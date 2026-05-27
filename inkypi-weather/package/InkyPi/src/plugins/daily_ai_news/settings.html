@@ -1,0 +1,73 @@
+<div class="form-group">
+  <label class="form-label" for="model">总结模型</label>
+  <input type="text" class="form-control" name="model" id="model" value="gpt-5-nano">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="brief_title">标题</label>
+  <input type="text" class="form-control" name="brief_title" id="brief_title" value="整点新闻">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="region_focus">关注范围</label>
+  <select class="form-control" name="region_focus" id="region_focus">
+    <option value="china_global" selected>中国 + 全球</option>
+    <option value="global">全球</option>
+    <option value="us_global">美国 + 全球</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="feed_urls">RSS 新闻源</label>
+  <textarea class="form-control" name="feed_urls" id="feed_urls" rows="7">BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
+BBC World|https://feeds.bbci.co.uk/news/world/rss.xml
+NPR|https://feeds.npr.org/1001/rss.xml
+NYTimes World|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+Guardian World|https://www.theguardian.com/world/rss</textarea>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="max_items">最多摄取条目</label>
+  <input type="number" class="form-control" name="max_items" id="max_items" min="6" max="40" value="22">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="daily_api_limit">每日 API 调用上限</label>
+  <input type="number" class="form-control" name="daily_api_limit" id="daily_api_limit" min="1" max="5" value="1">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="font_family">字体</label>
+  <select name="font_family" id="font_family">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="force_refresh" id="force_refresh"> 忽略今日缓存，强制重新总结</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const [key, value] of Object.entries(pluginSettings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else {
+          el.value = value;
+        }
+      }
+    }
+
+    const fontFamily = document.getElementById('font_family');
+    if (fontFamily && !fontFamily.value) {
+      if ([...fontFamily.options].some(option => option.value === 'LXGW WenKai')) {
+        fontFamily.value = 'LXGW WenKai';
+      }
+    }
+  });
+</script>

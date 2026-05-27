@@ -1,0 +1,6 @@
+{
+    "display_name": "中文文学报时",
+    "id": "chinese_literature_clock",
+    "class": "ChineseLiteratureClock",
+    "repository": "local://chinese-literature-clock"
+}

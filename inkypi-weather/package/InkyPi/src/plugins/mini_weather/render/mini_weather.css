@@ -1,0 +1,415 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.mini-weather-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.8dvh;
+  padding: 0dvh 0.5dvw;
+  font-family: "Jost";
+}
+
+.mini-weather-title {
+  text-align: center;
+  font-size: min(10.5dvh, 9.5dvw);
+  font-weight: 700;
+  line-height: 1.18;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  width: 100%;
+  /* minimum readable size used by title auto-fit script */
+  --title-min-scale: 0.55;
+}
+
+.mini-weather-date {
+  text-align: center;
+  color: #3e3e3e;
+  font-size: min(7.4dvh, 6.8dvw);
+  font-weight: 500;
+  margin-top: 0.3dvh;
+}
+
+.mini-weather-layout {
+  display: grid;
+  /* keep stable column proportions so cards do not expand */
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.9fr);
+  gap: 2.2dvw;
+  align-items: stretch;
+  min-height: 0;
+  flex: 1;
+}
+
+.current-card,
+.forecast-row {
+  background: rgba(80, 80, 80, 0.09);
+  border-radius: 2.1dvw;
+}
+
+.current-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 0;
+  padding: 2.5dvh 1.8dvw 2.4dvh;
+  /* fixed card width to keep layout stable */
+  width: 36dvw;
+  min-width: 36dvw;
+  max-width: 36dvw;
+  overflow: hidden;
+  /* base temp font-size for scaling rules below */
+  --temp-base: min(22dvh, 20dvw);
+}
+
+.current-label {
+  width: 100%;
+  text-align: center;
+  font-size: min(8.0dvh, 6.6dvw);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.current-main {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.77dvw;
+  /* keep icon and temperature on same line */
+  white-space: nowrap;
+  min-height: 0;
+}
+
+.current-icon {
+  width: min(24dvh, 21.5dvw);
+  height: min(24dvh, 21.5dvw);
+  object-fit: contain;
+  flex: 0 0 auto;
+  filter: grayscale(1) brightness(0.68) contrast(0.9);
+  opacity: 0.88;
+}
+
+.color-icons .current-icon {
+  filter: none;
+  opacity: 1;
+}
+
+.current-temp {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: calc(var(--temp-base) * 0.82);
+  font-weight: 700;
+  line-height: 0.92;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.current-temp .unit {
+  font-size: 0.55em;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Scale temperature for different digit counts so value+unit fits inside fixed card */
+.current-temp.digits-2 {
+  font-size: calc(var(--temp-base) * 0.76);
+}
+.current-temp.digits-3 {
+  font-size: calc(var(--temp-base) * 0.58);
+}
+
+.current-range,
+.forecast-range {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.6dvw;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.range-high {
+  color: #b4222d;
+}
+
+.range-low {
+  color: #1c6eb6;
+}
+
+.forecast-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: 1.2dvh;
+  min-height: 0;
+  flex: 1;
+}
+
+.forecast-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2.0dvw;
+  padding: 2.4dvh 2.8dvw;
+  background: transparent;
+  flex: 1;
+  border-radius: 2.1dvw;
+}
+
+.forecast-row:nth-child(odd) {
+  background: rgba(80, 80, 80, 0.09);
+}
+
+.forecast-left {
+  display: flex;
+  align-items: center;
+  gap: 2.0dvw;
+  min-width: 0;
+}
+
+.forecast-icon {
+  width: min(10.0dvh, 7.5dvw);
+  height: min(10.0dvh, 7.5dvw);
+  object-fit: contain;
+  flex: 0 0 auto;
+  filter: grayscale(1) brightness(0.68) contrast(0.9);
+  opacity: 0.88;
+}
+
+.color-icons .forecast-icon {
+  filter: none;
+  opacity: 1;
+}
+
+.forecast-day {
+  font-size: min(7.8dvh, 5.8dvw);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.forecast-range {
+  font-size: min(7.8dvh, 5.8dvw);
+  justify-self: end;
+}
+
+.current-range {
+  font-size: min(9.4dvh, 8.0dvw);
+  gap: 2.4dvw;
+}
+
+/* Shrink range text when any value has 3+ digits (e.g. Kelvin temps like 295K) */
+.current-range.large-temps {
+  font-size: min(7.5dvh, 6.4dvw);
+}
+
+.forecast-range.large-temps {
+  font-size: min(6.2dvh, 4.6dvw);
+}
+
+@media (max-aspect-ratio: 1) {
+  /* Adjust layout for vertical/portrait orientation only. Keeps horizontal layout unchanged. */
+  .mini-weather-shell {
+    gap: 2.2dvh;
+    padding: 2.2dvh 2.5dvw;
+    overflow-x: hidden; /* prevent any horizontal clipping/scroll */
+  }
+
+  .mini-weather-layout {
+    grid-template-columns: 1fr;
+    gap: 2.2dvh;
+  }
+
+  /* Make the NOW card full-width and centered horizontally */
+  .current-card {
+    min-height: 30.8dvh;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin: 0 auto;
+    padding: 2.42dvh 3.85dvw 1.54dvh; /* give a bit more horizontal breathing room */
+  }
+
+  /* Allow the main content inside the current card to wrap and center when needed */
+  .current-main {
+    gap: 1.21dvw;
+    white-space: normal; /* prevent long content from forcing horizontal overflow */
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* Forecast list sits below the NOW card and uses full width */
+  .forecast-list {
+    width: 100%;
+    padding: 0;
+  }
+
+  .forecast-row {
+    padding: 1.43dvh 1.98dvw;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Ensure icons/text inside forecast rows don't overflow horizontally */
+  .forecast-left {
+    min-width: 0;
+  }
+  .forecast-range {
+    min-width: 0;
+  }
+}
+
+/* --- No-icons mode --- */
+.no-icons .current-main {
+  justify-content: center;
+}
+
+.no-icons .current-temp {
+  font-size: calc(var(--temp-base) * 1.22);
+}
+
+.no-icons .current-temp.digits-2 {
+  font-size: calc(var(--temp-base) * 1.14);
+}
+
+.no-icons .current-temp.digits-3 {
+  font-size: calc(var(--temp-base) * 0.92);
+}
+
+.no-icons .forecast-left {
+  gap: 0;
+}
+
+.no-icons .forecast-day {
+  font-size: min(9.2dvh, 6.8dvw);
+}
+
+/* 4-day no-icons: pull back slightly so all 4 rows stay within bounds */
+[data-forecast-days="4"].no-icons .forecast-day {
+  font-size: min(8.2dvh, 6.8dvw);
+}
+
+/* 4-day with icons, 2-digit temps only */
+[data-forecast-days="4"]:not(.no-icons) .forecast-list:not(.large-temps) .forecast-day {
+  font-size: min(8.3dvh, 5.8dvw);
+}
+
+/* --- Forecast days scaling ---
+   Fewer days = rows grow vertically (via flex:1 + space-evenly).
+   All dvw values stay at the 4-day baseline so horizontal zones never shift.
+   Only dvh values and padding grow for 1, 2, and 3 days.
+
+   When 3-digit temps are detected, JS also marks .forecast-list with
+   .large-temps. Those rules override the enhanced sizing back to a safe
+   compact preset using higher-specificity selectors. */
+
+/* 3 forecast days — slight vertical improvement */
+[data-forecast-days="3"] .forecast-icon {
+  width: min(12.5dvh, 7.5dvw);
+  height: min(12.5dvh, 7.5dvw);
+}
+[data-forecast-days="3"] .forecast-day {
+  font-size: min(9.0dvh, 5.8dvw);
+}
+[data-forecast-days="3"] .forecast-range {
+  font-size: min(9.0dvh, 5.8dvw);
+}
+[data-forecast-days="3"] .forecast-row {
+  padding: 2.8dvh 2.8dvw;
+}
+[data-forecast-days="3"] .forecast-list {
+  gap: 1.6dvh;
+}
+
+/* 2 forecast days — moderate vertical increase */
+[data-forecast-days="2"] .forecast-icon {
+  width: min(12.0dvh, 7.5dvw);
+  height: min(12.0dvh, 7.5dvw);
+}
+[data-forecast-days="2"] .forecast-day {
+  font-size: min(9.0dvh, 5.8dvw);
+}
+[data-forecast-days="2"] .forecast-range {
+  font-size: min(9.0dvh, 5.8dvw);
+}
+[data-forecast-days="2"] .forecast-row {
+  padding: 2.8dvh 2.8dvw;
+}
+[data-forecast-days="2"] .forecast-list {
+  gap: 2.0dvh;
+}
+
+/* 1 forecast day — larger vertical increase */
+[data-forecast-days="1"] .forecast-icon {
+  width: min(20.0dvh, 7.5dvw);
+  height: min(20.0dvh, 7.5dvw);
+}
+[data-forecast-days="1"] .forecast-day {
+  font-size: min(15.0dvh, 5.8dvw);
+}
+[data-forecast-days="1"] .forecast-range {
+  font-size: min(15.0dvh, 5.8dvw);
+}
+[data-forecast-days="1"] .forecast-row {
+  padding: 4.5dvh 2.8dvw;
+}
+
+/* --- 3-digit temperature overrides ---
+   When .forecast-list has .large-temps, reset icon, day, and range to
+   conservative sizes that fit "▲ 305K  ▼ 296K" without horizontal overlap.
+   Horizontal dvw caps are reduced; dvh values match 4-day baseline. */
+
+/* 3-day and 2-day large-temps: conservative baseline */
+[data-forecast-days="3"] .forecast-list.large-temps .forecast-icon,
+[data-forecast-days="2"] .forecast-list.large-temps .forecast-icon {
+  width: min(10.0dvh, 6.5dvw);
+  height: min(10.0dvh, 6.5dvw);
+}
+[data-forecast-days="3"] .forecast-list.large-temps .forecast-day,
+[data-forecast-days="2"] .forecast-list.large-temps .forecast-day {
+  font-size: min(9.0dvh, 4.8dvw);
+}
+[data-forecast-days="3"] .forecast-list.large-temps .forecast-range,
+[data-forecast-days="2"] .forecast-list.large-temps .forecast-range {
+  font-size: min(7.8dvh, 4.0dvw);
+}
+[data-forecast-days="2"] .forecast-list.large-temps .forecast-row {
+  padding: 2.8dvh 2.8dvw;
+}
+
+/* 4-day large-temps: day label slightly larger only */
+.forecast-list.large-temps .forecast-day {
+  font-size: min(9.0dvh, 4.8dvw);
+}
+
+/* 1-day large-temps: slightly larger than 2-day large-temps */
+[data-forecast-days="1"] .forecast-list.large-temps .forecast-icon {
+  width: min(13.0dvh, 6.5dvw);
+  height: min(13.0dvh, 6.5dvw);
+}
+[data-forecast-days="1"] .forecast-list.large-temps .forecast-day {
+  font-size: min(12.0dvh, 4.8dvw);
+}
+[data-forecast-days="1"] .forecast-list.large-temps .forecast-range {
+  font-size: min(10.5dvh, 4.0dvw);
+}
+[data-forecast-days="1"] .forecast-list.large-temps .forecast-row {
+  padding: 4.0dvh 2.8dvw;
+}
+
+@media (max-width: 250px) {
+  .mini-weather-shell {
+    font-family: "Dogica";
+  }
+}

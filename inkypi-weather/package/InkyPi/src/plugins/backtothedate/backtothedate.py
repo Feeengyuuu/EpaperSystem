@@ -1,0 +1,386 @@
+from datetime import datetime, timedelta, timezone
+from html import unescape
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from plugins.base_plugin.base_plugin import BasePlugin
+from utils.http_client import get_http_session
+import json
+import logging
+import os
+import random
+import re
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://chineseposters.net"
+POSTERS_URL = f"{BASE_URL}/posters/posters"
+DEFAULT_MAX_PAGE = 141
+MAX_PAGE_CACHE_TTL = timedelta(days=7)
+POSTER_PATH_RE = re.compile(r"^/posters/(?!posters(?:$|\?))[-a-z0-9]+/?$", re.I)
+IMAGE_PATH_RE = re.compile(r"/sites/default/files/images/[^\"'\s<>]+\.(?:jpg|jpeg|png)", re.I)
+REQUEST_HEADERS = {
+    "User-Agent": "InkyPi BacktotheDate/1.0 (+https://chineseposters.net/)"
+}
+
+
+class _PosterLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links = []
+        self._active_href = None
+        self._text = []
+        self._img_alt = ""
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag.lower() == "a":
+            self._active_href = attrs.get("href")
+            self._text = []
+            self._img_alt = ""
+        elif tag.lower() == "img" and self._active_href:
+            self._img_alt = attrs.get("alt") or self._img_alt
+
+    def handle_data(self, data):
+        if self._active_href:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() != "a" or not self._active_href:
+            return
+
+        title = _clean_text(" ".join(self._text)) or _clean_text(self._img_alt)
+        self.links.append({"href": self._active_href, "title": title})
+        self._active_href = None
+        self._text = []
+        self._img_alt = ""
+
+
+class _PosterDetailParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.images = []
+        self._in_h1 = False
+        self._h1_text = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        attrs = dict(attrs)
+        if tag == "h1":
+            self._in_h1 = True
+            self._h1_text = []
+        elif tag == "img":
+            src = attrs.get("src")
+            if src:
+                self.images.append({
+                    "src": src,
+                    "alt": attrs.get("alt") or "",
+                })
+
+    def handle_data(self, data):
+        if self._in_h1:
+            self._h1_text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "h1" and self._in_h1:
+            self.title = _clean_text(" ".join(self._h1_text))
+            self._in_h1 = False
+
+
+def _clean_text(value):
+    value = re.sub(r"<[^>]+>", " ", value or "")
+    value = unescape(value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+class BacktotheDate(BasePlugin):
+    def generate_image(self, settings, device_config):
+        logger.info("=== BacktotheDate Plugin: Starting image generation ===")
+        settings = settings or {}
+        dimensions = self._display_dimensions(device_config)
+        attempts = self._safe_int(settings.get("attempts"), 8, minimum=1, maximum=20)
+        errors = []
+
+        for _ in range(attempts):
+            try:
+                poster = self._select_random_poster(settings)
+                image = self._load_poster_image(poster["image_url"], dimensions)
+                if image:
+                    image, posters = self._compose_display_image(poster, image, dimensions, settings)
+                    self._remember_success(posters)
+                    logger.info(
+                        "Selected Chinese poster: %s | %s",
+                        poster.get("title") or poster["page_url"],
+                        poster["image_url"],
+                    )
+                    return image
+                errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
+            except Exception as exc:
+                logger.warning("BacktotheDate poster attempt failed: %s", exc)
+                errors.append(str(exc))
+
+        detail = "; ".join(errors[-3:])
+        raise RuntimeError(f"Could not fetch a Chinese poster image. {detail}")
+
+    def _display_dimensions(self, device_config):
+        dimensions = device_config.get_resolution()
+        if device_config.get_config("orientation") == "vertical":
+            dimensions = dimensions[::-1]
+        return dimensions
+
+    def _select_random_poster(self, settings):
+        max_page = self._get_max_page(settings)
+        state = self._read_state()
+        last_page_url = state.get("last_page_url")
+
+        for _ in range(8):
+            page = random.randint(0, max_page)
+            list_html = self._fetch_text(POSTERS_URL, params={"page": page})
+            links = self._extract_poster_links(list_html)
+            if not links:
+                continue
+
+            candidates = [link for link in links if link["url"] != last_page_url] or links
+            random.shuffle(candidates)
+            for link in candidates[:4]:
+                detail_html = self._fetch_text(link["url"])
+                poster = self._extract_poster_data(detail_html, link["url"])
+                if link.get("title") and not poster.get("title"):
+                    poster["title"] = link["title"]
+                if poster.get("image_url"):
+                    return poster
+
+        raise RuntimeError("No poster image link found on sampled pages.")
+
+    def _get_max_page(self, settings):
+        configured_page = self._safe_int(settings.get("maxPage"), None, minimum=0, maximum=10000)
+        if configured_page is not None:
+            return configured_page
+
+        state = self._read_state()
+        cached = self._safe_int(state.get("max_page"), None, minimum=0, maximum=10000)
+        checked_at = self._parse_datetime(state.get("max_page_checked_at"))
+        if cached is not None and checked_at and datetime.now(timezone.utc) - checked_at < MAX_PAGE_CACHE_TTL:
+            return cached
+
+        try:
+            html_text = self._fetch_text(POSTERS_URL)
+            discovered = self._discover_max_page(html_text)
+        except Exception as exc:
+            logger.warning("Could not discover Chinese Posters page count: %s", exc)
+            discovered = None
+
+        max_page = discovered if discovered is not None else cached
+        if max_page is None:
+            max_page = DEFAULT_MAX_PAGE
+
+        state["max_page"] = max_page
+        state["max_page_checked_at"] = datetime.now(timezone.utc).isoformat()
+        self._write_state(state)
+        return max_page
+
+    def _discover_max_page(self, html_text):
+        pages = [int(match.group(1)) for match in re.finditer(r"[?&]page=(\d+)", html_text or "")]
+        return max(pages) if pages else None
+
+    def _extract_poster_links(self, html_text):
+        parser = _PosterLinkParser()
+        parser.feed(html_text or "")
+
+        by_url = {}
+        for link in parser.links:
+            href = link.get("href") or ""
+            parsed_path = urlparse(urljoin(BASE_URL, href)).path
+            if not POSTER_PATH_RE.match(parsed_path):
+                continue
+
+            url = urljoin(BASE_URL, href)
+            existing = by_url.get(url)
+            title = link.get("title") or ""
+            if not existing or (title and not existing.get("title")):
+                by_url[url] = {"url": url, "title": title}
+
+        return list(by_url.values())
+
+    def _extract_poster_data(self, html_text, page_url):
+        parser = _PosterDetailParser()
+        parser.feed(html_text or "")
+
+        image_url = None
+        image_alt = ""
+        for image in parser.images:
+            src = image.get("src") or ""
+            if IMAGE_PATH_RE.search(src):
+                image_url = urljoin(BASE_URL, src)
+                image_alt = image.get("alt") or ""
+                break
+
+        if not image_url:
+            match = IMAGE_PATH_RE.search(html_text or "")
+            if match:
+                image_url = urljoin(BASE_URL, match.group(0))
+
+        title = parser.title or _clean_text(image_alt)
+        return {
+            "page_url": page_url,
+            "image_url": image_url,
+            "title": title,
+        }
+
+    def _compose_display_image(self, poster, image, dimensions, settings):
+        return self._fit_image(image, dimensions, settings), [poster]
+
+    def _load_poster_image(self, image_url, dimensions):
+        image = self.image_loader.from_url(
+            image_url,
+            dimensions,
+            timeout_ms=40000,
+            resize=False,
+            headers=REQUEST_HEADERS,
+        )
+        if not image:
+            return None
+
+        return image
+
+    def _is_portrait(self, image):
+        return image.size[0] < image.size[1]
+
+    def _fit_image(self, image, dimensions, settings):
+        image = ImageOps.exif_transpose(image)
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        elif image.mode == "L":
+            image = image.convert("RGB")
+
+        fit_mode = (settings.get("fitMode") or "rotate_portrait").lower()
+        if fit_mode == "cover":
+            return ImageOps.fit(image, dimensions, method=Image.LANCZOS)
+        if fit_mode in {"rotate_portrait", "rotate", "mosaic", "wall", "auto"}:
+            if self._is_portrait(image):
+                image = image.rotate(90, expand=True)
+            return self._fit_blur_contain(image, dimensions, settings)
+        if fit_mode in {"landscape", "adaptive", "ambient"}:
+            return self._fit_landscape(image, dimensions, settings)
+
+        fitted = ImageOps.contain(image, dimensions, method=Image.LANCZOS)
+        background = self._background(settings).copy()
+        if background.size != dimensions:
+            background = Image.new("RGB", dimensions, background.getpixel((0, 0)))
+        x = (dimensions[0] - fitted.size[0]) // 2
+        y = (dimensions[1] - fitted.size[1]) // 2
+        background.paste(fitted, (x, y))
+        return background
+
+    def _fit_landscape(self, image, dimensions, settings):
+        return self._fit_blur_contain(image, dimensions, settings, max_width_ratio=0.52 if self._is_portrait(image) else 1.0)
+
+    def _fit_blur_contain(self, image, dimensions, settings, max_width_ratio=1.0):
+        backdrop = ImageOps.fit(image, dimensions, method=Image.LANCZOS)
+        blur_radius = max(2, min(dimensions) // 90)
+        backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        backdrop = ImageEnhance.Color(backdrop).enhance(0.35)
+        backdrop = ImageEnhance.Contrast(backdrop).enhance(0.82)
+
+        wash_color = (255, 255, 255) if (settings.get("backgroundColor") or "white").lower() != "black" else (18, 18, 18)
+        wash = Image.new("RGB", dimensions, wash_color)
+        backdrop = Image.blend(backdrop, wash, 0.42)
+
+        max_width = int(dimensions[0] * max_width_ratio)
+        inset_bounds = (max(1, max_width), dimensions[1])
+        poster = ImageOps.contain(image, inset_bounds, method=Image.LANCZOS)
+
+        canvas = backdrop.copy()
+        x = (dimensions[0] - poster.size[0]) // 2
+        y = (dimensions[1] - poster.size[1]) // 2
+        matte = 8
+        draw = ImageDraw.Draw(canvas)
+        box = (
+            max(0, x - matte),
+            max(0, y - matte),
+            min(dimensions[0] - 1, x + poster.size[0] + matte - 1),
+            min(dimensions[1] - 1, y + poster.size[1] + matte - 1),
+        )
+        draw.rectangle(box, fill=(255, 255, 255), outline=(0, 0, 0), width=2)
+        canvas.paste(poster, (x, y))
+        return canvas
+
+    def _background(self, settings):
+        color = (settings.get("backgroundColor") or "white").lower()
+        if color == "black":
+            return Image.new("RGB", (1, 1), (0, 0, 0))
+        return Image.new("RGB", (1, 1), (255, 255, 255))
+
+    def _fetch_text(self, url, params=None):
+        session = get_http_session()
+        response = session.get(url, params=params, timeout=20, headers=REQUEST_HEADERS)
+        response.raise_for_status()
+        if not response.encoding:
+            response.encoding = "utf-8"
+        return response.text
+
+    def _state_path(self):
+        return Path(self.get_plugin_dir(".backtothedate_state.json"))
+
+    def _read_state(self):
+        path = self._state_path()
+        try:
+            if path.is_file():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Could not read BacktotheDate state %s: %s", path, exc)
+        return {}
+
+    def _write_state(self, state):
+        path = self._state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(state, indent=2)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            path.write_text(text, encoding="utf-8")
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _remember_success(self, posters):
+        if isinstance(posters, dict):
+            posters = [posters]
+        first = posters[0] if posters else {}
+        state = self._read_state()
+        state["last_page_url"] = first.get("page_url")
+        state["last_image_url"] = first.get("image_url")
+        state["last_title"] = first.get("title")
+        state["last_page_urls"] = [poster.get("page_url") for poster in posters if poster.get("page_url")]
+        state["last_image_urls"] = [poster.get("image_url") for poster in posters if poster.get("image_url")]
+        state["last_displayed_at"] = datetime.now(timezone.utc).isoformat()
+        self._write_state(state)
+
+    def _parse_datetime(self, value):
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    def _safe_int(self, value, default, minimum=None, maximum=None):
+        if value in (None, ""):
+            return default
+        try:
+            result = int(value)
+        except (TypeError, ValueError):
+            return default
+        if minimum is not None:
+            result = max(minimum, result)
+        if maximum is not None:
+            result = min(maximum, result)
+        return result

@@ -1,0 +1,32 @@
+.litclock-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 4% 6%;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.litclock-quote {
+  width: 100%;
+  line-height: 1.25;
+  word-wrap: break-word;
+}
+
+.litclock-attribution {
+  margin-top: 1.2em;
+  font-size: 0.45em;
+  font-style: italic;
+  text-align: right;
+  width: 100%;
+  opacity: 0.85;
+}
+
+.litclock-tier-1 .litclock-quote { font-size: 64px; }
+.litclock-tier-2 .litclock-quote { font-size: 52px; }
+.litclock-tier-3 .litclock-quote { font-size: 42px; }
+.litclock-tier-4 .litclock-quote { font-size: 34px; }
+.litclock-tier-5 .litclock-quote { font-size: 26px; }

@@ -1,0 +1,94 @@
+<div class="form-group">
+  <label class="form-label">句子选择</label>
+  <div class="radio-group">
+    <label><input type="radio" name="quote_selection" value="shortest" checked> 最短</label>
+    <label><input type="radio" name="quote_selection" value="random"> 随机</label>
+    <label><input type="radio" name="quote_selection" value="daily"> 每天固定</label>
+  </div>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="allow_nsfw" id="allow_nsfw"> 允许成人向原著条目</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="show_attribution" id="show_attribution" checked> 显示出处</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="font_family">字体</label>
+  <select name="font_family" id="font_family">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label">时间高亮</label>
+  <div class="radio-group">
+    <label><input type="radio" name="highlight_style" value="bold" checked> 加粗</label>
+    <label><input type="radio" name="highlight_style" value="italic"> 常规</label>
+    <label><input type="radio" name="highlight_style" value="underline"> 下划线</label>
+    <label><input type="radio" name="highlight_style" value="color"> 颜色</label>
+  </div>
+</div>
+
+<div class="form-group" id="highlight_color_group" style="display:none;">
+  <label class="form-label" for="highlight_color">高亮颜色</label>
+  <input type="color" name="highlight_color" id="highlight_color" value="#c00000">
+</div>
+
+<script>
+  const defaultFontFamily = '方正新楷近似';
+
+  function updateHighlightColorVisibility() {
+    const selected = document.querySelector('input[name="highlight_style"]:checked');
+    const group = document.getElementById('highlight_color_group');
+    group.style.display = (selected && selected.value === 'color') ? '' : 'none';
+  }
+  document.querySelectorAll('input[name="highlight_style"]').forEach(el =>
+    el.addEventListener('change', updateHighlightColorVisibility)
+  );
+
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      const qs = pluginSettings.quote_selection || 'shortest';
+      const qsEl = document.querySelector(`input[name="quote_selection"][value="${qs}"]`);
+      if (qsEl) qsEl.checked = true;
+
+      document.getElementById('allow_nsfw').checked =
+        pluginSettings.allow_nsfw === true || pluginSettings.allow_nsfw === 'on';
+      document.getElementById('show_attribution').checked =
+        pluginSettings.show_attribution === undefined ||
+        pluginSettings.show_attribution === true ||
+        pluginSettings.show_attribution === 'on';
+
+      if (pluginSettings.font_family) {
+        const savedFontFamily = ['LXGW WenKai', '康熙字典体'].includes(pluginSettings.font_family)
+          ? defaultFontFamily
+          : pluginSettings.font_family;
+        document.getElementById('font_family').value =
+          savedFontFamily;
+      }
+
+      const hs = pluginSettings.highlight_style || 'bold';
+      const hsEl = document.querySelector(`input[name="highlight_style"][value="${hs}"]`);
+      if (hsEl) hsEl.checked = true;
+
+      if (pluginSettings.highlight_color) {
+        document.getElementById('highlight_color').value = pluginSettings.highlight_color;
+      }
+    } else {
+      const backgroundColor = document.getElementById('backgroundColor');
+      const textColor = document.getElementById('textColor');
+      const fontFamily = document.getElementById('font_family');
+      if (backgroundColor) backgroundColor.value = '#000000';
+      if (textColor) textColor.value = '#ffffff';
+      if (fontFamily && [...fontFamily.options].some(option => option.value === defaultFontFamily)) {
+        fontFamily.value = defaultFontFamily;
+      }
+    }
+    updateHighlightColorVisibility();
+  });
+</script>

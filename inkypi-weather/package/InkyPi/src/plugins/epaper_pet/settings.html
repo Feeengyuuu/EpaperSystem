@@ -1,0 +1,185 @@
+<div class="form-group">
+  <label class="form-label" for="language">Display language / 显示语言</label>
+  <select id="language" name="language" class="form-input">
+    <option value="zh-Hans" selected>简体中文</option>
+    <option value="en">English</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="pet_name">Pet name / 宠物名</label>
+  <input type="text" class="form-input" id="pet_name" name="pet_name" value="Mochi">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="pet_id">Save id / 存档 ID</label>
+  <input type="text" class="form-input" id="pet_id" name="pet_id" value="mochi">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="personality">Personality note / 性格备注</label>
+  <input type="text" class="form-input" id="personality" name="personality" value="quiet, curious, low-refresh e-paper companion">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="tick_minutes">Heartbeat interval / 生命心跳</label>
+  <input type="number" class="form-input" id="tick_minutes" name="tick_minutes" min="5" max="240" step="5" value="15">
+  <span>minutes / 分钟</span>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="care_profile">Care profile / 照顾强度</label>
+  <select id="care_profile" name="care_profile" class="form-input">
+    <option value="gentle">Gentle / 温和</option>
+    <option value="normal" selected>Normal / 正常</option>
+    <option value="needy">Needy / 黏人</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="event_density">Expression density / 活跃度</label>
+  <select id="event_density" name="event_density" class="form-input">
+    <option value="quiet">Quiet / 安静</option>
+    <option value="normal">Normal / 正常</option>
+    <option value="expressive" selected>Expressive / 活跃</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="ai_dialogue" id="ai_dialogue"> AI dialogue / AI 生成台词</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="ai_each_render" id="ai_each_render" checked> Fresh AI line on each render / 每次渲染生成新台词</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="ai_use_plugin_context" id="ai_use_plugin_context" checked> Use live plugin context cache</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_chat_style">AI chat style</label>
+  <select id="ai_chat_style" name="ai_chat_style" class="form-input">
+    <option value="wry" selected>Dry wit</option>
+    <option value="black_humor">Mild black humor</option>
+    <option value="aphorism">Aphorism / golden line</option>
+    <option value="soft">Soft small talk</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_context_max_age_hours">Context max age</label>
+  <input type="number" class="form-input" id="ai_context_max_age_hours" name="ai_context_max_age_hours" min="1" max="72" step="1" value="24">
+  <span>hours</span>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_context_plugins">Context plugins</label>
+  <input type="text" class="form-input" id="ai_context_plugins" name="ai_context_plugins" value="weather,daily_ai_news,steam_daily_art,steam_profile_dashboard">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_provider">AI provider / AI 提供方</label>
+  <select id="ai_provider" name="ai_provider" class="form-input">
+    <option value="free_auto" selected>Free auto, paid fallback only after limit / 免费优先，限流后才付费</option>
+    <option value="groq">Groq free-tier key / Groq 免费额度</option>
+    <option value="openai">OpenAI paid key / OpenAI 付费密钥</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="ai_openai_after_free" id="ai_openai_after_free" checked> Use OpenAI only after Groq quota/rate limit</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_text_model">AI text model / AI 文本模型</label>
+  <select id="ai_text_model" name="ai_text_model" class="form-input">
+    <option value="gpt-4o-mini" selected>GPT-4o mini</option>
+    <option value="gpt-4o">GPT-4o</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_groq_model">Groq model / Groq 模型</label>
+  <input type="text" class="form-input" id="ai_groq_model" name="ai_groq_model" value="llama-3.3-70b-versatile">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="ai_daily_limit">AI daily limit / AI 每日上限</label>
+  <input type="number" class="form-input" id="ai_daily_limit" name="ai_daily_limit" min="0" max="500" step="1" value="24">
+  <span>requests / 次</span>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="autonomous_care" id="autonomous_care" checked> Autonomous care / 自主照顾</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="show_journal" id="show_journal" checked> Show latest journal line / 显示最近日志</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!loadPluginSettings) return;
+    const setValue = (id, fallback) => {
+      const el = document.getElementById(id);
+      if (el && pluginSettings[id] !== undefined) el.value = pluginSettings[id] || fallback || '';
+    };
+
+    setValue('language', 'zh-Hans');
+    setValue('pet_name', 'Mochi');
+    setValue('pet_id', 'mochi');
+    setValue('personality', '');
+    setValue('tick_minutes', '15');
+    setValue('care_profile', 'normal');
+    setValue('event_density', 'expressive');
+    setValue('ai_provider', 'free_auto');
+    setValue('ai_text_model', 'gpt-4o-mini');
+    setValue('ai_groq_model', 'llama-3.3-70b-versatile');
+    setValue('ai_daily_limit', '24');
+    setValue('ai_chat_style', 'wry');
+    setValue('ai_context_max_age_hours', '24');
+    setValue('ai_context_plugins', 'weather,daily_ai_news,steam_daily_art,steam_profile_dashboard');
+
+    const autonomousCare = document.getElementById('autonomous_care');
+    if (autonomousCare) {
+      autonomousCare.checked = pluginSettings.autonomous_care === undefined ||
+        pluginSettings.autonomous_care === true ||
+        pluginSettings.autonomous_care === 'on';
+    }
+
+    const aiDialogue = document.getElementById('ai_dialogue');
+    if (aiDialogue) {
+      aiDialogue.checked = pluginSettings.ai_dialogue === true ||
+        pluginSettings.ai_dialogue === 'on';
+    }
+
+    const aiEachRender = document.getElementById('ai_each_render');
+    if (aiEachRender) {
+      aiEachRender.checked = pluginSettings.ai_each_render === undefined ||
+        pluginSettings.ai_each_render === true ||
+        pluginSettings.ai_each_render === 'on';
+    }
+
+    const aiOpenaiAfterFree = document.getElementById('ai_openai_after_free');
+    if (aiOpenaiAfterFree) {
+      aiOpenaiAfterFree.checked = pluginSettings.ai_openai_after_free === undefined ||
+        pluginSettings.ai_openai_after_free === true ||
+        pluginSettings.ai_openai_after_free === 'on';
+    }
+
+    const aiUsePluginContext = document.getElementById('ai_use_plugin_context');
+    if (aiUsePluginContext) {
+      aiUsePluginContext.checked = pluginSettings.ai_use_plugin_context === undefined ||
+        pluginSettings.ai_use_plugin_context === true ||
+        pluginSettings.ai_use_plugin_context === 'on';
+    }
+
+    const showJournal = document.getElementById('show_journal');
+    if (showJournal) {
+      showJournal.checked = pluginSettings.show_journal === undefined ||
+        pluginSettings.show_journal === true ||
+        pluginSettings.show_journal === 'on';
+    }
+  });
+</script>

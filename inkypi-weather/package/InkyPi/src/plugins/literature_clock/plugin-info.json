@@ -1,0 +1,6 @@
+{
+    "display_name": "Literature Clock",
+    "id": "literature_clock",
+    "class": "LiteratureClock",
+    "repository": "https://github.com/harshithdepa/InkyPi-literature-clock"
+}

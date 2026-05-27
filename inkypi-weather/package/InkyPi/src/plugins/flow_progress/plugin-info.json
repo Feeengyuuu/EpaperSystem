@@ -1,0 +1,6 @@
+{
+  "display_name": "Flow Progress",
+  "id": "flow_progress",
+  "class": "FlowProgress",
+  "repository": "https://github.com/saulob/InkyPi-Flow-Progress"
+}

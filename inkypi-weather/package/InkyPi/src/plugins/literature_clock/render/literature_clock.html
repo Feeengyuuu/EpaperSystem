@@ -1,0 +1,20 @@
+{% extends "plugin.html" %}
+
+{% block content %}
+<div class="litclock-root litclock-tier-{{ size_tier }}"
+     style="font-family: {{ font_family|default('serif') }};">
+  <div class="litclock-quote">{{ quote_html|safe }}</div>
+  {% if show_attribution and attribution %}
+    <div class="litclock-attribution">{{ attribution }}</div>
+  {% endif %}
+</div>
+
+<style>
+  .litclock-highlight {
+    {% if highlight_style == 'bold' %}font-weight: 700;{% endif %}
+    {% if highlight_style == 'italic' %}font-style: italic;{% endif %}
+    {% if highlight_style == 'underline' %}text-decoration: underline;{% endif %}
+    {% if highlight_style == 'color' %}color: {{ highlight_color|default('#c00') }};{% endif %}
+  }
+</style>
+{% endblock %}

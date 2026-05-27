@@ -1,0 +1,85 @@
+<div class="form-group">
+  <label class="form-label">Quote selection</label>
+  <div class="radio-group">
+    <label><input type="radio" name="quote_selection" value="shortest" checked> Shortest</label>
+    <label><input type="radio" name="quote_selection" value="random"> Random</label>
+    <label><input type="radio" name="quote_selection" value="daily"> One per day</label>
+  </div>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="allow_nsfw" id="allow_nsfw"> Allow NSFW quotes</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="show_attribution" id="show_attribution" checked> Show attribution</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="font_family">Font</label>
+  <select name="font_family" id="font_family">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label">Highlight style</label>
+  <div class="radio-group">
+    <label><input type="radio" name="highlight_style" value="bold" checked> Bold</label>
+    <label><input type="radio" name="highlight_style" value="italic"> Italic</label>
+    <label><input type="radio" name="highlight_style" value="underline"> Underline</label>
+    <label><input type="radio" name="highlight_style" value="color"> Color</label>
+  </div>
+</div>
+
+<div class="form-group" id="highlight_color_group" style="display:none;">
+  <label class="form-label" for="highlight_color">Highlight color</label>
+  <input type="color" name="highlight_color" id="highlight_color" value="#c00000">
+</div>
+
+<script>
+  function updateHighlightColorVisibility() {
+    const selected = document.querySelector('input[name="highlight_style"]:checked');
+    const group = document.getElementById('highlight_color_group');
+    group.style.display = (selected && selected.value === 'color') ? '' : 'none';
+  }
+  document.querySelectorAll('input[name="highlight_style"]').forEach(el =>
+    el.addEventListener('change', updateHighlightColorVisibility)
+  );
+
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      const qs = pluginSettings.quote_selection || 'shortest';
+      const qsEl = document.querySelector(`input[name="quote_selection"][value="${qs}"]`);
+      if (qsEl) qsEl.checked = true;
+
+      document.getElementById('allow_nsfw').checked = !!pluginSettings.allow_nsfw;
+      document.getElementById('show_attribution').checked =
+        pluginSettings.show_attribution === undefined ? true : !!pluginSettings.show_attribution;
+
+      if (pluginSettings.font_family) {
+        document.getElementById('font_family').value = pluginSettings.font_family;
+      }
+
+      const hs = pluginSettings.highlight_style || 'bold';
+      const hsEl = document.querySelector(`input[name="highlight_style"][value="${hs}"]`);
+      if (hsEl) hsEl.checked = true;
+
+      if (pluginSettings.highlight_color) {
+        document.getElementById('highlight_color').value = pluginSettings.highlight_color;
+      }
+    } else {
+      const backgroundColor = document.getElementById('backgroundColor');
+      const textColor = document.getElementById('textColor');
+      const fontFamily = document.getElementById('font_family');
+      if (backgroundColor) backgroundColor.value = '#000000';
+      if (textColor) textColor.value = '#ffffff';
+      if (fontFamily && [...fontFamily.options].some(option => option.value === 'LXGW WenKai')) {
+        fontFamily.value = 'LXGW WenKai';
+      }
+    }
+    updateHighlightColorVisibility();
+  });
+</script>

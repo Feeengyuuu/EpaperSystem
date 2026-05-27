@@ -1,0 +1,32 @@
+[
+  {
+    "id": "abstract_triangles",
+    "label": "100 Lines / Triangles",
+    "prompt": "A high-contrast black-and-white abstract geometric line pattern. Use ONLY 100 lines. Thick black vector lines form an intricate tessellation of interlocking triangles, polygons, and starburst nodes. The design resembles shattered glass or crystalline facets, with dense radiating line intersections and irregular polygon cells. Vertical panel-like divisions run through the composition, giving a stained-glass or architectural lattice feel. No shading, no color, pure bold line art on a white background. Ultra-sharp vector style, modern minimalist geometric design, seamless repeating pattern."
+  },
+  {
+    "id": "shanshui_chinese",
+    "label": "Chinese Shan Shui",
+    "prompt": "A traditional Chinese Shan Shui landscape painting. Misty layered mountain peaks rendered in expressive black ink wash, with small pavilion huts perched on distant ridgelines. A soft red sun hangs in a pale sky, partially veiled by haze. In the foreground, delicate ink-drawn trees line a quiet riverbank. A small wooden boat with two covered cabins floats on calm water, a lone figure poling it forward. Thick atmospheric fog blends water and mountains into a serene dreamlike scene. Minimal color palette of black, gray, and warm beige paper texture, with a single muted red sun accent. Classic brushwork, soft gradients, tranquil composition, traditional East Asian ink painting style. 8k resolution."
+  },
+  {
+    "id": "cubanist",
+    "label": "Cubanist",
+    "prompt": "An image of either a person or animal or person AND animal in the style of Cubism. Fragmented and geometric shapes, overlapping planes.  Focus on abstracted human forms rather than realistic representation."
+  },
+  {
+    "id": "woodblock_japanese",
+    "label": "Japanese Woodblock",
+    "prompt": "A dreamy Shan Shui landscape in the style of a vintage Japanese woodblock print. High-contrast, flat colors, bold black outlines. A giant snow-capped mountain peak, a winding indigo river, a single red sun, and blooming pink cherry blossoms. Heavy atmospheric mist rendered as solid white shapes. No soft gradients, 8k resolution, Ukiyo-e aesthetic."
+  },
+  {
+    "id": "warhol",
+    "label": "Warhol",
+    "prompt": "Choose ONE subject at random — (A) a famous celebrity, (B) an iconic animal, or (C) a world-famous landmark — shown as a bold, high-contrast screenprint with thick black outlines and simplified shapes. Create a 2x2 or 3x3 grid of repeated panels of the same subject, each panel using a different loud, contrasting colorway (neon pink, cyan, yellow, lime, purple, orange), misregistered ink layers, halftone dot texture, flat color blocks, and subtle paper/ink imperfections. Studio-like composition, centered subject, minimal background, graphic poster look, vibrant pop palette, crisp edges, no text, no logos, no watermark, high resolution."
+  },
+  {
+    "id": "guochao",
+    "label": "Guochao",
+    "prompt": "A vibrant, maximalist flat-vector illustration in the 'Guochao' style, blending traditional Chinese mythology with modern urban life. The scene should feature grainy, stippled textures and a pastel-meets-neon color palette. Incorporate surreal juxtapositions: ancient dragons or deities interacting with modern bicycles, vintage cars, and streetwear. Use a layered, folk-art composition with stylized clouds, mountains, and intricate patterns. High-detail, whimsical, and dreamlike atmosphere"
+  }
+]

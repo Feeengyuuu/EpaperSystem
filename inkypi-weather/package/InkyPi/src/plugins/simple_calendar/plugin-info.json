@@ -1,0 +1,6 @@
+{
+    "display_name": "Simple Calendar",
+    "id": "simple_calendar",
+    "class": "SimpleCalendar",
+    "repository": "https://github.com/saulob/InkyPi-Simple-Calendar"
+}

@@ -1,0 +1,29 @@
+.ssh/
+.secrets-backup/
+.env
+**/.env
+*.env.backup
+
+# Local/runtime state
+.tmp/
+**/.tmp/
+**/tmp/
+**/mock_display_output/
+**/pytest-cache-files-*/
+**/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+
+# Python environments and vendored install caches
+**/.venv/
+**/.venv-*/
+**/.pc-packages/
+
+# Generated package artifacts
+inkypi-weather/dist/
+*.zip
+*.tar
+*.tar.gz
+
+# Local publish staging
+.github-backup-stage/

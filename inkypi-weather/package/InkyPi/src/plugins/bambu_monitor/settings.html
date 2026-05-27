@@ -1,0 +1,97 @@
+<div style="margin-bottom:14px;">
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
+        Read-only Bambu Lab printer status over local MQTT. Keep the printer in its normal cloud-connected mode first; only consider LAN Only / Developer Mode if the live read fails or your firmware requires it.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="host" class="form-label">Printer IP / Host</label>
+    <input type="text" id="host" name="host" class="form-input" placeholder="192.168.1.120">
+    <small>Use the local IP shown on the printer or in your router.</small>
+</div>
+
+<div class="form-group">
+    <label for="serialNumber" class="form-label">Printer Serial Number</label>
+    <input type="text" id="serialNumber" name="serialNumber" class="form-input" placeholder="01P00...">
+    <small>Shown in Device Info / Bambu Studio. Used for MQTT topics.</small>
+</div>
+
+<div class="form-group">
+    <label for="accessCode" class="form-label">LAN Access Code</label>
+    <input type="password" id="accessCode" name="accessCode" class="form-input" placeholder="Leave blank to use env key">
+    <small>For better security, store this in API Keys as BAMBU_ACCESS_CODE and leave this field blank.</small>
+</div>
+
+<div class="form-group">
+    <label for="accessCodeEnv" class="form-label">Access Code Env Key</label>
+    <input type="text" id="accessCodeEnv" name="accessCodeEnv" class="form-input" value="BAMBU_ACCESS_CODE">
+</div>
+
+<div class="form-group">
+    <label for="port" class="form-label">MQTT TLS Port</label>
+    <input type="number" id="port" name="port" class="form-input" value="8883" min="1" max="65535">
+</div>
+
+<div class="form-group">
+    <label for="timeoutSeconds" class="form-label">Connection Timeout Seconds</label>
+    <input type="number" id="timeoutSeconds" name="timeoutSeconds" class="form-input" value="6" min="2" max="20">
+</div>
+
+<div class="form-group">
+    <label for="cacheSeconds" class="form-label">Status Cache Seconds</label>
+    <input type="number" id="cacheSeconds" name="cacheSeconds" class="form-input" value="60" min="0" max="3600">
+    <small>Use 60 seconds while printing and longer values when idle.</small>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="cameraEnabled" name="cameraEnabled" checked>
+        Capture A1/P1 camera snapshot
+    </label>
+    <small>Grabs one still frame from the local port 6000 camera stream on each plugin refresh.</small>
+</div>
+
+<div class="form-group">
+    <label for="cameraPort" class="form-label">Camera TCP/TLS Port</label>
+    <input type="number" id="cameraPort" name="cameraPort" class="form-input" value="6000" min="1" max="65535">
+</div>
+
+<div class="form-group">
+    <label for="cameraTimeoutSeconds" class="form-label">Camera Timeout Seconds</label>
+    <input type="number" id="cameraTimeoutSeconds" name="cameraTimeoutSeconds" class="form-input" value="18" min="2" max="20">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="requestFullUpdate" name="requestFullUpdate" checked>
+        Request a full status update
+    </label>
+    <small>This sends only Bambu's status refresh request, not print-control commands.</small>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="demoMode" name="demoMode">
+        Demo mode
+    </label>
+    <small>Use sample data for local preview before the printer credentials are configured.</small>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('host').value = pluginSettings.host || '';
+            document.getElementById('serialNumber').value = pluginSettings.serialNumber || '';
+            document.getElementById('accessCode').value = pluginSettings.accessCode || '';
+            document.getElementById('accessCodeEnv').value = pluginSettings.accessCodeEnv || 'BAMBU_ACCESS_CODE';
+            document.getElementById('port').value = pluginSettings.port || '8883';
+            document.getElementById('timeoutSeconds').value = pluginSettings.timeoutSeconds || '6';
+            document.getElementById('cacheSeconds').value = pluginSettings.cacheSeconds || '60';
+            document.getElementById('cameraEnabled').checked = pluginSettings.cameraEnabled !== 'off';
+            document.getElementById('cameraPort').value = pluginSettings.cameraPort || '6000';
+            document.getElementById('cameraTimeoutSeconds').value = pluginSettings.cameraTimeoutSeconds || '18';
+            document.getElementById('requestFullUpdate').checked = pluginSettings.requestFullUpdate !== 'off';
+            document.getElementById('demoMode').checked = pluginSettings.demoMode === 'on' || pluginSettings.demoMode === true;
+        }
+    });
+</script>

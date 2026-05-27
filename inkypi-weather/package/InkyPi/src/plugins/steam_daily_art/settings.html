@@ -1,0 +1,113 @@
+<div class="form-group">
+    <label for="sourceCategory" class="form-label">Steam Source:</label>
+    <select id="sourceCategory" name="sourceCategory" class="form-input">
+        <option value="fresh_frontpage">Fresh Frontpage Mix</option>
+        <option value="spotlights">Steam Spotlights</option>
+        <option value="daily_deals">Daily Deals</option>
+        <option value="specials">Specials</option>
+        <option value="top_sellers">Top Sellers</option>
+        <option value="new_releases">New Releases</option>
+        <option value="coming_soon">Coming Soon</option>
+        <option value="featured">All Featured</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="selectionMode" class="form-label">Selection:</label>
+    <select id="selectionMode" name="selectionMode" class="form-input">
+        <option value="daily_rotation">Steam Rank, No Repeat</option>
+        <option value="first">First Steam Item</option>
+        <option value="random">No-Repeat Random</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="rotationCadence" class="form-label">Rotation:</label>
+    <select id="rotationCadence" name="rotationCadence" class="form-input">
+        <option value="hourly">Hourly</option>
+        <option value="six_hours">Every 6 Hours</option>
+        <option value="daily">Daily</option>
+        <option value="every_refresh">Every Refresh</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="imageMode" class="form-label">Image Type:</label>
+    <select id="imageMode" name="imageMode" class="form-input">
+        <option value="library_hero">Library Hero</option>
+        <option value="header">Header</option>
+        <option value="large_capsule">Large Capsule</option>
+        <option value="auto">Auto Fallback</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="logoOverlay" class="form-label">Logo Overlay:</label>
+    <select id="logoOverlay" name="logoOverlay" class="form-input">
+        <option value="show">Show Logo</option>
+        <option value="hide">Hide Logo</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="logoPosition" class="form-label">Logo Position:</label>
+    <select id="logoPosition" name="logoPosition" class="form-input">
+        <option value="empty_space">Auto Empty Space</option>
+        <option value="golden_left">Golden Left</option>
+        <option value="center">Center</option>
+        <option value="top_center">Top Center</option>
+        <option value="bottom_left">Bottom Left</option>
+        <option value="bottom_center">Bottom Center</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="logoSize" class="form-label">Logo Size:</label>
+    <select id="logoSize" name="logoSize" class="form-input">
+        <option value="normal">Normal</option>
+        <option value="compact">Compact</option>
+        <option value="large">Large</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="countryCode" class="form-label">Country:</label>
+    <input type="text" id="countryCode" name="countryCode" value="US" maxlength="2" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="language" class="form-label">Language:</label>
+    <input type="text" id="language" name="language" value="english" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="showCaption" class="form-label">Caption:</label>
+    <input type="checkbox" id="showCaption" name="showCaption" value="false" onclick="this.value=this.checked ? 'true' : 'false';">
+    <span>Show game title</span>
+</div>
+
+<div class="form-group">
+    <span style="color: var(--text-primary);">
+        Fetches current Steam store promotional items from frontpage categories such as spotlights, deals, top sellers, and new releases. Rotation follows Steam's order and skips repeats until the pool is exhausted.
+    </span>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!loadPluginSettings) return;
+
+        document.getElementById('sourceCategory').value = pluginSettings.sourceCategory || 'fresh_frontpage';
+        document.getElementById('selectionMode').value = pluginSettings.selectionMode || 'daily_rotation';
+        document.getElementById('rotationCadence').value = pluginSettings.rotationCadence || 'hourly';
+        document.getElementById('imageMode').value = pluginSettings.imageMode || 'library_hero';
+        document.getElementById('logoOverlay').value = pluginSettings.logoOverlay || 'show';
+        document.getElementById('logoPosition').value = pluginSettings.logoPosition || 'empty_space';
+        document.getElementById('logoSize').value = pluginSettings.logoSize || 'normal';
+        document.getElementById('countryCode').value = pluginSettings.countryCode || 'US';
+        document.getElementById('language').value = pluginSettings.language || 'english';
+
+        const showCaption = pluginSettings.showCaption === 'true';
+        document.getElementById('showCaption').checked = showCaption;
+        document.getElementById('showCaption').value = showCaption ? 'true' : 'false';
+    });
+</script>

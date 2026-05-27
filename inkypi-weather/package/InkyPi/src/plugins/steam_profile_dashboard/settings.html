@@ -1,0 +1,109 @@
+<div class="form-group">
+    <label for="steamId" class="form-label">SteamID64:</label>
+    <input type="text" id="steamId" name="steamId" value="76561198176386838" placeholder="7656119..." required class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="statusCacheSeconds" class="form-label">实时状态缓存：</label>
+    <select id="statusCacheSeconds" name="statusCacheSeconds" class="form-input">
+        <option value="30">30 秒</option>
+        <option value="60">1 分钟</option>
+        <option value="120">2 分钟</option>
+        <option value="300">5 分钟</option>
+        <option value="600">10 分钟</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="fullCacheMinutes" class="form-label">完整数据缓存：</label>
+    <select id="fullCacheMinutes" name="fullCacheMinutes" class="form-input">
+        <option value="15">15 分钟</option>
+        <option value="30">30 分钟</option>
+        <option value="60">1 小时</option>
+        <option value="180">3 小时</option>
+        <option value="720">12 小时</option>
+        <option value="1440">1 天</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="friendLimit" class="form-label">好友扫描上限：</label>
+    <input type="number" id="friendLimit" name="friendLimit" value="100" min="0" max="100" step="10" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="recentLimit" class="form-label">近期游戏数量：</label>
+    <input type="number" id="recentLimit" name="recentLimit" value="5" min="0" max="10" step="1" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="includeFriends" class="form-label">好友：</label>
+    <select id="includeFriends" name="includeFriends" class="form-input">
+        <option value="true">显示在线好友</option>
+        <option value="false">跳过好友</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="refreshRecentOnGameChange" class="form-label">游戏变化：</label>
+    <select id="refreshRecentOnGameChange" name="refreshRecentOnGameChange" class="form-input">
+        <option value="true">游戏变化时刷新近期游戏</option>
+        <option value="false">只刷新状态</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="includeAppDetails" class="form-label">商店详情：</label>
+    <select id="includeAppDetails" name="includeAppDetails" class="form-input">
+        <option value="true">显示类型/媒体评分</option>
+        <option value="false">跳过商店详情</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="includeBadges" class="form-label">徽章：</label>
+    <select id="includeBadges" name="includeBadges" class="form-input">
+        <option value="true">显示徽章和 XP</option>
+        <option value="false">跳过徽章</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="includeBans" class="form-label">封禁摘要：</label>
+    <select id="includeBans" name="includeBans" class="form-input">
+        <option value="true">显示摘要</option>
+        <option value="false">跳过封禁摘要</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="language" class="form-label">Steam 商店语言：</label>
+    <select id="language" name="language" class="form-input">
+        <option value="schinese">简体中文</option>
+        <option value="english">English</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <span style="color: var(--text-primary);">
+        实时状态刷新时只使用一次 Steam API 请求；完整资料会单独缓存。实际屏幕更新速度还取决于该播放列表项目的刷新设置。
+    </span>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!loadPluginSettings) return;
+
+        document.getElementById('steamId').value = pluginSettings.steamId || '76561198176386838';
+        document.getElementById('statusCacheSeconds').value = pluginSettings.statusCacheSeconds || '60';
+        document.getElementById('fullCacheMinutes').value = pluginSettings.fullCacheMinutes || pluginSettings.cacheMinutes || '30';
+        document.getElementById('friendLimit').value = pluginSettings.friendLimit || '100';
+        document.getElementById('recentLimit').value = pluginSettings.recentLimit || '5';
+        document.getElementById('includeFriends').value = pluginSettings.includeFriends || 'true';
+        document.getElementById('refreshRecentOnGameChange').value = pluginSettings.refreshRecentOnGameChange || 'true';
+        document.getElementById('includeAppDetails').value = pluginSettings.includeAppDetails || 'true';
+        document.getElementById('includeBadges').value = pluginSettings.includeBadges || 'true';
+        document.getElementById('includeBans').value = pluginSettings.includeBans || 'true';
+        document.getElementById('language').value = pluginSettings.language || 'schinese';
+    });
+</script>

@@ -1,0 +1,6 @@
+{
+    "display_name": "Bambu Monitor",
+    "id": "bambu_monitor",
+    "class": "BambuMonitor",
+    "repository": "local://bambu-monitor"
+}

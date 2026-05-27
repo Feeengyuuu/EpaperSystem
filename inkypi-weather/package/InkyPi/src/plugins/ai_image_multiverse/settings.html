@@ -1,0 +1,493 @@
+<div class="form-group">
+    <label for="textPrompt" class="form-label">Text Prompt:</label>
+    <input type="text" id="textPrompt" name="textPrompt" placeholder="Type something..." class="form-input">
+</div>
+
+<!-- Dropdown Options -->
+<!-- Inject pipeline + env availability into the page -->
+<div id="aiConfig" data-config='{{ ui_config|tojson|safe }}' style="display:none;"></div>
+
+<div class="form-group dropdown-container">
+  <div class="form-group">
+    <label for="imageModel" class="form-label">Image Model:</label>
+    <select id="imageModel" name="imageModel" class="form-input" onchange="applyPipelineUI()">
+      {% if available_models and available_models|length > 0 %}
+        {% for m in available_models %}
+          <option value="{{ m.id }}">{{ m.label }}</option>
+        {% endfor %}
+      {% else %}
+        <option value="none" disabled selected>No Models Available</option>
+      {% endif %}
+    </select>
+  </div>
+
+  <div class="form-group" id="qualityGroup" style="flex:0 0 100%; width:100%;">
+    <label for="quality" class="form-label">Quality:</label>
+    <!-- IMPORTANT: do NOT disable this select; it must always submit -->
+    <select id="quality" name="quality" class="form-input"></select>
+  </div>
+</div>
+
+<div class="form-group">
+  <label for="randomizePromptToggle" class="form-label">Randomize Text Prompt:</label>
+  <div class="toggle-container">
+    <!-- This is the ONLY field that gets submitted -->
+    <input type="hidden" id="randomizePrompt" name="randomizePrompt" value="false">
+    <!-- Checkbox does NOT submit (no name). It only drives the hidden field. -->
+    <input
+      type="checkbox"
+      id="randomizePromptToggle"
+      class="toggle-checkbox"
+      value="true"
+      onchange="syncRandomizeHidden()"
+    >
+    <label for="randomizePromptToggle" class="toggle-label"></label>
+  </div>
+  <div id="randomizeHelp" class="form-help" style="margin-top:6px; opacity:0.8; display:none;"></div>
+</div>
+
+<!-- Scale, Blur, Color Options -->
+<div class="form-group">
+    <div class="form-group">
+        <label for="padImage" class="form-label">Scale to Fit:</label>
+        <div class="toggle-container">
+            <input type="checkbox" id="padImage" name="padImage" class="toggle-checkbox" value="false">
+            <label for="padImage" class="toggle-label"></label>
+        </div>
+        <!-- Hidden input ensures 'true' is always sent when unchecked -->
+        <input type="hidden" name="padImage" value="true">
+    </div>
+
+    <div class="form-group">
+        <label class="form-label" for="backgroundOption">Background:</label>
+        <div class="form-group">
+            <input type="radio" id="backgroundOption" name="backgroundOption" value="blur">
+            <label>Blur</label>
+            <input type="radio" id="backgroundOption" name="backgroundOption" value="color">
+            <label>Color</label>
+            <input type="color" id="backgroundColor" name="backgroundColor" value="#ffffff" class="color-picker"/>
+        </div>
+    </div>
+</div>
+
+<div class="separator"></div>
+
+<div class="form-group">
+  <!-- Row 1: Presets + icons -->
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:nowrap;">
+    <label class="form-label" style="margin:0; white-space:nowrap;">Presets:</label>
+
+    <div style="display:flex; align-items:center; gap:10px; flex:0 0 auto;">
+      <img src="/images/ai_image_multiverse/plus.png" alt="Add a Preset"
+        style="width:24px;height:24px;cursor:pointer;"
+        onclick="openPresetAddModal()">
+
+      <img src="/images/ai_image_multiverse/minus.png" alt="Delete a Preset"
+        style="width:24px;height:24px;cursor:pointer;"
+        onclick="openPresetDeleteModal()">
+    </div>
+  </div>
+
+  <!-- Row 2: Preset Buttons & Modals -->
+  <div id="presetButtons"
+       style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; width:100%;">
+    <span style="opacity:0.8;">Loading presets…</span>
+  </div>
+</div>
+
+<div id="presetAddModal" class="modal">
+  <div class="modal-content">
+    <span class="close-button" onclick="closePresetAddModal()">&times;</span>
+    <h2>Add Preset</h2>
+
+    <div class="form-group">
+      <label class="form-label" for="presetAddName">Preset Name:</label>
+      <input id="presetAddName" type="text" class="form-input" />
+    </div>
+
+    <div class="form-group" style="align-items:flex-start;">
+      <label class="form-label" for="presetAddPrompt">Preset Prompt:</label>
+      <textarea id="presetAddPrompt" class="form-input" rows="8" style="width:100%;"></textarea>
+    </div>
+
+    <div id="presetAddError" style="color: var(--accent-warn); font-weight:600; margin-top:8px;"></div>
+
+    <div class="buttons-container" style="margin-top:12px;">
+      <button type="button" class="action-button warn" onclick="closePresetAddModal()">Cancel</button>
+      <button type="button" class="action-button" onclick="submitPresetAdd()">Add</button>
+    </div>
+  </div>
+</div>
+
+<div id="presetDeleteModal" class="modal">
+  <div class="modal-content">
+    <span class="close-button" onclick="closePresetDeleteModal()">&times;</span>
+    <h2>Delete Preset ?</h2>
+
+    <div class="form-group">
+      <label class="form-label" for="presetDeleteSelect">Preset:</label>
+      <select id="presetDeleteSelect" class="form-input"></select>
+    </div>
+
+    <div id="presetDeleteError" style="color: var(--accent-warn); font-weight:600; margin-top:8px;"></div>
+
+    <div class="buttons-container" style="margin-top:12px;">
+      <button type="button" class="action-button warn" onclick="closePresetDeleteModal()">Cancel</button>
+      <button type="button" class="action-button" onclick="submitPresetDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="presetDeleteConfirmModal" class="modal">
+  <div class="modal-content">
+    <span class="close-button" onclick="closePresetDeleteConfirmModal()">&times;</span>
+    <h2>Confirm Delete</h2>
+
+    <div class="form-group" style="justify-content:center;">
+      <span id="presetDeleteConfirmText"></span>
+    </div>
+
+    <div class="buttons-container" style="margin-top:12px;">
+      <button type="button" class="action-button warn" onclick="closePresetDeleteConfirmModal()">No</button>
+      <button type="button" class="action-button" onclick="confirmPresetDelete()">Yes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function _getCfg() {
+  const cfgEl = document.getElementById("aiConfig");
+  if (!cfgEl) return {};
+  try { return JSON.parse(cfgEl.dataset.config || "{}"); }
+  catch (e) { console.warn("Failed to parse ui_config", e); return {}; }
+}
+
+// Hidden input is the ONLY submitted value for randomizePrompt
+function syncRandomizeHidden() {
+  const hidden = document.getElementById("randomizePrompt");
+  const toggle = document.getElementById("randomizePromptToggle");
+  if (!hidden || !toggle) return;
+  hidden.value = toggle.checked ? "true" : "false";
+}
+
+function applyPipelineUI() {
+  const imageModelEl = document.getElementById("imageModel");
+  const qualityEl = document.getElementById("quality");
+  const qualityGroup = document.getElementById("qualityGroup");
+
+  const randToggle = document.getElementById("randomizePromptToggle");
+  const randHidden = document.getElementById("randomizePrompt");
+  const randHelp = document.getElementById("randomizeHelp");
+
+  if (!imageModelEl || !qualityEl) return;
+
+  const model = imageModelEl.value;
+  if (!model || model === "none") return;
+
+  const cfg = _getCfg();
+  const pipeline = cfg.pipeline || {};
+  const envMap = cfg.env || {};
+
+  const entry = pipeline[model] || {};
+  const qList = Array.isArray(entry.quality) ? entry.quality : [];
+  const defaultQ = entry.default_quality || "";
+
+  // QUALITY (must submit)
+
+  const prev = qualityEl.value;
+
+  qualityEl.innerHTML = "";
+
+  if (qList.length) {
+    qList.forEach((q) => {
+      const opt = document.createElement("option");
+      opt.value = q.value;
+      opt.textContent = q.label || q.value;
+      qualityEl.appendChild(opt);
+    });
+
+    const isPrevValid = qList.some((q) => q.value === prev);
+    const isDefValid = defaultQ && qList.some((q) => q.value === defaultQ);
+
+  qualityEl.value = isDefValid ? defaultQ : (isPrevValid ? prev : qList[0].value);
+  } else {
+    // Fallback if pipeline entry forgot quality list
+    const opt = document.createElement("option");
+    opt.value = "standard";
+    opt.textContent = "Standard";
+    qualityEl.appendChild(opt);
+    qualityEl.value = "standard";
+  }
+
+  // Optional: hide quality selector if only one option (still submits)
+  if (qualityGroup) {
+    qualityGroup.style.display = (qList.length <= 1) ? "none" : "";
+  }
+
+  // RANDOMIZER gating
+  
+  if (randToggle && randHidden) {
+    const llmEnv = entry.llm && entry.llm.env ? entry.llm.env : "";
+    const llmOk = llmEnv ? !!envMap[llmEnv] : true;
+
+    if (!llmOk) {
+      // Force OFF and lock it
+      randToggle.checked = false;
+      randToggle.disabled = true;
+      randHidden.value = "false";
+
+      if (randHelp) {
+        randHelp.textContent = "Randomize disabled: missing " + llmEnv;
+        randHelp.style.color = "#5b2a86";
+        randHelp.style.fontSize = "0.75em";
+        randHelp.style.display = "";
+      }
+    } else {
+      randToggle.disabled = false;
+      // Keep hidden value synced to whatever the user chose
+      randHidden.value = randToggle.checked ? "true" : "false";
+      if (randHelp) randHelp.style.display = "none";
+    }
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Init pipeline-driven UI
+  applyPipelineUI();
+
+  // Ensure randomize hidden input matches initial toggle state
+  syncRandomizeHidden();
+
+  // Wire events together
+  const imageModelEl = document.getElementById("imageModel");
+  if (imageModelEl) {
+    imageModelEl.addEventListener("change", () => {
+      applyPipelineUI();
+      syncRandomizeHidden();
+    });
+  }
+
+  const randToggle = document.getElementById("randomizePromptToggle");
+  if (randToggle) {
+    randToggle.addEventListener("change", () => {
+      syncRandomizeHidden();
+    });
+  }
+});
+</script>
+
+<script>
+  function _pluginBasePath() {
+    const p = (window.location.pathname || "").replace(/\/+$/, "");
+    return p;
+  }
+
+  function _sortPresets(list) {
+    return (Array.isArray(list) ? list : [])
+      .filter(p => p && p.id)
+      .sort((a, b) =>
+        String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, {
+          numeric: true, sensitivity: "base"
+        })
+      );
+  }
+
+  function _renderPresetButtons(presets) {
+    const wrap = document.getElementById("presetButtons");
+    if (!wrap) return;
+
+    const list = _sortPresets(presets);
+    wrap.innerHTML = "";
+
+    if (!list.length) {
+      wrap.innerHTML = `<span style="opacity:0.8;">No presets yet</span>`;
+      return;
+    }
+
+    list.forEach(p => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.style.flex = "0 0 auto";
+      b.style.width = "auto";
+      b.style.maxWidth = "100%";
+
+      b.className = "action-button";
+      b.textContent = p.label || p.id;
+      b.style.padding = "8px 10px";
+      b.style.fontSize = "0.85em";
+      b.style.borderRadius = "999px";
+      b.style.whiteSpace = "nowrap";
+
+      b.addEventListener("click", () => {
+        const input = document.getElementById("textPrompt");
+        if (!input) return;
+        input.value = p.prompt || "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      wrap.appendChild(b);
+    });
+  }
+
+  async function loadPresetsIntoButtons() {
+    const url = `${_pluginBasePath()}/presets/list?ts=${Date.now()}`;
+    const r = await fetch(url, { cache: "no-store" });
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || !data.ok) {
+      const wrap = document.getElementById("presetButtons");
+      if (wrap) wrap.innerHTML = `<span style="opacity:0.8;">Presets failed to load</span>`;
+      return;
+    }
+
+    _renderPresetButtons(data.presets);
+
+    const delSel = document.getElementById("presetDeleteSelect");
+    if (delSel) {
+      delSel.innerHTML = "";
+      _sortPresets(data.presets).forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.label || p.id;
+        delSel.appendChild(opt);
+      });
+    }
+  }
+
+  function openPresetAddModal() {
+    const err = document.getElementById("presetAddError");
+    if (err) err.textContent = "";
+    const name = document.getElementById("presetAddName");
+    const prompt = document.getElementById("presetAddPrompt");
+    if (name) name.value = "";
+    if (prompt) prompt.value = "";
+    const m = document.getElementById("presetAddModal");
+    if (m) m.style.display = "block";
+  }
+
+  function closePresetAddModal() {
+    const m = document.getElementById("presetAddModal");
+    if (m) m.style.display = "none";
+  }
+
+  function openPresetDeleteModal() {
+    const err = document.getElementById("presetDeleteError");
+    if (err) err.textContent = "";
+    const m = document.getElementById("presetDeleteModal");
+    if (m) m.style.display = "block";
+  }
+
+  function closePresetDeleteModal() {
+    const m = document.getElementById("presetDeleteModal");
+    if (m) m.style.display = "none";
+  }
+
+  let _pendingDeletePresetId = "";
+
+  function openPresetDeleteConfirmModal(text, id) {
+    _pendingDeletePresetId = id || "";
+    const t = document.getElementById("presetDeleteConfirmText");
+    if (t) t.textContent = text || "Delete this preset?";
+    const m = document.getElementById("presetDeleteConfirmModal");
+    if (m) m.style.display = "block";
+  }
+
+  function closePresetDeleteConfirmModal() {
+    const m = document.getElementById("presetDeleteConfirmModal");
+    if (m) m.style.display = "none";
+    _pendingDeletePresetId = "";
+  }
+
+  async function submitPresetAdd() {
+    const err = document.getElementById("presetAddError");
+    if (err) err.textContent = "";
+
+    const name = (document.getElementById("presetAddName")?.value || "").trim();
+    const prompt = (document.getElementById("presetAddPrompt")?.value || "").trim();
+
+    if (!name || !prompt) {
+      if (err) err.textContent = "Both Preset Name and Preset Prompt are required.";
+      return;
+    }
+
+    const url = `${_pluginBasePath()}/presets/add`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: name, prompt })
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      if (r.status === 409 && (data.error === "duplicate_preset_label" || data.error === "duplicate_preset_id")) {
+        if (err) err.textContent = data.message || "That preset name already exists. Please pick another.";
+        return;
+      }
+      if (err) err.textContent = data.error || `Add failed (HTTP ${r.status})`;
+      return;
+    }
+
+    if (!data.ok) {
+      if (err) err.textContent = data.message || data.error || "Add failed.";
+      return;
+    }
+
+    closePresetAddModal();
+    await loadPresetsIntoButtons();
+  }
+
+  function submitPresetDelete() {
+    const err = document.getElementById("presetDeleteError");
+    if (err) err.textContent = "";
+
+    const sel = document.getElementById("presetDeleteSelect");
+    const id = (sel?.value || "").trim();
+    if (!id) {
+      if (err) err.textContent = "Select a preset to delete.";
+      return;
+    }
+
+    const label = sel?.selectedOptions?.[0]?.textContent?.trim() || id;
+    openPresetDeleteConfirmModal(`Delete "${label}"? This cannot be undone.`, id);
+  }
+
+  async function confirmPresetDelete() {
+    const id = (_pendingDeletePresetId || "").trim();
+    if (!id) return;
+
+    const url = `${_pluginBasePath()}/presets/delete`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) {
+      const err = document.getElementById("presetDeleteError");
+      if (err) err.textContent = data.error || `Delete failed (HTTP ${r.status})`;
+      closePresetDeleteConfirmModal();
+      return;
+    }
+
+    closePresetDeleteConfirmModal();
+    closePresetDeleteModal();
+    await loadPresetsIntoButtons();
+  }
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    try { await loadPresetsIntoButtons(); } catch {}
+
+    window.addEventListener("click", (ev) => {
+      const addM = document.getElementById("presetAddModal");
+      const delM = document.getElementById("presetDeleteModal");
+      const confM = document.getElementById("presetDeleteConfirmModal");
+
+      if (ev.target === addM) closePresetAddModal();
+      if (ev.target === delM) closePresetDeleteModal();
+      if (ev.target === confM) closePresetDeleteConfirmModal();
+    });
+  });
+</script>

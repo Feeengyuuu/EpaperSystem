@@ -1,0 +1,64 @@
+{
+    "name": "InkyPi Development",
+    "display_type": "mock",
+    "resolution": [
+        800,
+        480
+    ],
+    "orientation": "horizontal",
+    "plugin_order": [
+        "calendar",
+        "ai_image",
+        "ai_text",
+        "clock",
+        "epaper_pet",
+        "comic",
+        "countdown",
+        "github",
+        "image_album",
+        "image_folder",
+        "image_upload",
+        "apod",
+        "image_url",
+        "newspaper",
+        "rss",
+        "screenshot",
+        "todo_list",
+        "unsplash",
+        "weather",
+        "wpotd",
+        "year_progress",
+        "flow_progress",
+        "simple_calendar",
+        "stocktracker"
+    ],
+    "playlist_config": {
+        "playlists": [
+            {
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [],
+                "current_plugin_index": null
+            }
+        ],
+        "active_playlist": "Default"
+    },
+    "refresh_info": {
+        "refresh_time": "2026-05-24T02:17:55.033391-07:00",
+        "image_hash": "bbc1db2e2fb56f2192c0329fefd78b13cf8db7cbb0e0a8e7e82ba5f8376a0f85",
+        "refresh_type": "Manual Update",
+        "plugin_id": "clock"
+    },
+    "inverted_image": null,
+    "log_system_stats": null,
+    "timezone": "America/Los_Angeles",
+    "time_format": "24h",
+    "plugin_cycle_interval_seconds": 300,
+    "image_settings": {
+        "saturation": 1.0,
+        "brightness": 1.0,
+        "sharpness": 1.0,
+        "contrast": 1.0
+    }
+}
