@@ -21,6 +21,15 @@
     </div>
 </div>
 
+<div class="form-group">
+    <label for="smartCropWpotd" class="form-label">Smart crop around image focus</label>
+    <div class="toggle-container">
+        <input type="checkbox" id="smartCropWpotd" name="smartCropWpotd" class="toggle-checkbox" value="true"
+            onclick="this.value = this.checked ? 'true' : 'false';">
+        <label for="smartCropWpotd" class="toggle-label"></label>
+    </div>
+</div>
+
 <script>
     function toggleDateField(toggle) {
         const $date = document.getElementById('customDate');
@@ -31,6 +40,7 @@
         const $toggleRandom = document.getElementById('randomizeWpotd');
         const $date = document.getElementById('customDate');
         const $toggleShrink = document.getElementById('shrinkToFitWpotd');
+        const $toggleSmartCrop = document.getElementById('smartCropWpotd');
 
         if (loadPluginSettings) {
             $toggleRandom.checked = pluginSettings.randomizeWpotd === 'true';
@@ -39,12 +49,18 @@
             $date.disabled = $toggleRandom.checked;
             $toggleShrink.checked = pluginSettings.shrinkToFitWpotd === 'true';
             $toggleShrink.value = pluginSettings.shrinkToFitWpotd;
+            $toggleSmartCrop.checked = pluginSettings.smartCropWpotd === undefined
+                || pluginSettings.smartCropWpotd === true
+                || pluginSettings.smartCropWpotd === 'true';
+            $toggleSmartCrop.value = $toggleSmartCrop.checked ? 'true' : 'false';
 
         } else {
             $toggleRandom.checked = false;
             $toggleRandom.value = "false";
             $date.value = "";
             $toggleShrink.checked = true;
-            $toggleShrink.value = "true";}
+            $toggleShrink.value = "true";
+            $toggleSmartCrop.checked = true;
+            $toggleSmartCrop.value = "true";}
     });
 </script>

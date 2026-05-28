@@ -1,0 +1,55 @@
+<div class="form-group">
+  <label class="form-label" for="word_list">Word list</label>
+  <textarea class="form-control" name="word_list" id="word_list" rows="6" placeholder="One English word per line. Leave blank for the built-in list."></textarea>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="poem_line_limit">Poem lines</label>
+  <input type="number" class="form-control" name="poem_line_limit" id="poem_line_limit" min="2" max="8" value="4">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="font_family">Font</label>
+  <select name="font_family" id="font_family">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="fetch_dictionary" id="fetch_dictionary" value="true" checked> Fetch definition from Free Dictionary API</label>
+  <input type="hidden" name="fetch_dictionary" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="fetch_poem" id="fetch_poem" value="true" checked> Fetch poem from PoetryDB</label>
+  <input type="hidden" name="fetch_poem" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="force_refresh" id="force_refresh"> Ignore today's cache once</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const [key, value] of Object.entries(pluginSettings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else {
+          el.value = value;
+        }
+      }
+    }
+
+    const fontFamily = document.getElementById('font_family');
+    if (fontFamily && !fontFamily.value) {
+      if ([...fontFamily.options].some(option => option.value === 'Jost')) {
+        fontFamily.value = 'Jost';
+      }
+    }
+  });
+</script>

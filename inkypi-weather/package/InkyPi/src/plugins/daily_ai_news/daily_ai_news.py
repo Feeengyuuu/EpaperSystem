@@ -21,6 +21,7 @@ import requests
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font, get_fonts
+from utils.theme_utils import get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,8 @@ class DailyAINews(BasePlugin):
             brief = self._fallback_brief(settings, now, str(exc))
 
         self._write_news_context(brief, now)
-        return self._render(dimensions, settings, brief, now)
+        theme_context = get_theme_context(device_config, now=now)
+        return self._render(dimensions, settings, brief, now, theme_context)
 
     def _write_news_context(self, brief: dict[str, Any], now: datetime) -> None:
         payload = brief.get("brief") if isinstance(brief, dict) else {}
@@ -590,24 +592,25 @@ class DailyAINews(BasePlugin):
             "warning": error,
         }
 
-    def _render(self, dimensions, settings, payload: dict[str, Any], now: datetime) -> Image.Image:
+    def _render(self, dimensions, settings, payload: dict[str, Any], now: datetime, theme_context=None) -> Image.Image:
         width, height = dimensions
         raw_title = str(settings.get("brief_title") or "").strip()
         title = DEFAULT_TITLE if not raw_title or raw_title == "二狗新闻" else raw_title
         brief = payload.get("brief") or {}
 
-        bg = (0, 0, 0)
-        header_bg = bg
-        ink = (255, 255, 255)
-        muted = (194, 196, 202)
-        dim = (112, 117, 130)
-        rule = (46, 48, 56)
-        red = (255, 82, 74)
-        gold = (255, 196, 92)
-        cyan = (107, 204, 255)
-        green = (146, 221, 166)
+        palette = get_theme_palette(theme_context)
+        bg = palette["background"]
+        header_bg = palette["header"]
+        ink = palette["ink"]
+        muted = palette["muted"]
+        dim = palette["dim"]
+        rule = palette["rule"]
+        red = palette["red"]
+        gold = palette["gold"]
+        cyan = palette["cyan"]
+        green = palette["green"]
 
-        img = self._base_background(dimensions, bg)
+        img = self._base_background(dimensions, bg, (theme_context or {}).get("mode", "day"))
         draw = ImageDraw.Draw(img)
 
         font_family = settings.get("font_family") or DEFAULT_FONT
@@ -631,7 +634,8 @@ class DailyAINews(BasePlugin):
         if payload.get("from_cache"):
             meta += "  |  cache"
         draw.text((width - margin - self._tw(draw, meta, meta_font), 20), meta, font=meta_font, fill=muted)
-        draw.text((width - margin - self._tw(draw, "MIDNIGHT BRIEF", meta_font), 45), "MIDNIGHT BRIEF", font=meta_font, fill=cyan)
+        theme_label = "MIDNIGHT BRIEF" if (theme_context or {}).get("mode") == "night" else "DAY BRIEF"
+        draw.text((width - margin - self._tw(draw, theme_label, meta_font), 45), theme_label, font=meta_font, fill=cyan)
 
         lede = str(brief.get("lede") or "")
         draw.line((margin, 88, margin, 124), fill=gold, width=4)
@@ -702,10 +706,12 @@ class DailyAINews(BasePlugin):
         draw.text((margin, height - 20), footer, font=footer_font, fill=dim)
         return img
 
-    def _base_background(self, dimensions, bg) -> Image.Image:
+    def _base_background(self, dimensions, bg, theme_mode="day") -> Image.Image:
         base = Image.new("RGB", dimensions, bg)
         path = Path(__file__).with_name(BACKGROUND_IMAGE)
         if not path.is_file():
+            return base
+        if theme_mode != "night":
             return base
         try:
             try:

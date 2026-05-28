@@ -6,7 +6,7 @@ Automatically uses memory-efficient strategies on low-RAM devices (Pi Zero)
 and high-performance strategies on capable devices (Pi 3/4).
 """
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 from io import BytesIO
 from utils.http_client import get_http_session
 import logging
@@ -14,6 +14,7 @@ import gc
 import psutil
 import tempfile
 import os
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class AdaptiveImageLoader:
     def __init__(self):
         self.is_low_resource = _is_low_resource_device()
 
-    def from_url(self, url, dimensions, timeout_ms=40000, resize=True, headers=None):
+    def from_url(self, url, dimensions, timeout_ms=40000, resize=True, headers=None, focus_crop=False):
         """
         Load an image from a URL and optionally resize it.
 
@@ -70,6 +71,7 @@ class AdaptiveImageLoader:
             timeout_ms: Request timeout in milliseconds
             resize: Whether to resize the image (default True)
             headers: Optional dict of HTTP headers to include in request
+            focus_crop: Bias cover-crop toward the most detailed area
 
         Returns:
             PIL Image object resized to dimensions, or None on error
@@ -77,11 +79,11 @@ class AdaptiveImageLoader:
         logger.debug(f"Loading image from URL: {url}")
 
         if self.is_low_resource:
-            return self._load_from_url_lowmem(url, dimensions, timeout_ms, resize, headers)
+            return self._load_from_url_lowmem(url, dimensions, timeout_ms, resize, headers, focus_crop)
         else:
-            return self._load_from_url_fast(url, dimensions, timeout_ms, resize, headers)
+            return self._load_from_url_fast(url, dimensions, timeout_ms, resize, headers, focus_crop)
 
-    def from_file(self, path, dimensions, resize=True):
+    def from_file(self, path, dimensions, resize=True, focus_crop=False):
         """
         Load an image from a local file and optionally resize it.
 
@@ -89,6 +91,7 @@ class AdaptiveImageLoader:
             path: Path to local image file
             dimensions: Target dimensions as (width, height)
             resize: Whether to resize the image (default True)
+            focus_crop: Bias cover-crop toward the most detailed area
 
         Returns:
             PIL Image object resized to dimensions, or None on error
@@ -101,14 +104,14 @@ class AdaptiveImageLoader:
 
         try:
             if self.is_low_resource:
-                return self._load_from_file_lowmem(path, dimensions, resize)
+                return self._load_from_file_lowmem(path, dimensions, resize, focus_crop)
             else:
-                return self._load_from_file_fast(path, dimensions, resize)
+                return self._load_from_file_fast(path, dimensions, resize, focus_crop)
         except Exception as e:
             logger.error(f"Error loading image from {path}: {e}")
             return None
 
-    def from_bytesio(self, data, dimensions, resize=True):
+    def from_bytesio(self, data, dimensions, resize=True, focus_crop=False):
         """
         Load an image from BytesIO object and optionally resize it.
 
@@ -116,6 +119,7 @@ class AdaptiveImageLoader:
             data: BytesIO object containing image data
             dimensions: Target dimensions as (width, height)
             resize: Whether to resize the image (default True)
+            focus_crop: Bias cover-crop toward the most detailed area
 
         Returns:
             PIL Image object resized to dimensions, or None on error
@@ -129,7 +133,7 @@ class AdaptiveImageLoader:
             logger.info(f"Loaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
 
             if resize:
-                img = self._process_and_resize(img, dimensions, original_size)
+                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
             else:
                 # Even without resizing, apply EXIF orientation correction
                 img = ImageOps.exif_transpose(img)
@@ -143,7 +147,7 @@ class AdaptiveImageLoader:
 
     # ========== LOW-RESOURCE IMPLEMENTATIONS ==========
 
-    def _load_from_url_lowmem(self, url, dimensions, timeout_ms, resize, headers=None):
+    def _load_from_url_lowmem(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False):
         """Low-memory URL loading using temp file + draft mode."""
         tmp_path = None
 
@@ -170,7 +174,7 @@ class AdaptiveImageLoader:
                 logger.debug(f"Downloaded {downloaded_bytes / 1024:.1f}KB to temp file")
 
             # Load from temp file with draft mode
-            return self._load_from_file_lowmem(tmp_path, dimensions, resize)
+            return self._load_from_file_lowmem(tmp_path, dimensions, resize, focus_crop)
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading image from {url}: {e}")
@@ -187,7 +191,7 @@ class AdaptiveImageLoader:
                 except Exception as e:
                     logger.warning(f"Could not delete temp file {tmp_path}: {e}")
 
-    def _load_from_file_lowmem(self, path, dimensions, resize):
+    def _load_from_file_lowmem(self, path, dimensions, resize, focus_crop=False):
         """Low-memory file loading using draft mode."""
         try:
             img = Image.open(path)
@@ -204,7 +208,7 @@ class AdaptiveImageLoader:
                 img.load()
                 logger.debug(f"Image decoded: {img.size[0]}x{img.size[1]} (draft mode reduced from {original_size[0]}x{original_size[1]})")
 
-                img = self._process_and_resize(img, dimensions, original_size)
+                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
             else:
                 # Even without resizing, apply EXIF orientation correction
                 img = ImageOps.exif_transpose(img)
@@ -224,7 +228,7 @@ class AdaptiveImageLoader:
 
     # ========== HIGH-PERFORMANCE IMPLEMENTATIONS ==========
 
-    def _load_from_url_fast(self, url, dimensions, timeout_ms, resize, headers=None):
+    def _load_from_url_fast(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False):
         """High-performance URL loading using in-memory processing."""
         try:
             logger.debug("Using in-memory processing (high-performance mode)")
@@ -242,7 +246,7 @@ class AdaptiveImageLoader:
             logger.info(f"Downloaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
 
             if resize:
-                img = self._process_and_resize(img, dimensions, original_size)
+                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
             else:
                 # Even without resizing, apply EXIF orientation correction
                 img = ImageOps.exif_transpose(img)
@@ -258,7 +262,7 @@ class AdaptiveImageLoader:
             logger.error(f"Error processing image from {url}: {e}")
             return None
 
-    def _load_from_file_fast(self, path, dimensions, resize):
+    def _load_from_file_fast(self, path, dimensions, resize, focus_crop=False):
         """High-performance file loading using in-memory processing."""
         try:
             img = Image.open(path)
@@ -267,7 +271,7 @@ class AdaptiveImageLoader:
             logger.info(f"Loaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
 
             if resize:
-                img = self._process_and_resize(img, dimensions, original_size)
+                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
             else:
                 # Even without resizing, apply EXIF orientation correction
                 img = ImageOps.exif_transpose(img)
@@ -282,7 +286,7 @@ class AdaptiveImageLoader:
 
     # ========== SHARED PROCESSING LOGIC ==========
 
-    def _process_and_resize(self, img, dimensions, original_size):
+    def _process_and_resize(self, img, dimensions, original_size, focus_crop=False):
         """
         Process and resize image with device-appropriate optimizations.
 
@@ -290,6 +294,7 @@ class AdaptiveImageLoader:
             img: PIL Image object
             dimensions: Target dimensions (width, height)
             original_size: Original image size for logging
+            focus_crop: Bias cover-crop toward the most detailed area
 
         Returns:
             Processed and resized PIL Image
@@ -309,14 +314,14 @@ class AdaptiveImageLoader:
 
         # Choose processing strategy based on device capabilities
         if self.is_low_resource:
-            img = self._resize_low_resource(img, dimensions)
+            img = self._resize_low_resource(img, dimensions, focus_crop)
         else:
-            img = self._resize_high_performance(img, dimensions)
+            img = self._resize_high_performance(img, dimensions, focus_crop)
 
         logger.info(f"Image processing complete: {dimensions[0]}x{dimensions[1]}")
         return img
 
-    def _resize_low_resource(self, img, dimensions):
+    def _resize_low_resource(self, img, dimensions, focus_crop=False):
         """Memory-efficient resize for low-resource devices."""
         logger.debug("Using memory-efficient processing (BICUBIC filter)")
 
@@ -338,12 +343,12 @@ class AdaptiveImageLoader:
 
             # Stage 2: High-quality resize to exact dimensions
             logger.debug(f"Stage 2: Final resize to {dimensions[0]}x{dimensions[1]} using LANCZOS")
-            img = ImageOps.fit(img, dimensions, method=Image.LANCZOS)
+            img = self._fit_image(img, dimensions, Image.LANCZOS, focus_crop)
             logger.debug(f"Stage 2 complete: {dimensions[0]}x{dimensions[1]}")
         else:
             # Direct resize with BICUBIC (fast, sufficient quality for e-ink)
             logger.debug(f"Resizing directly from {img.size[0]}x{img.size[1]} to {dimensions[0]}x{dimensions[1]}")
-            img = ImageOps.fit(img, dimensions, method=Image.BICUBIC)
+            img = self._fit_image(img, dimensions, Image.BICUBIC, focus_crop)
 
         # Explicit garbage collection
         gc.collect()
@@ -351,10 +356,232 @@ class AdaptiveImageLoader:
 
         return img
 
-    def _resize_high_performance(self, img, dimensions):
+    def _resize_high_performance(self, img, dimensions, focus_crop=False):
         """High-quality resize for powerful devices."""
         logger.debug("Using high-quality processing (LANCZOS filter)")
         logger.debug(f"Resizing from {img.size[0]}x{img.size[1]} to {dimensions[0]}x{dimensions[1]}")
 
-        return ImageOps.fit(img, dimensions, method=Image.LANCZOS)
+        return self._fit_image(img, dimensions, Image.LANCZOS, focus_crop)
 
+    def _fit_image(self, img, dimensions, method, focus_crop=False):
+        if not focus_crop:
+            return ImageOps.fit(img, dimensions, method=method)
+
+        logger.debug("Using focus-aware cover crop")
+        return self._focus_crop_fit(img, dimensions, method)
+
+    def _focus_crop_fit(self, img, dimensions, method):
+        target_width, target_height = int(dimensions[0]), int(dimensions[1])
+        target_ratio = target_width / target_height
+        image_ratio = img.width / img.height
+        face_focus = self._face_focus_point(img)
+
+        if abs(image_ratio - target_ratio) < 0.01:
+            cropped = img
+        elif image_ratio > target_ratio:
+            crop_width = max(1, min(img.width, int(round(img.height * target_ratio))))
+            if face_focus:
+                x = self._crop_offset_for_focus(face_focus[0], img.width, crop_width)
+                logger.debug(f"Using face-aware horizontal crop at x={x}")
+            else:
+                x = self._focus_crop_offset(img, crop_width, horizontal=True)
+            cropped = img.crop((x, 0, x + crop_width, img.height))
+        else:
+            crop_height = max(1, min(img.height, int(round(img.width / target_ratio))))
+            if face_focus:
+                y = self._crop_offset_for_focus(face_focus[1], img.height, crop_height)
+                logger.debug(f"Using face-aware vertical crop at y={y}")
+            else:
+                y = self._focus_crop_offset(img, crop_height, horizontal=False)
+            cropped = img.crop((0, y, img.width, y + crop_height))
+
+        return cropped.resize((target_width, target_height), method)
+
+    def _crop_offset_for_focus(self, focus_coord, full_size, crop_size):
+        max_offset = full_size - crop_size
+        if max_offset <= 0:
+            return 0
+        offset = int(round(focus_coord - crop_size / 2))
+        return max(0, min(max_offset, offset))
+
+    def _face_focus_point(self, image):
+        sample = image.convert("RGB")
+        sample.thumbnail((220, 220), Image.BILINEAR)
+        if sample.width < 16 or sample.height < 16:
+            return None
+
+        mask = self._skin_pixel_mask(sample)
+        components = self._skin_components(mask, sample.width, sample.height)
+        best = None
+        best_score = 0
+
+        for component in components:
+            score = self._face_component_score(sample, component)
+            if score > best_score:
+                best = component
+                best_score = score
+
+        if not best:
+            return None
+
+        min_x, min_y, max_x, max_y = best["bbox"]
+        sample_x = (min_x + max_x) / 2
+        sample_y = min_y + (max_y - min_y) * 0.42
+        focus = (
+            sample_x * image.width / sample.width,
+            sample_y * image.height / sample.height,
+        )
+        logger.debug(f"Detected face-like focus at {focus[0]:.1f},{focus[1]:.1f}")
+        return focus
+
+    def _skin_pixel_mask(self, image):
+        rgb_bytes = image.tobytes()
+        ycbcr_bytes = image.convert("YCbCr").tobytes()
+        mask = []
+
+        for index in range(0, len(rgb_bytes), 3):
+            r, g, b = rgb_bytes[index], rgb_bytes[index + 1], rgb_bytes[index + 2]
+            cb = ycbcr_bytes[index + 1]
+            cr = ycbcr_bytes[index + 2]
+            luma = (r * 299 + g * 587 + b * 114) / 1000
+            max_rgb = max(r, g, b)
+            min_rgb = min(r, g, b)
+            chroma_range = max_rgb - min_rgb
+            ycbcr_skin = 70 <= cb <= 145 and 122 <= cr <= 190 and luma > 32
+            rgb_skin = (
+                r > 45
+                and g > 25
+                and b > 15
+                and chroma_range > 10
+                and r >= b * 0.85
+                and r >= g * 0.72
+            )
+            mask.append(ycbcr_skin and rgb_skin)
+
+        return mask
+
+    def _skin_components(self, mask, width, height):
+        visited = bytearray(width * height)
+        components = []
+
+        for start, is_skin in enumerate(mask):
+            if not is_skin or visited[start]:
+                continue
+
+            stack = [start]
+            visited[start] = 1
+            area = 0
+            min_x = max_x = start % width
+            min_y = max_y = start // width
+
+            while stack:
+                index = stack.pop()
+                x = index % width
+                y = index // width
+                area += 1
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+                min_y = min(min_y, y)
+                max_y = max(max_y, y)
+
+                if x > 0:
+                    self._push_skin_neighbor(mask, visited, stack, index - 1)
+                if x < width - 1:
+                    self._push_skin_neighbor(mask, visited, stack, index + 1)
+                if y > 0:
+                    self._push_skin_neighbor(mask, visited, stack, index - width)
+                if y < height - 1:
+                    self._push_skin_neighbor(mask, visited, stack, index + width)
+
+            components.append({"area": area, "bbox": (min_x, min_y, max_x, max_y)})
+
+        return components
+
+    def _push_skin_neighbor(self, mask, visited, stack, index):
+        if mask[index] and not visited[index]:
+            visited[index] = 1
+            stack.append(index)
+
+    def _face_component_score(self, image, component):
+        area = component["area"]
+        image_area = image.width * image.height
+        area_ratio = area / image_area
+        min_x, min_y, max_x, max_y = component["bbox"]
+        width = max_x - min_x + 1
+        height = max_y - min_y + 1
+        bbox_area = width * height
+
+        if area < max(24, int(image_area * 0.0015)) or area_ratio > 0.34:
+            return 0
+        if width < 6 or height < 6:
+            return 0
+
+        aspect = width / height
+        fill = area / bbox_area
+        if aspect < 0.35 or aspect > 2.2 or fill < 0.16:
+            return 0
+
+        crop = image.crop((min_x, min_y, max_x + 1, max_y + 1)).convert("L")
+        edges = crop.filter(ImageFilter.FIND_EDGES)
+        edge_mean = ImageStat.Stat(edges).mean[0]
+        dark_ratio = sum(crop.histogram()[:80]) / bbox_area
+
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_bias = 1 - abs(center_x - image.width / 2) / (image.width / 2)
+        upper_bias = 1 - min(1, center_y / image.height)
+        aspect_score = 1 - min(1, abs(aspect - 0.82) / 1.4)
+        fill_score = min(1.0, fill / 0.48)
+        detail_score = min(1.0, edge_mean / 28) + min(0.45, dark_ratio * 2.2)
+
+        return area * (
+            0.7
+            + aspect_score * 0.7
+            + fill_score * 0.35
+            + detail_score * 0.5
+            + center_bias * 0.12
+            + upper_bias * 0.25
+        )
+
+    def _focus_crop_offset(self, image, crop_size, horizontal=True):
+        full_size = image.width if horizontal else image.height
+        max_offset = full_size - crop_size
+        if max_offset <= 0:
+            return 0
+
+        sample = image.convert("L")
+        sample.thumbnail((180, 180), Image.BILINEAR)
+        edges = sample.filter(ImageFilter.FIND_EDGES)
+
+        sample_full = sample.width if horizontal else sample.height
+        sample_crop = max(1, min(sample_full, int(round(crop_size * sample_full / full_size))))
+        sample_max = sample_full - sample_crop
+        if sample_max <= 0:
+            return max_offset // 2
+
+        steps = min(32, sample_max + 1)
+        best_score = None
+        best_sample_offset = sample_max // 2
+
+        for index in range(steps):
+            offset = round(index * sample_max / max(1, steps - 1))
+            if horizontal:
+                box = (offset, 0, offset + sample_crop, sample.height)
+            else:
+                box = (0, offset, sample.width, offset + sample_crop)
+
+            edge_region = edges.crop(box)
+            gray_region = sample.crop(box)
+            edge_mean = ImageStat.Stat(edge_region).mean[0]
+            luminance_std = ImageStat.Stat(gray_region).stddev[0]
+
+            crop_center = offset + sample_crop / 2
+            sample_center = sample_full / 2
+            center_bias = 1 - abs(crop_center - sample_center) / sample_center
+            score = edge_mean * 1.8 + luminance_std * 0.75 + center_bias * 10
+
+            if best_score is None or score > best_score:
+                best_score = score
+                best_sample_offset = offset
+
+        return int(round(best_sample_offset * max_offset / sample_max))

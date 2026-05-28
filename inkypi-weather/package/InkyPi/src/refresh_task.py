@@ -7,6 +7,7 @@ import pytz
 from datetime import datetime, timezone
 from plugins.plugin_registry import get_plugin_instance
 from utils.image_utils import compute_image_hash
+from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
 from PIL import Image
 
@@ -115,6 +116,8 @@ class RefreshTask:
 
                     refresh_action = None
                     background_cache_refresh = None
+                    background_cache_refresh_force = False
+                    theme_context_to_persist = None
                     if self.manual_update_request:
                         # handle immediate update request
                         logger.info("Manual update requested")
@@ -127,10 +130,25 @@ class RefreshTask:
 
                         # handle refresh based on playlists
                         logger.info(f"Running interval refresh check. | current_time: {current_dt.strftime('%Y-%m-%d %H:%M:%S')}")
-                        playlist, plugin_instance = self._determine_next_plugin(playlist_manager, latest_refresh, current_dt)
+                        theme_context = get_theme_context(self.device_config, now=current_dt)
+                        if self._has_theme_changed(theme_context):
+                            playlist, plugin_instance = self._determine_theme_refresh_plugin(playlist_manager, latest_refresh, current_dt)
+                            if plugin_instance:
+                                logger.info(
+                                    "Theme changed; forcing display refresh. | "
+                                    f"active_theme: {theme_context.get('mode')} | "
+                                    f"source: {theme_context.get('source')}"
+                                )
+                                refresh_action = PlaylistRefresh(playlist, plugin_instance, force=True)
+                                background_cache_refresh = (playlist, plugin_instance)
+                                background_cache_refresh_force = True
+                                theme_context_to_persist = theme_context
+                        else:
+                            playlist, plugin_instance = self._determine_next_plugin(playlist_manager, latest_refresh, current_dt)
                         if plugin_instance:
-                            refresh_action = PlaylistRefresh(playlist, plugin_instance)
-                            background_cache_refresh = (playlist, plugin_instance)
+                            if refresh_action is None:
+                                refresh_action = PlaylistRefresh(playlist, plugin_instance)
+                                background_cache_refresh = (playlist, plugin_instance)
 
                     if refresh_action:
                         plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
@@ -152,6 +170,8 @@ class RefreshTask:
 
                         # update latest refresh data in the device config
                         self.device_config.refresh_info = RefreshInfo(**refresh_info)
+                        if theme_context_to_persist:
+                            self._persist_active_theme(theme_context_to_persist, current_dt)
                         self._write_device_config()
 
                         if background_cache_refresh:
@@ -160,6 +180,7 @@ class RefreshTask:
                                 playlist,
                                 current_dt,
                                 skip_plugin_instance=displayed_plugin_instance,
+                                force=background_cache_refresh_force,
                             )
 
             except Exception as e:
@@ -225,11 +246,70 @@ class RefreshTask:
 
         return playlist, plugin
 
+    def _determine_theme_refresh_plugin(self, playlist_manager, latest_refresh_info, current_dt):
+        """Returns the currently displayed playlist plugin when possible for a theme-only redraw."""
+        playlist = playlist_manager.determine_active_playlist(current_dt)
+        if not playlist:
+            playlist_manager.active_playlist = None
+            logger.info("No active playlist determined for theme refresh.")
+            return None, None
+
+        playlist_manager.active_playlist = playlist.name
+        if not playlist.plugins:
+            logger.info(f"Active playlist '{playlist.name}' has no plugins for theme refresh.")
+            return None, None
+
+        displayed = None
+        if (
+            latest_refresh_info
+            and latest_refresh_info.refresh_type == "Playlist"
+            and latest_refresh_info.playlist == playlist.name
+        ):
+            displayed = playlist.find_plugin(latest_refresh_info.plugin_id, latest_refresh_info.plugin_instance)
+
+        plugin = displayed or playlist.get_next_plugin()
+        logger.info(f"Determined theme refresh plugin. | active_playlist: {playlist.name} | plugin_instance: {plugin.name}")
+        return playlist, plugin
+
+    def _has_theme_changed(self, theme_context):
+        current_mode = (theme_context or {}).get("mode")
+        previous_mode = self._get_config_value("active_theme", None)
+        return bool(current_mode and previous_mode != current_mode)
+
+    def _persist_active_theme(self, theme_context, current_dt):
+        mode = theme_context.get("mode")
+        if not mode:
+            return
+        info = {
+            "mode": mode,
+            "source": theme_context.get("source"),
+            "reason": theme_context.get("reason"),
+            "date": theme_context.get("date"),
+            "sunrise": theme_context.get("sunrise"),
+            "sunset": theme_context.get("sunset"),
+            "updated_at": current_dt.isoformat(),
+        }
+        self._set_config_value("active_theme", mode)
+        self._set_config_value("active_theme_info", info)
+
+    def _set_config_value(self, key, value):
+        if hasattr(self.device_config, "update_value"):
+            self.device_config.update_value(key, value)
+        elif hasattr(self.device_config, "config") and isinstance(self.device_config.config, dict):
+            self.device_config.config[key] = value
+
+    def _get_config_value(self, key, default=None):
+        if hasattr(self.device_config, "get_config"):
+            return self.device_config.get_config(key, default=default)
+        if hasattr(self.device_config, "config") and isinstance(self.device_config.config, dict):
+            return self.device_config.config.get(key, default)
+        return default
+
     def _write_device_config(self):
         with self.config_write_lock:
             self.device_config.write_config()
 
-    def _start_due_plugin_cache_refresh(self, playlist, current_dt, skip_plugin_instance=None):
+    def _start_due_plugin_cache_refresh(self, playlist, current_dt, skip_plugin_instance=None, force=False):
         """Start a non-blocking cache refresh for due non-displayed plugins."""
         if not self.running:
             return
@@ -243,6 +323,7 @@ class RefreshTask:
                     playlist,
                     current_dt,
                     skip_plugin_instance=skip_plugin_instance,
+                    force=force,
                 )
             finally:
                 self.cache_refresh_lock.release()
@@ -250,7 +331,7 @@ class RefreshTask:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None):
+    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, force=False):
         """Refresh cached images for due plugin instances in the active playlist.
 
         This is intended for the non-blocking background cache pass. Display
@@ -267,7 +348,7 @@ class RefreshTask:
                 plugin_instance.get_image_path(),
             )
             image_missing = not os.path.exists(plugin_image_path)
-            if not image_missing and not plugin_instance.should_refresh(current_dt):
+            if not force and not image_missing and not plugin_instance.should_refresh(current_dt):
                 continue
 
             try:

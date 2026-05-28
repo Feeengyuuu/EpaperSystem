@@ -20,6 +20,7 @@ import logging
 import threading
 import argparse
 from utils.app_utils import generate_startup_image
+from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
 from flask import Flask, request, send_from_directory
 from werkzeug.serving import is_running_from_reloader
 from config import Config
@@ -53,6 +54,11 @@ else:
     PORT = 80
     logger.info("Starting InkyPi in PRODUCTION mode on port 80")
 logging.getLogger('waitress.queue').setLevel(logging.ERROR)
+
+if not DEV_MODE and __name__ == '__main__':
+    disable_wifi_powersave()
+    start_wifi_reconnect_watchdog()
+
 app = Flask(__name__)
 template_dirs = [
    os.path.join(os.path.dirname(__file__), "templates"),    # Default template folder

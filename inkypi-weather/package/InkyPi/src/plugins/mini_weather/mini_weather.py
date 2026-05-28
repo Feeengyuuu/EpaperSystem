@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.weather.weather import UNITS, Weather
 from utils.app_utils import get_font
+from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,46 @@ QUICK_LOCATION_LABELS = {
 QUICK_LOCATION_COORDS = {
     city: tuple(map(float, coords.split(",")))
     for coords, city in QUICK_LOCATION_LABELS.items()
+}
+
+WEATHER_BACKGROUND_DEFAULT = "cloudy"
+WEATHER_BACKGROUND_BY_ICON = {
+    "01d": "clear_day",
+    "01n": "clear_night",
+    "022d": "clear_day",
+    "022n": "clear_night",
+    "02d": "cloudy",
+    "02n": "cloudy",
+    "03d": "cloudy",
+    "03n": "cloudy",
+    "04d": "cloudy",
+    "04n": "cloudy",
+    "09d": "rain",
+    "09n": "rain",
+    "10d": "rain",
+    "10n": "rain",
+    "11d": "thunderstorm",
+    "11n": "thunderstorm",
+    "13d": "snow",
+    "13n": "snow",
+    "48d": "fog",
+    "48n": "fog",
+    "50d": "fog",
+    "50n": "fog",
+    "51d": "rain",
+    "51n": "rain",
+    "53d": "rain",
+    "53n": "rain",
+    "56d": "rain",
+    "56n": "rain",
+    "57d": "rain",
+    "57n": "rain",
+    "71d": "snow",
+    "71n": "snow",
+    "73d": "snow",
+    "73n": "snow",
+    "77d": "snow",
+    "77n": "snow",
 }
 
 LANGUAGE_LABELS = {
@@ -356,7 +397,14 @@ class MiniWeather(Weather):
         # This matches the timezone used to parse the forecast and respects the
         # user's `weatherTimeZone` selection (locationTimeZone vs device timezone).
         now = datetime.datetime.now(provider_tz)
+        theme_context = get_theme_context(device_config, now=now)
         localized_date = format_localized_date(language, now)
+        weather_background_enabled = settings.get("weatherBackgrounds", "true") != "false"
+        weather_background = (
+            self._select_weather_background(template_params.get("current_day_icon"))
+            if weather_background_enabled
+            else None
+        )
 
         # Fix weekday labels: the parent parser may derive day labels from
         # date-only strings forced to UTC midnight, which shifts the weekday
@@ -382,9 +430,14 @@ class MiniWeather(Weather):
                 "forecast_rows": self._localize_forecast_rows(forecast_rows, labels),
                 "forecast_days": len(forecast_rows),
                 "provider_timezone": provider_tz.zone,
-                "plugin_settings": settings,
+                "plugin_settings": apply_theme_to_plugin_settings(settings, theme_context),
                 "show_icons": settings.get("showIcons", "true") != "false",
                 "color_icons": settings.get("colorIcons", "false") == "true",
+                "theme": theme_context,
+                "weather_background_enabled": weather_background_enabled,
+                "weather_background_file": weather_background["uri"] if weather_background else "",
+                "weather_background_path": weather_background["path"] if weather_background else "",
+                "weather_background_slug": weather_background["slug"] if weather_background else "",
             }
         )
         self._write_weather_context(template_params, now)
@@ -401,15 +454,16 @@ class MiniWeather(Weather):
 
     def _render_pil_fallback(self, dimensions, data):
         width, height = dimensions
-        bg = (255, 255, 255)
-        panel = (255, 255, 255)
-        ink = (0, 0, 0)
-        muted = (66, 70, 74)
-        red = (176, 42, 52)
-        blue = (35, 104, 166)
-        rule = (0, 0, 0)
+        palette = get_theme_palette(data.get("theme"))
+        bg = palette["background"]
+        panel = palette["panel"]
+        ink = palette["ink"]
+        muted = palette["muted"]
+        red = palette["red"]
+        blue = palette["blue"]
+        rule = palette["border"]
 
-        img = Image.new("RGB", dimensions, bg)
+        img = self._build_pil_background(dimensions, bg, data)
         draw = ImageDraw.Draw(img)
 
         margin = max(18, int(width * 0.035))
@@ -478,6 +532,60 @@ class MiniWeather(Weather):
             draw.text((right - low_w - high_w - 30, y + (row_h - 34) // 2), high, font=range_font, fill=red)
 
         return img
+
+    def _select_weather_background(self, current_icon_path):
+        icon_name = Path(str(current_icon_path or "")).stem.lower()
+        slug = WEATHER_BACKGROUND_BY_ICON.get(icon_name)
+
+        if not slug and icon_name:
+            code = icon_name[:2]
+            suffix = icon_name[-1] if icon_name[-1:] in ("d", "n") else "d"
+            if code == "01":
+                slug = "clear_night" if suffix == "n" else "clear_day"
+            elif code in ("02", "03", "04"):
+                slug = "cloudy"
+            elif code in ("09", "10", "51", "53", "56", "57"):
+                slug = "rain"
+            elif code == "11":
+                slug = "thunderstorm"
+            elif code in ("13", "71", "73", "77"):
+                slug = "snow"
+            elif code in ("48", "50"):
+                slug = "fog"
+
+        slug = slug or WEATHER_BACKGROUND_DEFAULT
+        background_path = Path(self.get_plugin_dir(f"backgrounds/{slug}.png"))
+        if not background_path.is_file():
+            logger.debug("Mini Weather background missing: %s", background_path)
+            return None
+
+        try:
+            uri = background_path.resolve().as_uri()
+        except ValueError:
+            uri = str(background_path)
+
+        return {
+            "slug": slug,
+            "path": str(background_path),
+            "uri": uri,
+        }
+
+    def _build_pil_background(self, dimensions, base_color, data):
+        img = Image.new("RGB", dimensions, base_color)
+        background_path = data.get("weather_background_path")
+        if not background_path:
+            return img
+
+        try:
+            background = Image.open(background_path).convert("RGB")
+            background = ImageOps.fit(background, dimensions, method=Image.LANCZOS)
+            background = ImageOps.grayscale(background)
+            if (data.get("theme") or {}).get("mode") == "night":
+                background = ImageOps.invert(background)
+            return Image.blend(img, background.convert("RGB"), 0.24)
+        except Exception as exc:
+            logger.debug("Could not load Mini Weather background %s: %s", background_path, exc)
+            return img
 
     def _pil_font(self, size, weight="normal"):
         system_fonts = [

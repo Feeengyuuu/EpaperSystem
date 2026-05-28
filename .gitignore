@@ -13,6 +13,8 @@
 **/.pytest_cache/
 **/__pycache__/
 *.py[cod]
+**/.context_cache/
+inkypi-weather/package/InkyPi/src/plugins/*/cache/
 
 # Python environments and vendored install caches
 **/.venv/

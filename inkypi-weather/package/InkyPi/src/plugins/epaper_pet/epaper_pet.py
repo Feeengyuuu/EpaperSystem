@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
 from utils.app_utils import get_font
+from utils.theme_utils import get_theme_context, get_theme_palette
 
 try:
     import pytz
@@ -30,8 +31,30 @@ DEFAULT_TICK_MINUTES = 15
 DEFAULT_AI_TEXT_MODEL = "gpt-4o-mini"
 DEFAULT_GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_AI_DAILY_LIMIT = 24
-DEFAULT_CONTEXT_MAX_ITEMS = 8
+DEFAULT_CONTEXT_MAX_ITEMS = 12
+DEFAULT_CONTEXT_PLUGIN_IDS = [
+    "weather",
+    "daily_ai_news",
+    "steam_daily_art",
+    "steam_profile_dashboard",
+    "steam_charts",
+    "live_radar",
+    "daily_word_poem",
+    "apod",
+    "natgeo_photo_of_the_day",
+    "magazine_covers",
+    "comic",
+    "wpotd",
+]
 MAX_OFFLINE_TICKS = 96
+HUNTING_FOOD_THRESHOLD = 25
+
+HUNTED_FOODS = [
+    {"id": "static_morsel", "food": "static-crackle morsel", "food_gain": 32, "energy_cost": 7, "happiness_gain": 3, "xp_gain": 5},
+    {"id": "pixel_seed", "food": "bright pixel seed", "food_gain": 28, "energy_cost": 5, "happiness_gain": 4, "xp_gain": 4},
+    {"id": "cache_nut", "food": "warm cache nut", "food_gain": 35, "energy_cost": 8, "happiness_gain": 2, "xp_gain": 6},
+    {"id": "moon_crumb", "food": "moonlit crumb", "food_gain": 30, "energy_cost": 6, "happiness_gain": 5, "xp_gain": 5},
+]
 
 FACE_MAP = {
     "happy": ("(=^_^=)", "Happy"),
@@ -50,6 +73,7 @@ FACE_MAP = {
     "bored": ("(=._.=)", "Bored"),
     "working": ("[=^_^=]", "Thinking"),
     "selfcare": ("(=o_o=)+", "Self-care"),
+    "hunting": ("(=O_O=)", "Hunting"),
 }
 
 BASE_EVENTS = [
@@ -280,6 +304,13 @@ LOCALIZED_TEXT = {
 }
 
 
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("moods", {})["hunting"] = "\u72e9\u730e"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("activity", {})["hunting"] = "\u51fa\u53bb\u72e9\u730e"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {})[
+    "Autonomy: hunted a small meal and ate it."
+] = "\u81ea\u4e3b\uff1a\u51fa\u53bb\u72e9\u730e\uff0c\u7136\u540e\u5403\u6389\u4e86\u81ea\u5df1\u627e\u5230\u7684\u98df\u7269\u3002"
+
+
 def _clamp(value: int | float, low: int = 0, high: int = 100) -> int:
     return max(low, min(high, int(round(value))))
 
@@ -393,6 +424,8 @@ class EpaperPet(BasePlugin):
         now = self._now(device_config)
         state = self._load_state(settings, now)
         changed = self._apply_elapsed(state, settings, now, device_config)
+        if not changed and self._should_hunt_now(state, settings):
+            changed = self._apply_autonomous_care(state, settings, now, device_config)
         if not changed and self._needs_initial_event(state):
             self._apply_autonomous_event(state, settings, now, steps=0, device_config=device_config)
             changed = True
@@ -403,7 +436,9 @@ class EpaperPet(BasePlugin):
         if changed:
             self._save_state(settings, state)
 
-        return self._render(dimensions, settings, state, now)
+        render_settings = dict(settings or {})
+        render_settings["_theme_context"] = get_theme_context(device_config, now=now)
+        return self._render(dimensions, render_settings, state, now)
 
     def _language(self, settings) -> str:
         raw = str((settings or {}).get("language") or "en").strip()
@@ -634,13 +669,8 @@ class EpaperPet(BasePlugin):
             return False
 
         stats = state["stats"]
-        if stats["food"] < 18:
-            stats["food"] = _clamp(stats["food"] + 24)
-            stats["happiness"] = _clamp(stats["happiness"] - 2)
-            stats["xp"] = int(stats["xp"]) + 2
-            state["mood_hint"] = "selfcare"
-            state["activity"] = "foraging"
-            state["message"] = "Autonomy: found an emergency snack."
+        if stats["food"] < HUNTING_FOOD_THRESHOLD:
+            self._apply_hunting_meal(state, now)
             self._maybe_generate_ai_message(state, settings, now, device_config)
             return True
         if stats["cleanliness"] < 18:
@@ -670,6 +700,42 @@ class EpaperPet(BasePlugin):
             self._maybe_generate_ai_message(state, settings, now, device_config)
             return True
         return False
+
+    def _should_hunt_now(self, state: dict[str, Any], settings) -> bool:
+        if not _enabled(settings.get("autonomous_care"), True):
+            return False
+        stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
+        return int(stats.get("food", 100)) < HUNTING_FOOD_THRESHOLD
+
+    def _apply_hunting_meal(self, state: dict[str, Any], now: datetime) -> None:
+        stats = state["stats"]
+        food = self._select_hunted_food(state, now)
+        stats["food"] = _clamp(stats["food"] + int(food["food_gain"]))
+        stats["energy"] = _clamp(stats["energy"] - int(food["energy_cost"]))
+        stats["happiness"] = _clamp(stats["happiness"] + int(food["happiness_gain"]))
+        stats["health"] = _clamp(stats["health"] + 2)
+        stats["xp"] = int(stats["xp"]) + int(food["xp_gain"])
+        state.pop("sleep_until", None)
+        state["mood_hint"] = "hunting"
+        state["activity"] = "hunting"
+        state["message"] = "Autonomy: hunted a small meal and ate it."
+        state["last_hunt"] = {
+            "id": food["id"],
+            "food": food["food"],
+            "food_gain": int(food["food_gain"]),
+            "energy_cost": int(food["energy_cost"]),
+            "at": now.isoformat(),
+        }
+
+    def _select_hunted_food(self, state: dict[str, Any], now: datetime) -> dict[str, Any]:
+        seed = "|".join([
+            str(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME),
+            str(state.get("last_tick_at") or ""),
+            now.strftime("%Y-%m-%d-%H"),
+            str(state.get("event_index") or 0),
+        ])
+        digest = hashlib.blake2s(seed.encode("utf-8"), digest_size=2).hexdigest()
+        return HUNTED_FOODS[int(digest, 16) % len(HUNTED_FOODS)]
 
     def _needs_initial_event(self, state: dict[str, Any]) -> bool:
         message = str(state.get("message") or "")
@@ -1032,6 +1098,10 @@ class EpaperPet(BasePlugin):
             time_band = "night"
 
         mood_id = state.get("mood_hint") or state.get("mood") or "calm"
+        last_hunt = state.get("last_hunt") if isinstance(state.get("last_hunt"), dict) else {}
+        state_notes = [item["hint"] for item in priorities[:3]] or ["healthy enough to focus on the current small activity"]
+        if state.get("activity") == "hunting":
+            state_notes.insert(0, "the pet hunted for food and ate what it found; keep it non-graphic")
         return {
             "stats": values,
             "time_band": time_band,
@@ -1043,9 +1113,12 @@ class EpaperPet(BasePlugin):
             "base_event": self._message_text(settings, base_message),
             "care_priority": priorities[:5],
             "top_priority": top_priority,
-            "state_notes": [
-                item["hint"] for item in priorities[:3]
-            ] or ["healthy enough to focus on the current small activity"],
+            "state_notes": state_notes,
+            "last_hunt": {
+                "food": last_hunt.get("food") or "",
+                "food_gain": last_hunt.get("food_gain"),
+                "at": last_hunt.get("at") or "",
+            } if last_hunt else {},
         }
 
     def _ambient_context(self, settings, now: datetime) -> dict[str, Any]:
@@ -1056,6 +1129,7 @@ class EpaperPet(BasePlugin):
 
         max_age_hours = _parse_int(settings.get("ai_context_max_age_hours"), 24, 1, 72)
         max_items = _parse_int(settings.get("ai_context_max_items"), DEFAULT_CONTEXT_MAX_ITEMS, 0, 24)
+        max_sources = _parse_int(settings.get("ai_context_max_sources"), 12, 1, 24)
         plugin_ids = self._context_plugin_ids(settings)
         try:
             entries = read_contexts(
@@ -1070,7 +1144,7 @@ class EpaperPet(BasePlugin):
 
         sources: list[dict[str, Any]] = []
         remaining_items = max_items
-        for entry in entries[:8]:
+        for entry in entries[:max_sources]:
             payload = entry.get("payload") or {}
             source = {
                 "plugin": entry.get("plugin_id"),
@@ -1091,7 +1165,7 @@ class EpaperPet(BasePlugin):
                     source["facts"].append({"label": label, "value": value})
 
             if remaining_items > 0:
-                for item in (payload.get("items") or [])[:remaining_items]:
+                for item in self._context_items_from_payload(payload)[:remaining_items]:
                     normalized = self._context_item(item)
                     if normalized:
                         source["items"].append(normalized)
@@ -1111,14 +1185,52 @@ class EpaperPet(BasePlugin):
     def _context_plugin_ids(self, settings) -> list[str] | None:
         raw = str(settings.get("ai_context_plugins") or "").strip()
         if not raw or raw.lower() in {"all", "*"}:
-            return ["weather", "daily_ai_news", "steam_daily_art", "steam_profile_dashboard"]
+            return list(DEFAULT_CONTEXT_PLUGIN_IDS)
         values = [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
         return values or None
+
+    def _context_items_from_payload(self, payload: dict[str, Any]) -> list[Any]:
+        raw_items = payload.get("items")
+        items = list(raw_items) if isinstance(raw_items, list) else []
+        for key in ("live", "replay", "forecast", "recent_games", "games", "photos", "covers"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                items.extend(value)
+        return items
 
     def _context_item(self, item: Any) -> dict[str, str]:
         if isinstance(item, dict):
             result = {}
-            for key in ("title", "why", "name", "appid", "rotation_key", "two_week_hours", "total_hours"):
+            for key in (
+                "title",
+                "why",
+                "summary",
+                "name",
+                "source",
+                "publication",
+                "date",
+                "word",
+                "definition",
+                "example",
+                "author",
+                "line",
+                "caption",
+                "rank",
+                "appid",
+                "secondary_name",
+                "current_players",
+                "peak_players",
+                "change_24h",
+                "peak_time",
+                "platform",
+                "owner",
+                "heat",
+                "filename",
+                "page_url",
+                "rotation_key",
+                "two_week_hours",
+                "total_hours",
+            ):
                 value = self._clip_context_text(item.get(key), 120)
                 if value:
                     result[key] = value
@@ -1187,10 +1299,11 @@ class EpaperPet(BasePlugin):
             "The pet has no buttons and expresses itself through a static face, mood, activity, and one log line. "
             "You must make the line feel state-aware, not random. "
             "Use the provided life.top_priority, care_priority, state_notes, current mood, activity, time_band, and personality. "
-            "If ambient.available is true, naturally connect the line to exactly one fresh ambient source such as weather, news, Steam promotion, or Steam activity. "
+            "If ambient.available is true, naturally connect the line to exactly one fresh ambient source such as weather, news, Steam promotion, Steam activity, live streams, game charts, a daily word or poem, space/photo sources, magazine covers, comics, or Wikipedia photos. "
             "Use only facts present in ambient; do not invent headlines, prices, forecasts, game names, or current events. "
             "Follow chat_style: soft means gentle small talk, wry means dry wit, black_humor means mild dark humor without cruelty or graphic content, aphorism means a compact memorable line. "
             "If life.top_priority.severity is 3 or higher, the line must naturally imply that need. "
+            "If life.activity_id is hunting, mention that the pet hunted and ate what it found without making it graphic. "
             "If all needs are mild, focus on the current activity, time of day, and personality. "
             "Do not contradict the stats; for example, do not sound energetic when energy is low, or full when food is low. "
             f"{length_rule} "
@@ -1300,7 +1413,9 @@ class EpaperPet(BasePlugin):
 
     def _render(self, dimensions, settings, state: dict[str, Any], now: datetime):
         width, height = dimensions
-        image = Image.new("RGB", dimensions, (0, 0, 0))
+        palette = get_theme_palette(settings.get("_theme_context"))
+        border = palette["border"]
+        image = Image.new("RGB", dimensions, palette["background"])
         draw = ImageDraw.Draw(image)
 
         mood = state.get("mood") or "calm"
@@ -1331,55 +1446,61 @@ class EpaperPet(BasePlugin):
         right = left + left_w + gap
         right_w = width - right - pad
 
-        draw.rectangle((1, 1, width - 2, height - 2), outline=(255, 255, 255), width=2)
-        self._draw_header(draw, (pad, pad, width - pad, pad + header_h), settings, state, mood_label, title_font, meta_font, label_font, now)
-        self._draw_face_panel(draw, (left, content_top, left + left_w, footer_top - gap), settings, face, mood_label, activity, face_font, label_font)
-        self._draw_stats_panel(draw, (right, content_top, right + right_w, footer_top - gap), settings, stats, label_font, value_font)
-        self._draw_message_panel(draw, (pad, footer_top, width - pad, height - pad), settings, state, message_font, journal_font, label_font, telemetry_font)
+        draw.rectangle((1, 1, width - 2, height - 2), outline=border, width=2)
+        self._draw_header(draw, (pad, pad, width - pad, pad + header_h), settings, state, mood_label, title_font, meta_font, label_font, now, palette)
+        self._draw_face_panel(draw, (left, content_top, left + left_w, footer_top - gap), settings, face, mood_label, activity, face_font, label_font, palette)
+        self._draw_stats_panel(draw, (right, content_top, right + right_w, footer_top - gap), settings, stats, label_font, value_font, palette)
+        self._draw_message_panel(draw, (pad, footer_top, width - pad, height - pad), settings, state, message_font, journal_font, label_font, telemetry_font, palette)
         return image
 
-    def _draw_header(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], mood_label: str, title_font, meta_font, label_font, now: datetime) -> None:
+    def _draw_header(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], mood_label: str, title_font, meta_font, label_font, now: datetime, palette) -> None:
         x1, y1, x2, y2 = box
+        ink = palette["ink"]
+        border = palette["border"]
         stats = state["stats"]
         name = str(state.get("name", DEFAULT_PET_NAME)).strip() or DEFAULT_PET_NAME
         if len(name) > 15:
             name = name[:15]
 
-        draw.rectangle(box, outline=(255, 255, 255), width=2)
+        draw.rectangle(box, outline=border, width=2)
         title = name if self._is_chinese(settings) or not name.isascii() else name.upper()
-        draw.text((x1 + 18, y1 + 8), title, font=title_font, fill=(255, 255, 255))
+        draw.text((x1 + 18, y1 + 8), title, font=title_font, fill=ink)
 
         if self._is_chinese(settings):
             meta = f"{self._ui(settings, 'level', 'LV')} {stats['level']}  {self._ui(settings, 'age', 'AGE')} {stats['age_days']}{self._ui(settings, 'day', 'D')}  XP {stats['xp']}"
         else:
             meta = f"LV {stats['level']}  AGE {stats['age_days']}D  XP {stats['xp']}"
-        draw.text((x1 + 20, y2 - 28), meta, font=meta_font, fill=(255, 255, 255))
+        draw.text((x1 + 20, y2 - 28), meta, font=meta_font, fill=ink)
 
         stamp = now.strftime("%m/%d %H:%M")
         stamp_w = self._text_w(draw, stamp, meta_font)
-        draw.text((x2 - 18 - stamp_w, y1 + 12), stamp, font=meta_font, fill=(255, 255, 255))
-        self._draw_badge(draw, x2 - 148, y2 - 34, 130, 24, self._badge_text(settings, mood_label), label_font)
+        draw.text((x2 - 18 - stamp_w, y1 + 12), stamp, font=meta_font, fill=ink)
+        self._draw_badge(draw, x2 - 148, y2 - 34, 130, 24, self._badge_text(settings, mood_label), label_font, palette)
 
-    def _draw_face_panel(self, draw, box: tuple[int, int, int, int], settings, face: str, mood_label: str, activity: str, face_font, label_font) -> None:
+    def _draw_face_panel(self, draw, box: tuple[int, int, int, int], settings, face: str, mood_label: str, activity: str, face_font, label_font, palette) -> None:
         x1, y1, x2, y2 = box
-        draw.rectangle(box, outline=(255, 255, 255), width=2)
-        draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "face", "FACE")), font=label_font, fill=(255, 255, 255))
-        self._draw_badge(draw, x2 - 124, y1 + 10, 108, 24, self._badge_text(settings, mood_label), label_font)
+        ink = palette["ink"]
+        border = palette["border"]
+        draw.rectangle(box, outline=border, width=2)
+        draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "face", "FACE")), font=label_font, fill=ink)
+        self._draw_badge(draw, x2 - 124, y1 + 10, 108, 24, self._badge_text(settings, mood_label), label_font, palette)
 
         cx = (x1 + x2) // 2
         cy = y1 + int((y2 - y1) * 0.53)
-        draw.text((cx, cy), face, anchor="mm", font=face_font, fill=(255, 255, 255))
-        draw.line((x1 + 28, y2 - 42, x2 - 28, y2 - 42), fill=(255, 255, 255), width=1)
+        draw.text((cx, cy), face, anchor="mm", font=face_font, fill=ink)
+        draw.line((x1 + 28, y2 - 42, x2 - 28, y2 - 42), fill=border, width=1)
         activity_label = f"{self._ui(settings, 'activity', 'ACTIVITY')}: {str(activity or self._activity_text(settings, 'quiet watch'))}"
         activity_label = self._badge_text(settings, activity_label)
         activity_label = self._clip_text(draw, activity_label, label_font, x2 - x1 - 46)
-        draw.text((cx, y2 - 27), activity_label, anchor="mm", font=label_font, fill=(255, 255, 255))
+        draw.text((cx, y2 - 27), activity_label, anchor="mm", font=label_font, fill=ink)
 
-    def _draw_stats_panel(self, draw, box: tuple[int, int, int, int], settings, stats: dict[str, Any], label_font, value_font) -> None:
+    def _draw_stats_panel(self, draw, box: tuple[int, int, int, int], settings, stats: dict[str, Any], label_font, value_font, palette) -> None:
         x1, y1, x2, y2 = box
-        draw.rectangle(box, outline=(255, 255, 255), width=2)
-        draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "vitals", "VITALS")), font=label_font, fill=(255, 255, 255))
-        self._draw_badge(draw, x2 - 122, y1 + 10, 106, 24, self._badge_text(settings, self._ui(settings, "auto", "AUTO")), label_font)
+        ink = palette["ink"]
+        border = palette["border"]
+        draw.rectangle(box, outline=border, width=2)
+        draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "vitals", "VITALS")), font=label_font, fill=ink)
+        self._draw_badge(draw, x2 - 122, y1 + 10, 106, 24, self._badge_text(settings, self._ui(settings, "auto", "AUTO")), label_font, palette)
 
         rows = [
             (self._localized(settings, "stats", "food", "FOOD"), "food"),
@@ -1391,10 +1512,12 @@ class EpaperPet(BasePlugin):
         row_y = y1 + 58
         row_h = 33
         for label, key in rows:
-            self._draw_bar(draw, x1 + 16, row_y, x2 - x1 - 32, self._badge_text(settings, label), int(stats[key]), label_font, value_font)
+            self._draw_bar(draw, x1 + 16, row_y, x2 - x1 - 32, self._badge_text(settings, label), int(stats[key]), label_font, value_font, palette)
             row_y += row_h
 
-    def _draw_bar(self, draw, x: int, y: int, width: int, label: str, value: int, label_font, value_font) -> None:
+    def _draw_bar(self, draw, x: int, y: int, width: int, label: str, value: int, label_font, value_font, palette) -> None:
+        ink = palette["ink"]
+        border = palette["border"]
         value = _clamp(value)
         value_text = f"{value:03d}"
         label_w = max(48, self._text_w(draw, label, label_font) + 10)
@@ -1404,24 +1527,26 @@ class EpaperPet(BasePlugin):
         bar_y = y + 8
         bar_w = max(80, width - label_w - value_w - 10)
 
-        draw.text((x, y + 3), label, font=label_font, fill=(255, 255, 255))
-        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), outline=(255, 255, 255), width=1)
+        draw.text((x, y + 3), label, font=label_font, fill=ink)
+        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), outline=border, width=1)
         fill_w = int((bar_w - 4) * value / 100)
         if fill_w > 0:
-            draw.rectangle((bar_x + 2, bar_y + 2, bar_x + 2 + fill_w, bar_y + bar_h - 2), fill=(255, 255, 255))
-        draw.text((bar_x + bar_w + 8, y - 2), value_text, font=value_font, fill=(255, 255, 255))
+            draw.rectangle((bar_x + 2, bar_y + 2, bar_x + 2 + fill_w, bar_y + bar_h - 2), fill=ink)
+        draw.text((bar_x + bar_w + 8, y - 2), value_text, font=value_font, fill=ink)
 
-    def _draw_badge(self, draw, x: int, y: int, width: int, height: int, text: str, font) -> None:
-        draw.rectangle((x, y, x + width, y + height), outline=(255, 255, 255), width=1)
+    def _draw_badge(self, draw, x: int, y: int, width: int, height: int, text: str, font, palette) -> None:
+        ink = palette["ink"]
+        draw.rectangle((x, y, x + width, y + height), outline=palette["border"], width=1)
         tw = self._text_w(draw, text, font)
         th = self._text_h(draw, text, font)
-        draw.text((x + (width - tw) // 2, y + (height - th) // 2 - 1), text, font=font, fill=(255, 255, 255))
+        draw.text((x + (width - tw) // 2, y + (height - th) // 2 - 1), text, font=font, fill=ink)
 
-    def _draw_message_panel(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], message_font, journal_font, label_font, telemetry_font) -> None:
+    def _draw_message_panel(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], message_font, journal_font, label_font, telemetry_font, palette) -> None:
         x1, y1, x2, y2 = box
-        draw.rectangle(box, outline=(255, 255, 255), width=2)
+        ink = palette["ink"]
+        draw.rectangle(box, outline=palette["border"], width=2)
         log_label = self._badge_text(settings, self._ui(settings, "log", "LOG"))
-        draw.text((x1 + 16, y1 + 10), log_label, font=label_font, fill=(255, 255, 255))
+        draw.text((x1 + 16, y1 + 10), log_label, font=label_font, fill=ink)
 
         message = self._message_text(settings, state.get("message", "Quiet heartbeat."))
         raw_journal = self._latest_journal_line(settings) if _enabled(settings.get("show_journal"), True) else ""
@@ -1432,20 +1557,20 @@ class EpaperPet(BasePlugin):
         lines = self._wrap(draw, message, message_font, max_w, max_lines=2)
         y = y1 + 12
         for line in lines:
-            draw.text((text_x, y), line, font=message_font, fill=(255, 255, 255))
+            draw.text((text_x, y), line, font=message_font, fill=ink)
             y += 28
 
         telemetry_w = 0
         if telemetry:
             telemetry = self._clip_text(draw, telemetry, telemetry_font, x2 - x1 - 32)
             telemetry_w = self._text_w(draw, telemetry, telemetry_font)
-            draw.text((x2 - 16 - telemetry_w, y2 - 22), telemetry, font=telemetry_font, fill=(255, 255, 255))
+            draw.text((x2 - 16 - telemetry_w, y2 - 22), telemetry, font=telemetry_font, fill=ink)
 
         if journal_line and journal_line != message:
             journal_prefix = self._ui(settings, "last", "LAST")
             journal_w = max(80, max_w - telemetry_w - (20 if telemetry_w else 0))
             journal = self._wrap(draw, f"{journal_prefix}: {journal_line}", journal_font, journal_w, max_lines=1)[0]
-            draw.text((text_x, y2 - 24), journal, font=journal_font, fill=(255, 255, 255))
+            draw.text((text_x, y2 - 24), journal, font=journal_font, fill=ink)
 
     def _ai_telemetry_text(self, settings, state: dict[str, Any]) -> str:
         usage = state.get("ai_usage") if isinstance(state.get("ai_usage"), dict) else {}

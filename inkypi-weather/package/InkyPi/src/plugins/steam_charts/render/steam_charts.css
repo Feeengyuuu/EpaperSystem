@@ -1,0 +1,307 @@
+body {
+    margin: 0;
+    padding: 0.45vw;
+    background-image: none;
+}
+
+.container {
+    align-items: stretch;
+    justify-content: flex-start;
+    background: transparent;
+}
+
+.steam-container {
+    --image-width: 14.5vw;
+    --image-gap: 1.2vw;
+    --logo-size: min(8.7dvh, 5.5vw);
+    --ink: #000000;
+    --paper: #ffffff;
+    display: flex;
+    flex-direction: column;
+    font-family: "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei", Arial, sans-serif;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    padding: 0.2dvh 0.4vw 0;
+    background: var(--paper);
+    color: var(--ink);
+}
+
+.steam-container.theme-night {
+    --ink: #ffffff;
+    --paper: #000000;
+}
+
+.steam-container.theme-day {
+    --ink: #000000;
+    --paper: #ffffff;
+}
+
+.header {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1vw;
+    flex-shrink: 0;
+    padding-bottom: 0.45dvh;
+    border-bottom: 0;
+}
+
+.header::after {
+    content: "";
+    position: absolute;
+    top: -0.1dvh;
+    right: 0.2vw;
+    width: min(20vw, 10rem);
+    height: min(13dvh, 3.9rem);
+    pointer-events: none;
+    background-image:
+        radial-gradient(circle at 86% 12%, var(--ink) 0 3px, transparent 3.4px),
+        radial-gradient(circle at 74% 22%, var(--ink) 0 2.8px, transparent 3.2px),
+        radial-gradient(circle at 94% 26%, var(--ink) 0 3.4px, transparent 3.8px),
+        radial-gradient(circle at 63% 39%, var(--ink) 0 2.6px, transparent 3px),
+        radial-gradient(circle at 80% 48%, var(--ink) 0 3px, transparent 3.4px),
+        radial-gradient(circle at 96% 54%, var(--ink) 0 3.4px, transparent 3.8px),
+        radial-gradient(circle at 70% 68%, var(--ink) 0 2.6px, transparent 3px),
+        repeating-linear-gradient(90deg, transparent 0 9px, var(--ink) 9px 15px, transparent 15px 25px);
+    mask-image: linear-gradient(135deg, transparent 0 28%, #000 70% 100%);
+    opacity: 1;
+    image-rendering: pixelated;
+}
+
+.title-wrap {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.9vw;
+    min-width: 0;
+}
+
+.steam-logo {
+    flex: 0 0 auto;
+    width: var(--logo-size);
+    height: var(--logo-size);
+    display: block;
+    margin-top: 0.2dvh;
+}
+
+.title-copy {
+    min-width: 0;
+}
+
+.title {
+    font-size: min(6.9dvh, 5vw);
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--ink);
+}
+
+.title-steam,
+.title-charts,
+.title-mode {
+    color: var(--ink);
+    text-transform: uppercase;
+}
+
+.title-mode {
+    font-weight: 700;
+}
+
+.subtitle,
+.updated-at {
+    color: var(--ink);
+    font-size: min(2.7dvh, 2vw);
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.updated-at {
+    position: relative;
+    z-index: 1;
+    padding-bottom: 0.12dvh;
+    text-transform: none;
+}
+
+.charts-table {
+    width: 100%;
+    flex: 1;
+    border-collapse: separate;
+    border-spacing: 0 0.75dvh;
+    table-layout: fixed;
+}
+
+.charts-table thead {
+    display: none;
+}
+
+.charts-table th,
+.charts-table td {
+    box-sizing: border-box;
+}
+
+.charts-table tbody tr {
+    background: var(--paper);
+}
+
+.charts-table td {
+    padding: 0.35dvh 0.25vw;
+    vertical-align: middle;
+    color: var(--ink);
+}
+
+.col-rank      { width: 6%;  text-align: left; }
+.col-name      { text-align: left; }
+.col-change    { text-align: right; }
+.col-sparkline { display: none; }
+.col-players   { text-align: right; }
+.col-peak      { text-align: right; }
+.col-time      { text-align: right; }
+
+.charts-table.variant-trending .col-name      { width: 57%; }
+.charts-table.variant-trending .col-change    { width: 17%; }
+.charts-table.variant-trending .col-players   { width: 20%; }
+
+.charts-table.variant-top-games .col-name      { width: 56%; }
+.charts-table.variant-top-games .col-players   { width: 21%; }
+.charts-table.variant-top-games .col-peak      { width: 17%; }
+
+.charts-table.variant-top-records .col-name      { width: 55%; }
+.charts-table.variant-top-records .col-peak      { width: 22%; }
+.charts-table.variant-top-records .col-time      { width: 17%; }
+
+.charts-table.has-images thead .col-name {
+    padding-left: calc(var(--image-width) + var(--image-gap));
+}
+
+.rank {
+    font-size: min(3.9dvh, 2.95vw);
+    font-weight: 800;
+    color: var(--ink);
+}
+
+.game-name {
+    position: relative;
+    font-size: min(4.25dvh, 3.2vw);
+    font-weight: 800;
+    padding-right: 0.4vw;
+    color: var(--ink);
+}
+
+.charts-table tbody tr:not(:last-child) .game-name::after {
+    content: "";
+    position: absolute;
+    left: calc(var(--image-width) + var(--image-gap));
+    bottom: -0.48dvh;
+    width: min(14vw, 7rem);
+    height: max(1px, 0.22dvh);
+    background: var(--ink);
+}
+
+.game-name-content {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.game-name-content.has-image {
+    gap: var(--image-gap);
+}
+
+.game-name-image {
+    flex: 0 0 var(--image-width);
+    width: var(--image-width);
+    max-width: var(--image-width);
+    height: auto;
+    display: block;
+    border: 0;
+    border-radius: 0;
+}
+
+.game-name-placeholder {
+    flex: 0 0 var(--image-width);
+    width: var(--image-width);
+    aspect-ratio: 8 / 3;
+    background: var(--paper);
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink);
+    font-size: min(3.2dvh, 2.35vw);
+    font-weight: 700;
+}
+
+.game-name-text {
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+    line-height: 1.04;
+    color: var(--ink);
+    flex-direction: column;
+    gap: 0.35dvh;
+}
+
+.game-name-primary,
+.game-name-secondary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.game-name-primary {
+    font-weight: 800;
+}
+
+.game-name-secondary {
+    font-size: min(2.45dvh, 1.9vw);
+    font-weight: 400;
+}
+
+.change,
+.players,
+.peak,
+.record-time {
+    font-size: min(3.5dvh, 2.65vw);
+    font-weight: 700;
+    color: var(--ink);
+    white-space: nowrap;
+}
+
+.change.positive,
+.change.negative {
+    color: var(--ink);
+}
+
+.sparkline-cell {
+    text-align: center;
+    padding: 0;
+}
+
+.sparkline-cell svg {
+    width: 100%;
+    height: min(4.6dvh, 3.5vw);
+    display: block;
+}
+
+.sparkline-cell svg polyline {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 2.8;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.sparkline-cell .no-data {
+    font-size: min(2.2dvh, 1.7vw);
+    font-weight: 700;
+    color: var(--ink);
+}

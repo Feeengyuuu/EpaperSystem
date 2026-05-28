@@ -11,6 +11,7 @@ import pytz
 from io import BytesIO
 import math
 from plugins.context_cache import write_context
+from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context
 
 logger = logging.getLogger(__name__)
         
@@ -130,10 +131,11 @@ class Weather(BasePlugin):
         if device_config.get_config("orientation") == "vertical":
             dimensions = dimensions[::-1]
 
-        template_params["plugin_settings"] = settings
-
         # Add last refresh time
         now = datetime.now(tz)
+        theme_context = get_theme_context(device_config, now=now)
+        template_params["theme"] = theme_context
+        template_params["plugin_settings"] = apply_theme_to_plugin_settings(settings, theme_context)
         if time_format == "24h":
             last_refresh_time = now.strftime("%Y-%m-%d %H:%M")
         else:
@@ -175,22 +177,33 @@ class Weather(BasePlugin):
         if today:
             summary_parts.append(f"today high {today.get('high')} low {today.get('low')}")
 
+        payload = {
+            "kind": "weather",
+            "source": title,
+            "summary": "; ".join(part for part in summary_parts if part),
+            "facts": facts,
+            "forecast": [
+                {
+                    "day": item.get("day"),
+                    "high": item.get("high"),
+                    "low": item.get("low"),
+                }
+                for item in forecast[:4]
+            ],
+        }
+        astronomy = template_params.get("astronomy")
+        if isinstance(astronomy, dict):
+            payload["astronomy"] = {
+                "date": astronomy.get("date"),
+                "timezone": astronomy.get("timezone"),
+                "sunrise": astronomy.get("sunrise"),
+                "sunset": astronomy.get("sunset"),
+                "source": astronomy.get("source") or "weather",
+            }
+
         write_context(
             "weather",
-            {
-                "kind": "weather",
-                "source": title,
-                "summary": "; ".join(part for part in summary_parts if part),
-                "facts": facts,
-                "forecast": [
-                    {
-                        "day": item.get("day"),
-                        "high": item.get("high"),
-                        "low": item.get("low"),
-                    }
-                    for item in forecast[:4]
-                ],
-            },
+            payload,
             generated_at=generated_at,
             ttl_seconds=2 * 60 * 60,
         )
@@ -216,6 +229,7 @@ class Weather(BasePlugin):
             "units": units,
             "time_format": time_format
         }
+        data['astronomy'] = self.parse_openweather_astronomy(current, daily_forecast, tz)
         data['forecast'] = self.parse_forecast(weather_data.get('daily'), tz, current_suffix, lat)
         data['data_points'] = self.parse_data_points(weather_data, aqi_data, tz, units, time_format)
 
@@ -241,12 +255,52 @@ class Weather(BasePlugin):
             "units": units,
             "time_format": time_format
         }
+        data['astronomy'] = self.parse_open_meteo_astronomy(daily, tz)
 
         data['forecast'] = self.parse_open_meteo_forecast(weather_data.get('daily', {}), units, tz, is_day, lat)
         data['data_points'] = self.parse_open_meteo_data_points(weather_data, aqi_data, units, tz, time_format)
         
         data['hourly_forecast'] = self.parse_open_meteo_hourly(weather_data.get('hourly', {}), units, tz, time_format, daily.get('sunrise', []), daily.get('sunset', []))
         return data
+
+    def parse_openweather_astronomy(self, current, daily_forecast, tz):
+        daily_today = daily_forecast[0] if daily_forecast else {}
+        sunrise_epoch = (current or {}).get("sunrise") or daily_today.get("sunrise")
+        sunset_epoch = (current or {}).get("sunset") or daily_today.get("sunset")
+        try:
+            sunrise = datetime.fromtimestamp(sunrise_epoch, tz=timezone.utc).astimezone(tz) if sunrise_epoch else None
+            sunset = datetime.fromtimestamp(sunset_epoch, tz=timezone.utc).astimezone(tz) if sunset_epoch else None
+        except Exception:
+            logger.warning("Could not parse OpenWeather sunrise/sunset data.", exc_info=True)
+            return None
+        return self._astronomy_payload(sunrise, sunset, tz)
+
+    def parse_open_meteo_astronomy(self, daily, tz):
+        sunrise_times = (daily or {}).get("sunrise") or []
+        sunset_times = (daily or {}).get("sunset") or []
+        sunrise = self._parse_local_datetime(sunrise_times[0], tz) if sunrise_times else None
+        sunset = self._parse_local_datetime(sunset_times[0], tz) if sunset_times else None
+        return self._astronomy_payload(sunrise, sunset, tz)
+
+    def _parse_local_datetime(self, value, tz):
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = tz.localize(parsed) if hasattr(tz, "localize") else parsed.replace(tzinfo=tz)
+        return parsed.astimezone(tz)
+
+    def _astronomy_payload(self, sunrise, sunset, tz):
+        if not sunrise or not sunset:
+            return None
+        return {
+            "date": sunrise.date().isoformat(),
+            "timezone": getattr(tz, "zone", None) or str(tz),
+            "sunrise": sunrise.isoformat(),
+            "sunset": sunset.isoformat(),
+            "source": "weather",
+        }
 
     def map_weather_code_to_icon(self, weather_code, is_day):
 

@@ -1,0 +1,191 @@
+<div style="margin-bottom:14px;">
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.45; max-width:100%;">
+        Renders a LiveRadar-style static card wall for e-paper. Add one streamer per line using: platform|id|label|fav
+    </div>
+</div>
+
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+    <label for="roomsText" class="form-label">Streamer Cards:</label>
+    <textarea class="form-control" name="roomsText" id="roomsText" rows="14">douyu|6979222|fav
+bilibili|545318|fav
+twitch|xqc
+douyu|60937|fav
+twitch|shroud
+bilibili|22747736
+douyu|12306|fav
+twitch|hasanabi
+douyu|1126960
+douyu|52
+douyu|2561707
+douyu|57321|fav
+douyu|522387
+bilibili|7720242
+bilibili|1992214
+bilibili|6655
+bilibili|931522
+bilibili|13140424
+bilibili|956152
+bilibili|473
+bilibili|22915949
+bilibili|5017134
+bilibili|866360
+bilibili|11623469
+bilibili|23447617
+bilibili|139
+bilibili|7586498
+bilibili|5229|fav
+bilibili|25018616
+bilibili|21198073
+douyu|24422
+bilibili|2366002
+twitch|ishowspeed
+twitch|j_blow
+twitch|asmongold
+twitch|pokimane
+twitch|jinnytty
+bilibili|17526
+bilibili|5460313
+douyu|3935426
+douyu|93589
+douyu|10639765|fav
+douyu|252140
+bilibili|24065
+bilibili|4417875
+douyu|3507497|fav
+douyu|110
+bilibili|682048
+twitch|lululuvely
+twitch|emiru
+twitch|berticuss
+douyu|71415
+douyu|48699
+douyu|9999
+douyu|7718843
+douyu|456302
+bilibili|733|fav
+bilibili|6
+bilibili|20984
+bilibili|23668205
+douyu|8682569
+bilibili|30931147
+bilibili|382436
+twitch|jie_220</textarea>
+</div>
+
+<div class="form-group">
+    <label for="roomsJson" class="form-label">LiveRadar Export JSON (optional):</label>
+    <textarea class="form-control" name="roomsJson" id="roomsJson" rows="4" placeholder='{"rooms":[{"platform":"twitch","id":"xqc","isFav":true}]}'></textarea>
+</div>
+
+<div class="form-group">
+    <label for="apiUrl" class="form-label">Status API:</label>
+    <input type="url" class="form-control" name="apiUrl" id="apiUrl" value="https://liveradar.pages.dev/api/status/batch">
+</div>
+
+<div class="form-group">
+    <label for="cacheSeconds" class="form-label">Status Cache Seconds:</label>
+    <input type="number" class="form-control" name="cacheSeconds" id="cacheSeconds" min="20" max="3600" value="60">
+</div>
+
+<div class="form-group">
+    <label for="snapshotCacheSeconds" class="form-label">Screenshot Cache Seconds:</label>
+    <input type="number" class="form-control" name="snapshotCacheSeconds" id="snapshotCacheSeconds" min="30" max="1800" value="60">
+</div>
+
+<div class="form-group">
+    <label for="maxLiveCards" class="form-label">Max Live Cards:</label>
+    <select id="maxLiveCards" name="maxLiveCards" class="form-control">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="maxOfflineCards" class="form-label">Max Offline Cards:</label>
+    <select id="maxOfflineCards" name="maxOfflineCards" class="form-control">
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="themeMode" class="form-label">Display Theme:</label>
+    <select id="themeMode" name="themeMode" class="form-control">
+        <option value="auto" selected>Auto Day/Night</option>
+        <option value="dark">Night Radar</option>
+        <option value="light">Day Paper</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="fetchAvatars" class="form-label">Request Avatars:</label>
+    <div class="toggle-container">
+        <input type="hidden" id="fetchAvatarsHidden" name="fetchAvatars" value="false">
+        <input type="checkbox" id="fetchAvatars" name="fetchAvatars" class="toggle-checkbox" value="true" checked
+            onchange="syncFetchAvatarsToggle(this)">
+        <label for="fetchAvatars" class="toggle-label"></label>
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="showSnapshots" class="form-label">Show Card Screenshots:</label>
+    <div class="toggle-container">
+        <input type="hidden" id="showSnapshotsHidden" name="showSnapshots" value="false">
+        <input type="checkbox" id="showSnapshots" name="showSnapshots" class="toggle-checkbox" value="true" checked
+            onchange="syncShowSnapshotsToggle(this)">
+        <label for="showSnapshots" class="toggle-label"></label>
+    </div>
+</div>
+
+<div class="form-group">
+    <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> Ignore cache on next refresh</label>
+</div>
+
+<script>
+    function syncFetchAvatarsToggle(toggle) {
+        document.getElementById('fetchAvatarsHidden').disabled = toggle.checked;
+    }
+
+    function syncShowSnapshotsToggle(toggle) {
+        document.getElementById('showSnapshotsHidden').disabled = toggle.checked;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const defaults = {
+            roomsText: document.getElementById('roomsText').value,
+            roomsJson: "",
+            apiUrl: "https://liveradar.pages.dev/api/status/batch",
+            cacheSeconds: "60",
+            snapshotCacheSeconds: "60",
+            maxLiveCards: "3",
+            maxOfflineCards: "3",
+            themeMode: "auto",
+            fetchAvatars: true,
+            showSnapshots: true,
+            refreshOnDisplay: "true",
+            forceRefresh: false
+        };
+
+        const values = (typeof loadPluginSettings !== 'undefined' && loadPluginSettings)
+            ? { ...defaults, ...pluginSettings }
+            : defaults;
+
+        for (const [key, value] of Object.entries(values)) {
+            const el = document.getElementById(key);
+            if (!el) continue;
+            if (el.type === 'checkbox') {
+                el.checked = value === true || value === 'on' || value === 'true';
+            } else {
+                el.value = value;
+            }
+        }
+
+        syncFetchAvatarsToggle(document.getElementById('fetchAvatars'));
+        syncShowSnapshotsToggle(document.getElementById('showSnapshots'));
+    });
+</script>

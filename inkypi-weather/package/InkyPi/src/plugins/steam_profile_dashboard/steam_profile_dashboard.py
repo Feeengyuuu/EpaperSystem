@@ -1,6 +1,7 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.http_client import get_http_session
+from utils.theme_utils import get_theme_context, get_theme_palette
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from io import BytesIO
 from datetime import datetime, timezone
@@ -57,6 +58,7 @@ class SteamProfileDashboard(BasePlugin):
         if not steam_id:
             raise RuntimeError("需要填写 SteamID64。")
 
+        theme_context = get_theme_context(device_config)
         status_cache_seconds = self._int_setting(settings, "statusCacheSeconds", 60, 30, 3600)
         full_cache_minutes = self._int_setting(
             settings,
@@ -65,7 +67,9 @@ class SteamProfileDashboard(BasePlugin):
             5,
             1440,
         )
-        cache_key = self._cache_key(settings, dimensions, steam_id)
+        cache_settings = dict(settings or {})
+        cache_settings["_theme_mode"] = theme_context.get("mode", "day")
+        cache_key = self._cache_key(cache_settings, dimensions, steam_id)
         cache_entry = self._read_cache(cache_key)
         now = time.time()
 
@@ -86,7 +90,7 @@ class SteamProfileDashboard(BasePlugin):
                 status_cache_seconds,
                 full_cache_minutes,
             )
-            image = self._render_dashboard(data, dimensions)
+            image = self._render_dashboard(data, dimensions, theme_context)
             image_path = self._cache_image_path(cache_key)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
@@ -573,17 +577,18 @@ class SteamProfileDashboard(BasePlugin):
         text = str(appid or "").strip()
         return text if text.isdigit() else ""
 
-    def _render_dashboard(self, data, dimensions):
+    def _render_dashboard(self, data, dimensions, theme_context=None):
         width, height = dimensions
-        bg = (0, 0, 0)
-        panel = (0, 0, 0)
-        panel_border = (255, 255, 255)
-        ink = (255, 255, 255)
-        gray = (255, 255, 255)
-        light = (255, 255, 255)
-        accent = (102, 192, 244)
-        accent_online = (88, 205, 118)
-        image = self._dashboard_background((width, height), bg)
+        palette = get_theme_palette(theme_context)
+        bg = palette["background"]
+        panel = palette["panel"]
+        panel_border = palette["border"]
+        ink = palette["ink"]
+        gray = palette["muted"]
+        light = palette["rule"]
+        accent = palette["accent"]
+        accent_online = palette["green"]
+        image = self._dashboard_background((width, height), bg, use_image=(theme_context or {}).get("mode") == "night")
         draw = ImageDraw.Draw(image)
 
         fonts = self._fonts(width, height)
@@ -754,7 +759,9 @@ class SteamProfileDashboard(BasePlugin):
         self._text(draw, (margin, height - 19), footer, fonts["tiny"], gray)
         return image
 
-    def _dashboard_background(self, dimensions, fallback_color):
+    def _dashboard_background(self, dimensions, fallback_color, use_image=True):
+        if not use_image:
+            return Image.new("RGB", dimensions, fallback_color)
         path = self.get_plugin_dir(STEAM_BACKGROUND_IMAGE)
         try:
             background = Image.open(path).convert("RGB")
@@ -1235,6 +1242,7 @@ class SteamProfileDashboard(BasePlugin):
             str(settings.get("includeBadges", "true")),
             str(settings.get("includeBans", "true")),
             str(settings.get("language", "schinese")),
+            str(settings.get("_theme_mode", "day")),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
 

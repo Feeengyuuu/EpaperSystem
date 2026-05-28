@@ -92,6 +92,49 @@ class TestPlaylist:
         assert playlist.get_next_plugin().name == "One"
         assert playlist.current_plugin_index == 0
 
+    def test_get_next_plugin_uses_every_plugin_before_repeating(self, monkeypatch):
+        playlist = Playlist(
+            "Test Playlist",
+            "00:00",
+            "24:00",
+            plugins=[
+                {"plugin_id": "one", "name": "One", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "two", "name": "Two", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "three", "name": "Three", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "four", "name": "Four", "plugin_settings": {}, "refresh": {"interval": 300}},
+            ],
+        )
+
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+
+        first_round = [playlist.get_next_plugin().name for _ in range(4)]
+        second_round_first = playlist.get_next_plugin().name
+
+        assert len(first_round) == len(set(first_round))
+        assert set(first_round) == {"One", "Two", "Three", "Four"}
+        assert second_round_first != first_round[-1]
+
+    def test_get_next_plugin_persists_queue_through_dict_roundtrip(self, monkeypatch):
+        playlist = Playlist(
+            "Test Playlist",
+            "00:00",
+            "24:00",
+            plugins=[
+                {"plugin_id": "one", "name": "One", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "two", "name": "Two", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "three", "name": "Three", "plugin_settings": {}, "refresh": {"interval": 300}},
+            ],
+        )
+
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+
+        selected_before_write = playlist.get_next_plugin().name
+        restored = Playlist.from_dict(playlist.to_dict())
+        remaining_after_write = [restored.get_next_plugin().name for _ in range(2)]
+
+        assert selected_before_write == "Three"
+        assert remaining_after_write == ["Two", "One"]
+
 
 class TestPluginInstance:
 

@@ -4,7 +4,7 @@ import uuid
 
 from PIL import Image
 
-from src.model import Playlist
+from src.model import Playlist, PlaylistManager, RefreshInfo
 from src.refresh_task import PlaylistRefresh, RefreshTask
 
 
@@ -21,9 +21,20 @@ class FakeDeviceConfig:
     def __init__(self, plugin_image_dir):
         self.plugin_image_dir = str(plugin_image_dir)
         self.write_count = 0
+        self.config = {}
 
     def get_plugin(self, plugin_id):
         return {"id": plugin_id}
+
+    def get_config(self, key=None, default=None):
+        if key is None:
+            return self.config
+        return self.config.get(key, default)
+
+    def update_value(self, key, value, write=False):
+        self.config[key] = value
+        if write:
+            self.write_config()
 
     def write_config(self):
         self.write_count += 1
@@ -166,6 +177,107 @@ def test_refresh_due_plugin_instances_skips_displayed_plugin(monkeypatch):
     assert displayed.latest_refresh_time == "2026-05-26T07:00:00+00:00"
     assert playlist.find_plugin("other", "Other Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
     assert device_config.write_count == 1
+
+
+def test_refresh_due_plugin_instances_force_refreshes_fresh_cache(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("force-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "fresh",
+                "name": "Fresh Plugin",
+                "plugin_settings": {"id": "fresh"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:04:00+00:00",
+            },
+        ],
+    )
+
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "fresh_Fresh_Plugin.png")
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        force=True,
+    )
+
+    assert calls == ["fresh"]
+    assert playlist.find_plugin("fresh", "Fresh Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_theme_refresh_prefers_currently_displayed_playlist_plugin():
+    tmp_path = make_test_dir("theme-current-plugin")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "one",
+                "name": "One",
+                "plugin_settings": {"id": "one"},
+                "refresh": {"interval": 3600},
+            },
+            {
+                "plugin_id": "two",
+                "name": "Two",
+                "plugin_settings": {"id": "two"},
+                "refresh": {"interval": 3600},
+            },
+        ],
+    )
+    manager = PlaylistManager([playlist])
+    latest = RefreshInfo(
+        refresh_type="Playlist",
+        plugin_id="one",
+        playlist="DailyDoseOfDay",
+        plugin_instance="One",
+        refresh_time="2026-05-26T07:00:00+00:00",
+        image_hash="old",
+    )
+
+    _playlist, plugin = task._determine_theme_refresh_plugin(
+        manager,
+        latest,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert plugin.name == "One"
+
+
+def test_theme_state_persists_after_forced_theme_refresh():
+    tmp_path = make_test_dir("theme-persist")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["active_theme"] = "night"
+    task = RefreshTask(device_config, display_manager=None)
+    current_dt = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
+    theme_context = {
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": "2026-05-26",
+        "sunrise": "2026-05-26T05:50:00-07:00",
+        "sunset": "2026-05-26T20:15:00-07:00",
+    }
+
+    assert task._has_theme_changed(theme_context)
+    task._persist_active_theme(theme_context, current_dt)
+
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.config["active_theme_info"]["source"] == "weather"
 
 
 def test_playlist_refresh_refreshes_rotating_newspaper_on_display():

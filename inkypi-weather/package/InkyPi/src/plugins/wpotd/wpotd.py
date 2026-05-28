@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, date
 from functools import lru_cache
 from typing import Dict, Any
 
+from plugins.context_cache import write_context
+
 logger = logging.getLogger(__name__)
 
 class Wpotd(BasePlugin):
@@ -47,7 +49,11 @@ class Wpotd(BasePlugin):
 
         datetofetch = self._determine_date(settings)
         logger.info(f"Fetching Wikipedia Picture of the Day for: {datetofetch}")
-        logger.debug(f"Settings: shrink_to_fit={settings.get('shrinkToFitWpotd', 'false')}, randomize={settings.get('randomizeWpotd', 'false')}")
+        logger.debug(
+            f"Settings: shrink_to_fit={settings.get('shrinkToFitWpotd', 'true')}, "
+            f"smart_crop={settings.get('smartCropWpotd', 'true')}, "
+            f"randomize={settings.get('randomizeWpotd', 'false')}"
+        )
 
         data = self._fetch_potd(datetofetch)
         picurl = data["image_src"]
@@ -63,16 +69,19 @@ class Wpotd(BasePlugin):
         dimensions = (max_width, max_height)
 
         # Use adaptive loader if shrink-to-fit is enabled
-        shrink_to_fit = settings.get("shrinkToFitWpotd") == "true"
+        shrink_to_fit = self._setting_enabled(settings, "shrinkToFitWpotd", default=True)
+        smart_crop = shrink_to_fit and self._setting_enabled(settings, "smartCropWpotd", default=True)
         logger.debug(
             f"Shrink-to-fit={'enabled' if shrink_to_fit else 'disabled'}; "
-            f"{'using adaptive loader' if shrink_to_fit else 'downloading original size'}"
+            f"{'using adaptive loader' if shrink_to_fit else 'downloading original size'}; "
+            f"smart-crop={'enabled' if smart_crop else 'disabled'}"
         )
 
         image = self._download_image(
             picurl,
             dimensions=dimensions,
             resize=shrink_to_fit,
+            focus_crop=smart_crop,
         )
         if image is None:
             logger.error("Failed to download WPOTD image")
@@ -80,8 +89,37 @@ class Wpotd(BasePlugin):
         if shrink_to_fit:
             logger.info(f"Image resized to fit device dimensions: {max_width}x{max_height}")
 
+        self._write_wpotd_context(data)
         logger.info("=== Wikipedia POTD Plugin: Image generation complete ===")
         return image
+
+    def _write_wpotd_context(self, data: Dict[str, Any]) -> None:
+        filename = str(data.get("filename") or "Wikipedia picture").strip()
+        date_text = data.get("date").isoformat() if hasattr(data.get("date"), "isoformat") else str(data.get("date") or "")
+        summary = f"Wikipedia POTD: {filename}"
+        if date_text:
+            summary += f" ({date_text})"
+
+        write_context(
+            "wpotd",
+            {
+                "kind": "wikipedia_photo",
+                "source": "Wikipedia Picture of the Day",
+                "summary": summary[:180],
+                "facts": [
+                    {"label": "date", "value": date_text},
+                    {"label": "filename", "value": filename[:100]},
+                ],
+                "items": [{
+                    "title": filename[:120],
+                    "date": date_text,
+                    "page_url": data.get("image_page_url"),
+                    "image_url": data.get("image_src"),
+                }],
+            },
+            generated_at=datetime.now(),
+            ttl_seconds=24 * 60 * 60,
+        )
 
     def _determine_date(self, settings: Dict[str, Any]) -> date:
         if settings.get("randomizeWpotd") == "true":
@@ -93,7 +131,21 @@ class Wpotd(BasePlugin):
         else:
             return datetime.today().date()
 
-    def _download_image(self, url: str, dimensions: tuple = None, resize: bool = False) -> Image.Image:
+    def _setting_enabled(self, settings: Dict[str, Any], key: str, default: bool = False) -> bool:
+        value = settings.get(key)
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() == "true"
+
+    def _download_image(
+        self,
+        url: str,
+        dimensions: tuple = None,
+        resize: bool = False,
+        focus_crop: bool = False,
+    ) -> Image.Image:
         """
         Download image from URL, optionally resizing with adaptive loader.
 
@@ -101,6 +153,7 @@ class Wpotd(BasePlugin):
             url: Image URL
             dimensions: Target dimensions if resizing
             resize: Whether to use adaptive resizing
+            focus_crop: Whether resizing should bias the crop toward image focus
         """
         try:
             if url.lower().endswith(".svg"):
@@ -109,7 +162,13 @@ class Wpotd(BasePlugin):
 
             if resize and dimensions:
                 # Use adaptive loader for memory-efficient processing
-                return self.image_loader.from_url(url, dimensions, timeout_ms=10000, headers=self.HEADERS)
+                return self.image_loader.from_url(
+                    url,
+                    dimensions,
+                    timeout_ms=10000,
+                    headers=self.HEADERS,
+                    focus_crop=focus_crop,
+                )
             else:
                 # Original behavior: download without resizing
                 session = get_http_session()
