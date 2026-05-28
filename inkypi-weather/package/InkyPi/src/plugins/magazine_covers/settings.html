@@ -28,9 +28,11 @@
     <select id="fitMode" name="fitMode" class="form-input">
         <option value="rotate_full" selected>Rotate portrait covers, show full image</option>
         <option value="contain">Show full image without rotation</option>
-        <option value="cover">Fill screen by cropping</option>
+        <option value="cover">Fill screen, crop toward masthead/logo</option>
     </select>
 </div>
+
+<input type="hidden" id="showSourceLabel" name="showSourceLabel" value="true">
 
 <div class="form-group">
     <label for="backgroundStyle" class="form-label">Background style:</label>
@@ -56,6 +58,7 @@
             document.getElementById('fitMode').value = pluginSettings.fitMode || 'rotate_full';
             document.getElementById('backgroundStyle').value = pluginSettings.backgroundStyle || 'blur';
             document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'white';
+            document.getElementById('showSourceLabel').value = pluginSettings.showSourceLabel || 'true';
         }
     });
 </script>

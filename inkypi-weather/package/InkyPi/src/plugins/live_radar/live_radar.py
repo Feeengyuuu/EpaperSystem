@@ -63,7 +63,7 @@ DEFAULT_ROOMS_TEXT = "\n".join(
         "twitch|j_blow",
         "twitch|asmongold",
         "twitch|pokimane",
-        "twitch|jinnytty",
+        "twitch|jinnytty|fav",
         "bilibili|17526",
         "bilibili|5460313",
         "douyu|3935426",
@@ -153,9 +153,10 @@ FAVORITE_PRIORITY = {
     ("douyu", "12306"): 3,
     ("douyu", "57321"): 4,
     ("bilibili", "5229"): 5,
-    ("douyu", "10639765"): 6,
-    ("douyu", "3507497"): 7,
-    ("bilibili", "733"): 8,
+    ("twitch", "jinnytty"): 6,
+    ("douyu", "10639765"): 7,
+    ("douyu", "3507497"): 8,
+    ("bilibili", "733"): 9,
 }
 
 
@@ -369,6 +370,12 @@ class LiveRadar(BasePlugin):
         top_h = 196 if show_snapshots else 158
         bottom_y = 316 if show_snapshots else 292
         footer_y = height - 27
+        col_gap = max(12, int(width * 0.018))
+        col_w = int((width - 2 * margin - col_gap) / 2)
+        live_queue_box = (margin, bottom_y, col_w, footer_y - bottom_y - 8)
+        offline_box = (margin + col_w + col_gap, bottom_y, col_w, footer_y - bottom_y - 8)
+        live_queue_max = 8
+        live_queue_count = self._live_queue_visible_count(live_queue_box, len(live_cards[live_limit:]), live_queue_max)
 
         if live_cards:
             self._draw_section_title(draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
@@ -387,7 +394,8 @@ class LiveRadar(BasePlugin):
                     show_snapshot=show_snapshots,
                     snapshot_cache_seconds=snapshot_cache_seconds,
                 )
-            if len(live_cards) > len(live_visible):
+            overflow_cards = self._top_live_overflow_cards(live_cards, len(live_visible), live_queue_count)
+            if overflow_cards:
                 section_right = (
                     margin
                     + draw.textlength("LIVE NOW", font=sub_font)
@@ -395,25 +403,19 @@ class LiveRadar(BasePlugin):
                     + 36
                 )
                 more_width = max(80, width - margin - section_right)
-                more = self._live_overflow_text(live_cards[len(live_visible) :], draw, sub_font, more_width)
+                more = self._live_overflow_text(overflow_cards, draw, sub_font, more_width)
                 self._draw_text_right(draw, more, width - margin, top_label_y, sub_font, theme["muted"])
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
-        col_gap = max(12, int(width * 0.018))
-        col_w = int((width - 2 * margin - col_gap) / 2)
-        replay_box = (margin, bottom_y, col_w, footer_y - bottom_y - 8)
-        offline_box = (margin + col_w + col_gap, bottom_y, col_w, footer_y - bottom_y - 8)
-        self._draw_compact_section(
+        self._draw_live_queue_section(
             image,
             draw,
-            replay_box,
-            "REPLAY",
-            replay_cards,
+            live_queue_box,
+            "LIVE TOO",
+            live_cards[live_limit:],
             theme,
-            max_items=2,
-            show_snapshot=False,
-            snapshot_cache_seconds=snapshot_cache_seconds,
+            max_items=live_queue_max,
             avatar_cache_seconds=avatar_cache_seconds,
         )
         self._draw_compact_section(
@@ -460,7 +462,6 @@ class LiveRadar(BasePlugin):
                 snapshot_cache_seconds,
             )
 
-        platform = PLATFORMS.get(card["platform"], {"label": card["platform"].upper(), "short": card["platform"][:2].upper()})
         pill_font = self._font(10 if large else 9, "bold")
         body_font = self._font(20 if large else 14, "bold")
         title_font = self._font(13 if large else 10)
@@ -468,14 +469,12 @@ class LiveRadar(BasePlugin):
 
         pad = 14 if large else 10
         if not large:
-            platform_text = platform["short"]
-            platform_w = max(30, draw.textlength(platform_text, font=pill_font) + 12)
+            platform_w = 30
             pill_y = y + (5 if snapshot_h else 8)
-            self._draw_pill(
+            self._draw_platform_badge(
                 draw,
                 (x + pad, pill_y, x + pad + platform_w, pill_y + 19),
-                platform_text,
-                pill_font,
+                card["platform"],
                 fill=ink,
                 ink=fill,
                 outline=ink,
@@ -510,11 +509,10 @@ class LiveRadar(BasePlugin):
             return
 
         pill_y = y + 10
-        self._draw_pill(
+        self._draw_platform_badge(
             draw,
-            (x + pad, pill_y, x + pad + (70 if large else 56), pill_y + 21),
-            platform["label"] if large else platform["short"],
-            pill_font,
+            (x + pad, pill_y, x + pad + 42, pill_y + 23),
+            card["platform"],
             fill=ink,
             ink=fill,
             outline=ink,
@@ -696,6 +694,129 @@ class LiveRadar(BasePlugin):
             more = f"+{len(cards) - len(visible)}"
             self._draw_text_right(draw, more, x + w, y, sub_font, theme["muted"])
 
+    def _draw_live_queue_section(self, image, draw, box, title, cards, theme, max_items, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
+        x, y, w, h = box
+        sub_font = self._font(13, "bold")
+        self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
+        content_y = y + 24
+        content_h = max(1, h - 24)
+        if not cards:
+            self._rounded_rectangle(
+                draw,
+                (x, content_y, x + w, y + h),
+                radius=8,
+                fill=theme["panel"],
+                outline=theme["line"],
+                width=1,
+            )
+            muted_font = self._font(13, "bold")
+            msg = "No extra live"
+            msg_w = draw.textlength(msg, font=muted_font)
+            draw.text((x + (w - msg_w) / 2, content_y + max(14, int((content_h - self._line_height(muted_font)) / 2))), msg, fill=theme["muted"], font=muted_font)
+            return 0
+
+        layout = self._live_queue_layout((x, y, w, h), len(cards), max_items)
+        visible_count = layout["visible_count"]
+        rows_used = layout["rows_used"]
+        row_h = layout["row_h"]
+        col_w = layout["col_w"]
+        columns = layout["columns"]
+        gap = layout["gap"]
+        col_gap = layout["col_gap"]
+
+        visible = cards[:visible_count]
+        for index, card in enumerate(visible):
+            column = index // rows_used
+            row = index % rows_used
+            row_x = x + column * (col_w + col_gap)
+            row_y = content_y + row * (row_h + gap)
+            self._draw_live_mini_row(image, draw, (row_x, row_y, col_w, row_h), card, theme, avatar_cache_seconds)
+
+        if len(cards) > len(visible):
+            self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
+        return len(visible)
+
+    def _live_queue_visible_count(self, box, card_count, max_items):
+        return self._live_queue_layout(box, card_count, max_items)["visible_count"]
+
+    @staticmethod
+    def _top_live_overflow_cards(live_cards, top_count, queue_count):
+        return live_cards[int(top_count) + int(queue_count) :]
+
+    @staticmethod
+    def _live_queue_layout(box, card_count, max_items):
+        _x, _y, w, h = box
+        content_h = max(1, h - 24)
+        gap = 4
+        col_gap = 8
+        columns = 2 if w >= 320 and card_count > 4 and max_items > 4 else 1
+        min_row_h = 22
+        rows_capacity = max(1, int((content_h + gap) / (min_row_h + gap)))
+        if columns == 2:
+            rows_capacity = min(rows_capacity, max(1, int(math.ceil(max_items / 2))))
+        visible_count = min(card_count, max_items, rows_capacity * columns)
+        rows_used = max(1, int(math.ceil(max(1, visible_count) / columns)))
+        row_h = max(min_row_h, int((content_h - gap * (rows_used - 1)) / rows_used))
+        col_w = int((w - col_gap * (columns - 1)) / columns)
+        return {
+            "visible_count": visible_count,
+            "rows_used": rows_used,
+            "row_h": row_h,
+            "col_w": col_w,
+            "columns": columns,
+            "gap": gap,
+            "col_gap": col_gap,
+        }
+
+    def _draw_live_mini_row(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
+        x, y, w, h = box
+        fill = theme["panel"]
+        ink = theme["ink"]
+        muted = theme["muted"]
+        line = theme["line"]
+        accent = theme["live_fill"] if theme.get("mode") == "dark" else theme["live_ink"]
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
+        draw.line((x + 5, y + 5, x + 5, y + h - 5), fill=accent, width=2)
+
+        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
+        pad = 10
+        avatar_size = min(22, max(16, h - 6))
+        avatar_x = x + pad + 5
+        avatar_y = y + max(3, int((h - avatar_size) / 2))
+        self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
+
+        platform_w = min(20, max(18, int(h * 0.8)))
+        platform_h = min(16, max(13, h - 7))
+        platform_y = y + max(3, int((h - platform_h) / 2))
+        right = x + w - pad
+        self._draw_platform_badge(
+            draw,
+            (right - platform_w, platform_y, right, platform_y + platform_h),
+            card["platform"],
+            fill=fill,
+            ink=ink,
+            outline=muted,
+        )
+        right -= platform_w + 5
+        if card.get("is_fav"):
+            icon_size = min(15, max(12, h - 7))
+            self._draw_icon_badge(
+                draw,
+                (right - icon_size, platform_y, right, platform_y + icon_size),
+                "fav",
+                fill=fill,
+                ink=ink,
+                outline=muted,
+            )
+            right -= icon_size + 5
+
+        text_x = avatar_x + avatar_size + 8
+        text_w = max(24, right - text_x)
+        owner_text = self._card_display_name(card)
+        name_font = self._fit_font(draw, owner_text, text_w, 11, 8, "bold")
+        name_y = y + max(2, int((h - self._line_height(name_font)) / 2) - 1)
+        draw.text((text_x, name_y), self._fit_text(draw, owner_text, name_font, text_w), fill=ink, font=name_font)
+
     def _draw_compact_card(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = box
         status = card["status"]
@@ -711,16 +832,13 @@ class LiveRadar(BasePlugin):
         self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
 
         badge_right = x + w - pad
-        platform_text = platform["short"]
-        platform_font = self._font(8, "bold")
-        platform_w = max(22, int(draw.textlength(platform_text, font=platform_font) + 10))
+        platform_w = 22
         platform_h = 16
         platform_y = y + max(6, int((h - platform_h) / 2))
-        self._draw_pill(
+        self._draw_platform_badge(
             draw,
             (badge_right - platform_w, platform_y, badge_right, platform_y + platform_h),
-            platform_text,
-            platform_font,
+            card["platform"],
             fill=fill,
             ink=ink,
             outline=ink,
@@ -909,6 +1027,95 @@ class LiveRadar(BasePlugin):
             fill=ink,
             font=font,
         )
+
+    def _draw_platform_badge(self, draw, box, platform_key, fill, ink, outline):
+        left, top, right, bottom = [int(v) for v in box]
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        self._rounded_rectangle(draw, (left, top, right, bottom), radius=max(4, min(width, height) // 3), fill=fill, outline=outline, width=1)
+        icon_box = (
+            left + max(3, width // 6),
+            top + max(3, height // 5),
+            right - max(3, width // 6),
+            bottom - max(3, height // 5),
+        )
+        key = str(platform_key or "").strip().lower()
+        if key == "bilibili":
+            self._draw_bilibili_mark(draw, icon_box, ink)
+        elif key == "douyu":
+            self._draw_douyu_mark(draw, icon_box, ink)
+        elif key == "twitch":
+            self._draw_twitch_mark(draw, icon_box, ink)
+        else:
+            self._draw_platform_initials(draw, (left, top, right, bottom), key, ink)
+        return left
+
+    def _draw_bilibili_mark(self, draw, box, ink):
+        left, top, right, bottom = [int(v) for v in box]
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        line_w = max(1, min(width, height) // 7)
+        body_top = top + max(2, height // 5)
+        radius = max(1, min(width, height) // 5)
+        self._rounded_rectangle(draw, (left, body_top, right, bottom), radius=radius, fill=None, outline=ink, width=line_w)
+        draw.line((left + width * 0.28, body_top, left + width * 0.12, top), fill=ink, width=line_w)
+        draw.line((right - width * 0.28, body_top, right - width * 0.12, top), fill=ink, width=line_w)
+        eye_r = max(1, min(width, height) // 10)
+        cy = body_top + (bottom - body_top) * 0.53
+        for cx in (left + width * 0.36, right - width * 0.36):
+            draw.ellipse((cx - eye_r, cy - eye_r, cx + eye_r, cy + eye_r), fill=ink)
+
+    def _draw_douyu_mark(self, draw, box, ink):
+        left, top, right, bottom = [int(v) for v in box]
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        line_w = max(1, min(width, height) // 7)
+        cy = top + height * 0.5
+        tail_w = max(3, int(width * 0.24))
+        body = (left + tail_w, top + height * 0.18, right, bottom - height * 0.18)
+        draw.polygon(
+            [
+                (left, cy),
+                (left + tail_w + 1, top + height * 0.22),
+                (left + tail_w + 1, bottom - height * 0.22),
+            ],
+            fill=ink,
+        )
+        draw.ellipse(body, outline=ink, width=line_w)
+        eye_r = max(1, min(width, height) // 10)
+        eye_x = right - width * 0.22
+        eye_y = cy - height * 0.08
+        draw.ellipse((eye_x - eye_r, eye_y - eye_r, eye_x + eye_r, eye_y + eye_r), fill=ink)
+
+    def _draw_twitch_mark(self, draw, box, ink):
+        left, top, right, bottom = [int(v) for v in box]
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        line_w = max(1, min(width, height) // 7)
+        notch = max(2, width // 5)
+        bubble = [
+            (left, top),
+            (right, top),
+            (right, bottom - notch),
+            (left + width * 0.58, bottom - notch),
+            (left + width * 0.42, bottom),
+            (left + width * 0.42, bottom - notch),
+            (left, bottom - notch),
+            (left, top),
+        ]
+        draw.line(bubble, fill=ink, width=line_w, joint="curve")
+        eye_top = top + height * 0.34
+        eye_bottom = top + height * 0.68
+        for cx in (left + width * 0.42, left + width * 0.62):
+            draw.line((cx, eye_top, cx, eye_bottom), fill=ink, width=line_w)
+
+    def _draw_platform_initials(self, draw, box, platform_key, ink):
+        left, top, right, bottom = [int(v) for v in box]
+        short = PLATFORMS.get(platform_key, {}).get("short") or str(platform_key or "")[:2].upper()
+        font = self._fit_font(draw, short, max(8, right - left - 6), 8, 6, "bold")
+        text_w = draw.textlength(short, font=font)
+        text_h = self._line_height(font)
+        draw.text((left + (right - left - text_w) / 2, top + (bottom - top - text_h) / 2 - 1), short, fill=ink, font=font)
 
     def _draw_icon_badge(self, draw, box, kind, fill, ink, outline):
         left, top, right, bottom = [int(v) for v in box]

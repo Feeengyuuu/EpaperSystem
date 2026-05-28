@@ -47,6 +47,7 @@ ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
 IMAGE_CACHE_TTL = timedelta(hours=18)
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
+RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
 
 
 class _ImageCandidateParser(HTMLParser):
@@ -117,14 +118,11 @@ class _ImageCandidateParser(HTMLParser):
             srcset = attrs.get(attr)
             if not srcset:
                 continue
-            best = self._best_srcset_url(srcset)
-            if best:
-                urls.append(best)
+            urls.extend(self._srcset_urls(srcset))
         return urls
 
-    def _best_srcset_url(self, srcset):
-        best_url = ""
-        best_score = -1
+    def _srcset_urls(self, srcset):
+        candidates = []
         for part in srcset.split(","):
             bits = part.strip().split()
             if not bits:
@@ -135,10 +133,8 @@ class _ImageCandidateParser(HTMLParser):
                 match = re.search(r"(\d+)(?:w|x)?$", bits[-1])
                 if match:
                     score = int(match.group(1))
-            if score >= best_score:
-                best_url = url
-                best_score = score
-        return best_url
+            candidates.append((score, url))
+        return [url for _score, url in sorted(candidates)]
 
 
 class MagazineCovers(BasePlugin):
@@ -167,7 +163,7 @@ class MagazineCovers(BasePlugin):
         for source in ordered_sources:
             try:
                 cover = self._load_cover(source, dimensions)
-                image = self._fit_cover(cover["image"], dimensions, settings)
+                image = self._fit_cover(cover["image"], dimensions, settings, source)
                 self._remember_success(source, cover)
                 self._write_cover_context(source, cover)
                 logger.info("Selected magazine cover: %s | %s", source["name"], cover["image_url"])
@@ -175,6 +171,8 @@ class MagazineCovers(BasePlugin):
             except Exception as exc:
                 logger.warning("Magazine cover failed for %s: %s", source["name"], exc)
                 errors.append(f"{source['name']}: {exc}")
+                if rotation_mode == "random":
+                    self._remember_failure(source)
 
         detail = "; ".join(errors[-4:])
         logger.warning("No Pi-safe magazine cover could be fetched. %s", detail)
@@ -278,7 +276,17 @@ class MagazineCovers(BasePlugin):
             state["random_source_ids"] = list(source_by_id.keys())
             self._write_state(state)
 
-        return [source_by_id[source_id] for source_id in queue]
+        ordered_ids = list(queue)
+        if len(ordered_ids) < len(source_by_id):
+            retry_ids = [
+                source_id
+                for source_id in source_by_id
+                if source_id not in set(ordered_ids)
+            ]
+            random.shuffle(retry_ids)
+            ordered_ids.extend(retry_ids)
+
+        return [source_by_id[source_id] for source_id in ordered_ids]
 
     def _load_cover(self, source, dimensions):
         cached = self._read_cached_cover(source, dimensions)
@@ -400,19 +408,28 @@ class MagazineCovers(BasePlugin):
 
     def _download_candidate_image(self, candidate, dimensions):
         tmp_path = self._download_candidate_to_temp(candidate["url"])
+        decode_path = tmp_path
+        resized_path = None
         try:
-            if self._image_exceeds_pi_safe_size(tmp_path):
-                raise RuntimeError("source image too large for Pi-safe decode")
+            image_info = self._source_image_info(tmp_path)
+            if image_info and image_info["pixels"] > MAX_PI_SAFE_SOURCE_PIXELS:
+                if image_info["format"] == "WEBP":
+                    raise RuntimeError("oversized WebP source cannot be safely downsampled on Pi")
+                resized_path = self._downsample_to_pi_safe_image(tmp_path)
+                decode_path = resized_path
 
-            image = self.image_loader.from_file(str(tmp_path), dimensions, resize=True)
+            image = self.image_loader.from_file(str(decode_path), dimensions, resize=True)
             if not image:
                 raise RuntimeError("image load returned empty")
             return image.convert("RGB")
         finally:
-            try:
-                Path(tmp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            for path in [tmp_path, resized_path]:
+                if not path:
+                    continue
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _download_candidate_to_temp(self, url):
         response = get_http_session().get(
@@ -437,22 +454,69 @@ class MagazineCovers(BasePlugin):
             raise
 
     def _image_exceeds_pi_safe_size(self, image_path):
-        try:
-            with Image.open(image_path) as image:
-                width, height = image.size
-        except Exception:
+        image_info = self._source_image_info(image_path)
+        if not image_info:
             return False
 
-        pixels = width * height
-        if pixels <= MAX_PI_SAFE_SOURCE_PIXELS:
+        if image_info["pixels"] <= MAX_PI_SAFE_SOURCE_PIXELS:
             return False
 
         logger.info(
             "Skipping oversized magazine cover candidate for Pi-safe decode: %sx%s",
-            width,
-            height,
+            image_info["width"],
+            image_info["height"],
         )
         return True
+
+    def _source_image_info(self, image_path):
+        try:
+            with Image.open(image_path) as image:
+                width, height = image.size
+                image_format = (image.format or "").upper()
+        except Exception:
+            return None
+
+        return {
+            "width": width,
+            "height": height,
+            "pixels": width * height,
+            "format": image_format,
+        }
+
+    def _downsample_to_pi_safe_image(self, image_path):
+        with Image.open(image_path) as image:
+            original_size = image.size
+            target_size = self._pi_safe_downsample_size(original_size)
+            image.draft("RGB", target_size)
+            image = ImageOps.exif_transpose(image)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            image.thumbnail(target_size, RESAMPLING_FILTER)
+
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            resized_path = Path(temp_file.name)
+            try:
+                with temp_file:
+                    image.save(temp_file, format="JPEG", quality=88)
+                logger.info(
+                    "Downsampled oversized magazine cover for Pi-safe decode: %sx%s -> %sx%s",
+                    original_size[0],
+                    original_size[1],
+                    image.size[0],
+                    image.size[1],
+                )
+                return resized_path
+            except Exception:
+                resized_path.unlink(missing_ok=True)
+                raise
+
+    def _pi_safe_downsample_size(self, size):
+        width, height = max(1, int(size[0])), max(1, int(size[1]))
+        pixels = width * height
+        if pixels <= MAX_PI_SAFE_SOURCE_PIXELS:
+            return width, height
+        scale = (MAX_PI_SAFE_SOURCE_PIXELS / pixels) ** 0.5
+        return max(1, int(width * scale)), max(1, int(height * scale))
 
     def _looks_like_cover(self, image, candidate):
         width, height = image.size
@@ -464,15 +528,16 @@ class MagazineCovers(BasePlugin):
             return True
         return score >= 80 and max(width, height) >= 300
 
-    def _fit_cover(self, image, dimensions, settings):
+    def _fit_cover(self, image, dimensions, settings, source=None):
         fit_mode = (settings.get("fitMode") or "rotate_full").lower()
         image = ImageOps.exif_transpose(image).convert("RGB")
-        if image.size == tuple(dimensions):
-            return image
 
         if fit_mode == "cover":
-            return ImageOps.fit(image, dimensions, method=Image.LANCZOS)
-        if fit_mode in {"rotate_full", "rotate", "auto"} and image.height > image.width:
+            fitted = self._fit_cover_crop(image, dimensions)
+            return self._with_source_label(fitted, source, settings)
+
+        should_rotate = fit_mode in {"rotate_full", "rotate", "auto"} and image.height > image.width
+        if should_rotate:
             image = image.rotate(90, expand=True)
 
         background = self._background(dimensions, settings, image)
@@ -480,7 +545,60 @@ class MagazineCovers(BasePlugin):
         x = (dimensions[0] - fitted.width) // 2
         y = (dimensions[1] - fitted.height) // 2
         background.paste(fitted, (x, y))
-        return background
+        return self._with_source_label(background, source, settings)
+
+    def _fit_cover_crop(self, image, dimensions):
+        target_width, target_height = dimensions
+        target_ratio = target_width / target_height
+        image_ratio = image.width / image.height
+
+        if image_ratio > target_ratio:
+            crop_width = max(1, min(image.width, int(round(image.height * target_ratio))))
+            x = max(0, (image.width - crop_width) // 2)
+            crop_box = (x, 0, x + crop_width, image.height)
+        else:
+            crop_height = max(1, min(image.height, int(round(image.width / target_ratio))))
+            y = self._masthead_crop_offset(image.height, crop_height)
+            crop_box = (0, y, image.width, y + crop_height)
+
+        cropped = image.crop(crop_box)
+        return cropped.resize((target_width, target_height), Image.LANCZOS)
+
+    def _masthead_crop_offset(self, image_height, crop_height):
+        max_offset = max(0, image_height - crop_height)
+        if max_offset == 0:
+            return 0
+        return 0
+
+    def _with_source_label(self, image, source, settings):
+        if str(settings.get("showSourceLabel", "true")).lower() in {"false", "0", "off", "no"}:
+            return image
+
+        label = str((source or {}).get("name") or "").strip()
+        if not label:
+            return image
+
+        image = image.copy()
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        max_label_width = max(120, int(width * 0.58))
+        font_size = max(16, min(width, height) // 22)
+        font = self._fallback_font(font_size, bold=True)
+        while font_size > 12 and draw.textlength(label.upper(), font=font) > max_label_width:
+            font_size -= 1
+            font = self._fallback_font(font_size, bold=True)
+        text = self._fit_text(draw, label.upper(), font, max_label_width)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        pad_x = max(8, width // 80)
+        pad_y = max(5, height // 96)
+        x = max(8, width // 70)
+        y = height - text_h - pad_y * 2 - max(8, height // 70)
+        box = (x, y, x + text_w + pad_x * 2, y + text_h + pad_y * 2)
+        draw.rectangle(box, fill="white", outline="black", width=1)
+        draw.text((x + pad_x, y + pad_y - bbox[1]), text, fill="black", font=font)
+        return image
 
     def _fallback_image(self, dimensions, title, subtitle):
         image = Image.new("RGB", dimensions, "white")
@@ -517,6 +635,15 @@ class MagazineCovers(BasePlugin):
             font=font,
             fill=fill,
         )
+
+    def _fit_text(self, draw, text, font, max_width):
+        if draw.textlength(text, font=font) <= max_width:
+            return text
+
+        candidate = text
+        while candidate and draw.textlength(candidate, font=font) > max_width:
+            candidate = candidate[:-1].rstrip()
+        return candidate or text[:1]
 
     def _background(self, dimensions, settings, image):
         color = (settings.get("backgroundColor") or "white").lower()
@@ -598,6 +725,20 @@ class MagazineCovers(BasePlugin):
             state["random_queue"] = [
                 queued_id for queued_id in state["random_queue"] if queued_id != source_id
             ]
+        self._write_state(state)
+
+    def _remember_failure(self, source):
+        state = self._read_state()
+        queue = state.get("random_queue")
+        if not isinstance(queue, list):
+            return
+
+        source_id = self._source_id(source)
+        updated_queue = [queued for queued in queue if queued != source_id]
+        if updated_queue == queue:
+            return
+
+        state["random_queue"] = updated_queue
         self._write_state(state)
 
     def _state_path(self):

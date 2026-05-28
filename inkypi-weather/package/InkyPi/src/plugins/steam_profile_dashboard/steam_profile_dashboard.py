@@ -18,7 +18,7 @@ STEAM_API_BASE = "https://api.steampowered.com"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "subtle-controller-bg-friend-id-live-v1"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-controller-buttons-v1"
 STEAM_BACKGROUND_IMAGE = "background.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
@@ -612,8 +612,19 @@ class SteamProfileDashboard(BasePlugin):
         friend_panel_y = panel_y + max(0, (panel_h - friend_group_h) // 2)
         top_text_right = friend_panel_x - 22 if online_avatar_friends else panel_x + panel_w - 18
 
+        avatar_box = (margin + 10, panel_y + 2, margin + 10 + avatar_size, panel_y + 2 + avatar_size)
+        self._draw_avatar_controller_buttons(
+            draw,
+            avatar_box,
+            right_limit=panel_x - 16,
+            bottom_limit=panel_y + panel_h + 34,
+            outline=ink,
+            muted=gray,
+            fonts=fonts,
+        )
+
         avatar = self._avatar_image(data["profile"].get("avatarfull"), avatar_size)
-        image.paste(avatar, (margin + 10, panel_y + 2), avatar if avatar.mode == "RGBA" else None)
+        image.paste(avatar, (avatar_box[0], avatar_box[1]), avatar if avatar.mode == "RGBA" else None)
 
         self._rounded_rect(
             draw,
@@ -758,6 +769,116 @@ class SteamProfileDashboard(BasePlugin):
             footer += f"  |  {len(warnings)} 项隐私/缺失"
         self._text(draw, (margin, height - 19), footer, fonts["tiny"], gray)
         return image
+
+    def _draw_avatar_controller_buttons(self, draw, avatar_box, right_limit, bottom_limit, outline, muted, fonts):
+        x0, y0, x1, y1 = avatar_box
+        size = x1 - x0
+        cx = x0 + size // 2
+        cy = y0 + size // 2
+        line_width = max(2, size // 70)
+        small_r = max(10, size // 13)
+        label_font = self._font(max(13, size // 9), bold=True)
+        small_font = self._font(max(12, size // 11), bold=True)
+
+        self._draw_round_button(draw, x0 + size * 0.12, y0 - size * 0.09, small_r, "Y", label_font, outline, muted, line_width)
+        self._draw_plus_button(draw, cx, y0 - size * 0.12, small_r, outline, muted, line_width)
+        self._draw_label_button(draw, right_limit - size * 0.24, y0 - size * 0.08, size * 0.25, size * 0.16, "R1", small_font, outline, muted, line_width)
+
+        self._draw_shape_button(draw, x0 - size * 0.10, cy - size * 0.36, small_r, "triangle", outline, muted, line_width)
+        self._draw_shape_button(draw, right_limit - small_r - 2, cy - size * 0.28, small_r, "square", outline, muted, line_width)
+        self._draw_round_button(draw, x0 - size * 0.13, cy + size * 0.32, small_r, "X", label_font, outline, muted, line_width)
+        self._draw_round_button(draw, right_limit - small_r - 1, cy + size * 0.20, small_r, "B", label_font, outline, muted, line_width)
+        self._draw_minus_button(draw, right_limit - small_r - 9, y1 - size * 0.12, small_r - 1, outline, muted, line_width)
+
+        dpad_size = size * 0.14
+        self._draw_label_button(draw, x0 - size * 0.12, y1 + size * 0.02, size * 0.24, size * 0.15, "L1", small_font, outline, muted, line_width)
+        self._draw_dpad(draw, cx - size * 0.12, min(bottom_limit - dpad_size, y1 + size * 0.13), dpad_size, outline, muted, line_width)
+        self._draw_round_button(draw, cx + size * 0.54, min(bottom_limit - small_r - 3, y1 + size * 0.22), small_r - 1, "x", small_font, outline, muted, line_width)
+
+    def _draw_round_button(self, draw, center_x, center_y, radius, label, font, outline, muted, width):
+        cx = int(round(center_x))
+        cy = int(round(center_y))
+        r = int(round(radius))
+        box = (cx - r, cy - r, cx + r, cy + r)
+        draw.ellipse(box, outline=muted, width=1)
+        inner = (box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2)
+        draw.ellipse(inner, outline=outline, width=width)
+        self._center_text(draw, (cx, cy), label, font, outline)
+
+    def _draw_plus_button(self, draw, center_x, center_y, radius, outline, muted, width):
+        self._draw_round_button(draw, center_x, center_y, radius, "", self._font(10), outline, muted, width)
+        cx = int(round(center_x))
+        cy = int(round(center_y))
+        arm = int(round(radius * 0.55))
+        draw.line((cx - arm, cy, cx + arm, cy), fill=outline, width=width)
+        draw.line((cx, cy - arm, cx, cy + arm), fill=outline, width=width)
+
+    def _draw_minus_button(self, draw, center_x, center_y, radius, outline, muted, width):
+        self._draw_round_button(draw, center_x, center_y, radius, "", self._font(10), outline, muted, width)
+        cx = int(round(center_x))
+        cy = int(round(center_y))
+        arm = int(round(radius * 0.55))
+        draw.line((cx - arm, cy, cx + arm, cy), fill=outline, width=width)
+
+    def _draw_label_button(self, draw, x, y, width, height, label, font, outline, muted, line_width):
+        x0 = int(round(x))
+        y0 = int(round(y))
+        w = int(round(width))
+        h = int(round(height))
+        box = (x0, y0, x0 + w, y0 + h)
+        self._rounded_rect(draw, box, radius=3, outline=muted, width=1, fill=None)
+        inner = (box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2)
+        self._rounded_rect(draw, inner, radius=3, outline=outline, width=line_width, fill=None)
+        self._center_text(draw, ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2), label, font, outline)
+
+    def _draw_shape_button(self, draw, center_x, center_y, radius, shape, outline, muted, width):
+        cx = int(round(center_x))
+        cy = int(round(center_y))
+        r = int(round(radius))
+        self._draw_round_button(draw, cx, cy, r, "", self._font(10), outline, muted, width)
+        if shape == "triangle":
+            points = [
+                (cx, cy - int(r * 0.48)),
+                (cx - int(r * 0.45), cy + int(r * 0.36)),
+                (cx + int(r * 0.45), cy + int(r * 0.36)),
+            ]
+            draw.line(points + [points[0]], fill=outline, width=max(1, width - 1))
+        elif shape == "square":
+            q = int(r * 0.42)
+            draw.rectangle((cx - q, cy - q, cx + q, cy + q), outline=outline, width=max(1, width - 1))
+
+    def _draw_dpad(self, draw, center_x, center_y, size, outline, muted, width):
+        cx = int(round(center_x))
+        cy = int(round(center_y))
+        unit = max(5, int(round(size / 3)))
+        boxes = [
+            (cx - unit, cy - unit * 3, cx + unit, cy - unit),
+            (cx - unit, cy + unit, cx + unit, cy + unit * 3),
+            (cx - unit * 3, cy - unit, cx - unit, cy + unit),
+            (cx + unit, cy - unit, cx + unit * 3, cy + unit),
+            (cx - unit, cy - unit, cx + unit, cy + unit),
+        ]
+        for box in boxes:
+            self._rounded_rect(draw, box, radius=2, outline=muted, width=1, fill=None)
+        for box in boxes:
+            inset = 1
+            self._rounded_rect(
+                draw,
+                (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset),
+                radius=2,
+                outline=outline,
+                width=max(1, width - 1),
+                fill=None,
+            )
+
+    def _center_text(self, draw, center, text, font, fill):
+        if not text:
+            return
+        cx, cy = center
+        bbox = draw.textbbox((0, 0), str(text), font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        draw.text((cx - text_w / 2 - bbox[0], cy - text_h / 2 - bbox[1]), str(text), font=font, fill=fill)
 
     def _dashboard_background(self, dimensions, fallback_color, use_image=True):
         if not use_image:

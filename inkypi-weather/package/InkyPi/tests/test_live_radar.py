@@ -121,6 +121,7 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         ("douyu", "12306"),
         ("douyu", "57321"),
         ("bilibili", "5229"),
+        ("twitch", "jinnytty"),
         ("douyu", "10639765"),
         ("douyu", "3507497"),
         ("bilibili", "733"),
@@ -370,8 +371,30 @@ def test_generate_image_draws_cover_snapshot_band():
         FakeDeviceConfig(),
     )
 
-    snapshot_band = image.crop((30, 112, 250, 160))
+    snapshot_band = image.crop((30, 112, 770, 160))
     assert len(set(snapshot_band.getdata())) > 8
+
+
+def test_platform_badges_render_known_icons():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (150, 42), theme["bg"])
+    draw = ImageDraw.Draw(image)
+
+    for index, platform in enumerate(("bilibili", "douyu", "twitch")):
+        x = 8 + index * 46
+        plugin._draw_platform_badge(
+            draw,
+            (x, 8, x + 34, 31),
+            platform,
+            fill=theme["ink"],
+            ink=theme["bg"],
+            outline=theme["ink"],
+        )
+
+    pixels = set(image.crop((0, 0, 150, 42)).getdata())
+    assert theme["bg"] in pixels
+    assert theme["ink"] in pixels
 
 
 def test_snapshot_header_is_only_for_large_live_cards():
@@ -435,6 +458,45 @@ def test_compact_card_draws_avatar_image():
 
     avatar_area = image.crop((24, 18, 58, 52))
     assert len(set(avatar_area.getdata())) > 2
+
+
+def test_live_queue_section_fits_two_columns_of_remaining_live_rows():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"streamer{i}",
+            "label": "",
+            "is_fav": i == 0,
+            "owner": f"Streamer {i}",
+            "title": "Live",
+            "heat": 100 + i,
+            "start_time": None,
+            "cover": "",
+            "avatar": "",
+            "is_error": False,
+            "favorite_rank": None,
+            "status": "live",
+        }
+        for i in range(9)
+    ]
+
+    visible = plugin._draw_live_queue_section(image, draw, (10, 10, 380, 128), "LIVE TOO", cards, theme, 8)
+
+    assert visible == 8
+    assert len(set(image.crop((16, 38, 386, 134)).getdata())) > 2
+    assert len(set(image.crop((210, 38, 386, 134)).getdata())) > 2
+
+
+def test_top_overflow_excludes_live_queue_rows():
+    cards = [{"id": str(index)} for index in range(12)]
+
+    overflow = LiveRadar._top_live_overflow_cards(cards, top_count=3, queue_count=8)
+
+    assert [card["id"] for card in overflow] == ["11"]
 
 
 def test_light_title_logo_treats_black_source_background_as_transparent(monkeypatch):
