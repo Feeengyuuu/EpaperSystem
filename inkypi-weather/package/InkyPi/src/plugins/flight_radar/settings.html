@@ -1,0 +1,197 @@
+<div style="margin-bottom:14px;">
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.45; max-width:100%;">
+        Static e-paper aircraft radar centered on SFO. Free sources are tried one by one; Google maps can use GOOGLE_MAPS_API_KEY or Google_KEY.
+    </div>
+</div>
+
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+    <label for="centerLabel" class="form-label">Center Label:</label>
+    <input type="text" class="form-control" name="centerLabel" id="centerLabel" value="SFO">
+</div>
+
+<div class="form-group">
+    <label for="latitude" class="form-label">Center Latitude:</label>
+    <input type="number" step="0.0001" class="form-control" name="latitude" id="latitude" value="37.6213">
+</div>
+
+<div class="form-group">
+    <label for="longitude" class="form-label">Center Longitude:</label>
+    <input type="number" step="0.0001" class="form-control" name="longitude" id="longitude" value="-122.3790">
+</div>
+
+<div class="form-group">
+    <label for="radiusNm" class="form-label">Range Radius (nautical miles):</label>
+    <input type="number" class="form-control" name="radiusNm" id="radiusNm" min="25" max="250" value="160">
+</div>
+
+<div class="form-group">
+    <label for="displayRadiusNm" class="form-label">Displayed Map Radius (nautical miles):</label>
+    <input type="number" class="form-control" name="displayRadiusNm" id="displayRadiusNm" min="15" max="250" value="20">
+</div>
+
+<div class="form-group">
+    <label for="maxAircraft" class="form-label">Max Aircraft:</label>
+    <input type="number" class="form-control" name="maxAircraft" id="maxAircraft" min="10" max="180" value="90">
+</div>
+
+<div class="form-group">
+    <label for="cacheSeconds" class="form-label">Successful Data Cache Seconds:</label>
+    <input type="number" class="form-control" name="cacheSeconds" id="cacheSeconds" min="0" max="1800" value="240">
+</div>
+
+<div class="form-group">
+    <label for="timeoutSeconds" class="form-label">Per-source Timeout Seconds:</label>
+    <input type="number" class="form-control" name="timeoutSeconds" id="timeoutSeconds" min="4" max="25" value="10">
+</div>
+
+<div class="form-group">
+    <label><input type="checkbox" name="routeLookupEnabled" id="routeLookupEnabled" checked> Show route when available</label>
+</div>
+
+<div class="form-group">
+    <label for="routeCacheSeconds" class="form-label">Route Cache Seconds:</label>
+    <input type="number" class="form-control" name="routeCacheSeconds" id="routeCacheSeconds" min="0" max="86400" value="1800">
+</div>
+
+<div class="form-group">
+    <label for="routeLookupLimit" class="form-label">Route Lookup Aircraft Limit:</label>
+    <input type="number" class="form-control" name="routeLookupLimit" id="routeLookupLimit" min="0" max="40" value="12">
+</div>
+
+<div class="form-group">
+    <label for="routeTimeoutSeconds" class="form-label">Route Lookup Timeout Seconds:</label>
+    <input type="number" class="form-control" name="routeTimeoutSeconds" id="routeTimeoutSeconds" min="2" max="10" value="4">
+</div>
+
+<div class="form-group">
+    <label for="routeSourceOrder" class="form-label">Route Source Order:</label>
+    <textarea class="form-control" name="routeSourceOrder" id="routeSourceOrder" rows="2">airping
+adsb_lol</textarea>
+</div>
+
+<div class="form-group">
+    <label for="mapMode" class="form-label">Radar Map Layer:</label>
+    <select id="mapMode" name="mapMode" class="form-control">
+        <option value="google_static" selected>Google Static Maps</option>
+        <option value="local_calibrated">Local calibrated SFO map</option>
+        <option value="stylized">Stylized Bay Area map</option>
+        <option value="static_image">Static image URL</option>
+        <option value="off">Off</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="mapImagePath" class="form-label">Local Map Image Path:</label>
+    <input type="text" class="form-control" name="mapImagePath" id="mapImagePath" value="sfo_bay_map_crop.png">
+</div>
+
+<div class="form-group">
+    <label for="mapImageUrl" class="form-label">Static Map Image URL (optional):</label>
+    <input type="url" class="form-control" name="mapImageUrl" id="mapImageUrl" placeholder="https://...">
+</div>
+
+<div class="form-group">
+    <label for="googleMapType" class="form-label">Google Map Type:</label>
+    <select id="googleMapType" name="googleMapType" class="form-control">
+        <option value="roadmap">Roadmap</option>
+        <option value="terrain" selected>Terrain</option>
+        <option value="satellite">Satellite</option>
+        <option value="hybrid">Hybrid</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="googleMapTheme" class="form-label">Google Map Theme:</label>
+    <select id="googleMapTheme" name="googleMapTheme" class="form-control">
+        <option value="day" selected>Day comic terrain</option>
+        <option value="night">Night comic terrain</option>
+        <option value="auto">Auto by local time</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="mapCacheHours" class="form-label">Map Image Cache Hours:</label>
+    <input type="number" class="form-control" name="mapCacheHours" id="mapCacheHours" min="1" max="168" value="24">
+</div>
+
+<div class="form-group">
+    <label for="sourceOrder" class="form-label">Source Order:</label>
+    <textarea class="form-control" name="sourceOrder" id="sourceOrder" rows="6">adsb_lol
+airplanes_live
+opensky
+flightaware
+rapidapi_custom</textarea>
+</div>
+
+<div class="form-group">
+    <label for="flightawareQuery" class="form-label">FlightAware AeroAPI Query (optional):</label>
+    <input type="text" class="form-control" name="flightawareQuery" id="flightawareQuery" placeholder='Example from your AeroAPI docs'>
+</div>
+
+<div class="form-group">
+    <label for="rapidapiUrl" class="form-label">RapidAPI URL (optional):</label>
+    <input type="url" class="form-control" name="rapidapiUrl" id="rapidapiUrl" placeholder="https://...">
+</div>
+
+<div class="form-group">
+    <label for="rapidapiHost" class="form-label">RapidAPI Host (optional):</label>
+    <input type="text" class="form-control" name="rapidapiHost" id="rapidapiHost" placeholder="example.p.rapidapi.com">
+</div>
+
+<div class="form-group">
+    <label for="rapidapiParams" class="form-label">RapidAPI Extra Params (optional key=value lines):</label>
+    <textarea class="form-control" name="rapidapiParams" id="rapidapiParams" rows="4"></textarea>
+</div>
+
+<div class="form-group">
+    <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> Ignore cache on next refresh</label>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const defaults = {
+            centerLabel: "SFO",
+            latitude: "37.6213",
+            longitude: "-122.3790",
+            radiusNm: "160",
+            displayRadiusNm: "20",
+            maxAircraft: "90",
+            cacheSeconds: "240",
+            timeoutSeconds: "10",
+            routeLookupEnabled: true,
+            routeCacheSeconds: "1800",
+            routeLookupLimit: "12",
+            routeTimeoutSeconds: "4",
+            routeSourceOrder: "airping\nadsb_lol",
+            mapMode: "google_static",
+            mapImagePath: "sfo_bay_map_crop.png",
+            mapImageUrl: "",
+            googleMapType: "terrain",
+            googleMapTheme: "day",
+            mapCacheHours: "24",
+            sourceOrder: "adsb_lol\nairplanes_live\nopensky\nflightaware\nrapidapi_custom",
+            flightawareQuery: "",
+            rapidapiUrl: "",
+            rapidapiHost: "",
+            rapidapiParams: "",
+            refreshOnDisplay: "true",
+            forceRefresh: false
+        };
+
+        const values = (typeof loadPluginSettings !== 'undefined' && loadPluginSettings)
+            ? { ...defaults, ...pluginSettings }
+            : defaults;
+
+        for (const [key, value] of Object.entries(values)) {
+            const el = document.getElementById(key);
+            if (!el) continue;
+            if (el.type === 'checkbox') {
+                el.checked = value === true || value === 'on' || value === 'true';
+            } else {
+                el.value = value;
+            }
+        }
+    });
+</script>

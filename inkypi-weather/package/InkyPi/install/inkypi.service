@@ -11,6 +11,7 @@ ExecStart=/usr/local/bin/inkypi run
 Restart=on-failure
 RestartSec=60
 KillSignal=SIGINT
+TimeoutStopSec=240
 StandardOutput=journal
 StandardError=journal
 CPUQuota=40%

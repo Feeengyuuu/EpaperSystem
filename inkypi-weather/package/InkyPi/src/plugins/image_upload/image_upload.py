@@ -1,14 +1,13 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image, ImageOps, ImageColor
+from PIL import Image
 import logging
 import random
 import os
 
-from utils.image_utils import pad_image_blur
-
 logger = logging.getLogger(__name__)
 
 IMAGE_UPLOAD_VERSION = "no-repeat-random-bag-v1"
+PORTRAIT_COLUMN_COUNT = 3
 
 
 class ImageUpload(BasePlugin):
@@ -66,42 +65,97 @@ class ImageUpload(BasePlugin):
             dimensions = dimensions[::-1]
             logger.debug(f"Vertical orientation detected, dimensions: {dimensions[0]}x{dimensions[1]}")
 
-        # Determine if we need manual padding
-        needs_padding = settings.get('padImage') == "true"
+        # The image upload display is automatic: portrait photos render as
+        # three side-by-side columns, landscape photos render as one cover image.
         display_mode = self._get_display_mode(settings)
-        background_option = settings.get('backgroundOption', 'blur')
 
-        logger.debug(f"Settings: display_mode={display_mode}, pad_image={needs_padding}, background_option={background_option}")
+        logger.debug(f"Settings: display_mode={display_mode}")
 
-        # Load image (without auto-resize if padding needed)
+        selected_index = img_index
         if display_mode == "random":
-            img_index = random.randrange(0, len(image_locations))
-            logger.info(f"Random mode: Selected image index {img_index}")
-            image = self.open_image(img_index, image_locations, dimensions, resize=not needs_padding)
+            selected_index = random.randrange(0, len(image_locations))
+            logger.info(f"Random mode: Selected image index {selected_index}")
         elif display_mode == "no_repeat_random":
-            img_index = self._select_no_repeat_index(settings, image_locations)
-            logger.info(f"No-repeat random mode: Selected image index {img_index}")
-            image = self.open_image(img_index, image_locations, dimensions, resize=not needs_padding)
+            selected_index = self._select_no_repeat_index(settings, image_locations)
+            logger.info(f"No-repeat random mode: Selected image index {selected_index}")
         else:
-            logger.info(f"Sequential mode: Loading image index {img_index}")
-            image = self.open_image(img_index, image_locations, dimensions, resize=not needs_padding)
-            img_index = (img_index + 1) % len(image_locations)
+            logger.info(f"Sequential mode: Loading image index {selected_index}")
+            img_index = (selected_index + 1) % len(image_locations)
             logger.debug(f"Next index will be: {img_index}")
 
-        # Write the new index back to the device json
-        settings['image_index'] = img_index
+        if self._is_portrait_image(image_locations[selected_index]):
+            portrait_indices = self._select_portrait_group(selected_index, image_locations, display_mode)
+            logger.info(f"Portrait layout: rendering indices {portrait_indices}")
+            image = self._render_portrait_columns(portrait_indices, image_locations, dimensions)
+        else:
+            logger.info("Landscape layout: rendering one full-screen image")
+            image = self.open_image(selected_index, image_locations, dimensions, resize=True)
 
-        # Apply padding if requested
-        if needs_padding:
-            logger.debug(f"Applying padding with {background_option} background")
-            if background_option == "blur":
-                image = pad_image_blur(image, dimensions)
-            else:
-                background_color = ImageColor.getcolor(settings.get('backgroundColor') or "white", image.mode)
-                image = ImageOps.pad(image, dimensions, color=background_color, method=Image.Resampling.LANCZOS)
+        # Write the new index back to the device json
+        settings['image_index'] = selected_index if display_mode != "sequential" else img_index
 
         logger.info("=== Image Upload Plugin: Image generation complete ===")
         return image
+
+    def _is_portrait_image(self, image_path):
+        try:
+            with Image.open(image_path) as image:
+                width, height = image.size
+                exif_orientation = image.getexif().get(274)
+                if exif_orientation in {5, 6, 7, 8}:
+                    width, height = height, width
+                return height > width
+        except Exception as e:
+            logger.warning(f"Could not determine image orientation for {image_path}: {e}")
+            return False
+
+    def _select_portrait_group(self, selected_index, image_locations, display_mode):
+        portrait_indices = [
+            index
+            for index, image_path in enumerate(image_locations)
+            if self._is_portrait_image(image_path)
+        ]
+
+        if selected_index not in portrait_indices:
+            return [selected_index]
+
+        if display_mode == "sequential":
+            selected = []
+            for offset in range(len(image_locations)):
+                candidate = (selected_index + offset) % len(image_locations)
+                if candidate in portrait_indices:
+                    selected.append(candidate)
+                    if len(selected) == PORTRAIT_COLUMN_COUNT:
+                        break
+        else:
+            remaining = [index for index in portrait_indices if index != selected_index]
+            random.shuffle(remaining)
+            selected = [selected_index] + remaining[:PORTRAIT_COLUMN_COUNT - 1]
+
+        return self._repeat_to_column_count(selected)
+
+    def _repeat_to_column_count(self, selected_indices):
+        if not selected_indices:
+            return []
+
+        index = 0
+        while len(selected_indices) < PORTRAIT_COLUMN_COUNT:
+            selected_indices.append(selected_indices[index % len(selected_indices)])
+            index += 1
+        return selected_indices[:PORTRAIT_COLUMN_COUNT]
+
+    def _render_portrait_columns(self, portrait_indices, image_locations, dimensions):
+        width, height = dimensions
+        canvas = Image.new("RGB", dimensions, "white")
+
+        for column, image_index in enumerate(portrait_indices):
+            left = round(column * width / PORTRAIT_COLUMN_COUNT)
+            right = round((column + 1) * width / PORTRAIT_COLUMN_COUNT)
+            column_size = (right - left, height)
+            image = self.open_image(image_index, image_locations, column_size, resize=True)
+            canvas.paste(image, (left, 0))
+
+        return canvas
 
     def _get_display_mode(self, settings):
         display_mode = settings.get("displayMode")

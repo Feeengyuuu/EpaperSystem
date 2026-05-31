@@ -132,6 +132,71 @@ def test_refresh_due_plugin_instances_refreshes_missing_image(monkeypatch):
     assert device_config.write_count == 1
 
 
+def test_playlist_refresh_uses_cached_image_without_generating_for_scheduled_display():
+    calls = []
+    tmp_path = make_test_dir("scheduled-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "slow",
+                "name": "Slow Plugin",
+                "plugin_settings": {"id": "slow"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("slow", "Slow Plugin")
+    Image.new("RGB", (2, 1), "black").save(tmp_path / "slow_Slow_Plugin.png")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.size == (2, 1)
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+
+
+def test_playlist_refresh_uses_placeholder_when_scheduled_cache_is_missing():
+    calls = []
+    tmp_path = make_test_dir("scheduled-placeholder")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["resolution"] = [200, 120]
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "missing",
+                "name": "Missing Plugin",
+                "plugin_settings": {"id": "missing"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("missing", "Missing Plugin")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.size == (200, 120)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+
+
 def test_refresh_due_plugin_instances_skips_displayed_plugin(monkeypatch):
     calls = []
     tmp_path = make_test_dir("skip-displayed")
@@ -176,6 +241,53 @@ def test_refresh_due_plugin_instances_skips_displayed_plugin(monkeypatch):
     assert (tmp_path / "other_Other_Plugin.png").exists()
     assert displayed.latest_refresh_time == "2026-05-26T07:00:00+00:00"
     assert playlist.find_plugin("other", "Other Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_refresh_due_plugin_instances_refreshes_displayed_refresh_on_display_only(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("displayed-on-display-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    current_dt = datetime(2026, 5, 26, 16, 0, tzinfo=timezone.utc)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "newspaper",
+                "name": "Displayed News",
+                "plugin_settings": {"id": "displayed", "mediaRotationMode": "rotate"},
+                "refresh": {"scheduled": "15:00"},
+                "latest_refresh_time": "2026-05-26T15:01:00+00:00",
+            },
+            {
+                "plugin_id": "newspaper",
+                "name": "Other News",
+                "plugin_settings": {"id": "other", "mediaRotationMode": "rotate"},
+                "refresh": {"scheduled": "15:00"},
+                "latest_refresh_time": "2026-05-26T15:01:00+00:00",
+            },
+        ],
+    )
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "newspaper_Displayed_News.png")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "newspaper_Other_News.png")
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    displayed = playlist.find_plugin("newspaper", "Displayed News")
+    task = RefreshTask(device_config, display_manager=None)
+    task._refresh_due_plugin_instances(
+        playlist,
+        current_dt,
+        displayed_plugin_instance=displayed,
+    )
+
+    assert calls == ["displayed"]
+    assert displayed.latest_refresh_time == "2026-05-26T16:00:00+00:00"
+    assert playlist.find_plugin("newspaper", "Other News").latest_refresh_time == "2026-05-26T15:01:00+00:00"
     assert device_config.write_count == 1
 
 

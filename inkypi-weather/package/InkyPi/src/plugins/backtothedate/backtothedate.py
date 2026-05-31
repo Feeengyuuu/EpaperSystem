@@ -23,6 +23,7 @@ IMAGE_PATH_RE = re.compile(r"/sites/default/files/images/[^\"'\s<>]+\.(?:jpg|jpe
 REQUEST_HEADERS = {
     "User-Agent": "InkyPi BacktotheDate/1.0 (+https://chineseposters.net/)"
 }
+POSTER_DETAIL_CANDIDATE_LIMIT = 8
 
 
 class _PosterLinkParser(HTMLParser):
@@ -133,7 +134,17 @@ class BacktotheDate(BasePlugin):
     def _select_random_poster(self, settings):
         max_page = self._get_max_page(settings)
         state = self._read_state()
-        last_page_url = state.get("last_page_url")
+        discarded_page_urls = self._discarded_url_keys(
+            state,
+            "discarded_page_urls",
+            legacy_keys=("last_page_url", "last_page_urls"),
+        )
+        discarded_image_urls = self._discarded_url_keys(
+            state,
+            "discarded_image_urls",
+            legacy_keys=("last_image_url", "last_image_urls"),
+        )
+        seen_fallbacks = []
 
         for _ in range(8):
             page = random.randint(0, max_page)
@@ -142,15 +153,28 @@ class BacktotheDate(BasePlugin):
             if not links:
                 continue
 
-            candidates = [link for link in links if link["url"] != last_page_url] or links
+            candidates = [
+                link
+                for link in links
+                if self._normalize_history_url(link.get("url")) not in discarded_page_urls
+            ] or links
             random.shuffle(candidates)
-            for link in candidates[:4]:
+            for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
                 detail_html = self._fetch_text(link["url"])
                 poster = self._extract_poster_data(detail_html, link["url"])
                 if link.get("title") and not poster.get("title"):
                     poster["title"] = link["title"]
                 if poster.get("image_url"):
+                    page_key = self._normalize_history_url(poster.get("page_url"))
+                    image_key = self._normalize_history_url(poster.get("image_url"))
+                    if page_key in discarded_page_urls or image_key in discarded_image_urls:
+                        seen_fallbacks.append(poster)
+                        continue
                     return poster
+
+        if seen_fallbacks:
+            logger.info("BacktotheDate found only previously displayed posters in sampled pages; reusing one fallback.")
+            return random.choice(seen_fallbacks)
 
         raise RuntimeError("No poster image link found on sampled pages.")
 
@@ -336,7 +360,7 @@ class BacktotheDate(BasePlugin):
     def _write_state(self, state):
         path = self._state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(state, indent=2)
+        text = json.dumps(state, indent=2, sort_keys=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         try:
             tmp.write_text(text, encoding="utf-8")
@@ -353,13 +377,69 @@ class BacktotheDate(BasePlugin):
             posters = [posters]
         first = posters[0] if posters else {}
         state = self._read_state()
+        existing_page_urls = self._url_list(state.get("discarded_page_urls"))
+        existing_page_urls.extend(self._url_list(state.get("last_page_url")))
+        existing_page_urls.extend(self._url_list(state.get("last_page_urls")))
+        existing_image_urls = self._url_list(state.get("discarded_image_urls"))
+        existing_image_urls.extend(self._url_list(state.get("last_image_url")))
+        existing_image_urls.extend(self._url_list(state.get("last_image_urls")))
+
         state["last_page_url"] = first.get("page_url")
         state["last_image_url"] = first.get("image_url")
         state["last_title"] = first.get("title")
         state["last_page_urls"] = [poster.get("page_url") for poster in posters if poster.get("page_url")]
         state["last_image_urls"] = [poster.get("image_url") for poster in posters if poster.get("image_url")]
         state["last_displayed_at"] = datetime.now(timezone.utc).isoformat()
+        state["discarded_page_urls"] = self._append_unique_urls(
+            existing_page_urls,
+            state["last_page_urls"],
+        )
+        state["discarded_image_urls"] = self._append_unique_urls(
+            existing_image_urls,
+            state["last_image_urls"],
+        )
         self._write_state(state)
+
+    def _discarded_url_keys(self, state, key, legacy_keys=()):
+        urls = self._url_list(state.get(key))
+        for legacy_key in legacy_keys:
+            urls.extend(self._url_list(state.get(legacy_key)))
+        return {
+            normalized
+            for normalized in (self._normalize_history_url(url) for url in urls)
+            if normalized
+        }
+
+    def _append_unique_urls(self, existing, additions):
+        result = []
+        seen = set()
+        for url in self._url_list(existing) + self._url_list(additions):
+            normalized = self._normalize_history_url(url)
+            if not normalized or normalized in seen:
+                continue
+            result.append(url)
+            seen.add(normalized)
+        return result
+
+    def _url_list(self, value):
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str) and item.strip()]
+        if isinstance(value, str) and value.strip():
+            return [value]
+        return []
+
+    def _normalize_history_url(self, url):
+        if not isinstance(url, str):
+            return ""
+        url = url.strip()
+        if not url:
+            return ""
+
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            path = parsed.path.rstrip("/")
+            return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{path}"
+        return url.rstrip("/")
 
     def _parse_datetime(self, value):
         if not value:

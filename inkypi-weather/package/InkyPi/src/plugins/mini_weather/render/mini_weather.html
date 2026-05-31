@@ -1,7 +1,7 @@
 {% extends "plugin.html" %}
 
 {% block content %}
-<div class="mini-weather-shell theme-{{ theme.mode|default('day') }}{% if not show_icons %} no-icons{% endif %}{% if color_icons %} color-icons{% endif %}{% if weather_background_enabled and weather_background_file %} has-weather-bg weather-bg-{{ weather_background_slug }}{% endif %}"
+<div class="mini-weather-shell theme-{{ theme.mode|default('day') }}{% if not show_icons %} no-icons{% endif %}{% if color_icons %} color-icons{% endif %}{% if weather_background_enabled and weather_background_file %} has-weather-bg weather-bg-{{ weather_background_slug }}{% if weather_background_color %} color-weather-bg{% endif %}{% endif %}"
      data-forecast-days="{{ forecast_days }}"
      style="--theme-background: {{ theme.css.background|default('#ffffff') }}; --theme-panel: {{ theme.css.panel|default('#ffffff') }}; --theme-ink: {{ theme.css.ink|default('#000000') }}; --theme-muted: {{ theme.css.muted|default('#42464a') }}; --theme-rule: {{ theme.css.border|default('#000000') }}; --theme-red: {{ theme.css.red|default('#b02a34') }}; --theme-blue: {{ theme.css.blue|default('#2368a6') }};{% if weather_background_enabled and weather_background_file %} --weather-bg-image: url('{{ weather_background_file }}');{% endif %}">
     <div class="mini-weather-title">{{ title }}</div>

@@ -9,7 +9,7 @@ from plugins.plugin_registry import get_plugin_instance
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
@@ -96,10 +96,7 @@ class RefreshTask:
         while True:
             try:
                 with self.condition:
-                    sleep_time = self.device_config.get_config(
-                        "plugin_cycle_interval_seconds",
-                        default=DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
-                    )
+                    sleep_time = self._get_refresh_wait_seconds()
 
                     # Wait for sleep_time or until notified
                     self.condition.wait(timeout=sleep_time)
@@ -145,9 +142,8 @@ class RefreshTask:
                                 theme_context_to_persist = theme_context
                         else:
                             playlist, plugin_instance = self._determine_next_plugin(playlist_manager, latest_refresh, current_dt)
-                        if plugin_instance:
-                            if refresh_action is None:
-                                refresh_action = PlaylistRefresh(playlist, plugin_instance)
+                            if plugin_instance:
+                                refresh_action = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True)
                                 background_cache_refresh = (playlist, plugin_instance)
 
                     if refresh_action:
@@ -161,8 +157,9 @@ class RefreshTask:
 
                         refresh_info = refresh_action.get_refresh_info()
                         refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
+                        display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
                         # check if image is the same as current image
-                        if image_hash != latest_refresh.image_hash:
+                        if image_hash != latest_refresh.image_hash or display_target_changed:
                             logger.info(f"Updating display. | refresh_info: {refresh_info}")
                             self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
                         else:
@@ -179,7 +176,8 @@ class RefreshTask:
                             self._start_due_plugin_cache_refresh(
                                 playlist,
                                 current_dt,
-                                skip_plugin_instance=displayed_plugin_instance,
+                                skip_plugin_instance=displayed_plugin_instance if background_cache_refresh_force else None,
+                                displayed_plugin_instance=displayed_plugin_instance,
                                 force=background_cache_refresh_force,
                             )
 
@@ -210,6 +208,34 @@ class RefreshTask:
         if self.running:
             with self.condition:
                 self.condition.notify_all()
+
+    def _get_refresh_wait_seconds(self):
+        """Return time until the next playlist tick, aligned to the latest refresh time."""
+        interval = self.device_config.get_config(
+            "plugin_cycle_interval_seconds",
+            default=DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+        )
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError):
+            interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+        if interval <= 0:
+            return DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+
+        try:
+            latest_refresh_dt = self.device_config.get_refresh_info().get_refresh_datetime()
+        except Exception:
+            logger.exception("Could not read latest refresh time for scheduler wait.")
+            return interval
+        if not latest_refresh_dt:
+            return interval
+
+        current_dt = self._get_current_datetime()
+        if latest_refresh_dt.tzinfo is None and current_dt.tzinfo is not None:
+            localize = getattr(current_dt.tzinfo, "localize", None)
+            latest_refresh_dt = localize(latest_refresh_dt) if localize else latest_refresh_dt.replace(tzinfo=current_dt.tzinfo)
+        elapsed = (current_dt - latest_refresh_dt).total_seconds()
+        return max(0, min(interval, interval - elapsed))
 
     def _get_current_datetime(self):
         """Retrieves the current datetime based on the device's configured timezone."""
@@ -309,8 +335,8 @@ class RefreshTask:
         with self.config_write_lock:
             self.device_config.write_config()
 
-    def _start_due_plugin_cache_refresh(self, playlist, current_dt, skip_plugin_instance=None, force=False):
-        """Start a non-blocking cache refresh for due non-displayed plugins."""
+    def _start_due_plugin_cache_refresh(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False):
+        """Start a non-blocking cache refresh for due plugin instances."""
         if not self.running:
             return
         if not self.cache_refresh_lock.acquire(blocking=False):
@@ -323,6 +349,7 @@ class RefreshTask:
                     playlist,
                     current_dt,
                     skip_plugin_instance=skip_plugin_instance,
+                    displayed_plugin_instance=displayed_plugin_instance,
                     force=force,
                 )
             finally:
@@ -331,12 +358,12 @@ class RefreshTask:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, force=False):
+    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False):
         """Refresh cached images for due plugin instances in the active playlist.
 
         This is intended for the non-blocking background cache pass. Display
-        rotation remains random, and the displayed plugin is refreshed
-        synchronously before this pass starts.
+        rotation uses the latest cached image first, then this pass updates
+        stale caches without blocking the next visible playlist tick.
         """
         updated = False
         for plugin_instance in list(playlist.plugins):
@@ -348,7 +375,11 @@ class RefreshTask:
                 plugin_instance.get_image_path(),
             )
             image_missing = not os.path.exists(plugin_image_path)
-            if not force and not image_missing and not plugin_instance.should_refresh(current_dt):
+            refresh_on_display = (
+                self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
+                and _refresh_on_display(plugin_instance)
+            )
+            if not force and not image_missing and not plugin_instance.should_refresh(current_dt) and not refresh_on_display:
                 continue
 
             try:
@@ -390,6 +421,16 @@ class RefreshTask:
         return (
             plugin_instance.plugin_id == other_plugin_instance.plugin_id
             and plugin_instance.name == other_plugin_instance.name
+        )
+
+    def _display_target_changed(self, latest_refresh_info, next_refresh_info):
+        if not latest_refresh_info:
+            return True
+        return (
+            latest_refresh_info.refresh_type != next_refresh_info.get("refresh_type")
+            or latest_refresh_info.plugin_id != next_refresh_info.get("plugin_id")
+            or latest_refresh_info.playlist != next_refresh_info.get("playlist")
+            or latest_refresh_info.plugin_instance != next_refresh_info.get("plugin_instance")
         )
     
     def log_system_stats(self):
@@ -454,10 +495,11 @@ class PlaylistRefresh(RefreshAction):
         plugin_instance: The plugin instance to refresh.
     """
 
-    def __init__(self, playlist, plugin_instance, force=False):
+    def __init__(self, playlist, plugin_instance, force=False, display_cached_only=False):
         self.playlist = playlist
         self.plugin_instance = plugin_instance
         self.force = force
+        self.display_cached_only = display_cached_only
 
     def get_refresh_info(self):
         """Return refresh metadata as a dictionary."""
@@ -477,6 +519,27 @@ class PlaylistRefresh(RefreshAction):
         # Determine the file path for the plugin's image
         plugin_image_path = os.path.join(device_config.plugin_image_dir, self.plugin_instance.get_image_path())
         image_missing = not os.path.exists(plugin_image_path)
+
+        if self.display_cached_only and not self.force:
+            if not image_missing:
+                logger.info(
+                    "Using cached plugin instance image for scheduled display. | "
+                    f"plugin_instance: {self.plugin_instance.name}."
+                )
+                try:
+                    with Image.open(plugin_image_path) as img:
+                        return img.copy()
+                except Exception:
+                    logger.exception(
+                        "Cached plugin image could not be loaded; using placeholder. | "
+                        f"plugin_instance: {self.plugin_instance.name}."
+                    )
+
+            logger.info(
+                "Plugin instance image missing for scheduled display; using placeholder. | "
+                f"plugin_instance: '{self.plugin_instance.name}'"
+            )
+            return self._placeholder_image(device_config)
 
         # Check if a refresh is needed based on the plugin instance's criteria
         refresh_on_display = _refresh_on_display(self.plugin_instance)
@@ -499,3 +562,61 @@ class PlaylistRefresh(RefreshAction):
                 image = img.copy()
 
         return image
+
+    def _placeholder_image(self, device_config):
+        dimensions = self._display_dimensions(device_config)
+        width, height = dimensions
+        image = Image.new("RGB", dimensions, "white")
+        draw = ImageDraw.Draw(image)
+        border = max(12, min(width, height) // 24)
+        draw.rectangle((border, border, width - border, height - border), outline="black", width=3)
+        draw.line((border, height // 2, width - border, height // 2), fill=(180, 180, 180), width=2)
+
+        title_font = self._font(max(20, min(width, height) // 12), bold=True)
+        subtitle_font = self._font(max(12, min(width, height) // 28))
+        title = "CACHE PENDING"
+        subtitle = f"{self.plugin_instance.name} will refresh in background"
+        subtitle = self._fit_text(draw, subtitle, subtitle_font, width - (border * 3))
+        self._draw_centered(draw, title, width // 2, height // 2 - 28, title_font, "black")
+        self._draw_centered(draw, subtitle, width // 2, height // 2 + 24, subtitle_font, (70, 70, 70))
+        return image
+
+    def _display_dimensions(self, device_config):
+        if hasattr(device_config, "get_resolution"):
+            try:
+                return tuple(int(value) for value in device_config.get_resolution())
+            except Exception:
+                logger.exception("Could not read display resolution from device config.")
+
+        resolution = None
+        if hasattr(device_config, "get_config"):
+            resolution = device_config.get_config("resolution", default=None)
+        if not resolution:
+            resolution = (800, 480)
+        return tuple(int(value) for value in resolution)
+
+    def _font(self, size, bold=False):
+        paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        ]
+        for path in paths:
+            try:
+                if os.path.exists(path):
+                    return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def _draw_centered(self, draw, text, x, y, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        draw.text((x - (bbox[2] - bbox[0]) // 2, y - (bbox[3] - bbox[1]) // 2), text, font=font, fill=fill)
+
+    def _fit_text(self, draw, text, font, max_width):
+        if draw.textlength(text, font=font) <= max_width:
+            return text
+        candidate = text
+        while candidate and draw.textlength(candidate + "...", font=font) > max_width:
+            candidate = candidate[:-1].rstrip()
+        return f"{candidate}..." if candidate else text[:1]

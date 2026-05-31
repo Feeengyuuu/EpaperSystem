@@ -1,7 +1,18 @@
 {
     "name": "InkyPi",
+    "display_type": "epd7in3e",
+    "resolution": [
+        800,
+        480
+    ],
     "orientation": "horizontal",
     "inverted_image": false,
+    "image_settings": {
+        "saturation": 1.0,
+        "brightness": 1.0,
+        "sharpness": 1.0,
+        "contrast": 1.0
+    },
     "scheduler_sleep_time": 60,
     "startup": true
 }

@@ -16,8 +16,35 @@ import time
 logger = logging.getLogger(__name__)
 
 WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GRAY = (170, 170, 170)
+
+# Color tokens follow docs/color-ui-guidelines.md: warm paper, process black
+# linework, and limited vintage comic process-color accents.
+PAPER = (255, 248, 220)  # 25Y PANTONE 100, vintage comic paper ground
+PANEL = (255, 253, 240)
+PANEL_BLUE = (235, 246, 255)  # 25B PANTONE 304 family, paper-tinted
+PANEL_GOLD = (255, 239, 176)  # 50Y PANTONE 101 family, paper-tinted
+PANEL_GREEN = (235, 249, 236)  # 50Y-25B PANTONE 358 family, paper-tinted
+PANEL_ORANGE = (255, 239, 222)  # 50Y-25R PANTONE 156 family, paper-tinted
+INK = (8, 8, 8)  # PROCESS BLACK
+MUTED = (126, 112, 82)  # 50Y-25R-25B PANTONE 465 family
+RULE = (190, 177, 134)
+ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
+ACCENT_CYAN = (0, 163, 173)  # 50Y-100B PANTONE 327 family
+ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
+ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
+CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
+MALACHITE = (0, 152, 82)  # 100Y-100B PANTONE 354 family
+ACCENT_PURPLE = (98, 58, 160)  # 100R-100B PANTONE 266 family
+BROWN = (137, 88, 56)  # 100Y-50R-50B PANTONE 470 family
+FILAMENT_GRAY = (188, 177, 147)  # 50Y-25R-25B PANTONE 465 family, lightened
+
+
+def _blend(foreground, background, amount):
+    amount = max(0.0, min(1.0, float(amount)))
+    return tuple(
+        int(background[index] + (foreground[index] - background[index]) * amount)
+        for index in range(3)
+    )
 
 MQTT_PROTOCOL_NAME = b"MQTT"
 MQTT_PROTOCOL_LEVEL = 4
@@ -322,7 +349,9 @@ class BambuMonitor(BasePlugin):
             path = self._camera_file(host, status.get("serial") or "printer")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with Image.open(BytesIO(frame)) as img:
-                img.convert("RGB").save(path, "JPEG", quality=85)
+                img.verify()
+            with open(path, "wb") as f:
+                f.write(frame)
             status["camera_path"] = path
             status["camera_updated_at"] = datetime.now().strftime("%H:%M")
             status["camera_failure_count"] = 0
@@ -420,123 +449,163 @@ class BambuMonitor(BasePlugin):
 
     def _render_status(self, status, dimensions):
         width, height = dimensions
-        img = Image.new("RGB", (width, height), BLACK)
+        img = Image.new("RGB", (width, height), PAPER)
         draw = ImageDraw.Draw(img)
 
         margin = 22
-        draw.text((margin, 12), "BAMBU MONITOR", fill=WHITE, font=self._font(25, True))
-        draw.text((width - margin, 18), status.get("updated_at", ""), fill=WHITE, font=self._font(13, True), anchor="ra")
-        draw.line((margin, 48, width - margin, 48), fill=WHITE, width=2)
+        self._draw_halftone(draw, (width - 190, 8, width - 28, 50), ACCENT_BLUE, PAPER, 9, 1)
+        self._draw_halftone(draw, (22, height - 46, 178, height - 12), CINNABAR, PAPER, 10, 1)
+        title_box = (margin, 12, margin + 234, 44)
+        draw.rectangle((title_box[0] + 3, title_box[1] + 3, title_box[2] + 3, title_box[3] + 3), fill=ACCENT_ORANGE)
+        draw.rectangle(title_box, fill=ACCENT_GOLD)
+        draw.rectangle(title_box, outline=INK, width=2)
+        draw.text((margin + 10, 16), "BAMBU MONITOR", fill=INK, font=self._font(23, True))
+        draw.text((width - margin, 18), status.get("updated_at", ""), fill=MUTED, font=self._font(13, True), anchor="ra")
+        draw.line((margin, 52, width - margin, 52), fill=INK, width=2)
+        draw.line((margin, 56, width - margin, 56), fill=ACCENT_BLUE, width=2)
 
         left = (margin, 64, 292, 326)
         camera = (310, 64, width - margin, 326)
         thermals = (margin, 344, 370, height - margin)
         ams = (388, 344, width - margin, height - margin)
-        self._draw_box(draw, left, "PRINT")
-        self._draw_box(draw, camera, "LIVE VIEW")
-        self._draw_box(draw, thermals, "THERMALS")
-        self._draw_box(draw, ams, "AMS")
+        self._draw_box(draw, left, "PRINT", ACCENT_GOLD, PANEL_GOLD)
+        self._draw_box(draw, camera, "LIVE VIEW", ACCENT_BLUE, PANEL_BLUE)
+        self._draw_box(draw, thermals, "THERMALS", CINNABAR, PANEL_ORANGE)
+        self._draw_box(draw, ams, "AMS", MALACHITE, PANEL_GREEN)
 
         self._draw_print_panel(draw, left, status)
-        self._draw_camera_panel(draw, camera, status)
+        self._draw_camera_panel(img, draw, camera, status)
         self._draw_thermal_panel(draw, thermals, status)
         self._draw_ams_panel(draw, ams, status)
 
         source = str(status.get("source") or "").upper()
         if source:
-            draw.text((width - margin, height - 16), source, fill=WHITE, font=self._font(11, True), anchor="ra")
+            source_font = self._font(11, True)
+            source_w = self._text_width(draw, source, source_font)
+            source_box = (width - margin - source_w - 18, height - 29, width - margin, height - 12)
+            source_color = self._source_color(source)
+            draw.rectangle(source_box, fill=source_color, outline=INK, width=1)
+            draw.text(
+                (source_box[0] + 9, height - 28),
+                source,
+                fill=self._contrast_text(source_color),
+                font=source_font,
+            )
         warning = status.get("warning")
         if warning:
-            self._draw_fit_text(draw, str(warning), margin + 8, height - 37, width - margin - 80, 12, False)
+            self._draw_fit_text(draw, str(warning), margin + 8, height - 39, width - margin - 90, 12, False, CINNABAR)
 
-        return self._threshold_image(img)
+        return img
 
     def _draw_print_panel(self, draw, box, status):
         left, top, right, bottom = box
         state = self._state_label(status.get("state"))
+        state_color = self._status_color(status.get("state"), status.get("error"))
         state_font = self._fit_font(draw, state, right - left - 28, 36, True, 20)
-        draw.text((left + 14, top + 42), state, fill=WHITE, font=state_font)
+        state_box = (left + 14, top + 38, right - 14, top + 76)
+        draw.rectangle(state_box, fill=state_color, outline=INK, width=2)
+        state_text_box = draw.textbbox((0, 0), state, font=state_font)
+        state_y = state_box[1] + 5 - state_text_box[1]
+        draw.text((left + 24, state_y), state, fill=self._contrast_text(state_color), font=state_font)
         stage = self._display_stage(status.get("stage"), status.get("host"))
-        self._draw_fit_text(draw, stage, left + 16, top + 84, right - left - 32, 14, False)
+        self._draw_fit_text(draw, stage, left + 16, top + 84, right - left - 32, 14, False, MUTED)
 
         progress = int(max(0, min(100, self._num(status.get("progress"), 0))))
         bar = (left + 16, top + 110, right - 16, top + 142)
-        draw.rectangle(bar, outline=WHITE, width=2)
+        draw.rectangle(bar, fill=WHITE, outline=INK, width=2)
         fill_w = int((bar[2] - bar[0] - 4) * progress / 100)
         if fill_w > 0:
-            draw.rectangle((bar[0] + 2, bar[1] + 2, bar[0] + 2 + fill_w, bar[3] - 2), fill=WHITE)
-        draw.text((right - 18, top + 152), f"{progress}%", fill=WHITE, font=self._font(26, True), anchor="ra")
+            fill_box = (bar[0] + 2, bar[1] + 2, bar[0] + 2 + fill_w, bar[3] - 2)
+            draw.rectangle(fill_box, fill=state_color)
+            for x in range(fill_box[0] + 8, fill_box[2], 12):
+                draw.line((x, fill_box[1], x - 8, fill_box[3]), fill=INK, width=1)
+        draw.text((right - 18, top + 152), f"{progress}%", fill=INK, font=self._font(26, True), anchor="ra")
 
         remaining = self._remaining_text(status.get("remaining_minutes"))
-        draw.text((left + 16, top + 190), remaining, fill=WHITE, font=self._font(16, True))
+        remaining_box = (left + 16, top + 187, right - 16, top + 211)
+        draw.rectangle(remaining_box, fill=PANEL, outline=INK, width=1)
+        draw.rectangle((remaining_box[0], remaining_box[1], remaining_box[0] + 7, remaining_box[3]), fill=ACCENT_BLUE)
+        draw.text((left + 29, top + 190), remaining, fill=INK, font=self._font(16, True))
         file_name = str(status.get("file") or "No active job")
-        self._draw_wrapped_fit_text(draw, file_name, left + 16, top + 224, right - left - 32, 2, 14, True)
+        self._draw_wrapped_fit_text(draw, file_name, left + 16, top + 224, right - left - 32, 2, 14, True, INK)
 
-    def _draw_camera_panel(self, draw, box, status):
+    def _draw_camera_panel(self, canvas, draw, box, status):
         left, top, right, bottom = box
         image_box = (left + 14, top + 40, right - 14, bottom - 16)
         camera_img = self._load_camera_image(status)
         if camera_img:
-            prepared = self._prepare_camera_image(
+            prepared = self._fit_camera_image(
                 camera_img,
                 (image_box[2] - image_box[0], image_box[3] - image_box[1]),
                 CAMERA_FRAME_CENTERING,
             )
-            draw.rectangle(image_box, fill=BLACK)
-            draw.bitmap((image_box[0], image_box[1]), prepared.convert("1"), fill=WHITE)
-            draw.rectangle(image_box, outline=WHITE, width=1)
+            draw.rectangle(image_box, fill=INK)
+            canvas.paste(prepared, (image_box[0], image_box[1]))
+            draw.rectangle(image_box, outline=INK, width=2)
             label = status.get("camera_updated_at")
             if label:
-                draw.text((right - 18, top + 13), f"FRAME {label}", fill=WHITE, font=self._font(10, True), anchor="ra")
+                draw.text((right - 18, top + 13), f"FRAME {label}", fill=ACCENT_BLUE, font=self._font(10, True), anchor="ra")
             return
 
         waiting_img = self._load_waiting_image()
         if waiting_img:
-            prepared = self._prepare_camera_image(waiting_img, (image_box[2] - image_box[0], image_box[3] - image_box[1]))
-            draw.rectangle(image_box, fill=BLACK)
-            draw.bitmap((image_box[0], image_box[1]), prepared.convert("1"), fill=WHITE)
-            draw.rectangle(image_box, outline=WHITE, width=1)
-            draw.text((right - 18, top + 13), "WAITING", fill=WHITE, font=self._font(10, True), anchor="ra")
+            prepared = self._fit_camera_image(waiting_img, (image_box[2] - image_box[0], image_box[3] - image_box[1]))
+            draw.rectangle(image_box, fill=INK)
+            canvas.paste(prepared, (image_box[0], image_box[1]))
+            draw.rectangle(image_box, outline=INK, width=2)
+            draw.text((right - 18, top + 13), "WAITING", fill=ACCENT_ORANGE, font=self._font(10, True), anchor="ra")
             return
 
-        draw.rectangle(image_box, outline=WHITE, width=1)
+        draw.rectangle(image_box, fill=_blend(ACCENT_BLUE, PANEL_BLUE, 0.08), outline=INK, width=2)
+        self._draw_halftone(draw, image_box, ACCENT_BLUE, PANEL_BLUE, 18, 1)
         draw.text(
             ((image_box[0] + image_box[2]) // 2, (image_box[1] + image_box[3]) // 2 - 10),
             "NO CAMERA FRAME",
-            fill=WHITE,
+            fill=ACCENT_BLUE,
             font=self._font(18, True),
             anchor="mm",
         )
         error = status.get("camera_error")
         if error:
-            self._draw_fit_text(draw, error[:60], image_box[0] + 12, image_box[3] - 26, image_box[2] - image_box[0] - 24, 11, False)
+            self._draw_fit_text(
+                draw,
+                error[:60],
+                image_box[0] + 12,
+                image_box[3] - 26,
+                image_box[2] - image_box[0] - 24,
+                11,
+                False,
+                CINNABAR,
+            )
 
     def _draw_thermal_panel(self, draw, box, status):
         left, top, right, bottom = box
         rows = [
-            ("NOZZLE", self._temp_text(status.get("nozzle"), status.get("nozzle_target"))),
-            ("BED", self._temp_text(status.get("bed"), status.get("bed_target"))),
-            ("CHAMBER", self._temp_text(status.get("chamber"), None)),
-            ("FAN", self._percent_text(status.get("fan"))),
-            ("SPEED", self._speed_text(status.get("speed"))),
+            ("NOZZLE", self._temp_text(status.get("nozzle"), status.get("nozzle_target")), CINNABAR),
+            ("BED", self._temp_text(status.get("bed"), status.get("bed_target")), ACCENT_ORANGE),
+            ("CHAMBER", self._temp_text(status.get("chamber"), None), ACCENT_GOLD),
+            ("FAN", self._percent_text(status.get("fan")), ACCENT_BLUE),
+            ("SPEED", self._speed_text(status.get("speed")), MALACHITE),
         ]
         y = top + 36
-        for label, value in rows:
-            draw.text((left + 16, y - 1), label, fill=GRAY, font=self._font(11, True))
-            draw.text((right - 16, y - 2), value, fill=WHITE, font=self._font(13, True), anchor="ra")
+        for label, value, accent in rows:
+            draw.rectangle((left + 16, y + 1, left + 25, y + 10), fill=accent, outline=INK, width=1)
+            draw.text((left + 32, y - 1), label, fill=MUTED, font=self._font(11, True))
+            draw.text((right - 16, y - 2), value, fill=INK, font=self._font(13, True), anchor="ra")
             y += 16
             if y < bottom - 12:
-                draw.line((left + 14, y - 3, right - 14, y - 3), fill=WHITE, width=1)
+                draw.line((left + 14, y - 3, right - 14, y - 3), fill=RULE, width=1)
 
     def _draw_ams_panel(self, draw, box, status):
         left, top, right, bottom = box
         error = status.get("error")
         error_text = "OK" if not error or str(error) == "0" else f"ERR {error}"
-        draw.text((right - 16, top + 11), error_text, fill=WHITE, font=self._font(13, True), anchor="ra")
+        error_color = MALACHITE if error_text == "OK" else CINNABAR
+        draw.text((right - 16, top + 11), error_text, fill=error_color, font=self._font(13, True), anchor="ra")
 
         trays = status.get("ams") or []
         if not trays:
-            draw.text((left + 16, top + 44), "AMS: not reported", fill=WHITE, font=self._font(16))
+            draw.text((left + 16, top + 44), "AMS: not reported", fill=INK, font=self._font(16))
             return
 
         x = left + 16
@@ -547,23 +616,27 @@ class BambuMonitor(BasePlugin):
             if x + tray_w > right - 10:
                 break
             tray_box = (x, y, x + tray_w, bottom - 18)
-            draw.rectangle(tray_box, outline=WHITE, width=3 if tray.get("active") else 1)
-            draw.text((x + 7, y + 7), str(tray.get("id") or "?"), fill=WHITE, font=self._font(13, True))
+            swatch = self._filament_swatch_color(tray.get("color")) or FILAMENT_GRAY
+            tray_fill = _blend(swatch, PANEL, 0.10)
+            outline = MALACHITE if tray.get("active") else INK
+            draw.rectangle(tray_box, fill=tray_fill, outline=outline, width=3 if tray.get("active") else 1)
+            draw.rectangle((tray_box[0], tray_box[1], tray_box[2], tray_box[1] + 5), fill=swatch)
+            draw.text((x + 7, y + 9), str(tray.get("id") or "?"), fill=INK, font=self._font(13, True))
             if tray.get("active"):
                 tag = (x + tray_w - 30, y + 7, x + tray_w - 7, y + 20)
-                draw.rectangle(tag, fill=WHITE)
-                draw.text(((tag[0] + tag[2]) // 2, tag[1] + 1), "USE", fill=BLACK, font=self._font(9, True), anchor="ma")
+                draw.rectangle(tag, fill=MALACHITE, outline=INK, width=1)
+                draw.text(((tag[0] + tag[2]) // 2, tag[1] + 1), "USE", fill=PAPER, font=self._font(9, True), anchor="ma")
 
             remain = tray.get("remain")
             detail = str(tray.get("type") or "FIL").upper()
             if self._is_nonnegative(remain):
                 detail = f"{detail} {remain}%"
-            self._draw_fit_text(draw, detail, x + 7, y + 24, tray_w - 14, 11, True)
+            self._draw_fit_text(draw, detail, x + 7, y + 27, tray_w - 14, 11, True, INK)
 
             color = tray.get("color")
             chip = (x + 7, y + 41, x + 18, y + 52)
             self._draw_filament_color_chip(draw, chip, color)
-            self._draw_fit_text(draw, self._filament_color_label(color), x + 23, y + 39, tray_w - 30, 10, False)
+            self._draw_fit_text(draw, self._filament_color_label(color), x + 23, y + 39, tray_w - 30, 10, False, MUTED)
             x += tray_w + 8
 
     def _render_setup_required(self, dimensions, host, serial, has_code):
@@ -643,33 +716,43 @@ class BambuMonitor(BasePlugin):
         except Exception as exc:
             logger.warning(f"Failed to write Bambu cache: {exc}")
 
-    def _draw_box(self, draw, box, title=None):
-        draw.rectangle(box, outline=WHITE, width=2)
+    def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
+        left, top, right, bottom = [int(value) for value in box]
+        draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=ACCENT_ORANGE)
+        draw.rectangle((left, top, right, bottom), fill=fill)
+        draw.rectangle((left, top, right, bottom), outline=INK, width=2)
+        draw.rectangle((left, top, right, top + 7), fill=accent)
         if title:
-            draw.text((box[0] + 12, box[1] + 8), title, fill=WHITE, font=self._font(15, True))
+            draw.text((left + 12, top + 12), title, fill=INK, font=self._font(15, True))
 
-    def _draw_fit_text(self, draw, text, x, y, max_width, start_size, bold=False):
+    def _draw_halftone(self, draw, bounds, color, paper, spacing, radius):
+        left, top, right, bottom = [int(value) for value in bounds]
+        dot = _blend(color, paper, 0.22)
+        for y in range(top, bottom, max(4, int(spacing))):
+            offset = (spacing // 2) if ((y // max(1, spacing)) % 2) else 0
+            for x in range(left + offset, right, max(4, int(spacing))):
+                draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=dot)
+
+    def _draw_fit_text(self, draw, text, x, y, max_width, start_size, bold=False, fill=INK):
         font = self._fit_font(draw, text, max_width, start_size, bold, 9)
-        draw.text((x, y), str(text), fill=WHITE, font=font)
+        draw.text((x, y), str(text), fill=fill, font=font)
 
     def _draw_filament_color_chip(self, draw, box, color):
-        rgb = self._parse_filament_color(color)
-        if not rgb:
-            draw.rectangle(box, outline=WHITE)
-            draw.line((box[0], box[1], box[2], box[3]), fill=WHITE, width=1)
+        swatch = self._filament_swatch_color(color)
+        if not swatch:
+            draw.rectangle(box, fill=PANEL, outline=INK)
+            draw.line((box[0], box[1], box[2], box[3]), fill=CINNABAR, width=1)
             return
 
-        r, g, b = rgb
-        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        fill = WHITE if luminance >= 170 else BLACK
-        draw.rectangle(box, outline=WHITE, fill=fill)
+        draw.rectangle(box, outline=INK, fill=swatch)
+        luminance = self._luma(swatch)
         if 55 <= luminance < 210:
-            pattern = BLACK if fill == WHITE else WHITE
+            pattern = INK if luminance > 150 else PAPER
             left, top, right, bottom = box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2
             for y in range(top, bottom + 1, 4):
                 draw.line((left, y, right, y), fill=pattern, width=1)
 
-    def _draw_wrapped_fit_text(self, draw, text, x, y, max_width, max_lines, start_size, bold=False):
+    def _draw_wrapped_fit_text(self, draw, text, x, y, max_width, max_lines, start_size, bold=False, fill=INK):
         words = str(text).replace("_", " ").split()
         lines = []
         current = ""
@@ -687,7 +770,7 @@ class BambuMonitor(BasePlugin):
         if current and len(lines) < max_lines:
             lines.append(current)
         for idx, line in enumerate(lines[:max_lines]):
-            self._draw_fit_text(draw, line, x, y + idx * (start_size + 4), max_width, start_size, bold)
+            self._draw_fit_text(draw, line, x, y + idx * (start_size + 4), max_width, start_size, bold, fill)
 
     def _load_camera_image(self, status):
         image = status.get("camera_image")
@@ -712,19 +795,22 @@ class BambuMonitor(BasePlugin):
             logger.warning(f"Failed to load Bambu waiting image: {exc}")
             return None
 
-    def _prepare_camera_image(self, image, size, centering=(0.5, 0.5)):
-        image = ImageOps.fit(image.convert("L"), size, method=Image.Resampling.LANCZOS, centering=centering)
-        image = ImageOps.autocontrast(image, cutoff=2)
-        image = image.point(lambda p: 255 if p >= 112 else 0, mode="1")
-        return image.convert("L")
+    def _fit_camera_image(self, image, size, centering=(0.5, 0.5)):
+        return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=centering)
 
     def _demo_camera_image(self):
-        img = Image.new("RGB", (640, 360), (20, 20, 20))
+        img = Image.new("RGB", (640, 360), PANEL_BLUE)
         draw = ImageDraw.Draw(img)
-        draw.rectangle((40, 90, 600, 280), outline=(240, 240, 240), width=8)
-        draw.rectangle((170, 130, 470, 245), outline=(240, 240, 240), width=5)
-        draw.line((80, 300, 560, 300), fill=(240, 240, 240), width=10)
-        draw.ellipse((285, 160, 355, 230), fill=(240, 240, 240))
+        self._draw_halftone(draw, (420, 22, 608, 132), ACCENT_BLUE, PANEL_BLUE, 16, 2)
+        draw.rectangle((0, 286, 640, 360), fill=_blend(ACCENT_BLUE, PANEL_BLUE, 0.12))
+        draw.rectangle((40, 90, 600, 280), fill=PANEL, outline=INK, width=8)
+        draw.rectangle((170, 130, 470, 245), fill=PANEL_GOLD, outline=INK, width=5)
+        draw.rectangle((232, 100, 408, 122), fill=MALACHITE, outline=INK, width=3)
+        draw.line((80, 300, 560, 300), fill=INK, width=10)
+        draw.rectangle((72, 292, 168, 308), fill=ACCENT_ORANGE, outline=INK, width=3)
+        draw.rectangle((472, 292, 568, 308), fill=ACCENT_BLUE, outline=INK, width=3)
+        draw.ellipse((285, 160, 355, 230), fill=ACCENT_GOLD, outline=INK, width=4)
+        draw.rectangle((292, 214, 348, 242), fill=CINNABAR, outline=INK, width=3)
         return img
 
     def _font(self, size, bold=False):
@@ -760,9 +846,6 @@ class BambuMonitor(BasePlugin):
             size -= 1
         return self._font(min_size, bold)
 
-    @staticmethod
-    def _threshold_image(img):
-        return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
     @staticmethod
     def _bool_setting(settings, key, default=False):
@@ -795,6 +878,39 @@ class BambuMonitor(BasePlugin):
         except (TypeError, ValueError):
             return False
 
+    @classmethod
+    def _status_color(cls, state, error=0):
+        if error and str(error) != "0":
+            return CINNABAR
+        normalized = cls._state_label(state)
+        if normalized in ("PRINTING", "RUNNING", "DONE"):
+            return MALACHITE
+        if normalized in ("PAUSED", "CONFIG"):
+            return ACCENT_ORANGE
+        if normalized in ("ERROR", "FAILED", "OFFLINE"):
+            return CINNABAR
+        return ACCENT_BLUE
+
+    @staticmethod
+    def _source_color(source):
+        normalized = str(source or "").strip().lower()
+        if normalized in ("error", "offline"):
+            return CINNABAR
+        if normalized in ("setup", "stale", "cache"):
+            return ACCENT_ORANGE
+        if normalized == "demo":
+            return ACCENT_GOLD
+        return ACCENT_BLUE
+
+    @staticmethod
+    def _luma(rgb):
+        r, g, b = rgb
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    @classmethod
+    def _contrast_text(cls, fill):
+        return INK if cls._luma(fill) > 150 else PAPER
+
     @staticmethod
     def _parse_filament_color(color):
         raw = str(color or "").strip().lstrip("#")
@@ -804,6 +920,49 @@ class BambuMonitor(BasePlugin):
             return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
         except ValueError:
             return None
+
+    @classmethod
+    def _filament_swatch_color(cls, color):
+        rgb = cls._parse_filament_color(color)
+        if not rgb:
+            return None
+
+        r, g, b = rgb
+        max_channel = max(rgb)
+        min_channel = min(rgb)
+        spread = max_channel - min_channel
+        if max_channel < 45:
+            return INK
+        if min_channel > 215 and spread < 35:
+            return WHITE
+        if spread < 30:
+            return FILAMENT_GRAY
+
+        hue, saturation, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        degrees = hue * 360
+        if saturation < 0.18:
+            if value > 0.75:
+                return WHITE
+            if value < 0.25:
+                return INK
+            return FILAMENT_GRAY
+        if degrees < 15 or degrees >= 345:
+            return CINNABAR
+        if degrees < 45:
+            return ACCENT_ORANGE
+        if degrees < 75:
+            return ACCENT_GOLD
+        if degrees < 165:
+            return MALACHITE
+        if degrees < 195:
+            return ACCENT_CYAN
+        if degrees < 255:
+            return ACCENT_BLUE
+        if degrees < 295:
+            return ACCENT_PURPLE
+        if degrees < 345:
+            return CINNABAR
+        return BROWN
 
     @classmethod
     def _filament_color_label(cls, color):

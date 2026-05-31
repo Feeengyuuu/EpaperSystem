@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -22,11 +23,28 @@ from utils.theme_utils import get_theme_context, get_theme_palette
 logger = logging.getLogger(__name__)
 
 DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-POETRYDB_RANDOM_URL = "https://poetrydb.org/random"
-REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Poem/1.0"}
-CACHE_SCHEMA_VERSION = "daily-word-poem-v2"
+WIKIQUOTE_QOTD_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quote_of_the_day"
+WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quotes/{date}"
+WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
+WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
+REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
+CACHE_SCHEMA_VERSION = "daily-word-quote-v3"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
+WIKIQUOTE_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 DISPLAY_TRANSLATION = str.maketrans({
     "\u201c": '"',
     "\u201d": '"',
@@ -36,15 +54,6 @@ DISPLAY_TRANSLATION = str.maketrans({
     "\u2013": "-",
     "\u2026": "...",
 })
-COMMON_ENGLISH_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "had", "has", "have", "he", "her", "his", "i", "in", "is", "it", "me",
-    "my", "not", "of", "on", "or", "our", "she", "so", "that", "the", "their",
-    "them", "there", "they", "this", "to", "was", "we", "were", "what", "when",
-    "where", "who", "will", "with", "you", "your", "first", "second", "third",
-    "line",
-}
-
 LOCAL_WORDS = [
     {
         "word": "luminous",
@@ -100,7 +109,7 @@ LOCAL_WORDS = [
         "phonetic": "/el-uh-kwuhnt/",
         "part_of_speech": "adjective",
         "definition": "Expressing meaning clearly and gracefully.",
-        "example": "The short poem was quiet but eloquent.",
+        "example": "The short quote was quiet but eloquent.",
     },
     {
         "word": "pragmatic",
@@ -233,7 +242,7 @@ LOCAL_WORDS = [
         "phonetic": "/rev-uh-ree/",
         "part_of_speech": "noun",
         "definition": "A pleasant state of dreamy thought.",
-        "example": "The poem drew him into a brief reverie.",
+        "example": "The quote drew him into a brief reverie.",
     },
     {
         "word": "cadence",
@@ -258,46 +267,126 @@ LOCAL_WORDS = [
     },
 ]
 
-FALLBACK_POEMS = [
+LOCAL_QUOTES = [
     {
-        "title": "Hope is the thing with feathers",
-        "author": "Emily Dickinson",
-        "lines": [
-            "Hope is the thing with feathers",
-            "That perches in the soul,",
-            "And sings the tune without the words,",
-            "And never stops at all,",
-        ],
+        "text": "The unexamined life is not worth living.",
+        "author": "Socrates",
+        "topic": "reflection",
     },
     {
-        "title": "A Red, Red Rose",
-        "author": "Robert Burns",
-        "lines": [
-            "O my Luve is like a red, red rose",
-            "That's newly sprung in June;",
-            "O my Luve is like the melodie",
-            "That's sweetly played in tune.",
-        ],
+        "text": "I think, therefore I am.",
+        "author": "Rene Descartes",
+        "topic": "reason",
     },
     {
-        "title": "The Lake Isle of Innisfree",
-        "author": "W. B. Yeats",
-        "lines": [
-            "I will arise and go now, and go to Innisfree,",
-            "And a small cabin build there, of clay and wattles made;",
-            "Nine bean-rows will I have there, a hive for the honey-bee,",
-            "And live alone in the bee-loud glade.",
-        ],
-    },
-    {
-        "title": "Sonnet 18",
+        "text": "Brevity is the soul of wit.",
         "author": "William Shakespeare",
-        "lines": [
-            "Shall I compare thee to a summer's day?",
-            "Thou art more lovely and more temperate:",
-            "Rough winds do shake the darling buds of May,",
-            "And summer's lease hath all too short a date;",
-        ],
+        "topic": "clarity",
+    },
+    {
+        "text": "Knowledge is power.",
+        "author": "Francis Bacon",
+        "topic": "learning",
+    },
+    {
+        "text": "Well begun is half done.",
+        "author": "Aristotle",
+        "topic": "action",
+    },
+    {
+        "text": "No great mind has ever existed without a touch of madness.",
+        "author": "Aristotle",
+        "topic": "genius",
+    },
+    {
+        "text": "Difficulties strengthen the mind, as labor does the body.",
+        "author": "Seneca",
+        "topic": "resilience",
+    },
+    {
+        "text": "Luck is what happens when preparation meets opportunity.",
+        "author": "Seneca",
+        "topic": "preparation",
+    },
+    {
+        "text": "Waste no more time arguing what a good person should be. Be one.",
+        "author": "Marcus Aurelius",
+        "topic": "character",
+    },
+    {
+        "text": "The obstacle is the way.",
+        "author": "Marcus Aurelius",
+        "topic": "resilience",
+    },
+    {
+        "text": "A journey of a thousand miles begins with a single step.",
+        "author": "Lao Tzu",
+        "topic": "progress",
+    },
+    {
+        "text": "Nature does not hurry, yet everything is accomplished.",
+        "author": "Lao Tzu",
+        "topic": "patience",
+    },
+    {
+        "text": "It does not matter how slowly you go, as long as you do not stop.",
+        "author": "Confucius",
+        "topic": "persistence",
+    },
+    {
+        "text": "Our greatest glory is not in never falling, but in rising every time we fall.",
+        "author": "Confucius",
+        "topic": "resilience",
+    },
+    {
+        "text": "Do what you can, with what you have, where you are.",
+        "author": "Theodore Roosevelt",
+        "topic": "action",
+    },
+    {
+        "text": "The only thing we have to fear is fear itself.",
+        "author": "Franklin D. Roosevelt",
+        "topic": "courage",
+    },
+    {
+        "text": "Genius is one percent inspiration and ninety-nine percent perspiration.",
+        "author": "Thomas Edison",
+        "topic": "work",
+    },
+    {
+        "text": "Turn your wounds into wisdom.",
+        "author": "Oprah Winfrey",
+        "topic": "growth",
+    },
+    {
+        "text": "Stay hungry, stay foolish.",
+        "author": "Steve Jobs",
+        "topic": "curiosity",
+    },
+    {
+        "text": "Simplicity is the ultimate sophistication.",
+        "author": "Leonardo da Vinci",
+        "topic": "simplicity",
+    },
+    {
+        "text": "Imagination is more important than knowledge.",
+        "author": "Albert Einstein",
+        "topic": "creativity",
+    },
+    {
+        "text": "What you do speaks so loudly that I cannot hear what you say.",
+        "author": "Ralph Waldo Emerson",
+        "topic": "integrity",
+    },
+    {
+        "text": "The secret of getting ahead is getting started.",
+        "author": "Mark Twain",
+        "topic": "momentum",
+    },
+    {
+        "text": "It always seems impossible until it is done.",
+        "author": "Nelson Mandela",
+        "topic": "resolve",
     },
 ]
 
@@ -308,16 +397,9 @@ def _enabled(value: Any, default: bool = False) -> bool:
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
 
 
-def _parse_int(value: Any, default: int, low: int, high: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(low, min(high, parsed))
-
-
 def _clean_text(value: Any, max_len: int = 280) -> str:
-    text = str(value or "").translate(DISPLAY_TRANSLATION)
+    text = html.unescape(str(value or "")).translate(DISPLAY_TRANSLATION)
+    text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:max_len]
 
@@ -385,8 +467,8 @@ class DailyWordPoem(BasePlugin):
     def _daily_payload(self, settings, now: datetime) -> dict[str, Any]:
         date_key = now.strftime("%Y-%m-%d")
         word_entry = self._daily_word(settings, now)
-        poem_line_limit = _parse_int(settings.get("poem_line_limit"), 4, 2, 8)
-        cache_key = self._cache_key(date_key, word_entry["word"], settings, poem_line_limit)
+        quote_entry = self._daily_quote(settings, now)
+        cache_key = self._cache_key(date_key, word_entry["word"], settings)
         cache_file = self._cache_dir() / "daily.json"
         cached = _safe_json_load(cache_file, {})
 
@@ -398,8 +480,8 @@ class DailyWordPoem(BasePlugin):
             "cache_key": cache_key,
             "date": date_key,
             "word": word_entry,
-            "poem": self._fallback_poem(now, poem_line_limit),
-            "sources": ["local word list", "local poem fallback"],
+            "quote": quote_entry,
+            "sources": ["local word list", quote_entry.get("source") or "local golden sentences"],
             "warnings": [],
             "from_cache": False,
             "generated_at": now.isoformat(),
@@ -415,59 +497,63 @@ class DailyWordPoem(BasePlugin):
                 logger.warning("Daily word definition fetch failed: %s", exc)
                 payload["warnings"].append("definition offline")
 
-        if _enabled(settings.get("fetch_poem"), default=True):
+        if (
+            _enabled(settings.get("fetch_wikiquote"), default=True)
+            and quote_entry.get("source") != "custom golden sentences"
+        ):
             try:
-                poem = self._fetch_poem(poem_line_limit)
-                if poem:
-                    payload["poem"] = poem
-                    payload["sources"][1] = "PoetryDB"
+                wikiquote = self._fetch_wikiquote_quote(date_key)
+                if wikiquote:
+                    payload["quote"] = wikiquote
+                    payload["sources"][1] = wikiquote.get("source") or "Wikiquote QOTD"
             except Exception as exc:
-                logger.warning("Daily poem fetch failed: %s", exc)
-                payload["warnings"].append("poem offline")
+                logger.warning("Wikiquote quote of the day fetch failed: %s", exc)
+                payload["warnings"].append("quote offline")
 
         _safe_json_write(cache_file, payload)
         return payload
 
     def _write_daily_word_context(self, payload: dict[str, Any], now: datetime) -> None:
         word = payload.get("word") if isinstance(payload, dict) else {}
-        poem = payload.get("poem") if isinstance(payload, dict) else {}
+        quote = payload.get("quote") if isinstance(payload, dict) else {}
         if not isinstance(word, dict):
             word = {}
-        if not isinstance(poem, dict):
-            poem = {}
+        if not isinstance(quote, dict):
+            quote = {}
 
         word_text = _clean_text(word.get("word"), 60)
         definition = _clean_text(word.get("definition"), 180)
-        poem_title = _clean_text(poem.get("title"), 100)
-        poem_author = _clean_text(poem.get("author"), 80)
-        poem_lines = [_clean_text(line, 120) for line in (poem.get("lines") or []) if _clean_text(line)]
+        quote_text = _clean_text(quote.get("text"), 180)
+        quote_author = _clean_text(quote.get("author"), 80)
 
         summary_parts = []
         if word_text:
             summary_parts.append(f"Daily word: {word_text}")
-        if poem_title:
-            byline = f" by {poem_author}" if poem_author else ""
-            summary_parts.append(f"poem: {poem_title}{byline}")
+        if quote_text:
+            byline = f" by {quote_author}" if quote_author else ""
+            summary_parts.append(f"quote: {quote_text}{byline}")
 
         write_context(
             "daily_word_poem",
             {
-                "kind": "word_poem",
-                "source": "Daily Word Poem",
+                "kind": "word_quote",
+                "source": "Daily Word & Quote",
                 "summary": "; ".join(summary_parts)[:180],
                 "facts": [
                     {"label": "word", "value": word_text},
                     {"label": "definition", "value": definition},
-                    {"label": "poem", "value": poem_title},
+                    {"label": "quote", "value": quote_text},
                 ],
                 "items": [{
                     "word": word_text,
                     "part_of_speech": _clean_text(word.get("part_of_speech"), 40),
                     "definition": definition,
                     "example": _clean_text(word.get("example"), 120),
-                    "title": poem_title,
-                    "author": poem_author,
-                    "line": poem_lines[0] if poem_lines else "",
+                    "quote": quote_text,
+                    "author": quote_author,
+                    "topic": _clean_text(quote.get("topic"), 40),
+                    "quote_source": _clean_text(quote.get("source"), 80),
+                    "quote_source_url": _clean_text(quote.get("source_url"), 180),
                 }],
                 "sources": payload.get("sources") or [],
                 "from_cache": bool(payload.get("from_cache")),
@@ -476,15 +562,15 @@ class DailyWordPoem(BasePlugin):
             ttl_seconds=24 * 60 * 60,
         )
 
-    def _cache_key(self, date_key: str, word: str, settings: dict[str, Any], poem_line_limit: int) -> str:
+    def _cache_key(self, date_key: str, word: str, settings: dict[str, Any]) -> str:
         raw = "\n".join([
             CACHE_SCHEMA_VERSION,
             date_key,
             word.lower(),
-            str(poem_line_limit),
             str(_enabled(settings.get("fetch_dictionary"), default=True)),
-            str(_enabled(settings.get("fetch_poem"), default=True)),
+            str(_enabled(settings.get("fetch_wikiquote"), default=True)),
             settings.get("word_list") or "",
+            settings.get("quote_list") or "",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -563,72 +649,146 @@ class DailyWordPoem(BasePlugin):
             "example": example,
         }
 
-    def _fetch_poem(self, line_limit: int) -> dict[str, Any]:
+    def _fetch_wikiquote_quote(self, date_key: str) -> dict[str, str]:
         session = get_http_session()
-        response = session.get(POETRYDB_RANDOM_URL, timeout=10, headers=REQUEST_HEADERS)
+        urls = [
+            WIKIQUOTE_QOTD_DATE_URL.format(date=quote(date_key)),
+            WIKIQUOTE_QOTD_URL,
+        ]
+        last_error: Exception | None = None
+
+        for url in urls:
+            try:
+                response = session.get(url, timeout=10, headers=REQUEST_HEADERS)
+                if response.status_code == 404:
+                    last_error = RuntimeError(f"Wikiquote API returned 404 for {url}")
+                    continue
+                response.raise_for_status()
+                return self._parse_wikiquote_quote(response.json())
+            except Exception as exc:
+                last_error = exc
+
+        try:
+            return self._fetch_wikiquote_day_quote(date_key, session)
+        except Exception as exc:
+            if last_error:
+                raise RuntimeError(f"{last_error}; official Wikiquote date page failed: {exc}") from exc
+            raise
+
+    def _fetch_wikiquote_day_quote(self, date_key: str, session=None) -> dict[str, str]:
+        session = session or get_http_session()
+        day_slug = self._wikiquote_day_slug(date_key)
+        raw_url = WIKIQUOTE_DAY_RAW_URL.format(day_slug=quote(day_slug, safe="_"))
+        source_url = WIKIQUOTE_DAY_PAGE_URL.format(day_slug=quote(day_slug, safe="_"))
+
+        response = session.get(raw_url, timeout=10, headers=REQUEST_HEADERS)
         response.raise_for_status()
-        return self._parse_poem_response(response.json(), line_limit)
+        return self._parse_wikiquote_day_raw(response.text, source_url, date_key)
 
-    def _parse_poem_response(self, data: Any, line_limit: int) -> dict[str, Any]:
-        if not isinstance(data, list) or not data:
-            raise RuntimeError("PoetryDB response is empty.")
+    def _wikiquote_day_slug(self, date_key: str) -> str:
+        date_value = datetime.strptime(date_key, "%Y-%m-%d")
+        month = WIKIQUOTE_MONTH_NAMES[date_value.month - 1]
+        return f"{month}_{date_value.day}"
 
-        poem = data[0]
-        lines = self._select_poem_lines(poem.get("lines") or [], line_limit)
+    def _parse_wikiquote_quote(self, data: Any) -> dict[str, str]:
+        if isinstance(data, list) and data:
+            data = data[0]
+        if not isinstance(data, dict):
+            raise RuntimeError("Wikiquote response is not a JSON object.")
 
-        if not lines:
-            raise RuntimeError("PoetryDB response has no poem lines.")
+        quote_text = _clean_text(data.get("quote") or data.get("text") or data.get("content"), 220)
+        author = _clean_text(data.get("author") or data.get("attribution") or "Wikiquote", 80)
+        featured_date = _clean_text(data.get("featured_date") or data.get("date"), 20)
+        if not quote_text:
+            raise RuntimeError("Wikiquote response has no quote text.")
 
         return {
-            "title": _clean_text(poem.get("title") or "Untitled", 100),
-            "author": _clean_text(poem.get("author") or "Unknown", 80),
-            "lines": lines,
+            "text": quote_text,
+            "author": author or "Wikiquote",
+            "topic": "Wikiquote QOTD",
+            "featured_date": featured_date,
+            "source": "Wikiquote QOTD",
+            "source_url": "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day",
         }
 
-    def _select_poem_lines(self, raw_lines, line_limit: int) -> list[str]:
-        candidates = []
-        for raw_line in raw_lines:
-            line = _clean_text(raw_line, 120)
+    def _parse_wikiquote_day_raw(self, data: Any, source_url: str, date_key: str) -> dict[str, str]:
+        if not isinstance(data, str) or not data.strip():
+            raise RuntimeError("Wikiquote date page is empty.")
+
+        raw = html.unescape(data)
+        raw = raw.split("{{QoDfooter", 1)[0]
+        raw = re.sub(r"\[\[(?:File|Image):[^\]]+\]\]", " ", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\{\{[^{}]*\}\}", " ", raw)
+        raw = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", raw)
+        raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
+
+        paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", raw, flags=re.IGNORECASE | re.DOTALL)
+        if paragraphs:
+            parts = [_clean_text(re.sub(r"<[^>]+>", " ", part), 260) for part in paragraphs]
+        else:
+            text = re.sub(r"<[^>]+>", " ", raw)
+            text = re.sub(r"^\s*(?:\{\||\|\}|!|\|[-}]?|\|\s*align=.*)$", " ", text, flags=re.MULTILINE)
+            parts = [_clean_text(part, 260) for part in text.splitlines()]
+
+        parts = [part for part in parts if part and not part.lower().startswith("image")]
+        joined = "\n".join(parts)
+        match = re.search(r"(?P<quote>.+?)\s*~\s*(?P<author>[^~\n]+)\s*~", joined, flags=re.DOTALL)
+        if match:
+            quote_text = _clean_text(match.group("quote"), 220)
+            author = _clean_text(match.group("author"), 80)
+        else:
+            quote_text = _clean_text(parts[0] if parts else "", 220)
+            author = "Wikiquote"
+
+        if not quote_text:
+            raise RuntimeError("Wikiquote date page has no quote text.")
+
+        return {
+            "text": quote_text,
+            "author": author or "Wikiquote",
+            "topic": "Wikiquote QOTD",
+            "featured_date": date_key,
+            "source": "Wikiquote QOTD",
+            "source_url": source_url,
+        }
+
+    def _daily_quote(self, settings, now: datetime) -> dict[str, str]:
+        custom_quotes = self._custom_quotes(settings.get("quote_list"))
+        quotes = custom_quotes or LOCAL_QUOTES
+        quote = quotes[now.date().toordinal() % len(quotes)]
+        return {
+            "text": _clean_text(quote.get("text"), 220),
+            "author": _clean_text(quote.get("author") or "Unknown", 80),
+            "topic": _clean_text(quote.get("topic") or "golden sentence", 40),
+            "source": _clean_text(quote.get("source") or ("custom golden sentences" if custom_quotes else "local golden sentences"), 80),
+            "source_url": _clean_text(quote.get("source_url"), 180),
+        }
+
+    def _custom_quotes(self, text: Any) -> list[dict[str, str]]:
+        quotes = []
+        seen = set()
+        for line in str(text or "").splitlines():
+            line = _clean_text(line, 260)
             if not line:
                 continue
-            if self._poem_line_is_displayable(line):
-                candidates.append(line)
-                if len(candidates) >= line_limit:
-                    return candidates
-            elif candidates:
-                candidates = []
-        return candidates[:line_limit]
 
-    def _poem_line_is_displayable(self, line: str) -> bool:
-        if not line:
-            return False
+            parts = re.split(r"\s+-\s+|\s+--\s+", line, maxsplit=1)
+            quote_text = _clean_text(parts[0], 220)
+            author = _clean_text(parts[1], 80) if len(parts) > 1 else "Custom"
+            if not quote_text:
+                continue
 
-        letters = re.findall(r"[A-Za-z]+", line)
-        if not letters:
-            return False
-
-        letter_text = "".join(letters)
-        upper = re.sub(r"[^A-Za-z ]", "", line).strip().upper()
-        if len(letter_text) >= 6 and letter_text.isupper():
-            return False
-        if re.match(r"^(CANTO|BOOK|CHAPTER|PART|STANZA)\b", upper):
-            return False
-        if re.fullmatch(r"[IVXLCDM]+", upper.replace(" ", "")):
-            return False
-
-        tokens = [token.lower() for token in letters]
-        common_count = sum(1 for token in tokens if token in COMMON_ENGLISH_WORDS)
-        if len(tokens) >= 2 and common_count == 0:
-            return False
-        return True
-
-    def _fallback_poem(self, now: datetime, line_limit: int) -> dict[str, Any]:
-        poem = FALLBACK_POEMS[now.date().toordinal() % len(FALLBACK_POEMS)]
-        return {
-            "title": poem["title"],
-            "author": poem["author"],
-            "lines": poem["lines"][:line_limit],
-        }
+            key = quote_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            quotes.append({
+                "text": quote_text,
+                "author": author or "Custom",
+                "topic": "custom",
+                "source": "custom golden sentences",
+            })
+        return quotes
 
     def _render(self, dimensions, settings, payload, now, theme_context=None):
         width, height = dimensions
@@ -679,9 +839,9 @@ class DailyWordPoem(BasePlugin):
         )
 
         draw.line((divider_x, header_y + 12, divider_x, bottom - 8), fill=faint, width=2)
-        self._render_poem_panel(
+        self._render_quote_panel(
             draw,
-            payload.get("poem") or {},
+            payload.get("quote") or {},
             (right_x, header_y + max(14, height // 32), right_width, bottom),
             font_family,
             text,
@@ -760,46 +920,51 @@ class DailyWordPoem(BasePlugin):
             example_font = self._load_font(font_family, 17)
             self._draw_wrapped(draw, example, (x, y), example_font, max_width, bottom - 28, muted)
 
-    def _render_poem_panel(self, draw, poem, box, font_family, text, accent, muted):
+    def _render_quote_panel(self, draw, quote, box, font_family, text, accent, muted):
         x, y, max_width, bottom = box
         label_font = self._load_font(font_family, 15, "bold")
-        title_font = self._load_font(font_family, 24, "bold")
         author_font = self._load_font(font_family, 17)
+        topic_font = self._load_font(font_family, 13, "bold")
 
-        draw.text((x, y), "ENGLISH POEM", font=label_font, fill=accent)
-        y += self._line_height(draw, label_font) + 8
+        draw.text((x, y), "GOLDEN SENTENCE", font=label_font, fill=accent)
+        y += self._line_height(draw, label_font) + max(12, int((bottom - y) * 0.035))
 
-        title = self._fit_single_line(draw, _clean_text(poem.get("title") or "Untitled", 100), title_font, max_width)
-        draw.text((x, y), title, font=title_font, fill=text)
-        y += self._line_height(draw, title_font) + 4
+        quote_text = _clean_text(quote.get("text") or "Keep going.", 220)
+        quoted = f'"{quote_text}"'
+        topic = _clean_text(quote.get("topic"), 40).upper()
+        author_reserved = self._line_height(draw, author_font)
+        topic_reserved = self._line_height(draw, topic_font) if topic else 0
+        reserved_height = author_reserved + topic_reserved + 28
+        available_height = max(70, bottom - y - reserved_height)
+        quote_font = self._fit_quote_font(draw, quoted, font_family, max_width, available_height)
+        line_height = self._quote_line_height(draw, quote_font)
 
-        author = "- " + _clean_text(poem.get("author") or "Unknown", 80)
+        for line in self._wrap_text(draw, quoted, quote_font, max_width):
+            if y + line_height > bottom - reserved_height:
+                break
+            draw.text((x, y), line, font=quote_font, fill=text)
+            y += line_height
+        y += max(8, line_height // 5)
+
+        author = "- " + _clean_text(quote.get("author") or "Unknown", 80)
         draw.text((x, y), self._fit_single_line(draw, author, author_font, max_width), font=author_font, fill=muted)
-        y += self._line_height(draw, author_font) + 18
+        y += self._line_height(draw, author_font) + 8
 
-        lines = [_clean_text(line, 120) for line in poem.get("lines") or [] if _clean_text(line)]
-        available_height = max(40, bottom - y - 26)
-        poem_font = self._fit_poem_font(draw, lines, font_family, max_width, available_height)
-        line_height = self._line_height(draw, poem_font)
+        if topic and y + self._line_height(draw, topic_font) <= bottom - 22:
+            draw.text((x, y), self._fit_single_line(draw, topic, topic_font, max_width), font=topic_font, fill=accent)
 
-        for raw_line in lines:
-            for line in self._wrap_text(draw, raw_line, poem_font, max_width):
-                if y + line_height > bottom - 22:
-                    return
-                draw.text((x, y), line, font=poem_font, fill=text)
-                y += line_height
-            y += max(2, line_height // 7)
-
-    def _fit_poem_font(self, draw, lines, font_family, max_width, max_height):
-        for size in range(24, 13, -1):
+    def _fit_quote_font(self, draw, text, font_family, max_width, max_height):
+        max_size = min(92, max(42, int(max_height * 0.62)))
+        for size in range(max_size, 16, -1):
             font = self._load_font(font_family, size)
-            wrapped = []
-            for line in lines:
-                wrapped.extend(self._wrap_text(draw, line, font, max_width))
-            needed = len(wrapped) * self._line_height(draw, font) + max(0, len(lines) - 1) * 3
+            wrapped = self._wrap_text(draw, text, font, max_width)
+            needed = len(wrapped) * self._quote_line_height(draw, font)
             if needed <= max_height:
                 return font
-        return self._load_font(font_family, 14)
+        return self._load_font(font_family, 16)
+
+    def _quote_line_height(self, draw, font):
+        return max(12, int(self._text_height(draw, "Ag", font) * 1.18))
 
     def _fit_wrapped_text(self, draw, text, font_family, max_width, max_height, max_size, min_size):
         for size in range(max_size, min_size - 1, -1):

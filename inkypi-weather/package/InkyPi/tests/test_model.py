@@ -91,6 +91,9 @@ class TestPlaylist:
 
         assert playlist.get_next_plugin().name == "One"
         assert playlist.current_plugin_index == 0
+        assert playlist.plugin_rotation_recent_history == [
+            playlist._plugin_rotation_key(playlist.plugins[0])
+        ]
 
     def test_get_next_plugin_uses_every_plugin_before_repeating(self, monkeypatch):
         playlist = Playlist(
@@ -134,6 +137,91 @@ class TestPlaylist:
 
         assert selected_before_write == "Three"
         assert remaining_after_write == ["Two", "One"]
+
+    def test_get_next_plugin_uses_remaining_random_pool_before_refill(self, monkeypatch):
+        playlist = Playlist(
+            "Test Playlist",
+            "00:00",
+            "24:00",
+            plugins=[
+                {"plugin_id": "one", "name": "One", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "two", "name": "Two", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "three", "name": "Three", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "four", "name": "Four", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "five", "name": "Five", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "six", "name": "Six", "plugin_settings": {}, "refresh": {"interval": 300}},
+            ],
+            current_plugin_index=4,
+        )
+        playlist.plugin_rotation_pool = [
+            playlist._plugin_rotation_key(plugin) for plugin in playlist.plugins
+        ]
+        playlist.plugin_rotation_queue = [
+            playlist._plugin_rotation_key(playlist.plugins[2]),
+            playlist._plugin_rotation_key(playlist.plugins[5]),
+        ]
+
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        plugin = playlist.get_next_plugin()
+
+        assert plugin.name == "Three"
+        assert playlist.plugin_rotation_queue == [
+            playlist._plugin_rotation_key(playlist.plugins[5]),
+        ]
+        assert playlist.plugin_rotation_recent_history == [
+            playlist._plugin_rotation_key(playlist.plugins[2]),
+        ]
+
+    def test_get_next_plugin_refills_random_pool_after_all_plugins_displayed(self, monkeypatch):
+        playlist = Playlist(
+            "Test Playlist",
+            "00:00",
+            "24:00",
+            plugins=[
+                {"plugin_id": "one", "name": "One", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "two", "name": "Two", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "three", "name": "Three", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "four", "name": "Four", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "five", "name": "Five", "plugin_settings": {}, "refresh": {"interval": 300}},
+                {"plugin_id": "six", "name": "Six", "plugin_settings": {}, "refresh": {"interval": 300}},
+            ],
+            current_plugin_index=5,
+            plugin_rotation_queue=[],
+            plugin_rotation_recent_history=[
+                '["six","Six"]',
+                '["five","Five"]',
+                '["four","Four"]',
+                '["three","Three"]',
+                '["two","Two"]',
+            ],
+        )
+
+        def fake_shuffle(items):
+            items[:] = [
+                playlist._plugin_rotation_key(playlist.plugins[5]),
+                playlist._plugin_rotation_key(playlist.plugins[4]),
+                playlist._plugin_rotation_key(playlist.plugins[3]),
+                playlist._plugin_rotation_key(playlist.plugins[2]),
+                playlist._plugin_rotation_key(playlist.plugins[1]),
+                playlist._plugin_rotation_key(playlist.plugins[0]),
+            ]
+
+        monkeypatch.setattr("src.model.random.shuffle", fake_shuffle)
+
+        plugin = playlist.get_next_plugin()
+
+        assert plugin.name == "Five"
+        assert playlist.plugin_rotation_queue == [
+            playlist._plugin_rotation_key(playlist.plugins[5]),
+            playlist._plugin_rotation_key(playlist.plugins[3]),
+            playlist._plugin_rotation_key(playlist.plugins[2]),
+            playlist._plugin_rotation_key(playlist.plugins[1]),
+            playlist._plugin_rotation_key(playlist.plugins[0]),
+        ]
+        assert playlist.plugin_rotation_recent_history == [
+            playlist._plugin_rotation_key(playlist.plugins[4])
+        ]
 
 
 class TestPluginInstance:

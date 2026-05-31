@@ -10,6 +10,7 @@
 **/tmp/
 **/mock_display_output/
 **/pytest-cache-files-*/
+**/.pytest-tmp-*/
 **/.pytest_cache/
 **/__pycache__/
 *.py[cod]

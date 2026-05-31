@@ -71,8 +71,8 @@ def test_hungry_pet_hunts_and_eats_its_catch():
     assert plugin._apply_autonomous_care(state, settings, now)
 
     assert state["activity"] == "hunting"
-    assert state["message"] == "Autonomy: hunted a small meal and ate it."
-    assert state["stats"]["food"] >= 40
+    assert state["message"] == "Autonomy: hunted a meal and stored the leftovers."
+    assert state["stats"]["food"] > 12
     assert state["stats"]["energy"] < 70
     assert state["last_hunt"]["food"]
 
@@ -82,3 +82,48 @@ def test_hungry_pet_hunts_and_eats_its_catch():
     assert summary["mood_id"] == "hunting"
     assert summary["activity"] == "\u51fa\u53bb\u72e9\u730e"
     assert "\u72e9\u730e" in summary["message"]
+
+
+def test_ai_context_includes_daily_visual_pose_library():
+    plugin = _plugin()
+    now = datetime(2026, 5, 30, 15, 0, tzinfo=timezone.utc)
+    settings = {"language": "zh-Hans", "_theme_context": {"mode": "night"}}
+    state = {
+        "pet_id": "visual-mochi",
+        "name": "Mochi",
+        "born_at": now.isoformat(),
+        "last_tick_at": now.isoformat(),
+        "event_index": 8,
+        "message": "Had six seconds of brave little chaos.",
+        "activity": "tiny zoomies",
+        "mood": "zoomies",
+        "mood_hint": "zoomies",
+        "stats": {
+            "food": 70,
+            "happiness": 88,
+            "energy": 80,
+            "cleanliness": 82,
+            "health": 95,
+            "xp": 42,
+            "level": 2,
+            "age_days": 1,
+        },
+        "daily_life": {"date": now.strftime("%Y-%m-%d"), "theme": "mischief"},
+    }
+
+    life = plugin._life_context(state, settings, now, state["message"])
+    visual = life["visual_state"]
+
+    assert life["daily_life"]["motion_theme"]
+    assert life["daily_life"]["body_focus"]
+    assert life["daily_life"]["visual_motif"]
+    assert visual["identity"]["front_legs"] == "short stubby front legs with compact paws"
+    assert visual["current_pose"]["key"] == "zoomies"
+    assert visual["current_pose"]["source"] == "activity"
+    assert visual["render_style"]["mode"] == "night"
+    assert len(visual["pose_library"]) >= 20
+
+    variation = plugin._dialogue_variation(state, now, life, {"available": False, "sources": []}, [])
+    assert "visual_state" in variation["must_consider"]
+    assert variation["pose_focus"]
+    assert variation["daily_motion_theme"]

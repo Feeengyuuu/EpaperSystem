@@ -2,8 +2,8 @@
 
 This package is prepared for:
 
-- Raspberry Pi Zero 2 W
-- Waveshare 7.5 inch black/white e-paper HAT, `800x480`
+- Raspberry Pi with 40-pin GPIO
+- Waveshare 7.3 inch Spectra 6 / E6 full-color e-paper HAT, `800x480`
 - InkyPi with the built-in Weather plugin
 - OpenWeatherMap key stored in `InkyPi/.env`
 
@@ -46,7 +46,7 @@ bash install_on_pi.sh
 The installer uses:
 
 ```bash
-sudo bash install/install.sh -W epd7in5_V2
+sudo bash install/install.sh -W epd7in3e
 ```
 
 InkyPi then runs as the `inkypi` systemd service. With WiFi available, the Weather plugin can fetch and refresh weather data automatically on its schedule.

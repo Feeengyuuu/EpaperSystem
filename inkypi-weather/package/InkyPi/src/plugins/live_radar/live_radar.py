@@ -393,6 +393,7 @@ class LiveRadar(BasePlugin):
                     large=True,
                     show_snapshot=show_snapshots,
                     snapshot_cache_seconds=snapshot_cache_seconds,
+                    avatar_cache_seconds=avatar_cache_seconds,
                 )
             overflow_cards = self._top_live_overflow_cards(live_cards, len(live_visible), live_queue_count)
             if overflow_cards:
@@ -442,14 +443,26 @@ class LiveRadar(BasePlugin):
         self._draw_text_right(draw, footer, width - margin, footer_y, small_font, theme["muted"])
         return image
 
-    def _draw_card(self, image, draw, box, card, theme, large, show_snapshot=True, snapshot_cache_seconds=90):
+    def _draw_card(
+        self,
+        image,
+        draw,
+        box,
+        card,
+        theme,
+        large,
+        show_snapshot=True,
+        snapshot_cache_seconds=90,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+    ):
         x, y, w, h = box
         status = card["status"]
         fill, ink, muted, line = self._card_palette(status, theme)
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=8, fill=fill, outline=line, width=2)
 
-        accent_w = 6 if large else 4
-        self._rounded_rectangle(draw, (x, y, x + accent_w, y + h), radius=4, fill=ink, outline=ink, width=0)
+        accent_w = 2 if large else 1
+        accent_x = x + max(1, accent_w)
+        draw.line((accent_x, y + 8, accent_x, y + h - 8), fill=ink, width=accent_w)
         snapshot_h = 0
         if show_snapshot and large and status == "live":
             snapshot_h = self._draw_snapshot_header(
@@ -469,7 +482,7 @@ class LiveRadar(BasePlugin):
 
         pad = 14 if large else 10
         if not large:
-            platform_w = 30
+            platform_w = 24
             pill_y = y + (5 if snapshot_h else 8)
             self._draw_platform_badge(
                 draw,
@@ -495,7 +508,7 @@ class LiveRadar(BasePlugin):
                 text_w = max(20, w - 2 * pad)
                 text_y = y + snapshot_h + 6
             else:
-                text_x = x + pad + platform_w + 8
+                text_x = x + pad + platform_w + 7
                 text_w = max(20, w - (text_x - x) - status_w - pad - 8)
                 text_y = y + 7
             owner_text = self._card_display_name(card)
@@ -509,9 +522,10 @@ class LiveRadar(BasePlugin):
             return
 
         pill_y = y + 10
+        platform_w = 28
         self._draw_platform_badge(
             draw,
-            (x + pad, pill_y, x + pad + 42, pill_y + 23),
+            (x + pad, pill_y, x + pad + platform_w, pill_y + 23),
             card["platform"],
             fill=ink,
             ink=fill,
@@ -538,16 +552,36 @@ class LiveRadar(BasePlugin):
                 outline=muted,
             )
 
-        text_w = max(20, w - 2 * pad)
         text_top = y + (snapshot_h + 7 if snapshot_h else 42)
         text_bottom = y + h - pad
+        text_x = x + pad
+        text_w = max(20, w - 2 * pad)
+        if status == "live" and snapshot_h:
+            platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
+            avatar_size = max(28, min(36, int(text_bottom - text_top - 2)))
+            avatar_x = x + pad
+            avatar_y = text_bottom - avatar_size
+            self._draw_avatar(
+                image,
+                draw,
+                (avatar_x, avatar_y, avatar_size),
+                card,
+                platform,
+                fill,
+                ink,
+                ink,
+                avatar_cache_seconds,
+                show_fav_badge=False,
+            )
+            text_x = avatar_x + avatar_size + 9
+            text_w = max(20, x + w - pad - text_x)
         owner_text = self._card_display_name(card)
         body_font = self._fit_font(draw, owner_text, text_w, 16 if snapshot_h else 22, 10, "bold")
         owner = self._fit_text(draw, owner_text, body_font, text_w)
-        draw.text((x + pad, text_top), owner, fill=ink, font=body_font)
+        draw.text((text_x, text_top), owner, fill=ink, font=body_font)
 
         meta_text = self._meta_text(card)
-        meta_font = self._fit_font(draw, meta_text, text_w, 8 if snapshot_h else 11, 7, "bold")
+        meta_font = self._fit_font(draw, meta_text, text_w, 10 if snapshot_h else 12, 8, "bold")
         meta_h = self._line_height(meta_font)
         meta_y = max(text_top + self._line_height(body_font) + 2, text_bottom - meta_h)
         meta = self._fit_text(draw, meta_text, meta_font, text_w)
@@ -567,10 +601,10 @@ class LiveRadar(BasePlugin):
         )
         line_h = self._line_height(title_font) + 1
         for line in title_lines:
-            draw.text((x + pad, title_y), line, fill=muted, font=title_font)
+            draw.text((text_x, title_y), line, fill=muted, font=title_font)
             title_y += line_h
 
-        draw.text((x + pad, meta_y), meta, fill=ink, font=meta_font)
+        draw.text((text_x, meta_y), meta, fill=ink, font=meta_font)
 
     def _draw_snapshot_header(self, image, draw, area, card, theme, large, cache_seconds):
         x, y, w, h = area
@@ -597,11 +631,8 @@ class LiveRadar(BasePlugin):
         if snapshot:
             try:
                 draw.rectangle((left, top, right, bottom), fill=fill)
-                snapshot = ImageOps.contain(snapshot, size, method=self._resampling_filter())
-                snapshot = ImageOps.autocontrast(ImageOps.grayscale(snapshot)).convert("RGB")
-                paste_x = left + (size[0] - snapshot.width) // 2
-                paste_y = top + (size[1] - snapshot.height) // 2
-                image.paste(snapshot, (paste_x, paste_y))
+                snapshot = ImageOps.fit(snapshot.convert("RGB"), size, method=self._resampling_filter())
+                image.paste(snapshot, (left, top))
             except Exception as exc:
                 logger.warning("LiveRadar cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
                 self._draw_snapshot_placeholder(draw, (left, top, right, bottom), card, theme, large)
@@ -614,13 +645,13 @@ class LiveRadar(BasePlugin):
     def _draw_snapshot_placeholder(self, draw, box, card, theme, large):
         left, top, right, bottom = box
         if theme.get("mode") == "light":
-            fill = (222, 222, 222)
-            stroke = (180, 180, 180)
-            text_fill = (80, 80, 80)
+            fill = (255, 255, 255)
+            stroke = (0, 0, 0)
+            text_fill = (0, 0, 0)
         else:
-            fill = (38, 38, 38)
-            stroke = (92, 92, 92)
-            text_fill = (185, 185, 185)
+            fill = (0, 0, 0)
+            stroke = (255, 255, 255)
+            text_fill = (255, 255, 255)
         draw.rectangle((left, top, right, bottom), fill=fill)
         step = 20 if large else 14
         for offset in range(-int(bottom - top), int(right - left), step):
@@ -776,7 +807,7 @@ class LiveRadar(BasePlugin):
         line = theme["line"]
         accent = theme["live_fill"] if theme.get("mode") == "dark" else theme["live_ink"]
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
-        draw.line((x + 5, y + 5, x + 5, y + h - 5), fill=accent, width=2)
+        draw.line((x + 5, y + 5, x + 5, y + h - 5), fill=accent, width=1)
 
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
         pad = 10
@@ -785,7 +816,7 @@ class LiveRadar(BasePlugin):
         avatar_y = y + max(3, int((h - avatar_size) / 2))
         self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
 
-        platform_w = min(20, max(18, int(h * 0.8)))
+        platform_w = min(17, max(15, int(h * 0.64)))
         platform_h = min(16, max(13, h - 7))
         platform_y = y + max(3, int((h - platform_h) / 2))
         right = x + w - pad
@@ -797,7 +828,7 @@ class LiveRadar(BasePlugin):
             ink=ink,
             outline=muted,
         )
-        right -= platform_w + 5
+        right -= platform_w + 4
         if card.get("is_fav"):
             icon_size = min(15, max(12, h - 7))
             self._draw_icon_badge(
@@ -808,7 +839,7 @@ class LiveRadar(BasePlugin):
                 ink=ink,
                 outline=muted,
             )
-            right -= icon_size + 5
+            right -= icon_size + 4
 
         text_x = avatar_x + avatar_size + 8
         text_w = max(24, right - text_x)
@@ -822,7 +853,7 @@ class LiveRadar(BasePlugin):
         status = card["status"]
         fill, ink, muted, line = self._card_palette(status, theme)
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=6, fill=fill, outline=line, width=1)
-        draw.line((x + 5, y + 7, x + 5, y + h - 7), fill=ink, width=2)
+        draw.line((x + 5, y + 7, x + 5, y + h - 7), fill=ink, width=1)
 
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
         pad = 10
@@ -832,7 +863,7 @@ class LiveRadar(BasePlugin):
         self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
 
         badge_right = x + w - pad
-        platform_w = 22
+        platform_w = 18
         platform_h = 16
         platform_y = y + max(6, int((h - platform_h) / 2))
         self._draw_platform_badge(
@@ -843,7 +874,7 @@ class LiveRadar(BasePlugin):
             ink=ink,
             outline=ink,
         )
-        badge_right -= platform_w + 5
+        badge_right -= platform_w + 4
         if card.get("is_fav"):
             icon_size = 17
             self._draw_icon_badge(
@@ -854,7 +885,7 @@ class LiveRadar(BasePlugin):
                 ink=ink,
                 outline=muted,
             )
-            badge_right -= icon_size + 5
+            badge_right -= icon_size + 4
 
         text_x = avatar_x + avatar_size + 10
         text_right = badge_right - 4
@@ -870,14 +901,14 @@ class LiveRadar(BasePlugin):
         if detail_y + self._line_height(detail_font) <= y + h - 4:
             draw.text((text_x, detail_y), self._fit_text(draw, detail_text, detail_font, text_w), fill=muted, font=detail_font)
 
-    def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds):
+    def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds, show_fav_badge=True):
         avatar_x, avatar_y, avatar_size = avatar_box
         bounds = (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size)
         avatar = self._load_avatar_source(card.get("avatar"), cache_seconds)
         if avatar:
             try:
                 fitted = ImageOps.fit(avatar, (avatar_size, avatar_size), method=self._resampling_filter())
-                fitted = ImageOps.autocontrast(ImageOps.grayscale(fitted)).convert("RGB")
+                fitted = fitted.convert("RGB")
                 mask = Image.new("L", (avatar_size, avatar_size), 0)
                 ImageDraw.Draw(mask).ellipse((0, 0, avatar_size - 1, avatar_size - 1), fill=255)
                 image.paste(fitted, (avatar_x, avatar_y), mask)
@@ -899,7 +930,7 @@ class LiveRadar(BasePlugin):
             )
 
         draw.ellipse(bounds, outline=ink, width=1)
-        if card.get("is_fav"):
+        if show_fav_badge and card.get("is_fav"):
             badge_size = max(10, int(avatar_size * 0.38))
             badge = (avatar_x + avatar_size - badge_size, avatar_y + avatar_size - badge_size, avatar_x + avatar_size + 1, avatar_y + avatar_size + 1)
             self._draw_icon_badge(draw, badge, "fav", fill=ink, ink=fill, outline=ink)
@@ -1160,27 +1191,27 @@ class LiveRadar(BasePlugin):
                 "mode": "light",
                 "bg": (255, 255, 255),
                 "ink": (0, 0, 0),
-                "muted": (78, 78, 78),
+                "muted": (0, 0, 0),
                 "line": (0, 0, 0),
                 "panel": (255, 255, 255),
-                "live_fill": (0, 0, 0),
-                "live_ink": (255, 255, 255),
-                "live_muted": (210, 210, 210),
+                "live_fill": (255, 255, 255),
+                "live_ink": (0, 0, 0),
+                "live_muted": (0, 0, 0),
                 "live_line": (0, 0, 0),
-                "replay_fill": (238, 238, 238),
+                "replay_fill": (255, 255, 255),
             }
         return {
             "mode": "dark",
             "bg": (0, 0, 0),
             "ink": (255, 255, 255),
-            "muted": (172, 172, 172),
-            "line": (235, 235, 235),
-            "panel": (18, 18, 18),
+            "muted": (255, 255, 255),
+            "line": (255, 255, 255),
+            "panel": (0, 0, 0),
             "live_fill": (255, 255, 255),
             "live_ink": (0, 0, 0),
-            "live_muted": (68, 68, 68),
+            "live_muted": (0, 0, 0),
             "live_line": (255, 255, 255),
-            "replay_fill": (36, 36, 36),
+            "replay_fill": (0, 0, 0),
         }
 
     def _parse_rooms(self, settings):

@@ -1,17 +1,33 @@
 <div class="form-group">
-    <label for="tickers">Stock Tickers (comma-separated)</label>
-    <input type="text" id="tickers" name="tickers" 
-           placeholder="e.g., AAPL, MSFT, TSLA, 0P0001RU1X.L" 
-           required>
-    <small>Enter stock ticker symbols separated by commas (e.g., AAPL, MSFT, or LSE: 0P0001RU1X.L)</small>
+    <label for="portfolio_csv_file">Robinhood / Portfolio CSV</label>
+    <input type="file" clear-on-submit id="portfolio_csv_file" name="portfolio_csv_file" accept=".csv,text/csv">
+    <input type="hidden" id="portfolio_csv_existing" name="portfolio_csv_file" value="">
+    <small>
+        Optional. Preferred exact format: <code>symbol,shares</code>. Robinhood account activity CSV is also supported
+        when its history is complete enough to calculate current holdings.
+        <span id="portfolio_csv_current"></span>
+    </small>
 </div>
 
 <div class="form-group">
-    <label for="shares">Number of Shares (comma-separated)</label>
+    <label for="portfolio_csv_path">CSV Path on Device</label>
+    <input type="text" id="portfolio_csv_path" name="portfolio_csv_path"
+           placeholder="/home/feeengyuuu/stocktracker/robinhood_holdings.csv">
+    <small>Optional alternative to upload. If set, this file is read every time the page refreshes.</small>
+</div>
+
+<div class="form-group">
+    <label for="tickers">Fallback Stock Tickers (comma-separated)</label>
+    <input type="text" id="tickers" name="tickers" 
+           placeholder="e.g., AAPL, MSFT, TSLA, 0P0001RU1X.L">
+    <small>Used only when no CSV is configured.</small>
+</div>
+
+<div class="form-group">
+    <label for="shares">Fallback Number of Shares (comma-separated)</label>
     <input type="text" id="shares" name="shares" 
-           placeholder="e.g., 10, 5, 3, 152.2" 
-           required>
-    <small>Enter number of shares for each ticker in the same order (decimals allowed)</small>
+           placeholder="e.g., 10, 5, 3, 152.2">
+    <small>Used only when no CSV is configured. Keep the same order as fallback tickers.</small>
 </div>
 
 <div class="form-group">
@@ -51,6 +67,11 @@
     background-color: #fff;
     color: #1a202c;
     box-sizing: border-box;
+}
+
+.form-group code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.85em;
 }
 
 .form-group input:focus,
@@ -160,6 +181,14 @@
             }
             if (pluginSettings.shares) {
                 document.getElementById('shares').value = pluginSettings.shares;
+            }
+            if (pluginSettings.portfolio_csv_path) {
+                document.getElementById('portfolio_csv_path').value = pluginSettings.portfolio_csv_path;
+            }
+            if (pluginSettings.portfolio_csv_file) {
+                document.getElementById('portfolio_csv_existing').value = pluginSettings.portfolio_csv_file;
+                const csvName = pluginSettings.portfolio_csv_file.split(/[\\/]/).pop();
+                document.getElementById('portfolio_csv_current').textContent = `Current file: ${csvName}`;
             }
             // Populate select dropdown
             if (pluginSettings.period) {

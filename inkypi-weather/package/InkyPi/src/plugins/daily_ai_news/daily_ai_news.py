@@ -26,6 +26,7 @@ from utils.theme_utils import get_theme_context, get_theme_palette
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-5-nano"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TITLE = "整点新闻"
 DEFAULT_FONT = "LXGW WenKai"
 BACKGROUND_IMAGE = "background_world_news.png"
@@ -104,8 +105,8 @@ class DailyAINews(BasePlugin):
         params["style_settings"] = True
         params["api_key"] = {
             "required": True,
-            "service": "OpenAI",
-            "expected_key": "OPEN_AI_SECRET",
+            "service": "OpenAI or Groq",
+            "expected_key": "OPEN_AI_SECRET or GROQ_API_KEY",
         }
         params["available_fonts"] = sorted({
             f.get("name") or f.get("font_family")
@@ -178,45 +179,60 @@ class DailyAINews(BasePlugin):
             cached["from_cache"] = True
             return cached
 
-        stale = cached if cached.get("brief") else None
-        api_key = device_config.load_env_key("OPEN_AI_SECRET") or device_config.load_env_key("OPENAI_API_KEY")
-        if not api_key:
-            if stale:
-                stale["from_cache"] = True
-                stale["warning"] = "未配置 OPEN_AI_SECRET，显示旧缓存。"
-                return stale
-            raise RuntimeError("OPEN_AI_SECRET is not configured.")
-
-        if not self._allow_api_call(settings, date_key):
-            if stale:
-                stale["from_cache"] = True
-                stale["warning"] = "已达到今日 API 调用上限，显示旧缓存。"
-                return stale
-            raise RuntimeError("Daily API limit reached and no cache is available.")
-
         items = self._fetch_items(feeds_text, max_items)
         items = self._rank_news_items(items, now)[:max_items]
         if not items:
+            stale = cached if cached.get("brief") else None
             if stale:
                 stale["from_cache"] = True
                 stale["warning"] = "新闻源暂不可用，显示旧缓存。"
                 return stale
             raise RuntimeError("No RSS items could be fetched.")
 
+        stale = cached if cached.get("brief") else None
         market_snapshot = self._fetch_market_snapshot(now)
-        brief = self._summarize_with_openai(api_key, model, settings, items, market_snapshot, now)
+        openai_key = device_config.load_env_key("OPEN_AI_SECRET") or device_config.load_env_key("OPENAI_API_KEY")
+        groq_key = device_config.load_env_key("GROQ_API_KEY")
+        can_call_ai = self._allow_api_call(settings, date_key)
+
+        if openai_key or groq_key:
+            if not can_call_ai:
+                if stale:
+                    stale["from_cache"] = True
+                    stale["warning"] = "已达到今日 API 调用上限，显示旧缓存。"
+                    return stale
+                brief = self._rss_only_brief(items, "已达到今日 API 调用上限，使用 RSS 兜底。")
+            else:
+                try:
+                    brief = self._summarize_with_ai(openai_key, groq_key, model, settings, items, market_snapshot, now)
+                except Exception as exc:
+                    logger.warning("AI summary failed; using RSS fallback: %s", exc)
+                    if stale:
+                        stale["from_cache"] = True
+                        stale["warning"] = f"AI 摘要失败，显示旧缓存：{str(exc)[:80]}"
+                        return stale
+                    brief = self._rss_only_brief(items, f"AI 摘要失败，使用 RSS 兜底：{str(exc)[:60]}")
+        else:
+            brief = self._rss_only_brief(items, "未配置 AI 密钥，使用 RSS 兜底。")
+
+        payload_model = brief.pop("_model", model)
+        used_ai = bool(brief.pop("_used_ai", False))
+        payload_warning = brief.pop("_fallback_warning", "")
         payload = {
             "cache_key": cache_key,
             "date": date_key,
             "generated_at": now.isoformat(),
-            "model": model,
+            "model": payload_model,
             "items": items[:max_items],
             "market_snapshot": market_snapshot,
             "brief": brief,
             "from_cache": False,
         }
+        if payload_warning:
+            payload["warning"] = payload_warning
         _safe_json_write(cache_file, payload)
-        self._record_api_call(date_key)
+        if used_ai:
+            self._record_api_call(date_key)
         return payload
 
     def _cache_dir(self) -> Path:
@@ -417,6 +433,55 @@ class DailyAINews(BasePlugin):
             "exchange": meta.get("exchangeName") or meta.get("fullExchangeName") or "",
         }
 
+    def _summarize_with_ai(
+        self,
+        openai_key: str,
+        groq_key: str,
+        model: str,
+        settings,
+        items: list[dict[str, str]],
+        market_snapshot: dict[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        backends = []
+        if openai_key:
+            backends.append({
+                "provider": "openai",
+                "api_key": openai_key,
+                "model": model,
+                "base_url": None,
+            })
+        if groq_key:
+            backends.append({
+                "provider": "groq",
+                "api_key": groq_key,
+                "model": settings.get("groq_model") or settings.get("ai_groq_model") or DEFAULT_GROQ_MODEL,
+                "base_url": "https://api.groq.com/openai/v1",
+            })
+
+        errors = []
+        for backend in backends:
+            try:
+                brief = self._summarize_with_openai(
+                    backend["api_key"],
+                    backend["model"],
+                    settings,
+                    items,
+                    market_snapshot,
+                    now,
+                    provider=backend["provider"],
+                    base_url=backend["base_url"],
+                )
+                brief["_model"] = backend["model"] if backend["provider"] == "openai" else f"groq:{backend['model']}"
+                brief["_used_ai"] = True
+                return brief
+            except Exception as exc:
+                reason = self._ai_error_reason(exc)
+                errors.append(f"{backend['provider']}: {reason}")
+                logger.warning("Daily AI news provider failed: %s", errors[-1])
+
+        raise RuntimeError("; ".join(errors) or "No AI provider is configured.")
+
     def _summarize_with_openai(
         self,
         api_key: str,
@@ -425,8 +490,13 @@ class DailyAINews(BasePlugin):
         items: list[dict[str, str]],
         market_snapshot: dict[str, Any],
         now: datetime,
+        provider: str = "openai",
+        base_url: str | None = None,
     ) -> dict[str, Any]:
-        client = OpenAI(api_key=api_key)
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = OpenAI(**client_kwargs)
         system = (
             "你是中文新闻编辑。只根据用户提供的 RSS 条目写简体中文每日简报。"
             "top 新闻只能来自 RSS 条目，不能使用市场行情、常识或背景知识补充。"
@@ -468,10 +538,13 @@ class DailyAINews(BasePlugin):
             if model.startswith("gpt-5"):
                 response_kwargs["reasoning"] = {"effort": "minimal"}
                 response_kwargs["text"] = {"verbosity": "low"}
-            response = client.responses.create(**response_kwargs)
-            content = (getattr(response, "output_text", "") or "").strip()
+            if provider == "openai":
+                response = client.responses.create(**response_kwargs)
+                content = (getattr(response, "output_text", "") or "").strip()
+            else:
+                raise RuntimeError(f"{provider} does not support Responses API in this plugin")
         except Exception as exc:
-            logger.warning("Responses API failed for %s, falling back to chat completions: %s", model, exc)
+            logger.warning("Responses API unavailable for %s/%s, falling back to chat completions: %s", provider, model, exc)
             chat_kwargs = {
                 "model": model,
                 "messages": [
@@ -536,6 +609,34 @@ class DailyAINews(BasePlugin):
             "analysis": items[1] if len(items) > 1 else "",
         }
 
+    def _rss_only_brief(self, items: list[dict[str, str]], warning: str) -> dict[str, Any]:
+        top = []
+        sources = []
+        for item in items:
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            source = str(item.get("source") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            why = summary[:36] if summary else (source[:36] or "来自 RSS 源。")
+            top.append({"title": title[:32], "why": why})
+            if source and source not in sources:
+                sources.append(source)
+            if len(top) >= 7:
+                break
+
+        top = self._dedupe_top_items(top, items)
+        return {
+            "lede": self._fallback_lede(top),
+            "top": top,
+            "a_share": {"summary": "A股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
+            "us_stock": {"summary": "美股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
+            "sources": sources[:5],
+            "_model": "rss-fallback",
+            "_used_ai": False,
+            "_fallback_warning": warning,
+        }
+
     def _fallback_lede(self, top: list[Any]) -> str:
         if top:
             headline, _why = self._news_text(top[0])
@@ -566,6 +667,16 @@ class DailyAINews(BasePlugin):
             if len(result) >= 7:
                 break
         return result
+
+    def _ai_error_reason(self, exc: Exception) -> str:
+        status = getattr(exc, "status_code", None)
+        response = getattr(exc, "response", None)
+        if status is None and response is not None:
+            status = getattr(response, "status_code", None)
+        text = re.sub(r"\s+", " ", str(exc or "")).strip()
+        if len(text) > 180:
+            text = text[:180].rstrip()
+        return f"HTTP {status}: {text}" if status else (text or type(exc).__name__)
 
     def _similar_news_title(self, left: str, right: str) -> bool:
         left_chars = {char for char in left if "\u4e00" <= char <= "\u9fff"}
@@ -718,11 +829,8 @@ class DailyAINews(BasePlugin):
                 resample = Image.Resampling.LANCZOS
             except AttributeError:
                 resample = Image.LANCZOS
-            gray = Image.open(path).convert("L").resize(dimensions, resample)
-            detail = gray.point(lambda px: 255 - px)
-            alpha = detail.point(lambda px: 0 if px < 18 else min(50, int((px - 18) * 0.50)))
-            tint = Image.new("RGB", dimensions, (125, 150, 170))
-            base.paste(tint, (0, 0), alpha)
+            artwork = Image.open(path).convert("RGB").resize(dimensions, resample)
+            base = Image.blend(base, artwork, 0.68)
         except Exception as exc:
             logger.warning("Could not render daily news background %s: %s", path, exc)
         return base

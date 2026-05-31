@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
 from utils.app_utils import get_font
-from utils.theme_utils import get_theme_context, get_theme_palette
+from utils.theme_utils import get_theme_context
 
 try:
     import pytz
@@ -32,6 +32,95 @@ DEFAULT_AI_TEXT_MODEL = "gpt-4o-mini"
 DEFAULT_GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_AI_DAILY_LIMIT = 24
 DEFAULT_CONTEXT_MAX_ITEMS = 12
+
+# Color tokens follow docs/color-ui-guidelines.md: process black linework,
+# paper/white grounds, and vintage comic process-color accents.
+PET_PAPER = (255, 248, 220)  # 25Y PANTONE 100, warm comic paper ground
+PET_PANEL = (255, 255, 255)  # paper white, preserves maximum text contrast
+PET_PANEL_BLUE = (235, 246, 255)  # 25B PANTONE 304 family, paper-tinted
+PET_PANEL_YELLOW = (255, 239, 176)  # 50Y PANTONE 101 family, paper-tinted
+PET_PANEL_GREEN = (232, 247, 224)  # 100Y-25B PANTONE 374 family, paper-tinted
+PET_INK = (0, 0, 0)  # PROCESS BLACK
+PET_MUTED = (126, 112, 82)  # 50Y-25R-25B PANTONE 465 family
+PET_RULE = (190, 177, 134)  # 50Y-25R-25B PANTONE 465 family, lightened
+PET_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
+PET_YELLOW = (255, 196, 30)  # 100Y-25R PANTONE 123 family
+PET_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
+PET_RED = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
+PET_GREEN = (0, 152, 82)  # 100Y-100B PANTONE 354 family
+PET_PURPLE = (102, 62, 153)  # 100R-100B PANTONE 266 family
+PET_BROWN = (122, 78, 43)  # 100Y-50R-50B PANTONE 470 family
+PET_NIGHT_PAPER = (0, 0, 0)  # PROCESS BLACK, deep-night ground
+PET_NIGHT_PANEL = (12, 15, 27)  # PROCESS BLACK with 100B-25R PANTONE 285 family lift
+PET_NIGHT_PANEL_BLUE = (8, 24, 52)  # 100B-25R PANTONE 285 family, night-calibrated
+PET_NIGHT_PANEL_YELLOW = (54, 42, 10)  # 100Y-25R PANTONE 123 family, night-calibrated
+PET_NIGHT_PANEL_GREEN = (8, 38, 25)  # 100Y-100B PANTONE 354 family, night-calibrated
+PET_NIGHT_INK = (255, 255, 255)  # paper white for night contrast
+PET_NIGHT_MUTED = (202, 190, 150)  # 50Y-25R-25B PANTONE 465 family, lightened
+PET_NIGHT_RULE = (92, 88, 70)  # muted print rule for dark panels
+PET_NIGHT_BLUE = (88, 165, 232)  # 100B-25R PANTONE 285 family, night-calibrated
+PET_NIGHT_YELLOW = (255, 205, 54)  # 100Y-25R PANTONE 123 family
+PET_NIGHT_ORANGE = (255, 136, 47)  # 100Y-50R PANTONE ORANGE 021 family
+PET_NIGHT_RED = (255, 82, 74)  # 100Y-100R PANTONE RED 032 family, night-calibrated
+PET_NIGHT_GREEN = (80, 201, 128)  # 100Y-100B PANTONE 354 family, night-calibrated
+PET_NIGHT_PURPLE = (177, 142, 230)  # 100R-100B PANTONE 266 family, night-calibrated
+PET_NIGHT_BROWN = (203, 145, 87)  # 100Y-50R-50B PANTONE 470 family, night-calibrated
+PET_BAR_COLORS = {
+    "food": PET_ORANGE,
+    "happiness": PET_YELLOW,
+    "energy": PET_BLUE,
+    "cleanliness": PET_PURPLE,
+    "health": PET_GREEN,
+}
+PET_NIGHT_BAR_COLORS = {
+    "food": PET_NIGHT_ORANGE,
+    "happiness": PET_NIGHT_YELLOW,
+    "energy": PET_NIGHT_BLUE,
+    "cleanliness": PET_NIGHT_PURPLE,
+    "health": PET_NIGHT_GREEN,
+}
+PET_MOOD_COLORS = {
+    "happy": PET_GREEN,
+    "calm": PET_BLUE,
+    "curious": PET_BLUE,
+    "playful": PET_YELLOW,
+    "alert": PET_ORANGE,
+    "grooming": PET_PURPLE,
+    "exploring": PET_GREEN,
+    "hungry": PET_RED,
+    "dirty": PET_BROWN,
+    "sick": PET_RED,
+    "tired": PET_PURPLE,
+    "sleeping": PET_BLUE,
+    "lonely": PET_PURPLE,
+    "bored": PET_BROWN,
+    "working": PET_BLUE,
+    "selfcare": PET_GREEN,
+    "hunting": PET_ORANGE,
+    "zoomies": PET_RED,
+    "belly": PET_YELLOW,
+}
+PET_NIGHT_MOOD_COLORS = {
+    "happy": PET_NIGHT_GREEN,
+    "calm": PET_NIGHT_BLUE,
+    "curious": PET_NIGHT_BLUE,
+    "playful": PET_NIGHT_YELLOW,
+    "alert": PET_NIGHT_ORANGE,
+    "grooming": PET_NIGHT_PURPLE,
+    "exploring": PET_NIGHT_GREEN,
+    "hungry": PET_NIGHT_RED,
+    "dirty": PET_NIGHT_BROWN,
+    "sick": PET_NIGHT_RED,
+    "tired": PET_NIGHT_PURPLE,
+    "sleeping": PET_NIGHT_BLUE,
+    "lonely": PET_NIGHT_PURPLE,
+    "bored": PET_NIGHT_BROWN,
+    "working": PET_NIGHT_BLUE,
+    "selfcare": PET_NIGHT_GREEN,
+    "hunting": PET_NIGHT_ORANGE,
+    "zoomies": PET_NIGHT_RED,
+    "belly": PET_NIGHT_YELLOW,
+}
 DEFAULT_CONTEXT_PLUGIN_IDS = [
     "weather",
     "daily_ai_news",
@@ -48,12 +137,109 @@ DEFAULT_CONTEXT_PLUGIN_IDS = [
 ]
 MAX_OFFLINE_TICKS = 96
 HUNTING_FOOD_THRESHOLD = 25
+LEVEL_XP_STEP = 100
+
+LEVEL_TIERS = [
+    {"min_level": 15, "title": "Night Hunter", "prey_size": "huge", "reserve_cap": 720},
+    {"min_level": 10, "title": "Cache Hunter", "prey_size": "large", "reserve_cap": 540},
+    {"min_level": 7, "title": "Screen Prowler", "prey_size": "medium", "reserve_cap": 360},
+    {"min_level": 4, "title": "Nest Stalker", "prey_size": "small", "reserve_cap": 240},
+    {"min_level": 1, "title": "Crumb Hunter", "prey_size": "tiny", "reserve_cap": 120},
+]
+
+PREY_SIZE_RANK = {"tiny": 0, "small": 1, "medium": 2, "large": 3, "huge": 4}
+PREY_SIZE_ORDER = ["tiny", "small", "medium", "large", "huge"]
 
 HUNTED_FOODS = [
-    {"id": "static_morsel", "food": "static-crackle morsel", "food_gain": 32, "energy_cost": 7, "happiness_gain": 3, "xp_gain": 5},
-    {"id": "pixel_seed", "food": "bright pixel seed", "food_gain": 28, "energy_cost": 5, "happiness_gain": 4, "xp_gain": 4},
-    {"id": "cache_nut", "food": "warm cache nut", "food_gain": 35, "energy_cost": 8, "happiness_gain": 2, "xp_gain": 6},
-    {"id": "moon_crumb", "food": "moonlit crumb", "food_gain": 30, "energy_cost": 6, "happiness_gain": 5, "xp_gain": 5},
+    {"id": "springtail", "level_min": 1, "size": "tiny", "prey_group": "microarthropod", "prey_mass_g": 0.002, "food": "springtail", "food_zh": "跳虫", "food_gain": 18, "reserve_gain": 4, "energy_cost": 3, "happiness_gain": 2, "xp_gain": 3},
+    {"id": "aphid", "level_min": 1, "size": "tiny", "prey_group": "insect", "prey_mass_g": 0.003, "food": "aphid", "food_zh": "蚜虫", "food_gain": 18, "reserve_gain": 4, "energy_cost": 3, "happiness_gain": 2, "xp_gain": 3},
+    {"id": "fruit_fly", "level_min": 1, "size": "tiny", "prey_group": "insect", "prey_mass_g": 0.001, "food": "fruit fly", "food_zh": "果蝇", "food_gain": 20, "reserve_gain": 5, "energy_cost": 4, "happiness_gain": 3, "xp_gain": 4},
+    {"id": "fungus_gnat", "level_min": 1, "size": "tiny", "prey_group": "insect", "prey_mass_g": 0.002, "food": "fungus gnat", "food_zh": "蕈蚊", "food_gain": 20, "reserve_gain": 6, "energy_cost": 4, "happiness_gain": 2, "xp_gain": 4},
+    {"id": "worker_ant", "level_min": 2, "size": "tiny", "prey_group": "insect", "prey_mass_g": 0.004, "food": "worker ant", "food_zh": "工蚁", "food_gain": 24, "reserve_gain": 8, "energy_cost": 5, "happiness_gain": 3, "xp_gain": 5},
+    {"id": "mosquito", "level_min": 2, "size": "tiny", "prey_group": "insect", "prey_mass_g": 0.003, "food": "mosquito", "food_zh": "蚊子", "food_gain": 22, "reserve_gain": 7, "energy_cost": 5, "happiness_gain": 3, "xp_gain": 5},
+    {"id": "housefly", "level_min": 4, "size": "small", "prey_group": "insect", "prey_mass_g": 0.012, "food": "housefly", "food_zh": "家蝇", "food_gain": 34, "reserve_gain": 18, "energy_cost": 8, "happiness_gain": 3, "xp_gain": 8},
+    {"id": "mealworm", "level_min": 4, "size": "small", "prey_group": "insect larva", "prey_mass_g": 0.1, "food": "mealworm", "food_zh": "黄粉虫", "food_gain": 40, "reserve_gain": 24, "energy_cost": 9, "happiness_gain": 4, "xp_gain": 9},
+    {"id": "small_cricket", "level_min": 4, "size": "small", "prey_group": "insect", "prey_mass_g": 0.25, "food": "small cricket", "food_zh": "小蟋蟀", "food_gain": 44, "reserve_gain": 28, "energy_cost": 11, "happiness_gain": 4, "xp_gain": 11},
+    {"id": "pantry_moth", "level_min": 5, "size": "small", "prey_group": "insect", "prey_mass_g": 0.08, "food": "pantry moth", "food_zh": "谷蛾", "food_gain": 38, "reserve_gain": 24, "energy_cost": 10, "happiness_gain": 4, "xp_gain": 10},
+    {"id": "earthworm", "level_min": 5, "size": "small", "prey_group": "annelid", "prey_mass_g": 0.5, "food": "earthworm", "food_zh": "蚯蚓", "food_gain": 48, "reserve_gain": 34, "energy_cost": 12, "happiness_gain": 3, "xp_gain": 12},
+    {"id": "grasshopper", "level_min": 7, "size": "medium", "prey_group": "insect", "prey_mass_g": 1.0, "food": "grasshopper", "food_zh": "蚱蜢", "food_gain": 58, "reserve_gain": 58, "energy_cost": 16, "happiness_gain": 5, "xp_gain": 16},
+    {"id": "cicada", "level_min": 7, "size": "medium", "prey_group": "insect", "prey_mass_g": 2.0, "food": "cicada", "food_zh": "蝉", "food_gain": 62, "reserve_gain": 72, "energy_cost": 18, "happiness_gain": 5, "xp_gain": 18},
+    {"id": "tree_frog", "level_min": 8, "size": "medium", "prey_group": "amphibian", "prey_mass_g": 5.0, "food": "tree frog", "food_zh": "树蛙", "food_gain": 68, "reserve_gain": 90, "energy_cost": 20, "happiness_gain": 5, "xp_gain": 20},
+    {"id": "house_gecko", "level_min": 8, "size": "medium", "prey_group": "reptile", "prey_mass_g": 6.0, "food": "house gecko", "food_zh": "壁虎", "food_gain": 70, "reserve_gain": 96, "energy_cost": 22, "happiness_gain": 5, "xp_gain": 22},
+    {"id": "small_skink", "level_min": 9, "size": "medium", "prey_group": "reptile", "prey_mass_g": 9.0, "food": "small skink", "food_zh": "小石龙子", "food_gain": 74, "reserve_gain": 110, "energy_cost": 24, "happiness_gain": 5, "xp_gain": 24},
+    {"id": "field_mouse", "level_min": 10, "size": "large", "prey_group": "small mammal", "prey_mass_g": 18.0, "food": "field mouse", "food_zh": "田鼠", "food_gain": 82, "reserve_gain": 180, "energy_cost": 28, "happiness_gain": 6, "xp_gain": 30},
+    {"id": "meadow_vole", "level_min": 11, "size": "large", "prey_group": "small mammal", "prey_mass_g": 35.0, "food": "meadow vole", "food_zh": "草原田鼠", "food_gain": 86, "reserve_gain": 230, "energy_cost": 31, "happiness_gain": 6, "xp_gain": 34},
+    {"id": "young_brown_rat", "level_min": 12, "size": "large", "prey_group": "small mammal", "prey_mass_g": 75.0, "food": "young brown rat", "food_zh": "幼年褐鼠", "food_gain": 90, "reserve_gain": 300, "energy_cost": 35, "happiness_gain": 6, "xp_gain": 38},
+    {"id": "adult_brown_rat", "level_min": 15, "size": "huge", "prey_group": "small mammal", "prey_mass_g": 250.0, "food": "adult brown rat", "food_zh": "成年褐鼠", "food_gain": 96, "reserve_gain": 430, "energy_cost": 42, "happiness_gain": 7, "xp_gain": 48},
+    {"id": "cottontail_rabbit", "level_min": 16, "size": "huge", "prey_group": "lagomorph", "prey_mass_g": 900.0, "food": "cottontail rabbit", "food_zh": "棉尾兔", "food_gain": 100, "reserve_gain": 620, "energy_cost": 56, "happiness_gain": 8, "xp_gain": 64},
+    {"id": "muskrat", "level_min": 18, "size": "huge", "prey_group": "semi-aquatic mammal", "prey_mass_g": 1000.0, "food": "muskrat", "food_zh": "麝鼠", "food_gain": 100, "reserve_gain": 700, "energy_cost": 62, "happiness_gain": 8, "xp_gain": 72},
+]
+
+AI_DIALOGUE_ANGLES = [
+    "current body state",
+    "food reserve economics",
+    "prey ecology",
+    "level ambition",
+    "daily routine",
+    "time-of-day instinct",
+    "last hunt memory",
+    "near-future hunt plan",
+    "visible body pose",
+    "short-front-paw comedy",
+    "tail and ear body language",
+    "day-night visual mood",
+    "ambient weather",
+    "ambient news",
+    "ambient games",
+    "tiny survival philosophy",
+    "e-paper physics",
+    "quiet black humor",
+    "compact aphorism",
+]
+
+AI_LINE_SHAPES = [
+    "deadpan field note",
+    "small confession",
+    "mini proverb",
+    "sleepy report",
+    "hunter boast",
+    "inventory audit",
+    "weather aside",
+    "game-adjacent mutter",
+    "one-breath diary",
+    "pose caption",
+    "motion snapshot",
+    "tiny stage direction",
+]
+
+AI_TONE_COLORS = [
+    "dry",
+    "warm",
+    "feral",
+    "sleepy",
+    "suspicious",
+    "proud",
+    "melancholy",
+    "absurd",
+    "matter-of-fact",
+]
+
+AI_DETAIL_LENSES = [
+    "prey name",
+    "prey mass",
+    "prey group",
+    "reserve days",
+    "xp to next level",
+    "next prey unlock",
+    "daily favorite",
+    "daily goal",
+    "weakest stat",
+    "fresh ambient fact",
+    "current pose image",
+    "daily motion theme",
+    "body focus",
+    "visual motif",
+    "pose line hook",
 ]
 
 FACE_MAP = {
@@ -74,7 +260,247 @@ FACE_MAP = {
     "working": ("[=^_^=]", "Thinking"),
     "selfcare": ("(=o_o=)+", "Self-care"),
     "hunting": ("(=O_O=)", "Hunting"),
+    "zoomies": ("(=O_O=)!", "Zoomies"),
+    "belly": ("(. o .)", "Belly"),
 }
+
+PET_STATE_IMAGE_DIR = Path(__file__).resolve().parent / "assets" / "cat_states"
+PET_STATE_IMAGE_MAP = {
+    "happy": "happy",
+    "calm": "calm",
+    "curious": "curious",
+    "playful": "playful",
+    "alert": "alert",
+    "grooming": "grooming",
+    "exploring": "tail_swish",
+    "hungry": "hungry",
+    "dirty": "unwell",
+    "sick": "unwell",
+    "tired": "tired",
+    "sleeping": "sleeping",
+    "lonely": "tired",
+    "bored": "tired",
+    "working": "alert_listening",
+    "selfcare": "kneading",
+    "hunting": "hunting",
+    "zoomies": "zoomies",
+    "belly": "belly",
+}
+PET_ACTIVITY_IMAGE_MAP = {
+    "bedtime curl": "dreaming",
+    "blanket kneading": "kneading",
+    "cache guarding": "alert_listening",
+    "cleaning": "kneading",
+    "crumb audit": "tail_swish",
+    "dream cache": "dreaming",
+    "dusk grooming": "grooming",
+    "edge watch": "alert_listening",
+    "face practice": "alert_listening",
+    "face wash": "grooming",
+    "foraging": "tail_swish",
+    "hunting": "hunting",
+    "listening": "alert_listening",
+    "micro dance": "zoomies",
+    "morning boot": "alert_listening",
+    "napping": "dreaming",
+    "needs care": "unwell",
+    "nest check": "alert_listening",
+    "nest sweeping": "kneading",
+    "pixel hoarding": "tail_swish",
+    "pixel patrol": "tail_swish",
+    "playing": "pounce",
+    "resting": "dreaming",
+    "scheduled nap": "dreaming",
+    "self grooming": "grooming",
+    "shadow pounce": "pounce",
+    "shadow prank": "zoomies",
+    "snack tracking": "hunting",
+    "snacking": "snacking",
+    "soft dreaming": "dreaming",
+    "solo game": "pounce",
+    "sorting thoughts": "alert_listening",
+    "stash meal": "snacking",
+    "stretching": "stretch",
+    "sun chase": "pounce",
+    "sun guessing": "alert_listening",
+    "thing inspection": "tail_swish",
+    "thought collecting": "tail_swish",
+    "tidying": "kneading",
+    "tiny zoomies": "zoomies",
+    "waking": "alert_listening",
+    "warm listening": "alert_listening",
+    "window watch": "tail_swish",
+    "world sniffing": "tail_swish",
+}
+
+PET_PHYSICAL_IDENTITY = {
+    "species": "domestic cat",
+    "coat": "white fur with gray and black tabby patches on head, back, and tail",
+    "eyes": "green eyes",
+    "nose": "small pink nose",
+    "body": "compact low-to-ground body",
+    "front_legs": "short stubby front legs with compact paws",
+    "voice_rule": "when physical detail helps, mention the body gently and never as a defect",
+}
+PET_POSE_LIBRARY = {
+    "alert": {
+        "label": "alert standing",
+        "body_language": "ears forward, body held still, watching the edge of the screen",
+        "line_hook": "notices small movement before anyone else",
+    },
+    "alert_listening": {
+        "label": "alert listening",
+        "body_language": "upright listening pose, green eyes open, short front paws planted",
+        "line_hook": "hears the room, the screen, or a tiny future snack",
+    },
+    "belly": {
+        "label": "belly sprawl",
+        "body_language": "fully relaxed belly-up sprawl with the whole cat visible",
+        "line_hook": "trusts the room enough to be unserious",
+    },
+    "calm": {
+        "label": "calm loaf",
+        "body_language": "low quiet body, soft eyes, settled into the panel",
+        "line_hook": "saves energy between refreshes",
+    },
+    "curious": {
+        "label": "curious watch",
+        "body_language": "head angled toward a small mystery, whiskers awake",
+        "line_hook": "inspects one strange thing without overreacting",
+    },
+    "dreaming": {
+        "label": "curled dream",
+        "body_language": "curled sleeping body with tail tucked around the paws",
+        "line_hook": "stores a small dream in cache",
+    },
+    "grooming": {
+        "label": "grooming",
+        "body_language": "careful paw-and-face grooming with tidy fur",
+        "line_hook": "edits one pixel of fur until it behaves",
+    },
+    "happy": {
+        "label": "happy sit",
+        "body_language": "upright relaxed sit, bright eyes, compact paws visible",
+        "line_hook": "pleased in a quiet e-paper way",
+    },
+    "hungry": {
+        "label": "hungry sit",
+        "body_language": "round seated posture, paws close, attention on snacks",
+        "line_hook": "counts crumbs with serious intent",
+    },
+    "hunting": {
+        "label": "hunting crawl",
+        "body_language": "low stalking body, short front legs forward, tail balanced",
+        "line_hook": "tracks a tiny non-graphic prey clue",
+    },
+    "kneading": {
+        "label": "kneading",
+        "body_language": "front paws working an invisible blanket, eyes half closed",
+        "line_hook": "turns comfort into a small task",
+    },
+    "playful": {
+        "label": "playful crouch",
+        "body_language": "low playful crouch, paws ready, tail lively",
+        "line_hook": "starts a harmless game with a shadow",
+    },
+    "pounce": {
+        "label": "pounce",
+        "body_language": "crouched pounce pose with short front legs tucked and ready",
+        "line_hook": "makes a brave tiny ambush",
+    },
+    "sleeping": {
+        "label": "sleeping curl",
+        "body_language": "small curled nap pose, breathing quietly",
+        "line_hook": "runs in low-power dream mode",
+    },
+    "snacking": {
+        "label": "snacking",
+        "body_language": "sitting upright while holding a tiny snack in both front paws",
+        "line_hook": "protects one snack as if it were treasure",
+    },
+    "stretch": {
+        "label": "stretch",
+        "body_language": "front stretch with short forelegs extended and tail up",
+        "line_hook": "does a serious little stretch before the next plan",
+    },
+    "tail_swish": {
+        "label": "tail swish",
+        "body_language": "standing curious pose with tail raised and swishing",
+        "line_hook": "uses the tail as a question mark",
+    },
+    "tired": {
+        "label": "tired sit",
+        "body_language": "sleepy seated pose, eyelids heavy, body low",
+        "line_hook": "asks the screen to become quieter",
+    },
+    "unwell": {
+        "label": "unwell rest",
+        "body_language": "careful low rest pose, needs gentle handling",
+        "line_hook": "moves softly and asks for care without drama",
+    },
+    "zoomies": {
+        "label": "tiny zoomies",
+        "body_language": "low running pose, compact body stretched forward, tail streaming",
+        "line_hook": "short legs still manage six brave seconds of speed",
+    },
+}
+PET_POSE_KEYS = list(PET_POSE_LIBRARY.keys())
+PET_DAILY_MOTION_THEMES = [
+    {
+        "id": "short_leg_zoomies",
+        "goal": "turn one tiny movement into a dramatic event",
+        "line_hook": "short front legs, serious speed, very small chaos",
+    },
+    {
+        "id": "quiet_body_language",
+        "goal": "let the pose say more than the status text",
+        "line_hook": "ears, paws, tail, and posture carry the mood",
+    },
+    {
+        "id": "snack_theater",
+        "goal": "treat food and crumbs like a daily expedition",
+        "line_hook": "snacks, prey memory, and reserve logic become tiny drama",
+    },
+    {
+        "id": "dream_cache",
+        "goal": "turn sleep and rest into little cached dreams",
+        "line_hook": "low-power sleep, dream bubbles, and tomorrow's plan",
+    },
+    {
+        "id": "tail_question",
+        "goal": "make curiosity visible through tail and ear motion",
+        "line_hook": "a tail swish becomes a question mark",
+    },
+    {
+        "id": "comfort_engine",
+        "goal": "make grooming, kneading, and stretching feel like daily rituals",
+        "line_hook": "small paws turn comfort into work",
+    },
+]
+PET_BODY_DETAIL_FOCUS = [
+    "short front paws",
+    "compact low body",
+    "green eyes",
+    "pink nose",
+    "tabby patches",
+    "raised tail",
+    "soft white belly",
+    "careful whiskers",
+]
+PET_VISUAL_MOTIFS = [
+    "motion lines behind the pose",
+    "small dream bubbles",
+    "tail-swish arcs",
+    "crumb-sized drama",
+    "kneading arcs under the paws",
+    "quiet e-paper stillness",
+    "day-paper warmth",
+    "deep-night contrast",
+]
+
+
+def _pet_state_lookup_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower().replace("_", " ").replace("-", " "))
 
 BASE_EVENTS = [
     {
@@ -164,6 +590,20 @@ EXPRESSIVE_EVENTS = [
         "message": "Did a two-pixel dance. Very efficient.",
         "delta": {"happiness": 5, "energy": -3, "food": -1, "xp": 3},
     },
+    {
+        "id": "belly_roll",
+        "mood": "belly",
+        "activity": "belly roll",
+        "message": "Rolled belly-up because the room felt safe.",
+        "delta": {"happiness": 5, "energy": -2, "cleanliness": -1, "xp": 3},
+    },
+    {
+        "id": "tiny_zoomies",
+        "mood": "zoomies",
+        "activity": "tiny zoomies",
+        "message": "Had six seconds of brave little chaos.",
+        "delta": {"happiness": 6, "energy": -5, "food": -2, "xp": 4},
+    },
 ]
 
 QUIET_EVENTS = [
@@ -182,6 +622,178 @@ QUIET_EVENTS = [
         "delta": {"energy": 2},
     },
 ]
+
+DAILY_LIFE_THEMES = [
+    {"id": "cozy", "goal": "keep the nest warm and tidy", "tone": "soft"},
+    {"id": "hunter", "goal": "find one tiny snack before night", "tone": "alert"},
+    {"id": "curious", "goal": "inspect one strange thing on the screen", "tone": "curious"},
+    {"id": "tidy", "goal": "make the pixel nest cleaner than yesterday", "tone": "careful"},
+    {"id": "mischief", "goal": "play a harmless trick on its own shadow", "tone": "playful"},
+    {"id": "dreamy", "goal": "collect a quiet thought for bedtime", "tone": "calm"},
+]
+
+DAILY_FAVORITES = [
+    "warm cache nut",
+    "bright pixel seed",
+    "moonlit crumb",
+    "static-crackle morsel",
+    "soft corner of the screen",
+    "sleepy refresh noise",
+]
+
+ROUTINE_EVENTS = {
+    "morning": [
+        {
+            "id": "morning_nest_check",
+            "mood": "alert",
+            "activity": "nest check",
+            "message": "Checked the nest corners before breakfast.",
+            "delta": {"energy": -1, "happiness": 1, "xp": 2},
+        },
+        {
+            "id": "face_wash",
+            "mood": "grooming",
+            "activity": "face wash",
+            "message": "Washed its face with two careful paws.",
+            "delta": {"cleanliness": 4, "energy": -1, "xp": 2},
+        },
+        {
+            "id": "sunbeam_chase",
+            "mood": "playful",
+            "activity": "sun chase",
+            "message": "Chased a sunbeam that may have been imaginary.",
+            "delta": {"happiness": 4, "energy": -3, "food": -1, "xp": 3},
+        },
+    ],
+    "midday": [
+        {
+            "id": "crumb_audit",
+            "mood": "working",
+            "activity": "crumb audit",
+            "message": "Counted crumbs, then declared one of them interesting.",
+            "delta": {"food": -1, "happiness": 2, "xp": 2},
+        },
+        {
+            "id": "warm_screen_listen",
+            "mood": "calm",
+            "activity": "warm listening",
+            "message": "Sat very still and listened to the warm screen.",
+            "delta": {"energy": 1, "happiness": 1, "xp": 1},
+        },
+        {
+            "id": "safe_belly_sprawl",
+            "mood": "belly",
+            "activity": "belly sprawl",
+            "message": "Flopped belly-up in a very serious comfort test.",
+            "delta": {"happiness": 5, "energy": -1, "cleanliness": -1, "xp": 3},
+        },
+    ],
+    "afternoon": [
+        {
+            "id": "shadow_pounce",
+            "mood": "playful",
+            "activity": "shadow pounce",
+            "message": "Practiced a tiny ambush on a harmless shadow.",
+            "delta": {"happiness": 4, "energy": -4, "food": -1, "xp": 4},
+        },
+        {
+            "id": "pixel_hoard",
+            "mood": "exploring",
+            "activity": "pixel hoarding",
+            "message": "Dragged one bright pixel back to the nest.",
+            "delta": {"energy": -2, "happiness": 2, "xp": 3},
+        },
+    ],
+    "evening": [
+        {
+            "id": "dusk_groom",
+            "mood": "grooming",
+            "activity": "dusk grooming",
+            "message": "Groomed until every pixel looked negotiable.",
+            "delta": {"cleanliness": 5, "energy": -2, "xp": 2},
+        },
+        {
+            "id": "nest_tuck",
+            "mood": "calm",
+            "activity": "nest tucking",
+            "message": "Tucked the day's noises under the sleeping mat.",
+            "delta": {"happiness": 2, "energy": 1, "xp": 2},
+        },
+    ],
+    "night": [
+        {
+            "id": "cache_guard",
+            "mood": "alert",
+            "activity": "cache guarding",
+            "message": "Curled around a warm cache and guarded it softly.",
+            "delta": {"energy": 1, "happiness": 1, "xp": 2},
+        },
+        {
+            "id": "soft_dream",
+            "mood": "sleeping",
+            "activity": "soft dreaming",
+            "message": "Dreamed of catching a headline by the tail.",
+            "delta": {"energy": 3, "happiness": 1, "xp": 1},
+        },
+    ],
+}
+
+THEME_EVENTS = {
+    "cozy": [
+        {
+            "id": "blanket_knead",
+            "mood": "calm",
+            "activity": "blanket kneading",
+            "message": "Kneaded the invisible blanket until the nest approved.",
+            "delta": {"happiness": 3, "energy": -1, "xp": 2},
+        },
+    ],
+    "hunter": [
+        {
+            "id": "snack_trail",
+            "mood": "hunting",
+            "activity": "snack tracking",
+            "message": "Tracked a suspicious snack trail across three pixels.",
+            "delta": {"food": 2, "energy": -3, "happiness": 2, "xp": 4},
+        },
+    ],
+    "curious": [
+        {
+            "id": "strange_thing",
+            "mood": "curious",
+            "activity": "thing inspection",
+            "message": "Inspected one strange thing and blinked twice at it.",
+            "delta": {"happiness": 2, "energy": -1, "xp": 4},
+        },
+    ],
+    "tidy": [
+        {
+            "id": "nest_sweep",
+            "mood": "grooming",
+            "activity": "nest sweeping",
+            "message": "Swept the pixel nest into a better kind of messy.",
+            "delta": {"cleanliness": 6, "energy": -2, "xp": 3},
+        },
+    ],
+    "mischief": [
+        {
+            "id": "shadow_prank",
+            "mood": "zoomies",
+            "activity": "shadow prank",
+            "message": "Set a trap for its shadow and immediately forgot it.",
+            "delta": {"happiness": 5, "energy": -3, "food": -1, "xp": 4},
+        },
+    ],
+    "dreamy": [
+        {
+            "id": "thought_collect",
+            "mood": "calm",
+            "activity": "thought collecting",
+            "message": "Collected one quiet thought and hid it for bedtime.",
+            "delta": {"happiness": 2, "energy": 1, "xp": 3},
+        },
+    ],
+}
 
 CARE_PROFILES = {
     "gentle": {"food": 1, "happiness": 1, "energy": 1, "cleanliness": 1},
@@ -306,13 +918,145 @@ LOCALIZED_TEXT = {
 
 LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("moods", {})["hunting"] = "\u72e9\u730e"
 LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("activity", {})["hunting"] = "\u51fa\u53bb\u72e9\u730e"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("activity", {})["stash meal"] = "\u5403\u50a8\u5907\u7cae"
 LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {})[
     "Autonomy: hunted a small meal and ate it."
 ] = "\u81ea\u4e3b\uff1a\u51fa\u53bb\u72e9\u730e\uff0c\u7136\u540e\u5403\u6389\u4e86\u81ea\u5df1\u627e\u5230\u7684\u98df\u7269\u3002"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {})[
+    "Autonomy: hunted a meal and stored the leftovers."
+] = "\u81ea\u4e3b\uff1a\u51fa\u53bb\u72e9\u730e\uff0c\u5403\u9971\u540e\u628a\u5269\u4e0b\u7684\u98df\u7269\u5b58\u4e86\u8d77\u6765\u3002"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {})[
+    "Ate from yesterday's hunting stash."
+] = "\u4ece\u6628\u5929\u7684\u72e9\u730e\u50a8\u5907\u91cc\u5403\u4e86\u4e00\u70b9\uff0c\u53c8\u80fd\u6491\u4e00\u4f1a\u513f\u3002"
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("moods", {}).update({
+    "zoomies": "\u6492\u6b22",
+    "belly": "\u7ffb\u809a\u76ae",
+})
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("activity", {}).update({
+    "belly roll": "\u7ffb\u809a\u76ae",
+    "tiny zoomies": "\u7a81\u7136\u6492\u6b22",
+    "nest check": "\u68c0\u67e5\u5c0f\u7a9d",
+    "face wash": "\u6d17\u8138",
+    "sun chase": "\u8ffd\u65e5\u5149",
+    "crumb audit": "\u76d8\u70b9\u788e\u5c51",
+    "warm listening": "\u542c\u6696\u5c4f",
+    "belly sprawl": "\u653e\u677e\u644a\u5e73",
+    "shadow pounce": "\u6251\u5f71\u5b50",
+    "pixel hoarding": "\u85cf\u50cf\u7d20",
+    "dusk grooming": "\u508d\u665a\u68b3\u6bdb",
+    "nest tucking": "\u6574\u7406\u5c0f\u7a9d",
+    "cache guarding": "\u5b88\u62a4\u7f13\u5b58",
+    "soft dreaming": "\u8f7b\u8f7b\u505a\u68a6",
+    "blanket kneading": "\u8e29\u9690\u5f62\u6bef\u5b50",
+    "snack tracking": "\u8ffd\u8e2a\u96f6\u98df",
+    "thing inspection": "\u68c0\u67e5\u5947\u602a\u4e1c\u897f",
+    "nest sweeping": "\u6253\u626b\u5c0f\u7a9d",
+    "shadow prank": "\u6349\u5f04\u5f71\u5b50",
+    "thought collecting": "\u6536\u96c6\u5c0f\u5ff5\u5934",
+    "self grooming": "\u81ea\u5df1\u68b3\u6bdb",
+    "scheduled nap": "\u65e5\u7a0b\u5c0f\u7761",
+    "bedtime curl": "\u7761\u524d\u56e2\u6210\u4e00\u5708",
+})
+LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {}).update({
+    "Rolled belly-up because the room felt safe.": "\u56e0\u4e3a\u89c9\u5f97\u5b89\u5168\uff0c\u7ffb\u8fc7\u6765\u6652\u4e86\u4e00\u4e0b\u5c0f\u809a\u76ae\u3002",
+    "Had six seconds of brave little chaos.": "\u52c7\u6562\u5730\u6492\u6b22\u4e86\u516d\u79d2\uff0c\u7136\u540e\u88c5\u4f5c\u65e0\u4e8b\u53d1\u751f\u3002",
+    "Checked the nest corners before breakfast.": "\u65e9\u996d\u524d\u5148\u68c0\u67e5\u4e86\u5c0f\u7a9d\u7684\u56db\u4e2a\u89d2\u843d\u3002",
+    "Washed its face with two careful paws.": "\u7528\u4e24\u53ea\u5c0f\u722a\u5f88\u8ba4\u771f\u5730\u6d17\u4e86\u8138\u3002",
+    "Chased a sunbeam that may have been imaginary.": "\u8ffd\u4e86\u4e00\u9053\u53ef\u80fd\u662f\u60f3\u8c61\u51fa\u6765\u7684\u65e5\u5149\u3002",
+    "Counted crumbs, then declared one of them interesting.": "\u6570\u4e86\u4e00\u904d\u788e\u5c51\uff0c\u5e76\u5ba3\u5e03\u5176\u4e2d\u4e00\u9897\u5f88\u6709\u610f\u601d\u3002",
+    "Sat very still and listened to the warm screen.": "\u5750\u5f97\u5f88\u9759\uff0c\u542c\u4e86\u4e00\u4f1a\u513f\u6696\u6696\u7684\u5c4f\u5e55\u3002",
+    "Flopped belly-up in a very serious comfort test.": "\u4e25\u8083\u5730\u7ffb\u809a\u76ae\uff0c\u6d4b\u8bd5\u4eca\u5929\u8212\u4e0d\u8212\u670d\u3002",
+    "Practiced a tiny ambush on a harmless shadow.": "\u5bf9\u4e00\u4e2a\u65e0\u5bb3\u7684\u5f71\u5b50\u7ec3\u4e60\u4e86\u5c0f\u578b\u4f0f\u51fb\u3002",
+    "Dragged one bright pixel back to the nest.": "\u62d6\u4e86\u4e00\u9897\u4eae\u4eae\u7684\u50cf\u7d20\u56de\u5c0f\u7a9d\u3002",
+    "Groomed until every pixel looked negotiable.": "\u68b3\u5230\u6bcf\u9897\u50cf\u7d20\u90fd\u663e\u5f97\u53ef\u4ee5\u5546\u91cf\u3002",
+    "Tucked the day's noises under the sleeping mat.": "\u628a\u4eca\u5929\u7684\u58f0\u97f3\u90fd\u585e\u5230\u7761\u57ab\u4e0b\u9762\u3002",
+    "Curled around a warm cache and guarded it softly.": "\u56f4\u7740\u4e00\u5757\u6696\u6696\u7684\u7f13\u5b58\u8725\u6210\u4e00\u5708\u5b88\u7740\u3002",
+    "Dreamed of catching a headline by the tail.": "\u68a6\u89c1\u81ea\u5df1\u6293\u4f4f\u4e86\u4e00\u6761\u65b0\u95fb\u7684\u5c3e\u5df4\u3002",
+    "Kneaded the invisible blanket until the nest approved.": "\u5bf9\u9690\u5f62\u5c0f\u6bef\u5b50\u8e29\u6765\u8e29\u53bb\uff0c\u76f4\u5230\u5c0f\u7a9d\u8868\u793a\u6ee1\u610f\u3002",
+    "Tracked a suspicious snack trail across three pixels.": "\u6cbf\u7740\u53ef\u7591\u7684\u96f6\u98df\u8f68\u8ff9\uff0c\u8ffd\u8fc7\u4e86\u4e09\u9897\u50cf\u7d20\u3002",
+    "Inspected one strange thing and blinked twice at it.": "\u68c0\u67e5\u4e86\u4e00\u4e2a\u5947\u602a\u4e1c\u897f\uff0c\u7136\u540e\u5bf9\u5b83\u7728\u4e86\u4e24\u4e0b\u773c\u3002",
+    "Swept the pixel nest into a better kind of messy.": "\u628a\u50cf\u7d20\u5c0f\u7a9d\u6253\u626b\u6210\u4e86\u66f4\u597d\u7684\u4e71\u6cd5\u3002",
+    "Set a trap for its shadow and immediately forgot it.": "\u7ed9\u81ea\u5df1\u7684\u5f71\u5b50\u8bbe\u4e86\u4e2a\u5708\u5957\uff0c\u7136\u540e\u7acb\u523b\u5fd8\u4e86\u3002",
+    "Collected one quiet thought and hid it for bedtime.": "\u6536\u96c6\u4e86\u4e00\u4e2a\u5b89\u9759\u7684\u5c0f\u5ff5\u5934\uff0c\u7559\u5230\u7761\u524d\u7528\u3002",
+    "Found a spare crumb and saved half for later.": "\u627e\u5230\u4e00\u9897\u591a\u51fa\u6765\u7684\u788e\u5c51\uff0c\u8fd8\u7559\u4e86\u534a\u9897\u665a\u70b9\u5403\u3002",
+    "Cleaned one paw, then judged the floor.": "\u6e05\u7406\u4e86\u4e00\u53ea\u722a\u5b50\uff0c\u7136\u540e\u5bf9\u5730\u677f\u505a\u51fa\u8bc4\u4ef7\u3002",
+    "Took a scheduled nap on the warmest pixel.": "\u8eba\u5728\u6700\u6696\u7684\u50cf\u7d20\u4e0a\uff0c\u5b8c\u6210\u4e86\u4eca\u5929\u7684\u65e5\u7a0b\u5c0f\u7761\u3002",
+    "Curled up because its own schedule said so.": "\u56e0\u4e3a\u81ea\u5df1\u7684\u4f5c\u606f\u8bf4\u8be5\u7761\u4e86\uff0c\u5c31\u56e2\u6210\u4e86\u4e00\u5708\u3002",
+})
 
 
 def _clamp(value: int | float, low: int = 0, high: int = 100) -> int:
     return max(low, min(high, int(round(value))))
+
+
+def _blend_rgb(fg: tuple[int, int, int], bg: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+    amount = min(max(float(amount), 0.0), 1.0)
+    return tuple(int(round(f * amount + b * (1.0 - amount))) for f, b in zip(fg, bg))
+
+
+def _theme_mode(theme: Any) -> str:
+    if isinstance(theme, dict):
+        return str(theme.get("mode") or "day").strip().lower()
+    return str(theme or "day").strip().lower()
+
+
+def _pet_palette(mood: str | None = None, theme: Any = None) -> dict[str, Any]:
+    night = _theme_mode(theme) == "night"
+    mood_key = str(mood or "").lower()
+    if night:
+        mood_accent = PET_NIGHT_MOOD_COLORS.get(mood_key, PET_NIGHT_BLUE)
+        return {
+            "mode": "night",
+            "background": PET_NIGHT_PAPER,
+            "panel": PET_NIGHT_PANEL,
+            "panel_blue": PET_NIGHT_PANEL_BLUE,
+            "panel_yellow": PET_NIGHT_PANEL_YELLOW,
+            "panel_green": PET_NIGHT_PANEL_GREEN,
+            "ink": PET_NIGHT_INK,
+            "muted": PET_NIGHT_MUTED,
+            "rule": PET_NIGHT_RULE,
+            "border": PET_NIGHT_INK,
+            "blue": PET_NIGHT_BLUE,
+            "yellow": PET_NIGHT_YELLOW,
+            "orange": PET_NIGHT_ORANGE,
+            "red": PET_NIGHT_RED,
+            "green": PET_NIGHT_GREEN,
+            "purple": PET_NIGHT_PURPLE,
+            "brown": PET_NIGHT_BROWN,
+            "accent": mood_accent,
+            "bar_colors": PET_NIGHT_BAR_COLORS,
+            "badge_mix": 0.30,
+            "bar_track_mix": 0.18,
+            "face_back_mix": 0.16,
+            "halftone_mix": 0.18,
+        }
+
+    mood_accent = PET_MOOD_COLORS.get(mood_key, PET_BLUE)
+    return {
+        "mode": "day",
+        "background": PET_PAPER,
+        "panel": PET_PANEL,
+        "panel_blue": PET_PANEL_BLUE,
+        "panel_yellow": PET_PANEL_YELLOW,
+        "panel_green": PET_PANEL_GREEN,
+        "ink": PET_INK,
+        "muted": PET_MUTED,
+        "rule": PET_RULE,
+        "border": PET_INK,
+        "blue": PET_BLUE,
+        "yellow": PET_YELLOW,
+        "orange": PET_ORANGE,
+        "red": PET_RED,
+        "green": PET_GREEN,
+        "purple": PET_PURPLE,
+        "brown": PET_BROWN,
+        "accent": mood_accent,
+        "bar_colors": PET_BAR_COLORS,
+        "badge_mix": 0.18,
+        "bar_track_mix": 0.10,
+        "face_back_mix": 0.10,
+        "halftone_mix": 0.20,
+    }
 
 
 def _enabled(value: Any, default: bool = False) -> bool:
@@ -518,6 +1262,7 @@ class EpaperPet(BasePlugin):
                     "energy": 68,
                     "cleanliness": 82,
                     "health": 90,
+                    "food_reserve": 0,
                     "xp": 0,
                     "level": 1,
                     "age_days": 0,
@@ -531,6 +1276,7 @@ class EpaperPet(BasePlugin):
             "energy": 70,
             "cleanliness": 80,
             "health": 90,
+            "food_reserve": 0,
             "xp": 0,
             "level": 1,
             "age_days": 0,
@@ -543,7 +1289,74 @@ class EpaperPet(BasePlugin):
         state.setdefault("mood", "calm")
         state.setdefault("born_at", now.isoformat())
         state.setdefault("last_tick_at", now.isoformat())
+        self._ensure_daily_life(state, now)
         return state
+
+    def _ensure_daily_life(self, state: dict[str, Any], now: datetime) -> dict[str, Any]:
+        today = now.strftime("%Y-%m-%d")
+        current = state.get("daily_life") if isinstance(state.get("daily_life"), dict) else {}
+        if current.get("date") == today:
+            pet_key = str(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME)
+            self._ensure_daily_visual_fields(current, pet_key, today)
+            return current
+
+        if current:
+            history = state.get("daily_history") if isinstance(state.get("daily_history"), list) else []
+            history.append({
+                "date": current.get("date"),
+                "theme": current.get("theme"),
+                "favorite": current.get("favorite"),
+                "ended_at": now.isoformat(),
+            })
+            state["daily_history"] = history[-7:]
+
+        pet_key = str(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME)
+        theme = self._stable_pick(DAILY_LIFE_THEMES, pet_key, today, "theme")
+        favorite = self._stable_pick(DAILY_FAVORITES, pet_key, today, "favorite")
+        wake_hour = 6 + self._stable_int(pet_key, today, "wake", modulo=3)
+        nap_hour = 12 + self._stable_int(pet_key, today, "nap", modulo=5)
+        bed_hour = 21 + self._stable_int(pet_key, today, "bed", modulo=3)
+        daily = {
+            "date": today,
+            "theme": theme["id"],
+            "goal": theme["goal"],
+            "tone": theme["tone"],
+            "favorite": favorite,
+            "wake_hour": wake_hour,
+            "nap_hour": nap_hour,
+            "bed_hour": bed_hour,
+            "curiosity": 1 + self._stable_int(pet_key, today, "curiosity", modulo=5),
+            "boldness": 1 + self._stable_int(pet_key, today, "boldness", modulo=5),
+        }
+        self._ensure_daily_visual_fields(daily, pet_key, today)
+        state["daily_life"] = daily
+        state.setdefault("daily_event_counts", {})
+        return daily
+
+    def _ensure_daily_visual_fields(self, daily: dict[str, Any], pet_key: str, today: str) -> None:
+        if not isinstance(daily.get("motion_theme"), dict):
+            daily["motion_theme"] = self._stable_pick(PET_DAILY_MOTION_THEMES, pet_key, today, "motion_theme")
+        if not daily.get("body_focus"):
+            daily["body_focus"] = self._stable_pick(PET_BODY_DETAIL_FOCUS, pet_key, today, "body_focus")
+        if not daily.get("visual_motif"):
+            daily["visual_motif"] = self._stable_pick(PET_VISUAL_MOTIFS, pet_key, today, "visual_motif")
+        if not isinstance(daily.get("pose_focus"), dict):
+            pose_key = self._stable_pick(PET_POSE_KEYS, pet_key, today, "pose_focus")
+            pose = PET_POSE_LIBRARY.get(pose_key, {})
+            daily["pose_focus"] = {
+                "key": pose_key,
+                "label": pose.get("label", pose_key),
+                "line_hook": pose.get("line_hook", ""),
+            }
+
+    def _stable_pick(self, values: list[Any], *parts: Any) -> Any:
+        return values[self._stable_int(*parts, modulo=len(values))]
+
+    def _stable_int(self, *parts: Any, modulo: int | None = None) -> int:
+        seed = "|".join(str(part) for part in parts)
+        digest = hashlib.blake2s(seed.encode("utf-8"), digest_size=4).hexdigest()
+        value = int(digest, 16)
+        return value % modulo if modulo else value
 
     def _save_state(self, settings, state: dict[str, Any]) -> None:
         _safe_json_write(self._state_file(settings), state)
@@ -564,9 +1377,11 @@ class EpaperPet(BasePlugin):
 
         stats = state["stats"]
         profile = CARE_PROFILES.get(settings.get("care_profile"), CARE_PROFILES["normal"])
+        self._ensure_daily_life(state, now)
         sleeping = self._is_sleeping(state, now)
         for _ in range(steps):
-            stats["food"] = _clamp(stats["food"] - profile["food"])
+            food_loss = self._consume_food_reserve(state, profile["food"])
+            stats["food"] = _clamp(stats["food"] - food_loss)
             stats["happiness"] = _clamp(stats["happiness"] - profile["happiness"])
             stats["cleanliness"] = _clamp(stats["cleanliness"] - profile["cleanliness"])
             if sleeping:
@@ -582,7 +1397,7 @@ class EpaperPet(BasePlugin):
             stats["xp"] = int(stats["xp"]) + 1
 
         state["last_tick_at"] = (last_tick + timedelta(minutes=steps * tick_minutes)).isoformat()
-        if not self._apply_autonomous_care(state, settings, now, device_config):
+        if not self._apply_autonomous_care(state, settings, now, device_config) and not self._apply_daily_instinct(state, settings, now, device_config):
             care_message = self._care_message(state, sleeping)
             if care_message:
                 state["activity"] = "needs care"
@@ -638,8 +1453,77 @@ class EpaperPet(BasePlugin):
         stats = state["stats"]
         born_at = self._parse_time(state.get("born_at"), now)
         stats["age_days"] = max(0, int((now - born_at).total_seconds() // 86400))
-        stats["level"] = max(1, int(stats.get("xp", 0)) // 100 + 1)
+        level_info = self._level_info(state, settings)
+        stats["level"] = level_info["level"]
+        stats["food_reserve"] = min(max(0, int(stats.get("food_reserve", 0))), int(level_info["reserve_cap"]))
         state["mood"] = self._choose_mood(state, now)
+
+    def _level_info(self, state: dict[str, Any], settings=None) -> dict[str, Any]:
+        stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
+        xp = max(0, int(stats.get("xp", 0)))
+        level = max(1, xp // LEVEL_XP_STEP + 1)
+        next_xp = level * LEVEL_XP_STEP
+        tier = self._level_tier(level)
+        reserve_days = self._reserve_days(state, settings or {})
+        return {
+            "level": level,
+            "xp": xp,
+            "next_xp": next_xp,
+            "xp_to_next": max(0, next_xp - xp),
+            "title": tier["title"],
+            "prey_size": tier["prey_size"],
+            "reserve_cap": int(tier["reserve_cap"]),
+            "reserve": max(0, int(stats.get("food_reserve", 0))),
+            "reserve_days": reserve_days,
+            "next_prey_unlock": self._next_prey_unlock(level),
+        }
+
+    def _level_tier(self, level: int) -> dict[str, Any]:
+        for tier in LEVEL_TIERS:
+            if int(level) >= int(tier["min_level"]):
+                return tier
+        return LEVEL_TIERS[-1]
+
+    def _next_prey_unlock(self, level: int) -> dict[str, Any]:
+        future = [tier for tier in LEVEL_TIERS if int(tier["min_level"]) > int(level)]
+        if not future:
+            return {}
+        tier = sorted(future, key=lambda item: int(item["min_level"]))[0]
+        return {
+            "level": int(tier["min_level"]),
+            "prey_size": tier["prey_size"],
+            "title": tier["title"],
+        }
+
+    def _reserve_days(self, state: dict[str, Any], settings) -> float:
+        stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
+        reserve = max(0, int(stats.get("food_reserve", 0)))
+        tick_minutes = _parse_int((settings or {}).get("tick_minutes"), DEFAULT_TICK_MINUTES, 5, 240)
+        profile = CARE_PROFILES.get((settings or {}).get("care_profile"), CARE_PROFILES["normal"])
+        daily_food_need = max(1, int(profile["food"]) * max(1, 1440 // tick_minutes))
+        return round(reserve / daily_food_need, 1)
+
+    def _consume_food_reserve(self, state: dict[str, Any], amount: int) -> int:
+        stats = state["stats"]
+        need = max(0, int(amount))
+        reserve = max(0, int(stats.get("food_reserve", 0)))
+        if reserve <= 0 or need <= 0:
+            stats["food_reserve"] = reserve
+            return need
+        used = min(reserve, need)
+        stats["food_reserve"] = reserve - used
+        return need - used
+
+    def _add_food_with_reserve(self, state: dict[str, Any], food_gain: int, reserve_gain: int, reserve_cap: int) -> int:
+        stats = state["stats"]
+        before = int(stats.get("food", 0))
+        direct_gain = max(0, int(food_gain))
+        overflow = max(0, before + direct_gain - 100)
+        stats["food"] = _clamp(before + direct_gain)
+        reserve_before = max(0, int(stats.get("food_reserve", 0)))
+        reserve_added = max(0, int(reserve_gain)) + overflow
+        stats["food_reserve"] = min(max(0, int(reserve_cap)), reserve_before + reserve_added)
+        return stats["food_reserve"] - reserve_before
 
     def _choose_mood(self, state: dict[str, Any], now: datetime) -> str:
         stats = state["stats"]
@@ -670,6 +1554,10 @@ class EpaperPet(BasePlugin):
 
         stats = state["stats"]
         if stats["food"] < HUNTING_FOOD_THRESHOLD:
+            if int(stats.get("food_reserve", 0)) > 0:
+                self._eat_from_reserve(state, now)
+                self._maybe_generate_ai_message(state, settings, now, device_config)
+                return True
             self._apply_hunting_meal(state, now)
             self._maybe_generate_ai_message(state, settings, now, device_config)
             return True
@@ -701,6 +1589,103 @@ class EpaperPet(BasePlugin):
             return True
         return False
 
+    def _eat_from_reserve(self, state: dict[str, Any], now: datetime) -> None:
+        stats = state["stats"]
+        reserve = max(0, int(stats.get("food_reserve", 0)))
+        serving = min(reserve, max(10, 62 - int(stats.get("food", 0))))
+        stats["food_reserve"] = reserve - serving
+        stats["food"] = _clamp(int(stats.get("food", 0)) + serving)
+        stats["happiness"] = _clamp(stats["happiness"] + 2)
+        stats["health"] = _clamp(stats["health"] + 1)
+        stats["xp"] = int(stats["xp"]) + 1
+        state.pop("sleep_until", None)
+        state["mood_hint"] = "hunting"
+        state["activity"] = "stash meal"
+        state["message"] = "Ate from yesterday's hunting stash."
+        state["last_stash_meal"] = {
+            "serving": int(serving),
+            "reserve_after": int(stats.get("food_reserve", 0)),
+            "at": now.isoformat(),
+        }
+
+    def _apply_daily_instinct(self, state: dict[str, Any], settings, now: datetime, device_config=None) -> bool:
+        if not _enabled(settings.get("autonomous_care"), True):
+            return False
+        if self._is_sleeping(state, now):
+            return False
+
+        daily = self._ensure_daily_life(state, now)
+        stats = state["stats"]
+        hour = now.hour
+        theme = str(daily.get("theme") or "")
+
+        if stats["food"] < 42 and 6 <= hour < 20 and self._daily_gate(state, daily, "small_forage", 72):
+            level_info = self._level_info(state, settings)
+            self._add_food_with_reserve(state, 16, 6 + int(level_info["level"]), int(level_info["reserve_cap"]))
+            stats["energy"] = _clamp(stats["energy"] - 4)
+            stats["happiness"] = _clamp(stats["happiness"] + 2)
+            stats["xp"] = int(stats["xp"]) + 4
+            state.pop("sleep_until", None)
+            state["mood_hint"] = "hunting"
+            state["activity"] = "foraging"
+            state["message"] = "Found a spare crumb and saved half for later."
+            state["daily_life"]["last_instinct"] = "small_forage"
+            self._maybe_generate_ai_message(state, settings, now, device_config)
+            return True
+
+        if stats["cleanliness"] < 48 and theme in {"tidy", "cozy"} and self._daily_gate(state, daily, "self_groom", 85):
+            stats["cleanliness"] = _clamp(stats["cleanliness"] + 16)
+            stats["energy"] = _clamp(stats["energy"] - 2)
+            stats["happiness"] = _clamp(stats["happiness"] + 1)
+            stats["xp"] = int(stats["xp"]) + 3
+            state["mood_hint"] = "selfcare"
+            state["activity"] = "self grooming"
+            state["message"] = "Cleaned one paw, then judged the floor."
+            state["daily_life"]["last_instinct"] = "self_groom"
+            self._maybe_generate_ai_message(state, settings, now, device_config)
+            return True
+
+        nap_hour = int(daily.get("nap_hour") or 14)
+        if nap_hour <= hour < nap_hour + 2 and stats["energy"] < 55 and self._daily_gate(state, daily, "daily_nap", 88):
+            state["sleep_until"] = (now + timedelta(minutes=55)).isoformat()
+            stats["happiness"] = _clamp(stats["happiness"] + 2)
+            stats["xp"] = int(stats["xp"]) + 2
+            state["activity"] = "scheduled nap"
+            state["message"] = "Took a scheduled nap on the warmest pixel."
+            state["daily_life"]["last_instinct"] = "daily_nap"
+            self._maybe_generate_ai_message(state, settings, now, device_config)
+            return True
+
+        bed_hour = int(daily.get("bed_hour") or 22)
+        if (hour >= bed_hour or hour < 5) and stats["energy"] < 68 and self._daily_gate(state, daily, "bedtime", 90):
+            wake_hour = int(daily.get("wake_hour") or 7)
+            wake_day = now.date() + timedelta(days=1 if hour >= bed_hour else 0)
+            wake_at = now.replace(year=wake_day.year, month=wake_day.month, day=wake_day.day, hour=wake_hour, minute=0, second=0, microsecond=0)
+            state["sleep_until"] = wake_at.isoformat()
+            stats["happiness"] = _clamp(stats["happiness"] + 2)
+            stats["xp"] = int(stats["xp"]) + 2
+            state["activity"] = "bedtime curl"
+            state["message"] = "Curled up because its own schedule said so."
+            state["daily_life"]["last_instinct"] = "bedtime"
+            self._maybe_generate_ai_message(state, settings, now, device_config)
+            return True
+
+        return False
+
+    def _daily_gate(self, state: dict[str, Any], daily: dict[str, Any], key: str, chance: int) -> bool:
+        date = str(daily.get("date") or "")
+        event_key = f"{date}:{key}"
+        counts = state.get("daily_event_counts") if isinstance(state.get("daily_event_counts"), dict) else {}
+        if counts.get(event_key):
+            state["daily_event_counts"] = counts
+            return False
+        roll = self._stable_int(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME, date, key, state.get("event_index") or 0, modulo=100)
+        if roll >= chance:
+            return False
+        counts[event_key] = 1
+        state["daily_event_counts"] = {k: v for k, v in counts.items() if str(k).startswith(date)}
+        return True
+
     def _should_hunt_now(self, state: dict[str, Any], settings) -> bool:
         if not _enabled(settings.get("autonomous_care"), True):
             return False
@@ -709,8 +1694,14 @@ class EpaperPet(BasePlugin):
 
     def _apply_hunting_meal(self, state: dict[str, Any], now: datetime) -> None:
         stats = state["stats"]
+        level_info = self._level_info(state)
         food = self._select_hunted_food(state, now)
-        stats["food"] = _clamp(stats["food"] + int(food["food_gain"]))
+        reserve_added = self._add_food_with_reserve(
+            state,
+            int(food["food_gain"]),
+            int(food.get("reserve_gain", 0)),
+            int(level_info["reserve_cap"]),
+        )
         stats["energy"] = _clamp(stats["energy"] - int(food["energy_cost"]))
         stats["happiness"] = _clamp(stats["happiness"] + int(food["happiness_gain"]))
         stats["health"] = _clamp(stats["health"] + 2)
@@ -718,24 +1709,98 @@ class EpaperPet(BasePlugin):
         state.pop("sleep_until", None)
         state["mood_hint"] = "hunting"
         state["activity"] = "hunting"
-        state["message"] = "Autonomy: hunted a small meal and ate it."
+        state["message"] = "Autonomy: hunted a meal and stored the leftovers."
         state["last_hunt"] = {
             "id": food["id"],
             "food": food["food"],
+            "food_zh": food.get("food_zh", ""),
+            "size": food.get("size", "tiny"),
+            "prey_group": food.get("prey_group", ""),
+            "prey_mass_g": food.get("prey_mass_g", 0),
+            "level": int(level_info["level"]),
+            "title": level_info["title"],
             "food_gain": int(food["food_gain"]),
+            "reserve_gain": int(food.get("reserve_gain", 0)),
+            "reserve_added": int(reserve_added),
+            "reserve_after": int(stats.get("food_reserve", 0)),
             "energy_cost": int(food["energy_cost"]),
             "at": now.isoformat(),
         }
 
     def _select_hunted_food(self, state: dict[str, Any], now: datetime) -> dict[str, Any]:
+        level = int(self._level_info(state)["level"])
+        available = self._available_hunted_foods(level)
         seed = "|".join([
             str(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME),
             str(state.get("last_tick_at") or ""),
             now.strftime("%Y-%m-%d-%H"),
             str(state.get("event_index") or 0),
+            str(level),
         ])
         digest = hashlib.blake2s(seed.encode("utf-8"), digest_size=2).hexdigest()
-        return HUNTED_FOODS[int(digest, 16) % len(HUNTED_FOODS)]
+        return available[int(digest, 16) % len(available)]
+
+    def _available_hunted_foods(self, level: int) -> list[dict[str, Any]]:
+        unlocked = [food for food in HUNTED_FOODS if int(food.get("level_min", 1)) <= int(level)]
+        if not unlocked:
+            return [HUNTED_FOODS[0]]
+        tier = self._level_tier(level)
+        current_rank = PREY_SIZE_RANK.get(str(tier.get("prey_size")), 0)
+        min_rank = max(0, current_rank - 1)
+        focused = [food for food in unlocked if PREY_SIZE_RANK.get(str(food.get("size")), 0) >= min_rank]
+        return focused or unlocked
+
+    def _prey_ai_item(self, food: dict[str, Any], settings) -> dict[str, Any]:
+        return {
+            "id": food.get("id") or "",
+            "name": food.get("food_zh") if self._is_chinese(settings) and food.get("food_zh") else food.get("food") or "",
+            "name_en": food.get("food") or "",
+            "name_zh": food.get("food_zh") or "",
+            "size": food.get("size") or "",
+            "prey_group": food.get("prey_group") or "",
+            "prey_mass_g": food.get("prey_mass_g"),
+            "level_min": int(food.get("level_min", 1)),
+            "food_gain": int(food.get("food_gain", 0)),
+            "reserve_gain": int(food.get("reserve_gain", 0)),
+            "energy_cost": int(food.get("energy_cost", 0)),
+            "happiness_gain": int(food.get("happiness_gain", 0)),
+            "xp_gain": int(food.get("xp_gain", 0)),
+        }
+
+    def _prey_ecology_context(self, state: dict[str, Any], settings, level_info: dict[str, Any]) -> dict[str, Any]:
+        level = int(level_info.get("level") or 1)
+        available = self._available_hunted_foods(level)
+        future = sorted(
+            [food for food in HUNTED_FOODS if int(food.get("level_min", 1)) > level],
+            key=lambda food: (
+                int(food.get("level_min", 1)),
+                PREY_SIZE_RANK.get(str(food.get("size")), 0),
+                str(food.get("id") or ""),
+            ),
+        )
+        catalog = []
+        for size in PREY_SIZE_ORDER:
+            prey = [food for food in HUNTED_FOODS if food.get("size") == size]
+            if not prey:
+                continue
+            catalog.append({
+                "size": size,
+                "min_level": min(int(food.get("level_min", 1)) for food in prey),
+                "prey": [self._prey_ai_item(food, settings) for food in prey],
+            })
+        return {
+            "rule": "The pet grows up the food web from tiny prey to huge prey; only unlocked prey may be treated as real catches.",
+            "size_order": list(PREY_SIZE_ORDER),
+            "current_title": level_info.get("title") or "",
+            "current_prey_size": level_info.get("prey_size") or "tiny",
+            "available_sizes": sorted(
+                {str(food.get("size") or "") for food in available if food.get("size")},
+                key=lambda value: PREY_SIZE_RANK.get(value, 0),
+            ),
+            "available_now": [self._prey_ai_item(food, settings) for food in available],
+            "next_locked_prey": [self._prey_ai_item(food, settings) for food in future[:8]],
+            "catalog": catalog,
+        }
 
     def _needs_initial_event(self, state: dict[str, Any]) -> bool:
         message = str(state.get("message") or "")
@@ -756,16 +1821,15 @@ class EpaperPet(BasePlugin):
         return ""
 
     def _apply_autonomous_event(self, state: dict[str, Any], settings, now: datetime, steps: int, device_config=None) -> None:
-        events = self._event_catalog(settings, now)
+        events = self._event_catalog(settings, now, state)
         if not events:
             return
 
         event_index = int(state.get("event_index") or 0)
-        offset = now.hour + (now.minute // max(1, _parse_int(settings.get("tick_minutes"), DEFAULT_TICK_MINUTES, 5, 240)))
-        event = events[(event_index + offset) % len(events)]
+        event = self._choose_autonomous_event(events, state, now, steps)
         previous = state.get("last_event_key")
         if previous == event.get("id") and len(events) > 1:
-            event = events[(event_index + offset + 1) % len(events)]
+            event = events[(events.index(event) + 1) % len(events)]
 
         self._apply_event_delta(state, event.get("delta", {}))
         state["event_index"] = event_index + max(1, steps)
@@ -775,7 +1839,23 @@ class EpaperPet(BasePlugin):
         state["message"] = event.get("message", "Moved quietly between refreshes.")
         self._maybe_generate_ai_message(state, settings, now, device_config)
 
-    def _event_catalog(self, settings, now: datetime) -> list[dict[str, Any]]:
+    def _choose_autonomous_event(self, events: list[dict[str, Any]], state: dict[str, Any], now: datetime, steps: int) -> dict[str, Any]:
+        daily = self._ensure_daily_life(state, now)
+        stats = state.get("stats") if isinstance(state.get("stats"), dict) else {}
+        seed_parts = [
+            state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME,
+            daily.get("date"),
+            daily.get("theme"),
+            self._time_band(now),
+            int(state.get("event_index") or 0),
+            max(1, steps),
+            int(stats.get("food", 0)) // 10,
+            int(stats.get("energy", 0)) // 10,
+            int(stats.get("happiness", 0)) // 10,
+        ]
+        return events[self._stable_int(*seed_parts, modulo=len(events))]
+
+    def _event_catalog(self, settings, now: datetime, state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         density = settings.get("event_density") or "expressive"
         if density == "quiet":
             events = list(QUIET_EVENTS)
@@ -784,8 +1864,13 @@ class EpaperPet(BasePlugin):
             if density in {"normal", "expressive"}:
                 events.extend(EXPRESSIVE_EVENTS)
 
-        hour = now.hour
-        if 5 <= hour < 10:
+        band = self._time_band(now)
+        if state is not None:
+            daily = self._ensure_daily_life(state, now)
+            events.extend(ROUTINE_EVENTS.get(band, []))
+            events.extend(THEME_EVENTS.get(str(daily.get("theme") or ""), []))
+
+        if band == "morning":
             events.extend([
                 {
                     "id": "morning_boot",
@@ -802,7 +1887,7 @@ class EpaperPet(BasePlugin):
                     "delta": {"happiness": 2, "xp": 1},
                 },
             ])
-        elif 21 <= hour or hour < 5:
+        elif band == "night":
             events.extend([
                 {
                     "id": "night_watch",
@@ -820,6 +1905,18 @@ class EpaperPet(BasePlugin):
                 },
             ])
         return events
+
+    def _time_band(self, now: datetime) -> str:
+        hour = now.hour
+        if 5 <= hour < 10:
+            return "morning"
+        if 10 <= hour < 14:
+            return "midday"
+        if 14 <= hour < 18:
+            return "afternoon"
+        if 18 <= hour < 22:
+            return "evening"
+        return "night"
 
     def _apply_event_delta(self, state: dict[str, Any], delta: dict[str, int]) -> None:
         stats = state["stats"]
@@ -848,6 +1945,9 @@ class EpaperPet(BasePlugin):
 
         base_message = state.get("message", "")
         ambient_context = self._ambient_context(settings, now)
+        prompt_settings = dict(settings or {})
+        if device_config is not None:
+            prompt_settings["_theme_context"] = get_theme_context(device_config, now=now)
         attempts: list[dict[str, Any]] = []
         fallback_from = ""
         fallback_reason = ""
@@ -862,7 +1962,7 @@ class EpaperPet(BasePlugin):
                     api_key,
                     model,
                     state,
-                    settings,
+                    prompt_settings,
                     now,
                     base_message,
                     ambient_context,
@@ -1023,6 +2123,51 @@ class EpaperPet(BasePlugin):
         usage[key] = int(usage.get(key) or 0) + 1
         state["ai_provider_usage"] = usage
 
+    def _pose_library_context(self) -> list[dict[str, str]]:
+        return [
+            {
+                "key": key,
+                "label": str(value.get("label") or key),
+                "body_language": str(value.get("body_language") or ""),
+                "line_hook": str(value.get("line_hook") or ""),
+            }
+            for key, value in PET_POSE_LIBRARY.items()
+        ]
+
+    def _visual_state_context(self, state: dict[str, Any], settings, daily_life: dict[str, Any]) -> dict[str, Any]:
+        mood_id = state.get("mood_hint") or state.get("mood") or "calm"
+        activity_id = state.get("activity", "")
+        pose_key = self._resolve_state_image_key(mood_id, activity_id)
+        pose = PET_POSE_LIBRARY.get(pose_key, PET_POSE_LIBRARY["calm"])
+        activity_pose_key = PET_ACTIVITY_IMAGE_MAP.get(_pet_state_lookup_key(activity_id))
+        theme_context = settings.get("_theme_context") if isinstance(settings, dict) else {}
+        theme_mode = _theme_mode(theme_context)
+        return {
+            "identity": dict(PET_PHYSICAL_IDENTITY),
+            "current_pose": {
+                "key": pose_key,
+                "asset": f"{pose_key}.png",
+                "source": "activity" if activity_pose_key else "mood",
+                "activity_id": activity_id,
+                "mood_id": mood_id,
+                "label": pose.get("label", pose_key),
+                "body_language": pose.get("body_language", ""),
+                "line_hook": pose.get("line_hook", ""),
+            },
+            "today": {
+                "motion_theme": daily_life.get("motion_theme") or {},
+                "body_focus": daily_life.get("body_focus") or "",
+                "visual_motif": daily_life.get("visual_motif") or "",
+                "pose_focus": daily_life.get("pose_focus") or {},
+            },
+            "render_style": {
+                "mode": theme_mode,
+                "day": "warm paper background with comic process-color accents",
+                "night": "deep black panels with bright e-paper contrast accents",
+            },
+            "pose_library": self._pose_library_context(),
+        }
+
     def _life_context(self, state: dict[str, Any], settings, now: datetime, base_message: str) -> dict[str, Any]:
         stats = state.get("stats", {})
         values = {
@@ -1031,9 +2176,11 @@ class EpaperPet(BasePlugin):
             "energy": int(stats.get("energy", 0)),
             "cleanliness": int(stats.get("cleanliness", 0)),
             "health": int(stats.get("health", 0)),
+            "food_reserve": int(stats.get("food_reserve", 0)),
             "level": int(stats.get("level", 1)),
             "age_days": int(stats.get("age_days", 0)),
         }
+        level_info = self._level_info(state, settings)
         priorities: list[dict[str, Any]] = []
 
         def add(metric: str, value: int, severity: int, state_name: str, hint: str) -> None:
@@ -1085,20 +2232,11 @@ class EpaperPet(BasePlugin):
             "hint": "respond to the current activity and time of day",
         }
 
-        hour = now.hour
-        if 5 <= hour < 10:
-            time_band = "morning"
-        elif 10 <= hour < 14:
-            time_band = "midday"
-        elif 14 <= hour < 18:
-            time_band = "afternoon"
-        elif 18 <= hour < 22:
-            time_band = "evening"
-        else:
-            time_band = "night"
+        time_band = self._time_band(now)
 
         mood_id = state.get("mood_hint") or state.get("mood") or "calm"
         last_hunt = state.get("last_hunt") if isinstance(state.get("last_hunt"), dict) else {}
+        daily_life = self._ensure_daily_life(state, now)
         state_notes = [item["hint"] for item in priorities[:3]] or ["healthy enough to focus on the current small activity"]
         if state.get("activity") == "hunting":
             state_notes.insert(0, "the pet hunted for food and ate what it found; keep it non-graphic")
@@ -1111,12 +2249,41 @@ class EpaperPet(BasePlugin):
             "activity_id": state.get("activity", ""),
             "activity": self._activity_text(settings, state.get("activity", "")),
             "base_event": self._message_text(settings, base_message),
+            "daily_life": {
+                "theme": daily_life.get("theme"),
+                "goal": daily_life.get("goal"),
+                "tone": daily_life.get("tone"),
+                "favorite": daily_life.get("favorite"),
+                "wake_hour": daily_life.get("wake_hour"),
+                "nap_hour": daily_life.get("nap_hour"),
+                "bed_hour": daily_life.get("bed_hour"),
+                "curiosity": daily_life.get("curiosity"),
+                "boldness": daily_life.get("boldness"),
+                "last_instinct": daily_life.get("last_instinct") or "",
+                "motion_theme": daily_life.get("motion_theme") or {},
+                "body_focus": daily_life.get("body_focus") or "",
+                "visual_motif": daily_life.get("visual_motif") or "",
+                "pose_focus": daily_life.get("pose_focus") or {},
+            },
+            "visual_state": self._visual_state_context(state, settings, daily_life),
+            "level_system": level_info,
+            "prey_ecology": self._prey_ecology_context(state, settings, level_info),
             "care_priority": priorities[:5],
             "top_priority": top_priority,
             "state_notes": state_notes,
             "last_hunt": {
                 "food": last_hunt.get("food") or "",
+                "food_label": last_hunt.get("food_zh") if self._is_chinese(settings) and last_hunt.get("food_zh") else last_hunt.get("food") or "",
+                "food_zh": last_hunt.get("food_zh") or "",
+                "size": last_hunt.get("size") or "",
+                "prey_group": last_hunt.get("prey_group") or "",
+                "prey_mass_g": last_hunt.get("prey_mass_g"),
+                "level": last_hunt.get("level"),
+                "title": last_hunt.get("title") or "",
                 "food_gain": last_hunt.get("food_gain"),
+                "reserve_gain": last_hunt.get("reserve_gain"),
+                "reserve_added": last_hunt.get("reserve_added"),
+                "reserve_after": last_hunt.get("reserve_after"),
                 "at": last_hunt.get("at") or "",
             } if last_hunt else {},
         }
@@ -1258,6 +2425,149 @@ class EpaperPet(BasePlugin):
             "sources": sources,
         }
 
+    def _ai_prompt_context(
+        self,
+        state: dict[str, Any],
+        settings,
+        now: datetime,
+        base_message: str,
+        ambient_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        language = self._language(settings)
+        language_name = "Simplified Chinese" if language == "zh-Hans" else "English"
+        life_context = self._life_context(state, settings, now, base_message)
+        recent_messages = state.get("ai_recent_messages", [])[-12:]
+        if not isinstance(recent_messages, list):
+            recent_messages = []
+        ambient = ambient_context or {"available": False, "sources": []}
+        variation = self._dialogue_variation(state, now, life_context, ambient, recent_messages)
+        return {
+            "pet_name": state.get("name", DEFAULT_PET_NAME),
+            "personality": settings.get("personality", ""),
+            "language": language_name,
+            "time": now.strftime("%Y-%m-%d %H:%M"),
+            "life": life_context,
+            "ambient": ambient,
+            "variation": variation,
+            "chat_style": settings.get("ai_chat_style") or "wry",
+            "recent_lines_to_avoid": recent_messages,
+        }
+
+    def _dialogue_variation(
+        self,
+        state: dict[str, Any],
+        now: datetime,
+        life_context: dict[str, Any],
+        ambient_context: dict[str, Any],
+        recent_messages: list[Any],
+    ) -> dict[str, Any]:
+        stats = life_context.get("stats") if isinstance(life_context.get("stats"), dict) else {}
+        last_hunt = life_context.get("last_hunt") if isinstance(life_context.get("last_hunt"), dict) else {}
+        prey_context = life_context.get("prey_ecology") if isinstance(life_context.get("prey_ecology"), dict) else {}
+        available_prey = prey_context.get("available_now") if isinstance(prey_context.get("available_now"), list) else []
+        locked_prey = prey_context.get("next_locked_prey") if isinstance(prey_context.get("next_locked_prey"), list) else []
+        visual_state = life_context.get("visual_state") if isinstance(life_context.get("visual_state"), dict) else {}
+        pose_library = visual_state.get("pose_library") if isinstance(visual_state.get("pose_library"), list) else []
+        visual_today = visual_state.get("today") if isinstance(visual_state.get("today"), dict) else {}
+        ambient_sources = (ambient_context or {}).get("sources") if isinstance((ambient_context or {}).get("sources"), list) else []
+        seed = "|".join([
+            str(state.get("pet_id") or state.get("name") or DEFAULT_PET_NAME),
+            now.strftime("%Y-%m-%dT%H:%M:%S"),
+            str(state.get("event_index") or 0),
+            str(state.get("activity") or ""),
+            str(state.get("mood") or state.get("mood_hint") or ""),
+            json.dumps(stats, sort_keys=True, separators=(",", ":")),
+            str(last_hunt.get("id") or ""),
+            str(len(recent_messages)),
+        ])
+        digest = hashlib.blake2s(seed.encode("utf-8"), digest_size=16).digest()
+        last_variation = state.get("ai_last_variation") if isinstance(state.get("ai_last_variation"), dict) else {}
+
+        def pick(options: list[Any], offset: int, avoid: Any = None) -> Any:
+            choices = [item for item in options if item != avoid] or list(options)
+            return choices[digest[offset % len(digest)] % len(choices)]
+
+        primary = pick(AI_DIALOGUE_ANGLES, 0, last_variation.get("primary_angle"))
+        secondary = pick(AI_DIALOGUE_ANGLES, 1, primary)
+        prey_focus = pick(available_prey, 5) if available_prey else {}
+        locked_prey_focus = pick(locked_prey, 6) if locked_prey else {}
+        ambient_focus = pick(ambient_sources, 7) if ambient_sources else {}
+        weakest_stat = ""
+        if stats:
+            weakest_stat = min(
+                ("food", "happiness", "energy", "cleanliness", "health"),
+                key=lambda key: int(stats.get(key, 100)),
+            )
+
+        return {
+            "novelty_seed": hashlib.blake2s(seed.encode("utf-8"), digest_size=4).hexdigest(),
+            "primary_angle": primary,
+            "secondary_angle": secondary,
+            "line_shape": pick(AI_LINE_SHAPES, 2, last_variation.get("line_shape")),
+            "tone_color": pick(AI_TONE_COLORS, 3, last_variation.get("tone_color")),
+            "detail_lens": pick(AI_DETAIL_LENSES, 4, last_variation.get("detail_lens")),
+            "prey_focus": prey_focus,
+            "locked_prey_focus": locked_prey_focus,
+            "ambient_focus": ambient_focus,
+            "pose_focus": pick(pose_library, 8, last_variation.get("pose_focus")) if pose_library else {},
+            "daily_motion_theme": visual_today.get("motion_theme") or {},
+            "daily_body_focus": visual_today.get("body_focus") or "",
+            "daily_visual_motif": visual_today.get("visual_motif") or "",
+            "daily_pose_focus": visual_today.get("pose_focus") or {},
+            "weakest_stat": weakest_stat,
+            "must_consider": [
+                "stats",
+                "top_priority",
+                "care_priority",
+                "daily_life",
+                "visual_state",
+                "pose_library",
+                "level_system",
+                "prey_ecology",
+                "last_hunt",
+                "ambient",
+                "recent_lines_to_avoid",
+            ],
+        }
+
+    def _ai_length_rule(self, language: str) -> str:
+        if language == "zh-Hans":
+            return (
+                "Write exactly one natural Simplified Chinese sentence, 12 to 30 Chinese characters. "
+                "Mostly use Simplified Chinese, but a short natural English word is acceptable when it fits the pet's voice."
+            )
+        return "Write exactly one natural English sentence, 6 to 14 words."
+
+    def _ai_system_content(self, language: str) -> str:
+        length_rule = self._ai_length_rule(language)
+        return (
+            "You write tiny dialogue lines for a Tamagotchi-like e-paper pet. "
+            "The pet has no buttons and expresses itself through a state image, mood, activity, and one log line. "
+            "You must make the line feel state-aware and strongly varied, never like a fixed status template. "
+            "Always inspect variation.must_consider before writing: stats, top_priority, care_priority, daily_life, visual_state, pose_library, level_system, prey_ecology, last_hunt, ambient, and recent_lines_to_avoid. "
+            "Follow variation.primary_angle first, then optionally variation.secondary_angle; use variation.line_shape, tone_color, detail_lens, pose_focus, daily_motion_theme, daily_body_focus, daily_visual_motif, daily_pose_focus, prey_focus, locked_prey_focus, ambient_focus, and weakest_stat to make this line distinct from recent lines. "
+            "prey_ecology contains the full prey catalog, current available prey, next locked prey, names, ecological group, mass, unlock level, food gain, reserve gain, energy cost, happiness gain, and XP gain. "
+            "visual_state contains the real cat identity, visible current pose, all available transparent pose images, today's motion theme, body focus, visual motif, and day/night render style. "
+            "The cat is a white and gray-black tabby with green eyes, a pink nose, a compact low body, and short front legs; you may use those physical details when they match the current pose. "
+            "Do not cram every field into one sentence; pick one surprising slice while still respecting all provided facts. "
+            "daily_life is the pet's own plan for today: theme, goal, favorite, wake hour, nap hour, bedtime, curiosity, boldness, motion theme, body focus, visual motif, and pose focus. "
+            "level_system describes survival growth: higher levels unlock larger prey, larger reserve capacity, and more stored food days. "
+            "If ambient.available is true, naturally connect the line to exactly one fresh ambient source such as weather, news, Steam promotion, Steam activity, live streams, game charts, a daily word or poem, space/photo sources, magazine covers, comics, or Wikipedia photos. "
+            "Use only facts present in ambient; do not invent headlines, prices, forecasts, game names, or current events. "
+            "Follow chat_style: soft means gentle small talk, wry means dry wit, black_humor means mild dark humor without cruelty or graphic content, aphorism means a compact memorable line. "
+            "If life.top_priority.severity is 3 or higher, the line must naturally imply that need. "
+            "If life.activity_id is hunting or life.last_hunt exists, you may mention the actual hunt, prey size, prey name, or stored leftovers without making it graphic. "
+            "If no hunt just happened, treat prey details as instinct, smell, memory, plan, dream, or ambition, not a new catch. "
+            "If all needs are mild, rotate among current activity, visible body pose, time of day, daily plan, level ambition, prey ecology, ambient world data, and personality. "
+            "Do not claim the image is truly animated; treat motion as a still pose, printed motion mark, or change between refreshes. "
+            "Do not contradict the stats; for example, do not sound energetic when energy is low, or full when food is low. "
+            f"{length_rule} "
+            "Do not use emoji, markdown, labels, quotes, brackets, or line breaks. "
+            "Do not mention OpenAI, prompts, APIs, models, or being generated. "
+            "Do not repeat or closely paraphrase any recent line. "
+            "Keep the voice quiet, alive, slightly playful, and suitable for an e-paper screen."
+        )
+
     def _request_ai_message(
         self,
         provider: str,
@@ -1272,46 +2582,9 @@ class EpaperPet(BasePlugin):
         from openai import OpenAI
 
         language = self._language(settings)
-        language_name = "Simplified Chinese" if language == "zh-Hans" else "English"
-        life_context = self._life_context(state, settings, now, base_message)
-        recent_messages = state.get("ai_recent_messages", [])[-12:]
-        context = {
-            "pet_name": state.get("name", DEFAULT_PET_NAME),
-            "personality": settings.get("personality", ""),
-            "language": language_name,
-            "time": now.strftime("%Y-%m-%d %H:%M"),
-            "life": life_context,
-            "ambient": ambient_context or {"available": False, "sources": []},
-            "chat_style": settings.get("ai_chat_style") or "wry",
-            "recent_lines_to_avoid": recent_messages,
-        }
-
-        if language == "zh-Hans":
-            length_rule = (
-                "Write exactly one natural Simplified Chinese sentence, 12 to 30 Chinese characters. "
-                "Mostly use Simplified Chinese, but a short natural English word is acceptable when it fits the pet's voice."
-            )
-        else:
-            length_rule = "Write exactly one natural English sentence, 6 to 14 words."
-
-        system_content = (
-            "You write tiny dialogue lines for a Tamagotchi-like e-paper pet. "
-            "The pet has no buttons and expresses itself through a static face, mood, activity, and one log line. "
-            "You must make the line feel state-aware, not random. "
-            "Use the provided life.top_priority, care_priority, state_notes, current mood, activity, time_band, and personality. "
-            "If ambient.available is true, naturally connect the line to exactly one fresh ambient source such as weather, news, Steam promotion, Steam activity, live streams, game charts, a daily word or poem, space/photo sources, magazine covers, comics, or Wikipedia photos. "
-            "Use only facts present in ambient; do not invent headlines, prices, forecasts, game names, or current events. "
-            "Follow chat_style: soft means gentle small talk, wry means dry wit, black_humor means mild dark humor without cruelty or graphic content, aphorism means a compact memorable line. "
-            "If life.top_priority.severity is 3 or higher, the line must naturally imply that need. "
-            "If life.activity_id is hunting, mention that the pet hunted and ate what it found without making it graphic. "
-            "If all needs are mild, focus on the current activity, time of day, and personality. "
-            "Do not contradict the stats; for example, do not sound energetic when energy is low, or full when food is low. "
-            f"{length_rule} "
-            "Do not use emoji, markdown, labels, quotes, brackets, or line breaks. "
-            "Do not mention OpenAI, prompts, APIs, models, or being generated. "
-            "Do not repeat or closely paraphrase any recent line. "
-            "Keep the voice quiet, alive, slightly playful, and suitable for an e-paper screen."
-        )
+        context = self._ai_prompt_context(state, settings, now, base_message, ambient_context)
+        state["ai_last_variation"] = context.get("variation", {})
+        system_content = self._ai_system_content(language)
         user_content = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
 
         client_kwargs = {"api_key": api_key, "timeout": 8.0}
@@ -1324,8 +2597,8 @@ class EpaperPet(BasePlugin):
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
             ],
-            temperature=1.1,
-            max_tokens=80,
+            temperature=1.25,
+            max_tokens=90,
         )
         return (response.choices[0].message.content or "").strip()
 
@@ -1376,7 +2649,12 @@ class EpaperPet(BasePlugin):
         sleep_until = state.get("sleep_until")
         if not sleep_until:
             return False
-        return self._parse_time(sleep_until, now) > now
+        parsed = self._parse_time(sleep_until, now)
+        if parsed.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=parsed.tzinfo)
+        elif parsed.tzinfo is None and now.tzinfo is not None:
+            parsed = parsed.replace(tzinfo=now.tzinfo)
+        return parsed > now
 
     def _parse_time(self, value: Any, fallback: datetime) -> datetime:
         try:
@@ -1392,6 +2670,8 @@ class EpaperPet(BasePlugin):
         face = FACE_MAP.get(mood, FACE_MAP["calm"])[0]
         label = self._mood_label(mood, settings or {})
         stats = state["stats"]
+        daily_life = state.get("daily_life") if isinstance(state.get("daily_life"), dict) else {}
+        level_info = self._level_info(state, settings or {})
         return {
             "name": state.get("name", DEFAULT_PET_NAME),
             "mood": label,
@@ -1399,12 +2679,22 @@ class EpaperPet(BasePlugin):
             "face": face,
             "activity": self._activity_text(settings or {}, state.get("activity", "")),
             "message": self._message_text(settings or {}, state.get("message", "")),
+            "daily_life": {
+                "theme": daily_life.get("theme") or "",
+                "goal": daily_life.get("goal") or "",
+                "favorite": daily_life.get("favorite") or "",
+                "wake_hour": daily_life.get("wake_hour"),
+                "nap_hour": daily_life.get("nap_hour"),
+                "bed_hour": daily_life.get("bed_hour"),
+            },
+            "level_system": level_info,
             "stats": {
                 "food": int(stats["food"]),
                 "happiness": int(stats["happiness"]),
                 "energy": int(stats["energy"]),
                 "cleanliness": int(stats["cleanliness"]),
                 "health": int(stats["health"]),
+                "food_reserve": int(stats.get("food_reserve", 0)),
                 "level": int(stats["level"]),
                 "xp": int(stats["xp"]),
                 "age_days": int(stats["age_days"]),
@@ -1413,16 +2703,18 @@ class EpaperPet(BasePlugin):
 
     def _render(self, dimensions, settings, state: dict[str, Any], now: datetime):
         width, height = dimensions
-        palette = get_theme_palette(settings.get("_theme_context"))
+        mood = state.get("mood") or "calm"
+        palette = _pet_palette(mood, settings.get("_theme_context"))
         border = palette["border"]
         image = Image.new("RGB", dimensions, palette["background"])
         draw = ImageDraw.Draw(image)
+        self._draw_halftone(draw, (0, 0, width, height), palette["orange"], palette["background"], spacing=30, radius=1, mix=palette["halftone_mix"])
 
-        mood = state.get("mood") or "calm"
         face = FACE_MAP.get(mood, FACE_MAP["calm"])[0]
         mood_label = self._mood_label(mood, settings)
         state["face"] = face
-        activity = self._activity_text(settings, state.get("activity", "quiet watch"))
+        activity_id = state.get("activity", "quiet watch")
+        activity = self._activity_text(settings, activity_id)
         stats = state["stats"]
 
         text_family = self._text_family(settings)
@@ -1447,11 +2739,38 @@ class EpaperPet(BasePlugin):
         right_w = width - right - pad
 
         draw.rectangle((1, 1, width - 2, height - 2), outline=border, width=2)
+        self._draw_registration_marks(draw, width, palette)
         self._draw_header(draw, (pad, pad, width - pad, pad + header_h), settings, state, mood_label, title_font, meta_font, label_font, now, palette)
-        self._draw_face_panel(draw, (left, content_top, left + left_w, footer_top - gap), settings, face, mood_label, activity, face_font, label_font, palette)
+        self._draw_face_panel(image, draw, (left, content_top, left + left_w, footer_top - gap), settings, mood, face, mood_label, activity_id, activity, face_font, label_font, palette)
         self._draw_stats_panel(draw, (right, content_top, right + right_w, footer_top - gap), settings, stats, label_font, value_font, palette)
         self._draw_message_panel(draw, (pad, footer_top, width - pad, height - pad), settings, state, message_font, journal_font, label_font, telemetry_font, palette)
         return image
+
+    def _draw_panel(self, draw, box: tuple[int, int, int, int], palette, *, fill=None, accent=None, shadow=None, stripe: int = 7) -> None:
+        x1, y1, x2, y2 = box
+        fill = fill or palette["panel"]
+        accent = accent or palette["accent"]
+        shadow = shadow or palette["orange"]
+        draw.rectangle((x1 + 4, y1 + 5, x2 + 4, y2 + 5), fill=shadow)
+        draw.rectangle(box, fill=fill)
+        if stripe > 0:
+            draw.rectangle((x1, y1, x2, min(y2, y1 + stripe)), fill=accent)
+        draw.rectangle(box, outline=palette["border"], width=2)
+
+    def _draw_registration_marks(self, draw, width: int, palette) -> None:
+        x = width - 86
+        y = 7
+        for color in (palette["blue"], palette["red"], palette["yellow"], palette["green"]):
+            draw.rectangle((x, y, x + 12, y + 12), fill=color)
+            draw.rectangle((x, y, x + 12, y + 12), outline=palette["ink"], width=1)
+            x += 17
+
+    def _draw_halftone(self, draw, box: tuple[int, int, int, int], color, paper, *, spacing: int = 20, radius: int = 1, mix: float = 0.20) -> None:
+        x1, y1, x2, y2 = box
+        dot = _blend_rgb(color, paper, mix)
+        for y in range(y1 + spacing // 2, y2, spacing):
+            for x in range(x1 + spacing // 2, x2, spacing):
+                draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=dot)
 
     def _draw_header(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], mood_label: str, title_font, meta_font, label_font, now: datetime, palette) -> None:
         x1, y1, x2, y2 = box
@@ -1462,45 +2781,148 @@ class EpaperPet(BasePlugin):
         if len(name) > 15:
             name = name[:15]
 
-        draw.rectangle(box, outline=border, width=2)
+        self._draw_panel(draw, box, palette, fill=palette["panel_yellow"], accent=palette["blue"], shadow=palette["red"])
         title = name if self._is_chinese(settings) or not name.isascii() else name.upper()
         draw.text((x1 + 18, y1 + 8), title, font=title_font, fill=ink)
 
+        level_info = self._level_info(state, settings)
+        reserve_days = float(level_info.get("reserve_days") or 0)
         if self._is_chinese(settings):
-            meta = f"{self._ui(settings, 'level', 'LV')} {stats['level']}  {self._ui(settings, 'age', 'AGE')} {stats['age_days']}{self._ui(settings, 'day', 'D')}  XP {stats['xp']}"
+            meta = f"{self._ui(settings, 'level', 'LV')} {stats['level']}  {self._ui(settings, 'age', 'AGE')} {stats['age_days']}{self._ui(settings, 'day', 'D')}  XP {stats['xp']}/{level_info['next_xp']}  储 {reserve_days:.1f}天"
         else:
-            meta = f"LV {stats['level']}  AGE {stats['age_days']}D  XP {stats['xp']}"
-        draw.text((x1 + 20, y2 - 28), meta, font=meta_font, fill=ink)
+            meta = f"LV {stats['level']}  AGE {stats['age_days']}D  XP {stats['xp']}/{level_info['next_xp']}  R {reserve_days:.1f}D"
+        meta = self._clip_text(draw, meta, meta_font, x2 - x1 - 188)
+        draw.text((x1 + 20, y2 - 28), meta, font=meta_font, fill=palette["muted"])
 
         stamp = now.strftime("%m/%d %H:%M")
         stamp_w = self._text_w(draw, stamp, meta_font)
-        draw.text((x2 - 18 - stamp_w, y1 + 12), stamp, font=meta_font, fill=ink)
-        self._draw_badge(draw, x2 - 148, y2 - 34, 130, 24, self._badge_text(settings, mood_label), label_font, palette)
+        draw.text((x2 - 18 - stamp_w, y1 + 12), stamp, font=meta_font, fill=palette["muted"])
+        self._draw_badge(draw, x2 - 148, y2 - 34, 130, 24, self._badge_text(settings, mood_label), label_font, palette, accent=palette["accent"])
 
-    def _draw_face_panel(self, draw, box: tuple[int, int, int, int], settings, face: str, mood_label: str, activity: str, face_font, label_font, palette) -> None:
+    def _draw_face_panel(self, image, draw, box: tuple[int, int, int, int], settings, mood: str, face: str, mood_label: str, activity_id: str, activity: str, face_font, label_font, palette) -> None:
         x1, y1, x2, y2 = box
         ink = palette["ink"]
         border = palette["border"]
-        draw.rectangle(box, outline=border, width=2)
+        self._draw_panel(draw, box, palette, fill=palette["panel_blue"], accent=palette["accent"], shadow=palette["yellow"])
+        self._draw_halftone(draw, (x1 + 16, y1 + 42, x2 - 16, y2 - 54), palette["blue"], palette["panel_blue"], spacing=22, radius=1, mix=palette["halftone_mix"])
         draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "face", "FACE")), font=label_font, fill=ink)
-        self._draw_badge(draw, x2 - 124, y1 + 10, 108, 24, self._badge_text(settings, mood_label), label_font, palette)
+        self._draw_badge(draw, x2 - 124, y1 + 10, 108, 24, self._badge_text(settings, mood_label), label_font, palette, accent=palette["accent"])
 
-        cx = (x1 + x2) // 2
-        cy = y1 + int((y2 - y1) * 0.53)
-        draw.text((cx, cy), face, anchor="mm", font=face_font, fill=ink)
+        pose_box = (x1 + 18, y1 + 40, x2 - 18, y2 - 48)
+        cx = (pose_box[0] + pose_box[2]) // 2
+        cy = (pose_box[1] + pose_box[3]) // 2
+        face_back = pose_box
+        draw.rectangle(face_back, fill=_blend_rgb(palette["accent"], palette["panel_blue"], palette["face_back_mix"]), outline=palette["rule"], width=1)
+        if not self._draw_state_image(image, draw, face_back, mood, activity_id, palette):
+            draw.text((cx, cy), face, anchor="mm", font=face_font, fill=ink)
         draw.line((x1 + 28, y2 - 42, x2 - 28, y2 - 42), fill=border, width=1)
         activity_label = f"{self._ui(settings, 'activity', 'ACTIVITY')}: {str(activity or self._activity_text(settings, 'quiet watch'))}"
         activity_label = self._badge_text(settings, activity_label)
         activity_label = self._clip_text(draw, activity_label, label_font, x2 - x1 - 46)
         draw.text((cx, y2 - 27), activity_label, anchor="mm", font=label_font, fill=ink)
 
+    def _draw_state_image(self, image, draw, box: tuple[int, int, int, int], mood: str, activity_id: str = "", palette=None) -> bool:
+        pose, state_key = self._load_state_image(mood, activity_id)
+        if pose is None:
+            return False
+        x1, y1, x2, y2 = box
+        max_w = max(1, x2 - x1 - 12)
+        max_h = max(1, y2 - y1 - 8)
+        resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+        pose.thumbnail((max_w, max_h), resampling)
+        x = x1 + (x2 - x1 - pose.width) // 2
+        y = y2 - pose.height - 4
+        if palette:
+            self._draw_pose_motion_marks(draw, box, state_key, palette)
+        image.paste(pose, (x, y), pose)
+        return True
+
+    def _load_state_image(self, mood: str, activity_id: str = ""):
+        state_key = self._resolve_state_image_key(mood, activity_id)
+        path = PET_STATE_IMAGE_DIR / f"{state_key}.png"
+        if not path.is_file():
+            return None, state_key
+        cache = getattr(self, "_state_image_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._state_image_cache = cache
+        key = str(path)
+        try:
+            if key not in cache:
+                cache[key] = Image.open(path).convert("RGBA")
+            return cache[key].copy(), state_key
+        except Exception as exc:
+            logger.warning("Could not load epaper pet state image %s: %s", path, exc)
+            return None, state_key
+
+    def _resolve_state_image_key(self, mood: str, activity_id: str = "") -> str:
+        activity_key = PET_ACTIVITY_IMAGE_MAP.get(_pet_state_lookup_key(activity_id))
+        if activity_key and (PET_STATE_IMAGE_DIR / f"{activity_key}.png").is_file():
+            return activity_key
+        mood_key = PET_STATE_IMAGE_MAP.get(_pet_state_lookup_key(mood), "calm")
+        if (PET_STATE_IMAGE_DIR / f"{mood_key}.png").is_file():
+            return mood_key
+        return "calm"
+
+    def _draw_pose_motion_marks(self, draw, box: tuple[int, int, int, int], state_key: str, palette) -> None:
+        x1, y1, x2, y2 = box
+        width = x2 - x1
+        height = y2 - y1
+        accent = palette["accent"]
+        warm = palette["orange"]
+        cool = palette["blue"]
+        soft = _blend_rgb(palette["accent"], palette["panel_blue"], 0.45)
+        rule = palette["rule"]
+
+        if state_key == "zoomies":
+            for i in range(5):
+                y = y1 + int(height * (0.22 + i * 0.12))
+                draw.line((x1 + 18, y, x1 + 78, y - 16), fill=warm if i % 2 else accent, width=2)
+                draw.line((x1 + 24, y + 8, x1 + 58, y), fill=rule, width=1)
+        elif state_key == "pounce":
+            draw.arc((x1 + 18, y1 + 44, x1 + width // 2, y1 + height - 18), 205, 300, fill=warm, width=2)
+            draw.arc((x1 + 34, y1 + 62, x1 + width // 2 + 18, y1 + height - 6), 205, 290, fill=accent, width=1)
+            for x in (x1 + 40, x2 - 58):
+                draw.line((x, y2 - 24, x + 24, y2 - 24), fill=rule, width=1)
+        elif state_key == "stretch":
+            for i in range(3):
+                y = y2 - 24 - i * 11
+                draw.line((x1 + 30 + i * 5, y, x2 - 42, y - 8), fill=soft, width=2)
+        elif state_key == "snacking":
+            crumbs = [
+                (x1 + width * 0.63, y1 + height * 0.42),
+                (x1 + width * 0.70, y1 + height * 0.48),
+                (x1 + width * 0.59, y1 + height * 0.52),
+            ]
+            for cx, cy in crumbs:
+                draw.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=warm)
+        elif state_key == "kneading":
+            for i in range(4):
+                x = x1 + int(width * (0.24 + i * 0.12))
+                draw.arc((x, y2 - 44, x + 36, y2 - 16), 200, 340, fill=warm if i % 2 else accent, width=2)
+        elif state_key == "alert_listening":
+            ear_x = x1 + width // 2
+            for i in range(3):
+                pad = 22 + i * 16
+                draw.arc((ear_x - pad, y1 + 30 - i * 3, ear_x + pad, y1 + 60 + i * 10), 200, 340, fill=cool if i % 2 else accent, width=1)
+        elif state_key in {"dreaming", "sleeping"}:
+            bubbles = [
+                (x1 + width * 0.36, y1 + height * 0.27, 5),
+                (x1 + width * 0.29, y1 + height * 0.20, 7),
+                (x1 + width * 0.22, y1 + height * 0.13, 10),
+            ]
+            for cx, cy, r in bubbles:
+                draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=cool, width=2)
+        elif state_key == "tail_swish":
+            for i in range(3):
+                draw.arc((x2 - 100 - i * 16, y1 + 38 + i * 8, x2 - 20, y1 + height - 42 + i * 8), 260, 42, fill=warm if i == 1 else accent, width=2)
+
     def _draw_stats_panel(self, draw, box: tuple[int, int, int, int], settings, stats: dict[str, Any], label_font, value_font, palette) -> None:
         x1, y1, x2, y2 = box
         ink = palette["ink"]
-        border = palette["border"]
-        draw.rectangle(box, outline=border, width=2)
+        self._draw_panel(draw, box, palette, fill=palette["panel"], accent=palette["green"], shadow=palette["blue"])
         draw.text((x1 + 16, y1 + 12), self._badge_text(settings, self._ui(settings, "vitals", "VITALS")), font=label_font, fill=ink)
-        self._draw_badge(draw, x2 - 122, y1 + 10, 106, 24, self._badge_text(settings, self._ui(settings, "auto", "AUTO")), label_font, palette)
+        self._draw_badge(draw, x2 - 122, y1 + 10, 106, 24, self._badge_text(settings, self._ui(settings, "auto", "AUTO")), label_font, palette, accent=palette["green"])
 
         rows = [
             (self._localized(settings, "stats", "food", "FOOD"), "food"),
@@ -1512,12 +2934,13 @@ class EpaperPet(BasePlugin):
         row_y = y1 + 58
         row_h = 33
         for label, key in rows:
-            self._draw_bar(draw, x1 + 16, row_y, x2 - x1 - 32, self._badge_text(settings, label), int(stats[key]), label_font, value_font, palette)
+            self._draw_bar(draw, x1 + 16, row_y, x2 - x1 - 32, self._badge_text(settings, label), int(stats[key]), label_font, value_font, palette, key)
             row_y += row_h
 
-    def _draw_bar(self, draw, x: int, y: int, width: int, label: str, value: int, label_font, value_font, palette) -> None:
+    def _draw_bar(self, draw, x: int, y: int, width: int, label: str, value: int, label_font, value_font, palette, key: str) -> None:
         ink = palette["ink"]
         border = palette["border"]
+        color = palette["bar_colors"].get(key, palette["accent"])
         value = _clamp(value)
         value_text = f"{value:03d}"
         label_w = max(48, self._text_w(draw, label, label_font) + 10)
@@ -1528,15 +2951,20 @@ class EpaperPet(BasePlugin):
         bar_w = max(80, width - label_w - value_w - 10)
 
         draw.text((x, y + 3), label, font=label_font, fill=ink)
-        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), outline=border, width=1)
+        draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), fill=_blend_rgb(color, palette["panel"], palette["bar_track_mix"]), outline=border, width=1)
         fill_w = int((bar_w - 4) * value / 100)
         if fill_w > 0:
-            draw.rectangle((bar_x + 2, bar_y + 2, bar_x + 2 + fill_w, bar_y + bar_h - 2), fill=ink)
+            draw.rectangle((bar_x + 2, bar_y + 2, bar_x + 2 + fill_w, bar_y + bar_h - 2), fill=color)
+            draw.line((bar_x + 2, bar_y + 2, bar_x + 2 + fill_w, bar_y + 2), fill=ink, width=1)
         draw.text((bar_x + bar_w + 8, y - 2), value_text, font=value_font, fill=ink)
 
-    def _draw_badge(self, draw, x: int, y: int, width: int, height: int, text: str, font, palette) -> None:
+    def _draw_badge(self, draw, x: int, y: int, width: int, height: int, text: str, font, palette, *, accent=None) -> None:
         ink = palette["ink"]
-        draw.rectangle((x, y, x + width, y + height), outline=palette["border"], width=1)
+        accent = accent or palette["accent"]
+        fill = _blend_rgb(accent, palette["panel"], palette["badge_mix"])
+        draw.rectangle((x, y, x + width, y + height), fill=fill, outline=palette["border"], width=1)
+        draw.rectangle((x, y, x + 6, y + height), fill=accent)
+        text = self._clip_text(draw, text, font, width - 14)
         tw = self._text_w(draw, text, font)
         th = self._text_h(draw, text, font)
         draw.text((x + (width - tw) // 2, y + (height - th) // 2 - 1), text, font=font, fill=ink)
@@ -1544,15 +2972,15 @@ class EpaperPet(BasePlugin):
     def _draw_message_panel(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], message_font, journal_font, label_font, telemetry_font, palette) -> None:
         x1, y1, x2, y2 = box
         ink = palette["ink"]
-        draw.rectangle(box, outline=palette["border"], width=2)
+        self._draw_panel(draw, box, palette, fill=palette["panel_green"], accent=palette["orange"], shadow=palette["green"])
         log_label = self._badge_text(settings, self._ui(settings, "log", "LOG"))
-        draw.text((x1 + 16, y1 + 10), log_label, font=label_font, fill=ink)
+        self._draw_badge(draw, x1 + 14, y1 + 11, 62, 24, log_label, label_font, palette, accent=palette["orange"])
 
         message = self._message_text(settings, state.get("message", "Quiet heartbeat."))
         raw_journal = self._latest_journal_line(settings) if _enabled(settings.get("show_journal"), True) else ""
         journal_line = self._message_text(settings, raw_journal) if raw_journal else ""
         telemetry = self._ai_telemetry_text(settings, state)
-        text_x = x1 + 16 + self._text_w(draw, log_label, label_font) + 20
+        text_x = x1 + 92
         max_w = x2 - text_x - 18
         lines = self._wrap(draw, message, message_font, max_w, max_lines=2)
         y = y1 + 12
@@ -1564,13 +2992,13 @@ class EpaperPet(BasePlugin):
         if telemetry:
             telemetry = self._clip_text(draw, telemetry, telemetry_font, x2 - x1 - 32)
             telemetry_w = self._text_w(draw, telemetry, telemetry_font)
-            draw.text((x2 - 16 - telemetry_w, y2 - 22), telemetry, font=telemetry_font, fill=ink)
+            draw.text((x2 - 16 - telemetry_w, y2 - 22), telemetry, font=telemetry_font, fill=palette["muted"])
 
         if journal_line and journal_line != message:
             journal_prefix = self._ui(settings, "last", "LAST")
             journal_w = max(80, max_w - telemetry_w - (20 if telemetry_w else 0))
             journal = self._wrap(draw, f"{journal_prefix}: {journal_line}", journal_font, journal_w, max_lines=1)[0]
-            draw.text((text_x, y2 - 24), journal, font=journal_font, fill=ink)
+            draw.text((text_x, y2 - 24), journal, font=journal_font, fill=palette["muted"])
 
     def _ai_telemetry_text(self, settings, state: dict[str, Any]) -> str:
         usage = state.get("ai_usage") if isinstance(state.get("ai_usage"), dict) else {}

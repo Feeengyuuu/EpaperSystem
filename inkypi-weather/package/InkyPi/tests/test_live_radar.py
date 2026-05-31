@@ -342,7 +342,7 @@ def test_generate_image_draws_cover_snapshot_band():
     for x in range(120):
         shade = int(255 * (x / 119))
         for y in range(60):
-            cover.putpixel((x, y), (shade, shade, shade))
+            cover.putpixel((x, y), (shade, 48, 255 - shade))
 
     plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/live.jpg" else None
     plugin._fetch_statuses = lambda rooms, api_url, timeout, fetch_avatars: [
@@ -373,6 +373,61 @@ def test_generate_image_draws_cover_snapshot_band():
 
     snapshot_band = image.crop((30, 112, 770, 160))
     assert len(set(snapshot_band.getdata())) > 8
+    assert any(r != g or g != b for r, g, b in snapshot_band.getdata())
+
+
+def test_snapshot_header_fills_available_area_without_letterboxing():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (280, 180), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    cover = Image.new("RGB", (60, 120), (24, 180, 240))
+    plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/tall.jpg" else None
+    card = {
+        "platform": "twitch",
+        "id": "xqc",
+        "status": "live",
+        "cover": "https://covers.test/tall.jpg",
+    }
+
+    header_h = plugin._draw_snapshot_header(image, draw, (20, 20, 220, 150), card, theme, True, 90)
+    mid_y = 20 + header_h // 2
+
+    assert image.getpixel((21, mid_y)) == (24, 180, 240)
+    assert image.getpixel((238, mid_y)) == (24, 180, 240)
+
+
+def test_large_live_card_draws_avatar_in_lower_left():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    image = Image.new("RGB", (300, 220), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    cover = Image.new("RGB", (160, 90), (30, 120, 220))
+    avatar = Image.new("RGB", (80, 80), (220, 40, 90))
+    plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/live.jpg" else None
+    plugin._load_avatar_source = lambda url, cache_seconds: avatar if url == "https://avatars.test/xqc.png" else None
+
+    card = {
+        "platform": "twitch",
+        "id": "xqc",
+        "label": "xQc",
+        "is_fav": True,
+        "owner": "xQc",
+        "title": "Checking the layout with a real avatar",
+        "heat": 1234,
+        "start_time": None,
+        "cover": "https://covers.test/live.jpg",
+        "avatar": "https://avatars.test/xqc.png",
+        "is_error": False,
+        "favorite_rank": 1,
+        "status": "live",
+    }
+
+    plugin._draw_card(image, draw, (20, 20, 250, 170), card, theme, large=True, show_snapshot=True)
+
+    avatar_area = image.crop((38, 145, 60, 167))
+    assert (220, 40, 90) in set(avatar_area.getdata())
+    assert any(r != g or g != b for r, g, b in avatar_area.getdata())
 
 
 def test_platform_badges_render_known_icons():
@@ -395,6 +450,18 @@ def test_platform_badges_render_known_icons():
     pixels = set(image.crop((0, 0, 150, 42)).getdata())
     assert theme["bg"] in pixels
     assert theme["ink"] in pixels
+
+
+def test_light_theme_live_cards_use_white_shell():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+
+    assert plugin._card_palette("live", theme) == (
+        (255, 255, 255),
+        (0, 0, 0),
+        (0, 0, 0),
+        (0, 0, 0),
+    )
 
 
 def test_snapshot_header_is_only_for_large_live_cards():
@@ -433,9 +500,9 @@ def test_compact_card_draws_avatar_image():
     draw = ImageDraw.Draw(image)
     avatar = Image.new("RGB", (60, 60), (0, 0, 0))
     for x in range(60):
-        shade = 255 if x > 30 else 32
+        color = (255, 48, 16) if x > 30 else (32, 180, 240)
         for y in range(60):
-            avatar.putpixel((x, y), (shade, shade, shade))
+            avatar.putpixel((x, y), color)
     plugin._load_avatar_source = lambda url, cache_seconds: avatar if url == "https://avatars.test/xqc.png" else None
 
     card = {
@@ -458,6 +525,7 @@ def test_compact_card_draws_avatar_image():
 
     avatar_area = image.crop((24, 18, 58, 52))
     assert len(set(avatar_area.getdata())) > 2
+    assert any(r != g or g != b for r, g, b in avatar_area.getdata())
 
 
 def test_live_queue_section_fits_two_columns_of_remaining_live_rows():

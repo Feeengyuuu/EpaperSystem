@@ -16,6 +16,6 @@ if ! grep -q '^OPEN_WEATHER_MAP_SECRET=' ".env"; then
   exit 1
 fi
 
-echo "Installing InkyPi for Waveshare 7.5-inch V2 black/white display..."
+echo "Installing InkyPi for Waveshare 7.3-inch Spectra 6 / E6 full-color display..."
 echo "This assumes WiFi was already configured in Raspberry Pi Imager or raspi-config."
-sudo bash install/install.sh -W epd7in5_V2
+sudo bash install/install.sh -W epd7in3e

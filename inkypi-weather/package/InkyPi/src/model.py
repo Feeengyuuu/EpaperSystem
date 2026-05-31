@@ -175,6 +175,7 @@ class Playlist:
         plugins (list): A list of PluginInstance objects within the playlist.
         current_plugin_index (int): Index of the currently active plugin in the playlist.
     """
+    RECENT_HISTORY_LIMIT = 8
 
     def __init__(
         self,
@@ -185,6 +186,7 @@ class Playlist:
         current_plugin_index=None,
         plugin_rotation_queue=None,
         plugin_rotation_pool=None,
+        plugin_rotation_recent_history=None,
     ):
         self.name = name
         self.start_time = start_time
@@ -193,6 +195,7 @@ class Playlist:
         self.current_plugin_index = current_plugin_index
         self.plugin_rotation_queue = plugin_rotation_queue or []
         self.plugin_rotation_pool = plugin_rotation_pool or []
+        self.plugin_rotation_recent_history = plugin_rotation_recent_history or []
 
     def is_active(self, current_time):
         """Check if the playlist is active at the given time."""
@@ -235,17 +238,20 @@ class Playlist:
         return next((p for p in self.plugins if p.plugin_id == plugin_id and p.name == name), None)
 
     def get_next_plugin(self):
-        """Return the next plugin from a shuffled no-repeat rotation queue."""
+        """Return the next plugin from a shuffled no-repeat rotation bag."""
         if not self.plugins:
             self.current_plugin_index = None
             self.plugin_rotation_queue = []
             self.plugin_rotation_pool = []
+            self.plugin_rotation_recent_history = []
             return None
 
         if len(self.plugins) == 1:
             self.current_plugin_index = 0
             self.plugin_rotation_queue = []
-            self.plugin_rotation_pool = [self._plugin_rotation_key(self.plugins[0])]
+            only_key = self._plugin_rotation_key(self.plugins[0])
+            self.plugin_rotation_pool = [only_key]
+            self.plugin_rotation_recent_history = [only_key]
             return self.plugins[self.current_plugin_index]
 
         plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
@@ -257,10 +263,20 @@ class Playlist:
             self.plugin_rotation_queue = []
             self.plugin_rotation_pool = list(plugin_keys)
 
-        queue = [key for key in self.plugin_rotation_queue if key in plugin_keys]
+        queue = self._dedupe_rotation_keys(
+            key for key in self.plugin_rotation_queue if key in plugin_keys
+        )
+        started_new_round = False
         if not queue:
+            started_new_round = True
             queue = list(plugin_keys)
             random.shuffle(queue)
+
+        recent_history = self._dedupe_rotation_keys(
+            key for key in self.plugin_rotation_recent_history if key in plugin_keys
+        )
+        if started_new_round:
+            recent_history = []
 
         if current_key and queue and queue[0] == current_key:
             replacement_index = next(
@@ -273,11 +289,30 @@ class Playlist:
         next_key = queue.pop(0)
         self.plugin_rotation_queue = queue
         self.current_plugin_index = plugin_keys.index(next_key)
+        self.plugin_rotation_recent_history = self._updated_recent_history(next_key, recent_history, len(plugin_keys))
 
         return self.plugins[self.current_plugin_index]
 
     def _plugin_rotation_key(self, plugin):
         return json.dumps([plugin.plugin_id, plugin.name], separators=(",", ":"))
+
+    def _recent_history_max_size(self, plugin_count):
+        return min(self.RECENT_HISTORY_LIMIT, max(1, plugin_count - 1))
+
+    def _updated_recent_history(self, next_key, recent_history, plugin_count):
+        updated = [next_key]
+        updated.extend(key for key in recent_history if key != next_key)
+        return updated[:self._recent_history_max_size(plugin_count)]
+
+    def _dedupe_rotation_keys(self, keys):
+        deduped = []
+        seen = set()
+        for key in keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(key)
+        return deduped
 
     def get_priority(self):
         """Determine priority of a playlist, based on the time range"""
@@ -308,6 +343,7 @@ class Playlist:
             "current_plugin_index": self.current_plugin_index,
             "plugin_rotation_queue": self.plugin_rotation_queue,
             "plugin_rotation_pool": self.plugin_rotation_pool,
+            "plugin_rotation_recent_history": self.plugin_rotation_recent_history,
         }
 
     @classmethod
@@ -320,6 +356,7 @@ class Playlist:
             current_plugin_index=data.get("current_plugin_index", None),
             plugin_rotation_queue=data.get("plugin_rotation_queue", []),
             plugin_rotation_pool=data.get("plugin_rotation_pool", []),
+            plugin_rotation_recent_history=data.get("plugin_rotation_recent_history", []),
         )
 
 class PluginInstance:

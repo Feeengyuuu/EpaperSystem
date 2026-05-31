@@ -137,3 +137,54 @@ def test_wpotd_fit_settings_default_to_enabled():
 
     assert plugin._setting_enabled({}, "shrinkToFitWpotd", default=True) is True
     assert plugin._setting_enabled({"smartCropWpotd": "false"}, "smartCropWpotd", default=True) is False
+
+
+def test_wpotd_fetch_image_src_prefers_generated_thumbnail_for_video():
+    plugin = Wpotd.__new__(Wpotd)
+
+    def fake_make_request(params):
+        assert params["iiurlwidth"] == Wpotd.THUMBNAIL_WIDTH
+        return {
+            "query": {
+                "pages": {
+                    "123": {
+                        "imageinfo": [
+                            {
+                                "url": "https://upload.wikimedia.org/example.webm",
+                                "thumburl": "https://upload.wikimedia.org/example.webm/1200px-example.webm.jpg",
+                                "mime": "video/webm",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+    plugin._make_request = fake_make_request
+
+    assert plugin._fetch_image_src("File:Example.webm").endswith(".webm.jpg")
+
+
+def test_wpotd_fetch_image_src_rejects_direct_video_without_thumbnail():
+    plugin = Wpotd.__new__(Wpotd)
+    plugin._make_request = lambda params: {
+        "query": {
+            "pages": {
+                "123": {
+                    "imageinfo": [
+                        {
+                            "url": "https://upload.wikimedia.org/example.webm",
+                            "mime": "video/webm",
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    try:
+        plugin._fetch_image_src("File:Example.webm")
+    except RuntimeError as exc:
+        assert str(exc) == "Failed to retrieve image URL."
+    else:
+        raise AssertionError("Expected direct video URL without thumbnail to fail")

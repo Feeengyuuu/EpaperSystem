@@ -1017,15 +1017,16 @@ class SteamProfileDashboard(BasePlugin):
         return "在线"
 
     def _friend_status_color(self, friend):
+        online_green = (88, 205, 118)
         if friend.get("gameid") or friend.get("gameextrainfo"):
-            return (88, 205, 118)
+            return online_green
         try:
             state = int(friend.get("personastate", 0) or 0)
         except Exception:
             state = 0
-        if state == 1:
-            return (88, 205, 118)
-        return (234, 176, 72)
+        if state != 0:
+            return online_green
+        return (120, 132, 146)
 
     def _avatar_image(self, url, size):
         avatar = None

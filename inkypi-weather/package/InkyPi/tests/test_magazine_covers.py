@@ -16,11 +16,15 @@ class RecordingLoader:
     def __init__(self):
         self.loaded_paths = []
         self.loaded_sizes = []
+        self.resize_flags = []
 
     def from_file(self, path, dimensions, resize=True, focus_crop=False):
         self.loaded_paths.append(Path(path))
+        self.resize_flags.append(resize)
         with Image.open(path) as image:
             self.loaded_sizes.append(image.size)
+            if not resize:
+                return image.copy().convert("RGB")
         return Image.new("RGB", dimensions, "white")
 
 
@@ -46,7 +50,8 @@ def test_oversized_candidate_is_downsampled_before_loader(tmp_path, monkeypatch)
         (800, 480),
     )
 
-    assert image.size == (800, 480)
+    assert image.size == loader.loaded_sizes[0]
+    assert loader.resize_flags == [False]
     assert loader.loaded_sizes
     assert loader.loaded_sizes[0] != (1400, 1400)
     assert loader.loaded_sizes[0][0] * loader.loaded_sizes[0][1] <= MAX_PI_SAFE_SOURCE_PIXELS
@@ -105,6 +110,7 @@ def test_pi_safe_candidate_uses_original_download(tmp_path, monkeypatch):
 
     assert loader.loaded_paths == [source_path]
     assert loader.loaded_sizes == [(600, 800)]
+    assert loader.resize_flags == [False]
 
 
 def test_random_order_retries_other_sources_when_queue_has_one_failed_source(monkeypatch):
@@ -162,6 +168,28 @@ def test_cover_crop_preserves_top_masthead_area():
     bottom_band = fitted.crop((0, 340, 800, 480)).convert("L")
     assert sum(top_band.histogram()[:32]) > 80000
     assert sum(bottom_band.histogram()[:32]) == 0
+
+
+def test_cover_crop_uses_detected_title_band_as_crop_rule():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    source = Image.new("RGB", (800, 1600), "white")
+    draw = ImageDraw.Draw(source)
+    draw.rectangle((0, 0, 800, 260), fill=(245, 245, 245))
+    draw.rectangle((0, 540, 800, 700), fill="black")
+    draw.rectangle((120, 575, 680, 665), fill="white")
+    draw.rectangle((0, 1180, 800, 1600), fill="gray")
+
+    fitted = plugin._fit_cover(
+        source,
+        (800, 480),
+        {"fitMode": "cover", "showSourceLabel": "false"},
+        {"name": "Detected Title"},
+    )
+
+    upper_band = fitted.crop((0, 0, 800, 190)).convert("L")
+    lower_band = fitted.crop((0, 330, 800, 480)).convert("L")
+    assert sum(upper_band.histogram()[:32]) > 70000
+    assert sum(lower_band.histogram()[:32]) == 0
 
 
 def test_source_label_adds_publication_context():

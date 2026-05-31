@@ -1,6 +1,6 @@
 <div style="margin-bottom:14px;">
     <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
-        Visualize the progress of your day, week, month and year using dot-based bars. Clean and optimized for e-paper displays
+        Visualize the progress of your day, week, month and year using dot-based bars. The default day view uses a color e-paper comic-print palette.
     </div>
 </div>
 
@@ -34,12 +34,12 @@
 
 <div class="form-group">
     <div class="form-group">
-        <label for="primaryColor" class="form-label">Primary Color:</label>
-        <input type="color" id="primaryColor" name="primaryColor" class="color-picker" value="#ffffff"/>
+        <label for="primaryColor" class="form-label">Ink Color:</label>
+        <input type="color" id="primaryColor" name="primaryColor" class="color-picker" value="#000000"/>
     </div>
     <div class="form-group">
-        <label for="secondaryColor" class="form-label">Secondary Color:</label>
-        <input type="color" id="secondaryColor" name="secondaryColor" class="color-picker" value="#000000"/>
+        <label for="secondaryColor" class="form-label">Paper Color:</label>
+        <input type="color" id="secondaryColor" name="secondaryColor" class="color-picker" value="#fff8dc"/>
     </div>
 </div>
 
@@ -49,6 +49,9 @@
         const language = document.getElementById('language');
         const numBars = document.getElementById('numBars');
         const numDots = document.getElementById('numDots');
+        const primaryColor = document.querySelector("[name=primaryColor]");
+        const secondaryColor = document.querySelector("[name=secondaryColor]");
+        const normalizeColor = (value) => (value || '').trim().toLowerCase();
         if (typeof pluginSettings === 'object' && pluginSettings !== null) {
             language.value = pluginSettings.language || 'en';
             // Fallback to English if saved language is no longer available
@@ -57,16 +60,21 @@
             }
             numBars.value = pluginSettings.numBars || '2';
             numDots.value = pluginSettings.numDots || '20';
-            if (pluginSettings.primaryColor) {
-                document.querySelector("[name=primaryColor]").value = pluginSettings.primaryColor;
-            }
-            if (pluginSettings.secondaryColor) {
-                document.querySelector("[name=secondaryColor]").value = pluginSettings.secondaryColor;
+            const savedPrimary = normalizeColor(pluginSettings.primaryColor);
+            const savedSecondary = normalizeColor(pluginSettings.secondaryColor);
+            if (savedPrimary === '#ffffff' && savedSecondary === '#000000') {
+                primaryColor.value = '#000000';
+                secondaryColor.value = '#fff8dc';
+            } else {
+                primaryColor.value = pluginSettings.primaryColor || '#000000';
+                secondaryColor.value = pluginSettings.secondaryColor || '#fff8dc';
             }
         } else {
             language.value = 'en';
             numBars.value = '2';
             numDots.value = '20';
+            primaryColor.value = '#000000';
+            secondaryColor.value = '#fff8dc';
         }
     });
 </script>

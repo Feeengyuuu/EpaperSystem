@@ -1,6 +1,6 @@
 # New Board Migration Baseline
 
-Last verified: 2026-05-26 18:15 PDT
+Last verified: 2026-05-29 16:11 PDT on the 7.3 inch Spectra 6 / E6 panel.
 
 This document freezes the current EpaperSystem beta state as the target baseline
 for installing a future production board. It intentionally does not contain API
@@ -11,7 +11,7 @@ keys or private `.env` values.
 Bring a fresh Raspberry Pi / mainboard to the current beta end state:
 
 - InkyPi running as the `inkypi` systemd service.
-- Waveshare 7.5 inch V2 black/white display configured as `epd7in5_V2`.
+- Waveshare 7.3 inch Spectra 6 / E6 full-color display configured as `epd7in3e`.
 - Resolution `800x480`, horizontal orientation.
 - Web UI reachable on the LAN.
 - Playlist `DailyDoseOfDay` active all day.
@@ -21,10 +21,53 @@ Bring a fresh Raspberry Pi / mainboard to the current beta end state:
   plugin images refresh in a non-overlapping background cache pass.
 - Current custom plugins and patched scheduler behavior installed.
 
+## New Board Target
+
+- Target board: Raspberry Pi Zero 2 W.
+- Target hostname and InkyPi device name: `ColoredEpaperFrame`.
+- Intended role: a clean development foundation that starts as a one-to-one
+  clone of the current beta software state.
+- Target IP address and Linux username: to be supplied when migration starts.
+  Do not assume the current beta host values.
+- Target display: the same Waveshare 7.3 inch Spectra 6 / E6 full-color HAT
+  and `epd7in3e` driver profile. If the panel is physically moved from the beta
+  host, power the old host off before disconnecting the ribbon cable.
+- OS posture: match the current beta OS, architecture, Python version, and
+  package behavior as closely as practical. If the new board intentionally uses
+  a different Raspberry Pi OS image or architecture, record that variance and
+  run the full post-migration validation.
+- Resource posture: keep the package's Zero-friendly service limits
+  (`CPUQuota=40%`, `MemoryMax=200M`), Bookworm zram setup, and `earlyoom`
+  install path unless a later smoke test proves they need tuning.
+
+## Deployment Gate
+
+The user has granted deployment permission for the future migration, but actual
+replication remains gated. Do not SSH into the new board, copy packages, install
+dependencies, create `.env`, restart services, or modify systemd on the new
+board until the user explicitly says to start the replication.
+
+Before the first deployment command, collect and confirm:
+
+- New board IP address for `ColoredEpaperFrame`.
+- Linux username.
+- Whether the Waveshare display is already connected and powered down before
+  cable moves.
+- Whether the board is a blank install or has an existing InkyPi installation
+  that can be overwritten.
+- Source for private `.env` values. Secrets must stay out of docs and commits.
+- Desired remote package directory. Prefer a new explicit path such as
+  `~/inkypi-weather-pi-package-zero2w-YYYYMMDD` instead of reusing the beta
+  directory name.
+
+Keep the current beta board unchanged as the rollback source until the Zero 2 W
+passes acceptance. Do not remove or overwrite the beta package directory during
+the new-board migration.
+
 ## Current Beta Device
 
 - Hostname: `EpaperPodBeta`
-- Current SSH target: `feeengyuuu@192.168.1.183`
+- Current SSH target: `feeengyuuu@192.168.1.186`
 - Current package path on Pi: `~/inkypi-weather-pi-package-20260524-3`
 - Current config path on Pi:
   `/home/feeengyuuu/inkypi-weather-pi-package-20260524-3/InkyPi/src/config/device.json`
@@ -33,15 +76,29 @@ Bring a fresh Raspberry Pi / mainboard to the current beta end state:
 - Service state at baseline: `active`
 
 The service can take roughly 2-4 minutes to become HTTP-ready after restart on
-the beta board. Treat `systemctl is-active inkypi` as process readiness only;
-wait for HTTP readiness before sending UI/API actions.
+the beta board. On the 7.3 inch Spectra 6 / E6 panel, verified startup took
+about 2 minutes 20 seconds from `Loading EPD display for epd7in3e` to Waitress
+serving HTTP, and a forced NatGeo display update took about 67 seconds from
+`Displaying image to Waveshare display` to sleep. Treat `systemctl is-active
+inkypi` as process readiness only; wait for HTTP readiness before sending UI/API
+actions.
+
+If `epd7in3e` logs show initialization but the web server never becomes ready,
+run a direct BUSY-pin smoke. A persistent `busy=0` means the panel is still
+busy or not responding; power the Pi off and check the display FPC orientation,
+connector latch, HAT seating, and power before continuing. Do not hot-plug the
+panel ribbon while powered.
+
+The E6 panel can still be refreshing when `systemctl stop inkypi` is requested.
+The packaged service template uses `TimeoutStopSec=240` so systemd has enough
+time to let a color refresh finish and let the display enter sleep.
 
 ## Device Settings
 
 ```json
 {
-  "name": "EpaperBeta",
-  "display_type": "epd7in5_V2",
+  "name": "ColoredEpaperFrame",
+  "display_type": "epd7in3e",
   "resolution": [800, 480],
   "orientation": "horizontal",
   "timezone": "America/Los_Angeles",
@@ -194,10 +251,44 @@ BAMBU_ACCESS_CODE=...
 
 Only include keys for plugins that remain enabled.
 
+## Pre-Migration Inventory
+
+Capture the current beta host before cloning so future debugging can distinguish
+software drift from board differences:
+
+```bash
+hostname
+uname -a
+cat /etc/os-release
+python3 --version
+systemctl cat inkypi
+systemctl is-active inkypi
+```
+
+Capture the new Zero 2 W before installing:
+
+```bash
+hostname
+uname -a
+cat /etc/os-release
+python3 --version
+ip addr show
+```
+
+After package copy but before install, verify the expected files exist:
+
+```bash
+test -f install_on_pi.sh
+test -f InkyPi/install/install.sh
+test -f InkyPi/install/inkypi.service
+test -f InkyPi/src/display/waveshare_epd/epd7in3e.py
+test -f InkyPi/.env
+```
+
 ## Migration Procedure
 
-1. Prepare the new board with Raspberry Pi OS, WiFi, SSH, locale, timezone, and
-   the intended username.
+1. Prepare the new board with Raspberry Pi OS, WiFi, SSH, locale, timezone,
+   hostname `ColoredEpaperFrame`, and the intended username.
 2. Install the Codex SSH key using
    `inkypi-weather/dist/epaperpod_codex_bootstrap.sh`, or manually install the
    same public key and limited sudo rule.
@@ -214,7 +305,7 @@ Only include keys for plugins that remain enabled.
    The installer runs:
 
    ```bash
-   sudo bash install/install.sh -W epd7in5_V2
+   sudo bash install/install.sh -W epd7in3e
    ```
 
 6. Restore `src/config/device.json` to the baseline settings and playlist above.
@@ -242,6 +333,12 @@ Run these checks from the Codex machine:
 
 ```powershell
 .\tools\epaperpod-test-key.ps1 -HostName <new-board-ip> -UserName <user>
+```
+
+The hostname should also resolve if local mDNS is available:
+
+```powershell
+.\tools\epaperpod-test-key.ps1 -HostName ColoredEpaperFrame.local -UserName <user>
 ```
 
 Verify HTTP:
@@ -275,9 +372,10 @@ journalctl -u inkypi --since=-20min --no-pager
 ## Acceptance Criteria
 
 - `systemctl is-active inkypi` returns `active`.
+- `hostname` returns `ColoredEpaperFrame`.
 - `/playlist` returns HTTP `200`.
 - `plugin_cycle_interval_seconds` is restored to `300` after smoke testing.
-- `DailyDoseOfDay` contains the 17 active baseline instances above.
+- `DailyDoseOfDay` contains the 18 active baseline instances above.
 - The `Money` / `stocktracker` instance has non-empty `tickers`, `shares`, and
   `period` values.
 - The selected display plugin refreshes before non-selected due cache refresh.

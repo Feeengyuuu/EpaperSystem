@@ -1,0 +1,73 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group nowrap">
+    <label for="startYear" class="form-label">Oldest year:</label>
+    <input id="startYear" name="startYear" class="form-input" type="number" min="1933" max="2050" value="1938">
+</div>
+
+<div class="form-group nowrap">
+    <label for="endYear" class="form-label">Newest year:</label>
+    <input id="endYear" name="endYear" class="form-input" type="number" min="1933" max="2050" value="{{ default_end_year }}">
+</div>
+
+<div class="form-group nowrap">
+    <label for="maxYearsPerRefresh" class="form-label">GCD years to scan per refresh:</label>
+    <input id="maxYearsPerRefresh" name="maxYearsPerRefresh" class="form-input" type="number" min="1" max="50" value="10">
+</div>
+
+<div class="form-group nowrap">
+    <label for="maxCoverAttempts" class="form-label">Cover download attempts:</label>
+    <input id="maxCoverAttempts" name="maxCoverAttempts" class="form-input" type="number" min="1" max="30" value="8">
+</div>
+
+<div class="form-group">
+    <label for="countryCodes" class="form-label">Country filter:</label>
+    <input id="countryCodes" name="countryCodes" class="form-input" type="text" value="us" spellcheck="false">
+    <div style="color: var(--text-primary); font-size: 0.9em; margin-top: 0.35rem;">
+        Comma-separated GCD country codes. Unknown records are kept until their issue details can be checked.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="fitMode" class="form-label">Fit mode:</label>
+    <select id="fitMode" name="fitMode" class="form-input">
+        <option value="rotate_full" selected>Rotate portrait covers, show full image</option>
+        <option value="contain">Show full image without rotation</option>
+        <option value="cover">Fill screen with cover crop</option>
+    </select>
+</div>
+
+<input type="hidden" id="showInfoLabel" name="showInfoLabel" value="true">
+
+<div class="form-group">
+    <label for="backgroundStyle" class="form-label">Background style:</label>
+    <select id="backgroundStyle" name="backgroundStyle" class="form-input">
+        <option value="blur" selected>Blurred cover backdrop</option>
+        <option value="plain">Plain color</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="backgroundColor" class="form-label">Background color:</label>
+    <select id="backgroundColor" name="backgroundColor" class="form-input">
+        <option value="white" selected>White</option>
+        <option value="black">Black</option>
+    </select>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const currentYear = String(new Date().getFullYear());
+        if (loadPluginSettings) {
+            document.getElementById('startYear').value = pluginSettings.startYear || '1938';
+            document.getElementById('endYear').value = pluginSettings.endYear || currentYear;
+            document.getElementById('maxYearsPerRefresh').value = pluginSettings.maxYearsPerRefresh || '10';
+            document.getElementById('maxCoverAttempts').value = pluginSettings.maxCoverAttempts || '8';
+            document.getElementById('countryCodes').value = pluginSettings.countryCodes || 'us';
+            document.getElementById('fitMode').value = pluginSettings.fitMode || 'rotate_full';
+            document.getElementById('backgroundStyle').value = pluginSettings.backgroundStyle || 'blur';
+            document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'white';
+            document.getElementById('showInfoLabel').value = pluginSettings.showInfoLabel || 'true';
+        }
+    });
+</script>

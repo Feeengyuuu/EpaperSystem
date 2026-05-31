@@ -60,11 +60,39 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont
 from utils.app_utils import get_font
+import csv
 import io
 import logging
+from datetime import datetime
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
+PAPER = (255, 248, 220)  # 25Y PANTONE 100, vintage comic paper ground
+PANEL = (255, 253, 240)
+PANEL_BLUE = (235, 246, 255)  # 25B PANTONE 304 family, paper-tinted
+PANEL_GOLD = (255, 239, 176)  # 50Y PANTONE 101 family, paper-tinted
+INK = (8, 8, 8)  # PROCESS BLACK
+MUTED = (126, 112, 82)  # 50Y-25R-25B PANTONE 465 family
+GRID = (190, 177, 134)
+BORDER = INK
+ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
+ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
+ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
+CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
+MALACHITE = (0, 152, 82)  # 100Y-100B PANTONE 354 family
+CHART_MARKER_GREEN = (0, 92, 50)  # 100Y-100B-50R PANTONE 350 family
+ROW_COLORS = [
+	PANEL,
+	(240, 247, 255),
+]
+CSV_SYMBOL_FIELDS = ("symbol", "ticker", "tickersymbol", "instrument", "securitysymbol")
+CSV_SHARE_FIELDS = ("shares", "share", "quantity", "qty", "currentquantity", "position")
+CSV_ACTION_FIELDS = ("action", "type", "activitytype", "transactiontype", "transcode", "description")
+CSV_NEGATIVE_ACTION_HINTS = ("sell", "sold", "transfer out", "outgoing", "journal out", "removed")
+CSV_POSITIVE_ACTION_HINTS = ("buy", "bought", "reinvest", "transfer in", "incoming", "journal in", "received")
+CASH_SYMBOLS = ("cash", "usd", "us dollar", "money market")
+EXTENDED_HISTORY_PERIOD = "1d"
+EXTENDED_HISTORY_INTERVAL = "1m"
 
 _yf = None
 _plt = None
@@ -109,29 +137,12 @@ class StockTracker(BasePlugin):
 		if device_config.get_config("orientation") == "vertical":
 			dimensions = dimensions[::-1]
 
-		# Parse tickers and shares from settings
-		try:
-			tickers_str = settings.get('tickers', '').strip()
-			shares_str = settings.get('shares', '').strip()
-			period = settings.get('period', '1mo')
-
-			if not tickers_str or not shares_str:
-				raise RuntimeError("Please provide both tickers and shares")
-
-			# Parse comma-separated values
-			tickers = [t.strip().upper() for t in tickers_str.split(',')]
-			shares = [float(s.strip()) for s in shares_str.split(',')]
-
-			if len(tickers) != len(shares):
-				raise RuntimeError("Number of tickers and shares must match")
-
-		except ValueError as e:
-			raise RuntimeError(f"Invalid input format: {str(e)}")
+		period, holdings = self._portfolio_holdings_from_settings(settings)
 
 		# Fetch stock data
 		stock_data = []
 
-		for ticker, share_count in zip(tickers, shares):
+		for ticker, share_count in holdings:
 			try:
 				data = self._fetch_stock_data(ticker, share_count, period)
 				if data:
@@ -144,6 +155,153 @@ class StockTracker(BasePlugin):
 
 		# Create dashboard
 		return self._create_dashboard(stock_data, dimensions)
+
+	def _portfolio_holdings_from_settings(self, settings):
+		period = settings.get('period', '1mo')
+		csv_path = (settings.get('portfolio_csv_file') or settings.get('portfolio_csv_path') or '').strip()
+		if csv_path:
+			resolved_path = self._resolve_portfolio_csv_path(csv_path)
+			return period, self._load_portfolio_csv(resolved_path)
+
+		try:
+			tickers_str = settings.get('tickers', '').strip()
+			shares_str = settings.get('shares', '').strip()
+
+			if not tickers_str or not shares_str:
+				raise RuntimeError("Please provide both tickers and shares, or upload a portfolio CSV")
+
+			tickers = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
+			shares = [float(s.strip()) for s in shares_str.split(',') if s.strip()]
+
+			if len(tickers) != len(shares):
+				raise RuntimeError("Number of tickers and shares must match")
+
+			return period, list(zip(tickers, shares))
+		except ValueError as e:
+			raise RuntimeError(f"Invalid input format: {str(e)}")
+
+	def _resolve_portfolio_csv_path(self, csv_path):
+		csv_path = os.path.expanduser(str(csv_path).strip())
+		if os.path.isabs(csv_path):
+			resolved_path = csv_path
+		else:
+			candidates = [
+				os.path.abspath(csv_path),
+				os.path.abspath(os.path.join(os.path.dirname(__file__), csv_path)),
+				os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", csv_path)),
+			]
+			resolved_path = next((path for path in candidates if os.path.isfile(path)), candidates[0])
+
+		if not os.path.isfile(resolved_path):
+			raise RuntimeError(f"Portfolio CSV not found: {resolved_path}")
+		return resolved_path
+
+	@staticmethod
+	def _csv_key(value):
+		return ''.join(ch for ch in str(value).lower() if ch.isalnum())
+
+	@staticmethod
+	def _csv_value(row, field_names):
+		for field_name in field_names:
+			value = row.get(field_name)
+			if value not in (None, ''):
+				return str(value).strip()
+		return ''
+
+	@staticmethod
+	def _parse_csv_number(value):
+		text = str(value or '').strip()
+		if not text:
+			return None
+		negative = text.startswith('(') and text.endswith(')')
+		text = text.strip('()').replace('$', '').replace(',', '').replace('%', '').strip()
+		try:
+			number = float(text)
+		except ValueError:
+			return None
+		return -number if negative else number
+
+	@staticmethod
+	def _clean_csv_symbol(value):
+		symbol = str(value or '').strip().upper()
+		if not symbol or symbol.lower() in CASH_SYMBOLS:
+			return ''
+		return symbol
+
+	def _signed_csv_quantity(self, row, quantity):
+		action_text = ' '.join(
+			self._csv_value(row, (field_name,)).lower()
+			for field_name in CSV_ACTION_FIELDS
+			if self._csv_value(row, (field_name,))
+		)
+		if any(hint in action_text for hint in CSV_NEGATIVE_ACTION_HINTS):
+			return -abs(quantity)
+		if any(hint in action_text for hint in CSV_POSITIVE_ACTION_HINTS):
+			return abs(quantity)
+		if self._csv_value(row, ("transcode",)).upper() == "SPL":
+			return abs(quantity)
+		return quantity
+
+	def _load_portfolio_csv(self, csv_path):
+		holdings = {}
+		order = []
+		with open(csv_path, newline='', encoding='utf-8-sig') as csv_file:
+			reader = csv.DictReader(csv_file)
+			if not reader.fieldnames:
+				raise RuntimeError("Portfolio CSV is missing a header row")
+
+			for raw_row in reader:
+				row = {self._csv_key(key): value for key, value in raw_row.items()}
+				symbol = self._clean_csv_symbol(self._csv_value(row, CSV_SYMBOL_FIELDS))
+				quantity = self._parse_csv_number(self._csv_value(row, CSV_SHARE_FIELDS))
+				if not symbol or quantity is None:
+					continue
+
+				quantity = self._signed_csv_quantity(row, quantity)
+				if symbol not in holdings:
+					holdings[symbol] = 0.0
+					order.append(symbol)
+				holdings[symbol] += quantity
+
+		result = [(symbol, holdings[symbol]) for symbol in order if holdings[symbol] > 0.0001]
+		if not result:
+			raise RuntimeError("No positive stock holdings found in portfolio CSV")
+		return result
+
+	def _fetch_extended_quote(self, stock, ticker):
+		try:
+			extended_hist = stock.history(
+				period=EXTENDED_HISTORY_PERIOD,
+				interval=EXTENDED_HISTORY_INTERVAL,
+				prepost=True,
+			)
+		except Exception as e:
+			logging.warning(f"Extended-hours quote unavailable for {ticker}: {type(e).__name__}: {e}")
+			return None
+
+		if getattr(extended_hist, "empty", True):
+			return None
+		if "Close" not in getattr(extended_hist, "columns", []):
+			return None
+
+		closes = extended_hist["Close"].dropna()
+		if getattr(closes, "empty", True):
+			return None
+
+		return {
+			"price": float(closes.iloc[-1]),
+			"timestamp": closes.index[-1] if len(closes.index) else None,
+		}
+
+	@staticmethod
+	def _history_with_latest_close(hist, latest_price):
+		try:
+			updated_hist = hist.copy()
+			updated_hist.loc[updated_hist.index[-1], "Close"] = float(latest_price)
+			return updated_hist
+		except Exception as e:
+			logging.warning(f"Unable to apply latest quote to trend history: {type(e).__name__}: {e}")
+			return hist
 
 	def _fetch_stock_data(self, ticker, shares, period):
 
@@ -180,21 +338,35 @@ class StockTracker(BasePlugin):
 				logging.error(f"Error fetching info for {ticker}: {type(e).__name__}: {e}", exc_info=True)
 				info = {}
 
-			current_price = hist['Close'].iloc[-1]
-			prev_price = hist['Close'].iloc[0]
+			regular_price = float(hist['Close'].iloc[-1])
+			current_price = regular_price
+			quote_source = "historical_close"
+			quote_time = hist.index[-1] if len(hist.index) else None
+			extended_quote = self._fetch_extended_quote(stock, ticker)
+			if extended_quote:
+				current_price = extended_quote["price"]
+				quote_source = "extended_1m"
+				quote_time = extended_quote["timestamp"]
+
+			prev_price = float(hist['Close'].iloc[0])
 			change = current_price - prev_price
 			change_percent = (change / prev_price) * 100 if prev_price != 0 else 0
+			history = self._history_with_latest_close(hist, current_price)
 
 			return {
 				'symbol': ticker,
 				'name': info.get('shortName', ticker),
 				'price': current_price,
+				'regular_price': regular_price,
 				'change': change,
 				'change_percent': change_percent,
 				'shares': shares,
 				'total_value': current_price * shares,
 				'total_change': change * shares,
-				'history': hist
+				'history': history,
+				'quote_source': quote_source,
+				'quote_time': quote_time,
+				'extended_hours': quote_source == "extended_1m",
 			}
 		except Exception as e:
 			# Log detailed error information for debugging
@@ -264,16 +436,62 @@ class StockTracker(BasePlugin):
 			values.append(total)
 		return values
 
-	def _draw_box(self, draw, box, title=None):
-		draw.rectangle(box, outline=WHITE, width=2)
+	@staticmethod
+	def _blend(fg, bg, amount):
+		amount = min(max(amount, 0.0), 1.0)
+		return tuple(int(round(f * amount + b * (1.0 - amount))) for f, b in zip(fg, bg))
+
+	@staticmethod
+	def _change_color(percent):
+		if percent > 0.005:
+			return MALACHITE
+		if percent < -0.005:
+			return CINNABAR
+		return MUTED
+
+	def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
+		left, top, right, bottom = [int(v) for v in box]
+		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=ACCENT_ORANGE)
+		draw.rectangle((left, top, right, bottom), fill=fill)
+		draw.rectangle((left, top, right, bottom), outline=BORDER, width=2)
+		draw.rectangle((left, top, right, top + 6), fill=accent)
 		if title:
-			draw.text((box[0] + 12, box[1] + 8), title, fill=WHITE, font=self._font(16, True))
+			draw.text((left + 12, top + 12), title, fill=INK, font=self._font(16, True))
+
+	def _draw_summary(self, draw, box, stock_data):
+		left, top, right, bottom = box
+		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD)
+		total_value = sum(data["total_value"] for data in stock_data)
+		total_change = sum(data["total_change"] for data in stock_data)
+		base_value = total_value - total_change
+		total_change_percent = (total_change / base_value) * 100 if base_value else 0
+		change_color = self._change_color(total_change_percent)
+
+		value_text = self._money(total_value)
+		value_font = self._fit_font(draw, value_text, right - left - 28, 36, True, 20)
+		draw.text((left + 14, top + 44), value_text, fill=INK, font=value_font)
+
+		change_text = self._change_text(total_change, total_change_percent)
+		change_font = self._fit_font(draw, change_text, right - left - 32, 18, True, 12)
+		pill = (left + 12, top + 96, right - 12, top + 124)
+		draw.rounded_rectangle(
+			pill,
+			radius=8,
+			fill=self._blend(change_color, PANEL_GOLD, 0.12),
+			outline=change_color,
+			width=2,
+		)
+		draw.text((left + 24, top + 100), change_text, fill=change_color, font=change_font)
+		draw.text((left + 14, bottom - 18), datetime.now().strftime("Updated %H:%M"), fill=MUTED, font=self._font(10))
 
 	def _draw_sparkline(self, draw, box, values):
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO TREND")
+		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE)
 		plot = (left + 14, top + 42, right - 14, bottom - 16)
-		draw.rectangle(plot, outline=WHITE, width=1)
+		draw.rectangle(plot, fill=(244, 250, 255), outline=GRID, width=1)
+		for i in range(1, 4):
+			y = plot[1] + (plot[3] - plot[1]) * i / 4
+			draw.line((plot[0] + 1, y, plot[2] - 1, y), fill=self._blend(GRID, PANEL_BLUE, 0.55), width=1)
 		if len(values) < 2:
 			return
 
@@ -288,89 +506,82 @@ class StockTracker(BasePlugin):
 			y = plot[3] - (plot[3] - plot[1]) * (value - vmin) / (vmax - vmin)
 			points.append((int(x), int(y)))
 
+		area = [(plot[0], plot[3])] + points + [(plot[2], plot[3])]
+		draw.polygon(area, fill=self._blend(ACCENT_BLUE, (244, 250, 255), 0.16))
 		if len(points) >= 2:
-			draw.line(points, fill=WHITE, width=3)
+			draw.line(points, fill=ACCENT_BLUE, width=3)
 		for point in points[-6:]:
-			draw.ellipse((point[0] - 2, point[1] - 2, point[0] + 2, point[1] + 2), fill=WHITE)
+			draw.ellipse((point[0] - 4, point[1] - 4, point[0] + 4, point[1] + 4), fill=INK)
+			draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=CHART_MARKER_GREEN)
 
 		label_font = self._font(12)
-		draw.text((plot[0] + 4, plot[1] + 4), self._money(vmax, 0), fill=WHITE, font=label_font)
-		draw.text((plot[0] + 4, plot[3] - 16), self._money(vmin, 0), fill=WHITE, font=label_font)
-
-	def _draw_summary(self, draw, box, stock_data):
-		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO")
-		total_value = sum(data["total_value"] for data in stock_data)
-		total_change = sum(data["total_change"] for data in stock_data)
-		base_value = total_value - total_change
-		total_change_percent = (total_change / base_value) * 100 if base_value else 0
-
-		value_text = self._money(total_value)
-		value_font = self._fit_font(draw, value_text, right - left - 28, 36, True, 20)
-		draw.text((left + 14, top + 44), value_text, fill=WHITE, font=value_font)
-
-		change_text = self._change_text(total_change, total_change_percent)
-		change_font = self._fit_font(draw, change_text, right - left - 28, 18, True, 12)
-		draw.text((left + 14, top + 100), change_text, fill=WHITE, font=change_font)
-		draw.text((left + 14, bottom - 28), "Yahoo Finance data", fill=WHITE, font=self._font(13))
+		draw.text((plot[0] + 4, plot[1] + 4), self._money(vmax, 0), fill=INK, font=label_font)
+		draw.text((plot[0] + 4, plot[3] - 16), self._money(vmin, 0), fill=MUTED, font=label_font)
 
 	def _draw_holdings(self, draw, box, stock_data):
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "HOLDINGS")
-		header_font = self._font(13, True)
-		row_font = self._font(15)
-		symbol_font = self._font(17, True)
-		y = top + 42
+		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL)
+		header_font = self._font(12, True)
+		row_font = self._font(13)
+		symbol_font = self._font(15, True)
+		y = top + 40
 		cols = {
-			"symbol": left + 14,
+			"symbol": left + 28,
 			"price": left + 150,
 			"shares": left + 280,
 			"value": left + 400,
 			"change": left + 600,
 		}
 		for label, x in [("SYMBOL", cols["symbol"]), ("PRICE", cols["price"]), ("SHARES", cols["shares"]), ("VALUE", cols["value"]), ("CHANGE", cols["change"])]:
-			draw.text((x, y), label, fill=WHITE, font=header_font)
-		y += 24
-		draw.line((left + 12, y, right - 12, y), fill=WHITE, width=1)
-		y += 10
+			draw.text((x, y), label, fill=MUTED, font=header_font)
+		y += 22
+		draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
+		y += 8
 
-		total_value = sum(data["total_value"] for data in stock_data) or 1
 		max_rows = min(len(stock_data), 6)
-		for data in sorted(stock_data, key=lambda item: item["total_value"], reverse=True)[:max_rows]:
-			if y + 24 > bottom - 12:
+		displayed_rows = 0
+		for idx, data in enumerate(sorted(stock_data, key=lambda item: item["total_value"], reverse=True)[:max_rows]):
+			if y + 18 > bottom - 26:
 				break
+			row_bg = ROW_COLORS[idx % len(ROW_COLORS)]
+			draw.rounded_rectangle((left + 10, y - 4, right - 10, y + 18), radius=5, fill=row_bg)
+			change_color = self._change_color(data["change_percent"])
+			draw.rounded_rectangle((left + 5, y - 3, left + 10, y + 17), radius=3, fill=change_color)
 			row_items = [
-				(cols["symbol"], data["symbol"], symbol_font),
-				(cols["price"], self._money(data["price"]), row_font),
-				(cols["shares"], self._shares(data["shares"]), row_font),
-				(cols["value"], self._money(data["total_value"]), row_font),
-				(cols["change"], f"{data['change_percent']:+.2f}%", row_font),
+				(cols["symbol"], data["symbol"], symbol_font, INK),
+				(cols["price"], self._money(data["price"]), row_font, INK),
+				(cols["shares"], self._shares(data["shares"]), row_font, INK),
+				(cols["value"], self._money(data["total_value"]), row_font, INK),
+				(cols["change"], f"{data['change_percent']:+.2f}%", row_font, change_color),
 			]
-			for x, text, font in row_items:
-				draw.text((x, y), text, fill=WHITE, font=font)
-			y += 27
-			draw.line((left + 12, y, right - 12, y), fill=WHITE, width=1)
-			y += 7
+			for x, text, font, fill in row_items:
+				draw.text((x, y), text, fill=fill, font=font)
+			y += 20
+			draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
+			y += 2
+			displayed_rows += 1
 
-		if len(stock_data) > max_rows:
-			remaining = len(stock_data) - max_rows
-			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=WHITE, font=self._font(13, True))
+		if len(stock_data) > displayed_rows:
+			remaining = len(stock_data) - displayed_rows
+			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=MUTED, font=self._font(13, True))
 
 	def _create_dashboard(self, stock_data, dimensions):
-		"""Create a monochrome dashboard optimized for 800x480 e-paper."""
+		"""Create a color dashboard that preserves the original stock layout."""
 		width, height = dimensions
-		img = Image.new("RGB", (width, height), BLACK)
+		img = Image.new("RGB", (width, height), PAPER)
 		draw = ImageDraw.Draw(img)
 
-		draw.text((24, 12), "STOCK TRACKER", fill=WHITE, font=self._font(24, True))
-		draw.text((width - 24, 18), "B/W E-PAPER MODE", fill=WHITE, font=self._font(13, True), anchor="ra")
-		draw.line((24, 46, width - 24, 46), fill=WHITE, width=2)
+		draw.rectangle((0, 0, width, 54), fill=PAPER)
+		draw.text((24, 12), "STOCK TRACKER", fill=INK, font=self._font(24, True))
+		source_label = "Yahoo realtime + extended hours" if any(data.get("extended_hours") for data in stock_data) else "Yahoo Finance data"
+		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
+		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
 
 		self._draw_summary(draw, (24, 60, 284, 204), stock_data)
 		self._draw_sparkline(draw, (304, 60, width - 24, 204), self._portfolio_values(stock_data))
 		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data)
 
-		return self._threshold_image(img)
+		return img
 
 	def generate_settings_template(self):
 

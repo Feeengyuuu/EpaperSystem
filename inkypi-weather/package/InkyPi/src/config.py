@@ -113,9 +113,37 @@ class Config:
             self.write_config()
 
     def load_env_key(self, key):
-        """Loads an environment variable using dotenv and returns its value."""
+        """Loads an environment variable from stable InkyPi .env locations."""
+        for env_file in self._env_file_candidates():
+            if env_file and os.path.isfile(env_file):
+                load_dotenv(env_file, override=True)
         load_dotenv(override=True)
         return os.getenv(key)
+
+    def _env_file_candidates(self):
+        candidates = []
+        explicit_file = os.getenv("INKYPI_ENV_FILE")
+        if explicit_file:
+            candidates.append(explicit_file)
+
+        project_dir = os.getenv("PROJECT_DIR")
+        if project_dir:
+            candidates.append(os.path.join(project_dir, ".env"))
+
+        candidates.extend([
+            os.path.join(os.getcwd(), ".env"),
+            os.path.join(self.BASE_DIR, ".env"),
+            os.path.join(os.path.dirname(self.BASE_DIR), ".env"),
+            os.path.join(os.path.realpath(self.BASE_DIR), ".env"),
+            os.path.join(os.path.dirname(os.path.realpath(self.BASE_DIR)), ".env"),
+        ])
+
+        seen = set()
+        for path in candidates:
+            normalized = os.path.abspath(path)
+            if normalized not in seen:
+                seen.add(normalized)
+                yield normalized
 
     def load_playlist_manager(self):
         """Loads the playlist manager object from the config."""

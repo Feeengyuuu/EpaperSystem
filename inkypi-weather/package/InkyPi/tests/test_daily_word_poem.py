@@ -1,3 +1,4 @@
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -78,51 +79,62 @@ def test_parse_dictionary_entry_extracts_core_fields(tmp_path):
     assert result["example"] == "A luminous screen glowed quietly."
 
 
-def test_parse_poem_response_limits_nonblank_lines(tmp_path):
+def test_custom_quote_list_picks_one_quote_per_day(tmp_path):
     plugin = _plugin(tmp_path)
-    result = plugin._parse_poem_response(
-        [
-            {
-                "title": "Test Poem",
-                "author": "Example Poet",
-                "lines": ["First line", "", "Second line", "Third line"],
-            }
-        ],
-        2,
-    )
-
-    assert result == {
-        "title": "Test Poem",
-        "author": "Example Poet",
-        "lines": ["First line", "Second line"],
+    settings = {
+        "quote_list": (
+            "Stay curious - Ada Lovelace\n"
+            "Ship clarity - Grace Hopper\n"
+            "Stay curious - Ada Lovelace\n"
+        )
     }
+    day = datetime(2026, 5, 27)
+
+    first = plugin._daily_quote(settings, day)
+    second = plugin._daily_quote(settings, day)
+    next_day = plugin._daily_quote(settings, datetime(2026, 5, 28))
+
+    allowed = {
+        ("Stay curious", "Ada Lovelace"),
+        ("Ship clarity", "Grace Hopper"),
+    }
+    assert (first["text"], first["author"]) in allowed
+    assert first == second
+    assert (next_day["text"], next_day["author"]) in allowed
+    assert next_day != first
 
 
-def test_parse_poem_response_skips_headings_and_foreign_epigraph(tmp_path):
+def test_parse_wikiquote_quote_extracts_fields(tmp_path):
     plugin = _plugin(tmp_path)
-    result = plugin._parse_poem_response(
-        [
-            {
-                "title": "The Corsair.",
-                "author": "George Gordon, Lord Byron",
-                "lines": [
-                    "CANTO THE FIRST.",
-                    '"-nessun maggior dolore,',
-                    "Che ricordarsi del tempo felice",
-                    "Nella miseria,-\"",
-                    "O'er the glad waters of the dark blue sea,",
-                    "Our thoughts as boundless, and our soul's as free",
-                    "Far as the breeze can bear, the billows foam,",
-                ],
-            }
-        ],
-        2,
+    result = plugin._parse_wikiquote_quote({
+        "quote": "The truth is rarely pure and never simple.",
+        "author": "Oscar Wilde",
+        "featured_date": "2026-05-28",
+    })
+
+    assert result["text"] == "The truth is rarely pure and never simple."
+    assert result["author"] == "Oscar Wilde"
+    assert result["topic"] == "Wikiquote QOTD"
+    assert result["source"] == "Wikiquote QOTD"
+    assert result["featured_date"] == "2026-05-28"
+
+
+def test_parse_wikiquote_day_raw_extracts_fields(tmp_path):
+    plugin = _plugin(tmp_path)
+    result = plugin._parse_wikiquote_day_raw(
+        """{| style="background:{{{color}}};"
+| align=center | <p>The time has come when scientific truth must cease to be the property of the few.</p><p> ~ [[Louis Agassiz]] ~ </p>
+| align=center | [[File:Plasma lamp touching.jpg|144px|right|]]
+{{QoDfooter|Month={{CURRENTMONTHNAME}}|Year=2007}}
+|}""",
+        "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/May_28",
+        "2026-05-28",
     )
 
-    assert result["lines"] == [
-        "O'er the glad waters of the dark blue sea,",
-        "Our thoughts as boundless, and our soul's as free",
-    ]
+    assert result["text"] == "The time has come when scientific truth must cease to be the property of the few."
+    assert result["author"] == "Louis Agassiz"
+    assert result["source"] == "Wikiquote QOTD"
+    assert result["source_url"].endswith("/May_28")
 
 
 def test_generate_image_renders_and_writes_daily_cache(tmp_path):
@@ -137,21 +149,23 @@ def test_generate_image_renders_and_writes_daily_cache(tmp_path):
             "example": "The test word stayed readable.",
         }
 
-    def fake_poem(limit):
-        return {
-            "title": "Small Song",
-            "author": "A. Poet",
-            "lines": ["One clear line", "Another measured line"][:limit],
-        }
-
     plugin._fetch_dictionary_entry = fake_dictionary
-    plugin._fetch_poem = fake_poem
+    plugin._fetch_wikiquote_quote = lambda date_key: {
+        "text": "A quote used by a test.",
+        "author": "Q. Author",
+        "topic": "Wikiquote QOTD",
+        "source": "Wikiquote QOTD",
+    }
 
     image = plugin.generate_image({}, FakeDeviceConfig())
 
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
     assert (tmp_path / "daily.json").is_file()
+    payload = json.loads((tmp_path / "daily.json").read_text(encoding="utf-8"))
+    assert "quote" in payload
+    assert "poem" not in payload
+    assert payload["quote"]["source"] == "Wikiquote QOTD"
 
 
 def test_page_palette_switches_between_day_and_midnight(tmp_path):
@@ -176,23 +190,29 @@ def test_display_phonetic_ascii_fallback_for_ipa(tmp_path):
 
 def test_cached_payload_is_reused_without_network(tmp_path):
     plugin = _plugin(tmp_path)
-    calls = {"dictionary": 0, "poem": 0}
+    calls = {"dictionary": 0, "wikiquote": 0}
 
     def fake_dictionary(word):
         calls["dictionary"] += 1
         return {"definition": "Network definition."}
 
-    def fake_poem(limit):
-        calls["poem"] += 1
-        return {"title": "Poem", "author": "Poet", "lines": ["Line"]}
+    def fake_wikiquote(date_key):
+        calls["wikiquote"] += 1
+        return {
+            "text": "Cached quote.",
+            "author": "Wikiquote",
+            "topic": "Wikiquote QOTD",
+            "source": "Wikiquote QOTD",
+        }
 
     plugin._fetch_dictionary_entry = fake_dictionary
-    plugin._fetch_poem = fake_poem
+    plugin._fetch_wikiquote_quote = fake_wikiquote
     now = datetime(2026, 5, 27)
 
     first = plugin._daily_payload({}, now)
     second = plugin._daily_payload({}, now)
 
     assert first["from_cache"] is False
+    assert "quote" in first
     assert second["from_cache"] is True
-    assert calls == {"dictionary": 1, "poem": 1}
+    assert calls == {"dictionary": 1, "wikiquote": 1}

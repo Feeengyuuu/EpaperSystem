@@ -187,13 +187,15 @@ class Newspaper(BasePlugin):
 
             if source_type in {"web", "website", "screenshot"}:
                 source_type = "url"
+            if source_type in {"headline", "headlines", "text"}:
+                source_type = "headlines"
             if source_type in {"paper", "slug", "frontpage"}:
                 source_type = "newspaper"
-            if source_type not in {"url", "newspaper"} or not value:
+            if source_type not in {"url", "headlines", "newspaper"} or not value:
                 logger.warning("Ignoring invalid media source line: %s", line)
                 continue
 
-            if source_type == "url":
+            if source_type in {"url", "headlines"}:
                 if not value.startswith(("http://", "https://")):
                     logger.warning("Ignoring media source with invalid URL: %s", line)
                     continue
@@ -238,13 +240,16 @@ class Newspaper(BasePlugin):
         raise RuntimeError(f"No news front page could be fetched. {detail}")
 
     def _fetch_source_image(self, source, device_config):
+        if source["type"] == "headlines":
+            headlines = self._fetch_web_headlines(source["value"])
+            if headlines:
+                return self._render_headlines_page(source, headlines, device_config)
+            return None
+
         if source["type"] == "url":
             image = self._fetch_url_screenshot(source["value"], device_config)
             if image:
                 return image
-            headlines = self._fetch_web_headlines(source["value"])
-            if headlines:
-                return self._render_headlines_page(source, headlines, device_config)
             return None
         return self._fetch_newspaper_cover(source["value"], device_config)
 
@@ -319,18 +324,26 @@ class Newspaper(BasePlugin):
     def _extract_headlines(self, html_text):
         html_text = re.sub(r"(?is)<(script|style|noscript).*?</\1>", " ", html_text or "")
         candidates = []
-        for pattern in [
-            r"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>",
-            r"(?is)<a[^>]*>(.*?)</a>",
-        ]:
-            for match in re.finditer(pattern, html_text):
-                text = self._clean_html_text(match.group(1))
-                if self._looks_like_headline(text):
-                    candidates.append(text)
+        preferred = []
+
+        for match in re.finditer(r"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>", html_text):
+            text = self._clean_html_text(match.group(1))
+            if self._looks_like_headline(text):
+                candidates.append(text)
+
+        for match in re.finditer(r"(?is)<a\b([^>]*)>(.*?)</a>", html_text):
+            attrs = match.group(1) or ""
+            text = self._clean_html_text(match.group(2))
+            if not self._looks_like_headline(text):
+                continue
+            if "ckxxapp.ckxx.net" in attrs:
+                preferred.append(text)
+            else:
+                candidates.append(text)
 
         unique = []
         seen = set()
-        for text in candidates:
+        for text in preferred + candidates:
             key = re.sub(r"\W+", "", text.lower())
             if not key or key in seen:
                 continue
@@ -358,12 +371,31 @@ class Newspaper(BasePlugin):
             "terms of use",
             "cookie",
             "advertisement",
+            "direct sponsorship",
             "edition",
             "weather",
             "video",
             "live tv",
+            "首页",
+            "平台热榜",
+            "主题聚合",
+            "历史归档",
+            "广告投放",
+            "联系投放",
+            "其他平台",
+            "参考消息实时热搜榜",
+            "在 hotflashnews 投放广告",
         }
-        if lower in reject or any(lower.startswith(prefix) for prefix in ["skip to", "follow ", "share "]):
+        reject_contains = [
+            "投放广告",
+            "aads",
+            "direct sponsorship",
+        ]
+        if (
+            lower in reject
+            or any(lower.startswith(prefix) for prefix in ["skip to", "follow ", "share "])
+            or any(marker in lower for marker in reject_contains)
+        ):
             return False
         cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
         if cjk_count >= 4:

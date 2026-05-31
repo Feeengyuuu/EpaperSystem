@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import re
 import unicodedata
 from pathlib import Path
@@ -49,6 +50,16 @@ QUICK_LOCATION_COORDS = {
 }
 
 WEATHER_BACKGROUND_DEFAULT = "cloudy"
+WEATHER_BACKGROUND_DEFAULT_STYLE = "mythic_comic_1982"
+WEATHER_BACKGROUND_STYLES = {
+    "classic": (),
+    "mythic_comic_1982": ("mythic_comic_1982",),
+}
+WEATHER_ICON_DEFAULT_STYLE = "shanghai_animation"
+WEATHER_ICON_STYLES = {
+    "classic": None,
+    "shanghai_animation": "shanghai_animation",
+}
 WEATHER_BACKGROUND_BY_ICON = {
     "01d": "clear_day",
     "01n": "clear_night",
@@ -391,6 +402,8 @@ class MiniWeather(Weather):
         forecast_days = max(1, min(4, int(settings.get("forecastDays", 4))))
         forecast_rows = forecast[1:1 + forecast_days] if len(forecast) > 1 else forecast[:forecast_days]
         labels = get_language_labels(language)
+        weather_icon_style = self._weather_icon_style(settings)
+        self._apply_weather_icon_style(template_params, forecast_rows, weather_icon_style)
 
         # localized date string
         # Use the provider timezone that was returned from _get_template_params.
@@ -401,7 +414,7 @@ class MiniWeather(Weather):
         localized_date = format_localized_date(language, now)
         weather_background_enabled = settings.get("weatherBackgrounds", "true") != "false"
         weather_background = (
-            self._select_weather_background(template_params.get("current_day_icon"))
+            self._select_weather_background(template_params.get("current_day_icon"), settings, now.date())
             if weather_background_enabled
             else None
         )
@@ -423,7 +436,7 @@ class MiniWeather(Weather):
         template_params.update(
             {
                 "title": title,
-                "current_label": labels["now"],
+                "current_label": labels["days"][now.weekday()],
                 "date": localized_date,
                 "current_high": current_day["high"],
                 "current_low": current_day["low"],
@@ -432,12 +445,15 @@ class MiniWeather(Weather):
                 "provider_timezone": provider_tz.zone,
                 "plugin_settings": apply_theme_to_plugin_settings(settings, theme_context),
                 "show_icons": settings.get("showIcons", "true") != "false",
-                "color_icons": settings.get("colorIcons", "false") == "true",
+                "color_icons": settings.get("colorIcons", "false") == "true" or weather_icon_style != "classic",
+                "weather_icon_style": weather_icon_style,
                 "theme": theme_context,
                 "weather_background_enabled": weather_background_enabled,
                 "weather_background_file": weather_background["uri"] if weather_background else "",
                 "weather_background_path": weather_background["path"] if weather_background else "",
                 "weather_background_slug": weather_background["slug"] if weather_background else "",
+                "weather_background_style": weather_background["style"] if weather_background else "",
+                "weather_background_color": weather_background["is_color"] if weather_background else False,
             }
         )
         self._write_weather_context(template_params, now)
@@ -469,7 +485,7 @@ class MiniWeather(Weather):
         margin = max(18, int(width * 0.035))
         title_font = self._pil_font(52, "bold")
         date_font = self._pil_font(32)
-        label_font = self._pil_font(32, "bold")
+        label_font = self._pil_font(64, "bold")
         range_font = self._pil_font(34, "bold")
         day_font = self._pil_font(38, "bold")
 
@@ -486,8 +502,18 @@ class MiniWeather(Weather):
         forecast_x = margin + current_w + gap
         forecast_w = width - forecast_x - margin
 
-        self._rounded(draw, (margin, top, margin + current_w, top + card_h), 18, panel, outline=rule, width=2)
-        self._draw_center(draw, str(data.get("current_label") or "NOW"), margin, top + 20, current_w, label_font, ink)
+        current_panel_alpha, forecast_panel_alpha = self._fallback_panel_alphas(data)
+        self._rounded_panel(
+            img,
+            draw,
+            (margin, top, margin + current_w, top + card_h),
+            18,
+            panel,
+            current_panel_alpha,
+            outline=rule,
+            width=2,
+        )
+        self._draw_center(draw, str(data.get("current_label") or "NOW"), margin, top + 14, current_w, label_font, ink)
 
         temp = str(data.get("current_temperature") or "--")
         unit = self._unit_label(data)
@@ -498,9 +524,9 @@ class MiniWeather(Weather):
             temp,
             unit,
             margin,
-            top + 78,
+            top + 108,
             current_w,
-            138,
+            112,
             ink,
             data.get("color_icons"),
         )
@@ -514,7 +540,16 @@ class MiniWeather(Weather):
         for idx, row in enumerate(rows):
             y = top + idx * (row_h + row_gap)
             if idx % 2 == 0:
-                self._rounded(draw, (forecast_x, y, forecast_x + forecast_w, y + row_h), 14, panel, outline=rule, width=1)
+                self._rounded_panel(
+                    img,
+                    draw,
+                    (forecast_x, y, forecast_x + forecast_w, y + row_h),
+                    14,
+                    panel,
+                    forecast_panel_alpha,
+                    outline=rule,
+                    width=1,
+                )
             elif idx > 0:
                 draw.line((forecast_x + 16, y, forecast_x + forecast_w - 16, y), fill=rule, width=1)
             icon = self._load_icon(row.get("icon"), min(48, row_h - 12), data.get("color_icons"))
@@ -533,7 +568,7 @@ class MiniWeather(Weather):
 
         return img
 
-    def _select_weather_background(self, current_icon_path):
+    def _select_weather_background(self, current_icon_path, settings=None, selected_date=None):
         icon_name = Path(str(current_icon_path or "")).stem.lower()
         slug = WEATHER_BACKGROUND_BY_ICON.get(icon_name)
 
@@ -554,10 +589,12 @@ class MiniWeather(Weather):
                 slug = "fog"
 
         slug = slug or WEATHER_BACKGROUND_DEFAULT
-        background_path = Path(self.get_plugin_dir(f"backgrounds/{slug}.png"))
-        if not background_path.is_file():
-            logger.debug("Mini Weather background missing: %s", background_path)
+        style = self._weather_background_style(settings)
+        candidates = self._weather_background_candidates(slug, style)
+        if not candidates:
+            logger.debug("Mini Weather background missing: %s (%s)", slug, style)
             return None
+        background_path = candidates[self._stable_weather_background_index(slug, style, selected_date, len(candidates))]
 
         try:
             uri = background_path.resolve().as_uri()
@@ -568,7 +605,74 @@ class MiniWeather(Weather):
             "slug": slug,
             "path": str(background_path),
             "uri": uri,
+            "style": style,
+            "is_color": "backgrounds_color" in background_path.parts,
         }
+
+    def _weather_background_style(self, settings):
+        style = str((settings or {}).get("weatherBackgroundStyle") or WEATHER_BACKGROUND_DEFAULT_STYLE).strip()
+        if style in WEATHER_BACKGROUND_STYLES:
+            return style
+        return WEATHER_BACKGROUND_DEFAULT_STYLE
+
+    def _weather_background_candidates(self, slug, style):
+        plugin_dir = Path(__file__).resolve().parent
+        if style != "classic":
+            candidates = []
+            color_dir = plugin_dir / "backgrounds_color"
+            for style_name in WEATHER_BACKGROUND_STYLES.get(style, ()):
+                candidates.extend(self._weather_background_candidates_from_dir(color_dir / style_name, slug))
+            if candidates:
+                return sorted(dict.fromkeys(candidates))
+        return self._weather_background_candidates_from_dir(plugin_dir / "backgrounds", slug)
+
+    def _weather_background_candidates_from_dir(self, directory, slug):
+        candidates = []
+        for pattern in (f"{slug}.png", f"{slug}_*.png"):
+            candidates.extend(path for path in directory.glob(pattern) if path.is_file())
+        variant_dir = directory / slug
+        if variant_dir.is_dir():
+            candidates.extend(path for path in variant_dir.glob("*.png") if path.is_file())
+        return sorted(dict.fromkeys(candidates))
+
+    def _stable_weather_background_index(self, slug, style, selected_date, count):
+        if count <= 1:
+            return 0
+        if hasattr(selected_date, "toordinal"):
+            date_number = selected_date.toordinal()
+        else:
+            date_number = datetime.date.today().toordinal()
+        digest = hashlib.sha256(f"{slug}|{style}".encode("utf-8")).hexdigest()
+        offset = int(digest[:12], 16)
+        return (date_number + offset) % count
+
+    def _weather_icon_style(self, settings):
+        style = str((settings or {}).get("weatherIconStyle") or WEATHER_ICON_DEFAULT_STYLE).strip()
+        if style in WEATHER_ICON_STYLES:
+            return style
+        return WEATHER_ICON_DEFAULT_STYLE
+
+    def _apply_weather_icon_style(self, template_params, forecast_rows, style):
+        if style == "classic":
+            return
+        template_params["current_day_icon"] = self._styled_weather_icon_path(
+            template_params.get("current_day_icon"),
+            style,
+        )
+        for row in forecast_rows:
+            row["icon"] = self._styled_weather_icon_path(row.get("icon"), style)
+
+    def _styled_weather_icon_path(self, icon_path, style):
+        icon_name = Path(str(icon_path or "")).name
+        if not icon_name:
+            return icon_path
+        style_dir = WEATHER_ICON_STYLES.get(style)
+        if not style_dir:
+            return icon_path
+        candidate = Path(self.get_plugin_dir(f"icons_color/{style_dir}/{icon_name}"))
+        if candidate.is_file():
+            return str(candidate)
+        return icon_path
 
     def _build_pil_background(self, dimensions, base_color, data):
         img = Image.new("RGB", dimensions, base_color)
@@ -579,6 +683,8 @@ class MiniWeather(Weather):
         try:
             background = Image.open(background_path).convert("RGB")
             background = ImageOps.fit(background, dimensions, method=Image.LANCZOS)
+            if data.get("weather_background_color"):
+                return Image.blend(img, background, 0.42)
             background = ImageOps.grayscale(background)
             if (data.get("theme") or {}).get("mode") == "night":
                 background = ImageOps.invert(background)
@@ -598,7 +704,7 @@ class MiniWeather(Weather):
                     return ImageFont.truetype(path, size)
             except Exception:
                 pass
-        for family in ("LXGW WenKai", "FandolKai", "Jost"):
+        for family in ("Jost", "LXGW WenKai", "FandolKai"):
             try:
                 font = get_font(family, size, weight)
                 if font:
@@ -685,6 +791,27 @@ class MiniWeather(Weather):
             draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
         except AttributeError:
             draw.rectangle(box, fill=fill, outline=outline, width=width)
+
+    def _rounded_panel(self, img, draw, box, radius, fill, alpha, outline=None, width=1):
+        if alpha >= 255:
+            self._rounded(draw, box, radius, fill, outline=outline, width=width)
+            return
+
+        fill_rgba = (*fill[:3], max(0, min(255, int(alpha))))
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        self._rounded(overlay_draw, box, radius, fill_rgba)
+        composed = Image.alpha_composite(img.convert("RGBA"), overlay)
+        img.paste(composed.convert("RGB"))
+        if outline:
+            self._rounded(draw, box, radius, None, outline=outline, width=width)
+
+    def _fallback_panel_alphas(self, data):
+        if not data.get("weather_background_path"):
+            return 255, 255
+        if data.get("weather_background_color"):
+            return 36, 26
+        return 190, 160
 
     def _draw_center(self, draw, text, x, y, width, font, fill):
         draw.text((x + (width - self._text_width(draw, text, font)) // 2, y), text, font=font, fill=fill)

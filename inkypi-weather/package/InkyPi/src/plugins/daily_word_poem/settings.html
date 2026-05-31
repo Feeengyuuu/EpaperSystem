@@ -4,8 +4,8 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="poem_line_limit">Poem lines</label>
-  <input type="number" class="form-control" name="poem_line_limit" id="poem_line_limit" min="2" max="8" value="4">
+  <label class="form-label" for="quote_list">Golden sentences</label>
+  <textarea class="form-control" name="quote_list" id="quote_list" rows="5" placeholder="One quote per line. Use: Quote text - Author. Leave blank for the built-in famous quote list."></textarea>
 </div>
 
 <div class="form-group">
@@ -23,8 +23,8 @@
 </div>
 
 <div class="form-group">
-  <label><input type="checkbox" name="fetch_poem" id="fetch_poem" value="true" checked> Fetch poem from PoetryDB</label>
-  <input type="hidden" name="fetch_poem" value="false">
+  <label><input type="checkbox" name="fetch_wikiquote" id="fetch_wikiquote" value="true" checked> Fetch quote of the day from Wikiquote</label>
+  <input type="hidden" name="fetch_wikiquote" value="false">
 </div>
 
 <div class="form-group">

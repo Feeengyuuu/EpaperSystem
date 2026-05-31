@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
@@ -44,6 +44,7 @@ Taste of Home|https://magazineshop.us/collections/taste-of-home
 TV Guide|https://magazineshop.us/collections/tv-guide-tv"""
 
 ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
+COVER_CACHE_VERSION = "magazine-covers-cache-v2-title-crop"
 IMAGE_CACHE_TTL = timedelta(hours=18)
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
@@ -418,7 +419,7 @@ class MagazineCovers(BasePlugin):
                 resized_path = self._downsample_to_pi_safe_image(tmp_path)
                 decode_path = resized_path
 
-            image = self.image_loader.from_file(str(decode_path), dimensions, resize=True)
+            image = self.image_loader.from_file(str(decode_path), dimensions, resize=False)
             if not image:
                 raise RuntimeError("image load returned empty")
             return image.convert("RGB")
@@ -554,21 +555,123 @@ class MagazineCovers(BasePlugin):
 
         if image_ratio > target_ratio:
             crop_width = max(1, min(image.width, int(round(image.height * target_ratio))))
-            x = max(0, (image.width - crop_width) // 2)
+            title_focus = self._title_focus_region(image)
+            if title_focus:
+                x = self._crop_offset_for_focus(title_focus["center_x"], image.width, crop_width)
+            else:
+                x = max(0, (image.width - crop_width) // 2)
             crop_box = (x, 0, x + crop_width, image.height)
         else:
             crop_height = max(1, min(image.height, int(round(image.width / target_ratio))))
-            y = self._masthead_crop_offset(image.height, crop_height)
+            y = self._masthead_crop_offset(image, crop_height)
             crop_box = (0, y, image.width, y + crop_height)
 
         cropped = image.crop(crop_box)
         return cropped.resize((target_width, target_height), Image.LANCZOS)
 
-    def _masthead_crop_offset(self, image_height, crop_height):
-        max_offset = max(0, image_height - crop_height)
+    def _masthead_crop_offset(self, image, crop_height):
+        max_offset = max(0, image.height - crop_height)
         if max_offset == 0:
             return 0
+
+        title_focus = self._title_focus_region(image)
+        if title_focus:
+            if title_focus["center_y"] <= crop_height * 0.45:
+                return 0
+            offset = int(round(title_focus["center_y"] - crop_height * 0.15))
+            return max(0, min(max_offset, offset))
+
         return 0
+
+    def _title_focus_region(self, image):
+        sample = image.convert("L")
+        sample.thumbnail((320, 320), Image.BILINEAR)
+        if sample.width < 80 or sample.height < 80:
+            return None
+
+        edges = sample.filter(ImageFilter.FIND_EDGES)
+        scan_height = max(1, int(sample.height * 0.68))
+        window_height = max(18, min(scan_height, sample.height // 6))
+        if window_height >= scan_height:
+            return None
+
+        step = max(4, window_height // 4)
+        best = None
+        best_score = 0.0
+
+        for y in range(0, scan_height - window_height + 1, step):
+            box = (0, y, sample.width, y + window_height)
+            gray_region = sample.crop(box)
+            edge_region = edges.crop(box)
+            score = self._title_region_score(gray_region, edge_region, y, scan_height)
+            if score > best_score:
+                best_score = score
+                best = {
+                    "center_x": sample.width / 2,
+                    "center_y": y + window_height / 2,
+                    "score": score,
+                }
+
+        if not best or best_score < 42:
+            return None
+
+        return {
+            "center_x": best["center_x"] * image.width / sample.width,
+            "center_y": best["center_y"] * image.height / sample.height,
+            "score": best_score,
+        }
+
+    def _title_region_score(self, gray_region, edge_region, y, scan_height):
+        area = max(1, gray_region.width * gray_region.height)
+        gray_hist = gray_region.histogram()
+        edge_hist = edge_region.histogram()
+        dark_ratio = sum(gray_hist[:90]) / area
+        light_ratio = sum(gray_hist[200:]) / area
+        edge_ratio = sum(edge_hist[32:]) / area
+        edge_mean = ImageStat.Stat(edge_region).mean[0]
+        contrast = ImageStat.Stat(gray_region).stddev[0]
+        coverage = self._title_region_horizontal_coverage(gray_region, edge_region)
+        top_bias = 1 - min(1.0, y / max(1, scan_height))
+
+        score = (
+            edge_mean * 1.35
+            + contrast * 0.65
+            + min(42.0, dark_ratio * 120)
+            + min(30.0, edge_ratio * 260)
+            + coverage * 34
+            + top_bias * 12
+        )
+
+        if dark_ratio > 0.92 or light_ratio > 0.98:
+            score *= 0.45
+        if dark_ratio < 0.025 and edge_ratio < 0.035:
+            score *= 0.55
+        return score
+
+    def _title_region_horizontal_coverage(self, gray_region, edge_region):
+        segments = 8
+        active = 0
+        for index in range(segments):
+            left = int(round(index * gray_region.width / segments))
+            right = int(round((index + 1) * gray_region.width / segments))
+            if right <= left:
+                continue
+            box = (left, 0, right, gray_region.height)
+            gray_slice = gray_region.crop(box)
+            edge_slice = edge_region.crop(box)
+            area = max(1, gray_slice.width * gray_slice.height)
+            dark_ratio = sum(gray_slice.histogram()[:90]) / area
+            edge_ratio = sum(edge_slice.histogram()[32:]) / area
+            if dark_ratio > 0.055 or edge_ratio > 0.04:
+                active += 1
+        return active / segments
+
+    def _crop_offset_for_focus(self, focus_coord, full_size, crop_size):
+        max_offset = max(0, full_size - crop_size)
+        if max_offset == 0:
+            return 0
+        offset = int(round(focus_coord - crop_size / 2))
+        return max(0, min(max_offset, offset))
 
     def _with_source_label(self, image, source, settings):
         if str(settings.get("showSourceLabel", "true")).lower() in {"false", "0", "off", "no"}:
@@ -681,7 +784,7 @@ class MagazineCovers(BasePlugin):
                 return None
             if self._image_exceeds_pi_safe_size(image_path):
                 return None
-            loaded = self.image_loader.from_file(str(image_path), dimensions, resize=True)
+            loaded = self.image_loader.from_file(str(image_path), dimensions, resize=False)
             if not loaded:
                 return None
             return {
@@ -746,7 +849,7 @@ class MagazineCovers(BasePlugin):
 
     def _cache_meta_path(self, source, dimensions):
         key = hashlib.sha256(
-            f"{source['name']}|{source['url']}|{dimensions[0]}x{dimensions[1]}".encode("utf-8")
+            f"{COVER_CACHE_VERSION}|{source['name']}|{source['url']}|{dimensions[0]}x{dimensions[1]}".encode("utf-8")
         ).hexdigest()[:20]
         safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", source["name"]).strip("_") or "source"
         return self._cache_dir() / "covers" / f"{safe_name}_{key}.json"

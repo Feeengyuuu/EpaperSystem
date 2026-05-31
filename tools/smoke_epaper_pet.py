@@ -21,7 +21,7 @@ sys.path.insert(0, str(SRC))
 
 from config import Config  # noqa: E402
 from plugins.context_cache import write_context  # noqa: E402
-from plugins.epaper_pet.epaper_pet import EpaperPet  # noqa: E402
+from plugins.epaper_pet.epaper_pet import EpaperPet, FACE_MAP, HUNTED_FOODS  # noqa: E402
 from plugins.plugin_registry import get_plugin_instance, load_plugins  # noqa: E402
 
 
@@ -105,6 +105,132 @@ def main() -> int:
     summary = plugin._state_summary(second_state, settings)
     if not any("\u4e00" <= char <= "\u9fff" for char in summary["message"] + summary["activity"] + summary["mood"]):
         raise AssertionError("Expected Simplified Chinese text in localized pet summary.")
+    daily_life = second_state.get("daily_life") or {}
+    if not daily_life.get("theme") or not daily_life.get("goal") or not daily_life.get("favorite"):
+        raise AssertionError(f"Expected daily life plan in pet state, got {daily_life}")
+    if "belly" not in FACE_MAP or "zoomies" not in FACE_MAP:
+        raise AssertionError("Expected active belly/zoomies moods in the random expression pool.")
+    if FACE_MAP["belly"][0] == "( \u3002 )( \u3002 )":
+        raise AssertionError("Expected non-sexual belly expression, not the rejected explicit form.")
+    if len(HUNTED_FOODS) < 20:
+        raise AssertionError("Expected a broad ecology-based hunting prey table.")
+    prey_sizes = {food.get("size") for food in HUNTED_FOODS}
+    if not {"tiny", "small", "medium", "large", "huge"}.issubset(prey_sizes):
+        raise AssertionError(f"Expected prey sizes from tiny to huge, got {prey_sizes}")
+    if not all(food.get("prey_group") and food.get("food_zh") and food.get("prey_mass_g") for food in HUNTED_FOODS):
+        raise AssertionError("Expected every prey entry to include ecological group, Chinese name, and mass.")
+    prey_life = plugin._life_context(second_state, settings, datetime.now(), second_state.get("message", ""))
+    prey_ecology = prey_life.get("prey_ecology") or {}
+    catalog_entries = [
+        prey
+        for tier in prey_ecology.get("catalog", [])
+        for prey in tier.get("prey", [])
+    ]
+    if len(catalog_entries) != len(HUNTED_FOODS):
+        raise AssertionError("Expected AI prey ecology context to include the complete prey catalog.")
+    if not prey_ecology.get("available_now") or not prey_ecology.get("next_locked_prey"):
+        raise AssertionError(f"Expected AI prey ecology context to include available and locked prey, got {prey_ecology}")
+    if not all("prey_mass_g" in prey and "reserve_gain" in prey and "xp_gain" in prey for prey in catalog_entries):
+        raise AssertionError("Expected AI prey catalog to expose mass, reserve gain, and XP gain.")
+
+    midday = datetime.now().astimezone().replace(hour=12, minute=15, second=0, microsecond=0)
+    midday_events = plugin._event_catalog(settings, midday, second_state)
+    midday_ids = {event.get("id") for event in midday_events}
+    if not {"crumb_audit", "warm_screen_listen", "safe_belly_sprawl"}.issubset(midday_ids):
+        raise AssertionError(f"Expected midday routine events, got {midday_ids}")
+
+    original_daily_gate = plugin._daily_gate
+    try:
+        plugin._daily_gate = lambda *_args, **_kwargs: True
+        instinct_state = {
+            "pet_id": f"instinct-mochi-{run_id}",
+            "name": "Mochi",
+            "activity": "quiet watch",
+            "mood": "calm",
+            "message": "Quiet heartbeat.",
+            "event_index": 0,
+            "born_at": midday.isoformat(),
+            "last_tick_at": midday.isoformat(),
+            "stats": {
+                "food": 36,
+                "happiness": 70,
+                "energy": 68,
+                "cleanliness": 80,
+                "health": 90,
+                "level": 1,
+                "xp": 0,
+                "age_days": 0,
+            },
+        }
+        plugin._ensure_daily_life(instinct_state, midday)
+        if not plugin._apply_daily_instinct(instinct_state, settings, midday, DeviceConfig()):
+            raise AssertionError("Expected daily survival instinct to trigger.")
+        if instinct_state.get("activity") != "foraging" or instinct_state["stats"]["food"] <= 36:
+            raise AssertionError(f"Expected self-foraging to improve food, got {instinct_state}")
+    finally:
+        plugin._daily_gate = original_daily_gate
+
+    low_hunt_state = {
+        "pet_id": f"low-hunt-mochi-{run_id}",
+        "name": "Mochi",
+        "event_index": 0,
+        "last_tick_at": midday.isoformat(),
+        "activity": "quiet watch",
+        "mood": "calm",
+        "message": "Quiet heartbeat.",
+        "stats": {
+            "food": 10,
+            "food_reserve": 0,
+            "happiness": 70,
+            "energy": 80,
+            "cleanliness": 80,
+            "health": 90,
+            "level": 1,
+            "xp": 0,
+            "age_days": 0,
+        },
+    }
+    plugin._apply_hunting_meal(low_hunt_state, midday)
+    if low_hunt_state["last_hunt"].get("size") != "tiny":
+        raise AssertionError(f"Expected level 1 pet to hunt tiny prey, got {low_hunt_state['last_hunt']}")
+    if not low_hunt_state["last_hunt"].get("prey_group") or not low_hunt_state["last_hunt"].get("food_zh"):
+        raise AssertionError(f"Expected hunt details to include ecology metadata, got {low_hunt_state['last_hunt']}")
+    if low_hunt_state["stats"].get("food_reserve", 0) <= 0:
+        raise AssertionError(f"Expected hunting leftovers to create food reserve, got {low_hunt_state}")
+
+    high_hunt_state = json.loads(json.dumps(low_hunt_state))
+    high_hunt_state["pet_id"] = f"high-hunt-mochi-{run_id}"
+    high_hunt_state["stats"].update({"food": 8, "food_reserve": 0, "xp": 1000, "energy": 100})
+    high_level = plugin._level_info(high_hunt_state, settings)
+    if high_level["level"] < 10 or high_level["prey_size"] != "large" or high_level["reserve_cap"] < 540:
+        raise AssertionError(f"Expected high-level large-prey tier, got {high_level}")
+    if not high_level.get("next_prey_unlock") or high_level["next_prey_unlock"].get("prey_size") != "huge":
+        raise AssertionError(f"Expected next huge-prey unlock, got {high_level}")
+    high_pool_sizes = {food.get("size") for food in plugin._available_hunted_foods(high_level["level"])}
+    if "tiny" in high_pool_sizes or not {"medium", "large"}.issubset(high_pool_sizes):
+        raise AssertionError(f"Expected high-level focused pool to favor medium/large prey, got {high_pool_sizes}")
+    large_seen = False
+    for event_index in range(32):
+        high_hunt_state["event_index"] = event_index
+        prey = plugin._select_hunted_food(high_hunt_state, midday)
+        if prey.get("size") in {"large", "medium"}:
+            large_seen = True
+            break
+    if not large_seen:
+        raise AssertionError("Expected high-level hunting pool to include larger prey.")
+
+    apex_state = json.loads(json.dumps(high_hunt_state))
+    apex_state["stats"].update({"xp": 1800})
+    apex_level = plugin._level_info(apex_state, settings)
+    apex_pool_sizes = {food.get("size") for food in plugin._available_hunted_foods(apex_level["level"])}
+    if "huge" not in apex_pool_sizes:
+        raise AssertionError(f"Expected apex-level hunting pool to include huge prey, got {apex_pool_sizes}")
+
+    reserve_state = json.loads(json.dumps(high_hunt_state))
+    reserve_state["stats"].update({"food": 12, "food_reserve": 80})
+    plugin._eat_from_reserve(reserve_state, midday)
+    if reserve_state["stats"]["food"] <= 12 or reserve_state["stats"]["food_reserve"] >= 80:
+        raise AssertionError(f"Expected stash meal to feed the pet from reserve, got {reserve_state}")
 
     ai_settings = dict(settings)
     ai_settings.update({
@@ -121,6 +247,42 @@ def main() -> int:
     })
 
     context_now = datetime.now().astimezone()
+    prompt_context = plugin._ai_prompt_context(
+        high_hunt_state,
+        ai_settings,
+        context_now,
+        high_hunt_state.get("message", ""),
+        {
+            "available": True,
+            "sources": [
+                {
+                    "plugin": "weather",
+                    "kind": "weather",
+                    "source": "Prompt Smoke Weather",
+                    "age_minutes": 2,
+                    "summary": "current 68F; clear enough for hunting metaphors",
+                }
+            ],
+        },
+    )
+    variation = prompt_context.get("variation") or {}
+    if not variation.get("primary_angle") or not variation.get("line_shape") or not variation.get("detail_lens"):
+        raise AssertionError(f"Expected AI variation controls, got {variation}")
+    if "prey_ecology" not in variation.get("must_consider", []):
+        raise AssertionError(f"Expected AI variation to require prey ecology coverage, got {variation}")
+    if not variation.get("prey_focus", {}).get("prey_mass_g"):
+        raise AssertionError(f"Expected AI variation to select a concrete prey focus, got {variation}")
+    prompt_prey_catalog = [
+        prey
+        for tier in prompt_context["life"]["prey_ecology"]["catalog"]
+        for prey in tier.get("prey", [])
+    ]
+    if len(prompt_prey_catalog) != len(HUNTED_FOODS):
+        raise AssertionError("Expected AI prompt context to carry the complete prey catalog.")
+    system_rules = plugin._ai_system_content("zh-Hans")
+    if "prey_ecology contains the full prey catalog" not in system_rules or "variation.primary_angle" not in system_rules:
+        raise AssertionError("Expected AI system prompt to require prey ecology and variation controls.")
+
     write_context(
         "weather",
         {

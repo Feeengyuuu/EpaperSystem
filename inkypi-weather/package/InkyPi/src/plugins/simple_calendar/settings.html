@@ -35,6 +35,48 @@
 </div>
 
 <div class="form-group">
+	<label class="form-label">
+		<input type="checkbox" id="showHolidays" name="showHolidays" value="true" checked onclick="this.value=this.checked ? 'true' : 'false'; document.getElementById('holidayPreset').value=this.checked ? 'us_cn' : 'off';" />
+		Show US + China holidays
+	</label>
+	<input type="hidden" id="holidayPreset" name="holidayPreset" value="us_cn" />
+	<div id="holidayCalendarList"></div>
+</div>
+
+<div class="form-group">
+	<label class="form-label">
+		<input type="checkbox" id="weatherPanelBackground" name="weatherPanelBackground" value="true" checked onclick="this.value=this.checked ? 'true' : 'false';" />
+		Use today's weather as the date panel background
+	</label>
+</div>
+
+<div class="form-group">
+	<label for="weatherPanelBackgroundStyle" class="form-label">Weather background style:</label>
+	<select id="weatherPanelBackgroundStyle" name="weatherPanelBackgroundStyle" class="form-input">
+		<option value="classic" selected>Classic monochrome</option>
+		<option value="img2_original_heroes_weather">Comic heroes</option>
+		<option value="img2_original_heroes_nyc_weather">NYC comic heroes</option>
+		<option value="img2_original_heroes_local_top_weather">Local top weather variants</option>
+		<option value="img2_original_heroes_mixed">Mixed comic heroes</option>
+	</select>
+</div>
+
+<div class="form-group">
+	<label class="form-label">
+		<input type="checkbox" id="dateHeroOverlays" name="dateHeroOverlays" value="true" checked onclick="this.value=this.checked ? 'true' : 'false';" />
+		Overlay comic hero cutouts on the large date number
+	</label>
+</div>
+
+<div class="form-group">
+	<label class="form-label">
+		<input type="checkbox" id="showPersonalCalendars" name="showPersonalCalendars" value="true" checked onclick="this.value=this.checked ? 'true' : 'false';" />
+		Show private Google Calendar events
+	</label>
+	<div id="personalCalendarList"></div>
+</div>
+
+<div class="form-group">
 		<div class="form-group">
 			<label for="primaryColor" class="form-label">Primary Color:</label>
 			<input type="color" id="primaryColor" name="primaryColor" class="color-picker" value="#e61a1a" />
@@ -46,6 +88,86 @@
 </div>
 
 <script>
+	const defaultHolidayCalendars = [
+		{
+			label: 'US',
+			color: '#345995',
+			url: 'https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics'
+		},
+		{
+			label: 'CN',
+			color: '#c62828',
+			url: 'https://calendar.google.com/calendar/ical/china__zh_cn%40holiday.calendar.google.com/public/basic.ics'
+		}
+	];
+
+	function addHolidayCalendarInput(source) {
+		const calendarList = document.getElementById('holidayCalendarList');
+		const row = document.createElement('div');
+		row.className = 'calendar-entry';
+		row.style.display = 'grid';
+		row.style.gridTemplateColumns = '58px 48px 1fr';
+		row.style.gap = '8px';
+		row.style.marginTop = '8px';
+
+		const label = document.createElement('input');
+		label.type = 'text';
+		label.name = 'holidayCalendarLabels[]';
+		label.className = 'form-input';
+		label.value = source.label || '';
+
+		const color = document.createElement('input');
+		color.type = 'color';
+		color.name = 'holidayCalendarColors[]';
+		color.className = 'color-picker';
+		color.value = source.color || '#345995';
+
+		const url = document.createElement('input');
+		url.type = 'url';
+		url.name = 'holidayCalendarURLs[]';
+		url.className = 'form-input';
+		url.value = source.url || '';
+
+		row.appendChild(label);
+		row.appendChild(color);
+		row.appendChild(url);
+		calendarList.appendChild(row);
+	}
+
+	function addPersonalCalendarInput(source) {
+		const calendarList = document.getElementById('personalCalendarList');
+		const row = document.createElement('div');
+		row.className = 'calendar-entry';
+		row.style.display = 'grid';
+		row.style.gridTemplateColumns = '58px 48px 1fr';
+		row.style.gap = '8px';
+		row.style.marginTop = '8px';
+
+		const label = document.createElement('input');
+		label.type = 'text';
+		label.name = 'personalCalendarLabels[]';
+		label.className = 'form-input';
+		label.value = source.label || 'CAL';
+
+		const color = document.createElement('input');
+		color.type = 'color';
+		color.name = 'personalCalendarColors[]';
+		color.className = 'color-picker';
+		color.value = source.color || '#2e7d32';
+
+		const url = document.createElement('input');
+		url.type = 'url';
+		url.name = 'personalCalendarURLs[]';
+		url.className = 'form-input';
+		url.placeholder = 'Google Calendar secret iCal URL';
+		url.value = source.url || '';
+
+		row.appendChild(label);
+		row.appendChild(color);
+		row.appendChild(url);
+		calendarList.appendChild(row);
+	}
+
 	document.addEventListener('DOMContentLoaded', () => {
 		if (loadPluginSettings) {
 			document.getElementById('customDate').value = pluginSettings.customDate || '';
@@ -57,6 +179,48 @@
 			document.getElementById('layoutPosition').value = pluginSettings.layoutPosition || 'left';
 			document.querySelector('[name=primaryColor]').value = pluginSettings.primaryColor || '#e61a1a';
 			document.querySelector('[name=highlightColor]').value = pluginSettings.highlightColor || '#a30d0d';
+			const weatherPanelEnabled = pluginSettings.weatherPanelBackground !== 'false' && pluginSettings.weatherPanelBackground !== false;
+			document.getElementById('weatherPanelBackground').checked = weatherPanelEnabled;
+			document.getElementById('weatherPanelBackground').value = weatherPanelEnabled ? 'true' : 'false';
+			const weatherStyle = document.getElementById('weatherPanelBackgroundStyle');
+			weatherStyle.value = pluginSettings.weatherPanelBackgroundStyle || 'classic';
+			if (!weatherStyle.querySelector(`option[value="${weatherStyle.value}"]`)) {
+				weatherStyle.value = 'classic';
+			}
+			const heroSetting = pluginSettings.dateHeroOverlays;
+			const heroEnabled = heroSetting === undefined || heroSetting === null
+				? weatherStyle.value !== 'classic'
+				: heroSetting !== 'false' && heroSetting !== false;
+			document.getElementById('dateHeroOverlays').checked = heroEnabled;
+			document.getElementById('dateHeroOverlays').value = heroEnabled ? 'true' : 'false';
+			const personalEnabled = pluginSettings.showPersonalCalendars !== 'false' && pluginSettings.showPersonalCalendars !== false;
+			document.getElementById('showPersonalCalendars').checked = personalEnabled;
+			document.getElementById('showPersonalCalendars').value = personalEnabled ? 'true' : 'false';
+			const holidaysEnabled = pluginSettings.showHolidays !== 'off' && pluginSettings.showHolidays !== false && pluginSettings.holidayPreset !== 'off';
+			document.getElementById('showHolidays').checked = holidaysEnabled;
+			document.getElementById('holidayPreset').value = holidaysEnabled ? (pluginSettings.holidayPreset || 'us_cn') : 'off';
+
+			const urls = pluginSettings['holidayCalendarURLs[]'] || defaultHolidayCalendars.map(item => item.url);
+			const labels = pluginSettings['holidayCalendarLabels[]'] || defaultHolidayCalendars.map(item => item.label);
+			const colors = pluginSettings['holidayCalendarColors[]'] || defaultHolidayCalendars.map(item => item.color);
+			urls.forEach((url, index) => {
+				addHolidayCalendarInput({
+					url,
+					label: labels[index] || '',
+					color: colors[index] || '#345995'
+				});
+			});
+
+			const personalUrls = pluginSettings['personalCalendarURLs[]'] || [''];
+			const personalLabels = pluginSettings['personalCalendarLabels[]'] || ['CAL'];
+			const personalColors = pluginSettings['personalCalendarColors[]'] || ['#2e7d32'];
+			personalUrls.forEach((url, index) => {
+				addPersonalCalendarInput({
+					url,
+					label: personalLabels[index] || 'CAL',
+					color: personalColors[index] || '#2e7d32'
+				});
+			});
 		}
 	});
 </script>

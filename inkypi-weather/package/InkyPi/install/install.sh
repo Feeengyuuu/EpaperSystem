@@ -259,20 +259,45 @@ install_config() {
 update_config() {
   if [[ -n "$WS_TYPE" ]]; then
       local DEVICE_JSON="$CONFIG_DIR/device.json"
+      python3 - "$DEVICE_JSON" "$WS_TYPE" <<'PY'
+import json
+import sys
 
-      if grep -q '"display_type":' "$DEVICE_JSON"; then
-          # Update existing display_type value
-          sed -i "s/\"display_type\": \".*\"/\"display_type\": \"$WS_TYPE\"/" "$DEVICE_JSON"
-          echo "Updated display_type to: $WS_TYPE" 
-      else
-          # Append display_type safely, ensuring proper comma placement
-          if grep -q '}$' "$DEVICE_JSON"; then
-              sed -i '$s/}/,/' "$DEVICE_JSON"  # Replace last } with a comma
-          fi
-          echo "  \"display_type\": \"$WS_TYPE\"" >> "$DEVICE_JSON"
-          echo "}" >> "$DEVICE_JSON"  # Add trailing }
-          echo "Added display_type: $WS_TYPE"
-      fi
+device_json, ws_type = sys.argv[1], sys.argv[2]
+with open(device_json, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+config["display_type"] = ws_type
+
+display_defaults = {
+    "epd7in3e": {
+        "resolution": [800, 480],
+        "orientation": "horizontal",
+        "image_settings": {
+            "saturation": 1.0,
+            "brightness": 1.0,
+            "sharpness": 1.0,
+            "contrast": 1.0,
+        },
+    },
+    "epd7in5_V2": {
+        "resolution": [800, 480],
+        "orientation": "horizontal",
+    },
+}
+
+for key, value in display_defaults.get(ws_type, {}).items():
+    if isinstance(value, dict):
+        existing = config.setdefault(key, {})
+        existing.update(value)
+    else:
+        config[key] = value
+
+with open(device_json, "w", encoding="utf-8") as f:
+    json.dump(config, f, indent=4, ensure_ascii=False)
+    f.write("\n")
+PY
+      echo "Updated display configuration to: $WS_TYPE"
   else
       echo "Config not updated as WS_TYPE flag is not set"
   fi

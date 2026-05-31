@@ -5,6 +5,322 @@ Corrections, insights, and knowledge gaps captured during development.
 **Categories**: correction | insight | knowledge_gap | best_practice
 
 ---
+## [LRN-20260530-130] best_practice
+
+**Logged**: 2026-05-30T02:40:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+GCD Comic Covers must avoid shared-session retries and render metadata fallbacks.
+
+### Details
+On EpaperPod, `www.comics.org` API requests can return `429 Too Many Requests`, and `files1.comics.org` cover images can return Cloudflare `403` challenges. The shared InkyPi HTTP session uses urllib3 retries and may sleep on 429, causing GCD refreshes to occupy the background cache worker for a long time. Direct cover images may also be unavailable even with browser-like headers.
+
+### Suggested Action
+For `gcd_comic_covers`, use plugin-local `requests.get` calls with short connect/read timeouts and no shared-session retry behavior. Cap cover attempts per refresh and, when metadata is available but source images are blocked, render a metadata cover card instead of repeatedly trying bad image URLs.
+
+### Metadata
+- Source: production_debug
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/gcd_comic_covers/gcd_comic_covers.py`, `inkypi-weather/package/InkyPi/tests/test_gcd_comic_covers.py`
+- Tags: epaperpod, gcd, comics, cloudflare, retries, timeout, fallback
+
+---
+## [LRN-20260530-129] best_practice
+
+**Logged**: 2026-05-30T01:49:21-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Diagnose EpaperPod's current playlist screen from successful display updates, not only the next selected plugin.
+
+### Details
+The `/playlist` page marks the current `refresh_info` plugin with `Displayed Now`, while `/api/current_image` headers show the last saved current image timestamp. Logs can contain a later `Determined next plugin` line for a slow or stuck plugin before any successful `Updating display`; in that case the visible screen remains the previous plugin. On 2026-05-30, `NatGeoDaily` stayed displayed after `GCD Comic Covers` was selected because the latter was still failing/fetching cover candidates without a completed display update.
+
+### Suggested Action
+For future "what is currently displayed / when did it switch" checks, combine `/playlist`, `/download-logs?hours=...`, and `/api/current_image` headers. Treat the latest successful `Updating display` plus matching `Displayed Now` as authoritative; use `Determined next plugin` only as an attempted transition.
+
+### Metadata
+- Source: production_debug
+- Related Files: `inkypi-weather/package/InkyPi/src/refresh_task.py`, `inkypi-weather/package/InkyPi/src/templates/playlist.html`
+- Tags: epaperpod, playlist, rotation, current-screen, logs, diagnostics
+
+---
+## [LRN-20260529-128] insight
+
+**Logged**: 2026-05-29T23:49:09-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+`WikiDaily` is the `wpotd` playlist instance, not the Daily Word Wikiquote plugin.
+
+### Details
+In the EpaperPod playlist configuration, the instance named `WikiDaily` maps to plugin id `wpotd`, which renders Wikipedia Picture of the Day. The separate `daily_word_poem` plugin is named `DailyWord` in the playlist and now uses Wikiquote for the golden sentence. Future checks for "wiki daily" should inspect `src/plugins/wpotd/` first, then inspect `daily_word_poem` only if the user specifically mentions Daily Word, Wikiquote, or golden sentence.
+
+### Suggested Action
+When diagnosing `WikiDaily`, parse the active playlist config and check the `wpotd` refresh state, settings, and generated plugin image path before reviewing `daily_word_poem`.
+
+### Metadata
+- Source: conversation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/wpotd/wpotd.py`, `inkypi-weather/package/InkyPi/src/plugins/daily_word_poem/daily_word_poem.py`
+- Tags: epaperpod, wikidaily, wpotd, daily-word, wikiquote
+
+---
+
+## [LRN-20260529-126] best_practice
+
+**Logged**: 2026-05-29T19:59:53-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+For fixed-height PIL status labels on the Bambu Monitor page, position large text from its actual `textbbox` instead of a fixed y offset.
+
+### Details
+The deployed color Bambu page rendered `PRINTING` with the bottom of the large white state label visually clipped by the green status band. The cause was a fixed `top + 42` draw position with the Jost font's bbox extending below the intended rectangle. Computing `draw.textbbox((0, 0), state, font=state_font)` and placing the glyph with a small top padding kept the whole word inside the band.
+
+### Suggested Action
+When adding large all-caps labels to 800x480 e-paper panels, calculate glyph placement using `textbbox` and explicit padding. Do not assume a font-size-based y offset fits inside a fixed rectangle, especially with Jost/SemiBold.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/bambu_monitor/bambu_monitor.py`
+- Tags: inkypi, bambu-monitor, pillow, typography, clipping, epaper
+
+---
+## [LRN-20260528-105] knowledge_gap
+
+**Logged**: 2026-05-28T16:24:47-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Waveshare 13.3inch e-Paper HAT+ (E) is hardware-compatible with Raspberry Pi 40-pin hosts, but current EpaperPod software is not plug-and-play for it.
+
+### Details
+The 13.3inch Spectra 6/E6 HAT+ product uses SPI and a standard Raspberry Pi 40-pin GPIO header, so the hardware can be used with Raspberry Pi-series hosts. However, the local EpaperPod package currently only contains `display/waveshare_epd/epd7in5_V2.py`. Waveshare's 13.3 E manual points to a separate `13.3inch_e-Paper_E` demo package with `epd_13in3E_test.py`; third-party notes indicate the Python import is `epd13in3E` and may require WiringPi plus bundled `.so` libraries. The current InkyPi installer fetches drivers from the standard `RaspberryPi_JetsonNano/python/lib/waveshare_epd/<WS_TYPE>.py` path, which may not cover this separate-program driver.
+
+### Suggested Action
+Before buying or migrating to this screen, verify on a spare Pi by running Waveshare's official `epd_13in3E_test.py`. For EpaperPod support, plan a driver integration task: vendor the 13.3 E Python driver and `.so` files, install WiringPi if required, adapt `WaveshareDisplay` if the driver API differs, set `display_type=epd13in3E`, and set resolution/orientation around `1600x1200`.
+
+### Metadata
+- Source: compatibility_research
+- Related Files: `inkypi-weather/package/InkyPi/src/display/waveshare_display.py`, `inkypi-weather/package/InkyPi/install/install.sh`, `docs/new-board-migration-baseline.md`
+- Tags: inkypi, epaper, waveshare, spectra6, epd13in3E, compatibility
+
+---
+## [LRN-20260528-104] insight
+
+**Logged**: 2026-05-28T16:17:45-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+For the Moon Phase e-paper plugin, the user wants a SpaceX-adjacent aerospace telemetry style.
+
+### Details
+While implementing the `moon_phase` plugin, the user clarified that the full page should be very close to SpaceX's design language. The applied interpretation was high-contrast black/white, all-caps technical labels, thin rules, corner registration marks, telemetry-style data rows, and no brand logos or copied marks.
+
+### Suggested Action
+For future moon/space-themed e-paper layouts in this project, default to restrained aerospace telemetry styling: black field, white typography, fine grid/rule details, large mission-style numeric metrics, and real astronomical data.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/moon_phase/moon_phase.py`
+- Tags: inkypi, epaper, moon-phase, visual-design, spacex-style, telemetry
+
+---
+## [LRN-20260528-103] correction
+
+**Logged**: 2026-05-28T16:06:42-07:00
+**Priority**: low
+**Status**: active
+**Area**: epaper
+
+### Summary
+When discussing "other existing plugins" for this e-paper setup, interpret it as external ecosystem plugins, not plugins already present in the local package.
+
+### Details
+The user clarified that by "其他的，与我们拥有的不同的" they meant plugins or plugin ideas that already exist elsewhere and are different from the locally installed/custom InkyPi plugins.
+
+### Suggested Action
+For future plugin recommendation questions, first separate local installed/custom plugins from external InkyPi/PaperPi/InkyCal ecosystem options, and explicitly label whether a candidate is directly installable, likely portable, or only useful as inspiration.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/`, `docs/new-board-migration-baseline.md`
+- Tags: inkypi, epaper, recommendations, external-plugins
+
+---
+## [LRN-20260528-102] best_practice
+
+**Logged**: 2026-05-28T15:17:47-07:00
+**Priority**: medium
+**Status**: pending
+**Area**: backend
+
+### Summary
+For content plugins, make quote/text provenance explicit when adding curated local lists.
+
+### Details
+After replacing the Daily Word plugin's poem panel with golden sentences, the user asked where the sentences came from. The implementation used a hardcoded `LOCAL_QUOTES` list rather than a network API or verified source dataset, so the UI/data should not imply externally sourced or fully source-verified quotes.
+
+### Suggested Action
+When adding curated text such as quotes, expose whether it is local curated content, user-provided content, or an external API result. For stricter attribution, add source fields per item and render/cache them instead of only author/topic.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/daily_word_poem/daily_word_poem.py`
+- Tags: inkypi, content, quotes, provenance, attribution
+
+---
+## [LRN-20260528-101] best_practice
+
+**Logged**: 2026-05-28T15:12:49-07:00
+**Priority**: medium
+**Status**: pending
+**Area**: tests
+
+### Summary
+Avoid pytest `tmp_path` for narrow InkyPi plugin checks in this sandbox; Python-created `mode=0o700` temp dirs can become unreadable.
+
+### Details
+While validating the Daily Word & Quote change, pytest collected the test file successfully but failed before test code ran because temporary directories created with Python/pytest permissions became inaccessible on Windows (`PermissionError: [WinError 5]`). Even `--basetemp` under `.tmp` and `C:\tmp` failed. Directly invoking the test functions with normal PowerShell-created directories worked, and the syntax check passed with `PYTHONDONTWRITEBYTECODE=1`.
+
+### Suggested Action
+For small InkyPi plugin validations, load dependencies with `PYTHONPATH=.../InkyPi/.pc-packages`, use a Python 3.12 project venv, set `PYTHONDONTWRITEBYTECODE=1`, and either run focused pytest outside the sandbox or call narrow test functions with fresh per-run temp directories. Reusing cache test directories can cause false `from_cache` assertions. Clean up any pytest probe directories created during diagnosis.
+
+### Metadata
+- Source: error
+- Related Files: `inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py`, `inkypi-weather/package/InkyPi/.pc-packages/`
+- Tags: inkypi, pytest, windows, sandbox, tmp_path, permissions
+- See Also: LRN-20260527-054
+
+---
+
+## [LRN-20260527-052] best_practice
+
+**Logged**: 2026-05-27T18:57:22-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Avoid pytest `tmp_path` for small InkyPi plugin cache tests on this Windows setup.
+
+### Details
+While adding the `live_radar` plugin, logic tests passed but render/cache tests using pytest's `tmp_path` failed because `C:\Users\super\AppData\Local\Temp\pytest-of-LocalTest` could not be scanned. A project-local `--basetemp` also failed during pytest cleanup. Replacing filesystem temp usage with monkeypatched in-memory `_read_cache` / `_write_cache` fakes made the tests deterministic and avoided unrelated ACL problems.
+
+### Suggested Action
+For future narrow plugin unit tests, fake plugin cache reads/writes in memory when the cache persistence itself is not under test. Keep real filesystem checks for focused integration tests only, and use source `compile(...)` rather than `py_compile` when `__pycache__` permissions are dirty.
+
+### Metadata
+- Source: implementation
+- Related Files: inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: inkypi, epaper, pytest, tmp_path, windows-acl, cache-tests
+
+---
+
+## [LRN-20260527-051] best_practice
+
+**Logged**: 2026-05-27T18:47:41-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Build a future LiveRadar e-paper plugin around the batch status API, not full-page browser screenshots.
+
+### Details
+The public LiveRadar app exposes `/api/status` and `/api/status/batch` through Cloudflare Pages Functions, and a live elevated network smoke confirmed `/api/status/batch` returns normalized streamer status for multiple rooms. For the current 7.5-inch e-paper device, the practical plugin shape is to poll that normalized API, cache results, and render a static Pillow/Jinja dashboard. Recreating the whole browser app would waste the Pi Zero W budget on DOM, animation, audio, localStorage, and interactive controls that the no-button e-paper setup cannot use.
+
+### Suggested Action
+For a future `live_radar` plugin, default to a settings-managed room list plus optional LiveRadar export/import JSON, call `https://liveradar.pages.dev/api/status/batch` for batches of up to 10 rooms, and render live/replay/offline sections into an 800x480 static layout. Keep a standalone Python port of the platform fetchers as a fallback only if relying on the public Pages API becomes undesirable.
+
+### Metadata
+- Source: implementation
+- Related Files: G:\PersonalProjects\LiveRader\LR_online\functions\_shared\platform-status.js, inkypi-weather/package/InkyPi/src/plugins/base_plugin/base_plugin.py
+- Tags: inkypi, epaper, liveradar, streamer-status, cloudflare-pages, batch-api
+
+---
+
+## [LRN-20260527-050] correction
+
+**Logged**: 2026-05-27T17:21:24-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Person-image smart crop should prioritize the face over generic visual saliency.
+
+### Details
+The user corrected the Wikipedia Picture of the Day smart-crop behavior: generic edge/detail scoring can lock onto clothes, props, text, or background detail instead of the intended person. For character or portrait-style images, the crop target should first try to locate a face-like region and use that as the crop anchor, then fall back to generic saliency only when no face candidate is found.
+
+### Suggested Action
+For future e-paper image fit/crop changes, keep the face-first branch in `AdaptiveImageLoader` when `focus_crop=True`. Validate with off-center face examples where high-detail non-face regions would otherwise win.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/utils/image_loader.py, inkypi-weather/package/InkyPi/tests/test_wpotd_smart_crop.py
+- Tags: inkypi, epaper, wpotd, smart-crop, face-priority
+
+---
+
+## [LRN-20260527-049] best_practice
+
+**Logged**: 2026-05-27T15:31:09-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+After Pi plugin hot-deploys, verify through the local Web API and allow several minutes for Waveshare display init.
+
+### Details
+During the Daily Comic deploy, direct `scp` of `comic.py` and `settings.html` followed by `sudo -n systemctl restart inkypi` worked, but `python3 -m py_compile` as the normal user failed on the Pi because `InkyPi/src/plugins/comic/__pycache__` was not writable. The service also remained active but did not serve HTTP until Waveshare `epd7in5_V2` initialization completed about 3 minutes after restart. Once Waitress was serving, calling `POST /display_plugin_instance` from the Windows host with PowerShell JSON was more reliable than constructing JSON inside an SSH command; it generated the DailyComic image and wrote the plugin's `comic_rotation_*` state into `device.json`.
+
+### Suggested Action
+For future plugin installs, upload changed files with `scp`, restart InkyPi, then poll `http://127.0.0.1/playlist` on the Pi until HTTP 200 before triggering a plugin. Avoid normal-user `py_compile` in plugin directories with stale/root-owned `__pycache__`; use local tests plus service/log verification instead. Prefer local `Invoke-RestMethod` or `curl.exe` for JSON API calls over SSH-embedded JSON.
+
+### Metadata
+- Source: implementation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/comic/comic.py, inkypi-weather/package/InkyPi/src/plugins/comic/settings.html
+- Tags: inkypi, epaperpod, deployment, scp, pycache, waveshare, display-plugin-instance
+
+---
+
+## [LRN-20260527-048] best_practice
+
+**Logged**: 2026-05-27T15:21:29-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Preload system Pillow before adding `.pc-packages` when running InkyPi pytest on Python 3.14.
+
+### Details
+The project-local `.pc-packages` directory contains `pytest`, but its bundled `PIL` package can fail on the current system Python 3.14 with `ImportError: cannot import name '_imaging' from 'PIL'`. A reliable test command is to import `PIL.Image` first from the system environment, then prepend `.pc-packages` to `sys.path` and invoke `pytest.main(...)`. Use `PYTHONDONTWRITEBYTECODE=1` and disable pytest's cache provider when permission errors appear around `__pycache__` or `.pytest_cache`.
+
+### Suggested Action
+For future InkyPi test runs on this workstation, prefer:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -c "import pathlib, sys; import PIL.Image; sys.path.insert(0, str(pathlib.Path('.pc-packages').resolve())); import pytest; raise SystemExit(pytest.main(['-p','no:cacheprovider','tests']))"`
+
+### Metadata
+- Source: implementation
+- Related Files: inkypi-weather/package/InkyPi/tests/test_comic_rotation.py
+- Tags: inkypi, epaper, pytest, pillow, pc-packages, windows, validation
+
+---
 
 ## [LRN-20260526-047] best_practice
 
@@ -164,6 +480,52 @@ For future refresh-flow work, preserve the display-first/background-cache-second
 - Source: implementation
 - Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py, docs/new-board-migration-baseline.md
 - Tags: inkypi, scheduler, display-priority, background-refresh, api-rate-limit
+
+---
+
+## [LRN-20260528-002] correction
+
+**Logged**: 2026-05-28T00:28:31-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Steam dashboard avatar decoration should be integrated into the avatar frame, not scattered around the profile area.
+
+### Details
+The user rejected a first pass that placed many controller-button decorations around the avatar because it made the page look messy. The intended direction is to make the avatar border itself more interesting, with compact details such as segmented rings, ticks, and small gamepad nodes attached to the circular frame.
+
+### Suggested Action
+For future Steam dashboard visual polish, keep decorative controls inside or directly attached to the avatar frame. Avoid filling the left-side whitespace with free-floating symbols unless the user explicitly asks for that layout.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/steam_profile_dashboard.py
+- Tags: inkypi, epaper, steam-dashboard, avatar-frame, visual-design
+
+---
+
+## [LRN-20260528-001] best_practice
+
+**Logged**: 2026-05-28T00:01:39-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+For user-managed DailyImage batches, store source images in a user-owned folder and point `image_upload` at those paths.
+
+### Details
+Batch uploading several large JPEGs through the InkyPi Web API can make the Pi slow or drop the HTTP connection because the request path performs image processing. The `static/images/saved` tree may also have permission issues that make direct SCP and path validation unreliable. A safer pattern is to copy images to a user-owned folder such as `/home/feeengyuuu/epaper_images/DailyImage/`, then update `imageFiles[]` to those absolute paths through the lightweight plugin settings API.
+
+### Suggested Action
+When adding personal image batches to `DailyImage`, copy files via SCP to `/home/feeengyuuu/epaper_images/DailyImage/`, set `displayMode=no_repeat_random`, and update the complete `imageFiles[]` list with absolute paths. Verify with the InkyPi venv that every image opens before reporting success.
+
+### Metadata
+- Source: implementation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/image_upload/image_upload.py
+- Tags: inkypi, epaper, image-upload, dailyimage, permissions, upload
 
 ---
 
@@ -1970,6 +2332,21 @@ For future EpaperSystem work, try `rg` first as usual, then immediately fall bac
 
 ---
 ### Summary
+When the user reports repeated InkyPi pages, distinguish playlist instance rotation from plugin-internal content rotation.
+
+### Details
+The main playlist no-repeat queue in `model.py` operates on plugin instance keys, not on the visual content produced inside a selected plugin. Automatic playlist rotation should show every active plugin instance once before repeating, but manual `/update_now` and `/display_plugin_instance` calls bypass the automatic `get_next_plugin()` selection. Rotating plugins such as `newspaper`, `steam_daily_art`, and `image_upload` have their own internal source/image selection state, so a repeated-looking screen can come from plugin-internal fallback or cache behavior even when the main plugin instance queue is working.
+
+### Suggested Action
+For duplicate-page reports, inspect logs for `Determined next plugin` first. If the plugin instance names repeat before the queue is exhausted, debug `plugin_rotation_queue` in `device.json` and deployment freshness. If instance names differ or the same rotating plugin was manually refreshed, inspect that plugin's internal rotation state and failures.
+
+### Metadata
+- Source: implementation_analysis
+- Related Files: `inkypi-weather/package/InkyPi/src/model.py`, `inkypi-weather/package/InkyPi/src/refresh_task.py`, `inkypi-weather/package/InkyPi/tests/test_model.py`
+- Tags: inkypi, playlist, no-repeat, rotation, diagnostics
+
+---
+### Summary
 Epaper Pet should show compact AI provider and daily refresh telemetry on the rendered screen.
 
 ### Details
@@ -1985,6 +2362,36 @@ When changing Epaper Pet AI or render layout, preserve the footer and keep it sh
 
 ---
 ### Summary
+Epaper Pet should feel alive through local survival systems first, with AI acting as a narrator.
+
+### Details
+The user wants the pet to behave like a self-sustaining Tamagotchi, not just a random quote generator. The stable pattern is to keep life mechanics deterministic and local: daily plans, time-band routines, survival instincts, level-based hunting, prey-size unlocks, and food reserve. AI dialogue should read these state facts and phrase them naturally, while Groq/OpenAI usage remains controlled by the existing budget rules.
+
+### Suggested Action
+When extending Epaper Pet, add mechanics that change state before adding AI prompt text. Level progression should affect real survival outcomes such as huntable prey size and reserve capacity. Keep expressive faces non-sexual and pet-like; use belly-up or zoomies framing for active states.
+
+### Metadata
+- Source: user direction and implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/epaper_pet/epaper_pet.py`, `tools/smoke_epaper_pet.py`
+- Tags: inkypi, epaper-pet, tamagotchi, survival-loop, ai-narration, level-system
+
+---
+### Summary
+On this Windows EpaperSystem shell, `curl.exe` may be blocked by proxy env vars while PowerShell HTTP works.
+
+### Details
+During live Pi verification, `curl.exe` returned HTTP `000` because it honored `http_proxy=http://127.0.0.1:9`, even though `Invoke-WebRequest -UseBasicParsing`, `Test-NetConnection`, and SSH-side `curl http://127.0.0.1/playlist` confirmed the Pi service was reachable. Do not treat local curl `000` as device failure until proxy/env behavior is checked.
+
+### Suggested Action
+For EpaperPodBeta live checks from Windows, prefer `Invoke-WebRequest -UseBasicParsing` for HTTP status, or run `curl` on the Pi over SSH. If using local `curl.exe`, clear/override proxy env vars first.
+
+### Metadata
+- Source: implementation
+- Related Files: none
+- Tags: inkypi, windows, curl, proxy, live-verification
+
+---
+### Summary
 BacktotheDate should rotate portrait posters instead of tiling multiple portrait images.
 
 ### Details
@@ -1997,3 +2404,836 @@ For future BacktotheDate layout changes, keep `fitMode=rotate_portrait` as the d
 - Source: user correction and implementation
 - Related Files: `inkypi-weather/package/InkyPi/src/plugins/backtothedate/backtothedate.py`, `inkypi-weather/package/InkyPi/src/plugins/backtothedate/settings.html`
 - Tags: inkypi, backtothedate, e-paper, layout, portrait-rotation, blur-background
+
+---
+### Summary
+For EpaperSystem GitHub backup, avoid `gh auth login` keyring persistence on this Windows machine.
+
+### Details
+`gh auth login` successfully completed browser/device authorization but then failed while moving the active token into the Windows keyring with "Not enough memory resources are available to process this command." A direct GitHub OAuth device flow using the GitHub CLI OAuth client, keeping the token only in the current PowerShell process memory, worked for creating the private repository and pushing the backup. The local project also had a broken partial `.git` directory with only `config.lock`, `hooks`, `info`, and `description`; backing it up and moving the valid staging `.git` back to the project root restored normal Git status.
+
+### Suggested Action
+For future private backups from this checkout, first verify whether `gh auth status` actually succeeds. If it fails at keyring persistence, use a temporary direct device-flow publish script that does not write the token to disk, push with a one-time `http.extraheader`, then delete the script/log. Keep the remote URL token-free and verify with the GitHub connector after push.
+
+### Metadata
+- Source: implementation
+- Related Files: `.gitignore`, `.gitattributes`
+- Tags: github, backup, gh-cli, keyring, device-flow, windows, git
+
+---
+### Summary
+EpaperPod can be online with `inkypi` active while the local Web server is hung; use a user cron watchdog when root install is unavailable.
+
+### Details
+After moving the device closer to the router, the Pi returned to `192.168.1.183` and SSH worked, but both remote `http://192.168.1.183/settings` and Pi-local `http://127.0.0.1/settings` timed out even though `inkypi.service` was `active` and port 80 was listening. Restarting `inkypi` restored the page. The user account did not have passwordless sudo for writing `/etc` or restarting NetworkManager, but sudoers allowed exact commands like `/usr/bin/systemctl restart inkypi`, so a user crontab watchdog was installed at `/home/feeengyuuu/bin/epaperpod-user-watchdog.sh` to check local HTTP every 2 minutes after a 5-minute startup grace and restart InkyPi after repeated failures.
+
+### Suggested Action
+When this device is reachable by SSH but the settings page hangs, test `curl -I --max-time 8 http://127.0.0.1/settings` on the Pi. If local curl hangs while `systemctl is-active inkypi` is active, restart InkyPi and inspect `/home/feeengyuuu/.cache/epaperpod-watchdog/watchdog.log`. For stronger Wi-Fi recovery, root access or a sudoers rule is still needed to install a system timer, disable NetworkManager Wi-Fi powersave, or restart NetworkManager.
+
+### Metadata
+- Source: implementation
+- Related Files: `.tmp/epaperpod-user-watchdog.sh`
+- Tags: inkypi, epaperpod, watchdog, cron, wifi, systemd, raspberry-pi
+
+---
+### Summary
+EpaperPod in the user's room can fail to rejoin the LAN even after a power reboot.
+
+### Details
+After the user rebooted the device in the weak-coverage room, local checks from `192.168.1.90` still could not reach the previous Pi address `192.168.1.183`; `EpaperPodBeta.local` and `EpaperPodBeta.attlocal.net` did not resolve. A full local `192.168.1.0/24` check for ports `22` and `80` found only the Windows host, router, printer, and AT&T/AirTies extender-style web endpoints; no SSH endpoint for the Pi appeared. This supports the diagnosis that the Pi Zero W is not joining the accessible LAN from that location, rather than merely having InkyPi's web app hung.
+
+### Suggested Action
+When this happens, first move the Pi or extender to improve 2.4GHz signal and confirm the device appears in the AT&T client list before attempting SSH/deploy. Once reachable, install stronger Wi-Fi recovery such as disabling power save and adding a network watchdog; until then code deployment cannot proceed from Codex.
+
+### Metadata
+- Source: live_network_check
+- Related Files: `tools/epaperpod-test-key.ps1`
+- Tags: inkypi, epaperpod, wifi, extender, raspberry-pi-zero-w, deployment
+
+---
+### Summary
+For EpaperPod plugin hotfixes, prefer direct SCP upload plus remote unzip over a temporary local HTTP download server.
+
+### Details
+During the Simple Calendar clean-background deploy, starting a local Python HTTP server from PowerShell failed once with a duplicate `Path`/`PATH` environment-key error and then hung without opening port `8766`. Direct `scp` to `/home/feeengyuuu/inkypi-weather-pi-package-20260524-3`, followed by `unzip -o` and `sudo -n systemctl restart inkypi`, completed cleanly. The Web UI may still take multiple minutes to become ready after service restart because display initialization is slow, so verify both `systemctl is-active inkypi` and a local/remote HTTP endpoint before declaring the deployment done.
+
+### Suggested Action
+Use `tools/epaperpod-test-key.ps1` to confirm SSH, then upload deploy zips with `C:\Windows\System32\OpenSSH\scp.exe` and apply them over SSH. Trigger a plugin refresh through `/display_plugin_instance` with real JSON serialization rather than hand-escaped command-line JSON, then fetch `/api/current_image` to verify the actual rendered screen.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/dist/simple-calendar-clean-20260527.zip`, `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/simple_calendar.py`
+- Tags: inkypi, epaperpod, deployment, scp, simple-calendar, windows-powershell
+
+---
+### Summary
+When running SSH commands from PowerShell, avoid unescaped `$()` in double-quoted remote commands.
+
+### Details
+PowerShell expands `$(...)` locally before launching `ssh.exe`, so a remote command like `echo HOST=$(hostname)` inside a double-quoted command string prints the Windows host name instead of the Pi host name. This can make remote diagnostics look inconsistent even though the rest of the SSH command runs on the Pi.
+
+### Suggested Action
+Use single-quoted PowerShell strings for remote shell snippets when possible, or escape PowerShell `$` characters before sending commands through `ssh.exe`. For important diagnostics, prefer explicit remote checks that do not rely on shell substitutions in the outer PowerShell string.
+
+### Metadata
+- Source: implementation
+- Related Files: `tools/epaperpod-test-key.ps1`
+- Tags: windows-powershell, ssh, quoting, epaperpod, diagnostics
+
+---
+### Summary
+EpaperPod can persist Wi-Fi powersave off through the root-run InkyPi startup path when normal sudo is not passwordless.
+
+### Details
+The `feeengyuuu` account can list full sudo privileges but requires a password for arbitrary commands; only selected `systemctl inkypi` commands are passwordless. Since `/etc/systemd/system/inkypi.service` runs `/usr/local/bin/inkypi run` as root, adding a production startup hook in `src/inkypi.py` to call `/usr/sbin/iw dev wlan0 set power_save off` successfully turned `wlan0` from `Power save: on` to `Power save: off` after `sudo -n systemctl restart inkypi`. The hook must run before `DisplayManager` initialization because Waveshare display startup can take about 2 minutes; placing it later delays the Wi-Fi fix and makes verification misleading.
+
+### Suggested Action
+For this device, keep Wi-Fi powersave handling in an early, non-fatal startup helper such as `src/utils/network_utils.py`. Verify with `/usr/sbin/iw dev wlan0 get power_save`, then wait for `/playlist` to return HTTP 200 because service active status appears before Waitress is ready.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/inkypi.py`, `inkypi-weather/package/InkyPi/src/utils/network_utils.py`
+- Tags: inkypi, epaperpod, wifi, powersave, systemd, raspberry-pi, deployment
+
+---
+### Summary
+EpaperPod Wi-Fi recovery should be failure-triggered, not continuous scanning, to protect normal display operation.
+
+### Details
+For the user's "keep searching and reconnect after disconnect" requirement, the safer implementation is a root-run InkyPi background watchdog that checks `wlan0`, the default gateway, and NetworkManager state on an interval. It should keep powersave off, but only run `nmcli radio wifi on`, `nmcli device wifi rescan ifname wlan0`, `nmcli device connect wlan0`, and known connection activation after consecutive connectivity failures. This avoids constant scans while the display is already connected, and keeps the e-paper refresh path independent from network recovery.
+
+### Suggested Action
+Keep the watchdog lightweight and non-fatal: no reboot, no display operations, no forced disconnect while healthy. Verify deployment with `journalctl -u inkypi` for `Starting Wi-Fi reconnect watchdog on wlan0`, `/usr/sbin/iw dev wlan0 get power_save`, `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev status`, gateway ping, and `/playlist` HTTP 200.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/utils/network_utils.py`, `inkypi-weather/package/InkyPi/src/inkypi.py`
+- Tags: inkypi, epaperpod, wifi, reconnect, watchdog, networkmanager
+
+---
+### Summary
+Use `python -m ast ... >/dev/null` for Pi-side syntax checks when `__pycache__` permissions are root-owned.
+
+### Details
+On EpaperPod, running `python -m py_compile` as `feeengyuuu` failed after direct source deploy because earlier root-run service imports had created `__pycache__` files that the user account could not overwrite. The source was valid; the failure was only bytecode write permission. `python -m ast /path/to/file.py >/dev/null` parsed the files without writing `.pyc` and worked for deployed runtime files before restarting/validating the service.
+
+### Suggested Action
+For Pi hot deploy validation, use local tests first, then remote `python -m ast <file> >/dev/null` on each changed Python file. Treat `py_compile` permission failures under `src/**/__pycache__` as an environment artifact unless the AST parse also fails.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/utils/theme_utils.py`, `inkypi-weather/package/InkyPi/src/refresh_task.py`
+- Tags: inkypi, epaperpod, deployment, python, permissions, pycache, validation
+
+---
+### Summary
+Run focused pytest checks outside the sandbox when this Windows workspace denies pytest temp directory access.
+
+### Details
+During the Daily Word & Poem plugin work, the project-local pytest package existed under `.pc-packages`, but ordinary sandboxed pytest runs failed while creating or scanning temporary directories such as `C:\Users\super\AppData\Local\Temp\pytest-of-LocalTest`, `tmp\pytest-dwp-*`, and `C:\tmp\epaper-pytest-*`. The tests themselves were valid and passed once the same focused pytest command was run with approval outside the sandbox and with `PYTHONPATH=.pc-packages`.
+
+### Suggested Action
+For this checkout, use `.venv-test\Scripts\python.exe -m pytest ...` with `PYTHONPATH` pointed at `.pc-packages`, `PYTHONDONTWRITEBYTECODE=1`, and a scoped `--basetemp` path. If sandboxed runs fail with `PermissionError: [WinError 5]` before test code executes, rerun the exact focused test with escalation rather than debugging the tests.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py`, `.pc-packages`
+- Tags: inkypi, pytest, windows, sandbox, tempdir, validation
+
+---
+### Summary
+Verify deployed InkyPi current screen images through HTTP when static image directories are not readable over SSH.
+
+### Details
+On EpaperPod, `display.display_manager` can log that it saved `src/static/images/current_image.png`, while the `feeengyuuu` SSH account still gets `Permission denied` or `No such file` when trying to list or scp that static directory directly. The same image is available through the running Flask/Waitress static route after `/playlist` returns HTTP 200.
+
+### Suggested Action
+After a `display_plugin_instance` smoke test, fetch `http://127.0.0.1/static/images/current_image.png` on the Pi into `/tmp`, then scp the `/tmp` copy back for visual QA. For LiveRadar, the current site logo is exposed by the site HTML as `apple-touch-icon.png`; package a downscaled local copy with the plugin instead of relying on runtime web access for the title logo.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py`, `inkypi-weather/package/InkyPi/src/plugins/live_radar/liveradar_logo.png`
+- Tags: inkypi, epaperpod, liveradar, deployment, static-images, visual-qa
+## [LRN-20260527-054] best_practice
+
+**Logged**: 2026-05-27T20:45:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: tests
+
+### Summary
+For InkyPi pytest runs on this Windows workspace, load project dependencies from `.pc-packages` and rerun outside the sandbox if pytest temp directories hit `Access denied`.
+
+### Details
+The local virtual environments may not have `pytest` or Flask installed, while `.pc-packages` contains the bundled project dependencies. Running pytest inside the sandbox can fail during `tmp_path` setup or cleanup with Windows `PermissionError` on pytest temporary directories even when `--basetemp` points inside the workspace.
+
+### Suggested Action
+Run targeted tests with `PYTHONPATH=.../InkyPi/.pc-packages` and set `INKYPI_CONTEXT_CACHE_DIR` to a project-local temp folder. If pytest fails only on temp-directory permission errors, rerun the same command outside the sandbox rather than treating it as a code failure.
+
+### Metadata
+- Source: verification
+- Related Files: `inkypi-weather/package/InkyPi/pytest.ini`, `inkypi-weather/package/InkyPi/.pc-packages/`
+- See Also: LRN-20260527-052
+- Tags: inkypi, pytest, windows, sandbox, pc-packages
+
+---
+## [LRN-20260527-055] best_practice
+
+**Logged**: 2026-05-27T22:05:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper_pet
+
+### Summary
+For `epaper_pet` behavior changes, verify autonomous state transitions from the pet state cache, not only from `current_image.png`.
+
+### Details
+After triggering `Robot`, the pet correctly entered `activity=hunting`, restored food, and persisted `last_hunt`, but a subsequent playlist refresh quickly overwrote `static/images/current_image.png` with another plugin. The durable proof of the behavior was the pet cache file plus `refresh_info` and journal logs, while the current screen image only proves the last completed display update.
+
+### Suggested Action
+When validating pet autonomy, inspect `plugins/epaper_pet/cache/pets/<pet_id>.json` for `activity`, `message`, `stats`, and any new behavior-specific fields. Use `display_plugin_instance` for live display proof, but expect the active playlist to rotate afterward and capture the robot image immediately if visual evidence matters.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/epaper_pet/epaper_pet.py`
+- Tags: inkypi, epaperpod, epaper_pet, deployment, validation, playlist-rotation
+
+---
+## [LRN-20260528-001] correction
+
+**Logged**: 2026-05-28T01:03:45-07:00
+**Priority**: high
+**Status**: pending
+**Area**: docs
+
+### Summary
+Commercial EpaperSystem promotional images must use img-2 Taobao-style bases plus real 800x480 horizontal project screenshots for the device screen.
+
+### Details
+The user corrected an image-generation workflow that first allowed img-2 to invent screen UI, then overcorrected into local-only mockups. For sale-facing product imagery, the desired workflow is still img-2 generated promotional imagery, but the screen content must be actual project output, not generated widgets or fictional layouts. The requested visual language is mainland China Taobao ecommerce style. The correct workflow is to generate Taobao-style scene/device/packaging bases with a blank green screen placeholder, then composite a validated real 800x480 landscape screenshot into the display and add exact Chinese sales copy through code.
+
+### Suggested Action
+For future product images in this repo, keep actual screen captures in `marketing_assets/source_screens/`, validate dimensions, use img-2 for Taobao-style base imagery, and use deterministic compositing for the device screen and Chinese copy. Prompt img-2 for a blank chroma-green screen only and never rely on it to render the UI or final text.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `marketing_assets/README.md`, `tools/create_marketing_assets.py`, `tools/composite_taobao_img2_assets.py`
+- Tags: epaper, marketing, imagegen, img-2, screenshots, commercial, taobao
+
+---
+## [LRN-20260528-002] best_practice
+
+**Logged**: 2026-05-28T15:50:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: deployment
+
+### Summary
+Verify zip entry paths before deploying individual InkyPi plugin files from Windows.
+
+### Details
+PowerShell `Compress-Archive` with multiple explicit file paths can flatten entries to bare filenames. On EpaperPod this extracted `daily_word_poem.py`, `settings.html`, and `plugin-info.json` into the package root instead of overwriting `InkyPi/src/plugins/daily_word_poem/`, so the restart would not have picked up the intended plugin changes.
+
+### Suggested Action
+For single-plugin deployments, stage files under a temporary `InkyPi/src/plugins/<plugin_id>/` directory, compress the staging directory contents, and inspect zip entries before SCP. Treat `unzip` path-separator warnings on Linux as a reason to run a separate post-extract confirmation before restarting.
+
+### Metadata
+- Source: deployment
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/daily_word_poem/daily_word_poem.py`
+- Tags: inkypi, epaperpod, deployment, powershell, zip
+
+---
+## [LRN-20260528-003] best_practice
+
+**Logged**: 2026-05-28T15:50:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: daily_word_poem
+
+### Summary
+Use Wikiquote official date pages as a fallback when the Toolforge Quote of the Day API returns 404.
+
+### Details
+The Toolforge `wq-quote-of-the-day-parser` endpoint is documented and useful, but it returned `404` for `2026-05-28` and for `/api/quote_of_the_day` during deployment. Wikiquote's official `Wikiquote:Quote_of_the_day/May_28` raw page was reachable and contained the QOTD text and author, allowing the Daily Word plugin to keep using Wikiquote instead of dropping to local golden sentences.
+
+### Suggested Action
+For daily quote fetches, try the Toolforge date endpoint, then the Toolforge today endpoint, then `https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/<Month>_<day>&action=raw`. Bump the plugin cache schema when changing fetch fallback behavior so same-day failed-cache payloads are refreshed immediately.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/daily_word_poem/daily_word_poem.py`, `inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py`
+- Tags: inkypi, daily_word_poem, wikiquote, toolforge, cache
+
+---
+## [LRN-20260528-106] correction
+
+**Logged**: 2026-05-28T19:01:10-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Keep Bambu Monitor live camera frames unprocessed in the rendered preview.
+
+### Details
+The user reported that the Bambu Monitor real-time camera screenshot looked too high contrast and asked to restore the original image directly instead of processing it. The live camera frame should be cached as the original JPEG bytes and rendered with only bounded crop/resize for layout. Avoid plugin-local grayscale conversion, autocontrast, manual thresholding, and whole-plugin thresholding when that would alter the camera image.
+
+### Suggested Action
+For future Bambu Monitor camera work, preserve the raw camera frame through cache and panel rendering. If a display-specific black/white conversion is needed, leave it to the display pipeline rather than applying camera-specific contrast or threshold transforms inside `bambu_monitor.py`.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/bambu_monitor/bambu_monitor.py`, `inkypi-weather/package/InkyPi/tests/test_bambu_monitor.py`
+- Tags: inkypi, bambu-monitor, camera, original-media, contrast, epaper
+
+---
+## [LRN-20260528-109] best_practice
+
+**Logged**: 2026-05-28T20:49:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: deployment
+
+### Summary
+Package EpaperPod plugin zips with explicit entry names instead of wildcard compression.
+
+### Details
+PowerShell `Compress-Archive -Path InkyPi\src\plugins\epaper_pet\*` produced a bad deployment zip: it included `__pycache__` artifacts and lost the required `InkyPi/src/...` prefix. A previously opened zip reader can also leave a package temporarily undeletable in the same workflow. Creating a fresh package with explicit `System.IO.Compression` entries and disposing both writer and reader produced the expected five runtime files with Unix-style paths.
+
+### Suggested Action
+For future EpaperPod plugin deployments, use a new package filename or ensure readers are disposed before overwrite, and add each runtime file explicitly as `InkyPi/src/plugins/<plugin_id>/...`. Verify archive entries before upload.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/epaper_pet/epaper_pet.py`
+- Tags: inkypi, epaperpod, deployment, zip, powershell
+
+---
+## [LRN-20260528-108] best_practice
+
+**Logged**: 2026-05-28T20:38:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper_pet
+
+### Summary
+Use ecology-based prey metadata for the e-paper pet hunting chain.
+
+### Details
+When expanding the Tamagotchi-style pet's hunting system, model prey as a reality-inspired food web rather than fantasy items. Each prey entry should carry unlock level, prey size tier, broad biological group, approximate mass, localized display name, reserve gain, XP gain, and hunt cost. High-level hunting should focus on the current and immediately previous prey size tiers so progression feels like the animal is moving up the food chain instead of randomly returning to mostly tiny prey.
+
+### Suggested Action
+For future `epaper_pet` survival work, keep hunted-food data structured and expose the most recent prey metadata to AI context so generated one-liners can reference the animal's current ecology and progression.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/epaper_pet/epaper_pet.py`, `tools/smoke_epaper_pet.py`
+- Tags: epaper, pet, survival, hunting, progression, localization
+
+---
+## [LRN-20260528-107] best_practice
+
+**Logged**: 2026-05-28T19:22:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: deployment
+
+### Summary
+EpaperPod plugin deployment can update writable plugin files over SSH, but service reload may need the InkyPi reboot endpoint.
+
+### Details
+During Bambu Monitor deployment, the SSH user could overwrite files in both `/usr/local/inkypi/src/plugins/bambu_monitor/` and `/home/feeengyuuu/inkypi-weather-pi-package-20260524-3/InkyPi/src/plugins/bambu_monitor/`, but `sudo -n true` failed with `sudo: a password is required`, so direct `systemctl restart inkypi` was unavailable over SSH. Calling the app's `/shutdown` endpoint with `{"reboot": true}` rebooted the device and reloaded plugin code. The Zero W took several minutes to initialize the Waveshare display before Waitress began serving HTTP again.
+
+### Suggested Action
+For future EpaperPod single-plugin deployments, deploy a forward-slash zip to both active and source package paths, run remote `py_compile` with `PYTHONPYCACHEPREFIX=/tmp/...`, then use the InkyPi reboot endpoint if `sudo -n systemctl restart inkypi` is unavailable. Poll both `systemctl is-active inkypi` and local `curl http://127.0.0.1/` because systemd can be active before HTTP is ready.
+
+### Metadata
+- Source: implementation
+- Related Files: `tools/epaperpod-deploy-zip.ps1`, `inkypi-weather/package/InkyPi/src/plugins/bambu_monitor/bambu_monitor.py`
+- Tags: inkypi, epaperpod, deployment, reboot, sudo, readiness
+
+---
+## [LRN-20260528-110] correction
+
+**Logged**: 2026-05-28T21:35:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: backend
+
+### Summary
+Use random-bag playlist rotation for EpaperPod plugin pages.
+
+### Details
+The user clarified that automatic whole-plugin rotation should remove each displayed plugin instance from the random selection pool until every plugin in the active playlist has displayed. Only after the pool is exhausted should the pool be rebuilt and shuffled again. This is different from a sliding recent-history cooldown: the desired mental model is "display one, exclude one" for the current round, then restore the full pool for the next round, with only immediate back-to-back repeats avoided at the round boundary.
+
+### Suggested Action
+For future playlist work in `Playlist.get_next_plugin()`, preserve the persisted `plugin_rotation_queue` as the current round's remaining random bag. Do not replace it with probabilistic recent-history blocking unless the user explicitly asks for a longer cross-round cooldown.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/model.py`, `inkypi-weather/package/InkyPi/tests/test_model.py`
+- Tags: inkypi, epaperpod, playlist, random, no-repeat, rotation
+
+---
+## [LRN-20260529-111] correction
+
+**Logged**: 2026-05-29T15:38:59-07:00
+**Priority**: high
+**Status**: active
+**Area**: hardware
+
+### Summary
+In EpaperSystem, "new screen" usually means the Raspberry Pi e-paper panel, not the Windows desktop monitor.
+
+### Details
+The user corrected an attempted Windows display enumeration. For this workspace, screen/hardware questions should first be interpreted in the EpaperPod/Raspberry Pi context: current baseline device `EpaperPodBeta`, InkyPi service, Waveshare e-paper HATs, SPI, `display_type`, and Pi connectivity. Only inspect Windows monitors if the user explicitly says PC monitor, HDMI desktop screen, or Windows display.
+
+### Suggested Action
+For future EpaperSystem hardware checks, start with project docs, Pi SSH/HTTP reachability, InkyPi `device.json`, Waveshare driver modules, and product model compatibility before querying Windows display APIs.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `docs/new-board-migration-baseline.md`, `inkypi-weather/dist/inkypi-weather-pi-package/InkyPi/src/display/display_manager.py`
+- Tags: epaper, raspberry-pi, waveshare, hardware, correction
+
+---
+## [LRN-20260529-112] best_practice
+
+**Logged**: 2026-05-29T15:43:24-07:00
+**Priority**: medium
+**Status**: active
+**Area**: hardware
+
+### Summary
+For EpaperSystem Waveshare screen swaps, update both the install wrapper and the JSON config defaults.
+
+### Details
+InkyPi's lower-level installer already accepts `-W <waveshare_model>` and can fetch the matching Waveshare driver, but the project wrapper `install_on_pi.sh`, package README, migration baseline, and `install/config_base/device.json` can still pin the previous screen. For an existing board, `install.sh` should update `device.json` with structured JSON logic rather than text-only `sed` replacement so `display_type`, `resolution`, orientation, and image settings remain consistent.
+
+### Suggested Action
+When changing e-paper hardware, update the wrapper `-W` argument, vendor the official driver into `src/display/waveshare_epd/`, update fresh-install config defaults, and make install-time config migration explicit for existing `device.json` files.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/install_on_pi.sh`, `inkypi-weather/package/InkyPi/install/install.sh`, `inkypi-weather/package/InkyPi/install/config_base/device.json`
+- Tags: inkypi, waveshare, display, installer, migration
+
+---
+## [LRN-20260529-113] best_practice
+
+**Logged**: 2026-05-29T16:18:29-07:00
+**Priority**: high
+**Status**: active
+**Area**: hardware
+
+### Summary
+For Waveshare `epd7in3e`, a BUSY pin stuck low points first to panel connection issues.
+
+### Details
+During the 7.3 inch Spectra 6 / E6 deployment, `epd7in3e.EPD().init()` timed out with `busy_initial=0` and `busy_final=0`. After the user reconnected the host/screen, BUSY reads became `[1, 1, 1, 1, 1]` and `epd.init()` completed in about 0.3 seconds. InkyPi then loaded `epd7in3e`, Waitress became ready after about 2 minutes 20 seconds, and forced display refreshes completed successfully. The practical diagnostic is: if BUSY remains `0`, stop software retries and power off before checking FPC orientation, connector latch, HAT seating, and power.
+
+### Suggested Action
+Keep the `epd7in3e` driver BUSY timeout guard and include the hardware connection checklist in deployment docs. For E6 panels, expect slow startup and display updates; avoid stopping the service mid-refresh unless necessary.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/display/waveshare_epd/epd7in3e.py`, `docs/new-board-migration-baseline.md`
+- Tags: inkypi, waveshare, epd7in3e, busy-pin, fpc, deployment
+
+---
+## [LRN-20260529-114] best_practice
+
+**Logged**: 2026-05-29T16:53:41-07:00
+**Priority**: medium
+**Status**: active
+**Area**: tests
+
+### Summary
+For InkyPi plugin tests in this workspace, use the Codex Python 3.12 runtime with project `.pc-packages` on `PYTHONPATH`.
+
+### Details
+The local `.venv*` environments did not include pytest/Pillow, system Python 3.14 could not import compiled Pillow from `.pc-packages`, and direct bytecode compilation hit existing `__pycache__` permission errors. The working path was `C:\Users\super\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe` with `PYTHONPATH` set to `inkypi-weather/package/InkyPi/.pc-packages` and `PYTHONDONTWRITEBYTECODE=1`.
+
+### Suggested Action
+For future targeted InkyPi Python tests, run from `inkypi-weather/package/InkyPi` with the Codex runtime, set `.pc-packages` on `PYTHONPATH`, and disable bytecode/cache writes when possible.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/tests/test_flow_progress.py`
+- Tags: inkypi, tests, python, pytest, pc-packages, codex-runtime
+
+---
+## [LRN-20260529-115] correction
+
+**Logged**: 2026-05-29T16:56:04-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+Dots / `flow_progress` should title the page as `PROGRESSION of <current year>`, not `DOTS`.
+
+### Details
+The user corrected the first color comic day design: the title should not be the plugin nickname `DOTS`; it should read as an annual progress page, using the current render year dynamically, for example `PROGRESSION of 2026`.
+
+### Suggested Action
+For future `flow_progress` visual iterations, including a possible night version, preserve the dynamic `PROGRESSION of {now.year}` title unless the user explicitly asks for a different naming direction.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/flow_progress/flow_progress.py`
+- Tags: inkypi, flow-progress, dots, title, design
+
+---
+## [LRN-20260529-116] best_practice
+
+**Logged**: 2026-05-29T17:08:22-07:00
+**Priority**: low
+**Status**: active
+**Area**: infra
+
+### Summary
+Avoid complex nested Python one-liners inside PowerShell SSH commands for EpaperPod deployment checks.
+
+### Details
+During a Dots hot deploy, remote `python3 -c ...` commands that embedded JSON quotes were mangled by the Windows PowerShell to SSH quoting layers, producing unterminated string syntax errors. The deploy itself succeeded, and simpler SSH commands plus local `Invoke-RestMethod` / `Invoke-WebRequest` API checks were reliable.
+
+### Suggested Action
+For future Pi deployment verification, prefer simple SSH commands, local Web API calls, or small checked-in helper scripts over quote-heavy remote Python one-liners. If structured remote JSON parsing is necessary, copy a temporary script or use a minimal command with no nested JSON/string quoting.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/blueprints/plugin.py`, `inkypi-weather/package/InkyPi/src/blueprints/main.py`
+- Tags: epaperpod, ssh, powershell, deployment, quoting
+
+---
+## [LRN-20260529-117] correction
+
+**Logged**: 2026-05-29T17:14:46-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+The Dots / `flow_progress` title banner needs explicit left/right padding around `PROGRESSION of <year>`.
+
+### Details
+The user corrected the deployed comic day view because the `PROGRESSION of 2026` title was visually squeezed against the slanted title border. The fix expanded the banner width and added a dedicated `title_text_pad` inside the text box so the long title has breathing room.
+
+### Suggested Action
+For future `flow_progress` title changes, keep explicit horizontal padding inside the slanted banner and validate on the actual 800x480 render, not only by text centering math.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/flow_progress/flow_progress.py`
+- Tags: inkypi, flow-progress, dots, title, layout, padding
+
+---
+## [LRN-20260529-118] correction
+
+**Logged**: 2026-05-29T17:24:48-07:00
+**Priority**: high
+**Status**: active
+**Area**: frontend
+
+### Summary
+For major color e-paper visual redesigns, generate an img-2 reference before hand-coding the page.
+
+### Details
+While redesigning the stock page toward a Shanghai Animation Studio-era Chinese animation craft direction, the first direct hand-coded pass looked poor. The user explicitly corrected the workflow: first use img-2 to generate a visual reference, then use that as the implementation target.
+
+### Suggested Action
+For future substantial e-paper art-direction changes, especially historical or culturally specific themes, create a generated visual reference first, review its composition, then translate only the successful layout/color principles into code. Avoid copying protected characters or film scenes; preserve functional semantics such as US stock green-up/red-down colors when requested.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: epaper, color-ui, visual-design, img2, stocktracker, workflow
+
+---
+## [LRN-20260529-116] correction
+
+**Logged**: 2026-05-29T17:10:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+When the user approves generated Mini Weather backgrounds, install that exact set and make the rendered background fill the whole 800x480 plugin viewport.
+
+### Details
+The user correction was that the latest generated mythic comic backgrounds were already visually good and should not be regenerated. The remaining requirement was placement: the image must fill the background dimensions. For Mini Weather this means keeping the approved images, storing them as exact `800x480` plugin assets, selecting them by live weather slug, and rendering the background layer with viewport-cover behavior so the base plugin body padding/margins do not leave a plain edge.
+
+### Suggested Action
+For future Mini Weather background sets, do not treat "background must fill" as a prompt change if the art is already approved. Treat it as integration/layout work: resize/crop assets to `800x480`, use `background-size: cover`, avoid `background-repeat`, and preview the actual plugin frame to check for outer whitespace.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/mini_weather/render/mini_weather.css`, `inkypi-weather/package/InkyPi/src/plugins/mini_weather/backgrounds_color/`
+- Tags: inkypi, mini-weather, weather-backgrounds, imagegen, layout
+
+---
+## [LRN-20260529-117] correction
+
+**Logged**: 2026-05-29T17:35:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+The active EpaperPod device URL is `http://192.168.1.186/`, and Mini Weather icon previews should use the approved old Chinese animation-inspired style.
+
+### Details
+The user corrected the device target from `.183` to `.186`. The `.186` host responded with HTTP 200 and SSH hostname `EpaperPodBeta`. For Mini Weather, the requested visual direction is not to copy specific Shanghai Animation Film Studio frames or characters, but to make original weather icons that evoke old Chinese animation craft: ink line, cut-paper shapes, water/ink wash, mineral colors, auspicious cloud forms, and paper texture.
+
+### Suggested Action
+For future EpaperPod deploys in this workspace, default to `feeengyuuu@192.168.1.186` unless the user gives a newer address. For Mini Weather icon work, store candidate icons under `icons_color/<style>/`, keep the original `icons/` assets as fallback, and preview against the real Mini Weather layout before finalizing.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/mini_weather/icons_color/shanghai_animation/`, `inkypi-weather/package/InkyPi/src/plugins/mini_weather/mini_weather.py`
+- Tags: inkypi, epaperpod, host, mini-weather, icons, shanghai-animation
+
+---
+## [LRN-20260529-118] best_practice
+
+**Logged**: 2026-05-29T18:28:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Mini Weather visual changes must be applied to both HTML/CSS and PIL fallback on the Pi.
+
+### Details
+On the active EpaperPod, Mini Weather logged `HTML render failed; using PIL fallback renderer`, so CSS-only changes to card transparency did not affect the actual device image. The fallback renderer draws cards, labels, and background blending directly in Pillow. User-facing changes such as replacing `NOW` with the current weekday and making card backgrounds transparent must be reflected in `mini_weather.py` as well as `render/mini_weather.css`.
+
+### Suggested Action
+Before judging Mini Weather visual changes on hardware, inspect `journalctl -u inkypi` for HTML render fallback warnings. Keep a local PIL fallback preview script for card/background work, and deploy/restart Python changes when the fallback renderer is involved.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/mini_weather/mini_weather.py`, `inkypi-weather/package/InkyPi/src/plugins/mini_weather/render/mini_weather.css`
+- Tags: inkypi, mini-weather, pil-fallback, css, visual-qa
+
+---
+## [LRN-20260529-119] correction
+
+**Logged**: 2026-05-29T17:31:19-07:00
+**Priority**: high
+**Status**: active
+**Area**: frontend
+
+### Summary
+For the Stock Tracker color-screen update, preserve the existing dashboard layout and only add restrained color.
+
+### Details
+The user rejected the themed Shanghai Animation Studio-inspired stock page direction as visually unpleasant and redirected the work to keep the current stock page structure. The right approach is the existing title, portfolio summary, trend chart, and holdings table layout, with color used for panel accents, chart line/fill, row alternation, and US-style green-up/red-down changes.
+
+### Suggested Action
+For future stock page visual updates, avoid full art-direction redesign unless explicitly approved from a reference. Start from the current functional layout and add color/layering incrementally so the page feels alive without changing scan patterns.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: stocktracker, color-ui, layout, epaper
+
+---
+## [LRN-20260529-120] correction
+
+**Logged**: 2026-05-29T17:31:19-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+Stock Tracker holding rows need a clear gutter between the left status color bar and ticker text.
+
+### Details
+After adding color to the existing Stock Tracker layout, the user noted the left color indicator in the holdings list visually overlapped the ticker symbols. The fix was to keep the status bar near the row edge and move the `SYMBOL` column text to the right.
+
+### Suggested Action
+When adding row status indicators to compact e-paper tables, reserve explicit horizontal gutter space before text. Validate with bold ticker symbols because their strokes make tight spacing look like overlap on the rendered screen.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: stocktracker, table-layout, color-ui, epaper
+
+---
+## [LRN-20260529-121] correction
+
+**Logged**: 2026-05-29T17:32:47-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+Stock Tracker should place the Yahoo Finance source label in the top header row.
+
+### Details
+The user asked to move `Yahoo Finance data` out of the portfolio summary card and place it on the same top row as `COLOR E-PAPER MODE`. This keeps the card focused on portfolio value while preserving the source label as page-level metadata.
+
+### Suggested Action
+For future Stock Tracker header/layout changes, keep data source and display mode labels grouped in the top-right header rather than inside content panels.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: stocktracker, header, metadata, layout
+
+---
+## [LRN-20260529-122] correction
+
+**Logged**: 2026-05-29T17:33:54-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+Stock Tracker should show the refresh timestamp in the portfolio summary card footer.
+
+### Details
+After moving `Yahoo Finance data` to the page header, the user asked to reuse its former footer position in the portfolio card for the refresh time. This makes source/mode page-level metadata while keeping update recency close to the portfolio value.
+
+### Suggested Action
+For future Stock Tracker layout changes, keep `Yahoo Finance data | COLOR E-PAPER MODE` in the top-right header and place a compact `Updated HH:MM` timestamp in the summary card footer.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: stocktracker, refresh-time, metadata, layout
+
+---
+## [LRN-20260529-123] correction
+
+**Logged**: 2026-05-29T17:52:49-07:00
+**Priority**: high
+**Status**: active
+**Area**: frontend
+
+### Summary
+Color-screen UI should obey the old comic palette law, including Stock Tracker.
+
+### Details
+The user clarified that the governing color rule is old comic process/Pantone palette compliance. The Stock Tracker page should use the same color discipline as the Dots comic page: warm paper ground, process-black outlines/text, and limited yellow, blue, orange, red, and green accents, while preserving semantic requirements such as US stock green-up/red-down behavior.
+
+### Suggested Action
+For future color-screen plugin updates, do not use generic muted dashboard colors by default. Start from `docs/color-ui-guidelines.md` and trace UI colors to vintage comic process palette tokens unless the user explicitly requests a different palette.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `docs/color-ui-guidelines.md`, `.learnings/color_ui_palette_rule.md`, `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: color-ui, comic-palette, stocktracker, epaper
+
+---
+## [LRN-20260529-124] correction
+
+**Logged**: 2026-05-29T18:06:24-07:00
+**Priority**: medium
+**Status**: active
+**Area**: frontend
+
+### Summary
+Stock Tracker trend chart markers should be dark green, not yellow.
+
+### Details
+The user pointed out that the yellow chart markers on the blue trend line were hard to read on the e-paper preview. The fix uses a dark green marker token with black outline for the chart points, while leaving US stock gain/loss colors unchanged.
+
+### Suggested Action
+For future Stock Tracker chart tweaks, keep trend markers high-contrast against both the blue line and pale blue chart fill. Prefer the dark green comic-palette marker with black outline over yellow dots in the trend panel.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`
+- Tags: stocktracker, chart, markers, color-ui, readability
+
+---
+## [LRN-20260529-125] correction
+
+**Logged**: 2026-05-29T19:39:44-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Robinhood account activity CSV is not necessarily a current holdings snapshot.
+
+### Details
+The user provided a Robinhood CSV with `Activity Date`, `Instrument`, `Trans Code`, and `Quantity`. It was sufficient to identify Robinhood activity-report format, but not sufficient by itself to guarantee current holdings because it may omit opening positions before the report range. In this case, a dividend row referenced existing AAPL shares that were not represented by buy rows in the CSV.
+
+### Suggested Action
+For Stock Tracker, treat `symbol,shares` current-position CSV or a screenshot/manual current holdings list as the accurate source of truth. Use Robinhood activity CSV only if the export covers full account history, or if implementing a stateful workflow that applies weekly activity deltas to a verified baseline.
+
+### Metadata
+- Source: user_feedback
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py`, `inkypi-weather/package/InkyPi/tests/test_stocktracker.py`
+- Tags: stocktracker, robinhood, csv, holdings, accuracy
+
+---
+## [LRN-20260529-126] best_practice
+
+**Logged**: 2026-05-29T20:08:06-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Simple Calendar comic character overlays should target the focus-panel date number.
+
+### Details
+For the Simple Calendar comic layout, small character cutouts are most effective when they are composited over the large left/right focus-panel day number. Placing character art across every month-grid date would compete with readability and event markers. The better pattern is a date-stable rotating cutout on the focus number, with the calendar grid kept clean.
+
+### Suggested Action
+For future Simple Calendar interaction art, add or tune cutouts through `date_hero_cutouts` and `_draw_focus_date_hero`, keeping overlays on the large focus date unless the user explicitly asks for month-grid stickers.
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/simple_calendar.py`, `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/date_hero_cutouts/`
+- Tags: simple-calendar, comic, cutouts, epaper, readability
+
+---
+## [LRN-20260529-127] best_practice
+
+**Logged**: 2026-05-29T20:26:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+EpaperPod deploy checks should tolerate existing SFTP dirs and redirect pycache writes.
+
+### Details
+When deploying new plugin asset directories to EpaperPod, `sftp -b` stops on `mkdir` failure if the directory already exists. Prefix directory creation commands with `-mkdir` so existing remote directories do not abort the batch. Also, `python3 -m py_compile` against `/usr/local/inkypi` can fail with `Permission denied` when it tries to write `__pycache__`; use `PYTHONPYCACHEPREFIX=/tmp/inkypi-pycache` for remote syntax checks.
+
+### Suggested Action
+For future EpaperPod deployments, generate SFTP batches with `-mkdir` for directory setup and validate Python files with `PYTHONPYCACHEPREFIX=/tmp/inkypi-pycache python3 -m py_compile <file>`.
+
+### Metadata
+- Source: deployment
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/simple_calendar.py`, `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/date_hero_cutouts/`
+- Tags: epaperpod, deploy, sftp, py_compile, permissions
+
+---
+## [LRN-20260530-128] best_practice
+
+**Logged**: 2026-05-30T00:10:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Wikipedia POTD can be video media; WikiDaily must use MediaWiki thumbnails.
+
+### Details
+On 2026-05-29, Wikipedia Picture of the Day resolved to `A_Trip_Down_Market_Street_(1906).webm`. Downloading the original `.webm` as if it were an image caused request timeouts and temporary no-space errors, so `WikiDaily` never advanced `latest_refresh_time`.
+
+### Suggested Action
+For `wpotd`, request `imageinfo` with `iiurlwidth` and prefer `thumburl`. Reject direct `.webm`, `.ogv`, `.mp4`, `.mov`, and `.svg` original URLs unless MediaWiki provides a raster thumbnail.
+
+### Metadata
+- Source: production_debug
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/wpotd/wpotd.py`, `inkypi-weather/package/InkyPi/tests/test_wpotd_smart_crop.py`
+- Tags: epaperpod, wpotd, wikipedia, mediawiki, video, thumbnails
+
+---

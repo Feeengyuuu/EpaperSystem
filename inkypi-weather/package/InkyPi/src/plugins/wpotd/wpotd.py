@@ -30,6 +30,7 @@ from random import randint
 from datetime import datetime, timedelta, date
 from functools import lru_cache
 from typing import Dict, Any
+from urllib.parse import urlparse
 
 from plugins.context_cache import write_context
 
@@ -38,6 +39,8 @@ logger = logging.getLogger(__name__)
 class Wpotd(BasePlugin):
     HEADERS = {'User-Agent': 'InkyPi/1.0 (https://github.com/fatihak/InkyPi/)'}
     API_URL = "https://en.wikipedia.org/w/api.php"
+    THUMBNAIL_WIDTH = 1200
+    DIRECT_DOWNLOAD_BLOCKLIST = (".svg", ".webm", ".ogv", ".mp4", ".mov")
 
     def generate_settings_template(self) -> Dict[str, Any]:
         template_params = super().generate_settings_template()
@@ -156,9 +159,9 @@ class Wpotd(BasePlugin):
             focus_crop: Whether resizing should bias the crop toward image focus
         """
         try:
-            if url.lower().endswith(".svg"):
-                logger.warning("SVG format is not supported by Pillow. Skipping image download.")
-                raise RuntimeError("Unsupported image format: SVG.")
+            if self._is_unsupported_direct_media_url(url):
+                logger.warning("Direct WPOTD media format is not supported by Pillow: %s", url)
+                raise RuntimeError("Unsupported direct media format.")
 
             if resize and dimensions:
                 # Use adaptive loader for memory-efficient processing
@@ -214,16 +217,37 @@ class Wpotd(BasePlugin):
             "action": "query",
             "format": "json",
             "prop": "imageinfo",
-            "iiprop": "url",
+            "iiprop": "url|mime",
+            "iiurlwidth": self.THUMBNAIL_WIDTH,
             "titles": filename
         }
         data = self._make_request(params)
         try:
             page = next(iter(data["query"]["pages"].values()))
-            return page["imageinfo"][0]["url"]
+            info = page["imageinfo"][0]
         except (KeyError, IndexError, StopIteration) as e:
             logger.error(f"Failed to retrieve image URL for {filename}: {e}")
             raise RuntimeError("Failed to retrieve image URL.")
+
+        thumb_url = info.get("thumburl")
+        if thumb_url:
+            return thumb_url
+
+        original_url = info.get("url")
+        if original_url and not self._is_unsupported_direct_media_url(original_url):
+            return original_url
+
+        logger.error(
+            "No renderable WPOTD image URL for %s. original_url=%s mime=%s",
+            filename,
+            original_url,
+            info.get("mime"),
+        )
+        raise RuntimeError("Failed to retrieve image URL.")
+
+    def _is_unsupported_direct_media_url(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return path.endswith(self.DIRECT_DOWNLOAD_BLOCKLIST)
 
     def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
         try:

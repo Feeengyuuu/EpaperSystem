@@ -193,3 +193,106 @@ def test_generate_image_can_preserve_plain_full_poster(monkeypatch):
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_remember_success_adds_posters_to_discard_pools():
+    plugin = make_plugin("discard-pool")
+    plugin._write_state({
+        "discarded_page_urls": ["https://chineseposters.net/posters/old/"],
+        "discarded_image_urls": ["https://chineseposters.net/sites/default/files/images/old.jpg?download=1"],
+        "last_page_url": "https://chineseposters.net/posters/legacy",
+        "last_image_url": "https://chineseposters.net/sites/default/files/images/legacy.jpg",
+    })
+
+    plugin._remember_success([
+        {
+            "page_url": "https://chineseposters.net/posters/old",
+            "image_url": "https://chineseposters.net/sites/default/files/images/old.jpg",
+            "title": "Old",
+        },
+        {
+            "page_url": "https://chineseposters.net/posters/new",
+            "image_url": "https://chineseposters.net/sites/default/files/images/new.jpg",
+            "title": "New",
+        },
+    ])
+
+    state = plugin._read_state()
+    assert state["discarded_page_urls"] == [
+        "https://chineseposters.net/posters/old/",
+        "https://chineseposters.net/posters/legacy",
+        "https://chineseposters.net/posters/new",
+    ]
+    assert state["discarded_image_urls"] == [
+        "https://chineseposters.net/sites/default/files/images/old.jpg?download=1",
+        "https://chineseposters.net/sites/default/files/images/legacy.jpg",
+        "https://chineseposters.net/sites/default/files/images/new.jpg",
+    ]
+    assert state["last_page_urls"] == [
+        "https://chineseposters.net/posters/old",
+        "https://chineseposters.net/posters/new",
+    ]
+
+
+def test_select_random_poster_skips_discarded_page_and_image_urls(monkeypatch):
+    plugin = make_plugin("select-unseen")
+    plugin._write_state({
+        "discarded_page_urls": ["https://chineseposters.net/posters/seen-page"],
+        "discarded_image_urls": ["https://chineseposters.net/sites/default/files/images/seen-image.jpg"],
+    })
+
+    list_html = """
+    <a href="/posters/seen-page">Seen page</a>
+    <a href="/posters/image-seen">Seen image</a>
+    <a href="/posters/new">New poster</a>
+    """
+    detail_html = {
+        "https://chineseposters.net/posters/image-seen": """
+            <h1>Seen image</h1>
+            <img src="/sites/default/files/images/seen-image.jpg">
+        """,
+        "https://chineseposters.net/posters/new": """
+            <h1>New poster</h1>
+            <img src="/sites/default/files/images/new.jpg">
+        """,
+    }
+    fetched_urls = []
+
+    def fake_fetch(url, params=None):
+        fetched_urls.append(url)
+        if url.endswith("/posters/posters"):
+            return list_html
+        return detail_html[url]
+
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.randint", lambda low, high: 0)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+
+    poster = plugin._select_random_poster({"maxPage": 0})
+
+    assert poster["page_url"] == "https://chineseposters.net/posters/new"
+    assert poster["image_url"] == "https://chineseposters.net/sites/default/files/images/new.jpg"
+    assert "https://chineseposters.net/posters/seen-page" not in fetched_urls
+
+
+def test_select_random_poster_can_fallback_when_only_seen_posters_exist(monkeypatch):
+    plugin = make_plugin("select-seen-fallback")
+    plugin._write_state({
+        "discarded_page_urls": ["https://chineseposters.net/posters/seen"],
+        "discarded_image_urls": ["https://chineseposters.net/sites/default/files/images/seen.jpg"],
+    })
+
+    def fake_fetch(url, params=None):
+        if url.endswith("/posters/posters"):
+            return '<a href="/posters/seen">Seen poster</a>'
+        return '<h1>Seen poster</h1><img src="/sites/default/files/images/seen.jpg">'
+
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.randint", lambda low, high: 0)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.choice", lambda items: items[0])
+
+    poster = plugin._select_random_poster({"maxPage": 0})
+
+    assert poster["page_url"] == "https://chineseposters.net/posters/seen"
+    assert poster["image_url"] == "https://chineseposters.net/sites/default/files/images/seen.jpg"
