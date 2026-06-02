@@ -759,7 +759,7 @@ class DailyAINews(BasePlugin):
         top_x = margin
         side_x = top_x + main_w + main_gap
         y = max(136, lede_end + 8)
-        top_limit_y = module_y = 352
+        top_limit_y = module_y = 360
 
         self._section_header(draw, "◆ " + SECTION_LABELS["top"], top_x, y, main_w, section_font, red, rule)
         self._section_header(draw, "◇ 快讯补充", side_x, y, side_w, section_font, cyan, rule)
@@ -802,7 +802,7 @@ class DailyAINews(BasePlugin):
             drop_why_if_needed=True,
         )
 
-        module_h = 104
+        module_h = 96
         gap = 20
         col_w = (width - margin * 2 - gap) // 2
         modules = [
@@ -1034,12 +1034,13 @@ class DailyAINews(BasePlugin):
         drop_why_if_needed=False,
     ) -> int:
         styles = [
-            {"title": 17, "why": 14, "marker_w": 36, "title_h": 20, "why_h": 16, "gap": 4},
-            {"title": 16, "why": 13, "marker_w": 34, "title_h": 18, "why_h": 15, "gap": 3},
-            {"title": 15, "why": 12, "marker_w": 32, "title_h": 17, "why_h": 14, "gap": 2},
-            {"title": 14, "why": 11, "marker_w": 30, "title_h": 16, "why_h": 13, "gap": 1},
-            {"title": 13, "why": 10, "marker_w": 28, "title_h": 15, "why_h": 12, "gap": 0},
-            {"title": 12, "why": 9, "marker_w": 26, "title_h": 14, "why_h": 10, "gap": 0},
+            {"title": 18, "why": 16, "marker_w": 38, "title_h": 21, "why_h": 18, "gap": 3},
+            {"title": 17, "why": 15, "marker_w": 36, "title_h": 20, "why_h": 17, "gap": 2},
+            {"title": 16, "why": 14, "marker_w": 34, "title_h": 19, "why_h": 16, "gap": 1},
+            {"title": 15, "why": 13, "marker_w": 32, "title_h": 18, "why_h": 15, "gap": 0},
+            {"title": 14, "why": 12, "marker_w": 30, "title_h": 17, "why_h": 14, "gap": 0},
+            {"title": 13, "why": 11, "marker_w": 28, "title_h": 16, "why_h": 13, "gap": 0},
+            {"title": 12, "why": 10, "marker_w": 26, "title_h": 15, "why_h": 12, "gap": 0},
         ]
         prepared = []
         available = max_y - y

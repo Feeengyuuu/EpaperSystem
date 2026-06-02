@@ -33,7 +33,6 @@ Rolling Stone|https://magazineshop.us/collections/rolling-stone
 Billboard|https://magazineshop.us/collections/billboard
 Vanity Fair|https://www.vanityfair.com/magazine
 The Atlantic|https://www.theatlantic.com/magazine/
-WIRED Japan|https://wired.jp/magazine/
 Variety|https://magazineshop.us/collections/variety
 The Hollywood Reporter|https://magazineshop.us/collections/the-hollywood-reporter
 Us Weekly|https://magazineshop.us/collections/us-weekly
@@ -45,10 +44,14 @@ TV Guide|https://magazineshop.us/collections/tv-guide-tv"""
 
 ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
 COVER_CACHE_VERSION = "magazine-covers-cache-v2-title-crop"
-IMAGE_CACHE_TTL = timedelta(hours=18)
+IMAGE_CACHE_TTL = timedelta(hours=48)
+DAILY_LIBRARY_STATE_VERSION = "magazine-covers-daily-library-v1"
+DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=23)
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
+DEFAULT_FIT_MODE = "triptych"
+TRIPTYCH_COVER_COUNT = 3
 
 
 class _ImageCandidateParser(HTMLParser):
@@ -153,6 +156,12 @@ class MagazineCovers(BasePlugin):
             raise RuntimeError("No magazine cover sources configured.")
 
         rotation_mode = (settings.get("rotationMode") or "random").lower()
+        if self._daily_library_enabled(settings):
+            image = self._generate_from_daily_library(sources, dimensions, settings, device_config, rotation_mode)
+            if image:
+                return image
+            logger.warning("Daily magazine cover library unavailable; falling back to direct source fetch.")
+
         if rotation_mode == "single":
             ordered_sources = sources[:1]
         elif rotation_mode in {"rotate", "sequential"}:
@@ -161,6 +170,38 @@ class MagazineCovers(BasePlugin):
             ordered_sources = self._random_order(sources)
 
         errors = []
+        if self._fit_mode(settings) in {"triptych", "three_covers", "gallery"}:
+            source_covers = []
+            for source in ordered_sources:
+                try:
+                    cover = self._load_cover(source, dimensions)
+                    source_covers.append((source, cover))
+                    if len(source_covers) >= TRIPTYCH_COVER_COUNT:
+                        break
+                except Exception as exc:
+                    logger.warning("Magazine cover failed for %s: %s", source["name"], exc)
+                    errors.append(f"{source['name']}: {exc}")
+                    if rotation_mode == "random":
+                        self._remember_failure(source)
+
+            if len(source_covers) >= TRIPTYCH_COVER_COUNT:
+                image = self._fit_cover_triptych(source_covers, dimensions, settings)
+                self._remember_successes(source_covers)
+                self._write_cover_context(source_covers[0][0], source_covers[0][1])
+                logger.info(
+                    "Selected magazine cover triptych: %s",
+                    " | ".join(source["name"] for source, _cover in source_covers),
+                )
+                return image
+
+            if source_covers:
+                logger.warning("Only %s covers loaded for triptych; falling back to first cover.", len(source_covers))
+                source, cover = source_covers[0]
+                image = self._fit_cover(cover["image"], dimensions, settings, source)
+                self._remember_success(source, cover)
+                self._write_cover_context(source, cover)
+                return image
+
         for source in ordered_sources:
             try:
                 cover = self._load_cover(source, dimensions)
@@ -178,6 +219,196 @@ class MagazineCovers(BasePlugin):
         detail = "; ".join(errors[-4:])
         logger.warning("No Pi-safe magazine cover could be fetched. %s", detail)
         return self._fallback_image(dimensions, "Magazine Covers", "No Pi-safe cover image")
+
+    def _daily_library_enabled(self, settings):
+        return _setting_enabled(settings.get("dailyLibraryMode", "true"))
+
+    def _generate_from_daily_library(self, sources, dimensions, settings, device_config, rotation_mode):
+        if self._daily_library_needs_refresh(sources, dimensions, settings):
+            self._refresh_daily_library(sources, dimensions, settings)
+
+        fit_mode = self._fit_mode(settings)
+        display_count = TRIPTYCH_COVER_COUNT if fit_mode in {"triptych", "three_covers", "gallery"} else 1
+        ordered_sources = self._daily_library_order(sources, dimensions, rotation_mode, display_count)
+        if fit_mode in {"triptych", "three_covers", "gallery"}:
+            triptych = self._triptych_from_cached_sources(ordered_sources, dimensions, settings)
+            if triptych:
+                return triptych
+
+        for source in ordered_sources:
+            cover = self._read_cached_cover(source, dimensions)
+            if not cover:
+                logger.warning("Daily magazine library cover missing for %s", source["name"])
+                continue
+
+            image = self._fit_cover(cover["image"], dimensions, settings, source)
+            self._remember_success(source, cover)
+            self._write_cover_context(source, cover)
+            logger.info(
+                "Selected magazine cover from daily library: %s | %s",
+                source["name"],
+                cover["image_url"],
+            )
+            return image
+        return None
+
+    def _triptych_from_cached_sources(self, ordered_sources, dimensions, settings):
+        source_covers = []
+        for source in ordered_sources:
+            cover = self._read_cached_cover(source, dimensions)
+            if not cover:
+                logger.warning("Daily magazine library triptych cover missing for %s", source["name"])
+                continue
+            source_covers.append((source, cover))
+            if len(source_covers) >= TRIPTYCH_COVER_COUNT:
+                break
+
+        if len(source_covers) < TRIPTYCH_COVER_COUNT:
+            logger.warning(
+                "Daily magazine cover library has only %s usable covers for triptych.",
+                len(source_covers),
+            )
+            return None
+
+        image = self._fit_cover_triptych(source_covers, dimensions, settings)
+        self._remember_successes(source_covers)
+        self._write_cover_context(source_covers[0][0], source_covers[0][1])
+        logger.info(
+            "Selected magazine cover triptych from daily library: %s",
+            " | ".join(source["name"] for source, _cover in source_covers),
+        )
+        return image
+
+    def _daily_library_needs_refresh(self, sources, dimensions, settings):
+        state = self._read_state()
+        if state.get("daily_library_version") != DAILY_LIBRARY_STATE_VERSION:
+            return True
+        if state.get("daily_library_pool_key") != self._pool_key(sources):
+            return True
+        if state.get("daily_library_dimensions") != self._dimensions_key(dimensions):
+            return True
+        if state.get("daily_library_day_key") != self._daily_library_day_key():
+            return True
+        if not state.get("daily_library_source_ids"):
+            return True
+
+        refreshed_at = self._parse_datetime(state.get("daily_library_refreshed_at"))
+        if not refreshed_at:
+            return True
+
+        return self._now_utc() - refreshed_at >= self._daily_library_refresh_interval(settings)
+
+    def _refresh_daily_library(self, sources, dimensions, settings):
+        state = self._read_state()
+        refreshed_source_ids = []
+        errors = []
+
+        for source in sources:
+            try:
+                cover = self._load_cover(source, dimensions, force_refresh=True)
+                refreshed_source_ids.append(self._source_id(source))
+                logger.info(
+                    "Refreshed magazine cover library item: %s | %s",
+                    source["name"],
+                    cover.get("image_url"),
+                )
+            except Exception as exc:
+                cached = self._read_cached_cover(source, dimensions)
+                if cached:
+                    refreshed_source_ids.append(self._source_id(source))
+                    logger.warning(
+                        "Magazine library refresh failed for %s, keeping cached cover: %s",
+                        source["name"],
+                        exc,
+                    )
+                else:
+                    logger.warning("Magazine library refresh failed for %s: %s", source["name"], exc)
+                    errors.append(f"{source['name']}: {exc}")
+
+        now = self._now_utc().isoformat()
+        state["daily_library_last_attempt_at"] = now
+        state["daily_library_errors"] = errors[-8:]
+
+        if refreshed_source_ids:
+            state["daily_library_version"] = DAILY_LIBRARY_STATE_VERSION
+            state["daily_library_pool_key"] = self._pool_key(sources)
+            state["daily_library_dimensions"] = self._dimensions_key(dimensions)
+            state["daily_library_day_key"] = self._daily_library_day_key()
+            state["daily_library_refreshed_at"] = now
+            state["daily_library_source_ids"] = refreshed_source_ids
+            state["daily_library_queue"] = []
+            state["daily_library_next_index"] = 0
+            logger.info("Magazine cover library refreshed. | count: %s", len(refreshed_source_ids))
+        else:
+            logger.warning("Magazine cover library refresh produced no usable covers.")
+
+        self._write_state(state)
+        return bool(refreshed_source_ids)
+
+    def _daily_library_order(self, sources, dimensions, rotation_mode, display_count=1):
+        source_by_id = {self._source_id(source): source for source in sources}
+        state = self._read_state()
+        source_ids = [
+            source_id
+            for source_id in state.get("daily_library_source_ids", [])
+            if source_id in source_by_id
+        ]
+        if not source_ids:
+            return []
+        display_count = max(1, min(int(display_count or 1), len(source_ids)))
+
+        if rotation_mode == "single":
+            return [source_by_id[source_ids[0]]]
+
+        if rotation_mode in {"rotate", "sequential"}:
+            next_index = int(state.get("daily_library_next_index") or 0) % len(source_ids)
+            ordered_ids = source_ids[next_index:] + source_ids[:next_index]
+            state["daily_library_next_index"] = (next_index + display_count) % len(source_ids)
+            self._write_state(state)
+            return [source_by_id[source_id] for source_id in ordered_ids]
+
+        queue = [
+            source_id
+            for source_id in state.get("daily_library_queue", [])
+            if source_id in source_by_id and source_id in source_ids
+        ]
+        if len(queue) < display_count:
+            existing_ids = set(queue)
+            refill = [
+                source_id
+                for source_id in self._new_daily_library_queue(source_ids, state, display_count)
+                if source_id not in existing_ids
+            ]
+            queue.extend(refill)
+
+        selected_ids = []
+        while queue and len(selected_ids) < display_count:
+            source_id = queue.pop(0)
+            if source_id not in selected_ids:
+                selected_ids.append(source_id)
+
+        state["daily_library_queue"] = queue
+        self._write_state(state)
+
+        selected_id_set = set(selected_ids)
+        remaining_ids = [source_id for source_id in queue if source_id not in selected_id_set]
+        fallback_ids = [source_id for source_id in source_ids if source_id not in selected_id_set and source_id not in remaining_ids]
+        ordered_ids = selected_ids + remaining_ids + fallback_ids
+        return [source_by_id[source_id] for source_id in ordered_ids]
+
+    def _new_daily_library_queue(self, source_ids, state, display_count):
+        queue = list(source_ids)
+        random.shuffle(queue)
+        last_ids = set(state.get("last_source_ids") or [])
+        last_source_id = state.get("last_source_id")
+        if last_source_id:
+            last_ids.add(last_source_id)
+
+        fresh_first = [source_id for source_id in queue if source_id not in last_ids]
+        delayed_last = [source_id for source_id in queue if source_id in last_ids]
+        if len(fresh_first) >= min(display_count, len(source_ids)):
+            return fresh_first + delayed_last
+        return queue
 
     def _write_cover_context(self, source, cover):
         publication = str(source.get("name") or "Magazine").strip()
@@ -289,10 +520,11 @@ class MagazineCovers(BasePlugin):
 
         return [source_by_id[source_id] for source_id in ordered_ids]
 
-    def _load_cover(self, source, dimensions):
-        cached = self._read_cached_cover(source, dimensions)
-        if cached:
-            return cached
+    def _load_cover(self, source, dimensions, force_refresh=False):
+        if not force_refresh:
+            cached = self._read_cached_cover(source, dimensions)
+            if cached:
+                return cached
 
         html_text = self._fetch_text(source["url"])
         parser = _ImageCandidateParser(source["url"])
@@ -530,7 +762,7 @@ class MagazineCovers(BasePlugin):
         return score >= 80 and max(width, height) >= 300
 
     def _fit_cover(self, image, dimensions, settings, source=None):
-        fit_mode = (settings.get("fitMode") or "rotate_full").lower()
+        fit_mode = self._fit_mode(settings)
         image = ImageOps.exif_transpose(image).convert("RGB")
 
         if fit_mode == "cover":
@@ -541,12 +773,40 @@ class MagazineCovers(BasePlugin):
         if should_rotate:
             image = image.rotate(90, expand=True)
 
-        background = self._background(dimensions, settings, image)
         fitted = ImageOps.contain(image, dimensions, method=Image.LANCZOS)
+        background = self._solid_background(dimensions, settings)
         x = (dimensions[0] - fitted.width) // 2
         y = (dimensions[1] - fitted.height) // 2
         background.paste(fitted, (x, y))
         return self._with_source_label(background, source, settings)
+
+    def _fit_mode(self, settings):
+        return str(settings.get("fitMode") or DEFAULT_FIT_MODE).strip().lower()
+
+    def _fit_cover_triptych(self, source_covers, dimensions, settings):
+        cover_images = [
+            ImageOps.exif_transpose(cover["image"]).convert("RGB")
+            for _source, cover in source_covers[:TRIPTYCH_COVER_COUNT]
+        ]
+        canvas = self._triptych_background(cover_images, dimensions, settings)
+        width, height = dimensions
+        column_width = width // TRIPTYCH_COVER_COUNT
+
+        for index, image in enumerate(cover_images):
+            x0 = index * column_width
+            target_width = column_width if index < TRIPTYCH_COVER_COUNT - 1 else width - x0
+            fitted = ImageOps.contain(image, (target_width, height), method=Image.LANCZOS)
+            x = x0 + (target_width - fitted.width) // 2
+            y = (height - fitted.height) // 2
+            canvas.paste(fitted, (x, y))
+
+        return canvas
+
+    def _triptych_background(self, cover_images, dimensions, settings):
+        background = self._solid_background(dimensions, settings)
+        if not cover_images:
+            return background
+        return self._background(dimensions, settings, cover_images[0])
 
     def _fit_cover_crop(self, image, dimensions):
         target_width, target_height = dimensions
@@ -748,13 +1008,18 @@ class MagazineCovers(BasePlugin):
             candidate = candidate[:-1].rstrip()
         return candidate or text[:1]
 
+    def _solid_background(self, dimensions, settings):
+        color = (settings.get("backgroundColor") or "white").lower()
+        base_color = (0, 0, 0) if color == "black" else (255, 255, 255)
+        return Image.new("RGB", dimensions, base_color)
+
     def _background(self, dimensions, settings, image):
         color = (settings.get("backgroundColor") or "white").lower()
         base_color = (0, 0, 0) if color == "black" else (255, 255, 255)
 
         style = (settings.get("backgroundStyle") or "blur").lower()
         if style in {"plain", "solid"}:
-            return Image.new("RGB", dimensions, base_color)
+            return self._solid_background(dimensions, settings)
 
         try:
             backdrop = ImageOps.fit(image, dimensions, method=Image.LANCZOS)
@@ -766,7 +1031,7 @@ class MagazineCovers(BasePlugin):
             return Image.blend(backdrop, wash, 0.5 if color != "black" else 0.35)
         except Exception as exc:
             logger.warning("Could not render blurred magazine background: %s", exc)
-            return Image.new("RGB", dimensions, base_color)
+            return self._solid_background(dimensions, settings)
 
     def _read_cached_cover(self, source, dimensions):
         meta_path = self._cache_meta_path(source, dimensions)
@@ -816,17 +1081,30 @@ class MagazineCovers(BasePlugin):
             logger.warning("Could not cache magazine cover for %s: %s", source["name"], exc)
 
     def _remember_success(self, source, cover):
+        self._remember_successes([(source, cover)])
+
+    def _remember_successes(self, source_covers):
+        source_covers = list(source_covers or [])
+        if not source_covers:
+            return
+
+        first_source, first_cover = source_covers[0]
         state = self._read_state()
-        source_id = self._source_id(source)
-        state["last_source"] = source.get("name")
-        state["last_source_id"] = source_id
-        state["last_page_url"] = cover.get("page_url")
-        state["last_image_url"] = cover.get("image_url")
-        state["last_title"] = cover.get("title")
+        source_ids = [self._source_id(source) for source, _cover in source_covers]
+        state["last_source"] = first_source.get("name")
+        state["last_source_id"] = source_ids[0]
+        state["last_sources"] = [source.get("name") for source, _cover in source_covers]
+        state["last_source_ids"] = source_ids
+        state["last_page_url"] = first_cover.get("page_url")
+        state["last_image_url"] = first_cover.get("image_url")
+        state["last_title"] = first_cover.get("title")
+        state["last_page_urls"] = [cover.get("page_url") for _source, cover in source_covers if cover.get("page_url")]
+        state["last_image_urls"] = [cover.get("image_url") for _source, cover in source_covers if cover.get("image_url")]
         state["last_displayed_at"] = datetime.now(timezone.utc).isoformat()
         if isinstance(state.get("random_queue"), list):
+            source_id_set = set(source_ids)
             state["random_queue"] = [
-                queued_id for queued_id in state["random_queue"] if queued_id != source_id
+                queued_id for queued_id in state["random_queue"] if queued_id not in source_id_set
             ]
         self._write_state(state)
 
@@ -891,11 +1169,44 @@ class MagazineCovers(BasePlugin):
     def _source_id(self, source):
         return f"{source['name']}|{source['url']}"
 
+    def _dimensions_key(self, dimensions):
+        return f"{dimensions[0]}x{dimensions[1]}"
+
+    def _daily_library_day_key(self):
+        return self._now_utc().astimezone().date().isoformat()
+
+    def _daily_library_refresh_interval(self, settings):
+        try:
+            hours = float(settings.get("libraryRefreshHours") or 0)
+        except (TypeError, ValueError):
+            hours = 0
+        if hours <= 0:
+            return DAILY_LIBRARY_REFRESH_INTERVAL
+        return timedelta(hours=max(1.0, hours))
+
+    def _parse_datetime(self, value):
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _now_utc(self):
+        return datetime.now(timezone.utc)
+
     def _safe_int(self, value, default):
         try:
             return int(value)
         except (TypeError, ValueError):
             return default
+
+
+def _setting_enabled(value):
+    return value is True or str(value).lower() in {"1", "true", "on", "yes"}
 
 
 def _clean_text(value):

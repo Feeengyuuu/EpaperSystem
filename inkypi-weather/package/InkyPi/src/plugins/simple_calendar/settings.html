@@ -53,11 +53,11 @@
 <div class="form-group">
 	<label for="weatherPanelBackgroundStyle" class="form-label">Weather background style:</label>
 	<select id="weatherPanelBackgroundStyle" name="weatherPanelBackgroundStyle" class="form-input">
-		<option value="classic" selected>Classic monochrome</option>
+		<option value="classic">Classic monochrome</option>
 		<option value="img2_original_heroes_weather">Comic heroes</option>
 		<option value="img2_original_heroes_nyc_weather">NYC comic heroes</option>
 		<option value="img2_original_heroes_local_top_weather">Local top weather variants</option>
-		<option value="img2_original_heroes_mixed">Mixed comic heroes</option>
+		<option value="img2_original_heroes_mixed" selected>Mixed comic heroes</option>
 	</select>
 </div>
 
@@ -183,9 +183,9 @@
 			document.getElementById('weatherPanelBackground').checked = weatherPanelEnabled;
 			document.getElementById('weatherPanelBackground').value = weatherPanelEnabled ? 'true' : 'false';
 			const weatherStyle = document.getElementById('weatherPanelBackgroundStyle');
-			weatherStyle.value = pluginSettings.weatherPanelBackgroundStyle || 'classic';
+			weatherStyle.value = pluginSettings.weatherPanelBackgroundStyle || 'img2_original_heroes_mixed';
 			if (!weatherStyle.querySelector(`option[value="${weatherStyle.value}"]`)) {
-				weatherStyle.value = 'classic';
+				weatherStyle.value = 'img2_original_heroes_mixed';
 			}
 			const heroSetting = pluginSettings.dateHeroOverlays;
 			const heroEnabled = heroSetting === undefined || heroSetting === null

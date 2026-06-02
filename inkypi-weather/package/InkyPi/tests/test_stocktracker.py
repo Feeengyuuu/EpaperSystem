@@ -1,9 +1,10 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.stocktracker.stocktracker import CHART_MARKER_GREEN, CINNABAR, MALACHITE, PAPER, StockTracker  # noqa: E402
+from plugins.stocktracker.stocktracker import ACCENT_ORANGE, CINNABAR, MALACHITE, PAPER, StockTracker  # noqa: E402
 
 
 class FakeLoc:
@@ -109,8 +110,13 @@ def test_stock_dashboard_uses_color_theme_and_us_change_colors():
         _stock("TSLA", [260, 250, 240], 5),
         _stock("SPY", [520, 522, 525], 3),
     ]
+    history_points = [
+        {"date": "2026-05-30", "timestamp": "2026-05-30T05:30:00", "value": 4500.0},
+        {"date": "2026-05-31", "timestamp": "2026-05-31T05:30:00", "value": 4900.0},
+        {"date": "2026-06-01", "timestamp": "2026-06-01T05:30:00", "value": 4700.0},
+    ]
 
-    image = plugin._create_dashboard(stock_data, (800, 480))
+    image = plugin._create_dashboard(stock_data, (800, 480), history_points)
 
     assert image.size == (800, 480)
     assert image.mode == "RGB"
@@ -119,7 +125,73 @@ def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     assert _near_color_count(image, PAPER, tolerance=5) > 10_000
     assert _near_color_count(image, MALACHITE, tolerance=12) > 500
     assert _near_color_count(image, CINNABAR, tolerance=12) > 500
-    assert _near_color_count(image, CHART_MARKER_GREEN, tolerance=8) > 40
+    assert image.getpixel((318, 188)) == ACCENT_ORANGE
+    assert image.getpixel((540, 102)) == MALACHITE
+    assert image.getpixel((762, 145)) == CINNABAR
+
+
+def test_stock_tracker_records_one_snapshot_per_day(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    persisted_history = []
+    writes = []
+
+    monkeypatch.setattr(plugin, "_portfolio_history_path", lambda stock_data: "memory-history.json")
+    monkeypatch.setattr(plugin, "_read_portfolio_history", lambda history_path: list(persisted_history))
+
+    def write_history(history_path, history):
+        writes.append((history_path, list(history)))
+        persisted_history[:] = list(history)
+
+    monkeypatch.setattr(plugin, "_write_portfolio_history", write_history)
+
+    first = plugin._record_portfolio_snapshot(
+        [_stock("AAPL", [100, 110], 2), _stock("TSLA", [50, 60], 1)],
+        datetime(2026, 6, 1, 5, 30),
+    )
+    second = plugin._record_portfolio_snapshot(
+        [_stock("AAPL", [100, 120], 2), _stock("TSLA", [50, 55], 1)],
+        datetime(2026, 6, 1, 18, 45),
+    )
+    third = plugin._record_portfolio_snapshot(
+        [_stock("AAPL", [100, 125], 2), _stock("TSLA", [50, 58], 1)],
+        datetime(2026, 6, 2, 5, 30),
+    )
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert second[0]["date"] == "2026-06-01"
+    assert second[0]["timestamp"] == "2026-06-01T18:45:00"
+    assert second[0]["value"] == 295.0
+    assert [point["date"] for point in third] == ["2026-06-01", "2026-06-02"]
+    assert [point["value"] for point in third] == [295.0, 308.0]
+    assert len(writes) == 3
+    assert writes[-1][0] == "memory-history.json"
+
+
+def test_stock_tracker_snapshot_uses_only_finite_numbers():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [_stock("AAPL", [100, 110], 2)]
+    stock_data[0]["total_change"] = float("nan")
+
+    totals = plugin._portfolio_totals(stock_data)
+    snapshot = plugin._portfolio_snapshot(stock_data, datetime(2026, 6, 1, 5, 30))
+    normalized = plugin._normalize_portfolio_history_entry({
+        "date": "2026-06-01",
+        "timestamp": "2026-06-01T05:30:00",
+        "value": 220.0,
+        "change": float("nan"),
+        "change_percent": float("nan"),
+    })
+
+    assert totals == (220.0, 0.0, 0.0)
+    assert snapshot["change"] == 0.0
+    assert snapshot["change_percent"] == 0.0
+    assert normalized == {
+        "date": "2026-06-01",
+        "timestamp": "2026-06-01T05:30:00",
+        "value": 220.0,
+    }
+    assert plugin._normalize_portfolio_history_entry({"date": "2026-06-01", "value": float("nan")}) is None
 
 
 def test_stock_tracker_loads_direct_holdings_csv():

@@ -16,6 +16,7 @@
 *.py[cod]
 **/.context_cache/
 inkypi-weather/package/InkyPi/src/plugins/*/cache/
+**/.magazine_covers_cache/
 
 # Python environments and vendored install caches
 **/.venv/

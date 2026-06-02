@@ -139,6 +139,7 @@ first item of a new round must not be the plugin that was just displayed.
 | Weather | `mini_weather` | every 30 minutes |
 | Robot | `epaper_pet` | every 15 minutes |
 | Money | `stocktracker` | daily at `00:00` |
+| GitHub | `github` | daily at `00:00` |
 | Bambu | `bambu_monitor` | every 5 minutes |
 | SteamDailyArt | `steam_daily_art` | every 60 minutes |
 | Anal | `image_upload` | daily at `00:00` |
@@ -156,6 +157,10 @@ preserved when moving to a new board:
 - `Money` / `stocktracker`: `tickers=AAPL, SPY, NTDOY, TSLA, NVDA, VTI,
   VXUS, VGIT, TTWO, GOOGL`, `shares=246.3, 17.35, 771, 83.27, 245.29,
   51.4, 80.52, 60.08, 10.6, 2`, `period=1mo`.
+- `GitHub` / `github`: `githubType=contributions`,
+  `githubUsername=Feeengyuuu`, `selectedFrame=Rectangle`; keep the
+  default Pillow contributions renderer and preserve the original GitHub
+  green heatmap colors.
 - `Bambu` / `bambu_monitor`: `host=192.168.1.137`,
   `serialNumber=03919D530909663`, `accessCodeEnv=BAMBU_ACCESS_CODE`,
   `port=8883`, `timeoutSeconds=8`, `cacheSeconds=60`,
@@ -198,6 +203,7 @@ internet sources do not block screen rotation or stack API bursts.
 | SteamDaily | Steam Web API + Store API | Five-minute live status refresh; heavier profile data remains cached for 15 minutes. |
 | Weather | OpenWeatherMap | 30-minute weather refresh with OpenWeather cost guards. |
 | Money | Yahoo Finance via `yfinance` | Daily scheduled portfolio data fetch. |
+| GitHub | GitHub GraphQL API | Daily contributions dashboard fetch using the configured `GITHUB_SECRET`; production render stays Pillow-based. |
 | Bambu | Bambu local MQTT/TLS + camera TLS | Five-minute read-only local printer status refresh against `192.168.1.137:8883`; each render also captures one A1 camera frame from `192.168.1.137:6000`; keep Bambu Cloud/mobile access enabled when possible. |
 | SteamDailyArt | Steam Store front page + CDN | Hourly fresh Steam front-page art fetch with no-repeat selection. |
 | NovalTime | local quote/time data | No internet source; refreshes local time-based text every 5 minutes. |
@@ -375,7 +381,7 @@ journalctl -u inkypi --since=-20min --no-pager
 - `hostname` returns `ColoredEpaperFrame`.
 - `/playlist` returns HTTP `200`.
 - `plugin_cycle_interval_seconds` is restored to `300` after smoke testing.
-- `DailyDoseOfDay` contains the 18 active baseline instances above.
+- `DailyDoseOfDay` contains the 19 active baseline instances above.
 - The `Money` / `stocktracker` instance has non-empty `tickers`, `shares`, and
   `period` values.
 - The selected display plugin refreshes before non-selected due cache refresh.

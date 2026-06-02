@@ -88,13 +88,28 @@ def test_weather_code_maps_to_generated_panel_backgrounds():
     assert plugin._weather_code_to_background_slug(95, 1) == "thunderstorm"
 
 
-def test_weather_background_path_uses_simple_calendar_panel_assets():
+def test_weather_background_classic_style_uses_simple_calendar_panel_assets():
     plugin = SimpleCalendar({"id": "simple_calendar"})
 
-    path = Path(plugin._weather_background_path("rain"))
+    path = Path(plugin._weather_background_path("rain", {"weatherPanelBackgroundStyle": "classic"}))
 
     assert path.name == "rain.png"
     assert path.parent.name == "weather_panel_backgrounds"
+    assert path.is_file()
+
+
+def test_weather_background_default_uses_mixed_comic_pool():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    path = Path(plugin._weather_background_path("clear_day", {}, date(2026, 5, 28)))
+
+    assert "weather_panel_backgrounds_color" in path.parts
+    assert path.parent.name in {
+        "img2_original_heroes",
+        "img2_original_heroes_weather",
+        "img2_original_heroes_nyc_weather",
+        "img2_original_heroes_local_top_weather",
+    }
     assert path.is_file()
 
 
@@ -108,12 +123,24 @@ def test_weather_background_style_can_use_color_variant_pool():
     ))
 
     assert "weather_panel_backgrounds_color" in path.parts
-    assert path.name == "rain.png"
+    assert path.stem.startswith("rain")
+    assert path.suffix == ".png"
     assert path.parent.name in {
         "img2_original_heroes_weather",
         "img2_original_heroes_nyc_weather",
     }
     assert path.is_file()
+
+
+def test_weather_background_mixed_style_includes_suffix_named_hero_assets():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    candidates = plugin._weather_background_candidates("clear_day", "img2_original_heroes_mixed")
+
+    assert any(
+        path.parent.name == "img2_original_heroes" and path.name.endswith("_clear_day.png")
+        for path in candidates
+    )
 
 
 def test_weather_background_variant_selection_is_stable_for_date():
@@ -139,6 +166,7 @@ def test_weather_background_variant_selection_rotates_by_date():
 def test_date_hero_overlay_defaults_to_comic_weather_styles():
     plugin = SimpleCalendar({"id": "simple_calendar"})
 
+    assert plugin._date_hero_overlay_enabled({}) is True
     assert plugin._date_hero_overlay_enabled({"weatherPanelBackgroundStyle": "classic"}) is False
     assert plugin._date_hero_overlay_enabled({"weatherPanelBackgroundStyle": "img2_original_heroes_weather"}) is True
     assert plugin._date_hero_overlay_enabled({

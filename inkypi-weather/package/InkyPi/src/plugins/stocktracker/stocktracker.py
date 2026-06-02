@@ -61,8 +61,12 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 from PIL import Image, ImageDraw, ImageFont
 from utils.app_utils import get_font
 import csv
+import hashlib
 import io
+import json
 import logging
+import math
+import re
 from datetime import datetime
 
 WHITE = (255, 255, 255)
@@ -93,6 +97,9 @@ CSV_POSITIVE_ACTION_HINTS = ("buy", "bought", "reinvest", "transfer in", "incomi
 CASH_SYMBOLS = ("cash", "usd", "us dollar", "money market")
 EXTENDED_HISTORY_PERIOD = "1d"
 EXTENDED_HISTORY_INTERVAL = "1m"
+PORTFOLIO_HISTORY_DIR_ENV = "INKYPI_STOCKTRACKER_HISTORY_DIR"
+PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
+PORTFOLIO_HISTORY_MAX_DAYS = 180
 
 _yf = None
 _plt = None
@@ -154,7 +161,8 @@ class StockTracker(BasePlugin):
 			raise RuntimeError("No valid stock data retrieved")
 
 		# Create dashboard
-		return self._create_dashboard(stock_data, dimensions)
+		history_points = self._record_portfolio_snapshot(stock_data)
+		return self._create_dashboard(stock_data, dimensions, history_points)
 
 	def _portfolio_holdings_from_settings(self, settings):
 		period = settings.get('period', '1mo')
@@ -436,6 +444,129 @@ class StockTracker(BasePlugin):
 			values.append(total)
 		return values
 
+	def _record_portfolio_snapshot(self, stock_data, now=None):
+		now = now or datetime.now()
+		snapshot = self._portfolio_snapshot(stock_data, now)
+		history_path = self._portfolio_history_path(stock_data)
+		history = self._read_portfolio_history(history_path)
+		history = self._upsert_portfolio_snapshot(history, snapshot)
+		try:
+			self._write_portfolio_history(history_path, history)
+		except Exception as e:
+			logging.warning(f"Could not write stock portfolio history: {type(e).__name__}: {e}")
+		return history
+
+	def _portfolio_totals(self, stock_data):
+		total_value = sum(self._finite_float(data.get("total_value")) for data in stock_data)
+		total_change = sum(self._finite_float(data.get("total_change")) for data in stock_data)
+		base_value = total_value - total_change
+		total_change_percent = (total_change / base_value) * 100 if base_value else 0
+		total_change_percent = self._finite_float(total_change_percent)
+		return total_value, total_change, total_change_percent
+
+	def _portfolio_snapshot(self, stock_data, now):
+		total_value, total_change, total_change_percent = self._portfolio_totals(stock_data)
+		return {
+			"date": now.strftime("%Y-%m-%d"),
+			"timestamp": now.isoformat(),
+			"value": round(float(total_value), 4),
+			"change": round(float(total_change), 4),
+			"change_percent": round(float(total_change_percent), 4),
+		}
+
+	@staticmethod
+	def _finite_float(value, default=0.0):
+		try:
+			number = float(value)
+		except (TypeError, ValueError):
+			return default
+		return number if math.isfinite(number) else default
+
+	def _portfolio_history_path(self, stock_data):
+		explicit_file = os.getenv(PORTFOLIO_HISTORY_FILE_ENV)
+		if explicit_file:
+			return os.path.abspath(explicit_file)
+
+		history_dir = os.getenv(PORTFOLIO_HISTORY_DIR_ENV)
+		if not history_dir:
+			history_dir = os.path.join(os.path.dirname(__file__), ".stocktracker_history")
+		history_key = self._portfolio_history_key(stock_data)
+		return os.path.abspath(os.path.join(history_dir, f"{history_key}.json"))
+
+	@staticmethod
+	def _portfolio_history_key(stock_data):
+		holdings = [
+			{
+				"symbol": str(data.get("symbol", "")).upper(),
+				"shares": round(float(data.get("shares", 0)), 6),
+			}
+			for data in stock_data
+		]
+		holdings.sort(key=lambda item: item["symbol"])
+		payload = json.dumps(holdings, sort_keys=True, separators=(",", ":"))
+		return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
+
+	def _read_portfolio_history(self, history_path):
+		try:
+			if not os.path.isfile(history_path):
+				return []
+			with open(history_path, "r", encoding="utf-8") as history_file:
+				raw_history = json.load(history_file)
+		except Exception as e:
+			logging.warning(f"Could not read stock portfolio history: {type(e).__name__}: {e}")
+			return []
+
+		if not isinstance(raw_history, list):
+			return []
+		return [entry for entry in (self._normalize_portfolio_history_entry(item) for item in raw_history) if entry]
+
+	@staticmethod
+	def _normalize_portfolio_history_entry(item):
+		if not isinstance(item, dict):
+			return None
+		date_text = str(item.get("date") or "").strip()
+		if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_text):
+			return None
+		try:
+			value = float(item.get("value"))
+		except (TypeError, ValueError):
+			return None
+		if not math.isfinite(value):
+			return None
+		normalized = {
+			"date": date_text,
+			"timestamp": str(item.get("timestamp") or date_text),
+			"value": value,
+		}
+		for key in ("change", "change_percent"):
+			try:
+				number = float(item.get(key))
+				if math.isfinite(number):
+					normalized[key] = number
+			except (TypeError, ValueError):
+				pass
+		return normalized
+
+	def _upsert_portfolio_snapshot(self, history, snapshot):
+		by_date = {}
+		for item in history:
+			normalized = self._normalize_portfolio_history_entry(item)
+			if normalized:
+				by_date[normalized["date"]] = normalized
+		by_date[snapshot["date"]] = snapshot
+		return [
+			by_date[date_key]
+			for date_key in sorted(by_date.keys())[-PORTFOLIO_HISTORY_MAX_DAYS:]
+		]
+
+	@staticmethod
+	def _write_portfolio_history(history_path, history):
+		os.makedirs(os.path.dirname(history_path), exist_ok=True)
+		temp_path = f"{history_path}.tmp"
+		with open(temp_path, "w", encoding="utf-8") as history_file:
+			json.dump(history, history_file, ensure_ascii=True, indent=2, allow_nan=False)
+		os.replace(temp_path, history_path)
+
 	@staticmethod
 	def _blend(fg, bg, amount):
 		amount = min(max(amount, 0.0), 1.0)
@@ -461,10 +592,7 @@ class StockTracker(BasePlugin):
 	def _draw_summary(self, draw, box, stock_data):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD)
-		total_value = sum(data["total_value"] for data in stock_data)
-		total_change = sum(data["total_change"] for data in stock_data)
-		base_value = total_value - total_change
-		total_change_percent = (total_change / base_value) * 100 if base_value else 0
+		total_value, total_change, total_change_percent = self._portfolio_totals(stock_data)
 		change_color = self._change_color(total_change_percent)
 
 		value_text = self._money(total_value)
@@ -484,7 +612,7 @@ class StockTracker(BasePlugin):
 		draw.text((left + 24, top + 100), change_text, fill=change_color, font=change_font)
 		draw.text((left + 14, bottom - 18), datetime.now().strftime("Updated %H:%M"), fill=MUTED, font=self._font(10))
 
-	def _draw_sparkline(self, draw, box, values):
+	def _draw_sparkline(self, draw, box, values, history_points=None):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE)
 		plot = (left + 14, top + 42, right - 14, bottom - 16)
@@ -492,11 +620,18 @@ class StockTracker(BasePlugin):
 		for i in range(1, 4):
 			y = plot[1] + (plot[3] - plot[1]) * i / 4
 			draw.line((plot[0] + 1, y, plot[2] - 1, y), fill=self._blend(GRID, PANEL_BLUE, 0.55), width=1)
-		if len(values) < 2:
+		history_points = [
+			point
+			for point in (self._normalize_portfolio_history_entry(item) for item in (history_points or []))
+			if point
+		]
+		history_values = [float(point["value"]) for point in history_points]
+		if len(values) < 2 and len(history_values) < 1:
 			return
 
-		vmin = min(values)
-		vmax = max(values)
+		all_values = [float(value) for value in values] + history_values
+		vmin = min(all_values)
+		vmax = max(all_values)
 		if abs(vmax - vmin) < 0.0001:
 			vmax = vmin + 1
 
@@ -507,16 +642,43 @@ class StockTracker(BasePlugin):
 			points.append((int(x), int(y)))
 
 		area = [(plot[0], plot[3])] + points + [(plot[2], plot[3])]
-		draw.polygon(area, fill=self._blend(ACCENT_BLUE, (244, 250, 255), 0.16))
 		if len(points) >= 2:
+			draw.polygon(area, fill=self._blend(ACCENT_BLUE, (244, 250, 255), 0.16))
 			draw.line(points, fill=ACCENT_BLUE, width=3)
-		for point in points[-6:]:
-			draw.ellipse((point[0] - 4, point[1] - 4, point[0] + 4, point[1] + 4), fill=INK)
-			draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=CHART_MARKER_GREEN)
+		self._draw_history_markers(draw, plot, history_points, vmin, vmax)
+		if len(points) >= 2:
+			self._draw_latest_value_marker(draw, points[-1])
 
 		label_font = self._font(12)
 		draw.text((plot[0] + 4, plot[1] + 4), self._money(vmax, 0), fill=INK, font=label_font)
 		draw.text((plot[0] + 4, plot[3] - 16), self._money(vmin, 0), fill=MUTED, font=label_font)
+
+	def _draw_latest_value_marker(self, draw, point):
+		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=INK)
+		draw.ellipse((point[0] - 2, point[1] - 2, point[0] + 2, point[1] + 2), fill=ACCENT_BLUE)
+
+	def _draw_history_markers(self, draw, plot, history_points, vmin, vmax):
+		if not history_points:
+			return
+		radius = 4 if len(history_points) <= 36 else 3
+		ordered_points = sorted(history_points, key=lambda point: point["date"])
+		previous_value = None
+		for idx, point in enumerate(ordered_points):
+			value = float(point["value"])
+			if len(ordered_points) == 1:
+				x = plot[2]
+			else:
+				x = plot[0] + (plot[2] - plot[0]) * idx / (len(ordered_points) - 1)
+			y = plot[3] - (plot[3] - plot[1]) * (value - vmin) / (vmax - vmin)
+			if previous_value is None:
+				fill = ACCENT_ORANGE
+			else:
+				fill = MALACHITE if value >= previous_value else CINNABAR
+			previous_value = value
+			x = int(round(x))
+			y = int(round(y))
+			draw.ellipse((x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1), fill=INK)
+			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 	def _draw_holdings(self, draw, box, stock_data):
 		left, top, right, bottom = box
@@ -565,7 +727,7 @@ class StockTracker(BasePlugin):
 			remaining = len(stock_data) - displayed_rows
 			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=MUTED, font=self._font(13, True))
 
-	def _create_dashboard(self, stock_data, dimensions):
+	def _create_dashboard(self, stock_data, dimensions, history_points=None):
 		"""Create a color dashboard that preserves the original stock layout."""
 		width, height = dimensions
 		img = Image.new("RGB", (width, height), PAPER)
@@ -578,7 +740,7 @@ class StockTracker(BasePlugin):
 		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
 
 		self._draw_summary(draw, (24, 60, 284, 204), stock_data)
-		self._draw_sparkline(draw, (304, 60, width - 24, 204), self._portfolio_values(stock_data))
+		self._draw_sparkline(draw, (304, 60, width - 24, 204), self._portfolio_values(stock_data), history_points)
 		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data)
 
 		return img

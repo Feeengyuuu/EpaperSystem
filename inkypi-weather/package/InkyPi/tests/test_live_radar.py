@@ -1,5 +1,6 @@
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -557,6 +558,133 @@ def test_live_queue_section_fits_two_columns_of_remaining_live_rows():
     assert visible == 8
     assert len(set(image.crop((16, 38, 386, 134)).getdata())) > 2
     assert len(set(image.crop((210, 38, 386, 134)).getdata())) > 2
+
+
+def test_snapshot_mini_candidates_prefer_cover_cards_and_skip_visible_live():
+    plugin = _plugin()
+
+    visible_live = {
+        "platform": "twitch",
+        "id": "xqc",
+        "owner": "xQc",
+        "label": "",
+        "status": "live",
+        "is_fav": True,
+        "heat": 999,
+        "cover": "https://covers.test/xqc.jpg",
+    }
+    candidates = [
+        {
+            "platform": "twitch",
+            "id": "offline-no-cover",
+            "owner": "No Cover",
+            "label": "",
+            "status": "offline",
+            "is_fav": True,
+            "heat": 1000,
+            "cover": "",
+        },
+        {
+            "platform": "douyu",
+            "id": "replay-cover",
+            "owner": "Replay Cover",
+            "label": "",
+            "status": "replay",
+            "is_fav": False,
+            "heat": 1,
+            "cover": "https://covers.test/replay.jpg",
+        },
+        {
+            "platform": "bilibili",
+            "id": "offline-cover",
+            "owner": "Offline Cover",
+            "label": "",
+            "status": "offline",
+            "is_fav": False,
+            "heat": 2,
+            "cover": "https://covers.test/offline.jpg",
+        },
+        visible_live,
+    ]
+
+    picked = plugin._snapshot_mini_candidates(candidates, [visible_live], max_items=2)
+
+    assert [card["id"] for card in picked] == ["replay-cover", "offline-cover"]
+
+
+def test_snapshot_mini_section_draws_cover_thumbnails():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (260, 130), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    cover = Image.new("RGB", (80, 50), (24, 180, 240))
+    plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/offline.jpg" else None
+    cards = [
+        {
+            "platform": "twitch",
+            "id": "offline-cover",
+            "owner": "Offline Cover",
+            "label": "",
+            "title": "Recent stream",
+            "status": "offline",
+            "is_fav": False,
+            "heat": 0,
+            "cover": "https://covers.test/offline.jpg",
+        }
+    ]
+
+    visible = plugin._draw_snapshot_mini_section(image, draw, (10, 10, 220, 100), "SNAPSHOT MINI", cards, theme)
+
+    assert visible == 1
+    assert (24, 180, 240) in set(image.crop((18, 42, 52, 62)).getdata())
+
+
+def test_dashboard_uses_snapshot_mini_when_no_extra_live():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    seen = {}
+
+    def draw_snapshot_mini(_image, _draw, _box, _title, cards, _theme, max_items=4, snapshot_cache_seconds=90):
+        seen["ids"] = [card["id"] for card in cards]
+        return len(cards)
+
+    def fail_live_queue(*_args, **_kwargs):
+        raise AssertionError("live queue should not draw when there are no extra live cards")
+
+    plugin._draw_snapshot_mini_section = draw_snapshot_mini
+    plugin._draw_live_queue_section = fail_live_queue
+    cards = [
+        {
+            "platform": "twitch",
+            "id": "xqc",
+            "owner": "xQc",
+            "label": "",
+            "title": "Live",
+            "status": "live",
+            "is_fav": False,
+            "heat": 10,
+            "start_time": None,
+            "cover": "",
+            "avatar": "",
+        },
+        {
+            "platform": "douyu",
+            "id": "recent-cover",
+            "owner": "Recent Cover",
+            "label": "",
+            "title": "Recent",
+            "status": "offline",
+            "is_fav": False,
+            "heat": 0,
+            "start_time": None,
+            "cover": "https://covers.test/recent.jpg",
+            "avatar": "",
+        },
+    ]
+
+    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert seen["ids"] == ["recent-cover"]
 
 
 def test_top_overflow_excludes_live_queue_rows():

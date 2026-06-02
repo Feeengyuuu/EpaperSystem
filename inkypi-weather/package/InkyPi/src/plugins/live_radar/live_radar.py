@@ -409,16 +409,33 @@ class LiveRadar(BasePlugin):
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
-        self._draw_live_queue_section(
-            image,
-            draw,
-            live_queue_box,
-            "LIVE TOO",
-            live_cards[live_limit:],
-            theme,
-            max_items=live_queue_max,
-            avatar_cache_seconds=avatar_cache_seconds,
-        )
+        queued_live_cards = live_cards[live_limit:]
+        if queued_live_cards:
+            self._draw_live_queue_section(
+                image,
+                draw,
+                live_queue_box,
+                "LIVE TOO",
+                queued_live_cards,
+                theme,
+                max_items=live_queue_max,
+                avatar_cache_seconds=avatar_cache_seconds,
+            )
+        else:
+            self._draw_snapshot_mini_section(
+                image,
+                draw,
+                live_queue_box,
+                "SNAPSHOT MINI",
+                self._snapshot_mini_candidates(
+                    replay_cards + offline_cards + error_cards,
+                    live_cards[:live_limit],
+                    max_items=4,
+                ),
+                theme,
+                max_items=4,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+            )
         self._draw_compact_section(
             image,
             draw,
@@ -766,6 +783,120 @@ class LiveRadar(BasePlugin):
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
         return len(visible)
+
+    def _snapshot_mini_candidates(self, cards, excluded_cards=None, max_items=4):
+        excluded = {
+            (card.get("platform"), card.get("id"))
+            for card in (excluded_cards or [])
+        }
+        candidates = []
+        for card in cards:
+            key = (card.get("platform"), card.get("id"))
+            if key in excluded:
+                continue
+            candidates.append(card)
+
+        def sort_key(card):
+            has_cover = 0 if card.get("cover") else 1
+            return (
+                has_cover,
+                STATUS_RANK.get(card.get("status"), 99),
+                0 if card.get("is_fav") else 1,
+                -self._safe_int(card.get("heat"), 0),
+                self._card_display_name(card).lower(),
+            )
+
+        return sorted(candidates, key=sort_key)[: max(0, int(max_items))]
+
+    def _draw_snapshot_mini_section(self, image, draw, box, title, cards, theme, max_items=4, snapshot_cache_seconds=90):
+        x, y, w, h = box
+        sub_font = self._font(13, "bold")
+        self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
+        if cards:
+            self._draw_text_right(draw, "quiet slots", x + w, y, self._font(9, "bold"), theme["muted"])
+
+        content_y = y + 24
+        content_h = max(1, h - 24)
+        if not cards:
+            self._rounded_rectangle(
+                draw,
+                (x, content_y, x + w, y + h),
+                radius=8,
+                fill=theme["panel"],
+                outline=theme["line"],
+                width=1,
+            )
+            muted_font = self._font(13, "bold")
+            msg = "No snapshots"
+            msg_w = draw.textlength(msg, font=muted_font)
+            draw.text((x + (w - msg_w) / 2, content_y + max(14, int((content_h - self._line_height(muted_font)) / 2))), msg, fill=theme["muted"], font=muted_font)
+            return 0
+
+        visible = cards[: max(1, int(max_items))]
+        gap = 6
+        col_gap = 8
+        columns = 2 if w >= 300 and len(visible) > 1 else 1
+        rows = max(1, int(math.ceil(len(visible) / columns)))
+        card_w = int((w - col_gap * (columns - 1)) / columns)
+        row_h = max(34, int((content_h - gap * (rows - 1)) / rows))
+
+        for index, card in enumerate(visible):
+            column = index % columns
+            row = index // columns
+            card_x = x + column * (card_w + col_gap)
+            card_y = content_y + row * (row_h + gap)
+            self._draw_snapshot_mini_card(
+                image,
+                draw,
+                (card_x, card_y, card_w, row_h),
+                card,
+                theme,
+                snapshot_cache_seconds,
+            )
+        return len(visible)
+
+    def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90):
+        x, y, w, h = [int(value) for value in box]
+        fill, ink, muted, line = self._card_palette(card["status"], theme)
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
+
+        pad = 5
+        thumb_w = max(42, min(62, int(w * 0.38)))
+        thumb_h = max(18, h - 2 * pad)
+        thumb_box = (x + pad, y + pad, x + pad + thumb_w, y + pad + thumb_h)
+        snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds)
+        if snapshot:
+            try:
+                size = (max(1, thumb_box[2] - thumb_box[0]), max(1, thumb_box[3] - thumb_box[1]))
+                fitted = ImageOps.fit(snapshot.convert("RGB"), size, method=self._resampling_filter())
+                image.paste(fitted, (thumb_box[0], thumb_box[1]))
+            except Exception as exc:
+                logger.warning("LiveRadar mini cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
+                self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+        else:
+            self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+        draw.rectangle(thumb_box, outline=ink, width=1)
+
+        text_x = thumb_box[2] + 8
+        text_w = max(20, x + w - pad - text_x)
+        dot_size = 6
+        dot_fill = {
+            "live": theme["live_ink"],
+            "replay": muted,
+            "error": ink,
+        }.get(card["status"], muted)
+        dot_y = y + max(6, int((h - self._line_height(self._font(11, "bold")) - 11) / 2))
+        draw.ellipse((text_x, dot_y + 3, text_x + dot_size, dot_y + 3 + dot_size), fill=dot_fill, outline=ink)
+
+        owner_text = self._card_display_name(card)
+        name_font = self._fit_font(draw, owner_text, max(12, text_w - dot_size - 5), 11, 8, "bold")
+        draw.text((text_x + dot_size + 5, dot_y), self._fit_text(draw, owner_text, name_font, text_w - dot_size - 5), fill=ink, font=name_font)
+
+        meta_text = f"{PLATFORMS.get(card['platform'], {'short': card['platform'][:2].upper()})['short']} / {self._status_label(card['status']).lower()}"
+        meta_font = self._fit_font(draw, meta_text, text_w, 8, 7)
+        meta_y = dot_y + self._line_height(name_font) + 1
+        if meta_y + self._line_height(meta_font) <= y + h - 2:
+            draw.text((text_x, meta_y), self._fit_text(draw, meta_text, meta_font, text_w), fill=muted, font=meta_font)
 
     def _live_queue_visible_count(self, box, card_count, max_items):
         return self._live_queue_layout(box, card_count, max_items)["visible_count"]

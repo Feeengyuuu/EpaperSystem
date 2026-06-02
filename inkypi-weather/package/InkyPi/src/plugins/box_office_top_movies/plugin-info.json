@@ -1,0 +1,6 @@
+{
+    "display_name": "Box Office Top Movies",
+    "id": "box_office_top_movies",
+    "class": "BoxOfficeTopMovies",
+    "repository": "local"
+}

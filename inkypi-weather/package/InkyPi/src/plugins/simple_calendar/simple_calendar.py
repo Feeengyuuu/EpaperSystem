@@ -31,6 +31,7 @@ DEFAULT_HOLIDAY_CALENDARS = [
 
 WEATHER_PANEL_BACKGROUND_DEFAULT = "cloudy"
 WEATHER_PANEL_BACKGROUND_BLEND = 0.72
+WEATHER_PANEL_BACKGROUND_STYLE_DEFAULT = "img2_original_heroes_mixed"
 WEATHER_PANEL_CONTEXT_MAX_AGE_SECONDS = 3 * 60 * 60
 WEATHER_PANEL_BACKGROUND_STYLES = {
     "classic": (),
@@ -38,6 +39,7 @@ WEATHER_PANEL_BACKGROUND_STYLES = {
     "img2_original_heroes_nyc_weather": ("img2_original_heroes_nyc_weather",),
     "img2_original_heroes_local_top_weather": ("img2_original_heroes_local_top_weather",),
     "img2_original_heroes_mixed": (
+        "img2_original_heroes",
         "img2_original_heroes_weather",
         "img2_original_heroes_nyc_weather",
         "img2_original_heroes_local_top_weather",
@@ -1053,10 +1055,10 @@ class SimpleCalendar(BasePlugin):
         return str(path)
 
     def _weather_panel_background_style(self, settings):
-        style = str((settings or {}).get("weatherPanelBackgroundStyle") or "classic").strip()
+        style = str((settings or {}).get("weatherPanelBackgroundStyle") or WEATHER_PANEL_BACKGROUND_STYLE_DEFAULT).strip()
         if style in WEATHER_PANEL_BACKGROUND_STYLES:
             return style
-        return "classic"
+        return WEATHER_PANEL_BACKGROUND_STYLE_DEFAULT
 
     def _weather_background_candidates(self, slug, style):
         plugin_dir = Path(__file__).resolve().parent
@@ -1073,7 +1075,7 @@ class SimpleCalendar(BasePlugin):
 
     def _weather_background_candidates_from_dir(self, directory, slug):
         candidates = []
-        for pattern in (f"{slug}.png", f"{slug}_*.png"):
+        for pattern in (f"{slug}.png", f"{slug}_*.png", f"*_{slug}.png"):
             candidates.extend(path for path in directory.glob(pattern) if path.is_file())
         variant_dir = directory / slug
         if variant_dir.is_dir():

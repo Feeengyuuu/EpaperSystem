@@ -1,15 +1,37 @@
 <input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
 
 <div class="form-group">
+    <label for="sourceMode" class="form-label">Poster source:</label>
+    <select id="sourceMode" name="sourceMode" class="form-input">
+        <option value="mao_era" selected>Great Leap Forward + Cultural Revolution themes</option>
+        <option value="all_archive">All Chinese Posters archive</option>
+        <option value="custom">Custom Chinese Posters theme URLs</option>
+    </select>
+    <small style="width: 100%; color: var(--text-primary);">
+        Default uses 1958-1976 themed pages from chineseposters.net instead of the full archive.
+    </small>
+</div>
+
+<div class="form-group">
+    <label for="themeUrls" class="form-label">Custom theme URLs:</label>
+    <textarea id="themeUrls" name="themeUrls" class="form-input" rows="4"
+        placeholder="https://chineseposters.net/themes/great-leap-forward&#10;https://chineseposters.net/themes/cultural-revolution-campaigns"></textarea>
+    <small style="width: 100%; color: var(--text-primary);">
+        Optional. Only chineseposters.net /themes/ URLs are accepted.
+    </small>
+</div>
+
+<div class="form-group">
     <label for="fitMode" class="form-label">Fit mode:</label>
     <select id="fitMode" name="fitMode" class="form-input">
-        <option value="rotate_portrait" selected>Rotate portrait posters</option>
+        <option value="triptych" selected>Three vertical posters with blurred background</option>
+        <option value="rotate_portrait">Rotate portrait posters</option>
         <option value="landscape">Keep original orientation</option>
         <option value="contain">Show full poster on plain background</option>
         <option value="cover">Fill screen by cropping</option>
     </select>
     <small style="width: 100%; color: var(--text-primary);">
-        Portrait posters rotate 90 degrees counterclockwise. Empty space is filled with a blurred version of the same image.
+        Three-poster mode uses the 1958-1976 source pool and keeps each poster plain over a soft blurred backdrop. Landscape mode shows a plain full image without a blur frame.
     </small>
 </div>
 
@@ -30,7 +52,9 @@
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
-            const fitMode = pluginSettings.fitMode === 'mosaic' ? 'rotate_portrait' : (pluginSettings.fitMode || 'rotate_portrait');
+            document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'mao_era';
+            document.getElementById('themeUrls').value = pluginSettings.themeUrls || '';
+            const fitMode = pluginSettings.fitMode === 'mosaic' ? 'rotate_portrait' : (pluginSettings.fitMode || 'triptych');
             document.getElementById('fitMode').value = fitMode;
             document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'white';
         }

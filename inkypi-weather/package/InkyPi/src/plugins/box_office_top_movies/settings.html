@@ -1,0 +1,107 @@
+<div style="margin-bottom:14px;">
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
+        Displays the top North American box office movies with posters and weekend gross.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="sourceMode" class="form-label">Chart source:</label>
+    <select id="sourceMode" name="sourceMode" class="form-input">
+        <option value="the_numbers" selected>The Numbers weekend chart</option>
+        <option value="auto">Auto with fallback</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="itemsCount" class="form-label">Number of movies:</label>
+    <select id="itemsCount" name="itemsCount" class="form-input">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5" selected>5</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="chartUrl" class="form-label">Weekend chart URL:</label>
+    <input id="chartUrl" name="chartUrl" class="form-input" value="https://www.the-numbers.com/weekend-box-office-chart" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbLanguage" class="form-label">TMDb language:</label>
+    <input id="tmdbLanguage" name="tmdbLanguage" class="form-input" value="en-US" spellcheck="false">
+    <small>Used for the English-title search match.</small>
+</div>
+
+<div class="form-group">
+    <label for="showLocalizedTitles" class="form-label">Localized titles:</label>
+    <select id="showLocalizedTitles" name="showLocalizedTitles" class="form-input">
+        <option value="true" selected>Show Simplified Chinese names</option>
+        <option value="false">Hide localized names</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="localizedLanguage" class="form-label">Localized title language:</label>
+    <input id="localizedLanguage" name="localizedLanguage" class="form-input" value="zh-CN" spellcheck="false">
+    <small>TMDb language code for the secondary movie name.</small>
+</div>
+
+<div class="form-group">
+    <label for="tmdbBearerTokenEnv" class="form-label">TMDb bearer token env key:</label>
+    <input id="tmdbBearerTokenEnv" name="tmdbBearerTokenEnv" class="form-input" value="TMDB_BEARER_TOKEN" spellcheck="false">
+    <small>Preferred. Leave the token in API Keys or the service environment and point this field to that variable name.</small>
+</div>
+
+<div class="form-group">
+    <label for="tmdbApiKeyEnv" class="form-label">TMDb API key env key:</label>
+    <input id="tmdbApiKeyEnv" name="tmdbApiKeyEnv" class="form-input" value="TMDB_API_KEY" spellcheck="false">
+    <small>Used only when no bearer token is available.</small>
+</div>
+
+<div class="form-group">
+    <label for="tmdbBearerToken" class="form-label">TMDb bearer token:</label>
+    <input id="tmdbBearerToken" name="tmdbBearerToken" class="form-input" type="password" placeholder="Leave blank to use env key" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbApiKey" class="form-label">TMDb API key:</label>
+    <input id="tmdbApiKey" name="tmdbApiKey" class="form-input" type="password" placeholder="Leave blank to use env key" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="cacheHours" class="form-label">Refresh cache every:</label>
+    <select id="cacheHours" name="cacheHours" class="form-input">
+        <option value="3">3 hours</option>
+        <option value="6" selected>6 hours</option>
+        <option value="12">12 hours</option>
+        <option value="24">24 hours</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="themeMode" class="form-label">Display theme:</label>
+    <select id="themeMode" name="themeMode" class="form-input">
+        <option value="auto" selected>Auto day/night</option>
+        <option value="cinema">Cinema dark</option>
+        <option value="paper">Light paper</option>
+    </select>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'the_numbers';
+            document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
+            document.getElementById('chartUrl').value = pluginSettings.chartUrl || 'https://www.the-numbers.com/weekend-box-office-chart';
+            document.getElementById('tmdbLanguage').value = pluginSettings.tmdbLanguage || 'en-US';
+            document.getElementById('showLocalizedTitles').value = pluginSettings.showLocalizedTitles || 'true';
+            document.getElementById('localizedLanguage').value = pluginSettings.localizedLanguage || 'zh-CN';
+            document.getElementById('tmdbBearerTokenEnv').value = pluginSettings.tmdbBearerTokenEnv || 'TMDB_BEARER_TOKEN';
+            document.getElementById('tmdbApiKeyEnv').value = pluginSettings.tmdbApiKeyEnv || 'TMDB_API_KEY';
+            document.getElementById('tmdbBearerToken').value = pluginSettings.tmdbBearerToken || '';
+            document.getElementById('tmdbApiKey').value = pluginSettings.tmdbApiKey || '';
+            document.getElementById('cacheHours').value = pluginSettings.cacheHours || '6';
+            document.getElementById('themeMode').value = pluginSettings.themeMode || 'auto';
+        }
+    });
+</script>

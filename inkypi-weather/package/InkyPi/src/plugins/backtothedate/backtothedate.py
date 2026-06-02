@@ -16,14 +16,32 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://chineseposters.net"
 POSTERS_URL = f"{BASE_URL}/posters/posters"
+DEFAULT_SOURCE_MODE = "mao_era"
+MAO_ERA_THEME_URLS = [
+    f"{BASE_URL}/themes/great-leap-forward",
+    f"{BASE_URL}/themes/cultural-revolution-campaigns",
+    f"{BASE_URL}/themes/monsters-demons",
+    f"{BASE_URL}/themes/revolutionary-networking",
+    f"{BASE_URL}/themes/shanghai-commune",
+    f"{BASE_URL}/themes/revolutionary-committees",
+    f"{BASE_URL}/themes/red-sea-movement",
+    f"{BASE_URL}/themes/may-seven-cadre-schools",
+    f"{BASE_URL}/themes/up-to-the-mountains",
+    f"{BASE_URL}/themes/pla-cultural-revolution",
+    f"{BASE_URL}/themes/mao-cult",
+]
 DEFAULT_MAX_PAGE = 141
 MAX_PAGE_CACHE_TTL = timedelta(days=7)
 POSTER_PATH_RE = re.compile(r"^/posters/(?!posters(?:$|\?))[-a-z0-9]+/?$", re.I)
+THEME_PATH_RE = re.compile(r"^/themes/[-a-z0-9]+/?$", re.I)
 IMAGE_PATH_RE = re.compile(r"/sites/default/files/images/[^\"'\s<>]+\.(?:jpg|jpeg|png)", re.I)
 REQUEST_HEADERS = {
     "User-Agent": "InkyPi BacktotheDate/1.0 (+https://chineseposters.net/)"
 }
 POSTER_DETAIL_CANDIDATE_LIMIT = 8
+THEME_PAGE_SAMPLE_LIMIT = 4
+DEFAULT_FIT_MODE = "triptych"
+TRIPTYCH_POSTER_COUNT = 3
 
 
 class _PosterLinkParser(HTMLParser):
@@ -104,6 +122,13 @@ class BacktotheDate(BasePlugin):
         attempts = self._safe_int(settings.get("attempts"), 8, minimum=1, maximum=20)
         errors = []
 
+        if self._fit_mode(settings) in {"triptych", "three_vertical", "three_posters", "gallery"}:
+            try:
+                return self._generate_triptych_image(settings, dimensions, attempts)
+            except Exception as exc:
+                logger.warning("BacktotheDate triptych generation failed; falling back to single poster: %s", exc)
+                errors.append(str(exc))
+
         for _ in range(attempts):
             try:
                 poster = self._select_random_poster(settings)
@@ -125,6 +150,45 @@ class BacktotheDate(BasePlugin):
         detail = "; ".join(errors[-3:])
         raise RuntimeError(f"Could not fetch a Chinese poster image. {detail}")
 
+    def _generate_triptych_image(self, settings, dimensions, attempts):
+        selected = []
+        landscape_fallbacks = []
+        seen_urls = set()
+        max_attempts = max(attempts * 3, TRIPTYCH_POSTER_COUNT * 3)
+
+        for _ in range(max_attempts):
+            poster = self._select_random_poster(settings)
+            page_key = self._normalize_history_url(poster.get("page_url"))
+            image_key = self._normalize_history_url(poster.get("image_url"))
+            unique_key = image_key or page_key
+            if unique_key in seen_urls:
+                continue
+            seen_urls.add(unique_key)
+
+            image = self._load_poster_image(poster["image_url"], dimensions)
+            if not image:
+                continue
+            image = self._normalize_image(image)
+
+            target = selected if self._is_portrait(image) else landscape_fallbacks
+            target.append((poster, image))
+            if len(selected) >= TRIPTYCH_POSTER_COUNT:
+                break
+
+        poster_images = selected[:TRIPTYCH_POSTER_COUNT]
+        if len(poster_images) < TRIPTYCH_POSTER_COUNT:
+            poster_images.extend(landscape_fallbacks[:TRIPTYCH_POSTER_COUNT - len(poster_images)])
+        if len(poster_images) < TRIPTYCH_POSTER_COUNT:
+            raise RuntimeError(f"Only found {len(poster_images)} usable posters for triptych layout.")
+
+        posters = [poster for poster, _image in poster_images]
+        self._remember_success(posters)
+        logger.info(
+            "Selected Chinese poster triptych: %s",
+            " | ".join((poster.get("title") or poster["page_url"]) for poster in posters),
+        )
+        return self._compose_triptych_display_image(poster_images, dimensions, settings)
+
     def _display_dimensions(self, device_config):
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
@@ -132,7 +196,6 @@ class BacktotheDate(BasePlugin):
         return dimensions
 
     def _select_random_poster(self, settings):
-        max_page = self._get_max_page(settings)
         state = self._read_state()
         discarded_page_urls = self._discarded_url_keys(
             state,
@@ -144,6 +207,18 @@ class BacktotheDate(BasePlugin):
             "discarded_image_urls",
             legacy_keys=("last_image_url", "last_image_urls"),
         )
+
+        theme_urls = self._source_theme_urls(settings)
+        if theme_urls:
+            poster = self._select_random_theme_poster(theme_urls, discarded_page_urls, discarded_image_urls)
+            if poster:
+                return poster
+            logger.warning("No target-era poster found in configured theme sources; falling back to full poster archive.")
+
+        return self._select_random_archive_poster(settings, discarded_page_urls, discarded_image_urls)
+
+    def _select_random_archive_poster(self, settings, discarded_page_urls, discarded_image_urls):
+        max_page = self._get_max_page(settings)
         seen_fallbacks = []
 
         for _ in range(8):
@@ -177,6 +252,96 @@ class BacktotheDate(BasePlugin):
             return random.choice(seen_fallbacks)
 
         raise RuntimeError("No poster image link found on sampled pages.")
+
+    def _select_random_theme_poster(self, theme_urls, discarded_page_urls, discarded_image_urls):
+        seen_fallbacks = []
+        sources = list(theme_urls)
+        random.shuffle(sources)
+
+        for source_url in sources:
+            try:
+                first_html = self._fetch_text(source_url)
+                max_page = self._discover_max_page(first_html) or 0
+                pages = list(range(max_page + 1))
+                random.shuffle(pages)
+                for page in pages[:THEME_PAGE_SAMPLE_LIMIT]:
+                    html_text = first_html if page == 0 else self._fetch_text(source_url, params={"page": page})
+                    links = self._extract_poster_links(html_text)
+                    if not links:
+                        continue
+                    candidates = [
+                        link
+                        for link in links
+                        if self._normalize_history_url(link.get("url")) not in discarded_page_urls
+                    ] or links
+                    random.shuffle(candidates)
+                    for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
+                        detail_html = self._fetch_text(link["url"])
+                        poster = self._extract_poster_data(detail_html, link["url"])
+                        if link.get("title") and not poster.get("title"):
+                            poster["title"] = link["title"]
+                        if not poster.get("image_url"):
+                            continue
+                        page_key = self._normalize_history_url(poster.get("page_url"))
+                        image_key = self._normalize_history_url(poster.get("image_url"))
+                        if page_key in discarded_page_urls or image_key in discarded_image_urls:
+                            seen_fallbacks.append(poster)
+                            continue
+                        return poster
+            except Exception as exc:
+                logger.warning("BacktotheDate target theme source failed %s: %s", source_url, exc)
+
+        if seen_fallbacks:
+            logger.info("BacktotheDate target theme sources only found displayed posters; reusing one fallback.")
+            return random.choice(seen_fallbacks)
+        return None
+
+    def _source_theme_urls(self, settings):
+        mode = str(settings.get("sourceMode") or DEFAULT_SOURCE_MODE).strip().lower()
+        if mode in {"all", "archive", "all_archive", "legacy"}:
+            return []
+
+        custom_urls = self._parse_theme_urls(settings.get("themeUrls"))
+        if mode == "custom":
+            return custom_urls
+        if custom_urls:
+            return self._dedupe_urls(MAO_ERA_THEME_URLS + custom_urls)
+        return list(MAO_ERA_THEME_URLS)
+
+    def _parse_theme_urls(self, value):
+        if not value:
+            return []
+        if isinstance(value, str):
+            raw_items = re.split(r"[\s,]+", value)
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            return []
+
+        urls = []
+        for item in raw_items:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            url = urljoin(BASE_URL, text)
+            parsed = urlparse(url)
+            if parsed.netloc.lower() != urlparse(BASE_URL).netloc.lower():
+                continue
+            if not THEME_PATH_RE.match(parsed.path):
+                continue
+            urls.append(f"{BASE_URL}{parsed.path.rstrip('/')}")
+        return self._dedupe_urls(urls)
+
+    def _dedupe_urls(self, urls):
+        result = []
+        seen = set()
+        for url in urls:
+            key = self._normalize_history_url(url)
+            if not key or key in seen:
+                continue
+            result.append(url)
+            seen.add(key)
+        return result
 
     def _get_max_page(self, settings):
         configured_page = self._safe_int(settings.get("maxPage"), None, minimum=0, maximum=10000)
@@ -269,26 +434,37 @@ class BacktotheDate(BasePlugin):
 
         return image
 
-    def _is_portrait(self, image):
-        return image.size[0] < image.size[1]
-
-    def _fit_image(self, image, dimensions, settings):
+    def _normalize_image(self, image):
         image = ImageOps.exif_transpose(image)
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
         elif image.mode == "L":
             image = image.convert("RGB")
+        return image
 
-        fit_mode = (settings.get("fitMode") or "rotate_portrait").lower()
+    def _is_portrait(self, image):
+        return image.size[0] < image.size[1]
+
+    def _fit_image(self, image, dimensions, settings):
+        image = self._normalize_image(image)
+
+        fit_mode = self._fit_mode(settings)
         if fit_mode == "cover":
             return ImageOps.fit(image, dimensions, method=Image.LANCZOS)
         if fit_mode in {"rotate_portrait", "rotate", "mosaic", "wall", "auto"}:
             if self._is_portrait(image):
                 image = image.rotate(90, expand=True)
-            return self._fit_blur_contain(image, dimensions, settings)
+                return self._fit_blur_contain(image, dimensions, settings)
+            return self._fit_plain_contain(image, dimensions, settings)
         if fit_mode in {"landscape", "adaptive", "ambient"}:
             return self._fit_landscape(image, dimensions, settings)
 
+        return self._fit_plain_contain(image, dimensions, settings)
+
+    def _fit_mode(self, settings):
+        return str(settings.get("fitMode") or DEFAULT_FIT_MODE).strip().lower()
+
+    def _fit_plain_contain(self, image, dimensions, settings):
         fitted = ImageOps.contain(image, dimensions, method=Image.LANCZOS)
         background = self._background(settings).copy()
         if background.size != dimensions:
@@ -299,7 +475,36 @@ class BacktotheDate(BasePlugin):
         return background
 
     def _fit_landscape(self, image, dimensions, settings):
-        return self._fit_blur_contain(image, dimensions, settings, max_width_ratio=0.52 if self._is_portrait(image) else 1.0)
+        return self._fit_plain_contain(image, dimensions, settings)
+
+    def _compose_triptych_display_image(self, poster_images, dimensions, settings):
+        width, height = dimensions
+        canvas = self._triptych_backdrop([image for _poster, image in poster_images], dimensions, settings)
+        column_width = width // TRIPTYCH_POSTER_COUNT
+
+        for index, (_poster, image) in enumerate(poster_images[:TRIPTYCH_POSTER_COUNT]):
+            x0 = index * column_width
+            target_width = column_width if index < TRIPTYCH_POSTER_COUNT - 1 else width - x0
+            fitted = ImageOps.contain(image, (target_width, height), method=Image.LANCZOS)
+            x = x0 + (target_width - fitted.size[0]) // 2
+            y = (height - fitted.size[1]) // 2
+            canvas.paste(fitted, (x, y))
+
+        return canvas
+
+    def _triptych_backdrop(self, images, dimensions, settings):
+        background = self._background(settings)
+        if background.size != dimensions:
+            background = Image.new("RGB", dimensions, background.getpixel((0, 0)))
+        if not images:
+            return background
+
+        backdrop = ImageOps.fit(images[0], dimensions, method=Image.LANCZOS)
+        blur_radius = max(8, min(dimensions) // 26)
+        backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        backdrop = ImageEnhance.Color(backdrop).enhance(0.35)
+        backdrop = ImageEnhance.Contrast(backdrop).enhance(0.75)
+        return Image.blend(backdrop, background, 0.72)
 
     def _fit_blur_contain(self, image, dimensions, settings, max_width_ratio=1.0):
         backdrop = ImageOps.fit(image, dimensions, method=Image.LANCZOS)
