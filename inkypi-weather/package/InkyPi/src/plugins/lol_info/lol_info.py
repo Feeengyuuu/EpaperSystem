@@ -23,13 +23,15 @@ from utils.theme_utils import get_theme_context
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "lol_info"
-STYLE_VERSION = "lol-info-v6-skin-art-pool"
+STYLE_VERSION = "lol-info-v7-owned-latest-skin-pool"
 DEFAULT_GAME_NAME = "Hide on bush"
 DEFAULT_TAG_LINE = "KR1"
 DEFAULT_PLATFORM = "kr"
 DEFAULT_REGION = "asia"
 DDRAGON_VERSION_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 DDRAGON_BASE = "https://ddragon.leagueoflegends.com/cdn"
+CDRAGON_RAW_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default"
+CDRAGON_SKINS_URL = f"{CDRAGON_RAW_BASE}/v1/skins.json"
 LOL_LOGO_FILE = "league-of-legends-logo.png"
 RIOT_LOGO_FILE = "riot-games-logo.png"
 
@@ -186,7 +188,7 @@ class LoLInfo(BasePlugin):
 
         mastery_summaries = [self._mastery_summary(item, champions) for item in mastery]
         featured_champions = self._featured_champions(mastery_summaries, matches)
-        skin_art_pool = self._skin_art_pool(featured_champions, champions)
+        skin_art_pool = self._skin_art_pool(featured_champions, champions, settings)
         ranked = self._best_rank(leagues)
         return {
             "source": "Riot Games API",
@@ -324,11 +326,12 @@ class LoLInfo(BasePlugin):
             reverse=True,
         )[:limit]
 
-    def _skin_art_pool(self, featured_champions, champions, max_per_champion=5):
+    def _skin_art_pool(self, featured_champions, champions, settings=None, max_per_champion=5):
         version = (champions or {}).get("version") or ""
         if not version:
             return []
-        pool = []
+        settings = settings or {}
+        featured_pool = []
         for champion in (featured_champions or [])[:5]:
             champion_key = str(champion.get("champion_key") or "").strip()
             if not champion_key:
@@ -354,7 +357,7 @@ class LoLInfo(BasePlugin):
                 skin_name = str(skin.get("name") or "").strip()
                 if not skin_name or skin_name.lower() == "default":
                     skin_name = champion.get("champion_name") or champion_key
-                pool.append({
+                featured_pool.append({
                     "id": f"{champion_key}:{skin_num}",
                     "champion_key": champion_key,
                     "champion_name": champion.get("champion_name") or champion_key,
@@ -363,10 +366,222 @@ class LoLInfo(BasePlugin):
                     "skin_name": skin_name,
                     "splash_url": f"{DDRAGON_BASE}/img/champion/splash/{champion_key}_{skin_num}.jpg",
                     "loading_url": f"{DDRAGON_BASE}/img/champion/loading/{champion_key}_{skin_num}.jpg",
+                    "pool_source": "featured",
                     "mastery_points": champion.get("mastery_points") or 0,
                     "recent_games": champion.get("recent_games") or 0,
                 })
+        owned_refs = self._skin_ref_tokens(settings.get("ownedSkinIds"))
+        include_latest = self._enabled(settings.get("includeLatestSkins"), default=bool(settings))
+        latest_count = self._bounded_int(settings.get("latestSkinCount"), 8, 0, 24)
+        catalog = []
+        if owned_refs or (include_latest and latest_count > 0):
+            cache_hours = self._bounded_int(settings.get("latestSkinCacheHours"), 6, 1, 168)
+            catalog = self._communitydragon_skins(
+                cache_hours=cache_hours,
+                force_refresh=self._enabled(settings.get("forceRefresh"), default=False),
+            )
+        owned_pool = self._owned_skin_art_pool(owned_refs, catalog, champions)
+        latest_pool = self._latest_skin_art_pool(catalog, champions, latest_count) if include_latest and latest_count > 0 else []
+        return self._dedupe_skin_art_pool(owned_pool + latest_pool + featured_pool)
+
+    def _communitydragon_skins(self, cache_hours=6, force_refresh=False):
+        cache_path = self._cache_dir() / "communitydragon_skins_latest.json"
+        cache = self._read_json(cache_path, {})
+        if (
+            not force_refresh
+            and cache.get("updated_ts")
+            and time.time() - float(cache["updated_ts"]) < max(1, int(cache_hours)) * 60 * 60
+            and isinstance(cache.get("records"), list)
+        ):
+            return cache.get("records") or []
+        try:
+            response = get_http_session().get(CDRAGON_SKINS_URL, timeout=35)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                records = list(payload.values())
+            elif isinstance(payload, list):
+                records = payload
+            else:
+                records = []
+            self._write_json(cache_path, {"updated_ts": time.time(), "records": records})
+            return records
+        except Exception as exc:
+            logger.warning("LoL CommunityDragon skin catalog unavailable: %s", exc)
+            return cache.get("records") or []
+
+    def _owned_skin_art_pool(self, refs, records, champions):
+        raw_refs = [str(ref).strip() for ref in refs if str(ref).strip()]
+        normalized_refs = [ref.lower() for ref in raw_refs]
+        if not raw_refs:
+            return []
+        pool = []
+        matched = set()
+        for record in records or []:
+            art = self._skin_art_from_cdragon(record, champions, "owned")
+            if not art:
+                continue
+            keys = self._skin_art_match_keys(art)
+            hit = next((ref for ref in normalized_refs if ref in keys), None)
+            if not hit:
+                continue
+            matched.add(hit)
+            pool.append(art)
+        for raw_ref, normalized_ref in zip(raw_refs, normalized_refs):
+            if normalized_ref in matched:
+                continue
+            manual = self._skin_art_from_manual_ref(raw_ref, champions)
+            if manual:
+                pool.append(manual)
         return pool
+
+    def _latest_skin_art_pool(self, records, champions, limit):
+        pool = []
+        for record in records or []:
+            art = self._skin_art_from_cdragon(record, champions, "latest")
+            if art:
+                pool.append(art)
+        pool = sorted(pool, key=self._skin_art_release_key, reverse=True)
+        return pool[: max(0, int(limit))]
+
+    def _skin_art_from_cdragon(self, skin, champions, source):
+        if not isinstance(skin, dict):
+            return None
+        champion_id = self._safe_int(skin.get("championId") or skin.get("champion_id"))
+        skin_id = self._safe_int(skin.get("id") or skin.get("skinId") or skin.get("skin_id"))
+        skin_num = self._safe_int(skin.get("skinNum") or skin.get("num"))
+        if champion_id is None and skin_id is not None:
+            champion_id = skin_id // 1000
+        if skin_num is None and skin_id is not None and champion_id:
+            skin_num = skin_id - champion_id * 1000
+        if skin.get("isBase") is True or skin_num in (None, 0):
+            return None
+        if skin.get("parentSkin") or skin.get("parentSkinId"):
+            return None
+        champion = ((champions or {}).get("by_key") or {}).get(str(champion_id)) or {}
+        champion_key = str(
+            champion.get("id")
+            or skin.get("championName")
+            or skin.get("championAlias")
+            or ""
+        ).strip()
+        champion_key = "".join(ch for ch in champion_key if ch.isalnum())
+        if not champion_key:
+            return None
+        champion_name = champion.get("name") or skin.get("championName") or champion_key
+        skin_name = str(skin.get("name") or skin.get("skinName") or "").strip() or f"{champion_name} {skin_num}"
+        splash_url = (
+            self._communitydragon_asset_url(skin.get("uncenteredSplashPath"))
+            or self._communitydragon_asset_url(skin.get("splashPath"))
+            or f"{DDRAGON_BASE}/img/champion/splash/{champion_key}_{skin_num}.jpg"
+        )
+        loading_url = (
+            self._communitydragon_asset_url(skin.get("loadScreenPath"))
+            or self._communitydragon_asset_url(skin.get("loadScreenVintagePath"))
+            or f"{DDRAGON_BASE}/img/champion/loading/{champion_key}_{skin_num}.jpg"
+        )
+        return {
+            "id": f"{champion_key}:{skin_num}",
+            "skin_id": str(skin_id or ""),
+            "champion_key": champion_key,
+            "champion_name": champion_name,
+            "champion_icon": champion.get("icon_url") or "",
+            "skin_num": int(skin_num),
+            "skin_name": skin_name,
+            "splash_url": splash_url,
+            "loading_url": loading_url,
+            "release_date": str(skin.get("releaseDate") or skin.get("release_date") or skin.get("lastUpdated") or ""),
+            "pool_source": source,
+        }
+
+    def _skin_art_from_manual_ref(self, ref, champions):
+        champion_key = ""
+        skin_num = None
+        text = str(ref or "").strip()
+        for sep in (":", "_"):
+            if sep in text:
+                left, right = text.rsplit(sep, 1)
+                if right.strip().isdigit():
+                    champion_key = "".join(ch for ch in left.strip() if ch.isalnum())
+                    skin_num = int(right.strip())
+                break
+        if not champion_key or skin_num in (None, 0):
+            return None
+        by_id = (champions or {}).get("by_id") or {}
+        champion = by_id.get(champion_key.lower()) or {}
+        champion_key = champion.get("id") or champion_key
+        champion_name = champion.get("name") or champion_key
+        return {
+            "id": f"{champion_key}:{skin_num}",
+            "skin_id": "",
+            "champion_key": champion_key,
+            "champion_name": champion_name,
+            "champion_icon": champion.get("icon_url") or "",
+            "skin_num": skin_num,
+            "skin_name": f"{champion_name} {skin_num}",
+            "splash_url": f"{DDRAGON_BASE}/img/champion/splash/{champion_key}_{skin_num}.jpg",
+            "loading_url": f"{DDRAGON_BASE}/img/champion/loading/{champion_key}_{skin_num}.jpg",
+            "release_date": "",
+            "pool_source": "owned",
+        }
+
+    def _communitydragon_asset_url(self, path):
+        path = str(path or "").strip().replace("\\", "/")
+        if not path:
+            return ""
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        path = path.lstrip("/")
+        prefix = "lol-game-data/assets/"
+        if path.lower().startswith(prefix):
+            path = path[len(prefix):]
+        return f"{CDRAGON_RAW_BASE}/{path.lower()}"
+
+    @staticmethod
+    def _skin_ref_tokens(value):
+        raw = value if isinstance(value, str) else ""
+        for sep in ("\n", "\r", ";", "|"):
+            raw = raw.replace(sep, ",")
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    @staticmethod
+    def _skin_art_match_keys(art):
+        keys = {
+            str(art.get("id") or "").lower(),
+            str(art.get("skin_id") or "").lower(),
+            f"{art.get('champion_key')}:{art.get('skin_num')}".lower(),
+            f"{art.get('champion_key')}_{art.get('skin_num')}".lower(),
+        }
+        return {key for key in keys if key and key != "none"}
+
+    def _dedupe_skin_art_pool(self, pool):
+        result = []
+        seen = set()
+        for item in pool or []:
+            keys = self._skin_art_match_keys(item)
+            if keys & seen:
+                continue
+            seen.update(keys)
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _skin_art_release_key(item):
+        raw = str(item.get("release_date") or "")
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        date_value = int((digits + "0" * 14)[:14]) if digits else 0
+        try:
+            skin_id = int(item.get("skin_id") or 0)
+        except Exception:
+            skin_id = 0
+        return date_value, skin_id, int(item.get("skin_num") or 0)
+
+    @staticmethod
+    def _safe_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return None
 
     def _dragon_champion_detail(self, champion_key, version):
         safe_key = "".join(ch for ch in str(champion_key or "") if ch.isalnum())
@@ -878,6 +1093,10 @@ class LoLInfo(BasePlugin):
             str(self._enabled(settings.get("includeChallenges"), default=True)),
             str(self._enabled(settings.get("includeActiveGame"), default=True)),
             str(self._enabled(settings.get("useMockData"), default=False)),
+            str(settings.get("ownedSkinIds") or ""),
+            str(self._enabled(settings.get("includeLatestSkins"), default=True)),
+            str(self._bounded_int(settings.get("latestSkinCount"), 8, 0, 24)),
+            str(self._bounded_int(settings.get("latestSkinCacheHours"), 6, 1, 168)),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
 

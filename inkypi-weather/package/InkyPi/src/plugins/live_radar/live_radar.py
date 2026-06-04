@@ -890,9 +890,13 @@ class LiveRadar(BasePlugin):
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
 
         pad = 5
-        thumb_w = max(42, min(62, int(w * 0.38)))
-        thumb_h = max(18, h - 2 * pad)
-        thumb_box = (x + pad, y + pad, x + pad + thumb_w, y + pad + thumb_h)
+        thumb_h_max = max(18, h - 2 * pad)
+        available_w = max(1, w - 2 * pad)
+        min_text_w = max(62, min(92, int(w * 0.34)))
+        thumb_w = min(max(42, available_w - min_text_w - 8), max(42, int(thumb_h_max * 16 / 9)))
+        thumb_h = max(18, min(thumb_h_max, int(thumb_w * 9 / 16)))
+        thumb_y = y + max(pad, int((h - thumb_h) / 2))
+        thumb_box = (x + pad, thumb_y, x + pad + thumb_w, thumb_y + thumb_h)
         snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds)
         if snapshot:
             try:

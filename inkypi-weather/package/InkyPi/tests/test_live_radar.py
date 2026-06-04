@@ -641,8 +641,148 @@ def test_snapshot_mini_section_draws_cover_thumbnails():
 
     assert visible == 1
     assert (24, 180, 240) in set(image.crop((18, 42, 52, 62)).getdata())
+    assert (24, 180, 240) in set(image.crop((112, 58, 126, 72)).getdata())
     assert (240, 80, 32) not in set(image.crop((18, 82, 40, 104)).getdata())
-    assert (240, 80, 32) in set(image.crop((86, 58, 105, 78)).getdata())
+    assert (240, 80, 32) in set(image.crop((140, 58, 158, 78)).getdata())
+
+
+def test_snapshot_mini_card_keeps_single_tall_thumbnail_landscape():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (280, 130), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    cover = Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/live.jpg" else None
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    card = {
+        "platform": "twitch",
+        "id": "live-cover",
+        "owner": "Live Cover",
+        "label": "",
+        "title": "Live stream",
+        "status": "live",
+        "is_fav": False,
+        "heat": 0,
+        "start_time": None,
+        "cover": "https://covers.test/live.jpg",
+        "avatar": "",
+    }
+
+    plugin._draw_snapshot_mini_card(image, draw, (10, 20, 220, 76), card, theme)
+
+    assert image.getpixel((120, 52)) == (24, 180, 240)
+    assert image.getpixel((136, 52)) != (24, 180, 240)
+
+
+def test_snapshot_mini_section_keeps_two_thumbnails_landscape():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    covers = {
+        "https://covers.test/0.jpg": Image.new("RGB", (160, 90), (24, 180, 240)),
+        "https://covers.test/1.jpg": Image.new("RGB", (160, 90), (220, 90, 50)),
+    }
+    plugin._load_cover_source = lambda url, cache_seconds: covers.get(url)
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"live-cover-{index}",
+            "owner": f"Live Cover {index}",
+            "label": "",
+            "title": "Live stream",
+            "status": "live",
+            "is_fav": False,
+            "heat": 0,
+            "start_time": None,
+            "cover": f"https://covers.test/{index}.jpg",
+            "avatar": "",
+        }
+        for index in range(2)
+    ]
+
+    visible = plugin._draw_snapshot_mini_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme)
+
+    assert visible == 2
+    assert image.getpixel((108, 80)) == (24, 180, 240)
+    assert image.getpixel((300, 80)) == (220, 90, 50)
+
+
+def test_snapshot_mini_section_keeps_three_thumbnails_landscape():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    covers = {
+        "https://covers.test/0.jpg": Image.new("RGB", (160, 90), (24, 180, 240)),
+        "https://covers.test/1.jpg": Image.new("RGB", (160, 90), (220, 90, 50)),
+        "https://covers.test/2.jpg": Image.new("RGB", (160, 90), (90, 160, 120)),
+    }
+    plugin._load_cover_source = lambda url, cache_seconds: covers.get(url)
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"live-cover-{index}",
+            "owner": f"Live Cover {index}",
+            "label": "",
+            "title": "Live stream",
+            "status": "live",
+            "is_fav": False,
+            "heat": 0,
+            "start_time": None,
+            "cover": f"https://covers.test/{index}.jpg",
+            "avatar": "",
+        }
+        for index in range(3)
+    ]
+
+    visible = plugin._draw_snapshot_mini_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme)
+
+    assert visible == 3
+    assert image.getpixel((82, 50)) == (24, 180, 240)
+    assert image.getpixel((274, 50)) == (220, 90, 50)
+    assert image.getpixel((82, 106)) == (90, 160, 120)
+
+
+def test_snapshot_mini_section_keeps_four_thumbnails_landscape():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    covers = {
+        "https://covers.test/0.jpg": Image.new("RGB", (160, 90), (24, 180, 240)),
+        "https://covers.test/1.jpg": Image.new("RGB", (160, 90), (220, 90, 50)),
+        "https://covers.test/2.jpg": Image.new("RGB", (160, 90), (90, 160, 120)),
+        "https://covers.test/3.jpg": Image.new("RGB", (160, 90), (180, 120, 220)),
+    }
+    plugin._load_cover_source = lambda url, cache_seconds: covers.get(url)
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"live-cover-{index}",
+            "owner": f"Live Cover {index}",
+            "label": "",
+            "title": "Live stream",
+            "status": "live",
+            "is_fav": False,
+            "heat": 0,
+            "start_time": None,
+            "cover": f"https://covers.test/{index}.jpg",
+            "avatar": "",
+        }
+        for index in range(4)
+    ]
+
+    visible = plugin._draw_snapshot_mini_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme)
+
+    assert visible == 4
+    assert image.getpixel((82, 50)) == (24, 180, 240)
+    assert image.getpixel((274, 50)) == (220, 90, 50)
+    assert image.getpixel((82, 106)) == (90, 160, 120)
+    assert image.getpixel((274, 106)) == (180, 120, 220)
 
 
 def test_snapshot_mini_card_uses_platform_text_and_uptime_instead_of_live_dot():
@@ -697,7 +837,7 @@ def test_snapshot_mini_card_uses_platform_text_and_uptime_instead_of_live_dot():
     finally:
         live_radar_module.time.time = original_time
 
-    meta_pixels = set(image.crop((100, 58, 145, 80)).getdata())
+    meta_pixels = set(image.crop((160, 58, 220, 80)).getdata())
     assert theme["live_muted"] in meta_pixels
     assert any(text == "TW" and fill == theme["live_muted"] for _xy, text, fill in seen["texts"])
     assert any(text == "1h 02m" and fill == LIVE_STATUS_DOT for _xy, text, fill in seen["texts"])

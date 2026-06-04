@@ -555,6 +555,53 @@ def test_refresh_due_plugin_instances_refreshes_displayed_refresh_on_display_onl
     assert device_config.write_count == 1
 
 
+def test_refresh_due_plugin_instances_refreshes_displayed_lol_info_by_default(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("displayed-lol-info-refresh")
+    device_config = FakeDeviceConfig(tmp_path)
+    current_dt = datetime(2026, 6, 4, 16, 0, tzinfo=timezone.utc)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "lol_info",
+                "name": "LoL Daily",
+                "plugin_settings": {"id": "displayed"},
+                "refresh": {"scheduled": "15:00"},
+                "latest_refresh_time": "2026-06-04T15:01:00+00:00",
+            },
+            {
+                "plugin_id": "lol_info",
+                "name": "LoL Other",
+                "plugin_settings": {"id": "other"},
+                "refresh": {"scheduled": "15:00"},
+                "latest_refresh_time": "2026-06-04T15:01:00+00:00",
+            },
+        ],
+    )
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "lol_info_LoL_Daily.png")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "lol_info_LoL_Other.png")
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    displayed = playlist.find_plugin("lol_info", "LoL Daily")
+    task = RefreshTask(device_config, display_manager=None)
+    task._refresh_due_plugin_instances(
+        playlist,
+        current_dt,
+        displayed_plugin_instance=displayed,
+    )
+
+    assert calls == ["displayed"]
+    assert displayed.latest_refresh_time == "2026-06-04T16:00:00+00:00"
+    assert playlist.find_plugin("lol_info", "LoL Other").latest_refresh_time == "2026-06-04T15:01:00+00:00"
+    assert device_config.write_count == 1
+
+
 def test_refresh_due_plugin_instances_force_refreshes_fresh_cache(monkeypatch):
     calls = []
     tmp_path = make_test_dir("force-cache")

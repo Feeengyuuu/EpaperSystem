@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 import types
@@ -78,7 +79,14 @@ def test_mock_generate_image_renders_branded_dashboard(tmp_path):
     assert image.size == (800, 480)
     generated = list(tmp_path.glob("*.png"))
     assert generated
-    assert any(path.name.startswith("image_") for path in generated)
+    cache_files = list(tmp_path.glob("*.json"))
+    assert cache_files
+    cached_image_paths = []
+    for path in cache_files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("image_path"):
+            cached_image_paths.append(Path(payload["image_path"]))
+    assert any(path in generated for path in cached_image_paths)
 
 
 def test_riot_logo_light_background_is_removed(tmp_path):
@@ -158,6 +166,117 @@ def test_skin_art_pool_uses_non_chroma_skin_splash_urls(tmp_path):
     assert [item["id"] for item in pool] == ["Ahri:1"]
     assert pool[0]["splash_url"].endswith("/cdn/img/champion/splash/Ahri_1.jpg")
     assert pool[0]["loading_url"].endswith("/cdn/img/champion/loading/Ahri_1.jpg")
+
+
+def test_skin_art_pool_can_use_configured_owned_skin_ids(tmp_path):
+    plugin = make_plugin(tmp_path)
+    plugin._communitydragon_skins = lambda **_kwargs: [
+        {
+            "id": 103001,
+            "championId": 103,
+            "name": "Owned Ahri",
+            "releaseDate": "2011-12-14",
+            "uncenteredSplashPath": "/lol-game-data/assets/ASSETS/Characters/Ahri/Skins/Skin01/Images/Ahri_Splash_Uncentered_1.jpg",
+            "loadScreenPath": "/lol-game-data/assets/ASSETS/Characters/Ahri/Skins/Skin01/AhriLoadscreen_1.jpg",
+        },
+        {
+            "id": 92002,
+            "championId": 92,
+            "name": "Owned Riven",
+            "releaseDate": "2012-03-01",
+            "uncenteredSplashPath": "/lol-game-data/assets/ASSETS/Characters/Riven/Skins/Skin02/Images/Riven_Splash_Uncentered_2.jpg",
+        },
+        {
+            "id": 157001,
+            "championId": 157,
+            "name": "Not Owned Yasuo",
+            "releaseDate": "2013-12-13",
+        },
+    ]
+
+    pool = plugin._skin_art_pool(
+        [],
+        {
+            "version": "16.11.1",
+            "by_key": {
+                "103": {"id": "Ahri", "name": "Ahri"},
+                "92": {"id": "Riven", "name": "Riven"},
+                "157": {"id": "Yasuo", "name": "Yasuo"},
+            },
+        },
+        {"ownedSkinIds": "103001, Riven:2", "includeLatestSkins": "false"},
+    )
+
+    assert [item["id"] for item in pool] == ["Ahri:1", "Riven:2"]
+    assert pool[0]["pool_source"] == "owned"
+    assert pool[0]["splash_url"].endswith("/assets/characters/ahri/skins/skin01/images/ahri_splash_uncentered_1.jpg")
+
+
+def test_owned_skin_manual_fallback_keeps_canonical_champion_key(tmp_path):
+    plugin = make_plugin(tmp_path)
+    plugin._communitydragon_skins = lambda **_kwargs: []
+
+    pool = plugin._skin_art_pool(
+        [],
+        {
+            "version": "16.11.1",
+            "by_id": {
+                "riven": {"id": "Riven", "name": "Riven"},
+            },
+        },
+        {"ownedSkinIds": "riven:2", "includeLatestSkins": "false"},
+    )
+
+    assert [item["id"] for item in pool] == ["Riven:2"]
+    assert pool[0]["splash_url"].endswith("/cdn/img/champion/splash/Riven_2.jpg")
+
+
+def test_skin_art_pool_adds_latest_skins_by_release_date(tmp_path):
+    plugin = make_plugin(tmp_path)
+    plugin._communitydragon_skins = lambda **_kwargs: [
+        {"id": 103001, "championId": 103, "name": "Old Ahri", "releaseDate": "2011-12-14"},
+        {"id": 92002, "championId": 92, "name": "New Riven", "releaseDate": "2026-06-01"},
+        {"id": 157001, "name": "Newest Yasuo", "releaseDate": "2026-06-03"},
+    ]
+
+    pool = plugin._skin_art_pool(
+        [],
+        {
+            "version": "16.11.1",
+            "by_key": {
+                "103": {"id": "Ahri", "name": "Ahri"},
+                "92": {"id": "Riven", "name": "Riven"},
+                "157": {"id": "Yasuo", "name": "Yasuo"},
+            },
+        },
+        {"includeLatestSkins": "true", "latestSkinCount": "2"},
+    )
+
+    assert [item["id"] for item in pool] == ["Yasuo:1", "Riven:2"]
+    assert all(item["pool_source"] == "latest" for item in pool)
+
+
+def test_skin_art_pool_dedupes_owned_and_latest_skins(tmp_path):
+    plugin = make_plugin(tmp_path)
+    plugin._communitydragon_skins = lambda **_kwargs: [
+        {"id": 103001, "championId": 103, "name": "Ahri Skin", "releaseDate": "2026-06-03"},
+        {"id": 92002, "championId": 92, "name": "Riven Skin", "releaseDate": "2026-06-01"},
+    ]
+
+    pool = plugin._skin_art_pool(
+        [],
+        {
+            "version": "16.11.1",
+            "by_key": {
+                "103": {"id": "Ahri", "name": "Ahri"},
+                "92": {"id": "Riven", "name": "Riven"},
+            },
+        },
+        {"ownedSkinIds": "Ahri:1", "includeLatestSkins": "true", "latestSkinCount": "2"},
+    )
+
+    assert [item["id"] for item in pool] == ["Ahri:1", "Riven:2"]
+    assert pool[0]["pool_source"] == "owned"
 
 
 def test_overview_layout_places_art_large_on_right_and_logo_before_it(tmp_path):

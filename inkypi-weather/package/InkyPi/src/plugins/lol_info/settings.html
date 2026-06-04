@@ -54,6 +54,27 @@
 </div>
 
 <div class="form-group">
+  <label class="form-label" for="ownedSkinIds">Owned skin IDs</label>
+  <textarea id="ownedSkinIds" name="ownedSkinIds" class="form-input" rows="4" spellcheck="false" placeholder="Ahri:1, Riven:2, 103001"></textarea>
+  <small>Comma or newline separated. Supports Champion:SkinNum, Champion_SkinNum, or numeric skin IDs from CommunityDragon.</small>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="includeLatestSkins" id="includeLatestSkins" value="true" checked> Include latest game-data skins</label>
+  <input type="hidden" name="includeLatestSkins" value="false">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="latestSkinCount">Latest skins in art pool</label>
+  <input id="latestSkinCount" name="latestSkinCount" class="form-input" type="number" min="0" max="24" value="8">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="latestSkinCacheHours">Latest skin refresh hours</label>
+  <input id="latestSkinCacheHours" name="latestSkinCacheHours" class="form-input" type="number" min="1" max="168" value="6">
+</div>
+
+<div class="form-group">
   <label><input type="checkbox" name="includeChallenges" id="includeChallenges" value="true" checked> Include challenge points</label>
   <input type="hidden" name="includeChallenges" value="false">
 </div>
@@ -76,11 +97,11 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
-      ['gameName', 'tagLine', 'platformRoute', 'regionalRoute', 'refreshMinutes', 'recentLimit', 'masteryLimit'].forEach((id) => {
+      ['gameName', 'tagLine', 'platformRoute', 'regionalRoute', 'refreshMinutes', 'recentLimit', 'masteryLimit', 'ownedSkinIds', 'latestSkinCount', 'latestSkinCacheHours'].forEach((id) => {
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
       });
-      ['includeChallenges', 'includeActiveGame', 'useMockData', 'forceRefresh'].forEach((id) => {
+      ['includeLatestSkins', 'includeChallenges', 'includeActiveGame', 'useMockData', 'forceRefresh'].forEach((id) => {
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) {
           element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';

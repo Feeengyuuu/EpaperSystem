@@ -18,6 +18,7 @@ DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
 SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
 DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 180
+REFRESH_ON_DISPLAY_PLUGIN_IDS = {"backtothedate", "lol_info"}
 
 
 def _setting_enabled(value):
@@ -32,7 +33,7 @@ def _refresh_on_display(plugin_instance):
     if plugin_instance.plugin_id == "newspaper":
         return str(settings.get("mediaRotationMode") or "rotate").lower() != "single"
 
-    if plugin_instance.plugin_id == "backtothedate":
+    if plugin_instance.plugin_id in REFRESH_ON_DISPLAY_PLUGIN_IDS:
         return True
 
     return False
