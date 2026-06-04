@@ -117,6 +117,71 @@ def test_candidate_order_tries_candidates_with_cover_urls_first(tmp_path, monkey
     assert ordered[0]["issue_id"] == "2"
 
 
+def test_candidate_order_prefers_comic_vine_recent_before_gcd_exact(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 6, 3)
+    candidates = [
+        {"source": "gcd", "issue_id": "1", "match_quality": "exact_day", "cover_url": "https://example.com/gcd.jpg"},
+        {"source": "comicvine", "issue_id": "comicvine:2", "match_quality": "comicvine_recent", "cover_url": "https://example.com/cv.jpg"},
+    ]
+
+    ordered = plugin._candidate_order(candidates, {"version": "gcd-comic-covers-state-v1", "date_buckets": {}}, today)
+
+    assert ordered[0]["issue_id"] == "comicvine:2"
+
+
+def test_candidate_pool_defaults_to_comic_vine_with_gcd_fallback(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 6, 4)
+    monkeypatch.setattr(
+        plugin,
+        "_gcd_candidate_pool",
+        lambda _settings, _today: [{
+            "source": "gcd",
+            "issue_id": "gcd:1",
+            "match_quality": "exact_day",
+            "cover_url": "https://example.com/gcd.jpg",
+        }],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_comic_vine_candidate_pool",
+        lambda _settings, _today: [{
+            "source": "comicvine",
+            "issue_id": "comicvine:2",
+            "match_quality": "comicvine_recent",
+            "cover_url": "https://example.com/cv.jpg",
+        }],
+    )
+
+    candidates = plugin._candidate_pool({}, today)
+
+    assert [candidate["issue_id"] for candidate in candidates] == ["comicvine:2", "gcd:1"]
+
+
+def test_candidate_order_recycles_comic_vine_before_gcd_when_priority_seen(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 6, 4)
+    state = {
+        "version": "gcd-comic-covers-state-v1",
+        "date_buckets": {
+            "06-04": {
+                "seen_issue_ids": ["comicvine:1", "comicvine:2"],
+                "last_issue_id": "comicvine:2",
+            },
+        },
+    }
+    candidates = [
+        {"source": "comicvine", "issue_id": "comicvine:1", "match_quality": "comicvine_recent", "cover_url": "https://example.com/cv1.jpg"},
+        {"source": "comicvine", "issue_id": "comicvine:2", "match_quality": "comicvine_recent", "cover_url": "https://example.com/cv2.jpg"},
+        {"source": "gcd", "issue_id": "gcd:1", "match_quality": "exact_day", "cover_url": "https://example.com/gcd.jpg"},
+    ]
+
+    ordered = plugin._candidate_order(candidates, state, today)
+
+    assert ordered[0]["issue_id"] == "comicvine:1"
+
+
 def test_waste_pit_resets_after_pool_is_exhausted(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     today = date(2026, 5, 30)
@@ -358,6 +423,120 @@ def test_generate_image_uses_candidate_metadata_when_issue_detail_is_rate_limite
     assert image.getbbox() is not None
 
 
+def test_generate_image_defaults_to_plain_triptych_and_marks_all_covers(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    monkeypatch.setattr(plugin, "_current_date", lambda _device_config: date(2026, 5, 30))
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda _settings, _today: [
+            {"issue_id": "1", "country": "us", "on_sale_date": "1975-05-30", "match_quality": "exact_day"},
+            {"issue_id": "2", "country": "us", "on_sale_date": "1975-05-30", "match_quality": "exact_day"},
+            {"issue_id": "3", "country": "us", "on_sale_date": "1975-05-30", "match_quality": "exact_day"},
+        ],
+    )
+    monkeypatch.setattr(plugin, "_candidate_order", lambda candidates, _state, _today: candidates)
+    colors = {
+        "1": (220, 0, 0),
+        "2": (0, 160, 0),
+        "3": (0, 0, 220),
+    }
+
+    def fake_load_cover(candidate, _dimensions, _settings):
+        issue_id = candidate["issue_id"]
+        return {
+            **candidate,
+            "series_name": f"Series {issue_id}",
+            "issue_number": issue_id,
+            "cover_url": f"https://example.com/{issue_id}.jpg",
+            "date_label": "1975-05-30",
+            "image": Image.new("RGB", (200, 400), colors[issue_id]),
+        }
+
+    monkeypatch.setattr(plugin, "_load_cover", fake_load_cover)
+    monkeypatch.setattr("plugins.gcd_comic_covers.gcd_comic_covers.write_context", lambda *args, **kwargs: None)
+
+    image = plugin.generate_image({}, DeviceConfig())
+    state = plugin._read_state()
+
+    assert image.size == (800, 480)
+    assert image.getpixel((133, 240)) == colors["1"]
+    assert image.getpixel((399, 240)) == colors["2"]
+    assert image.getpixel((666, 240)) == colors["3"]
+    assert state["date_buckets"]["05-30"]["seen_issue_ids"] == ["1", "2", "3"]
+    assert state["date_buckets"]["05-30"]["last_issue_id"] == "3"
+
+
+def test_triptych_generation_prefers_portrait_covers_over_wide_strips(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 5, 30)
+    candidates = [
+        {"issue_id": "wide"},
+        {"issue_id": "red"},
+        {"issue_id": "green"},
+        {"issue_id": "blue"},
+    ]
+    colors = {
+        "wide": (230, 180, 0),
+        "red": (220, 0, 0),
+        "green": (0, 160, 0),
+        "blue": (0, 0, 220),
+    }
+
+    def fake_load_cover(candidate, _dimensions, _settings):
+        issue_id = candidate["issue_id"]
+        size = (500, 160) if issue_id == "wide" else (200, 400)
+        return {
+            **candidate,
+            "series_name": issue_id,
+            "issue_number": "1",
+            "date_label": "1975-05-30",
+            "cover_url": f"https://example.com/{issue_id}.jpg",
+            "image": Image.new("RGB", size, colors[issue_id]),
+        }
+
+    monkeypatch.setattr(plugin, "_load_cover", fake_load_cover)
+    monkeypatch.setattr("plugins.gcd_comic_covers.gcd_comic_covers.write_context", lambda *args, **kwargs: None)
+
+    image = plugin._generate_triptych_image(candidates, {}, today, (800, 480), {"backgroundColor": "white"}, 4)
+    state = plugin._read_state()
+
+    assert image.getpixel((133, 240)) == colors["red"]
+    assert image.getpixel((399, 240)) == colors["green"]
+    assert image.getpixel((666, 240)) == colors["blue"]
+    assert state["date_buckets"]["05-30"]["seen_issue_ids"] == ["red", "green", "blue"]
+
+
+def test_triptych_mode_renders_available_cover_without_info_label(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    cover = {
+        "series_name": "Label Should Not Render",
+        "issue_number": "9",
+        "date_label": "1975-05-30",
+        "image": Image.new("RGB", (200, 400), (220, 0, 0)),
+    }
+
+    image = plugin._compose_triptych_display_image([cover], (800, 480), {"backgroundColor": "white"})
+
+    assert image.size == (800, 480)
+    assert image.getpixel((399, 240)) == (220, 0, 0)
+    assert image.getpixel((20, 460)) != (255, 255, 255)
+
+
+def test_triptych_mode_expands_two_covers_to_fill_screen_width(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    covers = [
+        {"image": Image.new("RGB", (200, 400), (220, 0, 0))},
+        {"image": Image.new("RGB", (200, 400), (0, 0, 220))},
+    ]
+
+    image = plugin._compose_triptych_display_image(covers, (800, 480), {"backgroundColor": "white"})
+
+    assert image.size == (800, 480)
+    assert image.getpixel((100, 240)) == (220, 0, 0)
+    assert image.getpixel((700, 240)) == (0, 0, 220)
+
+
 def test_date_cache_path_is_day_scoped(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
 
@@ -373,6 +552,17 @@ def test_validate_detail_date_accepts_month_fallback_and_rejects_other_month(tmp
 
     with pytest.raises(RuntimeError):
         plugin._validate_detail_date({"on_sale_date": "2026-06-01"}, candidate)
+
+
+def test_validate_detail_date_skips_comic_vine_recent_candidates(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    candidate = {
+        "source": "comicvine",
+        "match_quality": "comicvine_recent",
+        "target_date": "2026-06-03",
+    }
+
+    plugin._validate_detail_date({"source": "comicvine", "on_sale_date": "2023-07-21"}, candidate)
 
 
 def test_default_fit_mode_rotates_portrait_cover_counterclockwise(tmp_path, monkeypatch):
@@ -392,3 +582,81 @@ def test_default_fit_mode_rotates_portrait_cover_counterclockwise(tmp_path, monk
     assert image.getpixel((0, 0)) == (255, 0, 0)
     assert image.getpixel((799, 0)) == (255, 0, 0)
     assert image.getpixel((0, 479)) == (0, 0, 255)
+
+
+def test_comic_vine_recent_candidates_normalize_issue_and_image(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 6, 3)
+
+    def fake_comic_vine_get(path, api_key, params):
+        assert path == "issues/"
+        assert api_key == "secret"
+        assert params["sort"] == "date_added:desc"
+        return {
+            "status_code": 1,
+            "results": [{
+                "id": 123,
+                "api_detail_url": "https://comicvine.gamespot.com/api/issue/4000-123/",
+                "site_detail_url": "https://comicvine.gamespot.com/example/",
+                "name": "The Test Issue",
+                "issue_number": "7",
+                "cover_date": "2026-06-01",
+                "store_date": "2026-06-03",
+                "date_added": "2026-06-03 12:30:00",
+                "volume": {"name": "Test Volume"},
+                "image": {"super_url": "https://comicvine.gamespot.com/a/uploads/scale_large/1/123.jpg"},
+            }],
+        }
+
+    monkeypatch.setattr(plugin, "_comic_vine_get", fake_comic_vine_get)
+
+    candidates = plugin._fetch_comic_vine_recent_candidates("secret", today, 10)
+
+    assert candidates == [{
+        "source": "comicvine",
+        "source_label": "Comic Vine",
+        "issue_id": "comicvine:123",
+        "comic_vine_id": "123",
+        "series_name": "Test Volume",
+        "issue_number": "7",
+        "title": "The Test Issue",
+        "publisher": "",
+        "country": "",
+        "language": "",
+        "on_sale_date": "2026-06-03",
+        "store_date": "2026-06-03",
+        "cover_date": "2026-06-01",
+        "date_added": "2026-06-03 12:30:00",
+        "cover_url": "https://comicvine.gamespot.com/a/uploads/scale_large/1/123.jpg",
+        "page_url": "https://comicvine.gamespot.com/example/",
+        "api_url": "https://comicvine.gamespot.com/api/issue/4000-123/",
+        "target_date": "2026-06-03",
+        "year": 2026,
+        "match_quality": "comicvine_recent",
+    }]
+
+
+def test_mixed_source_mode_prepends_comic_vine_candidates(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 6, 3)
+    monkeypatch.setattr(plugin, "_gcd_candidate_pool", lambda _settings, _today: [{"source": "gcd", "issue_id": "1"}])
+    monkeypatch.setattr(plugin, "_comic_vine_candidate_pool", lambda _settings, _today: [{"source": "comicvine", "issue_id": "comicvine:2"}])
+
+    candidates = plugin._candidate_pool({"sourceMode": "mixed"}, today)
+
+    assert [candidate["issue_id"] for candidate in candidates] == ["comicvine:2", "1"]
+
+
+def test_source_mode_accepts_settings_html_comicvine_value(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    assert plugin._source_mode({"sourceMode": "comicvine"}) == "comicvine"
+
+
+def test_comic_vine_issue_cache_path_is_windows_safe(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    path = plugin._issue_cache_path("comicvine:123")
+
+    assert "comicvine_123" in path.name
+    assert ":" not in path.name

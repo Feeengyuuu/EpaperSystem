@@ -1,0 +1,135 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="sourceMode">Artwork sources</label>
+  <select id="sourceMode" name="sourceMode" class="form-input">
+    <option value="all" selected>All available museum APIs</option>
+    <option value="open">No-key sources only: Met + Art Institute</option>
+    <option value="keyed">Keyed sources only: Europeana + Harvard</option>
+    <option value="met">The Met only</option>
+    <option value="artic">Art Institute of Chicago only</option>
+    <option value="europeana">Europeana only</option>
+    <option value="harvard">Harvard Art Museums only</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="rotationCadence">Random cadence</label>
+  <select id="rotationCadence" name="rotationCadence" class="form-input">
+    <option value="daily" selected>Daily</option>
+    <option value="hourly">Hourly</option>
+    <option value="every_refresh">Every refresh</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="queryTerms">Search terms</label>
+  <textarea id="queryTerms" name="queryTerms" class="form-input" rows="3" spellcheck="false">{{ default_query_terms }}</textarea>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="sourceLimit">Candidates per source</label>
+  <input id="sourceLimit" name="sourceLimit" class="form-input" type="number" min="3" max="50" value="12">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="maxAttempts">Image attempts</label>
+  <input id="maxAttempts" name="maxAttempts" class="form-input" type="number" min="1" max="40" value="10">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="layoutMode">Display layout</label>
+  <select id="layoutMode" name="layoutMode" class="form-input">
+    <option value="auto_gallery" selected>Auto: portrait gallery, landscape single</option>
+    <option value="gallery">Always show multiple artworks</option>
+    <option value="single">Single artwork</option>
+  </select>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="galleryCount">Gallery artworks</label>
+  <input id="galleryCount" name="galleryCount" class="form-input" type="number" min="1" max="4" value="3">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="fitMode">Image fit</label>
+  <select id="fitMode" name="fitMode" class="form-input">
+    <option value="contain" selected>Preserve full artwork</option>
+    <option value="cover">Fill screen crop</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="backgroundStyle">Background</label>
+  <select id="backgroundStyle" name="backgroundStyle" class="form-input">
+    <option value="blur" selected>Blurred artwork backdrop</option>
+    <option value="plain">Plain color</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="backgroundColor">Background color</label>
+  <select id="backgroundColor" name="backgroundColor" class="form-input">
+    <option value="warm" selected>Warm museum wall</option>
+    <option value="white">White</option>
+    <option value="gray">Gray</option>
+    <option value="black">Black</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="showCaption" id="showCaption" value="true"> Show artwork source plaque</label>
+  <input type="hidden" name="showCaption" value="false">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="fontFamily">Plaque font</label>
+  <select id="fontFamily" name="fontFamily" class="form-input">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh" value="true"> Ignore current cache once</label>
+  <input type="hidden" name="forceRefresh" value="false">
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      const ids = [
+        'sourceMode',
+        'rotationCadence',
+        'queryTerms',
+        'sourceLimit',
+        'maxAttempts',
+        'layoutMode',
+        'galleryCount',
+        'fitMode',
+        'backgroundStyle',
+        'backgroundColor',
+        'fontFamily',
+      ];
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) {
+          element.value = pluginSettings[id];
+        }
+      });
+      ['showCaption', 'forceRefresh'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) {
+          element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';
+        }
+      });
+    }
+
+    const fontFamily = document.getElementById('fontFamily');
+    if (fontFamily && !fontFamily.value) {
+      const jost = [...fontFamily.options].find((option) => option.value === 'Jost');
+      if (jost) fontFamily.value = 'Jost';
+    }
+  });
+</script>

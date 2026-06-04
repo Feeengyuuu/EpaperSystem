@@ -114,6 +114,7 @@ PLATFORMS = {
     "picarto": {"label": "PICARTO", "short": "PA"},
     "soop": {"label": "SOOP", "short": "SO"},
 }
+LIVE_STATUS_DOT = (0, 170, 80)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
@@ -375,6 +376,7 @@ class LiveRadar(BasePlugin):
         live_queue_box = (margin, bottom_y, col_w, footer_y - bottom_y - 8)
         offline_box = (margin + col_w + col_gap, bottom_y, col_w, footer_y - bottom_y - 8)
         live_queue_max = 8
+        snapshot_mini_live_threshold = max(3, int(layout.get("snapshot_mini_live_threshold") or 7))
         live_queue_count = self._live_queue_visible_count(live_queue_box, len(live_cards[live_limit:]), live_queue_max)
 
         if live_cards:
@@ -410,7 +412,19 @@ class LiveRadar(BasePlugin):
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
         queued_live_cards = live_cards[live_limit:]
-        if queued_live_cards:
+        if queued_live_cards and show_snapshots and len(live_cards) <= snapshot_mini_live_threshold:
+            self._draw_snapshot_mini_section(
+                image,
+                draw,
+                live_queue_box,
+                "LIVE TOO",
+                queued_live_cards,
+                theme,
+                max_items=4,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+                avatar_cache_seconds=avatar_cache_seconds,
+            )
+        elif queued_live_cards:
             self._draw_live_queue_section(
                 image,
                 draw,
@@ -435,6 +449,8 @@ class LiveRadar(BasePlugin):
                 theme,
                 max_items=4,
                 snapshot_cache_seconds=snapshot_cache_seconds,
+                avatar_cache_seconds=avatar_cache_seconds,
+                caption="quiet slots",
             )
         self._draw_compact_section(
             image,
@@ -808,12 +824,24 @@ class LiveRadar(BasePlugin):
 
         return sorted(candidates, key=sort_key)[: max(0, int(max_items))]
 
-    def _draw_snapshot_mini_section(self, image, draw, box, title, cards, theme, max_items=4, snapshot_cache_seconds=90):
+    def _draw_snapshot_mini_section(
+        self,
+        image,
+        draw,
+        box,
+        title,
+        cards,
+        theme,
+        max_items=4,
+        snapshot_cache_seconds=90,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+        caption=None,
+    ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
         self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
-        if cards:
-            self._draw_text_right(draw, "quiet slots", x + w, y, self._font(9, "bold"), theme["muted"])
+        if cards and caption:
+            self._draw_text_right(draw, caption, x + w, y, self._font(9, "bold"), theme["muted"])
 
         content_y = y + 24
         content_h = max(1, h - 24)
@@ -852,10 +880,11 @@ class LiveRadar(BasePlugin):
                 card,
                 theme,
                 snapshot_cache_seconds,
+                avatar_cache_seconds,
             )
         return len(visible)
 
-    def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90):
+    def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
         fill, ink, muted, line = self._card_palette(card["status"], theme)
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
@@ -876,27 +905,57 @@ class LiveRadar(BasePlugin):
         else:
             self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
         draw.rectangle(thumb_box, outline=ink, width=1)
+        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
 
         text_x = thumb_box[2] + 8
         text_w = max(20, x + w - pad - text_x)
-        dot_size = 6
-        dot_fill = {
-            "live": theme["live_ink"],
-            "replay": muted,
-            "error": ink,
-        }.get(card["status"], muted)
-        dot_y = y + max(6, int((h - self._line_height(self._font(11, "bold")) - 11) / 2))
-        draw.ellipse((text_x, dot_y + 3, text_x + dot_size, dot_y + 3 + dot_size), fill=dot_fill, outline=ink)
-
+        avatar_size = max(12, min(16, h - 24, int(h * 0.36)))
         owner_text = self._card_display_name(card)
-        name_font = self._fit_font(draw, owner_text, max(12, text_w - dot_size - 5), 11, 8, "bold")
-        draw.text((text_x + dot_size + 5, dot_y), self._fit_text(draw, owner_text, name_font, text_w - dot_size - 5), fill=ink, font=name_font)
+        name_x = text_x + avatar_size + 6
+        name_w = max(12, text_w - avatar_size - 6)
+        name_font = self._fit_font(draw, owner_text, name_w, 11, 8, "bold")
+        name_h = self._line_height(name_font)
+        icon_h = max(9, min(11, h - avatar_size - 8))
+        first_row_h = max(avatar_size, name_h)
+        block_h = first_row_h + 3 + icon_h
+        block_y = y + max(4, int((h - block_h) / 2))
+        avatar_y = block_y + max(0, int((first_row_h - avatar_size) / 2))
+        self._draw_avatar(
+            image,
+            draw,
+            (text_x, avatar_y, avatar_size),
+            card,
+            platform,
+            fill,
+            ink,
+            line,
+            avatar_cache_seconds,
+            show_fav_badge=False,
+        )
 
-        meta_text = f"{PLATFORMS.get(card['platform'], {'short': card['platform'][:2].upper()})['short']} / {self._status_label(card['status']).lower()}"
-        meta_font = self._fit_font(draw, meta_text, text_w, 8, 7)
-        meta_y = dot_y + self._line_height(name_font) + 1
-        if meta_y + self._line_height(meta_font) <= y + h - 2:
-            draw.text((text_x, meta_y), self._fit_text(draw, meta_text, meta_font, text_w), fill=muted, font=meta_font)
+        name_y = block_y + max(0, int((first_row_h - name_h) / 2)) - 1
+        draw.text((name_x, name_y), self._fit_text(draw, owner_text, name_font, name_w), fill=ink, font=name_font)
+
+        meta_y = block_y + first_row_h + 3
+        if meta_y + icon_h <= y + h - 2:
+            platform_label = platform["short"]
+            uptime_text = self._format_uptime(card.get("start_time")) if card["status"] == "live" else ""
+            platform_font = self._fit_font(draw, platform_label, max(12, name_w), 8, 7, "bold")
+            platform_text = self._fit_text(draw, platform_label, platform_font, max(12, name_w))
+            platform_y = meta_y + max(0, int((icon_h - self._line_height(platform_font)) / 2)) - 1
+            draw.text((name_x, platform_y), platform_text, fill=muted, font=platform_font)
+            if uptime_text:
+                uptime_x = name_x + int(draw.textlength(platform_text, font=platform_font)) + 5
+                uptime_w = max(0, x + w - pad - uptime_x)
+                if uptime_w >= 10:
+                    uptime_font = self._fit_font(draw, uptime_text, uptime_w, 8, 7, "bold")
+                    uptime_y = meta_y + max(0, int((icon_h - self._line_height(uptime_font)) / 2)) - 1
+                    draw.text(
+                        (uptime_x, uptime_y),
+                        self._fit_text(draw, uptime_text, uptime_font, uptime_w),
+                        fill=LIVE_STATUS_DOT,
+                        font=uptime_font,
+                    )
 
     def _live_queue_visible_count(self, box, card_count, max_items):
         return self._live_queue_layout(box, card_count, max_items)["visible_count"]

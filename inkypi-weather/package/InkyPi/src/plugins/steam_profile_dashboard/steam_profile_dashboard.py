@@ -16,9 +16,11 @@ logger = logging.getLogger(__name__)
 
 STEAM_API_BASE = "https://api.steampowered.com"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
+STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
+STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-v1"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v7"
 STEAM_BACKGROUND_IMAGE = "background.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
@@ -642,7 +644,17 @@ class SteamProfileDashboard(BasePlugin):
         has_current_game = profile.get("gameid") or profile.get("gameextrainfo")
         if has_current_game:
             current_game = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
-            y, _ = self._draw_wrapped_text(draw, (panel_x + 18, y), f"正在玩：{current_game}", fonts["body"], ink, top_line_width)
+            y, _ = self._draw_current_game_line(
+                image,
+                draw,
+                (panel_x + 18, y),
+                current_game,
+                profile.get("gameid"),
+                fonts["body"],
+                ink,
+                top_line_width,
+                data,
+            )
         else:
             y, _ = self._draw_status_line(draw, (panel_x + 18, y), "状态：", status_text, fonts["body"], ink, status_color, top_line_width)
         y += 7
@@ -697,38 +709,43 @@ class SteamProfileDashboard(BasePlugin):
         self._text(draw, (left_x, content_y), "最近 / 实时", fonts["section"], ink)
         y = content_y + 31
         left_line_width = col_w - 34
-        for line in self._recent_lines(data):
-            next_y, fits = self._draw_wrapped_text(
+        for item in self._recent_items(data):
+            next_y, fits = self._draw_recent_item(
+                image,
                 draw,
-                (left_x + 18, y),
-                line,
+                item,
+                left_x,
+                y,
                 fonts["small"],
                 ink,
+                accent_online,
                 left_line_width,
-                max_bottom=lower_y + lower_h - 18,
+                lower_y + lower_h - 18,
+                data,
             )
             if not fits:
                 break
-            self._bullet(draw, left_x, y + 7, accent_online)
             y = next_y + 5
 
         self._text(draw, (right_x, content_y), "游戏库 / 好友", fonts["section"], ink)
         y = content_y + 31
         right_line_width = width - margin - (right_x + 18) - 12
-        top_game_lines = self._top_game_lines(data)
-        if top_game_lines:
+        top_game_items = self._top_game_items(data)
+        if top_game_items:
             self._text(draw, (right_x + 18, y), "常玩 TOP 3", fonts["tiny"], gray)
             y += 21
-            for line in top_game_lines:
-                next_y, fits = self._draw_single_line_text(
+            for item in top_game_items:
+                next_y, fits = self._draw_top_game_item(
+                    image,
                     draw,
-                    (right_x + 18, y),
-                    line,
+                    item,
+                    right_x + 18,
+                    y,
                     fonts["small"],
                     ink,
                     right_line_width,
-                    max_bottom=lower_y + lower_h - 18,
-                    min_size=10,
+                    lower_y + lower_h - 18,
+                    data,
                 )
                 if not fits:
                     break
@@ -738,19 +755,22 @@ class SteamProfileDashboard(BasePlugin):
                 draw.line((right_x + 18, y - 3, width - margin - 18, y - 3), fill=light, width=1)
                 y += 9
 
-        for line in self._library_lines(data):
-            next_y, fits = self._draw_wrapped_text(
+        for item in self._library_items(data):
+            next_y, fits = self._draw_library_item(
+                image,
                 draw,
-                (right_x + 18, y),
-                line,
+                item,
+                right_x,
+                y,
                 fonts["small"],
                 ink,
+                accent,
                 right_line_width,
-                max_bottom=lower_y + lower_h - 18,
+                lower_y + lower_h - 18,
+                data,
             )
             if not fits:
                 break
-            self._bullet(draw, right_x, y + 7, accent)
             y = next_y + 5
 
         refresh_mode = self._refresh_mode_label(data.get("refresh_mode", "full"))
@@ -883,37 +903,44 @@ class SteamProfileDashboard(BasePlugin):
             logger.warning(f"Steam dashboard background unavailable: {e}")
             return Image.new("RGB", dimensions, fallback_color)
 
-    def _recent_lines(self, data):
-        lines = []
+    def _recent_items(self, data):
+        items = []
         profile = data.get("profile", {})
         if profile.get("gameid") or profile.get("gameextrainfo"):
             name = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
-            lines.append(f"正在玩：{name}")
+            items.append({"prefix": "正在玩：", "name": name, "appid": profile.get("gameid")})
 
         for game in data.get("recent_games", [])[:5]:
             name = self._display_game_name(data, game.get("appid"), game.get("name"))
             two_weeks = self._minutes_to_hours(game.get("playtime_2weeks", 0))
             forever = self._minutes_to_hours(game.get("playtime_forever", 0))
-            lines.append(f"{name}：近2周 {two_weeks}h / 总计 {forever}h")
+            items.append({
+                "name": name,
+                "suffix": f"：近2周 {two_weeks}h / 总计 {forever}h",
+                "appid": game.get("appid"),
+            })
 
         spotlight = data.get("spotlight_game") or {}
         details = data.get("app_details") or {}
         if details:
             genres = ", ".join(genre.get("description", "") for genre in details.get("genres", [])[:2])
             if genres:
-                lines.append(f"类型：{genres}")
+                items.append({"text": f"类型：{genres}"})
             if details.get("metacritic", {}).get("score"):
-                lines.append(f"媒体评分：{details['metacritic']['score']}")
+                items.append({"text": f"媒体评分：{details['metacritic']['score']}"})
         elif spotlight and (spotlight.get("appid") or spotlight.get("name")):
             name = self._display_game_name(data, spotlight.get("appid"), spotlight.get("name"))
-            lines.append(f"重点游戏：{name}")
+            items.append({"prefix": "重点游戏：", "name": name, "appid": spotlight.get("appid")})
 
-        if not lines:
-            lines.append("没有公开的近期游戏数据")
-        return lines
+        if not items:
+            items.append({"text": "没有公开的近期游戏数据"})
+        return items
 
-    def _top_game_lines(self, data):
-        lines = []
+    def _recent_lines(self, data):
+        return [self._item_text(item) for item in self._recent_items(data)]
+
+    def _top_game_items(self, data):
+        items = []
         games = data.get("owned_games", [])
         sorted_games = sorted(games, key=lambda game: game.get("playtime_forever", 0), reverse=True)
 
@@ -922,23 +949,31 @@ class SteamProfileDashboard(BasePlugin):
             if hours <= 0:
                 continue
             name = self._display_game_name(data, game.get("appid"), game.get("name"))
-            lines.append(f"TOP {index}  {name}  {hours}h")
-        return lines
+            items.append({
+                "rank": index,
+                "name": name,
+                "suffix": f"{hours}h",
+                "appid": game.get("appid"),
+            })
+        return items
 
-    def _library_lines(self, data):
-        lines = []
+    def _top_game_lines(self, data):
+        return [f"TOP {item.get('rank')}  {item.get('name')}  {item.get('suffix')}" for item in self._top_game_items(data)]
+
+    def _library_items(self, data):
+        items = []
         badges = data.get("badges") or {}
         if badges:
             badge_count = len(badges.get("badges", []))
             xp = badges.get("player_xp")
-            lines.append(f"徽章：{badge_count}  XP：{self._display_value(xp)}")
+            items.append({"text": f"徽章：{badge_count}  XP：{self._display_value(xp)}"})
 
         bans = data.get("bans") or {}
         if bans:
             vac = "VAC" if bans.get("VACBanned") else "无 VAC"
             game_bans = bans.get("NumberOfGameBans", 0)
             days = bans.get("DaysSinceLastBan", 0)
-            lines.append(f"封禁：{vac}，游戏封禁 {game_bans}，距上次 {days} 天")
+            items.append({"text": f"封禁：{vac}，游戏封禁 {game_bans}，距上次 {days} 天"})
 
         online_friends = [friend for friend in data.get("friends", []) if int(friend.get("personastate", 0)) != 0]
         for friend in online_friends[:3]:
@@ -946,13 +981,33 @@ class SteamProfileDashboard(BasePlugin):
             has_game = friend.get("gameid") or friend.get("gameextrainfo")
             if has_game:
                 game = self._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
-                lines.append(f"{name}: {game}")
+                items.append({
+                    "friend": name,
+                    "name": game,
+                    "appid": friend.get("gameid"),
+                })
             else:
-                lines.append(f"{name}: {PERSONA_STATES.get(int(friend.get('personastate', 0)), '在线')}")
+                items.append({"text": f"{name}: {PERSONA_STATES.get(int(friend.get('personastate', 0)), '在线')}"})
 
-        if not lines:
-            lines.append("游戏库/好友数据为隐私")
+        if not items:
+            items.append({"text": "游戏库/好友数据为隐私"})
+        return items
+
+    def _library_lines(self, data):
+        lines = []
+        for item in self._library_items(data):
+            if item.get("friend") and item.get("name"):
+                lines.append(f"{item.get('friend')}: {item.get('name')}")
+            else:
+                lines.append(item.get("text", ""))
         return lines
+
+    def _item_text(self, item):
+        if not isinstance(item, dict):
+            return str(item or "")
+        if item.get("text"):
+            return str(item.get("text") or "")
+        return f"{item.get('prefix', '')}{item.get('name', '')}{item.get('suffix', '')}"
 
     def _online_friends_for_avatars(self, data):
         friends = []
@@ -997,15 +1052,29 @@ class SteamProfileDashboard(BasePlugin):
             status_y = text_y + line_height + line_gap
             dot_y = status_y + max(0, (line_height - dot_size) // 2)
             draw.ellipse((text_x, dot_y, text_x + dot_size, dot_y + dot_size), fill=status_fill)
-            self._draw_single_line_text(
-                draw,
-                (text_x + dot_size + 7, status_y),
-                status_text,
-                fonts["tiny"],
-                ink,
-                max(20, width - (text_x + dot_size + 7 - x)),
-                min_size=8,
-            )
+            status_x = text_x + dot_size + 7
+            status_width = max(20, width - (status_x - x))
+            if friend.get("gameid") or friend.get("gameextrainfo"):
+                self._draw_friend_game_status(
+                    image,
+                    draw,
+                    friend,
+                    (status_x, status_y),
+                    fonts["tiny"],
+                    ink,
+                    status_width,
+                    data,
+                )
+            else:
+                self._draw_single_line_text(
+                    draw,
+                    (status_x, status_y),
+                    status_text,
+                    fonts["tiny"],
+                    ink,
+                    status_width,
+                    min_size=8,
+                )
 
     def _friend_display_id(self, friend):
         return self._clean_game_name(friend.get("personaname")) or str(friend.get("steamid") or "好友")
@@ -1027,6 +1096,65 @@ class SteamProfileDashboard(BasePlugin):
         if state != 0:
             return online_green
         return (120, 132, 146)
+
+    def _game_square_icon(self, data, appid, size):
+        url = self._game_icon_url(data, appid)
+        if not url:
+            return None
+
+        icon = None
+        icon_cache_path = self._game_icon_cache_path(url)
+        try:
+            if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 14 * 24 * 60 * 60:
+                icon = Image.open(icon_cache_path).convert("RGB")
+            else:
+                session = get_http_session()
+                response = session.get(url, timeout=25)
+                response.raise_for_status()
+                icon = Image.open(BytesIO(response.content)).convert("RGB")
+                icon = ImageOps.exif_transpose(icon)
+                os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
+                icon.save(icon_cache_path)
+        except Exception as e:
+            logger.warning(f"Steam game icon unavailable: {e}")
+            return None
+
+        icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+        result = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+        result.paste(icon, (0, 0))
+        outline = ImageDraw.Draw(result)
+        outline.rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255, 190), width=1)
+        return result
+
+    def _game_icon_url(self, data, appid):
+        appid = self._normalize_appid(appid)
+        if not appid:
+            return ""
+
+        game = self._game_record(data, appid)
+        icon_hash = str((game or {}).get("img_icon_url") or "").strip()
+        if icon_hash:
+            if icon_hash.startswith("http://") or icon_hash.startswith("https://"):
+                return icon_hash
+            return STEAM_APP_ICON_URL.format(appid=appid, icon_hash=icon_hash)
+
+        details = data.get("app_details") or {}
+        for key in ("capsule_image", "header_image"):
+            url = str(details.get(key) or "").strip()
+            if url.startswith("http://") or url.startswith("https://"):
+                return url
+        return STEAM_APP_CAPSULE_URL.format(appid=appid)
+
+    def _game_record(self, data, appid):
+        game = data.get("spotlight_game") or {}
+        if self._normalize_appid(game.get("appid")) == appid:
+            return game
+
+        for collection in ("recent_games", "owned_games"):
+            for game in data.get(collection, []) or []:
+                if self._normalize_appid(game.get("appid")) == appid:
+                    return game
+        return {}
 
     def _avatar_image(self, url, size):
         avatar = None
@@ -1130,12 +1258,21 @@ class SteamProfileDashboard(BasePlugin):
         candidates = []
         plugin_dir = self.get_plugin_dir()
         src_dir = os.path.abspath(os.path.join(plugin_dir, "..", ".."))
+        yahei_dir = os.path.join(plugin_dir, "..", "sports_dashboard", "fonts")
+        if bold:
+            candidates.extend([
+                os.path.join(plugin_dir, "fonts", "msyhbd.ttc"),
+                os.path.join(yahei_dir, "msyhbd.ttc"),
+                "C:/Windows/Fonts/msyhbd.ttc",
+            ])
         candidates.extend([
+            os.path.join(plugin_dir, "fonts", "msyh.ttc"),
+            os.path.join(yahei_dir, "msyh.ttc"),
+            "C:/Windows/Fonts/msyh.ttc",
             os.path.join(src_dir, "static", "fonts", "LXGWWenKai-Regular.ttf"),
             os.path.join(plugin_dir, "..", "literature_clock", "fonts", "LXGWWenKai-Regular.ttf"),
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simhei.ttf",
         ])
         if bold:
@@ -1154,6 +1291,240 @@ class SteamProfileDashboard(BasePlugin):
 
     def _text(self, draw, position, text, font, fill):
         draw.text(position, str(text), font=font, fill=fill)
+
+    def _game_icon_size(self, draw, font, min_size=10, max_size=24):
+        line_height = self._line_height(draw, font)
+        return max(min_size, min(max_size, max(1, line_height - 2)))
+
+    def _draw_current_game_line(self, image, draw, position, game_name, appid, font, fill, max_width, data, max_bottom=None):
+        x, y = position
+        label = "\u6b63\u5728\u73a9\uff1a"
+        game_name = str(game_name or "").strip()
+        max_width = int(max_width or 0)
+        if not game_name or max_width <= 0:
+            return y, True
+
+        line_height = self._line_height(draw, font)
+        icon_size = self._game_icon_size(draw, font, min_size=18, max_size=24)
+        icon = self._game_square_icon(data, appid, icon_size)
+        if icon is None:
+            return self._draw_single_line_text(
+                draw,
+                (x, y),
+                f"{label}{game_name}",
+                font,
+                fill,
+                max_width,
+                max_bottom=max_bottom,
+                min_size=10,
+            )
+
+        label_width = self._text_width(draw, label, font)
+        icon_x = x + label_width + 6
+        text_x = icon_x + icon_size + 7
+        game_width = max_width - (text_x - x)
+        if game_width < 80:
+            return self._draw_single_line_text(
+                draw,
+                (x, y),
+                f"{label}{game_name}",
+                font,
+                fill,
+                max_width,
+                max_bottom=max_bottom,
+                min_size=10,
+            )
+
+        if max_bottom is not None and y + line_height > max_bottom:
+            return y, False
+
+        self._text(draw, (x, y), label, font, fill)
+        icon_y = y + max(0, (line_height - icon_size) // 2)
+        image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+        next_y, fits = self._draw_single_line_text(
+            draw,
+            (text_x, y),
+            game_name,
+            font,
+            fill,
+            game_width,
+            max_bottom=max_bottom,
+            min_size=10,
+        )
+        return max(next_y, y + icon_size), fits
+
+    def _draw_recent_item(self, image, draw, item, x, y, font, fill, marker_fill, max_width, max_bottom, data):
+        if not isinstance(item, dict):
+            item = {"text": str(item or "")}
+        text = self._item_text(item)
+        if not text:
+            return y, True
+
+        max_right = x + 18 + int(max_width or 0)
+        if item.get("name") and item.get("appid"):
+            prefix = str(item.get("prefix") or "")
+            game_text = f"{item.get('name', '')}{item.get('suffix', '')}"
+            line_height = self._line_height(draw, font)
+            icon_size = self._game_icon_size(draw, font, min_size=12, max_size=18)
+            icon = self._game_square_icon(data, item.get("appid"), icon_size)
+            prefix_width = self._text_width(draw, prefix, font) if prefix else 0
+            if icon is not None:
+                icon_x = x + prefix_width
+                icon_y = y + max(0, (line_height - icon_size) // 2)
+                text_x = icon_x + icon_size + 7
+            else:
+                text_x = x + prefix_width
+            text_width = max(20, max_right - text_x)
+            lines = self._wrap_text(draw, game_text, font, text_width)
+            text_height = len(lines) * line_height + max(0, len(lines) - 1) * 2
+            if max_bottom is not None and y + max(text_height, icon_size) > max_bottom:
+                return y, False
+            if prefix:
+                self._text(draw, (x, y), prefix, font, fill)
+            if icon is not None:
+                image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+            next_y, fits = self._draw_wrapped_text(
+                draw,
+                (text_x, y),
+                game_text,
+                font,
+                fill,
+                text_width,
+                max_bottom=max_bottom,
+            )
+            if not fits:
+                return y, False
+            return max(next_y, y + icon_size), True
+
+        text_x = x + 18
+        text_width = max_width
+
+        next_y, fits = self._draw_wrapped_text(
+            draw,
+            (text_x, y),
+            text,
+            font,
+            fill,
+            text_width,
+            max_bottom=max_bottom,
+        )
+        if not fits:
+            return y, False
+
+        self._bullet(draw, x, y + 7, marker_fill)
+        return next_y, True
+
+    def _draw_top_game_item(self, image, draw, item, x, y, font, fill, max_width, max_bottom, data):
+        name = str((item or {}).get("name") or "")
+        if not name:
+            return y, True
+
+        prefix = f"TOP {item.get('rank', '-')}"
+        suffix = str((item or {}).get("suffix") or "")
+        line_height = self._line_height(draw, font)
+        icon_size = self._game_icon_size(draw, font, min_size=12, max_size=18)
+        icon = self._game_square_icon(data, (item or {}).get("appid"), icon_size)
+        suffix_text = f" {suffix}" if suffix else ""
+        prefix_width = self._text_width(draw, prefix, font)
+        suffix_width = self._text_width(draw, suffix_text, font)
+        max_right = x + int(max_width or 0)
+        icon_x = x + prefix_width + 8
+        game_x = icon_x + (icon_size + 7 if icon is not None else 0)
+        suffix_x = max_right - suffix_width
+        game_width = max(30, suffix_x - game_x - 6)
+
+        if max_bottom is not None and y + max(line_height, icon_size) > max_bottom:
+            return y, False
+
+        self._text(draw, (x, y), prefix, font, fill)
+        if icon is not None:
+            icon_y = y + max(0, (line_height - icon_size) // 2)
+            image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+
+        fitted_font = self._fit_single_line_font(draw, name, font, game_width, min_size=9)
+        game_line_height = self._line_height(draw, fitted_font)
+        self._text(draw, (game_x, y + max(0, (line_height - game_line_height) // 2)), name, fitted_font, fill)
+        if suffix_text:
+            self._text(draw, (suffix_x, y), suffix_text, font, fill)
+        return y + max(line_height, icon_size, game_line_height), True
+
+    def _draw_library_item(self, image, draw, item, x, y, font, fill, marker_fill, max_width, max_bottom, data):
+        if not isinstance(item, dict):
+            item = {"text": str(item or "")}
+
+        if item.get("friend") and item.get("name"):
+            label = f"{item.get('friend')}: "
+            name = str(item.get("name") or "")
+            line_height = self._line_height(draw, font)
+            icon_size = self._game_icon_size(draw, font, min_size=12, max_size=18)
+            icon = self._game_square_icon(data, item.get("appid"), icon_size)
+            text_x = x + 18
+            max_right = text_x + int(max_width or 0)
+            label_width = self._text_width(draw, label, font)
+            icon_x = text_x + label_width
+            game_x = icon_x + (icon_size + 7 if icon is not None else 0)
+            game_width = max(20, max_right - game_x)
+            if max_bottom is not None and y + max(line_height, icon_size) > max_bottom:
+                return y, False
+
+            self._text(draw, (text_x, y), label, font, fill)
+            if icon is not None:
+                icon_y = y + max(0, (line_height - icon_size) // 2)
+                image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+            return self._draw_single_line_text(
+                draw,
+                (game_x, y),
+                name,
+                font,
+                fill,
+                game_width,
+                max_bottom=max_bottom,
+                min_size=9,
+            )
+
+        text = str(item.get("text") or "")
+        next_y, fits = self._draw_wrapped_text(
+            draw,
+            (x + 18, y),
+            text,
+            font,
+            fill,
+            max_width,
+            max_bottom=max_bottom,
+        )
+        if not fits:
+            return y, False
+        self._bullet(draw, x, y + 7, marker_fill)
+        return next_y, True
+
+    def _draw_friend_game_status(self, image, draw, friend, position, font, fill, max_width, data):
+        x, y = position
+        label = "\u6b63\u5728\u6e38\u73a9\uff1a"
+        game = self._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
+        line_height = self._line_height(draw, font)
+        icon_size = self._game_icon_size(draw, font, min_size=8, max_size=12)
+        icon = self._game_square_icon(data, friend.get("gameid"), icon_size)
+        label_width = self._text_width(draw, label, font)
+        if label_width >= max_width - 20:
+            return self._draw_single_line_text(draw, (x, y), f"{label}{game}", font, fill, max_width, min_size=8)
+
+        self._text(draw, (x, y), label, font, fill)
+        if icon is not None:
+            icon_x = x + label_width
+            icon_y = y + max(0, (line_height - icon_size) // 2)
+            image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+            game_x = icon_x + icon_size + 5
+        else:
+            game_x = x + label_width
+        return self._draw_single_line_text(
+            draw,
+            (game_x, y),
+            game,
+            font,
+            fill,
+            max(20, max_width - (game_x - x)),
+            min_size=8,
+        )
 
     def _draw_status_line(self, draw, position, label, status, font, fill, dot_fill, max_width, max_bottom=None):
         x, y = position
@@ -1339,6 +1710,10 @@ class SteamProfileDashboard(BasePlugin):
     def _avatar_cache_path(self, url):
         digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
         return os.path.join(self._cache_dir(), f"avatar_{digest}.png")
+
+    def _game_icon_cache_path(self, url):
+        digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
+        return os.path.join(self._cache_dir(), f"gameicon_{digest}.png")
 
     def _cache_key(self, settings, dimensions, steam_id):
         parts = [

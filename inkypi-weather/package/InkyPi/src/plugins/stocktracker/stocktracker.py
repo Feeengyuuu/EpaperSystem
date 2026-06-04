@@ -60,6 +60,12 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont
 from utils.app_utils import get_font
+from utils.massive_market_data import (
+	MassiveMarketData,
+	MassiveMarketDataError,
+	load_massive_api_key,
+	massive_ticker_candidates,
+)
 import csv
 import hashlib
 import io
@@ -127,6 +133,59 @@ def _load_plot_libs():
 	return _plt, _np
 
 
+class _SimpleIloc:
+	def __init__(self, values):
+		self.values = values
+
+	def __getitem__(self, index):
+		return self.values[index]
+
+
+class _SimpleCloseSeries:
+	def __init__(self, values, index):
+		self.values = list(values)
+		self.index = list(index)
+		self.iloc = _SimpleIloc(self.values)
+		self.empty = len(self.values) == 0
+
+	def dropna(self):
+		pairs = [(index, value) for index, value in zip(self.index, self.values) if value is not None]
+		return _SimpleCloseSeries([value for _, value in pairs], [index for index, _ in pairs])
+
+
+class _SimpleLoc:
+	def __init__(self, values):
+		self.values = values
+
+	def __getitem__(self, key):
+		date_key, column = key
+		if column != "Close":
+			raise KeyError(column)
+		return self.values[date_key]
+
+	def __setitem__(self, key, value):
+		date_key, column = key
+		if column != "Close":
+			raise KeyError(column)
+		self.values[date_key] = value
+
+
+class _SimpleHistory:
+	def __init__(self, points):
+		self.index = [date_key for date_key, _close in points]
+		self.loc = _SimpleLoc({date_key: close for date_key, close in points})
+		self.columns = ["Close"]
+		self.empty = len(points) == 0
+
+	def __getitem__(self, key):
+		if key != "Close":
+			raise KeyError(key)
+		return _SimpleCloseSeries([self.loc.values[index] for index in self.index], self.index)
+
+	def copy(self):
+		return _SimpleHistory([(index, self.loc.values[index]) for index in self.index])
+
+
 class StockTracker(BasePlugin):
 
 	"""Stock portfolio tracker plugin for InkyPi"""
@@ -145,13 +204,21 @@ class StockTracker(BasePlugin):
 			dimensions = dimensions[::-1]
 
 		period, holdings = self._portfolio_holdings_from_settings(settings)
+		data_provider = self._data_provider(settings)
+		massive_client = self._massive_client(device_config, data_provider)
 
 		# Fetch stock data
 		stock_data = []
 
 		for ticker, share_count in holdings:
 			try:
-				data = self._fetch_stock_data(ticker, share_count, period)
+				data = self._fetch_stock_data(
+					ticker,
+					share_count,
+					period,
+					data_provider=data_provider,
+					massive_client=massive_client,
+				)
 				if data:
 					stock_data.append(data)
 			except Exception as e:
@@ -187,6 +254,19 @@ class StockTracker(BasePlugin):
 			return period, list(zip(tickers, shares))
 		except ValueError as e:
 			raise RuntimeError(f"Invalid input format: {str(e)}")
+
+	@staticmethod
+	def _data_provider(settings):
+		provider = str((settings or {}).get("data_provider") or "auto").strip().lower()
+		return provider if provider in {"auto", "massive", "yfinance"} else "auto"
+
+	def _massive_client(self, device_config, data_provider):
+		if data_provider == "yfinance":
+			return None
+		api_key = load_massive_api_key(device_config)
+		if not api_key:
+			return None
+		return MassiveMarketData(api_key)
 
 	def _resolve_portfolio_csv_path(self, csv_path):
 		csv_path = os.path.expanduser(str(csv_path).strip())
@@ -311,9 +391,16 @@ class StockTracker(BasePlugin):
 			logging.warning(f"Unable to apply latest quote to trend history: {type(e).__name__}: {e}")
 			return hist
 
-	def _fetch_stock_data(self, ticker, shares, period):
+	def _fetch_stock_data(self, ticker, shares, period, data_provider="yfinance", massive_client=None):
 
 		"""Fetch stock data using yfinance with proper error handling"""
+
+		if data_provider in {"auto", "massive"}:
+			massive_data = self._fetch_massive_stock_data(ticker, shares, period, massive_client)
+			if massive_data:
+				return massive_data
+			if data_provider == "massive":
+				return None
 
 		try:
 			yf = _load_yfinance()
@@ -375,12 +462,61 @@ class StockTracker(BasePlugin):
 				'quote_source': quote_source,
 				'quote_time': quote_time,
 				'extended_hours': quote_source == "extended_1m",
+				'data_provider': "yfinance",
 			}
 		except Exception as e:
 			# Log detailed error information for debugging
 			logging.error(f"Failed to fetch data for {ticker}: {type(e).__name__}: {e}", exc_info=True)
 			# Re-raise the original exception so that callers can handle or wrap it as needed
 			raise
+
+	def _fetch_massive_stock_data(self, ticker, shares, period, massive_client=None):
+		if massive_client is None:
+			return None
+		for massive_symbol in massive_ticker_candidates(ticker):
+			try:
+				bars = massive_client.fetch_daily_bars(massive_symbol, period=period)
+			except MassiveMarketDataError as e:
+				logging.warning(f"Massive data unavailable for {ticker}/{massive_symbol}: {type(e).__name__}: {e}")
+				continue
+			if not bars:
+				continue
+
+			points = [(bar.date or str(index), float(bar.close)) for index, bar in enumerate(bars)]
+			hist = _SimpleHistory(points)
+			if hist.empty:
+				continue
+
+			info = {}
+			try:
+				info = massive_client.fetch_ticker_details(massive_symbol)
+			except MassiveMarketDataError as e:
+				logging.warning(f"Massive ticker details unavailable for {ticker}: {type(e).__name__}: {e}")
+
+			regular_price = float(hist['Close'].iloc[-1])
+			current_price = regular_price
+			prev_price = float(hist['Close'].iloc[0])
+			change = current_price - prev_price
+			change_percent = (change / prev_price) * 100 if prev_price != 0 else 0
+
+			return {
+				'symbol': ticker,
+				'name': info.get('name') or info.get('ticker') or ticker,
+				'price': current_price,
+				'regular_price': regular_price,
+				'change': change,
+				'change_percent': change_percent,
+				'shares': shares,
+				'total_value': current_price * shares,
+				'total_change': change * shares,
+				'history': hist,
+				'quote_source': "massive_daily",
+				'quote_time': hist.index[-1] if len(hist.index) else None,
+				'extended_hours': False,
+				'data_provider': "massive",
+				'massive_symbol': massive_symbol,
+			}
+		return None
 
 	def _font(self, size, bold=False):
 		font_size = int(size)
@@ -735,7 +871,7 @@ class StockTracker(BasePlugin):
 
 		draw.rectangle((0, 0, width, 54), fill=PAPER)
 		draw.text((24, 12), "STOCK TRACKER", fill=INK, font=self._font(24, True))
-		source_label = "Yahoo realtime + extended hours" if any(data.get("extended_hours") for data in stock_data) else "Yahoo Finance data"
+		source_label = self._source_label(stock_data)
 		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
 		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
 
@@ -744,6 +880,17 @@ class StockTracker(BasePlugin):
 		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data)
 
 		return img
+
+	@staticmethod
+	def _source_label(stock_data):
+		if any(data.get("extended_hours") for data in stock_data):
+			return "Yahoo realtime + extended hours"
+		providers = {str(data.get("data_provider") or "yfinance") for data in stock_data}
+		if providers == {"massive"}:
+			return "Massive market data"
+		if "massive" in providers:
+			return "Massive + Yahoo fallback"
+		return "Yahoo Finance data"
 
 	def generate_settings_template(self):
 
@@ -759,6 +906,11 @@ class StockTracker(BasePlugin):
 			('6mo', '6 Months'),
 			('1y', '1 Year'),
 			('ytd', 'Year to Date')
+		]
+		template_params['data_provider_options'] = [
+			('auto', 'Auto: Massive first, yfinance fallback'),
+			('massive', 'Massive only'),
+			('yfinance', 'yfinance only'),
 		]
 
 		# Ensure settings dict is included

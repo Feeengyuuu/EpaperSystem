@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.stocktracker.stocktracker import ACCENT_ORANGE, CINNABAR, MALACHITE, PAPER, StockTracker  # noqa: E402
+from utils.massive_market_data import MassiveBar  # noqa: E402
 
 
 class FakeLoc:
@@ -228,3 +229,43 @@ def test_stock_tracker_prefers_extended_hours_quote(monkeypatch):
     assert data["extended_hours"] is True
     assert data["total_value"] == 202.5
     assert data["history"].loc[data["history"].index[-1], "Close"] == 101.25
+
+
+def test_stock_tracker_can_fetch_stock_data_from_massive_without_yfinance(monkeypatch):
+    class FakeMassiveClient:
+        def fetch_daily_bars(self, ticker, period="1mo"):
+            assert ticker == "AAPL"
+            assert period == "1mo"
+            return [
+                MassiveBar("AAPL", "2026-06-01", 1780272000000, 100.0, 101.0, 99.0, 100.0, 1000.0),
+                MassiveBar("AAPL", "2026-06-02", 1780358400000, 109.0, 111.0, 108.0, 110.0, 1500.0),
+            ]
+
+        def fetch_ticker_details(self, ticker):
+            assert ticker == "AAPL"
+            return {"name": "Apple Inc."}
+
+    def fail_yfinance():
+        raise AssertionError("yfinance should not be used when Massive returns data")
+
+    monkeypatch.setattr("plugins.stocktracker.stocktracker._load_yfinance", fail_yfinance)
+    plugin = StockTracker({"id": "stocktracker"})
+
+    data = plugin._fetch_stock_data(
+        "AAPL",
+        2,
+        "1mo",
+        data_provider="auto",
+        massive_client=FakeMassiveClient(),
+    )
+
+    assert data["data_provider"] == "massive"
+    assert data["quote_source"] == "massive_daily"
+    assert data["massive_symbol"] == "AAPL"
+    assert data["name"] == "Apple Inc."
+    assert data["price"] == 110.0
+    assert data["change"] == 10.0
+    assert data["change_percent"] == 10.0
+    assert data["total_value"] == 220.0
+    assert data["history"].loc["2026-06-02", "Close"] == 110.0
+    assert StockTracker._source_label([data]) == "Massive market data"

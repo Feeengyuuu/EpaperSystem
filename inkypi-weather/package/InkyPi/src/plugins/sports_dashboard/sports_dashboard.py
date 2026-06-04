@@ -2920,7 +2920,8 @@ class SportsDashboard(BasePlugin):
         tag = self._lpl_focus_tag(is_live)
         tag_w = 112 if is_live else 86
         tag_text, tag_font = self._fit_text(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
-        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        tag_fill = COLORS["red"] if is_live else COLORS["panel_gold"]
+        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=tag_fill, outline=COLORS["border"], width=1)
         draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
         date_text = event["start"].strftime("%m/%d")
         date_text, date_font = self._fit_text(draw, date_text, 54, 12, bold=True, min_size=9)

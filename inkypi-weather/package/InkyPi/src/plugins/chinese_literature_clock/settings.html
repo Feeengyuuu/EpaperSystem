@@ -1,7 +1,9 @@
 <div class="form-group">
   <label class="form-label">句子选择</label>
   <div class="radio-group">
-    <label><input type="radio" name="quote_selection" value="shortest" checked> 最短</label>
+    <label><input type="radio" name="quote_selection" value="source_random" checked> 来源均衡随机</label>
+    <label><input type="radio" name="quote_selection" value="source_daily"> 来源均衡每日固定</label>
+    <label><input type="radio" name="quote_selection" value="shortest"> 最短</label>
     <label><input type="radio" name="quote_selection" value="random"> 随机</label>
     <label><input type="radio" name="quote_selection" value="daily"> 每天固定</label>
   </div>
@@ -13,6 +15,10 @@
 
 <div class="form-group">
   <label><input type="checkbox" name="show_attribution" id="show_attribution" checked> 显示出处</label>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="open_library_enrichment" id="open_library_enrichment" checked> 使用 Open Library 丰富来源</label>
 </div>
 
 <div class="form-group">
@@ -53,7 +59,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
-      const qs = pluginSettings.quote_selection || 'shortest';
+      const qs = pluginSettings.quote_selection || 'source_random';
       const qsEl = document.querySelector(`input[name="quote_selection"][value="${qs}"]`);
       if (qsEl) qsEl.checked = true;
 
@@ -63,6 +69,10 @@
         pluginSettings.show_attribution === undefined ||
         pluginSettings.show_attribution === true ||
         pluginSettings.show_attribution === 'on';
+      document.getElementById('open_library_enrichment').checked =
+        pluginSettings.open_library_enrichment === undefined ||
+        pluginSettings.open_library_enrichment === true ||
+        pluginSettings.open_library_enrichment === 'on';
 
       if (pluginSettings.font_family) {
         const savedFontFamily = ['LXGW WenKai', '康熙字典体'].includes(pluginSettings.font_family)

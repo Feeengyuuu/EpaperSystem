@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
@@ -9,16 +10,17 @@ from plugins.base_plugin.base_plugin import BasePlugin
 
 from .quote_picker import resolve_with_fallback, sanitize, pick_quote
 from .dataset import ensure_dataset
+from .open_library import lookup_book_metadata
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEZONE = "US/Eastern"
-ATTRIBUTION_MAX = 55
 DEFAULT_BACKGROUND_COLOR = (0, 0, 0)
 DEFAULT_TEXT_COLOR = (255, 255, 255)
 DEFAULT_ATTRIBUTION_COLOR = (210, 210, 210)
 DEFAULT_FONT_FAMILY = "方正新楷近似"
 DEFAULT_LOCAL_FONT = "FandolKai-Regular.otf"
+OPEN_LIBRARY_CACHE_DAYS = 30
 LEGACY_BASE_FONT_FAMILIES = {"LXGW WenKai", "康熙字典体"}
 FALLBACK_LOCAL_FONTS = (
     "FandolKai-Regular.otf",
@@ -79,36 +81,36 @@ class ChineseLiteratureClock(BasePlugin):
         if not rows:
             return self._render_no_quote(dimensions, hhmm, settings)
 
-        strategy = settings.get("quote_selection") or "shortest"
+        strategy = settings.get("quote_selection") or "source_random"
         chosen = pick_quote(rows, strategy=strategy, seed_key=_seed_key(now))
 
         quote = sanitize(chosen["full_quote"])
         time_human = sanitize(chosen["time_human"])
 
-        attribution = ""
+        source_block = None
         if self._enabled(settings.get("show_attribution"), default=True):
             book = sanitize(chosen.get("book_title", ""))
             author = sanitize(chosen.get("author_name", ""))
-            attribution = f"- 《{book}》，{author}"
-            if len(attribution) > ATTRIBUTION_MAX:
-                attribution = attribution[: ATTRIBUTION_MAX - 3] + "..."
+            metadata = self._lookup_open_library_metadata(book, author, settings)
+            source_block = self._build_source_block(book, author, metadata)
 
-        return self._render_quote_image(dimensions, quote, time_human, attribution, settings)
+        return self._render_quote_image(dimensions, quote, time_human, source_block, settings)
 
     def _render_no_quote(self, dimensions, hhmm, settings):
         return self._render_quote_image(
             dimensions,
             f"现在是 {hhmm}。",
             hhmm,
-            "暂无这个时刻的小说句子",
+            {"book_line": "暂无这个时刻的小说句子", "meta_line": "本地句库 · 等待下一次报时"},
             settings,
         )
 
-    def _render_quote_image(self, dimensions, quote, time_human, attribution, settings):
+    def _render_quote_image(self, dimensions, quote, time_human, source_block, settings):
         width, height = dimensions
         background_color = self._settings_color(settings, ("backgroundColor", "background_color"), DEFAULT_BACKGROUND_COLOR)
         text_color = self._settings_color(settings, ("textColor", "text_color"), DEFAULT_TEXT_COLOR)
         attribution_color = self._settings_color(settings, ("attributionColor", "attribution_color"), DEFAULT_ATTRIBUTION_COLOR)
+        source_meta_color = self._source_meta_color(background_color, attribution_color)
 
         image = Image.new("RGB", dimensions, background_color)
         draw = ImageDraw.Draw(image)
@@ -119,7 +121,14 @@ class ChineseLiteratureClock(BasePlugin):
         max_height = height - margin_y * 2
 
         font_family = self._normalize_font_family(settings.get("font_family") or DEFAULT_FONT_FAMILY)
-        quote_max_height = max_height - (max(38, height // 9) if attribution else 0)
+        source_block = self._coerce_source_block(source_block)
+        source_fonts = self._source_fonts(font_family, width, height)
+        source_gap = max(8, height // 60) if source_block else 0
+        source_height = (
+            self._source_block_height(draw, source_block, source_fonts, max_width) + source_gap
+            if source_block else 0
+        )
+        quote_max_height = max_height - source_height
         quote_font, quote_bold_font, quote_lines, line_height = self._fit_quote(
             draw,
             quote,
@@ -128,13 +137,8 @@ class ChineseLiteratureClock(BasePlugin):
             quote_max_height,
         )
 
-        attribution_font = self._load_font_cascade(font_family, max(14, int(self._font_size(quote_font) * 0.42)))
-        attribution_height = 0
-        if attribution:
-            attribution_height = self._text_height(draw, attribution, attribution_font) + max(12, height // 36)
-
         quote_height = line_height * len(quote_lines)
-        total_height = quote_height + attribution_height
+        total_height = quote_height + source_height
         y = max(margin_y, (height - total_height) // 2)
 
         highlight_style = settings.get("highlight_style") or "bold"
@@ -154,13 +158,180 @@ class ChineseLiteratureClock(BasePlugin):
             )
             y += line_height
 
-        if attribution:
-            y += max(8, height // 60)
-            trimmed = self._fit_single_line(draw, attribution, attribution_font, max_width)
-            attr_width = self._text_width(draw, trimmed, attribution_font)
-            self._draw_text(draw, (width - margin_x - attr_width, y), trimmed, attribution_font, attribution_color)
+        if source_block:
+            y += source_gap
+            self._draw_source_block(
+                draw,
+                source_block,
+                source_fonts,
+                margin_x,
+                y,
+                max_width,
+                width,
+                attribution_color,
+                source_meta_color,
+            )
 
         return image
+
+    def _lookup_open_library_metadata(self, book, author, settings):
+        if not self._enabled(settings.get("open_library_enrichment"), default=True):
+            return None
+        if not book:
+            return None
+        cache_days = self._int_setting(settings.get("open_library_cache_days"), OPEN_LIBRARY_CACHE_DAYS, 1, 365)
+        try:
+            return lookup_book_metadata(
+                book,
+                author,
+                cache_dir=self._open_library_cache_dir(),
+                cache_days=cache_days,
+                force_refresh=self._enabled(settings.get("force_open_library_refresh"), default=False),
+            )
+        except Exception as exc:
+            logger.warning("Could not enrich Chinese literature source from Open Library: %s", exc)
+            return None
+
+    def _open_library_cache_dir(self):
+        override = os.getenv("INKYPI_CHINESE_LITCLOCK_OPEN_LIBRARY_CACHE")
+        path = Path(override) if override else Path(self.get_plugin_dir(".open_library_cache"))
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _build_source_block(self, book, author, metadata=None):
+        metadata = metadata if isinstance(metadata, dict) else None
+        title = book or (metadata or {}).get("title") or ""
+        authors = (metadata or {}).get("authors") or []
+        author_text = author or ("、".join(authors[:2]) if authors else "")
+
+        if title and author_text:
+            book_line = f"《{title}》 · {author_text}"
+        elif title:
+            book_line = f"《{title}》"
+        else:
+            book_line = author_text or "未标注书目"
+
+        return {
+            "book_line": book_line,
+            "meta_line": self._format_metadata_line(metadata),
+            "source_label": "Open Library" if metadata else "本地来源",
+            "source_url": (metadata or {}).get("open_library_url", ""),
+        }
+
+    def _format_metadata_line(self, metadata):
+        if not isinstance(metadata, dict):
+            return "本地句库 · 原著出处"
+
+        pieces = []
+        year = metadata.get("first_publish_year")
+        if year:
+            pieces.append(f"首版 {year}")
+        editions = metadata.get("edition_count")
+        if editions:
+            pieces.append(f"{editions} 个版本")
+        publisher = metadata.get("publisher")
+        if publisher:
+            pieces.append(self._short_text(str(publisher), 18))
+        if not pieces:
+            pieces.append("书目信息")
+
+        if metadata.get("from_cache"):
+            pieces.append("缓存")
+        return "Open Library · " + " · ".join(pieces)
+
+    def _coerce_source_block(self, source_block):
+        if not source_block:
+            return None
+        if isinstance(source_block, str):
+            text = source_block.strip()
+            if not text:
+                return None
+            return {"book_line": text, "meta_line": "", "source_label": "本地来源", "source_url": ""}
+        if isinstance(source_block, dict):
+            book_line = str(source_block.get("book_line") or "").strip()
+            meta_line = str(source_block.get("meta_line") or "").strip()
+            if not book_line and not meta_line:
+                return None
+            return {
+                "book_line": book_line,
+                "meta_line": meta_line,
+                "source_label": str(source_block.get("source_label") or "").strip(),
+                "source_url": str(source_block.get("source_url") or "").strip(),
+            }
+        return None
+
+    def _source_fonts(self, font_family, width, height):
+        title_size = max(15, min(21, width // 42))
+        meta_size = max(12, int(title_size * 0.76))
+        label_size = max(11, int(title_size * 0.7))
+        return {
+            "label": self._load_font_cascade(font_family, label_size),
+            "title": self._load_font_cascade(font_family, title_size),
+            "meta": self._load_font_cascade(font_family, meta_size),
+        }
+
+    def _source_block_height(self, draw, source_block, fonts, max_width):
+        if not source_block:
+            return 0
+        label_h = self._text_height(draw, "来源", fonts["label"])
+        title_h = self._text_height(draw, source_block.get("book_line", ""), fonts["title"])
+        meta = source_block.get("meta_line", "")
+        meta_h = self._text_height(draw, meta, fonts["meta"]) if meta else 0
+        return 1 + 9 + label_h + 5 + title_h + (5 + meta_h if meta else 0)
+
+    def _draw_source_block(
+        self,
+        draw,
+        source_block,
+        fonts,
+        margin_x,
+        y,
+        max_width,
+        width,
+        title_color,
+        meta_color,
+    ):
+        line_color = self._mix_color(title_color, meta_color, 0.45)
+        draw.line((margin_x, y, margin_x + max_width, y), fill=line_color, width=1)
+        y += 9
+
+        label = "来源"
+        self._draw_text(draw, (margin_x, y), label, fonts["label"], meta_color)
+
+        badge = "OPEN LIBRARY" if source_block.get("source_label") == "Open Library" else "LOCAL SOURCE"
+        badge = self._fit_single_line(draw, badge, fonts["label"], max_width // 2)
+        badge_width = self._text_width(draw, badge, fonts["label"])
+        self._draw_text(draw, (width - margin_x - badge_width, y), badge, fonts["label"], meta_color)
+
+        y += self._text_height(draw, label, fonts["label"]) + 5
+        book_line = self._fit_single_line(draw, source_block.get("book_line", ""), fonts["title"], max_width)
+        self._draw_text(draw, (margin_x, y), book_line, fonts["title"], title_color)
+        y += self._text_height(draw, book_line, fonts["title"]) + 5
+
+        meta_line = source_block.get("meta_line", "")
+        if meta_line:
+            meta_line = self._fit_single_line(draw, meta_line, fonts["meta"], max_width)
+            self._draw_text(draw, (margin_x, y), meta_line, fonts["meta"], meta_color)
+
+    def _source_meta_color(self, background_color, attribution_color):
+        return self._mix_color(attribution_color, background_color, 0.78)
+
+    def _mix_color(self, a, b, weight):
+        weight = max(0.0, min(1.0, float(weight)))
+        return tuple(int(a[i] * weight + b[i] * (1.0 - weight)) for i in range(3))
+
+    def _short_text(self, text, max_len):
+        text = (text or "").strip()
+        if len(text) <= max_len:
+            return text
+        return text[: max(1, max_len - 3)] + "..."
+
+    def _int_setting(self, value, default, minimum, maximum):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        return max(minimum, min(maximum, parsed))
 
     def _fit_quote(self, draw, quote, font_family, max_width, max_height):
         tier = _size_tier(len(quote))

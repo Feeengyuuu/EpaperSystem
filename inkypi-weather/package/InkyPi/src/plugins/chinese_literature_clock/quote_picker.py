@@ -162,9 +162,26 @@ def sanitize(text: str) -> str:
 def pick_quote(rows: list[dict], strategy: str, seed_key: str) -> dict:
     if not rows:
         raise ValueError("pick_quote called with empty rows")
+    if strategy in ("source_random", "source_daily"):
+        groups = _source_groups(rows)
+        if strategy == "source_daily":
+            rng = random.Random(seed_key)
+            return rng.choice(rng.choice(groups))
+        return random.choice(random.choice(groups))
     if strategy == "random":
         return random.choice(rows)
     if strategy == "daily":
         rng = random.Random(seed_key)
         return rng.choice(rows)
     return min(rows, key=lambda row: len(row["full_quote"]))
+
+
+def _source_groups(rows: list[dict]) -> list[list[dict]]:
+    grouped = {}
+    for row in rows:
+        key = (
+            (row.get("book_title") or "").strip(),
+            (row.get("author_name") or "").strip(),
+        )
+        grouped.setdefault(key, []).append(row)
+    return list(grouped.values()) or [rows]

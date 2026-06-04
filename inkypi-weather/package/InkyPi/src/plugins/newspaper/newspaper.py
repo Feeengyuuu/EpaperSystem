@@ -1,7 +1,9 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from datetime import datetime, timedelta
 import html
+from io import BytesIO
 from pathlib import Path
+import sys
 from urllib.parse import urlparse
 from utils.app_utils import get_font
 from utils.image_utils import get_image, take_screenshot
@@ -17,11 +19,14 @@ from plugins.newspaper.constants import NEWSPAPERS
 logger = logging.getLogger(__name__)
 
 FREEDOM_FORUM_URL = "https://cdn.freedomforum.org/dfp/jpg{}/lg/{}.jpg"
+LYWB_A01_PDF_URL = "https://lywb.lyd.com.cn/images2/2/{year_month}/{day}/A01/{stamp}A01_pdf.pdf"
+LYWB_LOOKBACK_DAYS = 10
 NEWS_FRONTPAGE_ROTATION_VERSION = "news-frontpage-rotation-v1"
 DEFAULT_MEDIA_SOURCES = """BBC News|url|https://www.bbc.com/news
 CNN|url|https://www.cnn.com
 CCTV News|url|https://news.cctv.com/index.shtml
 Xinhua|url|https://www.xinhuanet.com/
+Luoyang Evening News|lywb|A01
 China Daily|newspaper|chi_cd
 People's Daily|newspaper|chi_pd
 The New York Times|newspaper|ny_nyt
@@ -189,9 +194,11 @@ class Newspaper(BasePlugin):
                 source_type = "url"
             if source_type in {"headline", "headlines", "text"}:
                 source_type = "headlines"
+            if source_type in {"luoyang", "luoyang_evening_news", "lywb"}:
+                source_type = "lywb"
             if source_type in {"paper", "slug", "frontpage"}:
                 source_type = "newspaper"
-            if source_type not in {"url", "headlines", "newspaper"} or not value:
+            if source_type not in {"url", "headlines", "lywb", "newspaper"} or not value:
                 logger.warning("Ignoring invalid media source line: %s", line)
                 continue
 
@@ -200,6 +207,10 @@ class Newspaper(BasePlugin):
                     logger.warning("Ignoring media source with invalid URL: %s", line)
                     continue
                 default_name = urlparse(value).netloc or value
+                identity_value = value
+            elif source_type == "lywb":
+                value = value.upper()
+                default_name = "Luoyang Evening News"
                 identity_value = value
             else:
                 value = value.upper()
@@ -251,6 +262,10 @@ class Newspaper(BasePlugin):
             if image:
                 return image
             return None
+
+        if source["type"] == "lywb":
+            return self._fetch_luoyang_evening_news_cover(device_config)
+
         return self._fetch_newspaper_cover(source["value"], device_config)
 
     def _fetch_url_screenshot(self, url, device_config):
@@ -598,6 +613,114 @@ class Newspaper(BasePlugin):
                 image = new_image
         else:
             return None
+
+        return image
+
+    def _fetch_luoyang_evening_news_cover(self, device_config):
+        for date in self._lywb_candidate_dates():
+            url = self._build_lywb_pdf_url(date)
+            pdf_bytes = self._download_pdf(url)
+            if not pdf_bytes:
+                continue
+
+            image = self._render_pdf_first_page(pdf_bytes)
+            if not image:
+                continue
+
+            logger.info("Found Luoyang Evening News front page for %s", date.strftime("%Y-%m-%d"))
+            return self._prepare_frontpage_image(image, device_config)
+
+        return None
+
+    def _lywb_candidate_dates(self):
+        # Luoyang is UTC+8; use source-local date instead of the device timezone.
+        today = datetime.utcnow() + timedelta(hours=8)
+        return [today - timedelta(days=diff) for diff in range(LYWB_LOOKBACK_DAYS + 1)]
+
+    def _build_lywb_pdf_url(self, date):
+        return LYWB_A01_PDF_URL.format(
+            year_month=date.strftime("%Y-%m"),
+            day=date.strftime("%d"),
+            stamp=date.strftime("%Y%m%d"),
+        )
+
+    def _download_pdf(self, url):
+        try:
+            response = requests.get(
+                url,
+                timeout=20,
+                headers={
+                    "User-Agent": "Mozilla/5.0 InkyPi News Front Pages/1.0",
+                    "Referer": "https://lywb.lyd.com.cn/",
+                },
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Could not fetch PDF front page %s: %s", url, exc)
+            return None
+
+        if not response.content.startswith(b"%PDF"):
+            logger.warning("PDF front page response was not a PDF: %s", url)
+            return None
+
+        return response.content
+
+    def _render_pdf_first_page(self, pdf_bytes):
+        try:
+            fitz = self._import_pymupdf()
+        except Exception as exc:
+            try:
+                image = Image.open(BytesIO(pdf_bytes))
+                image.load()
+                return image.convert("RGB")
+            except Exception:
+                raise RuntimeError("PyMuPDF is required to render PDF front pages") from exc
+
+        document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            if len(document) < 1:
+                return None
+
+            page = document.load_page(0)
+            matrix = fitz.Matrix(2, 2)
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            return Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+        finally:
+            document.close()
+
+    def _import_pymupdf(self):
+        try:
+            import fitz
+
+            return fitz
+        except Exception:
+            vendor_path = Path(__file__).resolve().parent / "_vendor"
+            if vendor_path.is_dir() and str(vendor_path) not in sys.path:
+                sys.path.insert(0, str(vendor_path))
+
+            import fitz
+
+            return fitz
+
+    def _prepare_frontpage_image(self, image, device_config):
+        img_width, img_height = image.size
+
+        dimensions = device_config.get_resolution()
+        if device_config.get_config("orientation") == "horizontal":
+            dimensions = dimensions[::-1]
+
+        desired_width, desired_height = dimensions
+
+        img_ratio = img_width / img_height
+        desired_ratio = desired_width / desired_height
+
+        if img_ratio < desired_ratio:
+            new_height = int((img_width * desired_width) / desired_height)
+            new_image = Image.new("RGB", (img_width, new_height), (255, 255, 255))
+            new_image.paste(image, (0, 0))
+            image = new_image
 
         return image
 

@@ -21,6 +21,7 @@ import requests
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font, get_fonts
+from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
 from utils.theme_utils import get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,7 @@ class DailyAINews(BasePlugin):
             raise RuntimeError("No RSS items could be fetched.")
 
         stale = cached if cached.get("brief") else None
-        market_snapshot = self._fetch_market_snapshot(now)
+        market_snapshot = self._fetch_market_snapshot(now, device_config)
         openai_key = device_config.load_env_key("OPEN_AI_SECRET") or device_config.load_env_key("OPENAI_API_KEY")
         groq_key = device_config.load_env_key("GROQ_API_KEY")
         can_call_ai = self._allow_api_call(settings, date_key)
@@ -369,16 +370,43 @@ class DailyAINews(BasePlugin):
             parsed = parsed.replace(tzinfo=pytz.UTC)
         return parsed
 
-    def _fetch_market_snapshot(self, now: datetime) -> dict[str, Any]:
+    def _fetch_market_snapshot(self, now: datetime, device_config=None) -> dict[str, Any]:
         snapshot: dict[str, Any] = {"generated_at": now.isoformat(), "groups": {}}
+        massive_client = None
+        massive_key = load_massive_api_key(device_config)
+        if massive_key:
+            massive_client = MassiveMarketData(massive_key)
+            snapshot["macro"] = self._fetch_massive_macro(massive_client)
         for group, symbols in MARKET_GROUPS.items():
             rows = []
             for symbol, name in symbols:
-                row = self._fetch_yahoo_quote(symbol, name)
+                row = self._fetch_massive_quote(massive_client, symbol, name)
+                if not row:
+                    row = self._fetch_yahoo_quote(symbol, name)
                 if row:
                     rows.append(row)
             snapshot["groups"][group] = rows
         return snapshot
+
+    def _fetch_massive_quote(self, massive_client, symbol: str, name: str) -> dict[str, Any] | None:
+        if massive_client is None:
+            return None
+        try:
+            return massive_client.fetch_quote(symbol, name)
+        except MassiveMarketDataError as exc:
+            logger.warning("Massive market quote failed for %s: %s", symbol, exc)
+            return None
+
+    def _fetch_massive_macro(self, massive_client) -> dict[str, Any]:
+        try:
+            treasury_yields = massive_client.fetch_treasury_yields(limit=1)
+        except MassiveMarketDataError as exc:
+            logger.warning("Massive macro fetch failed: %s", exc)
+            treasury_yields = []
+        return {
+            "source": "massive",
+            "treasury_yields": treasury_yields[:1],
+        }
 
     def _fetch_yahoo_quote(self, symbol: str, name: str) -> dict[str, Any] | None:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
@@ -431,6 +459,7 @@ class DailyAINews(BasePlugin):
             "as_of": as_of,
             "currency": meta.get("currency") or "",
             "exchange": meta.get("exchangeName") or meta.get("fullExchangeName") or "",
+            "source": "yahoo",
         }
 
     def _summarize_with_ai(
@@ -806,34 +835,36 @@ class DailyAINews(BasePlugin):
         gap = 20
         col_w = (width - margin * 2 - gap) // 2
         modules = [
-            ("▣ " + SECTION_LABELS["a_share"], self._market_lines(brief, payload, "a_share"), red),
-            ("◎ " + SECTION_LABELS["us_stock"], self._market_lines(brief, payload, "us_stock"), green),
+            ("▣ " + SECTION_LABELS["a_share"], "a_share", red),
+            ("◎ " + SECTION_LABELS["us_stock"], "us_stock", green),
         ]
-        for i, (label, items, color) in enumerate(modules):
+        for i, (label, key, color) in enumerate(modules):
             x = margin + i * (col_w + gap)
-            self._draw_module(draw, label, items, x, module_y + 6, col_w, section_font, body_font, color, ink, dim, max_y=module_y + module_h)
+            self._draw_market_module(
+                draw,
+                label,
+                brief,
+                payload,
+                key,
+                x,
+                module_y + 6,
+                col_w,
+                section_font,
+                body_font,
+                color,
+                ink,
+                dim,
+                green,
+                red,
+                max_y=module_y + module_h,
+            )
 
         footer = self._footer_text(payload, brief)
         draw.text((margin, height - 20), footer, font=footer_font, fill=dim)
         return img
 
     def _base_background(self, dimensions, bg, theme_mode="day") -> Image.Image:
-        base = Image.new("RGB", dimensions, bg)
-        path = Path(__file__).with_name(BACKGROUND_IMAGE)
-        if not path.is_file():
-            return base
-        if theme_mode != "night":
-            return base
-        try:
-            try:
-                resample = Image.Resampling.LANCZOS
-            except AttributeError:
-                resample = Image.LANCZOS
-            artwork = Image.open(path).convert("RGB").resize(dimensions, resample)
-            base = Image.blend(base, artwork, 0.68)
-        except Exception as exc:
-            logger.warning("Could not render daily news background %s: %s", path, exc)
-        return base
+        return Image.new("RGB", dimensions, bg)
 
     def _font(self, family: str, size: int, weight: str = "normal"):
         for candidate in (family, DEFAULT_FONT, "方正新楷近似", "FandolKai"):
@@ -869,9 +900,13 @@ class DailyAINews(BasePlugin):
         underline_w = min(width, max(48, self._tw(draw, label, font) + 8))
         draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
 
+    def _market_rows(self, payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        rows = (((payload.get("market_snapshot") or {}).get("groups") or {}).get(key) or [])
+        return rows if isinstance(rows, list) else []
+
     def _market_lines(self, brief: dict[str, Any], payload: dict[str, Any], key: str) -> list[str]:
         block = brief.get(key) if isinstance(brief.get(key), dict) else {}
-        rows = (((payload.get("market_snapshot") or {}).get("groups") or {}).get(key) or [])
+        rows = self._market_rows(payload, key)
         if rows:
             summary = self._market_summary(key, rows, str(payload.get("date") or ""))
             analysis = self._market_tone(rows)
@@ -889,6 +924,12 @@ class DailyAINews(BasePlugin):
         return [f"{label}行情暂不可用", "等待下一次刷新。"]
 
     def _market_summary(self, key: str, rows: list[dict[str, Any]], date_key: str) -> str:
+        prefix, parts = self._market_summary_parts(key, rows, date_key)
+        if not parts:
+            return "行情数据暂不可用"
+        return prefix + " ".join(f"{name}{self._market_pct(pct)}" for name, pct in parts)
+
+    def _market_summary_parts(self, key: str, rows: list[dict[str, Any]], date_key: str) -> tuple[str, list[tuple[str, float]]]:
         names = {
             "上证指数": "上证",
             "深证成指": "深成",
@@ -904,18 +945,23 @@ class DailyAINews(BasePlugin):
             pct = row.get("change_pct")
             if not isinstance(pct, (int, float)):
                 continue
-            parts.append(f"{name}{self._market_pct(pct)}")
+            parts.append((name, float(pct)))
             as_of = str(row.get("as_of") or "")[:10]
             if as_of > latest_date:
                 latest_date = as_of
-        if not parts:
-            return "行情数据暂不可用"
         prefix = "上日 " if key == "us_stock" and date_key and latest_date and latest_date < date_key else ""
-        return prefix + " ".join(parts)
+        return prefix, parts
 
     def _market_pct(self, pct: float) -> str:
         text = f"{pct:+.2f}%"
         return text.replace("+0.", "+.").replace("-0.", "-.")
+
+    def _market_change_color(self, pct: float, up_color, down_color, neutral_color):
+        if pct > 0:
+            return up_color
+        if pct < 0:
+            return down_color
+        return neutral_color
 
     def _market_tone(self, rows: list[dict[str, Any]]) -> str:
         pct_values = [row.get("change_pct") for row in rows if isinstance(row.get("change_pct"), (int, float))]
@@ -933,9 +979,71 @@ class DailyAINews(BasePlugin):
             return "指数分化偏弱，市场情绪较谨慎。"
         return "涨跌互现，市场缺少一致主线。"
 
+    def _draw_market_module(
+        self,
+        draw,
+        label,
+        brief,
+        payload,
+        key,
+        x,
+        y,
+        width,
+        section_font,
+        body_font,
+        accent,
+        ink,
+        rule,
+        up_color,
+        down_color,
+        max_y=None,
+    ) -> int:
+        self._section_header(draw, label, x, y, width, section_font, accent, rule)
+        y += 31
+        rows = self._market_rows(payload, key)
+        prefix, parts = self._market_summary_parts(key, rows, str(payload.get("date") or "")) if rows else ("", [])
+        if parts:
+            y = self._draw_market_change_line(draw, prefix, parts, x, y, width, body_font, ink, up_color, down_color, max_y=max_y)
+            return self._draw_module_lines(draw, [self._market_tone(rows)], x, y, width, body_font, ink, max_y=max_y)
+        return self._draw_module_lines(draw, self._market_lines(brief, payload, key), x, y, width, body_font, ink, max_y=max_y)
+
+    def _draw_market_change_line(self, draw, prefix, parts, x, y, width, body_font, ink, up_color, down_color, max_y=None) -> int:
+        groups = [[("— ", ink)]]
+        if prefix:
+            groups[0].append((prefix, ink))
+        for index, (name, pct) in enumerate(parts):
+            group = [
+                (name, ink),
+                (self._market_pct(pct), self._market_change_color(pct, up_color, down_color, ink)),
+            ]
+            if index < len(parts) - 1:
+                group.append((" ", ink))
+            groups.append(group)
+
+        line_h = 20
+        if max_y is not None and y + line_h > max_y:
+            return y
+
+        cursor_x = x
+        limit_x = x + width
+        for group in groups:
+            group_w = sum(self._tw(draw, text, body_font) for text, _color in group)
+            if cursor_x > x and cursor_x + group_w > limit_x:
+                y += line_h
+                if max_y is not None and y + line_h > max_y:
+                    return y
+                cursor_x = x
+            for text, color in group:
+                draw.text((cursor_x, y), text, font=body_font, fill=color)
+                cursor_x += self._tw(draw, text, body_font)
+        return y + line_h + 3
+
     def _draw_module(self, draw, label, items, x, y, width, section_font, body_font, accent, ink, rule, max_y=None) -> int:
         self._section_header(draw, label, x, y, width, section_font, accent, rule)
         y += 31
+        return self._draw_module_lines(draw, items, x, y, width, body_font, ink, max_y=max_y)
+
+    def _draw_module_lines(self, draw, items, x, y, width, body_font, ink, max_y=None) -> int:
         for item in list(items)[:2]:
             text = self._module_text(item)
             if not text:

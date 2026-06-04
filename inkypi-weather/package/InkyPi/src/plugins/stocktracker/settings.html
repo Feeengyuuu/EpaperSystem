@@ -43,6 +43,18 @@
     <small>Select the time period for calculating price changes</small>
 </div>
 
+<div class="form-group">
+    <label for="data_provider">Market Data Provider</label>
+    <select id="data_provider" name="data_provider">
+        {% for value, label in data_provider_options %}
+        <option value="{{ value }}">
+            {{ label }}
+        </option>
+        {% endfor %}
+    </select>
+    <small>Auto uses Massive first when configured, then falls back to yfinance for unsupported symbols.</small>
+</div>
+
 <style>
 .form-group {
     margin-bottom: 1.5rem;
@@ -193,6 +205,9 @@
             // Populate select dropdown
             if (pluginSettings.period) {
                 document.getElementById('period').value = pluginSettings.period;
+            }
+            if (pluginSettings.data_provider) {
+                document.getElementById('data_provider').value = pluginSettings.data_provider;
             }
         }
     });

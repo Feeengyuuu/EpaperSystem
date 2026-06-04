@@ -1,12 +1,14 @@
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.newspaper.newspaper import Newspaper
+from plugins.newspaper.newspaper import DEFAULT_MEDIA_SOURCES, Newspaper
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "newspaper_rotation_tests"
@@ -74,6 +76,29 @@ def test_parse_media_sources_accepts_urls_and_newspaper_slugs():
     ]
 
 
+def test_parse_media_sources_accepts_luoyang_evening_news_source():
+    plugin = make_plugin("parse-lywb")
+
+    sources = plugin._parse_media_sources("Luoyang Evening News|lywb|A01")
+
+    assert sources == [
+        {
+            "id": "lywb:A01",
+            "name": "Luoyang Evening News",
+            "type": "lywb",
+            "value": "A01",
+        }
+    ]
+
+
+def test_default_media_sources_include_luoyang_evening_news():
+    plugin = make_plugin("default-lywb")
+
+    sources = plugin._parse_media_sources(DEFAULT_MEDIA_SOURCES)
+
+    assert any(source["id"] == "lywb:A01" for source in sources)
+
+
 def test_select_next_source_persists_sequential_rotation():
     plugin = make_plugin("sequential")
     sources = plugin._parse_media_sources(
@@ -112,23 +137,67 @@ def test_rotating_image_skips_failed_source(monkeypatch):
     assert plugin._select_next_source(sources)["name"] == "Broken"
 
 
-def test_url_source_renders_headlines_fallback_when_screenshot_fails(monkeypatch):
-    plugin = make_plugin("url-fallback")
+def test_url_source_returns_none_when_screenshot_fails(monkeypatch):
+    plugin = make_plugin("url-no-fallback")
     source = plugin._parse_media_sources("BBC News|url|https://www.bbc.com/news")[0]
 
     monkeypatch.setattr(plugin, "_fetch_url_screenshot", lambda url, device_config: None)
-    monkeypatch.setattr(
-        plugin,
-        "_fetch_web_headlines",
-        lambda url: [
-            "Global leaders agree new climate finance framework",
-            "Markets rise after central bank signals rate pause",
-        ],
-    )
 
     image = plugin._fetch_source_image(source, DeviceConfig())
 
-    assert image.size == (800, 480)
+    assert image is None
+
+
+def test_luoyang_evening_news_builds_a01_pdf_url():
+    plugin = make_plugin("lywb-url")
+
+    url = plugin._build_lywb_pdf_url(datetime(2026, 6, 3))
+
+    assert url == (
+        "https://lywb.lyd.com.cn/images2/2/2026-06/03/"
+        "A01/20260603A01_pdf.pdf"
+    )
+
+
+def test_luoyang_evening_news_fetches_pdf_front_page(monkeypatch):
+    plugin = make_plugin("lywb-fetch")
+    raw_page = Image.new("RGB", (700, 1000), "white")
+    requested_urls = []
+
+    monkeypatch.setattr(
+        plugin,
+        "_lywb_candidate_dates",
+        lambda: [datetime(2026, 6, 3)],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_pdf",
+        lambda url: requested_urls.append(url) or b"%PDF-1.7 fake",
+    )
+    monkeypatch.setattr(plugin, "_render_pdf_first_page", lambda pdf_bytes: raw_page)
+
+    image = plugin._fetch_luoyang_evening_news_cover(DeviceConfig())
+
+    assert requested_urls == [
+        "https://lywb.lyd.com.cn/images2/2/2026-06/03/"
+        "A01/20260603A01_pdf.pdf"
+    ]
+    assert image.size == raw_page.size
+    assert image.mode == "RGB"
+
+
+def test_render_pdf_first_page_returns_rgb_image():
+    fitz = pytest.importorskip("fitz")
+    plugin = make_plugin("lywb-render")
+    document = fitz.open()
+    page = document.new_page(width=100, height=120)
+    page.insert_text((12, 24), "A01")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    image = plugin._render_pdf_first_page(pdf_bytes)
+
+    assert image.size == (200, 240)
     assert image.mode == "RGB"
 
 

@@ -1,0 +1,91 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="gameName">Riot ID game name</label>
+  <input id="gameName" name="gameName" class="form-input" type="text" value="{{ defaultGameName }}" spellcheck="false">
+  <small>For example: Hide on bush</small>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="tagLine">Riot ID tag line</label>
+  <input id="tagLine" name="tagLine" class="form-input" type="text" value="{{ defaultTagLine }}" spellcheck="false">
+  <small>For example: KR1. Do not include the # symbol.</small>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="platformRoute">Platform route</label>
+  <select id="platformRoute" name="platformRoute" class="form-input">
+    <option value="kr" selected>KR</option>
+    <option value="na1">NA1</option>
+    <option value="euw1">EUW1</option>
+    <option value="eun1">EUN1</option>
+    <option value="br1">BR1</option>
+    <option value="jp1">JP1</option>
+    <option value="la1">LA1</option>
+    <option value="la2">LA2</option>
+    <option value="oc1">OC1</option>
+    <option value="tr1">TR1</option>
+  </select>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="regionalRoute">Regional route</label>
+  <select id="regionalRoute" name="regionalRoute" class="form-input">
+    <option value="asia" selected>Asia</option>
+    <option value="americas">Americas</option>
+    <option value="europe">Europe</option>
+    <option value="sea">SEA</option>
+  </select>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="refreshMinutes">Refresh every minutes</label>
+  <input id="refreshMinutes" name="refreshMinutes" class="form-input" type="number" min="15" max="1440" value="120">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="recentLimit">Recent matches fetched</label>
+  <input id="recentLimit" name="recentLimit" class="form-input" type="number" min="3" max="10" value="5">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="masteryLimit">Mastery champions fetched</label>
+  <input id="masteryLimit" name="masteryLimit" class="form-input" type="number" min="3" max="8" value="5">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="includeChallenges" id="includeChallenges" value="true" checked> Include challenge points</label>
+  <input type="hidden" name="includeChallenges" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="includeActiveGame" id="includeActiveGame" value="true" checked> Check live game status</label>
+  <input type="hidden" name="includeActiveGame" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="useMockData" id="useMockData" value="true"> Local/mock preview mode</label>
+  <input type="hidden" name="useMockData" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh" value="true"> Ignore cache once</label>
+  <input type="hidden" name="forceRefresh" value="false">
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      ['gameName', 'tagLine', 'platformRoute', 'regionalRoute', 'refreshMinutes', 'recentLimit', 'masteryLimit'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
+      });
+      ['includeChallenges', 'includeActiveGame', 'useMockData', 'forceRefresh'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) {
+          element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';
+        }
+      });
+    }
+  });
+</script>

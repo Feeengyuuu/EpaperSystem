@@ -5,6 +5,490 @@ Corrections, insights, and knowledge gaps captured during development.
 **Categories**: correction | insight | knowledge_gap | best_practice
 
 ---
+## [LRN-20260604-008] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: high
+**Status**: active
+**Area**: epaper, comic-covers, source-fallback
+
+### Summary
+ComicCovers should default to `mixed` and recycle Comic Vine recent covers before falling back to GCD metadata.
+
+### Details
+On ColoredEpaperFrame, the `ComicCovers` instance had no persisted `sourceMode`, so the previous default `gcd` skipped the available Comic Vine key. GCD then returned many issues with no cover URL plus 403/429 image/API failures, causing the plugin to render a text-only metadata card. After switching the default and instance setting to `mixed`, Comic Vine returned 24 candidates with real image URLs. A second issue appeared when the day's Comic Vine priority candidates were already marked seen: the ordering code dropped to GCD candidates while lower-quality GCD candidates were still unexhausted. Recycling the Comic Vine priority pool before GCD fallback restored real cover images.
+
+### Suggested Action
+For `gcd_comic_covers`, keep `DEFAULT_SOURCE_MODE = "mixed"` and make the settings page default to mixed. When `match_quality == "comicvine_recent"` candidates exist but are all seen for the day, recycle that priority pool while avoiding the immediate last issue when possible. When updating an existing instance through `/update_plugin_instance/<name>`, include `plugin_id=gcd_comic_covers`; the persisted config field is `plugin_settings`.
+
+### Metadata
+- Source: production_debug
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/gcd_comic_covers/gcd_comic_covers.py`, `inkypi-weather/package/InkyPi/src/plugins/gcd_comic_covers/settings.html`, `inkypi-weather/package/InkyPi/tests/test_gcd_comic_covers.py`, `.learnings/gcd_comic_covers_comic_vine_priority_recycle.md`
+- Tags: gcd-comic-covers, comic-vine, gdc, 429, 403, plugin-settings, random-playlist
+
+---
+## [LRN-20260604-007] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: high
+**Status**: active
+**Area**: epaper, deployment, device-targeting
+
+### Summary
+Do not deploy to the first reachable InkyPi device; verify the target hostname is `ColoredEpaperFrame`.
+
+### Details
+During LoLInfo random-playlist deployment, `192.168.1.188` briefly disappeared and `192.168.1.187` was reachable. That reachable device was `EpaperPodBeta`, not the intended target. The correct live target came back at `192.168.1.188`, and SSH `hostname` returned `ColoredEpaperFrame`.
+
+### Suggested Action
+Before any live deployment for the main frame, verify both HTTP reachability and SSH identity with `hostname`. If a scan finds `.187` or another reachable InkyPi-like device, treat it as non-target unless it identifies as `ColoredEpaperFrame`. If a wrong target is modified during recovery, remove any added playlist instance before finishing.
+
+### Metadata
+- Source: deployment_correction
+- Related Files: `tools/add_lol_info_to_random_list.py`, `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/colored_epaper_frame_hostname_guard.md`
+- Tags: epaperpod, colored-epaper-frame, hostname, deployment, device-identity, random-playlist
+
+---
+## [LRN-20260604-006] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, playlist
+
+### Summary
+LoLInfo must carry `refreshOnDisplay=true` when it is added to the random playlist.
+
+### Details
+The LoLInfo skin-art panel intentionally rotates a Data Dragon splash from the player's commonly used and high-mastery champions. The standard playlist display path uses the cached instance image first, so the instance needs `refreshOnDisplay=true` in its persisted settings; otherwise LoLInfo can be in the random playlist but still show the same cached skin art until its normal refresh interval expires.
+
+### Suggested Action
+When adding or updating `LoLInfo` in `DailyDoseOfDay`, include `refreshOnDisplay=true` with the Riot ID settings. Use `tools/add_lol_info_to_random_list.py` as an idempotent helper once the live device is reachable.
+
+### Metadata
+- Source: production_playlist_setup
+- Related Files: `tools/add_lol_info_to_random_list.py`, `.tmp/update_lol_info_instance.py`, `inkypi-weather/package/InkyPi/src/plugins/lol_info/settings.html`, `inkypi-weather/package/InkyPi/src/refresh_task.py`, `.learnings/lol_info_random_playlist_refresh_on_display.md`
+- Tags: lol-info, random-playlist, refresh-on-display, skin-art, cache
+
+---
+## [LRN-20260604-005] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, layout, visual
+
+### Summary
+LoLInfo skin splash art should render as an unobstructed image, with the Riot logo in the lower middle gap.
+
+### Details
+After adding the right-side skin-art pool, the first pass placed champion and skin-name labels over the bottom of the splash image and kept the Riot logo near the image's upper-left edge. The user corrected this: the skin artwork should fill its framed area without text overlays, and the Riot logo should sit in the lower empty space between the overview metrics and the skin image.
+
+### Suggested Action
+For future LoLInfo visual changes, do not overlay champion names, skin names, or source labels on top of the skin splash frame. Keep `_overview_layout()` responsible for positioning the large right-side art frame and the lower-middle Riot logo, and verify on the 800x480 render before deploying.
+
+### Metadata
+- Source: production_visual_refinement
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `inkypi-weather/package/InkyPi/tests/test_lol_info.py`, `.learnings/lol_info_skin_art_full_image_layout.md`
+- Tags: lol-info, riot-logo, skin-art, no-overlay, layout, 800x480
+
+---
+## [LRN-20260604-004] insight
+
+**Logged**: 2026-06-04
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, riot-api, assets
+
+### Summary
+LoLInfo can use Riot Data Dragon for champion splash art, loading art, and skin art.
+
+### Details
+Riot's authenticated player APIs return account, match, ranked, mastery, and champion identifiers, but champion artwork is provided through Data Dragon static assets. Individual champion JSON files contain a `skins` array with each skin's `num`; splash art uses `/cdn/img/champion/splash/{ChampionKey}_{num}.jpg`, and loading art uses `/cdn/img/champion/loading/{ChampionKey}_{num}.jpg`. Some skin entries are chromas and may not have separate splash images; entries with `parentSkin` should be treated as chromas.
+
+### Suggested Action
+For future LoLInfo visual expansions, use Match-V5 or mastery data to choose champion keys, then use Data Dragon champion detail JSON to list skin `num` values. Cache splash/loading images locally and fall back to champion square icons if an art URL is missing or blocked. Do not imply the match API exposes the exact cosmetic skin used by the player unless verified separately.
+
+### Metadata
+- Source: official_riot_docs
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/lol_info_riot_champion_skin_art_assets.md`
+- Tags: lol-info, riot-api, data-dragon, splash-art, skin-art, champion-assets
+
+---
+## [LRN-20260604-003] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, layout
+
+### Summary
+LoLInfo bottom overview should reserve the right side for future refresh content.
+
+### Details
+The user requested that the lower overview area be squeezed left so the right side remains open for a planned future refresh module. The implemented layout keeps the bottom panel full width, but constrains the Riot logo and six overview metrics to the left portion by reserving roughly a quarter of the panel width on the right.
+
+### Suggested Action
+For future LoLInfo bottom-panel edits, preserve the right reserved area unless the user explicitly fills it. Keep the existing left-packed metric layout and bump `STYLE_VERSION` after coordinate changes so cached images do not hide the update.
+
+### Metadata
+- Source: production_visual_refinement
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/lol_info_bottom_right_reserved_region.md`
+- Tags: lol-info, bottom-panel, reserved-region, layout, 800x480
+
+---
+## [LRN-20260604-002] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: high
+**Status**: active
+**Area**: epaper, lol-info, color-ui
+
+### Summary
+LoLInfo should follow the vintage comic process-color rule instead of a blue/cyan dashboard palette.
+
+### Details
+The live LoLInfo page initially used a dark blue panel system with saturated cyan borders, which made the screen read as a generic digital dashboard rather than the EpaperSystem formal color rule. The correction keeps night readability but maps the UI to `docs/color-ui-guidelines.md`: process-black background, warm-paper text and linework, and limited flat accent colors for cyan, amber, red, and green.
+
+### Suggested Action
+For future LoLInfo color changes, avoid cyan as the dominant border or background color. Keep panel borders warm-paper, use black/dark grounds for night mode, and reserve cyan for small informational labels. Bump `STYLE_VERSION` after color-token changes so cached images do not mask the update.
+
+### Metadata
+- Source: production_visual_refinement
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `docs/color-ui-guidelines.md`, `.learnings/lol_info_comic_palette_compliance.md`
+- Tags: lol-info, color-ui, comic-palette, process-black, warm-paper
+
+---
+## [LRN-20260604-001] best_practice
+
+**Logged**: 2026-06-04
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, layout
+
+### Summary
+LoLInfo needs compact fitted route labels and explicit bottom padding in the mastery panel.
+
+### Details
+On the live `LoLInfo` page for `NA1 / AMERICAS`, the route label looked slightly misaligned when rendered as a larger fixed-position string, and the third mastery row sat too close to the right panel's bottom border. The fix was to render the route with `_single()` using the tiny font and a slash separator, move the mastery list upward, reduce icon size and row step, and use a larger right padding for mastery bars.
+
+### Suggested Action
+For future LoLInfo layout edits, keep route labels width-fitted because `AMERICAS` is much longer than `ASIA`. Maintain visible bottom and right padding around the third mastery row on the 800x480 layout.
+
+### Metadata
+- Source: production_visual_refinement
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/lol_info_spacing_for_long_routes_and_mastery.md`
+- Tags: lol-info, spacing, route-label, mastery-panel, 800x480
+
+---
+## [LRN-20260603-021] insight
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, riot-api
+
+### Summary
+LoLInfo needs the exact Riot ID tagLine for account lookup.
+
+### Details
+Account-V1 could not find the North America account with guessed tags `NA1`, `NA`, `US1`, or `US`, and Summoner-V4 by-name returned 403 on the live key. After the user supplied tagLine `pog`, Account-V1 returned a PUUID and the live LoLInfo instance refreshed correctly.
+
+### Suggested Action
+For future LoLInfo account changes, ask for `gameName#tagLine` first. Use `platformRoute=na1` and `regionalRoute=americas` for North America after the exact tag is known.
+
+### Metadata
+- Source: production_probe
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/lol_info_riot_id_tagline_lookup.md`
+- Tags: lol-info, riot-id, tag-line, na1, account-lookup
+
+---
+## [LRN-20260603-020] deployment
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, deployment
+
+### Summary
+`systemctl restart inkypi` can stay in `stop-sigterm` until the 4 minute timeout.
+
+### Details
+During the LoLInfo deploy, the old service stayed `ActiveState=deactivating`, `SubState=stop-sigterm`, `ExecMainPID=2154` until systemd reached `TimeoutStopUSec=4min`, killed the old Python processes, and started the new service. Follow-up non-interactive `sudo kill` did not work because sudo required a terminal/password.
+
+### Suggested Action
+After restarting `inkypi`, poll systemd state and wait for `Started inkypi.service`, `waitress - Serving on http://0.0.0.0:80`, and `/playlist` HTTP 200 before triggering manual display refresh.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `.learnings/colored_epaper_frame_systemctl_restart_timeout.md`
+- Tags: colored-epaper-frame, epaperpod, deploy, systemd, waitress, restart-timeout
+
+---
+## [LRN-20260603-019] insight
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, lol-info, riot-api
+
+### Summary
+LoLInfo can use PUUID-based Riot endpoints and needs logo background cleanup.
+
+### Details
+The live `Riot_KEY` returned useful account, summoner, league-by-puuid, champion mastery, match, challenge, rotation, and platform status data. The older encrypted summoner id is not needed for ranked data because `/lol/league/v4/entries/by-puuid/{puuid}` works. The provided Riot logo asset has an opaque light/checkerboard background, so it must be cleaned and tinted before rendering on the dark e-paper dashboard.
+
+### Suggested Action
+For future LoLInfo work, keep Riot ID, platform route, and regional route as settings. Use Data Dragon `zh_CN` for champion labels/icons, treat Spectator 404 as "未在对局中", and keep brand logo preprocessing in the plugin rather than pre-editing the source files.
+
+### Metadata
+- Source: local_probe
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py`, `tools/probe_riot_api.py`, `.learnings/lol_info_riot_api_and_brand_assets.md`
+- Tags: lol-info, riot-api, puuid, data-dragon, logo-assets
+
+---
+## [LRN-20260603-018] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, dota-profile-dashboard, localization
+
+### Summary
+Dota hero names should be localized from the official `language=schinese` hero list.
+
+### Details
+OpenDota returned English `heroStats.localized_name` on the live Dota profile page. The working fix was to fetch `https://www.dota2.com/datafeed/herolist?language=schinese`, cache `name_loc` by hero id, and overwrite hero display names before rendering. The official list returned `獸` for Primal Beast, so normalize that value to Simplified Chinese `兽`.
+
+### Suggested Action
+For future Dota profile localization work, key localized names by numeric hero id, not English names. Bump `STYLE_VERSION` after localization changes so the plugin does not reuse a stale rendered cache.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/dota_profile_dashboard/dota_profile_dashboard.py`, `.learnings/dota_profile_schinese_hero_names.md`
+- Tags: dota-profile-dashboard, schinese, hero-names, opendota, dota2-datafeed
+
+---
+## [LRN-20260603-017] workflow
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, dota-profile-dashboard, deployment
+
+### Summary
+Dota Profile live deploy uses the project SSH key, not default Windows identities.
+
+### Details
+On `ColoredEpaperFrame` at `192.168.1.188`, default SSH failed because `C:\Users\super\.ssh` contained only known-host files. The working deploy path used `.ssh\epaperpod_codex_20260525` with `IdentitiesOnly=yes`, uploaded the new plugin to `/usr/local/inkypi/src/plugins/dota_profile_dashboard`, validated it in `/usr/local/inkypi/venv_inkypi`, restarted `inkypi`, added `DotaProfile` to `DailyDoseOfDay`, and verified the instance image matched `/api/current_image`.
+
+### Suggested Action
+For future new-plugin deploys on this device, start with the project key path and absolute Windows OpenSSH binaries. After a manual display, compare `/plugin_instance_image/<playlist>/<plugin>/<instance>` with `/api/current_image` by SHA256 before claiming the screen is showing the plugin.
+
+### Metadata
+- Source: deployment
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/dota_profile_dashboard/dota_profile_dashboard.py`, `.learnings/dota_profile_live_deploy_key_and_data_limits.md`
+- Tags: dota-profile-dashboard, epaperpod, ssh-key, deploy, opendota, current-image
+
+---
+## [LRN-20260603-016] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, dota-profile-dashboard, icon-rendering
+
+### Summary
+Dota hero icons need internal white pixel normalization, not only a black container.
+
+### Details
+OpenDota `heroStats.icon` images served through the Steam CDN can contain opaque white or near-white pixels inside the 32x32 source image. A black square container alone still leaves a visible white frame and white interior patches. The dashboard should remove the separate outline and normalize near-white source pixels to black before and after resizing.
+
+### Suggested Action
+For compact Dota hero rows, avoid drawing icon outlines and apply near-white to black cleanup in `_square_icon()`. Use local preview plus a small pixel smoke test before deploying to the e-paper device.
+
+### Metadata
+- Source: local_preview
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/dota_profile_dashboard/dota_profile_dashboard.py`, `inkypi-weather/package/InkyPi/tests/test_dota_profile_dashboard.py`, `.learnings/dota_profile_hero_icon_black_normalization.md`
+- Tags: dota-profile-dashboard, hero-icons, white-border, black-background, epaper
+
+---
+## [LRN-20260603-015] insight
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, dota-profile-dashboard, opendota
+
+### Summary
+Dota hero portraits should use OpenDota `heroStats` metadata with Steam CDN image URLs.
+
+### Details
+`Austinparisi42/Dota2HeroDatabase` does not contain a standalone hero image archive. Its JavaScript calls `https://api.opendota.com/api/heroStats` and reads the `icon`/`img` fields. The old page concatenates those paths with `https://api.opendota.com`, but that image URL returned 404 during the local probe. The same relative path works through `https://cdn.cloudflare.steamstatic.com`.
+
+### Suggested Action
+For Dota profile UI work, keep `heroStats` as the metadata source, generate hero image URLs from `icon`/`img`, try Steam CDN first, and retain the OpenDota asset base only as a fallback.
+
+### Metadata
+- Source: local_probe
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/dota_profile_dashboard/dota_profile_dashboard.py`, `tools/preview_dota_profile_dashboard.py`, `.learnings/dota_hero_icon_source_opendota_cdn.md`
+- Tags: dota-profile-dashboard, opendota, hero-icons, steam-cdn
+
+---
+## [LRN-20260603-014] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, dota-profile-dashboard, windows
+
+### Summary
+Local plugin preview cache writes may need a direct-write fallback on Windows.
+
+### Details
+While building the Dota Profile Dashboard local preview, the rendered image completed but JSON cache commit failed at `Path.replace()` in `.tmp` with `[WinError 5] Access is denied`. The plugin now keeps the normal temp-file path, catches `PermissionError` around the replace step, writes the final JSON directly, and best-effort removes the temp file.
+
+### Suggested Action
+For new UI-first plugins tested locally on this Windows machine, prefer mock data and include a cache write fallback when using temp-file replacement. This keeps preview scripts usable even when pytest or network dependencies are unavailable.
+
+### Metadata
+- Source: local_preview
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/dota_profile_dashboard/dota_profile_dashboard.py`, `tools/preview_dota_profile_dashboard.py`
+- Tags: dota-profile-dashboard, preview, windows, cache, permissionerror, mock-data
+
+---
+## [LRN-20260603-013] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, steam-profile-dashboard
+
+### Summary
+Steam dashboard real game names should all show left-side app logos sized from their row font.
+
+### Details
+The Steam page now treats displayed game names as structured rows with `appid`, `name`, and optional prefix/suffix. Current game, recent/realtime rows, commonly played TOP games, and friend activity can all render a Steam app logo immediately left of the game name. Icon size should come from the row font/line height, and rows that do not fit must skip the whole row rather than leaving an orphan icon.
+
+### Suggested Action
+For future Steam dashboard changes, do not flatten game rows into plain strings until after icon placement is decided. Use `img_icon_url` first and Steam app capsule fallback for missing hashes. Bump `STEAM_DASHBOARD_STYLE_VERSION` after changing icon coverage so live verification renders a fresh image.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/steam_profile_dashboard.py`
+- Tags: steam-profile-dashboard, game-icons, appid, typography, cache-key, epaperpod
+
+---
+## [LRN-20260603-012] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, steam-profile-dashboard
+
+### Summary
+Steam profile dashboard lower `最近 / 实时` game rows should use small square Steam app icons.
+
+### Details
+After adding a square app icon to the top current-game title, the lower-left `最近 / 实时` list also needed visual game icons. The safer pattern is to build structured recent items with `text` and optional `appid`, then render rows through `_draw_recent_item()` so game rows can reuse `_game_square_icon()` and non-game rows keep the original green bullet fallback. Lower recent rows may still wrap because they include Chinese names and playtime details.
+
+### Suggested Action
+For future Steam dashboard list changes, preserve app icons for game rows and keep bullet fallback only for metadata or missing-icon rows. Bump `STEAM_DASHBOARD_STYLE_VERSION` after changing lower-list visuals so live verification is not served stale cache.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/steam_profile_dashboard.py`
+- Tags: steam-profile-dashboard, recent-games, app-icons, list-rendering, cache-key, epaperpod
+
+---
+## [LRN-20260603-011] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, steam-profile-dashboard
+
+### Summary
+Steam profile dashboard current-game title should stay single-line and shrink rather than wrap.
+
+### Details
+After adding the square Steam game icon before the current game name, `Farthest Frontier` wrapped to a second line in the top profile panel. The preferred behavior is to keep the "正在玩：" label, icon, and game title on one row, using `_draw_single_line_text(..., min_size=10)` to shrink the title when width is tight. The row helper should return at least the icon height so the stats line below does not collide with the icon.
+
+### Suggested Action
+For future Steam dashboard title/layout changes, avoid wrapped current-game titles in the top panel. Bump `STEAM_DASHBOARD_STYLE_VERSION` after this kind of visual change so the live Pi does not reuse a stale cached image.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/steam_profile_dashboard.py`
+- Tags: steam-profile-dashboard, current-game, typography, single-line, cache-key, epaperpod
+
+---
+## [LRN-20260603-010] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper, steam-profile-dashboard
+
+### Summary
+Steam profile dashboard Chinese text can reuse the already deployed Microsoft YaHei fonts from `sports_dashboard`.
+
+### Details
+The Steam dashboard previously listed `C:/Windows/Fonts/msyh.ttc` after LXGW/Noto fallbacks, which did not help on the live Pi. The live device already had `msyh.ttc`, `msyhbd.ttc`, and `msyhl.ttc` under `src/plugins/sports_dashboard/fonts/`. Updating `steam_profile_dashboard._font()` to prefer `../sports_dashboard/fonts/msyh*.ttc` changed Chinese rendering to YaHei without copying new font files. Bumping `STEAM_DASHBOARD_STYLE_VERSION` forced a new cache key so the existing cached image did not keep the old font.
+
+### Suggested Action
+For future plugin font changes, first inspect existing deployed plugin font folders before adding font assets. When changing a rendered dashboard font, include the font/style version in the cache key or bump the existing style version so live verification renders the new font immediately.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/steam_profile_dashboard.py`, `inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/fonts/msyh.ttc`
+- Tags: steam-profile-dashboard, yahei, fonts, cache-key, epaperpod, coloredepaperframe
+
+---
+## [LRN-20260603-009] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+When a plugin gains new default settings, existing playlist instances keep their old settings until explicitly updated.
+
+### Details
+During the multi-plugin deploy, `ChineseClock` had the new `settings.html` default of `quote_selection=source_random` and Open Library enrichment enabled, but the live `ChineseClock` instance still had the old persisted setting `quote_selection=shortest`. Because `update_plugin_instance` replaces the entire settings payload, the migration needed to read the current non-secret settings, preserve visual values such as font, background, and highlight style, then update only the desired behavior fields.
+
+### Suggested Action
+After deploying settings-bearing plugin changes, inspect the live `device.json` for key instances. Do not assume UI defaults affect existing instances. Use the app API to update the existing instance with a complete form payload that preserves prior visual settings and adds the new behavior settings.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/chinese_literature_clock/settings.html`, `inkypi-weather/package/InkyPi/src/blueprints/plugin.py`
+- Tags: inkypi, playlist, settings, migration, chinese-clock, deploy
+
+---
+## [LRN-20260603-004] best_practice
+
+**Logged**: 2026-06-03
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+DailyArt should avoid showing a single narrow portrait artwork centered on the landscape e-paper screen.
+
+### Details
+On `ColoredEpaperFrame`, portrait museum scans look sparse when rendered one at a time with contain fit. The DailyArt plugin now supports `layoutMode=auto_gallery`, which keeps landscape artworks as a single large image only when no portrait candidates are available, but collects portrait candidates into a 3-item horizontal gallery by default. The cache payload records both `artwork` and `artworks`, and the context cache writes a `museum_artwork_gallery` item so downstream source display can cite all visible artworks.
+
+### Suggested Action
+For portrait-heavy visual plugins, prefer a 3-up gallery on the 800x480 panel. Include layout settings in the cache key, increase candidate/attempt limits enough to find multiple portrait images, and store multi-item source metadata rather than only the first image.
+
+### Metadata
+- Source: production_deploy
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/daily_art/daily_art.py`, `inkypi-weather/package/InkyPi/src/plugins/daily_art/settings.html`, `inkypi-weather/package/InkyPi/tests/test_daily_art.py`
+- Tags: inkypi, daily-art, museum-api, gallery, portrait, layout, context-cache
+
+---
 ## [LRN-20260530-130] best_practice
 
 **Logged**: 2026-05-30T02:40:00-07:00
@@ -3235,5 +3719,27 @@ For `wpotd`, request `imageinfo` with `iiurlwidth` and prefer `thumburl`. Reject
 - Source: production_debug
 - Related Files: `inkypi-weather/package/InkyPi/src/plugins/wpotd/wpotd.py`, `inkypi-weather/package/InkyPi/tests/test_wpotd_smart_crop.py`
 - Tags: epaperpod, wpotd, wikipedia, mediawiki, video, thumbnails
+
+---
+## [LRN-20260531-129] best_practice
+
+**Logged**: 2026-05-31T17:40:00-07:00
+**Priority**: medium
+**Status**: active
+**Area**: epaper
+
+### Summary
+Simple Calendar style-only fixes can be hot-applied through the plugin instance API.
+
+### Details
+On ColoredEpaperFrame, the running `inkypi` process was root-owned and `sudo -n systemctl restart inkypi` was unavailable. The live `Date` Simple Calendar instance had no `weatherPanelBackgroundStyle`, so it used the old default. Because the already-running code supported explicit comic styles, updating the instance via `PUT /update_plugin_instance/Date` with the existing settings plus `weatherPanelBackgroundStyle=img2_original_heroes_mixed`, then calling `POST /display_plugin_instance`, changed the live render without rebooting the device.
+
+### Suggested Action
+For future Simple Calendar visual default changes, prefer a code deploy plus an API instance-setting hotfix when restart access is unavailable. Preserve all existing form fields when using `PUT /update_plugin_instance/<instance>` because the endpoint replaces plugin settings with the submitted form data.
+
+### Metadata
+- Source: deployment
+- Related Files: `inkypi-weather/package/InkyPi/src/plugins/simple_calendar/simple_calendar.py`, `inkypi-weather/package/InkyPi/src/blueprints/plugin.py`
+- Tags: epaperpod, simple-calendar, deploy, hotfix, display-plugin-instance
 
 ---

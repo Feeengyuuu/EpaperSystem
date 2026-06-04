@@ -22,3 +22,24 @@ For future deploys on `ColoredEpaperFrame`, after using `/shutdown`, do not trig
 - Tags: colored-epaper-frame, epaperpod, deploy, shutdown, systemd, waitress, verification
 
 ---
+
+## [LRN-20260601-002] deployment
+
+**Logged**: 2026-06-01T00:20:00-07:00
+**Priority**: high
+**Status**: active
+**Area**: epaper
+
+### Summary
+Do not call `/shutdown` without `{"reboot": true}` on ColoredEpaperFrame.
+
+### Details
+The InkyPi `/shutdown` route executes `sudo shutdown -h now` unless the JSON body contains `{"reboot": true}`. Calling it with `{}` powers off `ColoredEpaperFrame`; after that, ping, SSH, and HTTP are unreachable until the device is physically power-cycled. The safe remote restart form is `POST /shutdown` with JSON `{"reboot": true}`, or avoid this endpoint entirely when only a Flask code reload is needed.
+
+### Suggested Action
+For future `ColoredEpaperFrame` deploys, use `Invoke-WebRequest -Method Post -ContentType application/json -Body '{"reboot": true}' http://192.168.1.188/shutdown` if a full reboot is intentional. Never use an empty JSON body for restart verification.
+
+### Metadata
+- Source: production_debug
+- Related Files: `inkypi-weather/package/InkyPi/src/blueprints/settings.py`
+- Tags: colored-epaper-frame, epaperpod, deploy, shutdown, reboot

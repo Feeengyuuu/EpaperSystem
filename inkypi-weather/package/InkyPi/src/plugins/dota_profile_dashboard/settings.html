@@ -1,0 +1,65 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="accountId">OpenDota account_id</label>
+  <input id="accountId" name="accountId" class="form-input" type="text" value="{{ defaultAccountId }}" spellcheck="false">
+  <small>OpenDota uses the 32-bit Steam account id. Leave this as the default to use the known Steam account.</small>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="steamId64">SteamID64 fallback</label>
+  <input id="steamId64" name="steamId64" class="form-input" type="text" value="{{ defaultSteamId64 }}" spellcheck="false">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="refreshMinutes">Refresh every minutes</label>
+  <input id="refreshMinutes" name="refreshMinutes" class="form-input" type="number" min="30" max="1440" value="180">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="recentLimit">Recent matches fetched</label>
+  <input id="recentLimit" name="recentLimit" class="form-input" type="number" min="3" max="20" value="8">
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="topHeroLimit">Hero rows fetched</label>
+  <input id="topHeroLimit" name="topHeroLimit" class="form-input" type="number" min="3" max="20" value="8">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="includeWordcloud" id="includeWordcloud" value="true" checked> Include wordcloud endpoint</label>
+  <input type="hidden" name="includeWordcloud" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="includeRecords" id="includeRecords" value="true" checked> Include personal record endpoints</label>
+  <input type="hidden" name="includeRecords" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="useMockData" id="useMockData" value="true"> Local/mock preview mode</label>
+  <input type="hidden" name="useMockData" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh" value="true"> Ignore cache once</label>
+  <input type="hidden" name="forceRefresh" value="false">
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      const ids = ['accountId', 'steamId64', 'refreshMinutes', 'recentLimit', 'topHeroLimit'];
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
+      });
+      ['includeWordcloud', 'includeRecords', 'useMockData', 'forceRefresh'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) {
+          element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';
+        }
+      });
+    }
+  });
+</script>

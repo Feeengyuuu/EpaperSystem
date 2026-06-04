@@ -48,7 +48,7 @@ def mask_value(value):
     """Mask API key value for display. Never reveal actual values for security."""
     if not value:
         return "(empty)"
-    return "●" * min(len(value), 20)
+    return "*" * min(len(value), 20)
 
 
 @apikeys_bp.route('/api-keys')

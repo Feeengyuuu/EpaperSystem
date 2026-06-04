@@ -1,0 +1,72 @@
+<div class="form-group">
+  <label class="form-label" for="language">Display language</label>
+  <select name="language" id="language">
+    <option value="zh" selected>Chinese</option>
+    <option value="en">English</option>
+    <option value="de">German</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="useless_mode">Useless Facts mode</label>
+  <select name="useless_mode" id="useless_mode">
+    <option value="today" selected>Today's fact</option>
+    <option value="random">Random fact</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="use_useless_facts" id="use_useless_facts" value="true" checked> Use Useless Facts</label>
+  <input type="hidden" name="use_useless_facts" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="use_world_fun_facts" id="use_world_fun_facts" value="true" checked> Use World Fun Facts via RapidAPI</label>
+  <input type="hidden" name="use_world_fun_facts" value="false">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="rapidapi_host">RapidAPI host</label>
+  <input class="form-control" type="text" name="rapidapi_host" id="rapidapi_host" value="world-fun-facts-all-languages-support.p.rapidapi.com">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="rapidapi_path">RapidAPI path</label>
+  <input class="form-control" type="text" name="rapidapi_path" id="rapidapi_path" value="/fact">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="font_family">Font</label>
+  <select name="font_family" id="font_family">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="force_refresh" id="force_refresh"> Ignore today's cache once</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const [key, value] of Object.entries(pluginSettings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else {
+          el.value = value;
+        }
+      }
+    }
+
+    const fontFamily = document.getElementById('font_family');
+    if (fontFamily && !fontFamily.value) {
+      if ([...fontFamily.options].some(option => option.value === 'Jost')) {
+        fontFamily.value = 'Jost';
+      }
+    }
+  });
+</script>

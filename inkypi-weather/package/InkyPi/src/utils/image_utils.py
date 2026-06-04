@@ -89,7 +89,7 @@ def compute_image_hash(image):
     img_bytes = image.tobytes()
     return hashlib.sha256(img_bytes).hexdigest()
 
-def take_screenshot_html(html_str, dimensions, timeout_ms=None):
+def take_screenshot_html(html_str, dimensions, timeout_ms=None, timezone_name=None):
     image = None
     try:
         # Create a temporary HTML file
@@ -97,7 +97,7 @@ def take_screenshot_html(html_str, dimensions, timeout_ms=None):
             html_file.write(html_str.encode("utf-8"))
             html_file_path = html_file.name
 
-        image = take_screenshot(html_file_path, dimensions, timeout_ms)
+        image = take_screenshot(html_file_path, dimensions, timeout_ms, timezone_name=timezone_name)
 
         # Remove html file
         os.remove(html_file_path)
@@ -110,17 +110,25 @@ def take_screenshot_html(html_str, dimensions, timeout_ms=None):
 def _find_chromium_binary():
     """Find the first available Chromium-based binary in system PATH."""
     candidates = ["chromium-headless-shell", "chromium", "chrome"]
+    if os.name == "nt":
+        candidates.extend([
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ])
     for candidate in candidates:
-        path = shutil.which(candidate)
+        path = candidate if os.path.isabs(candidate) and os.path.exists(candidate) else shutil.which(candidate)
         if path:
             logger.debug(f"Found browser binary: {candidate} at {path}")
             return candidate
     return None
 
 
-def take_screenshot(target, dimensions, timeout_ms=None):
+def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
     image = None
     img_file_path = None
+    browser_profile_dir = None
     try:
         # Find available browser binary
         browser = _find_chromium_binary()
@@ -131,6 +139,7 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         # Create a temporary output file for the screenshot
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_file:
             img_file_path = img_file.name
+        browser_profile_dir = tempfile.mkdtemp(prefix="inkypi-browser-")
 
         command = [
             browser,
@@ -148,6 +157,10 @@ def take_screenshot(target, dimensions, timeout_ms=None):
             "--disable-gpu-memory-buffer-compositor-resources",
             "--disable-extensions",
             "--disable-plugins",
+            "--disable-crash-reporter",
+            "--disable-crashpad",
+            "--run-all-compositor-stages-before-draw",
+            f"--user-data-dir={browser_profile_dir}",
             "--mute-audio",
             "--renderer-process-limit=1",
             "--no-zygote",
@@ -155,6 +168,9 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         ]
         if timeout_ms:
             command.append(f"--timeout={timeout_ms}")
+            command.append(f"--virtual-time-budget={timeout_ms}")
+        if timezone_name:
+            command.append(f"--timezone-for-testing={timezone_name}")
 
         process_timeout = ((timeout_ms or 45000) / 1000) + 15
         popen_kwargs = {
@@ -203,6 +219,11 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         if img_file_path and os.path.exists(img_file_path):
             try:
                 os.remove(img_file_path)
+            except OSError:
+                pass
+        if browser_profile_dir and os.path.exists(browser_profile_dir):
+            try:
+                shutil.rmtree(browser_profile_dir)
             except OSError:
                 pass
 

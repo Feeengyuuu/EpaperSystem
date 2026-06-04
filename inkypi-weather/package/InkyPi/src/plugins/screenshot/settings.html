@@ -4,6 +4,21 @@
 </div>
 
 <div class="form-group">
+    <label for="captureWidth" class="form-label">Capture viewport width (optional):</label>
+    <input type="number" id="captureWidth" name="captureWidth" min="200" max="2400" placeholder="800" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="captureHeight" class="form-label">Capture viewport height (optional):</label>
+    <input type="number" id="captureHeight" name="captureHeight" min="150" max="2400" placeholder="480" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="timezone" class="form-label">Browser timezone (optional):</label>
+    <input type="text" id="timezone" name="timezone" placeholder="America/Los_Angeles" class="form-input">
+</div>
+
+<div class="form-group">
     <span style="color: var(--text-primary);">Warning: Do not run with untrusted URLs, as it may pose a security risk. This may also fail if the website takes too long to load.</span>
 </div>
 
@@ -12,6 +27,9 @@
     document.addEventListener('DOMContentLoaded', () => {        
         if (loadPluginSettings) {
             document.getElementById('url').value = pluginSettings.url;
+            document.getElementById('captureWidth').value = pluginSettings.captureWidth || '';
+            document.getElementById('captureHeight').value = pluginSettings.captureHeight || '';
+            document.getElementById('timezone').value = pluginSettings.timezone || '';
         }
     });
 </script>

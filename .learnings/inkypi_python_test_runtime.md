@@ -107,3 +107,31 @@ For quick render checks, prefer `python -B -c "..."` one-liners, an existing che
 - Source: implementation
 - Related Files: `tools/smoke_epaper_pet.py`
 - Tags: inkypi, python, powershell, bom, render-preview
+
+---
+## [LRN-20260603-001] environment
+
+**Logged**: 2026-06-03
+**Priority**: low
+**Status**: active
+**Area**: epaper
+
+### Summary
+When using the default Python 3.14 runtime for focused tests, append `.pc-packages` to `sys.path` instead of prepending it through `PYTHONPATH`.
+
+### Details
+The global/default Python had Pillow and PyMuPDF available but lacked pytest. `.pc-packages` had pytest, but setting `PYTHONPATH` to `.pc-packages` first caused Python 3.14 to import the bundled incompatible `PIL` package and fail with `cannot import name '_imaging'`. Appending `.pc-packages` inside a `python -c` test runner let pytest import from `.pc-packages` while Pillow/PyMuPDF came from the working default environment.
+
+### Suggested Action
+For focused tests in this mixed environment, use:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:PYTEST_ADDOPTS='-p no:cacheprovider'
+python -c "import sys; sys.path.append(r'G:\PersonalProjects\EpaperSystem\inkypi-weather\package\InkyPi\.pc-packages'); import pytest; raise SystemExit(pytest.main(['-q', r'inkypi-weather\package\InkyPi\tests\test_name.py']))"
+```
+
+### Metadata
+- Source: implementation
+- Related Files: `inkypi-weather/package/InkyPi/tests/test_newspaper_rotation.py`, `inkypi-weather/package/InkyPi/.pc-packages/`
+- Tags: inkypi, pytest, pc-packages, pillow, pymupdf, python314

@@ -15,12 +15,32 @@ class Screenshot(BasePlugin):
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
             dimensions = dimensions[::-1]
+        capture_dimensions = self._capture_dimensions(settings, dimensions)
+        timezone_name = str(settings.get("timezone") or device_config.get_config("timezone", "") or "").strip()
 
         logger.info(f"Taking screenshot of url: {url}")
 
-        image = take_screenshot(url, dimensions, timeout_ms=40000)
+        image = take_screenshot(url, capture_dimensions, timeout_ms=40000, timezone_name=timezone_name)
 
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")
 
+        if image.size != dimensions:
+            image = image.resize(dimensions, Image.LANCZOS)
+
         return image
+
+    @staticmethod
+    def _capture_dimensions(settings, display_dimensions):
+        width, height = display_dimensions
+        try:
+            capture_width = int(settings.get("captureWidth") or width)
+        except Exception:
+            capture_width = width
+        try:
+            capture_height = int(settings.get("captureHeight") or height)
+        except Exception:
+            capture_height = height
+        capture_width = max(200, min(2400, capture_width))
+        capture_height = max(150, min(2400, capture_height))
+        return capture_width, capture_height

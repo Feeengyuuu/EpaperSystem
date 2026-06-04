@@ -1,11 +1,14 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
+import time
 import uuid
 
 from PIL import Image
 
 from src.model import Playlist, PlaylistManager, RefreshInfo
-from src.refresh_task import PlaylistRefresh, RefreshTask
+from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
@@ -47,6 +50,49 @@ class FakePlugin:
     def generate_image(self, settings, device_config):
         self.calls.append(settings["id"])
         return Image.new("RGB", (1, 1), "white")
+
+
+class CapturePlugin:
+    def __init__(self, calls):
+        self.calls = calls
+        self.config = {}
+
+    def generate_image(self, settings, device_config):
+        self.calls.append(dict(settings))
+        return Image.new("RGB", (1, 1), "white")
+
+
+class ThreadedDeviceConfig(FakeDeviceConfig):
+    def __init__(self, plugin_image_dir, playlist):
+        super().__init__(plugin_image_dir)
+        self.playlist_manager = PlaylistManager([playlist])
+        self.refresh_info = RefreshInfo(
+            refresh_type="Playlist",
+            plugin_id="old",
+            playlist="DailyDoseOfDay",
+            plugin_instance="Old",
+            refresh_time="2000-01-01T00:00:00+00:00",
+            image_hash="old",
+        )
+
+    def get_playlist_manager(self):
+        return self.playlist_manager
+
+    def get_refresh_info(self):
+        return self.refresh_info
+
+
+class BlockingDisplayManager:
+    def __init__(self):
+        self.first_display_started = threading.Event()
+        self.release_first_display = threading.Event()
+        self.display_count = 0
+
+    def display_image(self, image, image_settings=None):
+        self.display_count += 1
+        if self.display_count == 1:
+            self.first_display_started.set()
+            self.release_first_display.wait(timeout=1)
 
 
 def test_refresh_due_plugin_instances_updates_due_cache_only(monkeypatch):
@@ -132,6 +178,104 @@ def test_refresh_due_plugin_instances_refreshes_missing_image(monkeypatch):
     assert device_config.write_count == 1
 
 
+def test_refresh_due_plugin_instances_updates_sports_dashboard_live_cache_early(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("sports-live-cache")
+    state_path = tmp_path / "lpl_live_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-lpl-live-v1",
+                "has_live": True,
+                "live_until": "2026-05-26T08:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_radar",
+                "name": "LiveRadar",
+                "plugin_settings": {"id": "live_radar"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
+    other_plugin = playlist.find_plugin("live_radar", "LiveRadar")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / other_plugin.get_image_path())
+    Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 4, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+
+    assert calls == ["sports"]
+    assert other_plugin.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:04:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch):
+    tmp_path = make_test_dir("sports-live-wait")
+    state_path = tmp_path / "lpl_live_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-lpl-live-v1",
+                "has_live": True,
+                "live_until": "2026-05-26T08:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+
+    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
+    )
+
+    assert wait_seconds == 60
+
+
 def test_playlist_refresh_uses_cached_image_without_generating_for_scheduled_display():
     calls = []
     tmp_path = make_test_dir("scheduled-cache")
@@ -195,6 +339,126 @@ def test_playlist_refresh_uses_placeholder_when_scheduled_cache_is_missing():
     assert calls == []
     assert image.size == (200, 120)
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+
+
+def test_playlist_force_refresh_marks_plugin_settings():
+    calls = []
+    tmp_path = make_test_dir("playlist-force-settings")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "WorldCup",
+                "plugin_settings": {"id": "worldcup", "forceRefresh": "false"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:04:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("sports_dashboard", "WorldCup")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / "sports_dashboard_WorldCup.png")
+
+    PlaylistRefresh(playlist, plugin_instance, force=True).execute(
+        CapturePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True}]
+    assert plugin_instance.settings == {"id": "worldcup", "forceRefresh": "false"}
+
+
+def test_manual_refresh_marks_plugin_settings():
+    calls = []
+
+    ManualRefresh("sports_dashboard", {"id": "worldcup"}).execute(
+        CapturePlugin(calls),
+        device_config=None,
+        current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True}]
+
+
+def test_manual_update_times_out_instead_of_waiting_forever():
+    tmp_path = make_test_dir("manual-timeout")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["manual_update_timeout_seconds"] = 0.01
+    task = RefreshTask(device_config, display_manager=None)
+    task.running = True
+    action = ManualRefresh("sports_dashboard", {"id": "worldcup"})
+
+    try:
+        task.manual_update(action)
+    except TimeoutError as exc:
+        assert "Manual update timed out" in str(exc)
+    else:
+        raise AssertionError("manual_update should time out without a running worker thread")
+
+    assert task.manual_update_request == ()
+
+
+def test_manual_update_runs_after_in_flight_playlist_refresh(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("manual-after-inflight")
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_radar",
+                "name": "LiveRadar",
+                "plugin_settings": {"id": "live_radar"},
+                "refresh": {"interval": 999999999},
+                "latest_refresh_time": "2999-01-01T00:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("live_radar", "LiveRadar")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    device_config.config["manual_update_timeout_seconds"] = 1
+    display_manager = BlockingDisplayManager()
+    task = RefreshTask(device_config, display_manager=display_manager)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: CapturePlugin(calls),
+    )
+
+    task.start()
+    try:
+        assert display_manager.first_display_started.wait(timeout=1)
+
+        errors = []
+        manual_thread = threading.Thread(
+            target=lambda: _run_manual_update(task, playlist, plugin_instance, errors),
+            daemon=True,
+        )
+        manual_thread.start()
+        time.sleep(0.05)
+        display_manager.release_first_display.set()
+        manual_thread.join(timeout=1)
+
+        assert not manual_thread.is_alive()
+        assert errors == []
+        assert calls
+        assert all(call == {"id": "live_radar", "forceRefresh": True, "force_refresh": True} for call in calls)
+    finally:
+        display_manager.release_first_display.set()
+        task.stop()
+
+
+def _run_manual_update(task, playlist, plugin_instance, errors):
+    try:
+        task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+    except Exception as exc:
+        errors.append(exc)
 
 
 def test_refresh_due_plugin_instances_skips_displayed_plugin(monkeypatch):

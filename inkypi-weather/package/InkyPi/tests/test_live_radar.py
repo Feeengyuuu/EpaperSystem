@@ -7,7 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PIL import Image, ImageDraw
 
-from plugins.live_radar.live_radar import DEFAULT_ROOMS_TEXT, LiveRadar
+import plugins.live_radar.live_radar as live_radar_module
+from plugins.live_radar.live_radar import DEFAULT_ROOMS_TEXT, LIVE_STATUS_DOT, LiveRadar
 
 
 class FakeDeviceConfig:
@@ -618,7 +619,9 @@ def test_snapshot_mini_section_draws_cover_thumbnails():
     image = Image.new("RGB", (260, 130), theme["bg"])
     draw = ImageDraw.Draw(image)
     cover = Image.new("RGB", (80, 50), (24, 180, 240))
+    avatar = Image.new("RGB", (40, 40), (240, 80, 32))
     plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/offline.jpg" else None
+    plugin._load_avatar_source = lambda url, cache_seconds: avatar if url == "https://avatars.test/offline.png" else None
     cards = [
         {
             "platform": "twitch",
@@ -630,6 +633,7 @@ def test_snapshot_mini_section_draws_cover_thumbnails():
             "is_fav": False,
             "heat": 0,
             "cover": "https://covers.test/offline.jpg",
+            "avatar": "https://avatars.test/offline.png",
         }
     ]
 
@@ -637,6 +641,67 @@ def test_snapshot_mini_section_draws_cover_thumbnails():
 
     assert visible == 1
     assert (24, 180, 240) in set(image.crop((18, 42, 52, 62)).getdata())
+    assert (240, 80, 32) not in set(image.crop((18, 82, 40, 104)).getdata())
+    assert (240, 80, 32) in set(image.crop((86, 58, 105, 78)).getdata())
+
+
+def test_snapshot_mini_card_uses_platform_text_and_uptime_instead_of_live_dot():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (260, 120), theme["bg"])
+    real_draw = ImageDraw.Draw(image)
+    seen = {"texts": [], "ellipses": []}
+
+    class DrawSpy:
+        def __getattr__(self, name):
+            return getattr(real_draw, name)
+
+        def text(self, xy, text, fill=None, font=None, *args, **kwargs):
+            seen["texts"].append((xy, text, fill))
+            return real_draw.text(xy, text, fill=fill, font=font, *args, **kwargs)
+
+        def ellipse(self, xy, fill=None, outline=None, *args, **kwargs):
+            seen["ellipses"].append((xy, fill, outline))
+            return real_draw.ellipse(xy, fill=fill, outline=outline, *args, **kwargs)
+
+    draw = DrawSpy()
+    cover = Image.new("RGB", (80, 50), (24, 180, 240))
+    avatar = Image.new("RGB", (40, 40), (240, 80, 32))
+
+    plugin._load_cover_source = lambda url, cache_seconds: cover if url == "https://covers.test/live.jpg" else None
+    plugin._load_avatar_source = lambda url, cache_seconds: avatar if url == "https://avatars.test/live.png" else None
+
+    def fail_platform_badge(*args, **kwargs):
+        raise AssertionError("mini cards should use platform text, not platform badge icons")
+
+    plugin._draw_platform_badge = fail_platform_badge
+    now = 1_700_000_000.0
+    card = {
+        "platform": "twitch",
+        "id": "live-cover",
+        "owner": "Live Cover",
+        "label": "",
+        "title": "Live stream",
+        "status": "live",
+        "is_fav": False,
+        "heat": 0,
+        "start_time": (now - 3720) * 1000,
+        "cover": "https://covers.test/live.jpg",
+        "avatar": "https://avatars.test/live.png",
+    }
+
+    original_time = live_radar_module.time.time
+    try:
+        live_radar_module.time.time = lambda: now
+        plugin._draw_snapshot_mini_card(image, draw, (10, 20, 220, 76), card, theme)
+    finally:
+        live_radar_module.time.time = original_time
+
+    meta_pixels = set(image.crop((100, 58, 145, 80)).getdata())
+    assert theme["live_muted"] in meta_pixels
+    assert any(text == "TW" and fill == theme["live_muted"] for _xy, text, fill in seen["texts"])
+    assert any(text == "1h 02m" and fill == LIVE_STATUS_DOT for _xy, text, fill in seen["texts"])
+    assert not any(fill == LIVE_STATUS_DOT or outline == LIVE_STATUS_DOT for _xy, fill, outline in seen["ellipses"])
 
 
 def test_dashboard_uses_snapshot_mini_when_no_extra_live():
@@ -644,8 +709,9 @@ def test_dashboard_uses_snapshot_mini_when_no_extra_live():
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     seen = {}
 
-    def draw_snapshot_mini(_image, _draw, _box, _title, cards, _theme, max_items=4, snapshot_cache_seconds=90):
+    def draw_snapshot_mini(_image, _draw, _box, _title, cards, _theme, max_items=4, snapshot_cache_seconds=90, avatar_cache_seconds=0, caption=None):
         seen["ids"] = [card["id"] for card in cards]
+        seen["caption"] = caption
         return len(cards)
 
     def fail_live_queue(*_args, **_kwargs):
@@ -685,6 +751,84 @@ def test_dashboard_uses_snapshot_mini_when_no_extra_live():
     plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
 
     assert seen["ids"] == ["recent-cover"]
+    assert seen["caption"] == "quiet slots"
+
+
+def test_dashboard_uses_snapshot_mini_for_seven_or_fewer_live_cards():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    seen = {}
+
+    def draw_snapshot_mini(_image, _draw, _box, title, cards, _theme, max_items=4, snapshot_cache_seconds=90, avatar_cache_seconds=0, caption=None):
+        seen["title"] = title
+        seen["ids"] = [card["id"] for card in cards]
+        seen["caption"] = caption
+        return len(cards)
+
+    def fail_live_queue(*_args, **_kwargs):
+        raise AssertionError("dense live queue should not draw for 7 or fewer live cards")
+
+    plugin._draw_snapshot_mini_section = draw_snapshot_mini
+    plugin._draw_live_queue_section = fail_live_queue
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"streamer{i}",
+            "owner": f"Streamer {i}",
+            "label": "",
+            "title": "Live",
+            "status": "live",
+            "is_fav": False,
+            "heat": 100 - i,
+            "start_time": None,
+            "cover": f"https://covers.test/{i}.jpg",
+            "avatar": "",
+        }
+        for i in range(7)
+    ]
+
+    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert seen["title"] == "LIVE TOO"
+    assert seen["ids"] == ["streamer3", "streamer4", "streamer5", "streamer6"]
+    assert seen["caption"] is None
+
+
+def test_dashboard_keeps_dense_live_queue_for_more_than_seven_live_cards():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    seen = {}
+
+    def fail_snapshot_mini(*_args, **_kwargs):
+        raise AssertionError("snapshot mini should only replace live queue at 7 or fewer live cards")
+
+    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, avatar_cache_seconds=0):
+        seen["title"] = title
+        seen["count"] = len(cards)
+        return len(cards)
+
+    plugin._draw_snapshot_mini_section = fail_snapshot_mini
+    plugin._draw_live_queue_section = draw_live_queue
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"streamer{i}",
+            "owner": f"Streamer {i}",
+            "label": "",
+            "title": "Live",
+            "status": "live",
+            "is_fav": False,
+            "heat": 100 - i,
+            "start_time": None,
+            "cover": f"https://covers.test/{i}.jpg",
+            "avatar": "",
+        }
+        for i in range(8)
+    ]
+
+    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert seen == {"title": "LIVE TOO", "count": 5}
 
 
 def test_top_overflow_excludes_live_queue_rows():
