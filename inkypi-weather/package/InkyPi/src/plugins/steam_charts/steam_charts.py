@@ -251,14 +251,44 @@ class SteamCharts(BasePlugin):
         logo_y = title_y + max(1, int(height * 0.006))
         header_text_x = margin + logo_size + max(8, int(width * 0.012))
         subtitle_y = title_y + int(height * 0.09)
+        header_art_width = max(76, int(width * 0.115))
 
-        self._draw_header_pixel_gradient(image, margin, subtitle_y, theme_colors)
+        self._draw_header_pixel_gradient(
+            image,
+            margin,
+            subtitle_y,
+            theme_colors,
+            area_width=header_art_width,
+        )
         self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
         draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
         draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
         if updated_at_text:
-            updated_width = draw.textlength(updated_at_text, font=meta_font)
-            draw.text((width - margin - updated_width, subtitle_y), updated_at_text, fill=ink, font=meta_font)
+            updated_bbox = draw.textbbox((0, 0), updated_at_text, font=meta_font)
+            updated_width = updated_bbox[2] - updated_bbox[0]
+            updated_height = updated_bbox[3] - updated_bbox[1]
+            updated_pad_x = max(4, int(width * 0.006))
+            updated_pad_y = max(2, int(height * 0.004))
+            updated_gap = max(8, int(width * 0.012))
+            art_left = width - margin - header_art_width
+            updated_x = art_left - updated_gap - updated_width - updated_pad_x * 2
+            updated_x = max(header_text_x, int(updated_x))
+            updated_y = subtitle_y
+            draw.rectangle(
+                (
+                    updated_x,
+                    updated_y - updated_pad_y,
+                    updated_x + updated_width + updated_pad_x * 2,
+                    updated_y + updated_height + updated_pad_y,
+                ),
+                fill=paper,
+            )
+            draw.text(
+                (updated_x + updated_pad_x, updated_y),
+                updated_at_text,
+                fill=ink,
+                font=meta_font,
+            )
 
         top = subtitle_y + max(22, int(height * 0.066))
         row_gap = max(7, int(height * 0.016))
@@ -310,11 +340,16 @@ class SteamCharts(BasePlugin):
 
             if index < len(games) - 1:
                 separator_y = int(y + row_height - max(4, row_gap * 0.55))
+                separator_start_x = name_x
+                separator_end_x = min(
+                    title_x + separator_width,
+                    metric_x - int(width * 0.2),
+                )
                 draw.line(
                     (
-                        title_x,
+                        separator_start_x,
                         separator_y,
-                        min(title_x + separator_width, metric_x - int(width * 0.2)),
+                        separator_end_x,
                         separator_y,
                     ),
                     fill=ink,
@@ -324,13 +359,16 @@ class SteamCharts(BasePlugin):
         return image
 
     @staticmethod
-    def _draw_header_pixel_gradient(target, margin, bottom_y, theme_colors):
+    def _draw_header_pixel_gradient(target, margin, bottom_y, theme_colors, area_width=None):
         width, height = target.size
         draw = ImageDraw.Draw(target)
         ink = theme_colors["ink"]
         pixel = max(4, int(height * 0.011))
         gap = max(3, int(pixel * 0.85))
-        area_width = max(126, int(width * 0.2))
+        if area_width is None:
+            area_width = max(126, int(width * 0.2))
+        else:
+            area_width = max(1, int(area_width))
         area_height = max(40, int(height * 0.13))
         left = width - margin - area_width
         top = max(margin - pixel, 0)

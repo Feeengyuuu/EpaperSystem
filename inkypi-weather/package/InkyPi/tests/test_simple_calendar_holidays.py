@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import sys
 from pathlib import Path
 
@@ -242,6 +242,7 @@ def test_personal_google_calendar_sources_are_ics_urls():
 
 def test_extract_personal_calendar_event_includes_time_label():
     plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
     cal = icalendar.Calendar.from_ical(
         b"""BEGIN:VCALENDAR
 BEGIN:VEVENT
@@ -257,7 +258,7 @@ END:VCALENDAR
         cal,
         {"label": "ME", "color": (46, 125, 50), "kind": "personal"},
         date(2026, 5, 28),
-        pytz.timezone("America/Los_Angeles"),
+        tz,
     )
 
     assert events == [{
@@ -267,4 +268,187 @@ END:VCALENDAR
         "color": (46, 125, 50),
         "kind": "personal",
         "time": "8:30a",
+        "starts_at": tz.localize(datetime(2026, 5, 28, 8, 30)),
     }]
+
+
+def test_extract_personal_monthly_rrule_expands_current_month():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    cal = icalendar.Calendar.from_ical(
+        b"""BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:pay-10
+DTSTART;VALUE=DATE:20250910
+DTEND;VALUE=DATE:20250911
+RRULE:FREQ=MONTHLY;UNTIL=20360910;BYMONTHDAY=10
+SUMMARY:Pay Salary/401(k)
+END:VEVENT
+END:VCALENDAR
+"""
+    )
+
+    events = plugin._extract_holiday_events(
+        cal,
+        {"label": "ME", "color": (46, 125, 50), "kind": "personal"},
+        date(2026, 6, 4),
+        tz,
+    )
+
+    assert events == [{
+        "date": date(2026, 6, 10),
+        "title": "Pay Salary/401(k)",
+        "label": "ME",
+        "color": (46, 125, 50),
+        "kind": "personal",
+        "time": "",
+    }]
+
+
+def test_current_month_rows_include_recurring_personal_before_holidays():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    cal = icalendar.Calendar.from_ical(
+        b"""BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:pay-10
+DTSTART;VALUE=DATE:20250910
+DTEND;VALUE=DATE:20250911
+RRULE:FREQ=MONTHLY;UNTIL=20360910;BYMONTHDAY=10
+SUMMARY:Pay Salary/401(k)
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20260614
+DTEND;VALUE=DATE:20260615
+SUMMARY:Flag Day
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20260619
+DTEND;VALUE=DATE:20260620
+SUMMARY:Juneteenth
+END:VEVENT
+END:VCALENDAR
+"""
+    )
+    events = plugin._extract_holiday_events(
+        cal,
+        {"label": "ME", "color": (46, 125, 50), "kind": "personal"},
+        date(2026, 6, 4),
+        tz,
+    )
+
+    rows = plugin._upcoming_event_rows(
+        events,
+        date(2026, 6, 4),
+        reference_dt=tz.localize(datetime(2026, 6, 4, 18, 20)),
+        limit=3,
+    )
+
+    assert [event["title"] for event in rows] == [
+        "Pay Salary/401(k)",
+        "Flag Day",
+        "Juneteenth",
+    ]
+
+
+def test_calendar_title_cleaning_removes_emoji_symbol_noise():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    assert plugin._clean_event_title("💵Pay Salary💵/401(k)") == "Pay Salary/401(k)"
+
+
+def test_recurring_personal_event_honors_exdate_rdate_and_recurrence_override():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    cal = icalendar.Calendar.from_ical(
+        b"""BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:standup
+DTSTART;VALUE=DATE:20260610
+DTEND;VALUE=DATE:20260611
+RRULE:FREQ=DAILY;COUNT=2
+RDATE;VALUE=DATE:20260613
+EXDATE;VALUE=DATE:20260610
+SUMMARY:Daily Standup
+END:VEVENT
+BEGIN:VEVENT
+UID:standup
+RECURRENCE-ID;VALUE=DATE:20260611
+DTSTART;VALUE=DATE:20260612
+DTEND;VALUE=DATE:20260613
+SUMMARY:Moved Standup
+END:VEVENT
+END:VCALENDAR
+"""
+    )
+
+    events = plugin._extract_holiday_events(
+        cal,
+        {"label": "ME", "color": (46, 125, 50), "kind": "personal"},
+        date(2026, 6, 4),
+        tz,
+    )
+
+    assert [(event["date"], event["title"]) for event in events] == [
+        (date(2026, 6, 13), "Daily Standup"),
+        (date(2026, 6, 12), "Moved Standup"),
+    ]
+
+
+def test_current_month_event_rows_drop_elapsed_events_without_next_month_backfill():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    selected_date = date(2026, 6, 4)
+    reference_dt = tz.localize(datetime(2026, 6, 4, 15, 52))
+    events = [
+        {
+            "date": date(2026, 6, 4),
+            "title": "Quest Diagnostics Appointment",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "kind": "personal",
+            "time": "3p",
+            "starts_at": tz.localize(datetime(2026, 6, 4, 15, 0)),
+        },
+        {
+            "date": date(2026, 6, 14),
+            "title": "Flag Day",
+            "label": "US",
+            "color": (52, 89, 149),
+            "kind": "holiday",
+            "time": "",
+        },
+        {
+            "date": date(2026, 6, 19),
+            "title": "Juneteenth",
+            "label": "US",
+            "color": (52, 89, 149),
+            "kind": "holiday",
+            "time": "",
+        },
+        {
+            "date": date(2026, 6, 21),
+            "title": "Father's Day",
+            "label": "US",
+            "color": (52, 89, 149),
+            "kind": "holiday",
+            "time": "",
+        },
+        {
+            "date": date(2026, 7, 4),
+            "title": "Independence Day",
+            "label": "US",
+            "color": (52, 89, 149),
+            "kind": "holiday",
+            "time": "",
+        },
+    ]
+
+    rows = plugin._upcoming_event_rows(events, selected_date, reference_dt=reference_dt, limit=3)
+
+    assert [event["date"] for event in rows] == [
+        date(2026, 6, 14),
+        date(2026, 6, 19),
+        date(2026, 6, 21),
+    ]
+    assert "Independence Day" not in [event["title"] for event in rows]

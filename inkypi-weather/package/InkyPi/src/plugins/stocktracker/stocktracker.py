@@ -229,7 +229,12 @@ class StockTracker(BasePlugin):
 
 		# Create dashboard
 		history_points = self._record_portfolio_snapshot(stock_data)
-		return self._create_dashboard(stock_data, dimensions, history_points)
+		return self._create_dashboard(
+			stock_data,
+			dimensions,
+			history_points,
+			tracking_window_label=self._tracking_window_label(period),
+		)
 
 	def _portfolio_holdings_from_settings(self, settings):
 		period = settings.get('period', '1mo')
@@ -566,6 +571,24 @@ class StockTracker(BasePlugin):
 		return f"{value:+,.2f} ({percent:+.2f}%)"
 
 	@staticmethod
+	def _tracking_window_label(period):
+		period_labels = {
+			"1d": "TODAY",
+			"5d": "LAST WEEK",
+			"1mo": "LAST MONTH",
+			"3mo": "3 MONTHS",
+			"6mo": "6 MONTHS",
+			"1y": "1 YEAR",
+			"ytd": "YTD",
+			"max": "MAX",
+		}
+		period_key = str(period or "").strip()
+		if not period_key:
+			return None
+		window = period_labels.get(period_key, period_key.upper())
+		return f"WINDOW: {window}"
+
+	@staticmethod
 	def _threshold_image(img):
 		return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
@@ -761,29 +784,24 @@ class StockTracker(BasePlugin):
 			for point in (self._normalize_portfolio_history_entry(item) for item in (history_points or []))
 			if point
 		]
-		history_values = [float(point["value"]) for point in history_points]
-		if len(values) < 2 and len(history_values) < 1:
+		values = [float(value) for value in values]
+		if len(values) < 2:
 			return
 
-		all_values = [float(value) for value in values] + history_values
-		vmin = min(all_values)
-		vmax = max(all_values)
+		vmin = min(values)
+		vmax = max(values)
 		if abs(vmax - vmin) < 0.0001:
 			vmax = vmin + 1
 
-		points = []
-		for idx, value in enumerate(values):
-			x = plot[0] + (plot[2] - plot[0]) * idx / max(len(values) - 1, 1)
-			y = plot[3] - (plot[3] - plot[1]) * (value - vmin) / (vmax - vmin)
-			points.append((int(x), int(y)))
+		points = self._plot_series_points(plot, values, vmin, vmax)
 
 		area = [(plot[0], plot[3])] + points + [(plot[2], plot[3])]
 		if len(points) >= 2:
 			draw.polygon(area, fill=self._blend(ACCENT_BLUE, (244, 250, 255), 0.16))
 			draw.line(points, fill=ACCENT_BLUE, width=3)
-		self._draw_history_markers(draw, plot, history_points, vmin, vmax)
 		if len(points) >= 2:
 			self._draw_latest_value_marker(draw, points[-1])
+		self._draw_history_markers(draw, history_points, points)
 
 		label_font = self._font(12)
 		draw.text((plot[0] + 4, plot[1] + 4), self._money(vmax, 0), fill=INK, font=label_font)
@@ -793,32 +811,68 @@ class StockTracker(BasePlugin):
 		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=INK)
 		draw.ellipse((point[0] - 2, point[1] - 2, point[0] + 2, point[1] + 2), fill=ACCENT_BLUE)
 
-	def _draw_history_markers(self, draw, plot, history_points, vmin, vmax):
+	@staticmethod
+	def _plot_series_points(plot, values, vmin, vmax):
+		points = []
+		for idx, value in enumerate(values):
+			x = plot[0] + (plot[2] - plot[0]) * idx / max(len(values) - 1, 1)
+			y = plot[3] - (plot[3] - plot[1]) * (float(value) - vmin) / (vmax - vmin)
+			points.append((int(round(x)), int(round(y))))
+		return points
+
+	@staticmethod
+	def _sample_curve_points(curve_points, count):
+		if not curve_points or count <= 0:
+			return []
+		if count == 1:
+			return [curve_points[-1]]
+		max_index = len(curve_points) - 1
+		sampled_points = []
+		for idx in range(count):
+			position = max_index * idx / (count - 1)
+			left_index = int(math.floor(position))
+			right_index = min(left_index + 1, max_index)
+			ratio = position - left_index
+			left_point = curve_points[left_index]
+			right_point = curve_points[right_index]
+			x = left_point[0] + (right_point[0] - left_point[0]) * ratio
+			y = left_point[1] + (right_point[1] - left_point[1]) * ratio
+			sampled_points.append((int(round(x)), int(round(y))))
+		return sampled_points
+
+	def _history_marker_points(self, curve_points, history_points):
 		if not history_points:
-			return
-		radius = 4 if len(history_points) <= 36 else 3
-		ordered_points = sorted(history_points, key=lambda point: point["date"])
+			return []
+		ordered_points = sorted(history_points, key=lambda point: str(point.get("timestamp") or point["date"]))
+		coords = self._sample_curve_points(curve_points, len(ordered_points))
 		previous_value = None
+		marker_points = []
 		for idx, point in enumerate(ordered_points):
 			value = float(point["value"])
-			if len(ordered_points) == 1:
-				x = plot[2]
-			else:
-				x = plot[0] + (plot[2] - plot[0]) * idx / (len(ordered_points) - 1)
-			y = plot[3] - (plot[3] - plot[1]) * (value - vmin) / (vmax - vmin)
 			if previous_value is None:
 				fill = ACCENT_ORANGE
 			else:
 				fill = MALACHITE if value >= previous_value else CINNABAR
 			previous_value = value
-			x = int(round(x))
-			y = int(round(y))
+			marker_points.append({"point": coords[idx], "fill": fill, "history": point})
+		return marker_points
+
+	def _draw_history_markers(self, draw, history_points, curve_points):
+		marker_points = self._history_marker_points(curve_points, history_points)
+		if not marker_points:
+			return
+		radius = 4 if len(marker_points) <= 36 else 3
+		for marker in marker_points:
+			x, y = marker["point"]
+			fill = marker["fill"]
 			draw.ellipse((x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1), fill=INK)
 			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
-	def _draw_holdings(self, draw, box, stock_data):
+	def _draw_holdings(self, draw, box, stock_data, tracking_window_label=None):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL)
+		if tracking_window_label:
+			draw.text((right - 14, top + 14), tracking_window_label, fill=MUTED, font=self._font(12, True), anchor="ra")
 		header_font = self._font(12, True)
 		row_font = self._font(13)
 		symbol_font = self._font(15, True)
@@ -863,7 +917,7 @@ class StockTracker(BasePlugin):
 			remaining = len(stock_data) - displayed_rows
 			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=MUTED, font=self._font(13, True))
 
-	def _create_dashboard(self, stock_data, dimensions, history_points=None):
+	def _create_dashboard(self, stock_data, dimensions, history_points=None, tracking_window_label=None):
 		"""Create a color dashboard that preserves the original stock layout."""
 		width, height = dimensions
 		img = Image.new("RGB", (width, height), PAPER)
@@ -877,7 +931,7 @@ class StockTracker(BasePlugin):
 
 		self._draw_summary(draw, (24, 60, 284, 204), stock_data)
 		self._draw_sparkline(draw, (304, 60, width - 24, 204), self._portfolio_values(stock_data), history_points)
-		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data)
+		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data, tracking_window_label)
 
 		return img
 

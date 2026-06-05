@@ -1,0 +1,71 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="region">Region</label>
+  <select id="region" name="region" class="form-input">
+    <option value="us">US</option>
+    <option value="eu">EU</option>
+    <option value="kr">KR</option>
+    <option value="tw">TW</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="realmSlug">Realm slug</label>
+  <input id="realmSlug" name="realmSlug" class="form-input" type="text" value="" placeholder="area-52" spellcheck="false">
+  <small>Use the Blizzard slug, for example area-52, illidan, stormrage.</small>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="characterName">Character name</label>
+  <input id="characterName" name="characterName" class="form-input" type="text" value="" placeholder="your-character" spellcheck="false">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="locale">Locale</label>
+  <select id="locale" name="locale" class="form-input">
+    <option value="en_US">en_US</option>
+    <option value="zh_CN">zh_CN</option>
+    <option value="zh_TW">zh_TW</option>
+  </select>
+</div>
+
+<div class="form-group nowrap">
+  <label class="form-label" for="refreshMinutes">Refresh every minutes</label>
+  <input id="refreshMinutes" name="refreshMinutes" class="form-input" type="number" min="15" max="1440" value="90">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="useMockData" id="useMockData" value="true"> Local/mock preview mode</label>
+  <input type="hidden" name="useMockData" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh" value="true"> Ignore cache once</label>
+  <input type="hidden" name="forceRefresh" value="false">
+</div>
+
+<div class="form-group">
+  <small>
+    Public character mode uses BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET from API Keys.
+    Existing WoW_Key is accepted as a client-id alias, but Blizzard still requires a separate client secret.
+    Account-wide mode requires a user OAuth token with wow.profile scope as BLIZZARD_USER_ACCESS_TOKEN.
+  </small>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      ['region', 'realmSlug', 'characterName', 'locale', 'refreshMinutes'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
+      });
+      ['useMockData', 'forceRefresh'].forEach((id) => {
+        const element = document.getElementById(id);
+        if (element && pluginSettings[id] !== undefined) {
+          element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';
+        }
+      });
+    }
+  });
+</script>

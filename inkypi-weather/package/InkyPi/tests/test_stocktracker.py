@@ -126,9 +126,30 @@ def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     assert _near_color_count(image, PAPER, tolerance=5) > 10_000
     assert _near_color_count(image, MALACHITE, tolerance=12) > 500
     assert _near_color_count(image, CINNABAR, tolerance=12) > 500
-    assert image.getpixel((318, 188)) == ACCENT_ORANGE
-    assert image.getpixel((540, 102)) == MALACHITE
-    assert image.getpixel((762, 145)) == CINNABAR
+    assert image.getpixel((318, 102)) == ACCENT_ORANGE
+    assert image.getpixel((540, 185)) == MALACHITE
+    assert image.getpixel((762, 188)) == CINNABAR
+
+
+def test_stock_tracker_history_markers_decorate_portfolio_curve_coordinates():
+    plugin = StockTracker({"id": "stocktracker"})
+    curve_points = [(318, 102), (540, 185), (762, 188)]
+    history_points = [
+        {"date": "2026-05-30", "timestamp": "2026-05-30T05:30:00", "value": 4500.0},
+        {"date": "2026-05-31", "timestamp": "2026-05-31T05:30:00", "value": 4900.0},
+        {"date": "2026-06-01", "timestamp": "2026-06-01T05:30:00", "value": 4700.0},
+    ]
+
+    marker_points = plugin._history_marker_points(curve_points, history_points)
+
+    assert [marker["point"] for marker in marker_points] == curve_points
+    assert [marker["fill"] for marker in marker_points] == [ACCENT_ORANGE, MALACHITE, CINNABAR]
+
+
+def test_stock_tracker_labels_last_week_tracking_window():
+    assert StockTracker._tracking_window_label("5d") == "WINDOW: LAST WEEK"
+    assert StockTracker._tracking_window_label("1mo") == "WINDOW: LAST MONTH"
+    assert StockTracker._tracking_window_label("") is None
 
 
 def test_stock_tracker_records_one_snapshot_per_day(monkeypatch):

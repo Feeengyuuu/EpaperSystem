@@ -1,0 +1,14 @@
+{
+  "output_dir": "~/Pictures/ErgouDaily",
+  "brief_timezone": "Asia/Shanghai",
+  "schedule_timezone": "Mac local time",
+  "weather_location": "Luoyang, Henan",
+  "text_model": "gpt-5-mini",
+  "image_model": "gpt-image-2",
+  "image_size": "1024x1536",
+  "image_quality": "high",
+  "image_gen_cli": "~/.codex/skills/.system/imagegen/scripts/image_gen.py",
+  "notify": true,
+  "request_timeout_seconds": 180,
+  "rules_path": "rules/ergou_daily_rules.md"
+}

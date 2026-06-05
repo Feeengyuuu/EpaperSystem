@@ -98,6 +98,16 @@ WEATHER_BACKGROUND_SLUGS = {
     "snow",
     "thunderstorm",
 }
+ICAL_WEEKDAY_INDEX = {
+    "MO": 0,
+    "TU": 1,
+    "WE": 2,
+    "TH": 3,
+    "FR": 4,
+    "SA": 5,
+    "SU": 6,
+}
+RECURRENCE_ITERATION_LIMIT = 20000
 DATE_HERO_CUTOUT_DIR = "date_hero_cutouts"
 DATE_HERO_PLACEMENTS = (
     (-0.20, -0.12, 0.38),
@@ -541,6 +551,7 @@ class SimpleCalendar(BasePlugin):
         timezone_name = device_config.get_config("timezone", default="America/New_York")
         tz = pytz.timezone(timezone_name)
         selected_date = self._get_selected_date(settings, tz)
+        reference_dt = None if settings.get("customDate") else datetime.now(tz)
         language = self._get_locale_key(settings.get("language") or settings.get("locale", "en"))
         locale_data = LOCALE_DATA.get(language)
 
@@ -562,6 +573,7 @@ class SimpleCalendar(BasePlugin):
             holiday_events,
             weather_panel_background_path,
             date_hero_overlay_enabled,
+            reference_dt,
         )
 
     # ------------------------------------------------------------------
@@ -580,10 +592,18 @@ class SimpleCalendar(BasePlugin):
         holiday_events=None,
         weather_panel_background_path=None,
         date_hero_overlay_enabled=False,
+        reference_dt=None,
     ):
         W, H = dimensions
         holiday_events = holiday_events or []
-        holiday_events_by_day = self._group_holiday_events_by_day(holiday_events)
+        current_month_events = self._events_for_selected_month(holiday_events, selected_date)
+        holiday_events_by_day = self._group_holiday_events_by_day(current_month_events)
+        upcoming_event_rows = self._upcoming_event_rows(
+            holiday_events,
+            selected_date,
+            reference_dt=reference_dt,
+            limit=3,
+        )
 
         # Colours
         accent = primary_color
@@ -677,10 +697,10 @@ class SimpleCalendar(BasePlugin):
 
         self._draw_focus_holiday(
             draw,
-            holiday_events_by_day.get(selected_date.day, []),
+            self._events_for_focus_day(holiday_events_by_day.get(selected_date.day, []), selected_date, reference_dt),
             panel_cx,
             p_top + int(panel_h * 0.12),
-            int(panel_w * 0.74),
+            int(panel_w * 0.84),
             text_color,
             muted_text,
         )
@@ -768,7 +788,7 @@ class SimpleCalendar(BasePlugin):
             fill=(232, 232, 232),
             width=max(int(W * 0.0018), 1),
         )
-        event_list_h = int(cal_h * 0.19) if holiday_events else 0
+        event_list_h = int(cal_h * 0.19) if upcoming_event_rows else 0
         available_grid_h = c_bottom - grid_top_y - int(cal_h * 0.015) - event_list_h
 
         cal_grid = calendar.Calendar(firstweekday=6).monthdayscalendar(selected_date.year, selected_date.month)
@@ -813,6 +833,7 @@ class SimpleCalendar(BasePlugin):
             draw,
             holiday_events,
             selected_date,
+            upcoming_event_rows,
             c_left,
             c_bottom - event_list_h,
             c_right,
@@ -1244,31 +1265,382 @@ class SimpleCalendar(BasePlugin):
             month_end = date(selected_date.year, selected_date.month + 1, 1)
 
         events = []
+        recurrence_overrides = self._recurrence_override_keys(cal, tz)
         for component in cal.walk("VEVENT"):
-            start = self._component_date(component, "dtstart", tz)
-            if not start:
+            if self._component_is_cancelled(component):
                 continue
-            end = self._component_date(component, "dtend", tz) or (start + timedelta(days=1))
-            if end <= start:
-                end = start + timedelta(days=1)
-            if start >= month_end or end <= month_start:
-                continue
-
             title = self._clean_event_title(str(component.get("summary") or "Holiday"))
-            time_label = self._component_time_label(component, "dtstart", tz) if source.get("kind") == "personal" else ""
-            current = max(start, month_start)
-            last = min(end, month_end)
-            while current < last:
-                events.append({
-                    "date": current,
-                    "title": title,
-                    "label": source.get("label") or "",
-                    "color": source.get("color") or (80, 80, 80),
-                    "kind": source.get("kind") or "holiday",
-                    "time": time_label,
-                })
-                current += timedelta(days=1)
+            uid = self._component_uid(component)
+            recurrence_id = self._component_value(component, "recurrence-id", tz)
+            occurrence_starts, duration = self._component_occurrence_starts(
+                component,
+                selected_date,
+                tz,
+                excluded_keys=recurrence_overrides.get(uid, set()),
+                force_single=bool(recurrence_id),
+            )
+            for occurrence_start in occurrence_starts:
+                events.extend(
+                    self._events_for_occurrence(
+                        occurrence_start,
+                        duration,
+                        month_start,
+                        month_end,
+                        title,
+                        source,
+                        tz,
+                    )
+                )
         return events
+
+    def _recurrence_override_keys(self, cal, tz):
+        overrides = {}
+        for component in cal.walk("VEVENT"):
+            recurrence_id = self._component_value(component, "recurrence-id", tz)
+            if not recurrence_id:
+                continue
+            uid = self._component_uid(component)
+            if not uid:
+                continue
+            overrides.setdefault(uid, set()).add(self._date_value_key(recurrence_id, tz))
+        return overrides
+
+    def _component_occurrence_starts(self, component, selected_date, tz, excluded_keys=None, force_single=False):
+        start_value, duration = self._component_start_and_duration(component, tz)
+        if not start_value:
+            return [], timedelta(days=1)
+
+        candidates = []
+        recur = component.get("rrule")
+        if recur and not force_single:
+            candidates.extend(self._rrule_occurrence_starts(start_value, duration, recur, selected_date, tz))
+        else:
+            candidates.append(start_value)
+        candidates.extend(self._component_date_values(component, "rdate", tz))
+
+        excluded = set(excluded_keys or set())
+        excluded.update(self._component_date_value_keys(component, "exdate", tz))
+        month_start, month_end = self._selected_month_bounds(selected_date)
+
+        unique = {}
+        for candidate in candidates:
+            key = self._date_value_key(candidate, tz)
+            if key in excluded:
+                continue
+            if not self._occurrence_overlaps_month(candidate, duration, month_start, month_end, tz):
+                continue
+            unique[key] = candidate
+
+        return sorted(unique.values(), key=self._date_value_sort_key), duration
+
+    def _rrule_occurrence_starts(self, start_value, duration, recur, selected_date, tz):
+        start_date = self._date_from_value(start_value, tz)
+        if not start_date:
+            return []
+
+        month_start, month_end = self._selected_month_bounds(selected_date)
+        until_value = self._rrule_until(recur, tz)
+        count = self._rrule_int(recur, "COUNT")
+        occurrences = []
+        generated = 0
+        cursor = start_date
+        iterations = 0
+
+        while cursor < month_end and iterations < RECURRENCE_ITERATION_LIMIT:
+            iterations += 1
+            if self._rrule_date_matches(cursor, start_date, recur):
+                occurrence = self._same_kind_value_on_date(start_value, cursor, tz)
+                if self._date_value_sort_key(occurrence) >= self._date_value_sort_key(start_value):
+                    if until_value and self._occurrence_after_until(occurrence, until_value, tz):
+                        break
+                    generated += 1
+                    if not count or generated <= count:
+                        if self._occurrence_overlaps_month(occurrence, duration, month_start, month_end, tz):
+                            occurrences.append(occurrence)
+                    if count and generated >= count:
+                        break
+            cursor += timedelta(days=1)
+
+        return occurrences
+
+    def _rrule_date_matches(self, current, start_date, recur):
+        freq = str(self._rrule_first(recur, "FREQ", "")).upper()
+        interval = max(self._rrule_int(recur, "INTERVAL") or 1, 1)
+        bymonth = self._rrule_int_values(recur, "BYMONTH")
+        bymonthday = self._rrule_int_values(recur, "BYMONTHDAY")
+        byday = [str(value).upper() for value in self._rrule_values(recur, "BYDAY")]
+
+        if bymonth and current.month not in bymonth:
+            return False
+        if bymonthday and not self._monthday_matches(current, bymonthday):
+            return False
+        if byday and not self._byday_matches(current, byday, freq):
+            return False
+
+        if freq == "DAILY":
+            return (current - start_date).days % interval == 0
+        if freq == "WEEKLY":
+            week_index = (current - start_date).days // 7
+            if week_index % interval != 0:
+                return False
+            if byday:
+                return True
+            return current.weekday() == start_date.weekday()
+        if freq == "MONTHLY":
+            month_index = (current.year - start_date.year) * 12 + current.month - start_date.month
+            if month_index % interval != 0:
+                return False
+            if bymonthday or byday:
+                return True
+            return current.day == start_date.day
+        if freq == "YEARLY":
+            year_index = current.year - start_date.year
+            if year_index % interval != 0:
+                return False
+            if not bymonth and current.month != start_date.month:
+                return False
+            if bymonthday or byday:
+                return True
+            return current.day == start_date.day
+
+        return current == start_date
+
+    def _monthday_matches(self, current, monthdays):
+        last_day = calendar.monthrange(current.year, current.month)[1]
+        for monthday in monthdays:
+            expected = monthday if monthday > 0 else last_day + monthday + 1
+            if current.day == expected:
+                return True
+        return False
+
+    def _byday_matches(self, current, byday_values, freq):
+        for raw_value in byday_values:
+            weekday, ordinal = self._parse_byday(raw_value)
+            if weekday is None or current.weekday() != weekday:
+                continue
+            if ordinal is None or freq not in {"MONTHLY", "YEARLY"}:
+                return True
+            if ordinal > 0 and ((current.day - 1) // 7) + 1 == ordinal:
+                return True
+            if ordinal < 0:
+                last_day = calendar.monthrange(current.year, current.month)[1]
+                if ((last_day - current.day) // 7) + 1 == abs(ordinal):
+                    return True
+        return False
+
+    def _parse_byday(self, raw_value):
+        value = str(raw_value).upper()
+        weekday = ICAL_WEEKDAY_INDEX.get(value[-2:])
+        if weekday is None:
+            return None, None
+        ordinal_text = value[:-2]
+        if not ordinal_text:
+            return weekday, None
+        try:
+            return weekday, int(ordinal_text)
+        except ValueError:
+            return weekday, None
+
+    def _events_for_occurrence(self, occurrence_start, duration, month_start, month_end, title, source, tz):
+        start_date = self._date_from_value(occurrence_start, tz)
+        occurrence_end = occurrence_start + duration
+        end_date = self._date_from_value(occurrence_end, tz)
+        if not start_date or not end_date:
+            return []
+        if end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+
+        time_label = self._time_label_from_value(occurrence_start, tz) if source.get("kind") == "personal" else ""
+        starts_at = self._datetime_from_value(occurrence_start, tz) if source.get("kind") == "personal" else None
+        events = []
+        current = max(start_date, month_start)
+        last = min(end_date, month_end)
+        while current < last:
+            event = {
+                "date": current,
+                "title": title,
+                "label": source.get("label") or "",
+                "color": source.get("color") or (80, 80, 80),
+                "kind": source.get("kind") or "holiday",
+                "time": time_label,
+            }
+            if starts_at and current == starts_at.date():
+                event["starts_at"] = starts_at
+            events.append(event)
+            current += timedelta(days=1)
+        return events
+
+    def _component_start_and_duration(self, component, tz):
+        start = self._component_value(component, "dtstart", tz)
+        if not start:
+            return None, timedelta(days=1)
+        end = self._component_value(component, "dtend", tz)
+        if not end:
+            end = start + timedelta(days=1)
+        try:
+            duration = end - start
+        except TypeError:
+            duration = timedelta(days=1)
+        if duration <= timedelta(0):
+            duration = timedelta(days=1)
+        return start, duration
+
+    def _component_value(self, component, key, tz):
+        try:
+            value = component.decoded(key)
+        except Exception:
+            return None
+        return self._normalize_date_value(value, tz)
+
+    def _component_date_values(self, component, key, tz):
+        raw_values = component.get(key)
+        if not raw_values:
+            return []
+        if not isinstance(raw_values, list):
+            raw_values = [raw_values]
+
+        values = []
+        for raw_value in raw_values:
+            if hasattr(raw_value, "dts"):
+                candidates = [item.dt for item in raw_value.dts]
+            elif hasattr(raw_value, "dt"):
+                candidates = [raw_value.dt]
+            else:
+                candidates = [raw_value]
+            for candidate in candidates:
+                normalized = self._normalize_date_value(candidate, tz)
+                if normalized:
+                    values.append(normalized)
+        return values
+
+    def _component_date_value_keys(self, component, key, tz):
+        return {self._date_value_key(value, tz) for value in self._component_date_values(component, key, tz)}
+
+    def _normalize_date_value(self, value, tz):
+        if isinstance(value, datetime):
+            if value.tzinfo:
+                return value.astimezone(tz)
+            return tz.localize(value)
+        if isinstance(value, date):
+            return value
+        return None
+
+    def _date_from_value(self, value, tz):
+        normalized = self._normalize_date_value(value, tz)
+        if isinstance(normalized, datetime):
+            return normalized.date()
+        return normalized
+
+    def _datetime_from_value(self, value, tz):
+        normalized = self._normalize_date_value(value, tz)
+        if isinstance(normalized, datetime):
+            return normalized
+        return None
+
+    def _same_kind_value_on_date(self, template_value, occurrence_date, tz):
+        if isinstance(template_value, datetime):
+            template_value = self._normalize_date_value(template_value, tz)
+            return tz.localize(datetime.combine(occurrence_date, template_value.timetz().replace(tzinfo=None)))
+        return occurrence_date
+
+    def _occurrence_overlaps_month(self, occurrence_start, duration, month_start, month_end, tz):
+        start_date = self._date_from_value(occurrence_start, tz)
+        if not start_date:
+            return False
+        end_date = self._date_from_value(occurrence_start + duration, tz)
+        if not end_date or end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+        return start_date < month_end and end_date > month_start
+
+    def _occurrence_after_until(self, occurrence, until_value, tz):
+        occurrence = self._normalize_date_value(occurrence, tz)
+        until_value = self._normalize_date_value(until_value, tz)
+        if isinstance(occurrence, datetime) and isinstance(until_value, datetime):
+            return occurrence > until_value
+        return self._date_from_value(occurrence, tz) > self._date_from_value(until_value, tz)
+
+    def _date_value_key(self, value, tz):
+        normalized = self._normalize_date_value(value, tz)
+        if isinstance(normalized, datetime):
+            return ("datetime", normalized.isoformat())
+        if isinstance(normalized, date):
+            return ("date", normalized.isoformat())
+        return ("none", "")
+
+    def _date_value_sort_key(self, value):
+        if isinstance(value, datetime):
+            return (value.date().isoformat(), value.timetz().isoformat())
+        if isinstance(value, date):
+            return (value.isoformat(), "")
+        return ("", "")
+
+    def _time_label_from_value(self, value, tz):
+        value = self._datetime_from_value(value, tz)
+        if not value:
+            return ""
+        hour = value.hour % 12 or 12
+        minute = value.minute
+        suffix = "a" if value.hour < 12 else "p"
+        if minute:
+            return f"{hour}:{minute:02d}{suffix}"
+        return f"{hour}{suffix}"
+
+    def _rrule_values(self, recur, key):
+        if not recur:
+            return []
+        values = recur.get(key) or recur.get(key.lower())
+        if values is None:
+            return []
+        if not isinstance(values, (list, tuple)):
+            values = [values]
+        return [value.dt if hasattr(value, "dt") else value for value in values]
+
+    def _rrule_first(self, recur, key, default=None):
+        values = self._rrule_values(recur, key)
+        return values[0] if values else default
+
+    def _rrule_int(self, recur, key):
+        value = self._rrule_first(recur, key)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _rrule_int_values(self, recur, key):
+        values = []
+        for value in self._rrule_values(recur, key):
+            try:
+                values.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return values
+
+    def _rrule_until(self, recur, tz):
+        value = self._rrule_first(recur, "UNTIL")
+        return self._normalize_date_value(value, tz)
+
+    def _component_uid(self, component):
+        return str(component.get("uid") or "")
+
+    def _component_is_cancelled(self, component):
+        return str(component.get("status") or "").strip().upper() == "CANCELLED"
+
+    def _selected_month_bounds(self, selected_date):
+        month_start = date(selected_date.year, selected_date.month, 1)
+        if selected_date.month == 12:
+            return month_start, date(selected_date.year + 1, 1, 1)
+        return month_start, date(selected_date.year, selected_date.month + 1, 1)
+
+    def _component_datetime(self, component, key, tz):
+        try:
+            value = component.decoded(key)
+        except Exception:
+            return None
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo:
+            return value.astimezone(tz)
+        return tz.localize(value)
 
     def _component_date(self, component, key, tz):
         try:
@@ -1316,17 +1688,83 @@ class SimpleCalendar(BasePlugin):
             grouped.setdefault(event["date"].day, []).append(event)
         return grouped
 
+    def _events_for_selected_month(self, events, selected_date):
+        return [
+            event
+            for event in events
+            if event.get("date")
+            and event["date"].year == selected_date.year
+            and event["date"].month == selected_date.month
+        ]
+
+    def _event_is_upcoming(self, event, selected_date, reference_dt=None):
+        event_date = event.get("date")
+        if not event_date:
+            return False
+        if event_date.year != selected_date.year or event_date.month != selected_date.month:
+            return False
+        starts_at = event.get("starts_at")
+        if starts_at and reference_dt:
+            if starts_at < reference_dt:
+                return False
+            return starts_at.date() >= selected_date
+        return event_date >= selected_date
+
+    def _events_for_focus_day(self, events, selected_date, reference_dt=None):
+        return [
+            event
+            for event in events
+            if event.get("date") == selected_date and self._event_is_upcoming(event, selected_date, reference_dt)
+        ]
+
+    def _upcoming_event_rows(self, events, selected_date, reference_dt=None, limit=3):
+        upcoming = [
+            event
+            for event in events
+            if self._event_is_upcoming(event, selected_date, reference_dt)
+        ]
+        return self._merge_same_day_events(upcoming)[:limit]
+
     def _draw_focus_holiday(self, draw, events, x, y, max_width, text_color, muted_text):
         if not events:
             return
 
-        label_font = get_font("Jost", 13, "bold")
-        text_font = get_font("LXGW WenKai", 15) or get_font("Jost", 15)
+        label_font = self._get_holiday_title_font(11)
+        text_font = self._get_holiday_title_font(14)
         event = (self._merge_same_day_events(events) or events)[0]
-        label = self._fit_text(draw, event.get("label") or "", label_font, max_width)
-        title = self._fit_text(draw, event.get("title") or "", text_font, max_width)
-        draw.text((x, y), label, fill=event.get("color") or muted_text, font=label_font, anchor="mm")
-        draw.text((x, y + 22), title, fill=text_color, font=text_font, anchor="mm")
+        label = self._fit_text(draw, event.get("label") or "", label_font, max_width * 0.36)
+        title_lines = self._wrap_text_lines(draw, event.get("title") or "", text_font, max_width - 20, max_lines=2)
+        card_w = int(max_width)
+        card_h = 46 + max(len(title_lines), 1) * 15
+        left = int(x - card_w / 2)
+        top = int(y - card_h / 2)
+        right = left + card_w
+        bottom = top + card_h
+        event_color = event.get("color") or muted_text
+
+        draw.rounded_rectangle(
+            [left, top, right, bottom],
+            radius=9,
+            fill=(255, 249, 229),
+            outline=(210, 198, 160),
+            width=1,
+        )
+        if label:
+            label_bbox = draw.textbbox((0, 0), label, font=label_font)
+            label_w = min(label_bbox[2] - label_bbox[0] + 14, int(card_w * 0.42))
+            chip_left = int(x - label_w / 2)
+            chip_top = top + 6
+            draw.rounded_rectangle(
+                [chip_left, chip_top, chip_left + label_w, chip_top + 16],
+                radius=5,
+                fill=(247, 244, 226),
+                outline=event_color,
+                width=1,
+            )
+            draw.text((x, chip_top + 8), label, fill=event_color, font=label_font, anchor="mm")
+        first_title_y = top + 34
+        for line_index, title_line in enumerate(title_lines or [""]):
+            draw.text((x, first_title_y + line_index * 15), title_line, fill=text_color, font=text_font, anchor="mm")
 
     def _draw_holiday_markers(self, draw, events, x, y, cell_size, selected=False):
         radius = max(int(cell_size * 0.055), 3)
@@ -1338,20 +1776,15 @@ class SimpleCalendar(BasePlugin):
             cx = start_x + gap * index
             draw.ellipse([cx - radius, y - radius, cx + radius, y + radius], fill=color)
 
-    def _draw_holiday_list(self, draw, events, selected_date, left, top, right, bottom, text_color, muted_text, divider):
-        if not events or bottom <= top:
+    def _draw_holiday_list(self, draw, events, selected_date, upcoming_event_rows, left, top, right, bottom, text_color, muted_text, divider):
+        if not upcoming_event_rows or bottom <= top:
             return
 
         width = right - left
         line_y = top + 2
         draw.line([(left + int(width * 0.04), line_y), (right - int(width * 0.04), line_y)], fill=divider, width=1)
 
-        all_grouped = self._merge_same_day_events(events)
-        grouped = [event for event in all_grouped if event["date"] >= selected_date][:3]
-        if not grouped:
-            grouped = all_grouped[-3:]
-        if not grouped:
-            return
+        grouped = upcoming_event_rows
 
         date_font_size = max(int(width * 0.032), 14)
         label_font_size = max(int(width * 0.025), 11)
@@ -1436,8 +1869,40 @@ class SimpleCalendar(BasePlugin):
             text = text[:-1].rstrip()
         return ellipsis
 
+    def _wrap_text_lines(self, draw, text, font, max_width, max_lines=2):
+        words = str(text or "").strip().split()
+        if not words or max_lines <= 0:
+            return []
+
+        lines = []
+        current = ""
+        for index, word in enumerate(words):
+            candidate = f"{current} {word}".strip()
+            if not current or draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+                current = candidate
+                continue
+
+            lines.append(current)
+            current = word
+            if len(lines) == max_lines:
+                tail = " ".join([current] + words[index + 1:])
+                lines[-1] = self._fit_text(draw, f"{lines[-1]} {tail}", font, max_width)
+                break
+
+        if current and len(lines) < max_lines:
+            lines.append(current)
+
+        return [self._fit_text(draw, line, font, max_width) for line in lines[:max_lines]]
+
     def _clean_event_title(self, title):
-        return " ".join(str(title or "").replace("\n", " ").split())
+        title = " ".join(str(title or "").replace("\n", " ").split())
+        title = "".join(character for character in title if not self._is_calendar_symbol_noise(character))
+        return " ".join(title.split())
+
+    def _is_calendar_symbol_noise(self, character):
+        if "\ufe00" <= character <= "\ufe0f":
+            return True
+        return unicodedata.category(character) == "So"
 
     @staticmethod
     def _get_selected_date(settings, tz):

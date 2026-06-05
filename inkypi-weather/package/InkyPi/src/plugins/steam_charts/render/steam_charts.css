@@ -45,6 +45,7 @@ body {
     gap: 1vw;
     flex-shrink: 0;
     padding-bottom: 0.45dvh;
+    padding-right: min(14vw, 6.8rem);
     border-bottom: 0;
 }
 
@@ -53,7 +54,8 @@ body {
     position: absolute;
     top: -0.1dvh;
     right: 0.2vw;
-    width: min(20vw, 10rem);
+    z-index: 0;
+    width: min(11.5vw, 5.2rem);
     height: min(13dvh, 3.9rem);
     pointer-events: none;
     background-image:
@@ -124,8 +126,13 @@ body {
 
 .updated-at {
     position: relative;
-    z-index: 1;
-    padding-bottom: 0.12dvh;
+    z-index: 2;
+    flex: 0 0 auto;
+    padding: 0.22dvh 0.45vw 0.18dvh;
+    background: var(--paper);
+    font-size: min(2.35dvh, 1.75vw);
+    line-height: 1.12;
+    text-align: right;
     text-transform: none;
 }
 
@@ -197,9 +204,9 @@ body {
 .charts-table tbody tr:not(:last-child) .game-name::after {
     content: "";
     position: absolute;
-    left: calc(var(--image-width) + var(--image-gap));
+    left: 0;
     bottom: -0.48dvh;
-    width: min(14vw, 7rem);
+    width: min(30vw, calc(var(--image-width) + var(--image-gap) + 7rem));
     height: max(1px, 0.22dvh);
     background: var(--ink);
 }

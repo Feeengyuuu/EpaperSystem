@@ -20,7 +20,7 @@ STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/publ
 STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v7"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v13"
 STEAM_BACKGROUND_IMAGE = "background.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
@@ -1031,7 +1031,6 @@ class SteamProfileDashboard(BasePlugin):
 
             status_fill = self._friend_status_color(friend)
             name = self._friend_display_id(friend)
-            status_text = self._friend_live_text(data, friend)
             dot_size = 8
             text_x = avatar_x + size + 10
             line_height = self._line_height(draw, fonts["tiny"])
@@ -1064,8 +1063,10 @@ class SteamProfileDashboard(BasePlugin):
                     ink,
                     status_width,
                     data,
+                    row_height=line_height,
                 )
             else:
+                status_text = self._friend_live_text(data, friend)
                 self._draw_single_line_text(
                     draw,
                     (status_x, status_y),
@@ -1497,34 +1498,84 @@ class SteamProfileDashboard(BasePlugin):
         self._bullet(draw, x, y + 7, marker_fill)
         return next_y, True
 
-    def _draw_friend_game_status(self, image, draw, friend, position, font, fill, max_width, data):
+    def _draw_friend_game_status(self, image, draw, friend, position, font, fill, max_width, data, row_height=None):
         x, y = position
-        label = "\u6b63\u5728\u6e38\u73a9\uff1a"
+        prefix = "\u6b63\u5728\u6e38\u73a9\uff1a"
         game = self._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
         line_height = self._line_height(draw, font)
-        icon_size = self._game_icon_size(draw, font, min_size=8, max_size=12)
+        row_height = max(line_height, int(row_height or line_height))
+        icon_size = max(8, min(11, row_height - 2))
         icon = self._game_square_icon(data, friend.get("gameid"), icon_size)
-        label_width = self._text_width(draw, label, font)
-        if label_width >= max_width - 20:
-            return self._draw_single_line_text(draw, (x, y), f"{label}{game}", font, fill, max_width, min_size=8)
 
-        self._text(draw, (x, y), label, font, fill)
+        icon_prefix_gap = 2 if icon is not None else 0
+        icon_title_gap = 3 if icon is not None else 0
+
+        def group_width(candidate_font):
+            icon_width = icon_size + icon_prefix_gap + icon_title_gap if icon is not None else 0
+            return (
+                self._text_width(draw, prefix, candidate_font)
+                + icon_width
+                + self._text_width(draw, game, candidate_font)
+            )
+
+        fitted_font = font
+        if group_width(fitted_font) > max_width:
+            current_size = int(getattr(font, "size", 0) or 0)
+            for size in range(current_size - 1, 4, -1):
+                candidate = self._font(size)
+                if group_width(candidate) <= max_width or size == 5:
+                    fitted_font = candidate
+                    break
+
+        line_height = self._line_height(draw, fitted_font)
+        row_height = max(line_height, row_height)
+        start_x = x
+        text_y = y + max(0, (row_height - line_height) // 2)
+
+        self._text(draw, (start_x, text_y), prefix, fitted_font, fill)
+        cursor_x = start_x + self._text_width(draw, prefix, fitted_font)
         if icon is not None:
-            icon_x = x + label_width
-            icon_y = y + max(0, (line_height - icon_size) // 2)
-            image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
-            game_x = icon_x + icon_size + 5
+            cursor_x += icon_prefix_gap
+            icon_y = y + max(0, (row_height - icon_size) // 2)
+            image.paste(icon, (int(cursor_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+            cursor_x += icon_size + icon_title_gap
+
+        remaining_width = max(1, int(x + max_width - cursor_x))
+        if self._text_width(draw, game, fitted_font) <= remaining_width:
+            self._text(draw, (cursor_x, text_y), game, fitted_font, fill)
         else:
-            game_x = x + label_width
-        return self._draw_single_line_text(
-            draw,
-            (game_x, y),
-            game,
-            font,
-            fill,
-            max(20, max_width - (game_x - x)),
-            min_size=8,
-        )
+            self._draw_clipped_text(draw, (cursor_x, text_y), game, fitted_font, fill, remaining_width, line_height)
+        return y + row_height, True
+
+    def _draw_centered_single_line_text(self, draw, position, text, font, fill, max_width, row_height=None, min_size=8):
+        text = str(text or "")
+        max_width = int(max_width or 0)
+        if not text or max_width <= 0:
+            return position[1], True
+
+        x, y = position
+        fitted_font = self._fit_single_line_font(draw, text, font, max_width, min_size=min_size)
+        line_height = self._line_height(draw, fitted_font)
+        row_height = max(line_height, int(row_height or line_height))
+        text_width = self._text_width(draw, text, fitted_font)
+        text_x = x + max(0, (max_width - text_width) // 2)
+        text_y = y + max(0, (row_height - line_height) // 2)
+        if text_width <= max_width:
+            self._text(draw, (text_x, text_y), text, fitted_font, fill)
+        else:
+            self._draw_clipped_text(draw, (x, text_y), text, fitted_font, fill, max_width, line_height)
+        return y + row_height, True
+
+    def _draw_clipped_text(self, draw, position, text, font, fill, max_width, height):
+        x, y = position
+        max_width = max(1, int(max_width or 0))
+        height = max(1, int(height or self._line_height(draw, font)))
+        layer = Image.new("RGBA", (max_width, height), (255, 255, 255, 0))
+        layer_draw = ImageDraw.Draw(layer)
+        layer_draw.text((0, 0), str(text or ""), font=font, fill=fill)
+        target = getattr(draw, "_image", None)
+        if target is not None:
+            target.paste(layer, (int(x), int(y)), layer)
 
     def _draw_status_line(self, draw, position, label, status, font, fill, dot_fill, max_width, max_bottom=None):
         x, y = position

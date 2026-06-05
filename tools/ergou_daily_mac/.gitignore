@@ -1,0 +1,3 @@
+_dry_run/
+__pycache__/
+tests/__pycache__/

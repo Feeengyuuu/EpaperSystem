@@ -15,6 +15,8 @@
 **/__pycache__/
 *.py[cod]
 **/.context_cache/
+**/.codex_write_probe/
+**/.wow_profile_dashboard_cache/
 inkypi-weather/package/InkyPi/src/plugins/*/cache/
 inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/fonts/
 **/.magazine_covers_cache/
@@ -32,3 +34,4 @@ inkypi-weather/dist/
 
 # Local publish staging
 .github-backup-stage/
+$known

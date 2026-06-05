@@ -6,6 +6,14 @@ from model import PlaylistManager, RefreshInfo
 
 logger = logging.getLogger(__name__)
 
+ENV_KEY_ALIASES = {
+    "GROQ_API_KEY": ("Groq_V2", "GROQ_KEY"),
+    "BLIZZARD_CLIENT_ID": ("BNET_CLIENT_ID", "BATTLE_NET_CLIENT_ID", "WOW_CLIENT_ID", "WOW_KEY", "WoW_Key"),
+    "BLIZZARD_CLIENT_SECRET": ("BNET_CLIENT_SECRET", "BATTLE_NET_CLIENT_SECRET", "WOW_CLIENT_SECRET"),
+    "BLIZZARD_ACCESS_TOKEN": ("BNET_ACCESS_TOKEN", "BATTLE_NET_ACCESS_TOKEN", "WOW_ACCESS_TOKEN"),
+    "BLIZZARD_USER_ACCESS_TOKEN": ("BNET_USER_ACCESS_TOKEN", "BATTLE_NET_USER_ACCESS_TOKEN", "WOW_PROFILE_ACCESS_TOKEN"),
+}
+
 class Config:
     # Base path for the project directory
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -118,7 +126,15 @@ class Config:
             if env_file and os.path.isfile(env_file):
                 load_dotenv(env_file, override=True)
         load_dotenv(override=True)
-        return os.getenv(key)
+        for candidate in self._env_key_candidates(key):
+            value = os.getenv(candidate)
+            if value:
+                return value
+        return ""
+
+    def _env_key_candidates(self, key):
+        """Returns accepted names for a logical environment key."""
+        return (key, *ENV_KEY_ALIASES.get(key, ()))
 
     def _env_file_candidates(self):
         candidates = []

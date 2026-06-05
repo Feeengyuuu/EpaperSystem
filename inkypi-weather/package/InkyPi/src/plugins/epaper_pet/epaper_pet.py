@@ -30,6 +30,7 @@ DEFAULT_PET_NAME = "Mochi"
 DEFAULT_TICK_MINUTES = 15
 DEFAULT_AI_TEXT_MODEL = "gpt-4o-mini"
 DEFAULT_GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+LOCAL_AI_TEXT_MODEL = "local-rules-v1"
 DEFAULT_AI_DAILY_LIMIT = 24
 DEFAULT_CONTEXT_MAX_ITEMS = 12
 
@@ -1936,12 +1937,6 @@ class EpaperPet(BasePlugin):
             return False
 
         daily_limit = _parse_int(settings.get("ai_daily_limit"), DEFAULT_AI_DAILY_LIMIT, 0, 500)
-        if daily_limit <= 0:
-            state["ai_message_status"] = "daily_limit_disabled"
-            return False
-        if not self._reserve_ai_request(state, now, daily_limit):
-            state["ai_message_status"] = "daily_limit_reached"
-            return False
 
         base_message = state.get("message", "")
         ambient_context = self._ambient_context(settings, now)
@@ -1954,8 +1949,33 @@ class EpaperPet(BasePlugin):
 
         for index, backend in enumerate(backends):
             provider = backend["provider"]
-            api_key = backend["api_key"]
-            model = backend["model"]
+            api_key = backend.get("api_key", "")
+            model = backend.get("model", "")
+            next_backend = backends[index + 1] if index + 1 < len(backends) else None
+            if backend.get("fallback_from") and not fallback_from:
+                fallback_from = str(backend.get("fallback_from") or "")
+                fallback_reason = str(backend.get("fallback_reason") or "")
+
+            if provider != "local":
+                if daily_limit <= 0:
+                    attempts.append({"provider": provider, "model": model, "status": "skipped", "reason": "daily_limit_disabled"})
+                    if self._can_use_local_fallback(provider, next_backend):
+                        fallback_from = provider
+                        fallback_reason = "daily_limit_disabled"
+                        continue
+                    state["ai_message_status"] = "daily_limit_disabled"
+                    state["ai_message_attempts"] = attempts[-4:]
+                    return False
+                if not self._reserve_ai_request(state, now, daily_limit):
+                    attempts.append({"provider": provider, "model": model, "status": "skipped", "reason": "daily_limit_reached"})
+                    if self._can_use_local_fallback(provider, next_backend):
+                        fallback_from = provider
+                        fallback_reason = "daily_limit_reached"
+                        continue
+                    state["ai_message_status"] = "daily_limit_reached"
+                    state["ai_message_attempts"] = attempts[-4:]
+                    return False
+
             try:
                 generated = self._request_ai_message(
                     provider,
@@ -1971,12 +1991,20 @@ class EpaperPet(BasePlugin):
                 generated = self._clean_ai_message(generated, settings)
                 attempts.append({"provider": provider, "model": model, "status": "response"})
                 if not generated:
+                    if next_backend:
+                        fallback_from = provider
+                        fallback_reason = "empty_response"
+                        continue
                     state["ai_message_status"] = "empty_response"
                     state["ai_message_attempts"] = attempts[-4:]
                     return False
 
                 fingerprint = self._message_fingerprint(generated)
                 if fingerprint in set(state.get("ai_message_fingerprints", [])):
+                    if next_backend:
+                        fallback_from = provider
+                        fallback_reason = "duplicate_rejected"
+                        continue
                     state["ai_message_status"] = "duplicate_rejected"
                     state["ai_message_attempts"] = attempts[-4:]
                     return False
@@ -2000,11 +2028,10 @@ class EpaperPet(BasePlugin):
             except Exception as exc:
                 reason = self._ai_error_reason(exc)
                 attempts.append({"provider": provider, "model": model, "status": "failed", "reason": reason})
-                next_backend = backends[index + 1] if index + 1 < len(backends) else None
-                if self._should_use_paid_fallback(provider, exc, next_backend):
+                if self._should_use_fallback(provider, exc, next_backend):
                     fallback_from = provider
                     fallback_reason = reason
-                    logger.warning("Free AI provider failed with a limit error; trying paid fallback: %s", reason)
+                    logger.warning("AI provider failed; trying fallback provider: %s", reason)
                     continue
 
                 logger.warning("AI pet message generation failed: %s", exc)
@@ -2030,14 +2057,9 @@ class EpaperPet(BasePlugin):
                     "api_key": groq_key,
                     "model": settings.get("ai_groq_model") or DEFAULT_GROQ_TEXT_MODEL,
                 })
-                if _enabled(settings.get("ai_openai_after_free"), True):
-                    openai_key = self._load_env_key(device_config, "OPEN_AI_SECRET") or self._load_env_key(device_config, "OPENAI_API_KEY")
-                    if openai_key:
-                        backends.append({
-                            "provider": "openai",
-                            "api_key": openai_key,
-                            "model": settings.get("ai_text_model") or DEFAULT_AI_TEXT_MODEL,
-                        })
+                backends.append(self._local_ai_backend())
+            else:
+                backends.append(self._local_ai_backend("groq", "missing_groq_key"))
             return backends
 
         if provider == "groq":
@@ -2047,8 +2069,8 @@ class EpaperPet(BasePlugin):
                     "provider": "groq",
                     "api_key": groq_key,
                     "model": settings.get("ai_groq_model") or settings.get("ai_text_model") or DEFAULT_GROQ_TEXT_MODEL,
-                }]
-            return []
+                }, self._local_ai_backend()]
+            return [self._local_ai_backend("groq", "missing_groq_key")]
 
         if provider == "openai":
             openai_key = self._load_env_key(device_config, "OPEN_AI_SECRET") or self._load_env_key(device_config, "OPENAI_API_KEY")
@@ -2062,8 +2084,26 @@ class EpaperPet(BasePlugin):
 
         return []
 
-    def _should_use_paid_fallback(self, provider: str, exc: Exception, next_backend: dict[str, str] | None) -> bool:
-        if provider != "groq" or not next_backend or next_backend.get("provider") != "openai":
+    def _local_ai_backend(self, fallback_from: str = "", fallback_reason: str = "") -> dict[str, str]:
+        backend = {
+            "provider": "local",
+            "api_key": "",
+            "model": LOCAL_AI_TEXT_MODEL,
+        }
+        if fallback_from:
+            backend["fallback_from"] = fallback_from
+            backend["fallback_reason"] = fallback_reason
+        return backend
+
+    def _can_use_local_fallback(self, provider: str, next_backend: dict[str, str] | None) -> bool:
+        return provider == "groq" and bool(next_backend) and next_backend.get("provider") == "local"
+
+    def _should_use_fallback(self, provider: str, exc: Exception, next_backend: dict[str, str] | None) -> bool:
+        if provider != "groq" or not next_backend:
+            return False
+        if next_backend.get("provider") == "local":
+            return True
+        if next_backend.get("provider") != "openai":
             return False
         status = getattr(exc, "status_code", None)
         response = getattr(exc, "response", None)
@@ -2579,6 +2619,9 @@ class EpaperPet(BasePlugin):
         base_message: str,
         ambient_context: dict[str, Any] | None = None,
     ) -> str:
+        if provider == "local":
+            return self._local_ai_message(state, settings, now, base_message, ambient_context)
+
         from openai import OpenAI
 
         language = self._language(settings)
@@ -2601,6 +2644,153 @@ class EpaperPet(BasePlugin):
             max_tokens=90,
         )
         return (response.choices[0].message.content or "").strip()
+
+    def _local_ai_message(
+        self,
+        state: dict[str, Any],
+        settings,
+        now: datetime,
+        base_message: str,
+        ambient_context: dict[str, Any] | None = None,
+    ) -> str:
+        context = self._ai_prompt_context(state, settings, now, base_message, ambient_context)
+        state["ai_last_variation"] = context.get("variation", {})
+        life = context.get("life") if isinstance(context.get("life"), dict) else {}
+        variation = context.get("variation") if isinstance(context.get("variation"), dict) else {}
+        seed = str(variation.get("novelty_seed") or now.strftime("%H%M%S"))
+        if self._is_chinese(settings):
+            options = self._local_ai_message_options_zh(life, ambient_context or {})
+        else:
+            options = self._local_ai_message_options_en(life, ambient_context or {})
+        options = [item for item in options if item]
+        if not options:
+            return str(base_message or "")
+        return options[int(seed, 16) % len(options)]
+
+    def _local_ai_message_options_zh(self, life: dict[str, Any], ambient_context: dict[str, Any]) -> list[str]:
+        stats = life.get("stats") if isinstance(life.get("stats"), dict) else {}
+        top_priority = life.get("top_priority") if isinstance(life.get("top_priority"), dict) else {}
+        last_hunt = life.get("last_hunt") if isinstance(life.get("last_hunt"), dict) else {}
+        prey = life.get("prey_ecology") if isinstance(life.get("prey_ecology"), dict) else {}
+        available_prey = prey.get("available_now") if isinstance(prey.get("available_now"), list) else []
+        visual = life.get("visual_state") if isinstance(life.get("visual_state"), dict) else {}
+        current_pose = visual.get("current_pose") if isinstance(visual.get("current_pose"), dict) else {}
+        ambient_sources = ambient_context.get("sources") if isinstance(ambient_context.get("sources"), list) else []
+        activity = str(life.get("activity") or life.get("activity_id") or "\u5de1\u89c6")
+        time_band = {
+            "morning": "\u65e9\u6668",
+            "midday": "\u6b63\u5348",
+            "afternoon": "\u5348\u540e",
+            "evening": "\u508d\u665a",
+            "night": "\u591c\u91cc",
+        }.get(str(life.get("time_band") or ""), "\u4eca\u5929")
+
+        metric = str(top_priority.get("metric") or "")
+        options: list[str] = []
+        need_lines = {
+            "food": "\u809a\u5b50\u54cd\u6210\u5c0f\u949f\uff0c\u5b83\u628a\u997f\u5199\u5f97\u5f88\u542b\u84c4\u3002",
+            "energy": "\u7535\u91cf\u4f4e\u5230\u50cf\u7eb8\uff0c\u5148\u628a\u5f71\u5b50\u6536\u8d77\u6765\u3002",
+            "cleanliness": "\u7070\u5c18\u5728\u6bdb\u8fb9\u6392\u961f\uff0c\u5b83\u5047\u88c5\u6ca1\u770b\u89c1\u3002",
+            "happiness": "\u5c4f\u5e55\u5f88\u5b89\u9759\uff0c\u5b83\u628a\u60f3\u5ff5\u538b\u6210\u4e00\u884c\u3002",
+            "health": "\u4eca\u5929\u7684\u811a\u6b65\u653e\u8f7b\uff0c\u5065\u5eb7\u5148\u6162\u6162\u8865\u4e01\u3002",
+        }
+        if int(top_priority.get("severity") or 0) >= 3 and metric in need_lines:
+            options.append(need_lines[metric])
+
+        if last_hunt:
+            food = str(last_hunt.get("food_label") or last_hunt.get("food") or "\u730e\u7269")
+            options.append(f"{food}\u8fd8\u5728\u68a6\u91cc\u53d1\u54cd\uff0c\u50a8\u7cae\u8868\u793a\u7406\u89e3\u3002")
+        if available_prey:
+            focus = available_prey[0] if isinstance(available_prey[0], dict) else {}
+            food = str(focus.get("food_label") or focus.get("food_zh") or focus.get("food") or "\u5c0f\u730e\u7269")
+            options.append(f"\u5b83\u628a{food}\u5199\u8fdb\u5c0f\u672c\uff0c\u7559\u7ed9\u4e0b\u6b21\u5237\u65b0\u3002")
+
+        reserve = int(stats.get("food_reserve") or 0)
+        level = int(stats.get("level") or 1)
+        pose_key = str(current_pose.get("key") or "")
+        pose_label = {
+            "alert": "\u8b66\u89c9\u7ad9\u59ff",
+            "alert_listening": "\u7ad6\u8033\u5077\u542c",
+            "belly": "\u9732\u809a\u76ae",
+            "calm": "\u5b89\u9759\u63e3\u624b",
+            "curious": "\u597d\u5947\u89c2\u5bdf",
+            "dreaming": "\u8737\u7740\u505a\u68a6",
+            "grooming": "\u8ba4\u771f\u6d17\u8138",
+            "happy": "\u5f00\u5fc3\u7aef\u5750",
+            "hungry": "\u997f\u997f\u7aef\u5750",
+            "hunting": "\u4f4e\u8eab\u6f5c\u884c",
+            "kneading": "\u8e29\u5976\u5de5\u4f5c",
+            "playful": "\u51c6\u5907\u5f00\u73a9",
+            "pounce": "\u5c0f\u578b\u4f0f\u51fb",
+            "sleeping": "\u8737\u6210\u4e00\u56e2",
+            "snacking": "\u62b1\u7740\u96f6\u98df",
+            "stretch": "\u90d1\u91cd\u4f38\u5c55",
+            "tail_swish": "\u5c3e\u5df4\u63d0\u95ee",
+            "tired": "\u56f0\u56f0\u7aef\u5750",
+            "unwell": "\u4f4e\u4f4e\u4f11\u606f",
+            "zoomies": "\u77ed\u817f\u51b2\u523a",
+        }.get(pose_key, "\u5f53\u524d\u59ff\u52bf")
+        options.extend([
+            f"\u50a8\u7cae{reserve}\u683c\u7684\u5e95\u6c14\uff0c\u591f\u5b83\u51b7\u9759\u4e00\u4e0b\u3002",
+            f"\u5b83\u5728{activity}\u91cc\u7f29\u6210\u5c0f\u9017\u53f7\uff0c\u4e0d\u6025\u7740\u7ed3\u675f\u3002",
+            f"\u77ed\u524d\u722a\u6309\u4f4f\u4eca\u5929\uff0c{pose_label}\u8d1f\u8d23\u88c5\u9177\u3002",
+            f"\u7b49\u7ea7{level}\u7684\u91ce\u5fc3\u5f88\u5c0f\uff0c\u5148\u4ece\u4e00\u53e3\u6c14\u5f00\u59cb\u3002",
+            f"\u5b83\u628a{time_band}\u53e0\u597d\uff0c\u585e\u8fdb\u4e0b\u4e00\u6b21\u5237\u65b0\u91cc\u3002",
+            "\u5c0f\u5c3e\u5df4\u626b\u8fc7\u7eb8\u9762\uff0c\u4eca\u5929\u6682\u65f6\u5f52\u6863\u4e3a\u5e73\u9759\u3002",
+        ])
+        if ambient_sources:
+            source = ambient_sources[0] if isinstance(ambient_sources[0], dict) else {}
+            name = str(source.get("plugin") or source.get("source") or "\u5916\u9762")
+            options.append(f"\u542c\u5230{name}\u7684\u65b0\u9c9c\u4e8b\uff0c\u5b83\u53ea\u52a8\u4e86\u4e00\u4e0b\u8033\u6735\u3002")
+        return options
+
+    def _local_ai_message_options_en(self, life: dict[str, Any], ambient_context: dict[str, Any]) -> list[str]:
+        stats = life.get("stats") if isinstance(life.get("stats"), dict) else {}
+        top_priority = life.get("top_priority") if isinstance(life.get("top_priority"), dict) else {}
+        last_hunt = life.get("last_hunt") if isinstance(life.get("last_hunt"), dict) else {}
+        prey = life.get("prey_ecology") if isinstance(life.get("prey_ecology"), dict) else {}
+        available_prey = prey.get("available_now") if isinstance(prey.get("available_now"), list) else []
+        visual = life.get("visual_state") if isinstance(life.get("visual_state"), dict) else {}
+        current_pose = visual.get("current_pose") if isinstance(visual.get("current_pose"), dict) else {}
+        ambient_sources = ambient_context.get("sources") if isinstance(ambient_context.get("sources"), list) else []
+        activity = str(life.get("activity") or life.get("activity_id") or "watching")
+        time_band = str(life.get("time_band") or "today")
+
+        metric = str(top_priority.get("metric") or "")
+        need_lines = {
+            "food": "Its stomach rings softly; hunger stays politely documented.",
+            "energy": "Power is thin, so the shadow folds itself smaller.",
+            "cleanliness": "Dust queues at the fur edge; it pretends not to see.",
+            "happiness": "The screen is quiet, and wanting attention fits on one line.",
+            "health": "Today it walks carefully and lets health patch itself slowly.",
+        }
+        options: list[str] = []
+        if int(top_priority.get("severity") or 0) >= 3 and metric in need_lines:
+            options.append(need_lines[metric])
+        if last_hunt:
+            food = str(last_hunt.get("food_label") or last_hunt.get("food") or "the catch")
+            options.append(f"{food} still echoes in its dream inventory.")
+        if available_prey:
+            focus = available_prey[0] if isinstance(available_prey[0], dict) else {}
+            food = str(focus.get("food") or "small prey")
+            options.append(f"It files {food} under plans for the next refresh.")
+
+        reserve = int(stats.get("food_reserve") or 0)
+        level = int(stats.get("level") or 1)
+        pose_label = str(current_pose.get("label") or "the current pose")
+        options.extend([
+            f"{reserve} reserve points are enough confidence for one calm minute.",
+            f"It turns {activity} into a small comma and stays there.",
+            f"Short front paws hold today down; {pose_label} handles the attitude.",
+            f"Level {level} ambition starts with one carefully budgeted breath.",
+            f"It folds {time_band} into the next screen refresh.",
+            "The tail sweeps the paper; today is filed under quiet.",
+        ])
+        if ambient_sources:
+            source = ambient_sources[0] if isinstance(ambient_sources[0], dict) else {}
+            name = str(source.get("plugin") or source.get("source") or "outside")
+            options.append(f"It hears {name} update and moves one ear.")
+        return options
 
     def _clean_ai_message(self, message: str, settings) -> str:
         text = str(message or "").strip()
@@ -3018,7 +3208,7 @@ class EpaperPet(BasePlugin):
             text = f"AI {engine} {requests_today}"
 
         fallback_from = str(state.get("ai_message_fallback_from") or "").strip().lower()
-        if provider == "openai" and fallback_from == "groq":
+        if provider in {"local", "openai"} and fallback_from == "groq":
             text = f"{text} <- Groq"
         return text
 
