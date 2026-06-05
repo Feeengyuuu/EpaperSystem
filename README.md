@@ -8,6 +8,16 @@ health checks.
 
 简体中文：这是一个可开源发布的树莓派墨水屏信息台项目，内置插件系统、一键安装脚本、API Key 配置助手、中文安装流程和健康检查。
 
+## Built On InkyPi
+
+EpaperSystem is built on top of the open-source
+[InkyPi](https://github.com/fatihak/InkyPi) project. Thanks to the InkyPi
+maintainers and community; this project would not exist without that foundation.
+
+简体中文：EpaperSystem 的一切都建立在开源
+[InkyPi](https://github.com/fatihak/InkyPi) 项目的基础上。感谢 InkyPi
+维护者和社区提供的基础工程、插件架构和安装体系。
+
 The runnable app lives here:
 
 ```text

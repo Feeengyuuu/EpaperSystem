@@ -9,6 +9,15 @@ optional API key setup, and Simplified Chinese install flow.
 
 简体中文：本项目已经整理成可开源发布的 EpaperSystem，支持一键安装、插件包、可选 API Key 配置、健康检查和中文安装流程。
 
+EpaperSystem is built on the open-source
+[InkyPi](https://github.com/fatihak/InkyPi) foundation. We thank the original
+InkyPi maintainers and community for the base application, plugin model, and
+installer work that made this project possible.
+
+简体中文：EpaperSystem 的一切都以开源
+[InkyPi](https://github.com/fatihak/InkyPi) 为基础。感谢原 InkyPi
+维护者和社区提供基础应用、插件模型和安装体系。
+
 
 ## About InkyPi 
 InkyPi is an open-source, customizable E-Ink display powered by a Raspberry Pi. Designed for simplicity and flexibility, it allows you to effortlessly display the content you care about, with a simple web interface that makes setup and configuration effortless.
