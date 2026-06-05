@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timezone
 
-from src.model import Playlist, PluginInstance
+from src.model import Playlist, PlaylistManager, PluginInstance, RefreshInfo
 
 class TestPlaylist:
 
@@ -224,6 +224,35 @@ class TestPlaylist:
         ]
 
 
+class TestPlaylistManager:
+
+    def test_from_dict_handles_missing_config(self):
+        manager = PlaylistManager.from_dict(None)
+
+        assert manager.playlists == []
+        assert manager.active_playlist is None
+
+    def test_should_refresh_accepts_string_interval_and_aligns_timezone(self):
+        latest_refresh = datetime(2026, 5, 26, 7, 0)
+        current_time = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
+
+        assert PlaylistManager.should_refresh(latest_refresh, "300", current_time)
+
+
+class TestRefreshInfo:
+
+    def test_from_dict_handles_missing_config(self):
+        refresh_info = RefreshInfo.from_dict(None)
+
+        assert refresh_info.refresh_time is None
+        assert refresh_info.image_hash is None
+
+    def test_get_refresh_datetime_ignores_invalid_timestamp(self):
+        refresh_info = RefreshInfo.from_dict({"refresh_time": "not-a-time"})
+
+        assert refresh_info.get_refresh_datetime() is None
+
+
 class TestPluginInstance:
 
     def test_scheduled_refresh_waits_until_scheduled_time_today(self):
@@ -269,4 +298,26 @@ class TestPluginInstance:
         )
 
         assert plugin.should_refresh(datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc))
+
+    def test_invalid_latest_refresh_time_refreshes_instead_of_crashing(self):
+        plugin = PluginInstance(
+            "clock",
+            "Clock",
+            settings={},
+            refresh={"interval": 300},
+            latest_refresh_time="not-a-time",
+        )
+
+        assert plugin.should_refresh(datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc))
+
+    def test_invalid_scheduled_refresh_is_ignored(self):
+        plugin = PluginInstance(
+            "clock",
+            "Clock",
+            settings={},
+            refresh={"scheduled": "bad"},
+            latest_refresh_time="2026-05-26T07:00:00+00:00",
+        )
+
+        assert not plugin.should_refresh(datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc))
         

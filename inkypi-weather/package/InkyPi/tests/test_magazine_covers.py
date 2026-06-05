@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.magazine_covers.magazine_covers import (  # noqa: E402
+    DAILY_LIBRARY_REFRESH_INTERVAL,
     MAX_PI_SAFE_SOURCE_PIXELS,
     MagazineCovers,
     _ImageCandidateParser,
@@ -61,6 +62,14 @@ def test_srcset_candidates_are_ordered_small_to_large():
     assert parser._srcset_urls(
         "large.jpg 2400w, small.jpg 600w, medium.jpg 1200w"
     ) == ["small.jpg", "medium.jpg", "large.jpg"]
+
+
+def test_default_daily_library_refresh_interval_is_half_day():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    assert DAILY_LIBRARY_REFRESH_INTERVAL == timedelta(hours=12)
+    assert plugin._daily_library_refresh_interval({}) == timedelta(hours=12)
+    assert plugin._daily_library_refresh_interval({"libraryRefreshHours": "23"}) == timedelta(hours=23)
 
 
 def test_oversized_candidate_is_downsampled_before_loader(monkeypatch):

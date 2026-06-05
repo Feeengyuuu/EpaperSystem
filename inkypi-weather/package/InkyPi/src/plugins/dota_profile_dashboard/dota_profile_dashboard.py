@@ -825,6 +825,9 @@ class DotaProfileDashboard(BasePlugin):
             22: {"id": 22, "localized_name": "宙斯", "name": "npc_dota_hero_zuus", "icon": "/apps/dota2/images/dota_react/heroes/icons/zuus.png?", "img": "/apps/dota2/images/dota_react/heroes/zuus.png?"},
             44: {"id": 44, "localized_name": "幻影刺客", "name": "npc_dota_hero_phantom_assassin", "icon": "/apps/dota2/images/dota_react/heroes/icons/phantom_assassin.png?", "img": "/apps/dota2/images/dota_react/heroes/phantom_assassin.png?"},
         }
+        for hero in hero_stats.values():
+            hero.pop("icon", None)
+            hero.pop("img", None)
         return {
             "account_id": str(account_id),
             "profile": {

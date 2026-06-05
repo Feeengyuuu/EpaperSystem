@@ -17,6 +17,7 @@ import os
 import requests
 
 logger = logging.getLogger(__name__)
+DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES = 25 * 1024 * 1024
 
 
 def _is_low_resource_device():
@@ -61,7 +62,7 @@ class AdaptiveImageLoader:
     def __init__(self):
         self.is_low_resource = _is_low_resource_device()
 
-    def from_url(self, url, dimensions, timeout_ms=40000, resize=True, headers=None, focus_crop=False):
+    def from_url(self, url, dimensions, timeout_ms=40000, resize=True, headers=None, focus_crop=False, max_bytes=None):
         """
         Load an image from a URL and optionally resize it.
 
@@ -72,16 +73,18 @@ class AdaptiveImageLoader:
             resize: Whether to resize the image (default True)
             headers: Optional dict of HTTP headers to include in request
             focus_crop: Bias cover-crop toward the most detailed area
+            max_bytes: Optional response body limit. Non-positive values disable the limit.
 
         Returns:
             PIL Image object resized to dimensions, or None on error
         """
         logger.debug(f"Loading image from URL: {url}")
+        max_bytes = self._max_download_bytes(max_bytes)
 
         if self.is_low_resource:
-            return self._load_from_url_lowmem(url, dimensions, timeout_ms, resize, headers, focus_crop)
+            return self._load_from_url_lowmem(url, dimensions, timeout_ms, resize, headers, focus_crop, max_bytes)
         else:
-            return self._load_from_url_fast(url, dimensions, timeout_ms, resize, headers, focus_crop)
+            return self._load_from_url_fast(url, dimensions, timeout_ms, resize, headers, focus_crop, max_bytes)
 
     def from_file(self, path, dimensions, resize=True, focus_crop=False):
         """
@@ -147,7 +150,7 @@ class AdaptiveImageLoader:
 
     # ========== LOW-RESOURCE IMPLEMENTATIONS ==========
 
-    def _load_from_url_lowmem(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False):
+    def _load_from_url_lowmem(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False, max_bytes=None):
         """Low-memory URL loading using temp file + draft mode."""
         tmp_path = None
 
@@ -170,6 +173,7 @@ class AdaptiveImageLoader:
                     if chunk:
                         tmp.write(chunk)
                         downloaded_bytes += len(chunk)
+                        self._raise_if_download_too_large(url, downloaded_bytes, max_bytes)
 
                 logger.debug(f"Downloaded {downloaded_bytes / 1024:.1f}KB to temp file")
 
@@ -228,7 +232,7 @@ class AdaptiveImageLoader:
 
     # ========== HIGH-PERFORMANCE IMPLEMENTATIONS ==========
 
-    def _load_from_url_fast(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False):
+    def _load_from_url_fast(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False, max_bytes=None):
         """High-performance URL loading using in-memory processing."""
         try:
             logger.debug("Using in-memory processing (high-performance mode)")
@@ -240,7 +244,7 @@ class AdaptiveImageLoader:
             response = session.get(url, timeout=timeout_ms / 1000, stream=True, headers=request_headers)
             response.raise_for_status()
 
-            img = Image.open(BytesIO(response.content))
+            img = Image.open(BytesIO(self._response_content(response, url, max_bytes)))
             original_size = img.size
             original_pixels = original_size[0] * original_size[1]
             logger.info(f"Downloaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
@@ -261,6 +265,38 @@ class AdaptiveImageLoader:
         except Exception as e:
             logger.error(f"Error processing image from {url}: {e}")
             return None
+
+    def _max_download_bytes(self, max_bytes):
+        if max_bytes is None:
+            max_bytes = os.getenv("INKYPI_MAX_IMAGE_DOWNLOAD_BYTES", DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES)
+        try:
+            max_bytes = int(max_bytes)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid INKYPI_MAX_IMAGE_DOWNLOAD_BYTES value '%s'; using %s",
+                max_bytes,
+                DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES,
+            )
+            max_bytes = DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES
+        return max_bytes if max_bytes > 0 else None
+
+    def _response_content(self, response, url, max_bytes):
+        chunks = []
+        downloaded_bytes = 0
+        for chunk in response.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            downloaded_bytes += len(chunk)
+            self._raise_if_download_too_large(url, downloaded_bytes, max_bytes)
+        return b"".join(chunks)
+
+    def _raise_if_download_too_large(self, url, downloaded_bytes, max_bytes):
+        if max_bytes is not None and downloaded_bytes > max_bytes:
+            raise ValueError(
+                f"Image download exceeded {max_bytes} bytes. | "
+                f"url: {url} | downloaded_bytes: {downloaded_bytes}"
+            )
 
     def _load_from_file_fast(self, path, dimensions, resize, focus_crop=False):
         """High-performance file loading using in-memory processing."""

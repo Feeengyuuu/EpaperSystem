@@ -95,7 +95,7 @@ def test_mock_generate_image_renders_dashboard(tmp_path):
     assert image.size == (800, 480)
     generated = list(tmp_path.glob("*.png"))
     assert generated
-    assert any(path.name.startswith("image_") for path in generated)
+    assert not any(path.name.startswith("image_") for path in generated)
 
 
 def test_fetch_uses_no_key_endpoints_and_hero_cache(tmp_path, monkeypatch):

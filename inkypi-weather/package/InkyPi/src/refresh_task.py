@@ -307,7 +307,12 @@ class RefreshTask:
     def _get_current_datetime(self):
         """Retrieves the current datetime based on the device's configured timezone."""
         tz_str = self.device_config.get_config("timezone", default="UTC")
-        return datetime.now(pytz.timezone(tz_str))
+        try:
+            timezone_info = pytz.timezone(tz_str)
+        except Exception:
+            logger.warning("Invalid timezone '%s'; falling back to UTC.", tz_str)
+            timezone_info = pytz.UTC
+        return datetime.now(timezone_info)
 
     def _determine_next_plugin(self, playlist_manager, latest_refresh_info, current_dt):
         """Determines the next plugin to refresh based on the active playlist, plugin cycle interval, and current time."""
@@ -597,6 +602,8 @@ class RefreshTask:
             return localize(value) if localize else value.replace(tzinfo=reference.tzinfo)
         if value.tzinfo is not None and reference.tzinfo is not None:
             return value.astimezone(reference.tzinfo)
+        if value.tzinfo is not None and reference.tzinfo is None:
+            return value.replace(tzinfo=None)
         return value
 
     def _is_same_plugin_instance(self, plugin_instance, other_plugin_instance):
@@ -737,6 +744,7 @@ class PlaylistRefresh(RefreshAction):
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
             image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
+            os.makedirs(os.path.dirname(plugin_image_path), exist_ok=True)
             image.save(plugin_image_path)
             self.plugin_instance.latest_refresh_time = current_dt.isoformat()
         else:

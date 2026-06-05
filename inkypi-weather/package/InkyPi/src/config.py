@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import tempfile
 from dotenv import load_dotenv
 from model import PlaylistManager, RefreshInfo
 
@@ -36,8 +37,19 @@ class Config:
     def read_config(self):
         """Reads the device config JSON file and returns it as a dictionary."""
         logger.debug(f"Reading device config from {self.config_file}")
-        with open(self.config_file, encoding="utf-8") as f:
-            config = json.load(f)
+        try:
+            with open(self.config_file, encoding="utf-8") as f:
+                config = json.load(f)
+        except FileNotFoundError:
+            logger.warning("Device config file not found: %s", self.config_file)
+            return {}
+        except json.JSONDecodeError:
+            logger.exception("Device config file is not valid JSON: %s", self.config_file)
+            return {}
+
+        if not isinstance(config, dict):
+            logger.warning("Device config root must be an object, got %s", type(config).__name__)
+            return {}
 
         logger.debug("Loaded config:\n%s", json.dumps(config, indent=3))
 
@@ -54,8 +66,15 @@ class Config:
                 plugin_info_file = os.path.join(plugin_path, "plugin-info.json")
                 if os.path.isfile(plugin_info_file):
                     logger.debug(f"Reading plugin info from {plugin_info_file}")
-                    with open(plugin_info_file, encoding="utf-8") as f:
-                        plugin_info = json.load(f)
+                    try:
+                        with open(plugin_info_file, encoding="utf-8") as f:
+                            plugin_info = json.load(f)
+                    except (OSError, json.JSONDecodeError):
+                        logger.exception("Skipping unreadable plugin info: %s", plugin_info_file)
+                        continue
+                    if not isinstance(plugin_info, dict):
+                        logger.warning("Skipping plugin info with non-object root: %s", plugin_info_file)
+                        continue
                     plugins_list.append(plugin_info)
 
         return plugins_list
@@ -65,10 +84,38 @@ class Config:
         logger.debug(f"Writing device config to {self.config_file}")
         self.update_value("playlist_config", self.playlist_manager.to_dict())
         self.update_value("refresh_info", self.refresh_info.to_dict())
-        with open(self.config_file, 'w', encoding="utf-8") as outfile:
-            json.dump(self.config, outfile, indent=4)
+        config_dir = os.path.dirname(self.config_file)
+        os.makedirs(config_dir, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".device.",
+            suffix=".json.tmp",
+            dir=config_dir,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as outfile:
+                self._write_json(outfile)
+            try:
+                os.replace(tmp_path, self.config_file)
+                tmp_path = None
+            except OSError:
+                logger.exception(
+                    "Atomic config replace failed; falling back to direct write: %s",
+                    self.config_file,
+                )
+                with open(self.config_file, "w", encoding="utf-8") as outfile:
+                    self._write_json(outfile)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    logger.warning("Could not remove temporary config file: %s", tmp_path)
 
-    def get_config(self, key=None, default={}):
+    def _write_json(self, outfile):
+        json.dump(self.config, outfile, indent=4)
+        outfile.write("\n")
+
+    def get_config(self, key=None, default=None):
         """Gets the value of a specific configuration key or returns the entire config if none provided."""
         if key is not None:
             return self.config.get(key, default)
@@ -163,14 +210,14 @@ class Config:
 
     def load_playlist_manager(self):
         """Loads the playlist manager object from the config."""
-        playlist_manager = PlaylistManager.from_dict(self.get_config("playlist_config"))
+        playlist_manager = PlaylistManager.from_dict(self.get_config("playlist_config", default={}))
         if not playlist_manager.playlists:
             playlist_manager.add_default_playlist()
         return playlist_manager
 
     def load_refresh_info(self):
         """Loads the refresh information from the config."""
-        return RefreshInfo.from_dict(self.get_config("refresh_info"))
+        return RefreshInfo.from_dict(self.get_config("refresh_info", default={}))
 
     def get_playlist_manager(self):
         """Returns the playlist manager."""

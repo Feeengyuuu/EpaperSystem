@@ -243,14 +243,13 @@ def test_plane_marker_renders_colored_aircraft_icon():
     assert pixels.count(theme["plane_outline"]) > 10
 
 
-def test_track_history_keeps_current_plus_five_previous_refreshes():
+def test_track_history_keeps_current_plus_five_previous_refreshes(tmp_path):
     plugin = _plugin()
-    cache_path = Path(__file__).with_name(".flight_radar_tracks_test.json")
+    cache_path = tmp_path / ".flight_radar_tracks_test.json"
     original_track_history_file = FlightRadar._track_history_file
     FlightRadar._track_history_file = staticmethod(lambda: cache_path)
 
     try:
-        cache_path.unlink(missing_ok=True)
         aircraft = [{"hex": "A12345", "callsign": "UAL123", "lat": 37.6213, "lon": -122.3790}]
         for index in range(8):
             aircraft[0]["lon"] = -122.3790 + (index * 0.006)
@@ -263,7 +262,6 @@ def test_track_history_keeps_current_plus_five_previous_refreshes():
         assert round(track_points[-1]["lon"], 4) == round(-122.3790 + (7 * 0.006), 4)
     finally:
         FlightRadar._track_history_file = original_track_history_file
-        cache_path.unlink(missing_ok=True)
 
 
 def test_trail_limit_allows_longer_history_path():

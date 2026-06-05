@@ -770,3 +770,45 @@ def test_playlist_refresh_refreshes_backtothedate_on_display():
 
     assert calls == ["backtothedate"]
     assert plugin_instance.latest_refresh_time == "2026-05-26T16:00:00+00:00"
+
+
+def test_playlist_refresh_creates_plugin_image_directory_before_save():
+    calls = []
+    tmp_path = make_test_dir("create-image-dir")
+    plugin_image_dir = tmp_path / "missing" / "plugins"
+    device_config = FakeDeviceConfig(plugin_image_dir)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "clock",
+                "name": "Clock",
+                "plugin_settings": {"id": "clock"},
+                "refresh": {"interval": 300},
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("clock", "Clock")
+
+    PlaylistRefresh(playlist, plugin_instance).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["clock"]
+    assert (plugin_image_dir / "clock_Clock.png").exists()
+
+
+def test_get_current_datetime_falls_back_to_utc_for_invalid_timezone():
+    tmp_path = make_test_dir("invalid-timezone")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["timezone"] = "Not/AZone"
+    task = RefreshTask(device_config, display_manager=None)
+
+    current_dt = task._get_current_datetime()
+
+    assert current_dt.tzinfo is not None
+    assert current_dt.tzinfo.zone == "UTC"

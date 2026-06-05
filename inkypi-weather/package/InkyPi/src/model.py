@@ -18,7 +18,7 @@ class RefreshInfo:
         plugin_instance (str): Plugin instance name if refresh_type is 'Playlist'.
     """
 
-    def __init__(self, refresh_type, plugin_id, refresh_time, image_hash, playlist=None, plugin_instance=None):
+    def __init__(self, refresh_type=None, plugin_id=None, refresh_time=None, image_hash=None, playlist=None, plugin_instance=None):
         """Initialize RefreshInfo instance."""
         self.refresh_time = refresh_time
         self.image_hash = image_hash
@@ -31,7 +31,10 @@ class RefreshInfo:
         """Returns the refresh time as a datetime object or None if not set."""
         latest_refresh = None
         if self.refresh_time:
-            latest_refresh = datetime.fromisoformat(self.refresh_time)
+            try:
+                latest_refresh = datetime.fromisoformat(str(self.refresh_time).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid refresh_time value: %s", self.refresh_time)
         return latest_refresh
 
     def to_dict(self):
@@ -49,6 +52,8 @@ class RefreshInfo:
 
     @classmethod
     def from_dict(cls, data):
+        if not isinstance(data, dict):
+            data = {}
         return cls(
             refresh_time=data.get("refresh_time"),
             image_hash=data.get("image_hash"),
@@ -68,9 +73,9 @@ class PlaylistManager:
     DEFAULT_PLAYLIST_START = "00:00"
     DEFAULT_PLAYLIST_END = "24:00"
 
-    def __init__(self, playlists=[], active_playlist=None):
+    def __init__(self, playlists=None, active_playlist=None):
         """Initialize PlaylistManager with a list of playlists."""
-        self.playlists = playlists
+        self.playlists = list(playlists or [])
         self.active_playlist = active_playlist
 
     def get_playlist_names(self):
@@ -152,6 +157,8 @@ class PlaylistManager:
 
     @classmethod
     def from_dict(cls, data):
+        if not isinstance(data, dict):
+            data = {}
         return cls(
             playlists=[Playlist.from_dict(p) for p in data.get("playlists", [])],
             active_playlist=data.get("active_playlist")
@@ -163,6 +170,15 @@ class PlaylistManager:
         if not latest_refresh:
             return True  # No previous refresh, so it's time to refresh
 
+        try:
+            interval_seconds = float(interval_seconds)
+        except (TypeError, ValueError):
+            logger.warning("Invalid refresh interval '%s'; refreshing now.", interval_seconds)
+            return True
+        if interval_seconds <= 0:
+            return True
+
+        latest_refresh = PluginInstance.align_datetime_tz(latest_refresh, current_time)
         return (current_time - latest_refresh) >= timedelta(seconds=interval_seconds)
 
 class Playlist:
@@ -370,11 +386,11 @@ class PluginInstance:
         latest_refresh (str): ISO-formatted string representing the last refresh time.
     """
 
-    def __init__(self, plugin_id, name, settings, refresh, latest_refresh_time=None):
+    def __init__(self, plugin_id, name, settings=None, refresh=None, latest_refresh_time=None):
         self.plugin_id = plugin_id
         self.name = name
-        self.settings = settings
-        self.refresh = refresh
+        self.settings = settings or {}
+        self.refresh = refresh or {}
         self.latest_refresh_time = latest_refresh_time
 
     def update(self, updated_data):
@@ -387,17 +403,35 @@ class PluginInstance:
         latest_refresh_dt = self.get_latest_refresh_dt()
         if not latest_refresh_dt:
             return True
+        latest_refresh_dt = self.align_datetime_tz(latest_refresh_dt, current_time)
 
         # Check for interval-based refresh
         if "interval" in self.refresh:
-            interval = self.refresh.get("interval")
+            try:
+                interval = float(self.refresh.get("interval"))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid refresh interval for plugin '%s' instance '%s': %s",
+                    self.plugin_id,
+                    self.name,
+                    self.refresh.get("interval"),
+                )
+                interval = None
             if interval and (current_time - latest_refresh_dt) >= timedelta(seconds=interval):
                 return True
 
         if "scheduled" in self.refresh:
             scheduled_time_str = self.refresh.get("scheduled")
-            scheduled_time = datetime.strptime(scheduled_time_str, "%H:%M").time()
-            latest_refresh_dt = latest_refresh_dt.astimezone(current_time.tzinfo) if current_time.tzinfo else latest_refresh_dt
+            try:
+                scheduled_time = datetime.strptime(scheduled_time_str, "%H:%M").time()
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid scheduled refresh for plugin '%s' instance '%s': %s",
+                    self.plugin_id,
+                    self.name,
+                    scheduled_time_str,
+                )
+                return False
             scheduled_dt = current_time.replace(
                 hour=scheduled_time.hour,
                 minute=scheduled_time.minute,
@@ -421,8 +455,27 @@ class PluginInstance:
         """Returns the latest refresh time as a datetime object, or None if not set."""
         latest_refresh = None
         if self.latest_refresh_time:
-            latest_refresh = datetime.fromisoformat(self.latest_refresh_time)
+            try:
+                latest_refresh = datetime.fromisoformat(str(self.latest_refresh_time).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid latest_refresh_time for plugin '%s' instance '%s': %s",
+                    self.plugin_id,
+                    self.name,
+                    self.latest_refresh_time,
+                )
         return latest_refresh
+
+    @staticmethod
+    def align_datetime_tz(value, reference):
+        if value.tzinfo is None and reference.tzinfo is not None:
+            localize = getattr(reference.tzinfo, "localize", None)
+            return localize(value) if localize else value.replace(tzinfo=reference.tzinfo)
+        if value.tzinfo is not None and reference.tzinfo is not None:
+            return value.astimezone(reference.tzinfo)
+        if value.tzinfo is not None and reference.tzinfo is None:
+            return value.replace(tzinfo=None)
+        return value
     
     def to_dict(self):
         return {

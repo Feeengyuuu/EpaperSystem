@@ -44,9 +44,9 @@ TV Guide|https://magazineshop.us/collections/tv-guide-tv"""
 
 ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
 COVER_CACHE_VERSION = "magazine-covers-cache-v2-title-crop"
-IMAGE_CACHE_TTL = timedelta(hours=48)
+IMAGE_CACHE_TTL = timedelta(hours=20)
 DAILY_LIBRARY_STATE_VERSION = "magazine-covers-daily-library-v1"
-DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=23)
+DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=12)
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC

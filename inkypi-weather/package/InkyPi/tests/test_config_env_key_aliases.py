@@ -1,9 +1,11 @@
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from config import Config
+from model import PlaylistManager, RefreshInfo
 
 TEST_CACHE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "config_env_key_aliases_tests"
 
@@ -42,3 +44,31 @@ def test_load_env_key_does_not_alias_unrelated_keys(monkeypatch):
     monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
 
     assert config.load_env_key("OPENAI_API_KEY") == ""
+
+
+def test_write_config_persists_device_json(tmp_path):
+    config = Config.__new__(Config)
+    config.config_file = str(tmp_path / "device.json")
+    config.config = {"resolution": [800, 480]}
+    config.playlist_manager = PlaylistManager()
+    config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        plugin_id="clock",
+        refresh_time="2026-06-04T12:00:00+00:00",
+        image_hash="abc",
+    )
+
+    config.write_config()
+
+    saved = json.loads((tmp_path / "device.json").read_text(encoding="utf-8"))
+    assert saved["resolution"] == [800, 480]
+    assert saved["playlist_config"] == {"playlists": [], "active_playlist": None}
+    assert saved["refresh_info"]["plugin_id"] == "clock"
+
+
+def test_read_config_returns_empty_dict_for_invalid_json(tmp_path):
+    config = Config.__new__(Config)
+    config.config_file = str(tmp_path / "device.json")
+    (tmp_path / "device.json").write_text("{bad json", encoding="utf-8")
+
+    assert config.read_config() == {}
