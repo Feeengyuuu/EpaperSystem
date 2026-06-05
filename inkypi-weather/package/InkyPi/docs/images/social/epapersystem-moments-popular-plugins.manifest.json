@@ -1,13 +1,10 @@
 {
-  "generated_at": "2026-06-05T23:22:43.103704+00:00",
+  "generated_at": "2026-06-05T23:42:57.114473+00:00",
+  "raw_img2_source": "docs\\images\\social\\bases\\img2-moments-popular-plugins-raw.png",
   "output": "docs\\images\\social\\epapersystem-moments-popular-plugins.png",
-  "base": "docs\\images\\social\\bases\\img2-moments-popular-plugins-bg.png",
+  "img2_output": "docs\\images\\social\\epapersystem-moments-popular-plugins-img2.png",
   "format": "WeChat Moments vertical poster, 1080x1920",
-  "privacy_rule": "Private plugin content is shown as anonymized/locked UI, not raw private data.",
-  "live_sources": [
-    "docs/images/readme/screens/actual-daily-ai-news-800x480.png",
-    "docs/images/readme/screens/actual-lol-info-800x480.png",
-    "docs/images/readme/screens/actual-comic-covers-800x480.png"
-  ],
+  "method": "img-2 generated the complete main visual; Python only overlays controlled Chinese typography and project link.",
+  "privacy_rule": "Privacy plugins are represented as anonymized locked cards, not raw private data.",
   "upstream_credit": "Built on InkyPi: https://github.com/fatihak/InkyPi"
 }
