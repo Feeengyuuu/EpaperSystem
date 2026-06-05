@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-06-05T23:22:43.103704+00:00",
+  "output": "docs\\images\\social\\epapersystem-moments-popular-plugins.png",
+  "base": "docs\\images\\social\\bases\\img2-moments-popular-plugins-bg.png",
+  "format": "WeChat Moments vertical poster, 1080x1920",
+  "privacy_rule": "Private plugin content is shown as anonymized/locked UI, not raw private data.",
+  "live_sources": [
+    "docs/images/readme/screens/actual-daily-ai-news-800x480.png",
+    "docs/images/readme/screens/actual-lol-info-800x480.png",
+    "docs/images/readme/screens/actual-comic-covers-800x480.png"
+  ],
+  "upstream_credit": "Built on InkyPi: https://github.com/fatihak/InkyPi"
+}
