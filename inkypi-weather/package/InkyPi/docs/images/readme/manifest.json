@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-06-05T22:57:09.230603+00:00",
+  "device": "ColoredEpaperFrame",
+  "device_host": "192.168.1.188",
+  "screens": [
+    {
+      "slug": "lol-info",
+      "label": "LoLInfo",
+      "path": "docs\\images\\readme\\screens\\actual-lol-info-800x480.png",
+      "source": "/api/current_image after Display Now"
+    },
+    {
+      "slug": "comic-covers",
+      "label": "ComicCovers",
+      "path": "docs\\images\\readme\\screens\\actual-comic-covers-800x480.png",
+      "source": "/plugin_instance_image"
+    },
+    {
+      "slug": "daily-ai-news",
+      "label": "Daily AI News",
+      "path": "docs\\images\\readme\\screens\\actual-daily-ai-news-800x480.png",
+      "source": "/plugin_instance_image"
+    },
+    {
+      "slug": "live-radar",
+      "label": "LiveRadar",
+      "path": "docs\\images\\readme\\screens\\actual-live-radar-800x480.png",
+      "source": "/plugin_instance_image"
+    },
+    {
+      "slug": "daily-art",
+      "label": "DailyArt",
+      "path": "docs\\images\\readme\\screens\\actual-daily-art-800x480.png",
+      "source": "/plugin_instance_image"
+    },
+    {
+      "slug": "box-office",
+      "label": "BoxOffice",
+      "path": "docs\\images\\readme\\screens\\actual-box-office-800x480.png",
+      "source": "/plugin_instance_image"
+    }
+  ],
+  "outputs": [
+    "docs\\images\\readme\\epaper-system-hero.png",
+    "docs\\images\\readme\\epaper-system-plugin-wall.png",
+    "docs\\images\\readme\\epaper-system-real-screens.png"
+  ],
+  "rule": "img-2 bases contain only device/environment; screen content is captured from the live device."
+}

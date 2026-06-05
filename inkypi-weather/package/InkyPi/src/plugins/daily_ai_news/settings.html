@@ -45,7 +45,7 @@ Guardian World|https://www.theguardian.com/world/rss</textarea>
   <label class="form-label" for="font_family">字体</label>
   <select name="font_family" id="font_family">
     {% for font_name in available_fonts %}
-      <option value="{{ font_name }}">{{ font_name }}</option>
+      <option value="{{ font_name }}" {% if font_name == "Microsoft YaHei" %}selected{% endif %}>{{ font_name }}</option>
     {% endfor %}
   </select>
 </div>
@@ -69,9 +69,9 @@ Guardian World|https://www.theguardian.com/world/rss</textarea>
     }
 
     const fontFamily = document.getElementById('font_family');
-    if (fontFamily && !fontFamily.value) {
-      if ([...fontFamily.options].some(option => option.value === 'LXGW WenKai')) {
-        fontFamily.value = 'LXGW WenKai';
+    if (fontFamily && (!fontFamily.value || fontFamily.value === 'LXGW WenKai')) {
+      if ([...fontFamily.options].some(option => option.value === 'Microsoft YaHei')) {
+        fontFamily.value = 'Microsoft YaHei';
       }
     }
   });

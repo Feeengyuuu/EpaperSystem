@@ -99,3 +99,75 @@ def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
     assert "^GSPC" not in yahoo_calls
     assert "^IXIC" in yahoo_calls
     assert "000001.SS" in yahoo_calls
+
+
+def test_simplifies_common_traditional_chinese_payload():
+    plugin = _plugin()
+
+    payload = {
+        "brief": {
+            "lede": "臺灣與烏克蘭會議關注國際經濟",
+            "top": [{"title": "美國總統發表談話", "why": "市場風險升高"}],
+            "sources": ["BBC繁體中文"],
+        },
+        "items": [{"title": "歐盟發布新規", "summary": "企業應對"}],
+    }
+
+    simplified = plugin._simplify_chinese_payload(payload)
+
+    assert simplified["brief"]["lede"] == "台湾与乌克兰会议关注国际经济"
+    assert simplified["brief"]["top"][0]["title"] == "美国总统发表谈话"
+    assert simplified["brief"]["top"][0]["why"] == "市场风险升高"
+    assert simplified["brief"]["sources"] == ["BBC简体中文"]
+    assert simplified["items"][0]["title"] == "欧盟发布新规"
+    assert simplified["items"][0]["summary"] == "企业应对"
+
+
+def test_daily_ai_news_loads_microsoft_yahei_font():
+    plugin = _plugin()
+
+    font = plugin._font("Microsoft YaHei", 18, "bold")
+
+    assert hasattr(font, "getbbox")
+    assert "msyh" in str(getattr(font, "path", "")).lower()
+
+
+def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
+    plugin = _plugin()
+    original_font = plugin._font
+    font_calls = []
+
+    def record_font(family, size, weight="normal"):
+        font_calls.append((family, size, weight))
+        return original_font(family, size, weight)
+
+    monkeypatch.setattr(plugin, "_font", record_font)
+    payload = {
+        "date": "2026-06-05",
+        "generated_at": "2026-06-05T08:00:00",
+        "model": "test-model",
+        "brief": {
+            "lede": "臺灣與烏克蘭會議關注國際經濟",
+            "top": [
+                {"title": "美國總統發表談話", "why": "市場風險升高"},
+                {"title": "歐盟發布新規", "why": "企業應對"},
+            ],
+            "a_share": {"summary": "市場暫穩", "analysis": "等待數據"},
+            "us_stock": {"summary": "美股收高", "analysis": "科技股領漲"},
+            "sources": ["BBC繁體中文"],
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render(
+        (800, 480),
+        {"font_family": "LXGW WenKai", "brief_title": "整點新聞"},
+        payload,
+        datetime(2026, 6, 5),
+        {"mode": "day"},
+    )
+
+    assert image.size == (800, 480)
+    assert font_calls
+    assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}

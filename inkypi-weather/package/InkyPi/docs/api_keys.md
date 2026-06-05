@@ -1,96 +1,94 @@
+# API Keys
 
-# Storing API Keys
+API keys are optional. InkyPi should install and start without them; plugins that
+need a missing key will be unavailable, use cache, or fall back to a public/local
+source.
 
-Certain plugins, like the AI Image plugin, require API credentials to function. These credentials must be stored in a .env file located at the root of the project. Once you have your API token, follow these steps:
+Simplified Chinese version: [api_keys.zh-CN.md](./api_keys.zh-CN.md).
 
-1. SSH into your Raspberry Pi and navigate to the InkyPi directory:
-    ```bash
-    cd InkyPi
-    ```
-2. Create or edit the .env file using your preferred text editor (e.g., vi, nano):
-    ```bash
-    vi .env
-    ```
-3. Add your API keys following format, with one line per key:
-    ```
-    PLUGIN_KEY=your-key
-    ```
-4. Save the file and exit the editor
+Keys are stored in `.env` at the InkyPi project root. Do not commit `.env`.
 
-## Open AI Key
+## Add Keys
 
-Required for the AI Image and AI Text Plugins
+Use the installer helper:
 
-- Login or create an account on the [Open AI developer platform](https://platform.openai.com/docs/overview)
-- Crate a secret key from the API Keys tab in the Settings page
-    - It is recommended to set up Auto recharge (found in the "Billing" tab)
-    - Optionally set a Budge Limit in the Limits tab
-- Store your key in the .env file with the key `OPEN_AI_SECRET`
-    ```
-    OPEN_AI_SECRET=your-key
-    ```
+```bash
+python3 install/configure_api_keys.py --env-file .env
+```
 
-## Open Weather Map Key
+Simplified Chinese prompts:
 
-Required for the Weather Plugin
+```bash
+python3 install/configure_api_keys.py --env-file .env --lang zh-CN
+```
 
-- Login or create an account on [OpenWeatherMap](https://home.openweathermap.org/users/sign_in)
-    - Verify your email after signing up
-- The weather plugin uses the [One Call API 3.0](https://openweathermap.org/price) which requires a subscription but is free for up to 1,000 requests per day.
-    - Subscribe at [One Call API 3.0 Subscription](https://home.openweathermap.org/subscriptions/billing_info/onecall_30/base?key=base&service=onecall_30)
-    - Follow the instructions to complete the subscription.
-    - Navigate to [Your Subscriptions](https://home.openweathermap.org/subscriptions) and set "Calls per day (no more than)" to 1,000 to avoid exceeding the free limit
-- Store your api key in the .env file with the key `OPEN_WEATHER_MAP_SECRET`
-    ```
-    OPEN_WEATHER_MAP_SECRET=your-key
-    ```
+Show every known key and registration URL:
 
-## NASA Astronomy Picture Of the Day Key
+```bash
+python3 install/configure_api_keys.py --list
+python3 install/configure_api_keys.py --list --lang zh-CN
+```
 
-Required for the APOD Plugin
+Check what is configured:
 
-- Request an API key on [NASA APIs](https://api.nasa.gov/)
-   - Fill your First name, Last name, and e-mail address
-- The APOD plugin uses the [NASA APIs](https://api.nasa.gov/)
-   - Free for up to 1,000 requests per hour
-- Store your api key in the .env file with the key `NASA_SECRET`
-    ```
-    NASA_SECRET=your-key
-    ```
+```bash
+python3 install/configure_api_keys.py --check
+```
 
-## Unsplash Key
+You can also open the web UI and go to:
 
-Required for the Unsplash Plugin
- 
-- Register an account from https://unsplash.com/developers 
-- Go to https://unsplash.com/oauth/applications 
-- Create an app and open it
-- Your KEY is listed as `Access Key`
-- Store your api key in the .env file with the key `UNSPLASH_ACCESS_KEY`
-    ```
-    UNSPLASH_ACCESS_KEY=your-key
-    ```
+```text
+http://<your-pi>/api-keys
+```
 
-## GitHub Key
+After changing keys, restart the service:
 
-Required for the GitHub Plugin
+```bash
+sudo systemctl restart inkypi
+```
 
-- Login to your Github profile https://github.com/settings/profile
-- Under Developer Settings, create a new Personal access token (classic)
-- Assign the `read:user` scope and generate the token
-- Store your api key in the .env file with the key `GITHUB_SECRET`
-    ```
-    GITHUB_SECRET=your-key
-    ```
+## Key Registry
 
-## Immich Key
+This table is mirrored from `install/api_key_registry.json`, which is the
+installer and web UI source of truth.
 
-Required for the Image Album plugin for the Immich Provider
+| Variable | Service | Enables | Get key |
+| --- | --- | --- | --- |
+| `OPEN_AI_SECRET` | OpenAI | AI Image, AI Text, Daily AI News, Epaper Pet, AI Image Multiverse | <https://platform.openai.com/api-keys> |
+| `GROQ_API_KEY` | Groq | Daily AI News, Epaper Pet, AI Image Multiverse | <https://console.groq.com/keys> |
+| `NANO_BANANA_KEY` | Google AI Studio / Gemini | AI Image Multiverse | <https://aistudio.google.com/app/apikey> |
+| `AI_HORDE_KEY` | AI Horde | AI Image Multiverse | <https://aihorde.net/register> |
+| `OPEN_WEATHER_MAP_SECRET` | OpenWeather | Weather, Mini Weather | <https://home.openweathermap.org/api_keys> |
+| `NASA_SECRET` | NASA Open APIs | Astronomy Picture of the Day | <https://api.nasa.gov/> |
+| `UNSPLASH_ACCESS_KEY` | Unsplash | Unsplash | <https://unsplash.com/developers> |
+| `GITHUB_SECRET` | GitHub | GitHub Contributions, GitHub Sponsors | <https://github.com/settings/tokens> |
+| `IMMICH_KEY` | Immich | Image Album | <https://immich.app/docs/features/command-line-interface/> |
+| `STEAM_API_KEY` | Steam Web API | Steam Profile Dashboard | <https://steamcommunity.com/dev/apikey> |
+| `COMIC_VINE_API_KEY` | Comic Vine | GCD Comic Covers | <https://comicvine.gamespot.com/api/> |
+| `RIOT_API_KEY` | Riot Developer Portal | League of Legends Info | <https://developer.riotgames.com/> |
+| `OPENDOTA_API_KEY` | OpenDota | Dota Profile Dashboard | <https://www.opendota.com/api-keys> |
+| `FLIGHTAWARE_API_KEY` | FlightAware AeroAPI | Flight Radar | <https://flightaware.com/aeroapi/portal/> |
+| `RAPIDAPI_KEY` | RapidAPI | Flight Radar, Daily Knowledge | <https://rapidapi.com/hub> |
+| `GOOGLE_MAPS_API_KEY` | Google Maps Platform | Flight Radar map background | <https://console.cloud.google.com/google/maps-apis/credentials> |
+| `EUROPEANA_API_KEY` | Europeana | Daily Art | <https://pro.europeana.eu/page/get-api> |
+| `HARVARD_ART_MUSEUMS_API_KEY` | Harvard Art Museums | Daily Art | <https://harvardartmuseums.org/collections/api> |
+| `TMDB_BEARER_TOKEN` | The Movie Database | Box Office Top Movies | <https://www.themoviedb.org/settings/api> |
+| `MASSIVE_API_KEY` | Massive | Stock Tracker, Daily AI News market context | <https://massive.com/> |
+| `FOOTBALL_DATA_API_KEY` | football-data.org | Sports Dashboard | <https://www.football-data.org/client/register> |
+| `API_SPORTS_KEY` | API-SPORTS / API-Football | Sports Dashboard | <https://dashboard.api-football.com/register> |
+| `THE_ODDS_API_KEY` | The Odds API | Sports Dashboard odds | <https://the-odds-api.com/#get-access> |
+| `ODDS_API_IO_KEY` | Odds-API.io | Sports Dashboard odds | <https://odds-api.io/> |
+| `BLIZZARD_CLIENT_ID` | Battle.net Developer Portal | WoW Profile Dashboard | <https://develop.battle.net/access/clients> |
+| `BLIZZARD_CLIENT_SECRET` | Battle.net Developer Portal | WoW Profile Dashboard | <https://develop.battle.net/access/clients> |
+| `BLIZZARD_USER_ACCESS_TOKEN` | Battle.net OAuth | WoW Profile Dashboard account mode | <https://develop.battle.net/documentation/guides/using-oauth> |
 
-- Login to your Immich instance https://my.immich.app/
-- Under Account Settings > API Keys, create a new API Key
-- Assign the `asset.read`, `asset.download`, and `album.read` permissions and generate the key
-- Store your api key in the .env file with the key `IMMICH_KEY`
-    ```
-    IMMICH_KEY=your-key
-    ```
+## Aliases
+
+Several plugins accept legacy aliases for compatibility. The installer writes
+the primary variable names above, but the app can still read aliases listed in:
+
+```bash
+python3 install/configure_api_keys.py --list
+```
+
+Prefer the primary names for new installs.

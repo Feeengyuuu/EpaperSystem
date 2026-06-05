@@ -5,7 +5,7 @@
 # Description: This script automates the installation of InkyPI and creation of
 #              the InkyPI service.
 #
-# Usage: ./install.sh [-W <waveshare_device>]
+# Usage: ./install.sh [-W <waveshare_device>] [--no-reboot-prompt]
 #        -W <waveshare_device> (optional) Install for a Waveshare device,
 #                               specifying the device model type, e.g. epd7in3e.
 #
@@ -47,22 +47,47 @@ PIP_REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
 # as per the WS naming convention.
 WS_TYPE=""
 WS_REQUIREMENTS_FILE="$SCRIPT_DIR/ws-requirements.txt"
+REBOOT_PROMPT=true
 
-# Parse the arguments, looking for the -W option.
+usage() {
+  cat <<EOF
+Usage: sudo bash install/install.sh [options]
+
+Options:
+  -W, --waveshare <model>  Install for a Waveshare display, for example epd7in3e.
+  --no-reboot-prompt      Finish without asking to reboot. Used by install/bootstrap.sh.
+  -h, --help              Show this help.
+EOF
+}
+
+# Parse optional Waveshare and automation arguments.
 parse_arguments() {
-    while getopts ":W:" opt; do
-        case $opt in
-            W) WS_TYPE=$OPTARG
-                echo "Optional parameter WS is set for Waveshare support.  Screen type is: $WS_TYPE"
-                ;;
-            \?) echo "Invalid option: -$OPTARG." >&2
-                exit 1
-                ;;
-            :) echo "Option -$OPTARG requires an the model type of the Waveshare screen." >&2
-               exit 1
-               ;;
-        esac
-    done
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -W|--waveshare)
+        if [[ $# -lt 2 ]]; then
+          echo "Option $1 requires the model type of the Waveshare screen." >&2
+          exit 1
+        fi
+        WS_TYPE="$2"
+        echo "Optional parameter WS is set for Waveshare support. Screen type is: $WS_TYPE"
+        shift 2
+        ;;
+      --no-reboot-prompt)
+        REBOOT_PROMPT=false
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Invalid option: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
 }
 
 check_permissions() {
@@ -359,9 +384,14 @@ ask_for_reboot() {
   hostname=$(get_hostname)
   ip_address=$(get_ip_address)
   echo_header "$(echo_success "${APPNAME^^} Installation Complete!")"
-  echo_header "[•] A reboot of your Raspberry Pi is required for the changes to take effect"
-  echo_header "[•] After your Pi is rebooted, you can access the web UI by going to $(echo_blue "'$hostname.local'") or $(echo_blue "'$ip_address'") in your browser."
-  echo_header "[•] If you encounter any issues or have suggestions, please submit them here: https://github.com/fatihak/InkyPi/issues"
+  echo_header "- A reboot of your Raspberry Pi is required for the changes to take effect."
+  echo_header "- After your Pi is rebooted, access the web UI at $(echo_blue "'http://$hostname.local'") or $(echo_blue "'http://$ip_address'")."
+  echo_header "- If you encounter any issues or have suggestions, please submit them here: https://github.com/fatihak/InkyPi/issues"
+
+  if [[ "$REBOOT_PROMPT" != "true" ]]; then
+    echo "Reboot prompt skipped. Run 'sudo reboot now' after optional API key setup and health checks."
+    return
+  fi
 
   read -p "Would you like to restart your Raspberry Pi now? [Y/N] " userInput
   userInput="${userInput^^}"

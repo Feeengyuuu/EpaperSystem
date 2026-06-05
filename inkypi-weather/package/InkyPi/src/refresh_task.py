@@ -711,7 +711,9 @@ class PlaylistRefresh(RefreshAction):
         plugin_image_path = os.path.join(device_config.plugin_image_dir, self.plugin_instance.get_image_path())
         image_missing = not os.path.exists(plugin_image_path)
 
-        if self.display_cached_only and not self.force:
+        refresh_on_display = _refresh_on_display(self.plugin_instance)
+
+        if self.display_cached_only and not self.force and not refresh_on_display:
             if not image_missing:
                 logger.info(
                     "Using cached plugin instance image for scheduled display. | "
@@ -733,8 +735,6 @@ class PlaylistRefresh(RefreshAction):
             return self._placeholder_image(device_config)
 
         # Check if a refresh is needed based on the plugin instance's criteria
-        refresh_on_display = _refresh_on_display(self.plugin_instance)
-
         if self.plugin_instance.should_refresh(current_dt) or self.force or image_missing or refresh_on_display:
             if image_missing:
                 logger.info(f"Plugin instance image missing, refreshing. | plugin_instance: '{self.plugin_instance.name}'")

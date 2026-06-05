@@ -5,7 +5,6 @@ import json
 import logging
 import math
 import os
-import random
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -783,7 +782,8 @@ class LoLInfo(BasePlugin):
             self._text(draw, (x, y), label, fonts["tiny"], muted)
             self._single(draw, (x, y + 15), value, fonts["section"], color, col_w - 12, 11)
             self._single(draw, (x, y + 39), sub, fonts["tiny"], ink, col_w - 12, 8)
-        self._draw_skin_art_feature(image, draw, data, art_box, fonts, ink, muted, gold, cyan)
+        selected_skin_art = self._draw_skin_art_feature(image, draw, data, art_box, fonts, ink, muted, gold, cyan)
+        self._draw_skin_art_label(draw, selected_skin_art, logo_box, box, fonts, ink)
 
     def _overview_layout(self, box):
         x0, y0, x1, y1 = box
@@ -806,6 +806,21 @@ class LoLInfo(BasePlugin):
         art = ImageOps.fit(ImageOps.exif_transpose(raw).convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.42, 0.5))
         image.paste(art, (x0, y0))
         draw.rectangle((x0, y0, x1, y1), outline=(236, 232, 206), width=2)
+        return selected
+
+    def _draw_skin_art_label(self, draw, selected, logo_box, overview_box, fonts, ink):
+        skin_name = str((selected or {}).get("skin_name") or "").strip()
+        if not skin_name:
+            return
+        x0, _y0, x1, y1 = logo_box
+        _ox0, _oy0, _ox1, overview_y1 = overview_box
+        label_x0 = x0 + 7
+        label_x1 = x1 - 4
+        label_y1 = min(overview_y1 - 15, y1 + 42)
+        label_y0 = max(y1 + 17, label_y1 - 20)
+        if label_x1 - label_x0 < 24 or label_y1 - label_y0 < 14:
+            return
+        self._single(draw, (label_x0, label_y0 + 5), skin_name, fonts["tiny"], ink, label_x1 - label_x0, 7)
 
     def _write_context(self, data, generated_at, refresh_minutes):
         account = data.get("account") or {}
@@ -937,19 +952,24 @@ class LoLInfo(BasePlugin):
         state_path = self._skin_art_rotation_path(data)
         state = self._read_json(state_path, {})
         pool_ids = [str(item.get("id")) for item in pool]
-        recent = [item_id for item_id in (state.get("recent") or []) if item_id in pool_ids]
-        available = [item for item in pool if str(item.get("id")) not in recent]
-        if not available:
-            available = pool[:]
-            recent = []
         last_id = str(state.get("last") or "")
-        if len(available) > 1:
-            available = [item for item in available if str(item.get("id")) != last_id] or available
-        selected = random.choice(available)
+        try:
+            last_index = pool_ids.index(last_id)
+        except ValueError:
+            last_index = -1
+
+        next_index = (last_index + 1) % len(pool)
+        selected = pool[next_index]
         selected_id = str(selected.get("id"))
+        recent = [item_id for item_id in (state.get("recent") or []) if item_id in pool_ids]
         recent.append(selected_id)
         keep = max(1, len(pool_ids) - 1)
-        self._write_json(state_path, {"last": selected_id, "recent": recent[-keep:], "updated_ts": time.time()})
+        self._write_json(state_path, {
+            "last": selected_id,
+            "index": next_index,
+            "recent": recent[-keep:],
+            "updated_ts": time.time(),
+        })
         return selected
 
     def _skin_art_rotation_path(self, data):

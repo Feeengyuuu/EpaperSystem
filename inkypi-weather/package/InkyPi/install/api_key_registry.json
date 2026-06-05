@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "updated": "2026-06-05",
+  "description": "Optional API keys used by InkyPi plugins. Missing keys should not block installation; they only disable or degrade the matching plugin features.",
+  "keys": [
+    {
+      "key": "OPEN_AI_SECRET",
+      "service": "OpenAI",
+      "features": ["AI Image", "AI Text", "Daily AI News", "Epaper Pet", "AI Image Multiverse"],
+      "required": false,
+      "aliases": ["OPENAI_API_KEY"],
+      "signup_url": "https://platform.openai.com/api-keys",
+      "docs_url": "https://platform.openai.com/docs/quickstart",
+      "notes": "OpenAI account billing may be required. Keep this value secret."
+    },
+    {
+      "key": "GROQ_API_KEY",
+      "service": "Groq",
+      "features": ["Daily AI News", "Epaper Pet", "AI Image Multiverse"],
+      "required": false,
+      "aliases": ["Groq_V2", "GROQ_KEY"],
+      "signup_url": "https://console.groq.com/keys",
+      "docs_url": "https://console.groq.com/docs/quickstart",
+      "notes": "Used by Groq-backed LLM paths."
+    },
+    {
+      "key": "NANO_BANANA_KEY",
+      "service": "Google AI Studio / Gemini",
+      "features": ["AI Image Multiverse"],
+      "required": false,
+      "aliases": ["GOOGLE_AI_API_KEY", "GEMINI_API_KEY"],
+      "signup_url": "https://aistudio.google.com/app/apikey",
+      "docs_url": "https://ai.google.dev/gemini-api/docs/api-key",
+      "notes": "Used by Google Gemini image/text provider paths."
+    },
+    {
+      "key": "AI_HORDE_KEY",
+      "service": "AI Horde",
+      "features": ["AI Image Multiverse"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://aihorde.net/register",
+      "docs_url": "https://aihorde.net/api/",
+      "notes": "Optional community image generation provider."
+    },
+    {
+      "key": "OPEN_WEATHER_MAP_SECRET",
+      "service": "OpenWeather",
+      "features": ["Weather", "Mini Weather"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://home.openweathermap.org/api_keys",
+      "docs_url": "https://openweathermap.org/api",
+      "notes": "One Call API 3.0 may require enabling a subscription even for the free request tier."
+    },
+    {
+      "key": "NASA_SECRET",
+      "service": "NASA Open APIs",
+      "features": ["Astronomy Picture of the Day"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://api.nasa.gov/",
+      "docs_url": "https://api.nasa.gov/",
+      "notes": "NASA also provides a low-rate DEMO_KEY, but a personal key is recommended."
+    },
+    {
+      "key": "UNSPLASH_ACCESS_KEY",
+      "service": "Unsplash",
+      "features": ["Unsplash"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://unsplash.com/developers",
+      "docs_url": "https://unsplash.com/documentation",
+      "notes": "Create an Unsplash developer app and copy the Access Key."
+    },
+    {
+      "key": "GITHUB_SECRET",
+      "service": "GitHub",
+      "features": ["GitHub Contributions", "GitHub Sponsors"],
+      "required": false,
+      "aliases": ["GITHUB_TOKEN"],
+      "signup_url": "https://github.com/settings/tokens",
+      "docs_url": "https://docs.github.com/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+      "notes": "A classic token with read-only scopes is enough for public profile data."
+    },
+    {
+      "key": "IMMICH_KEY",
+      "service": "Immich",
+      "features": ["Image Album"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://immich.app/docs/features/command-line-interface/",
+      "docs_url": "https://immich.app/docs/features/command-line-interface/",
+      "notes": "Create the key in your own Immich instance under Account Settings > API Keys."
+    },
+    {
+      "key": "STEAM_API_KEY",
+      "service": "Steam Web API",
+      "features": ["Steam Profile Dashboard"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://steamcommunity.com/dev/apikey",
+      "docs_url": "https://steamcommunity.com/dev",
+      "notes": "Requires a Steam account."
+    },
+    {
+      "key": "COMIC_VINE_API_KEY",
+      "service": "Comic Vine",
+      "features": ["GCD Comic Covers"],
+      "required": false,
+      "aliases": ["COMICVINE_API_KEY", "COMIC_VINE_KEY", "COMICVINE_KEY", "COMICVINE", "COMIC_VINE"],
+      "signup_url": "https://comicvine.gamespot.com/api/",
+      "docs_url": "https://comicvine.gamespot.com/api/documentation",
+      "notes": "Used as a fallback/metadata provider for comic cover lookup."
+    },
+    {
+      "key": "RIOT_API_KEY",
+      "service": "Riot Developer Portal",
+      "features": ["League of Legends Info"],
+      "required": false,
+      "aliases": ["Riot_KEY", "RIOT_KEY"],
+      "signup_url": "https://developer.riotgames.com/",
+      "docs_url": "https://developer.riotgames.com/docs/lol",
+      "notes": "Development keys expire; use a production key for unattended displays."
+    },
+    {
+      "key": "OPENDOTA_API_KEY",
+      "service": "OpenDota",
+      "features": ["Dota Profile Dashboard"],
+      "required": false,
+      "aliases": ["OPENDOTA_KEY"],
+      "signup_url": "https://www.opendota.com/api-keys",
+      "docs_url": "https://docs.opendota.com/",
+      "notes": "Optional; public OpenDota calls may still work at lower limits."
+    },
+    {
+      "key": "FLIGHTAWARE_API_KEY",
+      "service": "FlightAware AeroAPI",
+      "features": ["Flight Radar"],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://flightaware.com/aeroapi/portal/",
+      "docs_url": "https://flightaware.com/aeroapi/portal/documentation",
+      "notes": "Optional paid/limited provider for flight positions."
+    },
+    {
+      "key": "RAPIDAPI_KEY",
+      "service": "RapidAPI",
+      "features": ["Flight Radar", "Daily Knowledge"],
+      "required": false,
+      "aliases": ["X_RAPIDAPI_KEY", "WORLD_FUN_FACTS_API_KEY", "WORLD_FUN_FACTS_KEY", "Fun_Fact", "FUN_FACT"],
+      "signup_url": "https://rapidapi.com/hub",
+      "docs_url": "https://docs.rapidapi.com/",
+      "notes": "Used by optional RapidAPI-backed providers. Subscribe to the specific API used by a plugin."
+    },
+    {
+      "key": "GOOGLE_MAPS_API_KEY",
+      "service": "Google Maps Platform",
+      "features": ["Flight Radar map background"],
+      "required": false,
+      "aliases": ["Google_KEY", "GOOGLE_KEY"],
+      "signup_url": "https://console.cloud.google.com/google/maps-apis/credentials",
+      "docs_url": "https://developers.google.com/maps/documentation/static-maps/get-api-key",
+      "notes": "Enable Static Maps API in the same Google Cloud project."
+    },
+    {
+      "key": "EUROPEANA_API_KEY",
+      "service": "Europeana",
+      "features": ["Daily Art"],
+      "required": false,
+      "aliases": ["EUROPEANA_KEY", "EUROPEANA_WSKEY", "EUROPEANA_APIKEY", "EUROPEANA_PERSONAL_API_KEY", "Europeana_API_Key", "Europeana_Key", "EuropeanaApiKey", "EUROPEANA"],
+      "signup_url": "https://pro.europeana.eu/page/get-api",
+      "docs_url": "https://pro.europeana.eu/page/apis",
+      "notes": "Optional keyed art source."
+    },
+    {
+      "key": "HARVARD_ART_MUSEUMS_API_KEY",
+      "service": "Harvard Art Museums",
+      "features": ["Daily Art"],
+      "required": false,
+      "aliases": ["HARVARD_ART_MUSEUM_API_KEY", "HARVARD_ART_MUSEUMS_KEY", "HARVARD_ART_API_KEY", "HARVARD_API_KEY", "HAM_API_KEY", "Harvard_Art_Museums_Key", "Harvard_Art_Museum_Key", "Harvard_Art_Key", "HARVARD"],
+      "signup_url": "https://harvardartmuseums.org/collections/api",
+      "docs_url": "https://github.com/harvardartmuseums/api-docs",
+      "notes": "Optional keyed art source."
+    },
+    {
+      "key": "TMDB_BEARER_TOKEN",
+      "service": "The Movie Database",
+      "features": ["Box Office Top Movies"],
+      "required": false,
+      "aliases": ["TMDB_READ_ACCESS_TOKEN", "TMDB_ACCESS_TOKEN", "TMDB_Access_Token", "THEMOVIEDB_BEARER_TOKEN", "TMDB_API_KEY", "THEMOVIEDB_API_KEY"],
+      "signup_url": "https://www.themoviedb.org/settings/api",
+      "docs_url": "https://developer.themoviedb.org/docs/getting-started",
+      "notes": "TMDB v4 read access token is preferred; v3 API key is also accepted by the plugin."
+    },
+    {
+      "key": "MASSIVE_API_KEY",
+      "service": "Massive",
+      "features": ["Stock Tracker", "Daily AI News market context"],
+      "required": false,
+      "aliases": ["MASSIVE_ECONOMIC_KEY", "MASSIVE_ECNOMIC_KEY", "Massive_Ecnomic_Key"],
+      "signup_url": "https://massive.com/",
+      "docs_url": "https://massive.com/docs/",
+      "notes": "Optional market data provider. Stock Tracker can fall back to yfinance when this is missing."
+    },
+    {
+      "key": "FOOTBALL_DATA_API_KEY",
+      "service": "football-data.org",
+      "features": ["Sports Dashboard"],
+      "required": false,
+      "aliases": ["FOOTBALL_DATA", "FOOTBALL_DATA_KEY", "FOOTBALL_DATA_TOKEN", "FOOTBALLDATA_KEY", "FOOTBALLDATA_TOKEN"],
+      "signup_url": "https://www.football-data.org/client/register",
+      "docs_url": "https://www.football-data.org/documentation/quickstart",
+      "notes": "Optional World Cup schedule data source."
+    },
+    {
+      "key": "API_SPORTS_KEY",
+      "service": "API-SPORTS / API-Football",
+      "features": ["Sports Dashboard"],
+      "required": false,
+      "aliases": ["APISPORTS_KEY", "API_FOOTBALL_KEY", "X_APISPORTS_KEY", "WORLD_CUP_API_KEY"],
+      "signup_url": "https://dashboard.api-football.com/register",
+      "docs_url": "https://www.api-football.com/documentation-v3",
+      "notes": "Optional World Cup fixture provider."
+    },
+    {
+      "key": "THE_ODDS_API_KEY",
+      "service": "The Odds API",
+      "features": ["Sports Dashboard odds"],
+      "required": false,
+      "aliases": ["ODDS_API_KEY", "WORLD_CUP_ODDS_API_KEY"],
+      "signup_url": "https://the-odds-api.com/#get-access",
+      "docs_url": "https://the-odds-api.com/liveapi/guides/v4/",
+      "notes": "Optional odds provider."
+    },
+    {
+      "key": "ODDS_API_IO_KEY",
+      "service": "Odds-API.io",
+      "features": ["Sports Dashboard odds"],
+      "required": false,
+      "aliases": ["ODDSAPI_IO_KEY", "WORLD_CUP_ODDS_API_IO_KEY"],
+      "signup_url": "https://odds-api.io/",
+      "docs_url": "https://docs.odds-api.io/",
+      "notes": "Optional odds provider, including LPL odds mode."
+    },
+    {
+      "key": "BLIZZARD_CLIENT_ID",
+      "service": "Battle.net Developer Portal",
+      "features": ["WoW Profile Dashboard"],
+      "required": false,
+      "aliases": ["BNET_CLIENT_ID", "BATTLE_NET_CLIENT_ID", "WOW_CLIENT_ID", "WOW_KEY", "WoW_Key"],
+      "signup_url": "https://develop.battle.net/access/clients",
+      "docs_url": "https://develop.battle.net/documentation/guides/getting-started",
+      "notes": "Use with BLIZZARD_CLIENT_SECRET for public WoW profile data."
+    },
+    {
+      "key": "BLIZZARD_CLIENT_SECRET",
+      "service": "Battle.net Developer Portal",
+      "features": ["WoW Profile Dashboard"],
+      "required": false,
+      "aliases": ["BNET_CLIENT_SECRET", "BATTLE_NET_CLIENT_SECRET", "WOW_CLIENT_SECRET"],
+      "signup_url": "https://develop.battle.net/access/clients",
+      "docs_url": "https://develop.battle.net/documentation/guides/getting-started",
+      "notes": "Use with BLIZZARD_CLIENT_ID for public WoW profile data."
+    },
+    {
+      "key": "BLIZZARD_USER_ACCESS_TOKEN",
+      "service": "Battle.net OAuth",
+      "features": ["WoW Profile Dashboard account mode"],
+      "required": false,
+      "aliases": ["BNET_USER_ACCESS_TOKEN", "BATTLE_NET_USER_ACCESS_TOKEN", "WOW_PROFILE_ACCESS_TOKEN", "BLIZZARD_ACCESS_TOKEN", "BNET_ACCESS_TOKEN", "BATTLE_NET_ACCESS_TOKEN", "WOW_ACCESS_TOKEN"],
+      "signup_url": "https://develop.battle.net/documentation/guides/using-oauth",
+      "docs_url": "https://develop.battle.net/documentation/guides/using-oauth",
+      "notes": "Advanced/temporary OAuth token path; most users should start with client credentials."
+    }
+  ]
+}

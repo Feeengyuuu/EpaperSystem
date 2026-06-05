@@ -5,6 +5,7 @@
 *.env.backup
 
 # Local/runtime state
+.learnings/
 .tmp/
 **/.tmp/
 **/tmp/
@@ -20,6 +21,7 @@
 inkypi-weather/package/InkyPi/src/plugins/*/cache/
 inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/fonts/
 **/.magazine_covers_cache/
+inkypi-weather/package/InkyPi/docs/images/readme/.cache/
 
 # Python environments and vendored install caches
 **/.venv/

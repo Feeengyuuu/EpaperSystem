@@ -867,6 +867,8 @@ class LiveRadar(BasePlugin):
         rows = max(1, int(math.ceil(len(visible) / columns)))
         card_w = int((w - col_gap * (columns - 1)) / columns)
         row_h = max(34, int((content_h - gap * (rows - 1)) / rows))
+        if rows == 1 and columns == 2 and len(visible) == 2:
+            row_h = min(row_h, max(56, int(content_h * 0.72)))
 
         for index, card in enumerate(visible):
             column = index % columns

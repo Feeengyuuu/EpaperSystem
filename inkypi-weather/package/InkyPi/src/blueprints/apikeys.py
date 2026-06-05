@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app, render_template
 from dotenv import dotenv_values
+import json
 import os
 import re
 import logging
@@ -12,6 +13,22 @@ def get_env_path():
     """Get path to .env file in the project root."""
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(base_dir, '.env')
+
+
+def get_api_key_registry():
+    """Load optional API key metadata used by the installer and web UI."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    registry_path = os.path.join(base_dir, "install", "api_key_registry.json")
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        keys = payload.get("keys", [])
+        if not isinstance(keys, list):
+            return []
+        return keys
+    except Exception as e:
+        logger.warning("Could not load API key registry: %s", e)
+        return []
 
 
 def parse_env_file(filepath):
@@ -66,6 +83,7 @@ def apikeys_page():
     return render_template(
         'apikeys.html',
         entries=template_entries,
+        registry=get_api_key_registry(),
         env_exists=os.path.exists(env_path)
     )
 

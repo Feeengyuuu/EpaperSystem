@@ -19,7 +19,7 @@
     <script defer src="{{ url_for('static', filename='scripts/i18n.js') }}"></script>
     <style>
         .apikeys-container {
-            max-width: 700px;
+            max-width: 980px;
             margin: 0 auto;
         }
         
@@ -127,9 +127,61 @@
             color: #4CAF50;
         }
 
+        .key-registry {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .key-card {
+            border: 1px solid var(--border-color, #ddd);
+            border-radius: 8px;
+            padding: 10px;
+            background: var(--bg-secondary, #f7f7f7);
+        }
+
+        .key-card-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .key-link {
+            font-size: 12px;
+            color: var(--accent-primary, #1abc9c);
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .key-link:hover {
+            text-decoration: underline;
+        }
+
+        .key-meta {
+            font-size: 12px;
+            line-height: 1.35;
+            color: var(--text-secondary, #666);
+        }
+
+        .key-meta strong {
+            color: var(--text-primary, #333);
+        }
+
         [data-theme="dark"] .btn-preset {
             background: #333;
             border-color: #555;
+        }
+
+        [data-theme="dark"] .key-card {
+            background: #2b2b2b;
+            border-color: #555;
+        }
+
+        [data-theme="dark"] .key-meta strong {
+            color: #eee;
         }
 
         [data-theme="dark"] .btn-preset:hover {
@@ -194,13 +246,12 @@
 <body>
     <div class="frame">
         <!-- Back Button -->
-        <button onclick="history.back()" class="back-button">← Back</button>
+        <button onclick="history.back()" class="back-button">&lt; Back</button>
         
         <!-- Header -->
         <div class="app-header">
             <div class="header-content">
                 <div class="title-container">
-                    <span style="font-size: 28px; margin-right: 10px;">🔑</span>
                     <h1 class="app-title">API Keys</h1>
                 </div>
             </div>
@@ -215,12 +266,12 @@
                     <div class="apikey-row" data-existing="true">
                         <input type="text" class="apikey-key" value="{{ entry.key }}" placeholder="KEY_NAME" readonly>
                         <input type="text" class="apikey-value masked" value="{{ entry.masked }}" placeholder="(unchanged)" readonly>
-                        <button type="button" class="btn-delete" onclick="deleteRow(this)" title="Delete">×</button>
+                        <button type="button" class="btn-delete" onclick="deleteRow(this)" title="Delete">x</button>
                     </div>
                     {% endfor %}
                 {% else %}
                     <div class="empty-state" id="empty-state">
-                        <div class="empty-state-icon">🔐</div>
+                        <div class="empty-state-icon">+</div>
                         <p>No API keys configured yet.</p>
                         <p>Add keys below to enable plugin features.</p>
                     </div>
@@ -232,16 +283,39 @@
                 <button type="button" class="btn-add" onclick="addRow()">
                     <span>+</span> Add API Key
                 </button>
-                <button type="button" class="btn-preset" data-key="OPEN_WEATHER_MAP_SECRET" onclick="addPreset(this)">OPEN_WEATHER_MAP_SECRET</button>
-                <button type="button" class="btn-preset" data-key="OPEN_AI_SECRET" onclick="addPreset(this)">OPEN_AI_SECRET</button>
-                <button type="button" class="btn-preset" data-key="NASA_SECRET" onclick="addPreset(this)">NASA_SECRET</button>
-                <button type="button" class="btn-preset" data-key="UNSPLASH_ACCESS_KEY" onclick="addPreset(this)">UNSPLASH_ACCESS_KEY</button>
-                <button type="button" class="btn-preset" data-key="GITHUB_SECRET" onclick="addPreset(this)">GITHUB_SECRET</button>
             </div>
+
+            {% if registry %}
+            <div class="key-registry">
+                {% for item in registry %}
+                <div class="key-card">
+                    <div class="key-card-actions">
+                        <button
+                            type="button"
+                            class="btn-preset"
+                            data-key="{{ item.key }}"
+                            onclick="addPreset(this)"
+                            title="{{ item.service }}: {{ item.features|join(', ') }}"
+                        >{{ item.key }}</button>
+                        {% if item.signup_url %}
+                        <a class="key-link" href="{{ item.signup_url }}" target="_blank" rel="noopener noreferrer">Get key</a>
+                        {% endif %}
+                    </div>
+                    <div class="key-meta">
+                        <strong>{{ item.service }}</strong><br>
+                        {{ item.features|join(', ') }}
+                        {% if item.aliases %}
+                        <br>Aliases: {{ item.aliases|join(', ') }}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
             
             <!-- Info Banner -->
             <div class="info-banner">
-                <span class="info-banner-icon">ℹ️</span>
+                <span class="info-banner-icon">i</span>
                 <span class="info-banner-text">
                     API keys are stored in the <code>.env</code> file on the device.
                     For security, existing values are never displayed. To change a key, delete it and add a new one.
@@ -274,7 +348,7 @@
             row.innerHTML = `
                 <input type="text" class="apikey-key" value="${key}" placeholder="KEY_NAME">
                 <input type="text" class="apikey-value" value="${value}" placeholder="Enter value">
-                <button type="button" class="btn-delete" onclick="deleteRow(this)" title="Delete">×</button>
+                <button type="button" class="btn-delete" onclick="deleteRow(this)" title="Delete">x</button>
             `;
             list.appendChild(row);
             
@@ -326,7 +400,7 @@
             if (list.children.length === 0) {
                 list.innerHTML = `
                     <div class="empty-state" id="empty-state">
-                        <div class="empty-state-icon">🔐</div>
+                        <div class="empty-state-icon">+</div>
                         <p>No API keys configured yet.</p>
                         <p>Add keys below to enable plugin features.</p>
                     </div>

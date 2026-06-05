@@ -1,6 +1,13 @@
-# InkyPi 
+# InkyPi
 
-<img src="./docs/images/inky_clock.jpg" />
+![EpaperSystem running on a Raspberry Pi e-paper display](./docs/images/readme/epaper-system-hero.png)
+
+This fork is packaged as part of
+[EpaperSystem](https://github.com/Feeengyuuu/EpaperSystem): a free open-source
+Raspberry Pi e-paper dashboard with a beginner installer, bundled plugins,
+optional API key setup, and Simplified Chinese install flow.
+
+简体中文：本项目已经整理成可开源发布的 EpaperSystem，支持一键安装、插件包、可选 API Key 配置、健康检查和中文安装流程。
 
 
 ## About InkyPi 
@@ -49,7 +56,44 @@ See [the wiki](https://github.com/fatihak/InkyPi/wiki) for a list of community-m
 **Disclosure:** The links above are affiliate links. I may earn a commission from qualifying purchases made through them, at no extra cost to you, which helps maintain and develop this project.
 
 ## Installation
-To install InkyPi, follow these steps:
+For a fresh Raspberry Pi, use the beginner installer:
+
+```bash
+git clone https://github.com/Feeengyuuu/EpaperSystem.git
+cd EpaperSystem/inkypi-weather/package/InkyPi
+sudo bash install/bootstrap.sh
+```
+
+简体中文安装：
+
+```bash
+sudo bash install/bootstrap.sh --lang zh-CN
+```
+
+The beginner installer runs the base install, creates `.env`, offers optional
+API key setup with registration URLs, starts the service, and runs a health
+check. It defaults to the Waveshare `epd7in3e` 7.3 inch color display. For a
+different Waveshare display:
+
+```bash
+sudo bash install/bootstrap.sh -W epd7in5_V2
+```
+
+For Pimoroni Inky displays:
+
+```bash
+sudo bash install/bootstrap.sh --pimoroni
+```
+
+Full zero-to-working guide:
+[Install From Zero](./docs/install_from_zero.md) /
+[从零安装](./docs/install_from_zero.zh-CN.md).
+
+API key guide:
+[API Keys](./docs/api_keys.md) /
+[API Key 获取地址](./docs/api_keys.zh-CN.md).
+
+Advanced/manual install:
 
 1. Clone the repository:
     ```bash

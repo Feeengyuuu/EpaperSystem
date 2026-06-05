@@ -4,7 +4,7 @@ import time
 import types
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
@@ -292,6 +292,57 @@ def test_overview_layout_places_art_large_on_right_and_logo_before_it(tmp_path):
     assert art_box[3] == 444
 
 
+def test_overview_draws_selected_skin_name_text_below_riot_logo(tmp_path):
+    plugin = make_plugin(tmp_path)
+    image = Image.new("RGB", (800, 480), (5, 7, 12))
+    draw = ImageDraw.Draw(image)
+    fonts = {
+        "title": plugin._font(25, bold=True),
+        "section": plugin._font(20, bold=True),
+        "body": plugin._font(15),
+        "small": plugin._font(13),
+        "tiny": plugin._font(10),
+        "micro": plugin._font(9),
+    }
+    selected = {
+        "id": "Ahri:1",
+        "skin_name": "Arcade Ahri",
+        "champion_name": "Ahri",
+        "splash_url": "https://example.test/ahri.jpg",
+    }
+    plugin._choose_skin_art = lambda _data: selected
+    plugin._image_from_url = lambda _url, _label="": Image.new("RGB", (160, 90), (24, 180, 240))
+    seen = {}
+    original_single = plugin._single
+
+    def record_single(draw_obj, position, text, font, fill, max_width, min_size=8):
+        if text == "Arcade Ahri":
+            seen["skin_label"] = position
+        return original_single(draw_obj, position, text, font, fill, max_width, min_size)
+
+    plugin._single = record_single
+    box = (22, 280, 778, 456)
+    _content_x1, logo_box, _art_box = plugin._overview_layout(box)
+
+    plugin._draw_overview(
+        image,
+        draw,
+        {"summary": {"games": 5}, "skin_art_pool": [selected]},
+        box,
+        fonts,
+        (255, 250, 222),
+        (202, 190, 150),
+        (255, 205, 54),
+        (82, 202, 128),
+        (107, 204, 255),
+        (255, 82, 74),
+    )
+
+    assert seen["skin_label"][0] > logo_box[0]
+    assert seen["skin_label"][1] > logo_box[3]
+    assert image.getpixel((logo_box[0] + 7, logo_box[3] + 22)) != (255, 82, 74)
+
+
 def test_skin_art_choice_rotates_without_immediate_repeat(tmp_path):
     plugin = make_plugin(tmp_path)
     data = {
@@ -306,6 +357,22 @@ def test_skin_art_choice_rotates_without_immediate_repeat(tmp_path):
     second = plugin._choose_skin_art(data)
 
     assert first["id"] != second["id"]
+
+
+def test_skin_art_choice_rotates_through_existing_pool_in_order(tmp_path):
+    plugin = make_plugin(tmp_path)
+    data = {
+        "account": {"puuid": "ordered-rotation-test"},
+        "skin_art_pool": [
+            {"id": "Ahri:1", "splash_url": "https://example.test/Ahri_1.jpg"},
+            {"id": "Riven:2", "splash_url": "https://example.test/Riven_2.jpg"},
+            {"id": "Yasuo:3", "splash_url": "https://example.test/Yasuo_3.jpg"},
+        ],
+    }
+
+    selected = [plugin._choose_skin_art(data)["id"] for _ in range(4)]
+
+    assert selected == ["Ahri:1", "Riven:2", "Yasuo:3", "Ahri:1"]
 
 
 def test_valid_data_cache_still_rerenders_image_without_refetch(tmp_path):

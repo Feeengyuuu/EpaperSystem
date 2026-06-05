@@ -309,6 +309,39 @@ def test_playlist_refresh_uses_cached_image_without_generating_for_scheduled_dis
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
 
 
+def test_playlist_refresh_rerenders_lol_info_on_scheduled_display():
+    calls = []
+    tmp_path = make_test_dir("scheduled-lol-info-refresh")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "lol_info",
+                "name": "LoLInfo",
+                "plugin_settings": {"id": "riot-page"},
+                "refresh": {"interval": 7200},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("lol_info", "LoLInfo")
+    Image.new("RGB", (2, 1), "black").save(tmp_path / "lol_info_LoLInfo.png")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["riot-page"]
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:05:00+00:00"
+
+
 def test_playlist_refresh_uses_placeholder_when_scheduled_cache_is_missing():
     calls = []
     tmp_path = make_test_dir("scheduled-placeholder")

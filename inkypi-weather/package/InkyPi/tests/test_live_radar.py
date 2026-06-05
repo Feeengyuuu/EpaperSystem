@@ -707,6 +707,7 @@ def test_snapshot_mini_section_keeps_two_thumbnails_landscape():
     assert visible == 2
     assert image.getpixel((108, 80)) == (24, 180, 240)
     assert image.getpixel((300, 80)) == (220, 90, 50)
+    assert image.getpixel((18, 126)) == theme["bg"]
 
 
 def test_snapshot_mini_section_keeps_three_thumbnails_landscape():

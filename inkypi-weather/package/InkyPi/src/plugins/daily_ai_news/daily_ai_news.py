@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-5-nano"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TITLE = "整点新闻"
-DEFAULT_FONT = "LXGW WenKai"
+DEFAULT_FONT = "Microsoft YaHei"
 BACKGROUND_IMAGE = "background_world_news.png"
 SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v7"
 DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
@@ -55,6 +55,599 @@ SECTION_LABELS = {
     "a_share": "A股今日",
     "us_stock": "美股今日",
 }
+
+TRADITIONAL_PHRASE_REPLACEMENTS = (
+    ("繁體中文", "简体中文"),
+    ("臺灣", "台湾"),
+    ("台灣", "台湾"),
+    ("烏克蘭", "乌克兰"),
+    ("俄羅斯", "俄罗斯"),
+    ("歐盟", "欧盟"),
+    ("美國", "美国"),
+    ("英國", "英国"),
+    ("日本國會", "日本国会"),
+    ("國會", "国会"),
+    ("總統", "总统"),
+    ("行政院", "行政院"),
+    ("立法院", "立法院"),
+    ("證券", "证券"),
+    ("颱風", "台风"),
+)
+
+TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
+    "與": "与",
+    "專": "专",
+    "業": "业",
+    "東": "东",
+    "絲": "丝",
+    "兩": "两",
+    "嚴": "严",
+    "喪": "丧",
+    "個": "个",
+    "臨": "临",
+    "為": "为",
+    "麗": "丽",
+    "舉": "举",
+    "義": "义",
+    "烏": "乌",
+    "樂": "乐",
+    "喬": "乔",
+    "習": "习",
+    "鄉": "乡",
+    "書": "书",
+    "買": "买",
+    "亂": "乱",
+    "爭": "争",
+    "於": "于",
+    "雲": "云",
+    "亞": "亚",
+    "產": "产",
+    "畝": "亩",
+    "親": "亲",
+    "褻": "亵",
+    "億": "亿",
+    "僅": "仅",
+    "從": "从",
+    "倉": "仓",
+    "儀": "仪",
+    "價": "价",
+    "眾": "众",
+    "優": "优",
+    "會": "会",
+    "傘": "伞",
+    "偉": "伟",
+    "傳": "传",
+    "傷": "伤",
+    "倫": "伦",
+    "偽": "伪",
+    "儲": "储",
+    "兒": "儿",
+    "黨": "党",
+    "內": "内",
+    "兩": "两",
+    "蘭": "兰",
+    "關": "关",
+    "興": "兴",
+    "養": "养",
+    "獸": "兽",
+    "冊": "册",
+    "軍": "军",
+    "農": "农",
+    "衝": "冲",
+    "決": "决",
+    "況": "况",
+    "凍": "冻",
+    "劃": "划",
+    "劉": "刘",
+    "則": "则",
+    "剛": "刚",
+    "創": "创",
+    "別": "别",
+    "刪": "删",
+    "劑": "剂",
+    "辦": "办",
+    "務": "务",
+    "動": "动",
+    "勢": "势",
+    "勛": "勋",
+    "勝": "胜",
+    "勞": "劳",
+    "區": "区",
+    "協": "协",
+    "單": "单",
+    "賣": "卖",
+    "衛": "卫",
+    "卻": "却",
+    "廠": "厂",
+    "歷": "历",
+    "厲": "厉",
+    "壓": "压",
+    "縣": "县",
+    "參": "参",
+    "雙": "双",
+    "發": "发",
+    "變": "变",
+    "敘": "叙",
+    "葉": "叶",
+    "號": "号",
+    "嘆": "叹",
+    "聽": "听",
+    "啟": "启",
+    "吳": "吴",
+    "員": "员",
+    "問": "问",
+    "單": "单",
+    "喚": "唤",
+    "營": "营",
+    "嘗": "尝",
+    "嚇": "吓",
+    "國": "国",
+    "圖": "图",
+    "圓": "圆",
+    "團": "团",
+    "園": "园",
+    "壞": "坏",
+    "堅": "坚",
+    "報": "报",
+    "場": "场",
+    "塊": "块",
+    "塵": "尘",
+    "墊": "垫",
+    "塢": "坞",
+    "墳": "坟",
+    "墜": "坠",
+    "壘": "垒",
+    "壟": "垄",
+    "壯": "壮",
+    "聲": "声",
+    "壺": "壶",
+    "處": "处",
+    "備": "备",
+    "複": "复",
+    "夢": "梦",
+    "夥": "伙",
+    "夾": "夹",
+    "奪": "夺",
+    "奮": "奋",
+    "奧": "奥",
+    "婦": "妇",
+    "媽": "妈",
+    "妝": "妆",
+    "姍": "姗",
+    "娛": "娱",
+    "婁": "娄",
+    "婦": "妇",
+    "嬰": "婴",
+    "學": "学",
+    "寧": "宁",
+    "寶": "宝",
+    "實": "实",
+    "審": "审",
+    "寫": "写",
+    "寬": "宽",
+    "寵": "宠",
+    "對": "对",
+    "尋": "寻",
+    "導": "导",
+    "將": "将",
+    "專": "专",
+    "尷": "尴",
+    "屆": "届",
+    "屬": "属",
+    "歲": "岁",
+    "島": "岛",
+    "峽": "峡",
+    "崗": "岗",
+    "嶺": "岭",
+    "嶼": "屿",
+    "川": "川",
+    "幣": "币",
+    "帥": "帅",
+    "師": "师",
+    "帳": "帐",
+    "帶": "带",
+    "幀": "帧",
+    "幫": "帮",
+    "幹": "干",
+    "庫": "库",
+    "廁": "厕",
+    "廂": "厢",
+    "廈": "厦",
+    "廣": "广",
+    "廟": "庙",
+    "廢": "废",
+    "廳": "厅",
+    "異": "异",
+    "彈": "弹",
+    "彙": "汇",
+    "彎": "弯",
+    "張": "张",
+    "強": "强",
+    "歸": "归",
+    "錄": "录",
+    "徵": "征",
+    "後": "后",
+    "徑": "径",
+    "徹": "彻",
+    "恆": "恒",
+    "惡": "恶",
+    "愛": "爱",
+    "慮": "虑",
+    "慶": "庆",
+    "憂": "忧",
+    "憑": "凭",
+    "應": "应",
+    "懷": "怀",
+    "態": "态",
+    "戲": "戏",
+    "戶": "户",
+    "戰": "战",
+    "才": "才",
+    "撲": "扑",
+    "執": "执",
+    "擴": "扩",
+    "掃": "扫",
+    "揚": "扬",
+    "擾": "扰",
+    "撫": "抚",
+    "拋": "抛",
+    "搶": "抢",
+    "護": "护",
+    "報": "报",
+    "擔": "担",
+    "擬": "拟",
+    "攏": "拢",
+    "擇": "择",
+    "掛": "挂",
+    "採": "采",
+    "擺": "摆",
+    "攜": "携",
+    "攝": "摄",
+    "攤": "摊",
+    "擊": "击",
+    "據": "据",
+    "擠": "挤",
+    "擴": "扩",
+    "敵": "敌",
+    "數": "数",
+    "斂": "敛",
+    "斃": "毙",
+    "斕": "斓",
+    "斷": "断",
+    "無": "无",
+    "舊": "旧",
+    "時": "时",
+    "晉": "晋",
+    "暫": "暂",
+    "曆": "历",
+    "術": "术",
+    "樸": "朴",
+    "機": "机",
+    "殺": "杀",
+    "雜": "杂",
+    "權": "权",
+    "條": "条",
+    "來": "来",
+    "楊": "杨",
+    "極": "极",
+    "構": "构",
+    "標": "标",
+    "樣": "样",
+    "樹": "树",
+    "檢": "检",
+    "樓": "楼",
+    "歡": "欢",
+    "歐": "欧",
+    "步": "步",
+    "殘": "残",
+    "毆": "殴",
+    "殼": "壳",
+    "氣": "气",
+    "沒": "没",
+    "沖": "冲",
+    "澤": "泽",
+    "潔": "洁",
+    "濟": "济",
+    "漲": "涨",
+    "災": "灾",
+    "為": "为",
+    "烴": "烃",
+    "煉": "炼",
+    "煙": "烟",
+    "熱": "热",
+    "燈": "灯",
+    "燒": "烧",
+    "爾": "尔",
+    "牆": "墙",
+    "獨": "独",
+    "獲": "获",
+    "獵": "猎",
+    "環": "环",
+    "現": "现",
+    "瑪": "玛",
+    "畫": "画",
+    "異": "异",
+    "當": "当",
+    "疇": "畴",
+    "癥": "症",
+    "發": "发",
+    "皺": "皱",
+    "盜": "盗",
+    "監": "监",
+    "盤": "盘",
+    "盧": "卢",
+    "眾": "众",
+    "著": "着",
+    "矚": "瞩",
+    "礎": "础",
+    "禮": "礼",
+    "禍": "祸",
+    "種": "种",
+    "稱": "称",
+    "穩": "稳",
+    "窮": "穷",
+    "竊": "窃",
+    "競": "竞",
+    "筆": "笔",
+    "築": "筑",
+    "簡": "简",
+    "簽": "签",
+    "糧": "粮",
+    "糾": "纠",
+    "紅": "红",
+    "紋": "纹",
+    "納": "纳",
+    "紐": "纽",
+    "純": "纯",
+    "紙": "纸",
+    "級": "级",
+    "紛": "纷",
+    "組": "组",
+    "結": "结",
+    "絕": "绝",
+    "絲": "丝",
+    "經": "经",
+    "綁": "绑",
+    "綠": "绿",
+    "網": "网",
+    "綱": "纲",
+    "綜": "综",
+    "綫": "线",
+    "維": "维",
+    "緊": "紧",
+    "緒": "绪",
+    "線": "线",
+    "緩": "缓",
+    "編": "编",
+    "緣": "缘",
+    "縣": "县",
+    "縱": "纵",
+    "總": "总",
+    "績": "绩",
+    "織": "织",
+    "繼": "继",
+    "續": "续",
+    "纖": "纤",
+    "罰": "罚",
+    "羅": "罗",
+    "羈": "羁",
+    "義": "义",
+    "習": "习",
+    "翹": "翘",
+    "聯": "联",
+    "聖": "圣",
+    "聞": "闻",
+    "職": "职",
+    "聰": "聪",
+    "聯": "联",
+    "肅": "肃",
+    "脅": "胁",
+    "脈": "脉",
+    "腦": "脑",
+    "臟": "脏",
+    "臨": "临",
+    "與": "与",
+    "興": "兴",
+    "舉": "举",
+    "艦": "舰",
+    "艙": "舱",
+    "藝": "艺",
+    "節": "节",
+    "蘇": "苏",
+    "藍": "蓝",
+    "虛": "虚",
+    "號": "号",
+    "蟲": "虫",
+    "蠟": "蜡",
+    "補": "补",
+    "裝": "装",
+    "製": "制",
+    "複": "复",
+    "規": "规",
+    "視": "视",
+    "覽": "览",
+    "覺": "觉",
+    "觸": "触",
+    "訂": "订",
+    "計": "计",
+    "訊": "讯",
+    "訓": "训",
+    "記": "记",
+    "訟": "讼",
+    "訪": "访",
+    "設": "设",
+    "許": "许",
+    "訴": "诉",
+    "診": "诊",
+    "詐": "诈",
+    "評": "评",
+    "詞": "词",
+    "試": "试",
+    "詩": "诗",
+    "誠": "诚",
+    "話": "话",
+    "誕": "诞",
+    "誘": "诱",
+    "語": "语",
+    "誤": "误",
+    "說": "说",
+    "課": "课",
+    "誰": "谁",
+    "調": "调",
+    "談": "谈",
+    "請": "请",
+    "諾": "诺",
+    "謀": "谋",
+    "謂": "谓",
+    "謊": "谎",
+    "謝": "谢",
+    "謠": "谣",
+    "證": "证",
+    "識": "识",
+    "譯": "译",
+    "議": "议",
+    "護": "护",
+    "讀": "读",
+    "變": "变",
+    "讓": "让",
+    "豐": "丰",
+    "豬": "猪",
+    "貝": "贝",
+    "負": "负",
+    "財": "财",
+    "責": "责",
+    "賢": "贤",
+    "敗": "败",
+    "賬": "账",
+    "貨": "货",
+    "質": "质",
+    "販": "贩",
+    "貪": "贪",
+    "貧": "贫",
+    "貿": "贸",
+    "賀": "贺",
+    "資": "资",
+    "賓": "宾",
+    "賠": "赔",
+    "賴": "赖",
+    "賺": "赚",
+    "購": "购",
+    "賽": "赛",
+    "贊": "赞",
+    "趙": "赵",
+    "趕": "赶",
+    "趨": "趋",
+    "跡": "迹",
+    "踐": "践",
+    "蹤": "踪",
+    "車": "车",
+    "軌": "轨",
+    "軟": "软",
+    "載": "载",
+    "較": "较",
+    "輔": "辅",
+    "輛": "辆",
+    "輝": "辉",
+    "輩": "辈",
+    "輪": "轮",
+    "輯": "辑",
+    "輸": "输",
+    "轉": "转",
+    "轟": "轰",
+    "辦": "办",
+    "辭": "辞",
+    "農": "农",
+    "邊": "边",
+    "遙": "遥",
+    "遜": "逊",
+    "遞": "递",
+    "遠": "远",
+    "適": "适",
+    "遷": "迁",
+    "選": "选",
+    "遺": "遗",
+    "醫": "医",
+    "釋": "释",
+    "釐": "厘",
+    "重": "重",
+    "鈴": "铃",
+    "銀": "银",
+    "銷": "销",
+    "銳": "锐",
+    "鋪": "铺",
+    "錄": "录",
+    "錢": "钱",
+    "錦": "锦",
+    "錯": "错",
+    "鍊": "链",
+    "鍵": "键",
+    "鍾": "钟",
+    "鎖": "锁",
+    "鎮": "镇",
+    "鏡": "镜",
+    "鐘": "钟",
+    "鐵": "铁",
+    "鐵": "铁",
+    "鑑": "鉴",
+    "鑒": "鉴",
+    "長": "长",
+    "門": "门",
+    "閃": "闪",
+    "閉": "闭",
+    "開": "开",
+    "閒": "闲",
+    "間": "间",
+    "閣": "阁",
+    "隊": "队",
+    "階": "阶",
+    "際": "际",
+    "陽": "阳",
+    "險": "险",
+    "隱": "隐",
+    "雜": "杂",
+    "離": "离",
+    "難": "难",
+    "電": "电",
+    "點": "点",
+    "靈": "灵",
+    "響": "响",
+    "頁": "页",
+    "項": "项",
+    "順": "顺",
+    "須": "须",
+    "預": "预",
+    "領": "领",
+    "頭": "头",
+    "頒": "颁",
+    "頻": "频",
+    "題": "题",
+    "額": "额",
+    "顏": "颜",
+    "願": "愿",
+    "類": "类",
+    "風": "风",
+    "飛": "飞",
+    "飯": "饭",
+    "飲": "饮",
+    "館": "馆",
+    "馬": "马",
+    "駐": "驻",
+    "驅": "驱",
+    "驗": "验",
+    "驚": "惊",
+    "體": "体",
+    "髮": "发",
+    "鬥": "斗",
+    "魚": "鱼",
+    "鮮": "鲜",
+    "鳥": "鸟",
+    "鳴": "鸣",
+    "麥": "麦",
+    "黃": "黄",
+    "齊": "齐",
+    "齡": "龄",
+    "龍": "龙",
+})
 
 
 def _enabled(value: Any) -> bool:
@@ -132,6 +725,7 @@ class DailyAINews(BasePlugin):
             logger.exception("Daily AI news failed")
             brief = self._fallback_brief(settings, now, str(exc))
 
+        brief = self._simplify_chinese_payload(brief)
         self._write_news_context(brief, now)
         theme_context = get_theme_context(device_config, now=now)
         return self._render(dimensions, settings, brief, now, theme_context)
@@ -231,6 +825,7 @@ class DailyAINews(BasePlugin):
         }
         if payload_warning:
             payload["warning"] = payload_warning
+        payload = self._simplify_chinese_payload(payload)
         _safe_json_write(cache_file, payload)
         if used_ai:
             self._record_api_call(date_key)
@@ -528,6 +1123,7 @@ class DailyAINews(BasePlugin):
         client = OpenAI(**client_kwargs)
         system = (
             "你是中文新闻编辑。只根据用户提供的 RSS 条目写简体中文每日简报。"
+            "所有中文必须使用简体中文，不得使用繁体中文或港澳台繁体词形。"
             "top 新闻只能来自 RSS 条目，不能使用市场行情、常识或背景知识补充。"
             "新闻必须强调今天或最近一次更新的具体变化，标题要具体，避免宏观空话。"
             "输出必须是一个 JSON object，不要 Markdown。"
@@ -541,6 +1137,7 @@ class DailyAINews(BasePlugin):
                 "sources": ["来源名"],
             },
             "rules": [
+                "所有输出字段只使用简体中文；如果素材是繁体中文，必须转换为简体中文再写入 JSON",
                 "top 给 7 条，每条 title 18到28字，why 16到26字",
                 "top 只选最近 24-48 小时内有明确新进展的硬新闻；优先冲突、政策、事故、市场、外交、法律、重大科技治理",
                 "top 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
@@ -593,7 +1190,7 @@ class DailyAINews(BasePlugin):
         brief["top"] = self._dedupe_top_items(brief.get("top") or [], items)
         if not str(brief.get("lede") or "").strip():
             brief["lede"] = self._fallback_lede(brief["top"])
-        return brief
+        return self._simplify_chinese_payload(brief)
 
     def _parse_brief_json(self, content: str) -> dict[str, Any]:
         try:
@@ -608,13 +1205,13 @@ class DailyAINews(BasePlugin):
         lede = str(data.get("lede") or "").strip()
         if not lede or lede == "今日新闻简报已生成。":
             lede = self._fallback_lede(top)
-        return {
+        return self._simplify_chinese_payload({
             "lede": lede[:48],
             "top": top,
             "a_share": self._as_market_block(data.get("a_share")),
             "us_stock": self._as_market_block(data.get("us_stock")),
             "sources": self._as_list(data.get("sources"), 5),
-        }
+        })
 
     def _as_list(self, value: Any, limit: int) -> list[Any]:
         if isinstance(value, list):
@@ -732,10 +1329,31 @@ class DailyAINews(BasePlugin):
             "warning": error,
         }
 
+    def _simplify_chinese_payload(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self._simplify_chinese_text(value)
+        if isinstance(value, list):
+            return [self._simplify_chinese_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._simplify_chinese_payload(item) for item in value)
+        if isinstance(value, dict):
+            return {key: self._simplify_chinese_payload(item) for key, item in value.items()}
+        return value
+
+    def _simplify_chinese_text(self, text: str) -> str:
+        simplified = str(text)
+        if simplified.startswith(("http://", "https://")):
+            return simplified
+        for traditional, replacement in TRADITIONAL_PHRASE_REPLACEMENTS:
+            simplified = simplified.replace(traditional, replacement)
+        return simplified.translate(TRADITIONAL_TO_SIMPLIFIED)
+
     def _render(self, dimensions, settings, payload: dict[str, Any], now: datetime, theme_context=None) -> Image.Image:
         width, height = dimensions
         raw_title = str(settings.get("brief_title") or "").strip()
         title = DEFAULT_TITLE if not raw_title or raw_title == "二狗新闻" else raw_title
+        title = self._simplify_chinese_text(title)
+        payload = self._simplify_chinese_payload(payload)
         brief = payload.get("brief") or {}
 
         palette = get_theme_palette(theme_context)
@@ -753,9 +1371,9 @@ class DailyAINews(BasePlugin):
         img = self._base_background(dimensions, bg, (theme_context or {}).get("mode", "day"))
         draw = ImageDraw.Draw(img)
 
-        font_family = settings.get("font_family") or DEFAULT_FONT
-        title_font = self._font("方正新楷近似", 44, "bold")
-        meta_font = self._font("Jost", 14)
+        font_family = DEFAULT_FONT
+        title_font = self._font(font_family, 44, "bold")
+        meta_font = self._font(font_family, 14)
         lede_font = self._font(font_family, 25, "bold")
         section_font = self._font(font_family, 18, "bold")
         headline_font = self._font(font_family, 19, "bold")
@@ -867,14 +1485,66 @@ class DailyAINews(BasePlugin):
         return Image.new("RGB", dimensions, bg)
 
     def _font(self, family: str, size: int, weight: str = "normal"):
+        if str(family or "").strip().lower() == DEFAULT_FONT.lower():
+            font = self._microsoft_yahei_font(size, weight)
+            if font:
+                return font
+
+        seen = set()
         for candidate in (family, DEFAULT_FONT, "方正新楷近似", "FandolKai"):
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
             try:
                 font = get_font(candidate, size, weight)
                 if font:
                     return font
             except OSError:
                 continue
+            except Exception:
+                continue
         return ImageFont.load_default()
+
+    def _microsoft_yahei_font(self, size: int, weight: str = "normal"):
+        plugin_dir = Path(self.get_plugin_dir())
+        shared_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
+        local_fonts = plugin_dir / "fonts"
+        weight = str(weight or "normal").lower()
+        candidates = []
+        if weight == "bold":
+            candidates.extend([
+                local_fonts / "msyhbd.ttc",
+                shared_fonts / "msyhbd.ttc",
+                Path("C:/Windows/Fonts/msyhbd.ttc"),
+                Path("C:/Windows/Fonts/msyhbd.ttf"),
+                Path("/usr/share/fonts/opentype/microsoft/msyhbd.ttc"),
+                Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttc"),
+                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+                Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"),
+            ])
+        candidates.extend([
+            local_fonts / "msyh.ttc",
+            shared_fonts / "msyh.ttc",
+            local_fonts / "msyhl.ttc",
+            shared_fonts / "msyhl.ttc",
+            Path("C:/Windows/Fonts/msyh.ttc"),
+            Path("C:/Windows/Fonts/msyh.ttf"),
+            Path("C:/Windows/Fonts/msyhl.ttc"),
+            Path("/usr/share/fonts/opentype/microsoft/msyh.ttc"),
+            Path("/usr/share/fonts/truetype/microsoft/msyh.ttc"),
+            Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ])
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                return ImageFont.truetype(str(path), size=int(size))
+            except Exception:
+                continue
+        return None
 
     def _date_label(self, payload: dict[str, Any], now: datetime) -> str:
         date = payload.get("date") or now.strftime("%Y-%m-%d")
