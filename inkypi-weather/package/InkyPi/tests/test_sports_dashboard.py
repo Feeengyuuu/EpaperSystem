@@ -316,6 +316,66 @@ def test_recent_zero_zero_lpl_match_is_inferred_live_during_match_window():
     assert stale["recent"] == [event]
 
 
+def test_future_completed_zero_zero_lpl_match_stays_next_until_start():
+    tz = timezone.utc
+    event = {
+        "start": datetime(2026, 6, 6, 9, 0, tzinfo=tz),
+        "state": "completed",
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": 0,
+        "wins_b": 0,
+        "best_of": 5,
+        "block": "Playoffs",
+    }
+    next_event = {
+        "start": datetime(2026, 6, 7, 9, 0, tzinfo=tz),
+        "state": "unstarted",
+        "team_a": "WE",
+        "team_b": "TES",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": 0,
+        "wins_b": 0,
+        "best_of": 5,
+        "block": "Playoffs",
+    }
+
+    selected = SportsDashboard._select_lpl_events(
+        [event, next_event],
+        datetime(2026, 6, 6, 8, 50, tzinfo=tz),
+    )
+
+    assert selected["live"] == []
+    assert selected["main"] is event
+    assert selected["upcoming"] == [event, next_event]
+    assert selected["recent"] == []
+
+    live = SportsDashboard._select_lpl_events([event, next_event], datetime(2026, 6, 6, 9, 5, tzinfo=tz))
+    assert live["live"] == [event]
+    assert live["main"] is event
+    assert live["upcoming"] == [next_event]
+    assert live["recent"] == []
+
+
+def test_lpl_live_endpoint_polling_starts_in_pregame_window():
+    tz = timezone.utc
+    event = {
+        "start": datetime(2026, 6, 6, 9, 0, tzinfo=tz),
+        "state": "completed",
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "wins_a": 0,
+        "wins_b": 0,
+        "best_of": 5,
+    }
+
+    assert SportsDashboard._should_poll_lpl_live_endpoint([event], datetime(2026, 6, 6, 8, 45, tzinfo=tz))
+    assert not SportsDashboard._should_poll_lpl_live_endpoint([event], datetime(2026, 6, 6, 8, 0, tzinfo=tz))
+
+
 def test_partial_best_of_lpl_series_is_inferred_live_between_games():
     tz = timezone.utc
     event = {

@@ -65,6 +65,7 @@ DEFAULT_LPL_ODDS_BOOKMAKERS = "Bet365"
 DEFAULT_LPL_LIVE_REFRESH_SECONDS = 180
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
+LPL_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
 FLAGS_API_URL_TEMPLATE = "https://flagsapi.com/{country_code}/flat/64.png"
 DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
@@ -547,9 +548,7 @@ class SportsDashboard(BasePlugin):
         response.raise_for_status()
         events = self._parse_lpl_events(response.json(), timezone_info)
         now = datetime.now(timezone_info)
-        if self._bool_setting(settings, "lplLiveEndpointEnabled", True) and any(
-            self._is_lpl_live_event(event, now) for event in events
-        ):
+        if self._bool_setting(settings, "lplLiveEndpointEnabled", True) and self._should_poll_lpl_live_endpoint(events, now):
             try:
                 live_events = self._fetch_lpl_live_events(settings, timezone_info)
                 events = self._merge_lpl_live_events(events, live_events, league_id)
@@ -726,13 +725,17 @@ class SportsDashboard(BasePlugin):
         live = [event for event in events if SportsDashboard._is_lpl_live_event(event, now)]
         upcoming = [
             event for event in events
-            if event["state"] != "completed" and not SportsDashboard._is_lpl_live_event(event, now) and event["start"] >= now
+            if (
+                not SportsDashboard._is_lpl_live_event(event, now)
+                and not SportsDashboard._is_lpl_finished_event(event, now)
+                and event["start"] >= now
+            )
         ]
         recent = sorted(
             [
                 event for event in events
                 if not SportsDashboard._is_lpl_live_event(event, now)
-                and (event["state"] == "completed" or event["start"] < now)
+                and event["start"] < now
             ],
             key=lambda item: item["start"],
             reverse=True,
@@ -744,6 +747,19 @@ class SportsDashboard(BasePlugin):
             "recent": recent,
             "main": main,
         }
+
+    @staticmethod
+    def _should_poll_lpl_live_endpoint(events, now):
+        return any(SportsDashboard._is_lpl_live_poll_candidate(event, now) for event in events or [])
+
+    @staticmethod
+    def _is_lpl_live_poll_candidate(event, now):
+        if SportsDashboard._is_lpl_live_event(event, now):
+            return True
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime) or now is None:
+            return False
+        return start - LPL_LIVE_PREGAME_WINDOW <= now < start + LPL_INFERRED_LIVE_WINDOW
 
     @staticmethod
     def _is_lpl_live_event(event, now=None):
@@ -761,6 +777,23 @@ class SportsDashboard(BasePlugin):
             SportsDashboard._lpl_score_is_unresolved(event)
             or SportsDashboard._lpl_series_is_unfinished(event)
         )
+
+    @staticmethod
+    def _is_lpl_finished_event(event, now=None):
+        event = event or {}
+        if SportsDashboard._is_lpl_live_event(event, now):
+            return False
+        if str(event.get("state") or "").strip().lower() != "completed":
+            return False
+        if now is None:
+            return True
+        start = event.get("start")
+        if isinstance(start, datetime) and now < start + LPL_INFERRED_LIVE_WINDOW:
+            return not (
+                SportsDashboard._lpl_score_is_unresolved(event)
+                or SportsDashboard._lpl_series_is_unfinished(event)
+            )
+        return True
 
     @staticmethod
     def _lpl_score_is_unresolved(event):
