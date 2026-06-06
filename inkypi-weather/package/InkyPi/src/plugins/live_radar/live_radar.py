@@ -115,9 +115,17 @@ PLATFORMS = {
     "soop": {"label": "SOOP", "short": "SO"},
 }
 LIVE_STATUS_DOT = (0, 170, 80)
+STATUS_TOTAL_FILLS = {
+    "live": LIVE_STATUS_DOT,
+    "replay": (255, 196, 32),
+    "offline": (196, 196, 196),
+    "error": (220, 55, 48),
+}
+STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
+TITLE_LOGO_SCALE = 1.4
 SANS_FONT_PATHS = {
     "normal": (
         r"C:\Windows\Fonts\msyh.ttc",
@@ -339,9 +347,9 @@ class LiveRadar(BasePlugin):
         offline_cards = self._sort_cards([card for card in cards if card["status"] == "offline"])
         error_cards = self._sort_cards([card for card in cards if card["status"] == "error"])
 
-        logo_size = max(34, int(height * 0.09))
+        logo_size, logo_y = self._title_logo_layout(height)
         title_x = margin
-        if self._paste_title_logo(image, margin, 16, logo_size, theme):
+        if self._paste_title_logo(image, margin, logo_y, logo_size, theme):
             title_x = margin + logo_size + 10
         draw.text((title_x, 13), "LiveRadar", fill=theme["ink"], font=title_font)
         draw.text((title_x + 3, 51), "STREAM CARD WALL", fill=theme["muted"], font=sub_font)
@@ -357,7 +365,8 @@ class LiveRadar(BasePlugin):
             stat_font,
             theme,
         )
-        draw.line((margin, 73, width - margin, 73), fill=theme["line"], width=2)
+        header_rule_y = max(73, logo_y + logo_size + 6)
+        draw.line((margin, header_rule_y, width - margin, header_rule_y), fill=theme["line"], width=2)
 
         max_live = max(1, min(3, int(layout.get("max_live_cards") or 3)))
         max_offline = max(1, min(5, int(layout.get("max_offline_cards") or 3)))
@@ -366,10 +375,10 @@ class LiveRadar(BasePlugin):
         avatar_cache_seconds = max(300, int(layout.get("avatar_cache_seconds") or AVATAR_CACHE_SECONDS))
 
         live_limit = min(max_live, max(1, len(live_cards))) if live_cards else 0
-        top_label_y = 84
-        top_y = 108
+        top_label_y = header_rule_y + 11
+        top_y = header_rule_y + 35
         top_h = 196 if show_snapshots else 158
-        bottom_y = 316 if show_snapshots else 292
+        bottom_y = top_y + (208 if show_snapshots else 184)
         footer_y = height - 27
         col_gap = max(12, int(width * 0.018))
         col_w = int((width - 2 * margin - col_gap) / 2)
@@ -1164,7 +1173,7 @@ class LiveRadar(BasePlugin):
             text_w = draw.textlength(text, font=font)
             w = text_w + 18
             x -= w
-            fill, ink, _muted, line = self._card_palette(kind, theme)
+            fill, ink, line = self._status_total_palette(kind, theme)
             self._draw_pill(draw, (x, y, x + w, y + 25), text, font, fill=fill, ink=ink, outline=line)
             x -= 7
 
@@ -1206,12 +1215,17 @@ class LiveRadar(BasePlugin):
             paste_x = int(x + (size - logo.width) / 2)
             paste_y = int(y + (size - logo.height) / 2)
             image.paste(logo.convert("RGB"), (paste_x, paste_y), mask)
-            draw = ImageDraw.Draw(image)
-            self._rounded_rectangle(draw, (x, y, x + size, y + size), radius=6, fill=None, outline=theme["line"], width=1)
             return True
         except Exception as exc:
             logger.warning("LiveRadar title logo unavailable: %s", exc)
             return False
+
+    @staticmethod
+    def _title_logo_layout(height):
+        base_size = max(34, int(height * 0.09))
+        size = max(34, int(round(base_size * TITLE_LOGO_SCALE)))
+        y = max(6, 16 - int((size - base_size) / 2))
+        return size, y
 
     @staticmethod
     def _prepare_title_logo(source, theme):
@@ -1377,6 +1391,14 @@ class LiveRadar(BasePlugin):
         if status == "error":
             return theme["panel"], theme["ink"], theme["muted"], theme["ink"]
         return theme["panel"], theme["ink"], theme["muted"], theme["line"]
+
+    def _status_total_palette(self, status, theme):
+        fill = STATUS_TOTAL_FILLS.get(status, theme["panel"])
+        if status == "offline" and theme.get("mode") == "dark":
+            fill = STATUS_TOTAL_DARK_OFFLINE_FILL
+        needs_light_ink = status in {"error"} or fill == STATUS_TOTAL_DARK_OFFLINE_FILL
+        ink = (255, 255, 255) if needs_light_ink else (0, 0, 0)
+        return fill, ink, theme["ink"]
 
     def _theme(self, settings, device_config):
         requested = str((settings or {}).get("themeMode") or "auto").strip().lower()

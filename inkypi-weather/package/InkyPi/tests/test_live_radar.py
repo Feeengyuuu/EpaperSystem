@@ -8,7 +8,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from PIL import Image, ImageDraw
 
 import plugins.live_radar.live_radar as live_radar_module
-from plugins.live_radar.live_radar import DEFAULT_ROOMS_TEXT, LIVE_STATUS_DOT, LiveRadar
+from plugins.live_radar.live_radar import (
+    DEFAULT_ROOMS_TEXT,
+    LIVE_STATUS_DOT,
+    STATUS_TOTAL_DARK_OFFLINE_FILL,
+    STATUS_TOTAL_FILLS,
+    TITLE_LOGO_SCALE,
+    LiveRadar,
+)
 
 
 class FakeDeviceConfig:
@@ -305,6 +312,71 @@ def test_generate_image_renders_card_wall_without_network():
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 0, 0)
     assert any(pixel != (0, 0, 0) for pixel in image.crop((10, 10, 790, 470)).getdata())
+
+
+def test_title_logo_renders_without_outer_box_in_both_themes():
+    plugin = _plugin()
+    source = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    for px in range(14, 26):
+        for py in range(14, 26):
+            source.putpixel((px, py), (255, 255, 255, 255))
+    plugin._load_title_logo = lambda: source
+
+    for theme_mode, bg in (("dark", (0, 0, 0)), ("light", (255, 255, 255))):
+        theme = plugin._theme({"themeMode": theme_mode}, FakeDeviceConfig(mode="day"))
+        image = Image.new("RGB", (80, 80), bg)
+
+        assert plugin._paste_title_logo(image, 12, 14, 40, theme)
+        assert image.getpixel((12, 14)) == bg
+        assert image.getpixel((52, 54)) == bg
+
+
+def test_title_logo_layout_scales_logo_body_by_40_percent():
+    base_size = max(34, int(480 * 0.09))
+    logo_size, logo_y = LiveRadar._title_logo_layout(480)
+
+    assert logo_size == round(base_size * TITLE_LOGO_SCALE)
+    assert TITLE_LOGO_SCALE == 1.4
+    assert logo_y < 16
+
+
+def test_status_total_badges_use_semantic_backgrounds_in_both_themes():
+    plugin = _plugin()
+
+    light_theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    dark_theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig(mode="night"))
+
+    assert plugin._status_total_palette("live", light_theme) == (
+        LIVE_STATUS_DOT,
+        (0, 0, 0),
+        light_theme["ink"],
+    )
+    assert plugin._status_total_palette("replay", light_theme) == (
+        STATUS_TOTAL_FILLS["replay"],
+        (0, 0, 0),
+        light_theme["ink"],
+    )
+    assert plugin._status_total_palette("offline", light_theme) == (
+        STATUS_TOTAL_FILLS["offline"],
+        (0, 0, 0),
+        light_theme["ink"],
+    )
+
+    assert plugin._status_total_palette("live", dark_theme) == (
+        LIVE_STATUS_DOT,
+        (0, 0, 0),
+        dark_theme["ink"],
+    )
+    assert plugin._status_total_palette("replay", dark_theme) == (
+        STATUS_TOTAL_FILLS["replay"],
+        (0, 0, 0),
+        dark_theme["ink"],
+    )
+    assert plugin._status_total_palette("offline", dark_theme) == (
+        STATUS_TOTAL_DARK_OFFLINE_FILL,
+        (255, 255, 255),
+        dark_theme["ink"],
+    )
 
 
 def test_generate_image_requests_avatars_by_default():
