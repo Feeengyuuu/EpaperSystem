@@ -66,6 +66,7 @@ DEFAULT_LPL_LIVE_REFRESH_SECONDS = 180
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
 LPL_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
+LPL_LIVE_STATS_MAX_FRAME_AGE = timedelta(minutes=10)
 FLAGS_API_URL_TEMPLATE = "https://flagsapi.com/{country_code}/flat/64.png"
 DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
@@ -82,6 +83,7 @@ LOLESPORTS_SCHEDULE_URL = (
 LOLESPORTS_LIVE_URL = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
 LOLESPORTS_EVENT_DETAILS_URL = "https://esports-api.lolesports.com/persisted/gw/getEventDetails?hl=en-US&id={event_id}"
 LOLESPORTS_LIVE_STATS_WINDOW_URL = "https://feed.lolesports.com/livestats/v1/window/{game_id}"
+BO3_API_BASE_URL = "https://api.bo3.gg/api/v1"
 TEAM_LOGO_CACHE = {}
 FLAG_IMAGE_CACHE = {}
 
@@ -103,6 +105,26 @@ LPL_ODDS_TEAM_ALIASES = {
     "UP": ("Ultra Prime", "UP"),
     "WBG": ("Weibo Gaming", "WBG"),
     "WE": ("Team WE", "WE"),
+}
+
+BO3_LPL_TEAM_SLUGS = {
+    "AL": "anyones-legend-lol",
+    "BLG": "bilibili-gaming-lol",
+    "EDG": "edward-gaming-lol",
+    "FPX": "funplus-phoenix-lol",
+    "IG": "invictus-gaming-lol",
+    "JDG": "jd-gaming-lol",
+    "LGD": "lgd-gaming-lol",
+    "LNG": "lng-esports-lol",
+    "NIP": "ninjas-in-pyjamas-lol",
+    "OMG": "oh-my-god-lol",
+    "RA": "rare-atom-lol",
+    "RNG": "royal-never-give-up-lol",
+    "TES": "top-esports-lol",
+    "TT": "thundertalk-gaming-lol",
+    "UP": "ultra-prime-lol",
+    "WBG": "weibo-gaming-lol",
+    "WE": "team-we-lol",
 }
 
 # Color tokens follow docs/color-ui-guidelines.md: warm paper, process black
@@ -852,7 +874,7 @@ class SportsDashboard(BasePlugin):
         if not event:
             return selected
         try:
-            little_round = self._fetch_lpl_realtime_info(event)
+            little_round = self._fetch_lpl_realtime_info(event, settings)
         except Exception as exc:
             logger.warning("LPL live stats fetch failed: %s", exc)
             return selected
@@ -860,7 +882,23 @@ class SportsDashboard(BasePlugin):
             event["little_round"] = little_round
         return selected
 
-    def _fetch_lpl_realtime_info(self, event):
+    def _fetch_lpl_realtime_info(self, event, settings=None):
+        settings = settings or {}
+        try:
+            little_round = self._fetch_lpl_riot_realtime_info(event)
+        except Exception as exc:
+            logger.debug("Riot LPL live stats failed before bo3.gg fallback: %s", exc)
+            little_round = None
+        if little_round:
+            return little_round
+        if self._bool_setting(settings, "lplBo3LiveApiEnabled", True):
+            try:
+                return self._fetch_lpl_bo3_little_round(event)
+            except Exception as exc:
+                logger.debug("bo3.gg LPL live stats fallback failed: %s", exc)
+        return None
+
+    def _fetch_lpl_riot_realtime_info(self, event):
         event_id = str((event or {}).get("event_id") or (event or {}).get("match_id") or "").strip()
         if not event_id:
             return None
@@ -870,7 +908,10 @@ class SportsDashboard(BasePlugin):
         game = self._lpl_current_game(match)
         if not game:
             if self._lpl_details_show_intermission(match, event):
-                return {"state": "intermission", "label": "中场休息"}
+                return self._lpl_intermission_little_round()
+            little_round = self._lpl_little_round_from_candidate_games(detail_event, match, event)
+            if little_round:
+                return little_round
             return None
         game_id = str(game.get("id") or "").strip()
         if not game_id:
@@ -879,9 +920,210 @@ class SportsDashboard(BasePlugin):
         little_round = self._lpl_little_round_from_window(window, detail_event, game, event)
         if little_round:
             return little_round
-        if self._lpl_details_show_intermission(match, event):
-            return {"state": "intermission", "label": "中场休息", "game_id": game_id, "game_number": game.get("number")}
         return None
+
+    def _lpl_little_round_from_candidate_games(self, detail_event, match, event):
+        for game in (match or {}).get("games") or []:
+            game_id = str((game or {}).get("id") or "").strip()
+            if not game_id:
+                continue
+            state = str((game or {}).get("state") or "").strip().lower()
+            if state == "completed":
+                continue
+            try:
+                window = self._fetch_lpl_live_stats_window(game_id)
+            except Exception as exc:
+                logger.debug("LPL live stats candidate window failed for %s: %s", game_id, exc)
+                continue
+            little_round = self._lpl_little_round_from_window(window, detail_event, game, event)
+            if little_round:
+                return little_round
+        return None
+
+    def _fetch_lpl_bo3_little_round(self, event):
+        payload = self._fetch_lpl_bo3_match_payload(event)
+        if not payload:
+            return None
+        return self._lpl_little_round_from_bo3_payload(payload, event)
+
+    def _fetch_lpl_bo3_match_payload(self, event):
+        session = get_http_session()
+        for slug in self._lpl_bo3_match_slug_candidates(event):
+            response = session.get(
+                f"{BO3_API_BASE_URL}/matches/{slug}",
+                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+                timeout=12,
+            )
+            if getattr(response, "status_code", None) == 404:
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            if self._lpl_bo3_payload_matches_event(payload, event):
+                return payload
+        return None
+
+    @staticmethod
+    def _lpl_little_round_from_bo3_payload(payload, event):
+        live_updates = (payload or {}).get("live_updates") or {}
+        if live_updates.get("game_ended") is True:
+            return SportsDashboard._lpl_intermission_little_round(
+                game_id=f"bo3:{payload.get('id') or payload.get('slug') or ''}",
+                game_number=SportsDashboard._lpl_bo3_next_game_number(payload),
+                frame_time=payload.get("updated_at") or payload.get("start_date") or "",
+                source="bo3.gg",
+            )
+        scores = SportsDashboard._lpl_bo3_game_scores(payload)
+        if not scores:
+            return None
+        score1, score2, game_number = scores
+        team1_is_a = SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team1", event, "a")
+        team2_is_b = SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team2", event, "b")
+        team1_is_b = SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team1", event, "b")
+        team2_is_a = SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team2", event, "a")
+        if team1_is_a and team2_is_b:
+            kills_a, kills_b = score1, score2
+        elif team1_is_b and team2_is_a:
+            kills_a, kills_b = score2, score1
+        else:
+            return None
+        return {
+            "state": "in_game",
+            "label": "Little Round",
+            "score": f"{kills_a}-{kills_b}",
+            "game_id": f"bo3:{payload.get('id') or payload.get('slug') or ''}",
+            "game_number": game_number,
+            "frame_time": payload.get("updated_at") or payload.get("start_date") or "",
+            "source": "bo3.gg",
+        }
+
+    @staticmethod
+    def _lpl_intermission_little_round(game_id="", game_number=None, frame_time="", source=""):
+        result = {
+            "state": "intermission",
+            "label": "Little Round",
+            "score": "0-0",
+        }
+        if game_id:
+            result["game_id"] = str(game_id)
+        if game_number is not None:
+            result["game_number"] = game_number
+        if frame_time:
+            result["frame_time"] = frame_time
+        if source:
+            result["source"] = source
+        return result
+
+    @staticmethod
+    def _lpl_bo3_game_scores(payload):
+        live_updates = (payload or {}).get("live_updates") or {}
+        team1_live = live_updates.get("team_1") or live_updates.get("team1") or {}
+        team2_live = live_updates.get("team_2") or live_updates.get("team2") or {}
+        score1 = SportsDashboard._lpl_int_value(team1_live.get("game_score"))
+        score2 = SportsDashboard._lpl_int_value(team2_live.get("game_score"))
+        if score1 is None or score2 is None:
+            score1 = SportsDashboard._lpl_int_value((payload or {}).get("team1_last_game_score"))
+            score2 = SportsDashboard._lpl_int_value((payload or {}).get("team2_last_game_score"))
+        if score1 is None or score2 is None:
+            return None
+        game_number = SportsDashboard._lpl_int_value(live_updates.get("game_number"))
+        if game_number is None:
+            team1_match_score = SportsDashboard._lpl_int_value((payload or {}).get("team1_score")) or 0
+            team2_match_score = SportsDashboard._lpl_int_value((payload or {}).get("team2_score")) or 0
+            completed_games = team1_match_score + team2_match_score
+            if live_updates and live_updates.get("game_ended") is False:
+                completed_games += 1
+            game_number = max(1, completed_games)
+        return score1, score2, game_number
+
+    @staticmethod
+    def _lpl_bo3_next_game_number(payload):
+        live_updates = (payload or {}).get("live_updates") or {}
+        current_game = SportsDashboard._lpl_int_value(live_updates.get("game_number"))
+        if current_game is not None:
+            return current_game + 1
+        team1_match_score = SportsDashboard._lpl_int_value((payload or {}).get("team1_score")) or 0
+        team2_match_score = SportsDashboard._lpl_int_value((payload or {}).get("team2_score")) or 0
+        return max(1, team1_match_score + team2_match_score + 1)
+
+    @staticmethod
+    def _lpl_bo3_payload_matches_event(payload, event):
+        if not payload:
+            return False
+        same_order = (
+            SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team1", event, "a")
+            and SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team2", event, "b")
+        )
+        reversed_order = (
+            SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team1", event, "b")
+            and SportsDashboard._lpl_bo3_team_matches_event_side(payload, "team2", event, "a")
+        )
+        if not (same_order or reversed_order):
+            return False
+        payload_start = SportsDashboard._parse_lpl_frame_time((payload or {}).get("start_date"))
+        event_start = SportsDashboard._parse_lpl_frame_time((event or {}).get("start"))
+        if payload_start and event_start:
+            return abs((payload_start - event_start).total_seconds()) <= 12 * 60 * 60
+        return True
+
+    @staticmethod
+    def _lpl_bo3_team_matches_event_side(payload, team_key, event, side):
+        aliases = SportsDashboard._lpl_event_team_aliases(event or {}, side)
+        if not aliases:
+            return False
+        for value in SportsDashboard._lpl_bo3_team_identity_values(payload, team_key):
+            normalized = SportsDashboard._normalize_odds_team_name(value)
+            if normalized in aliases:
+                return True
+            if normalized.endswith("lol") and normalized[:-3] in aliases:
+                return True
+        return False
+
+    @staticmethod
+    def _lpl_bo3_team_identity_values(payload, team_key):
+        team = (payload or {}).get(team_key) or {}
+        values = [
+            team.get("name"),
+            team.get("slug"),
+            (payload or {}).get(f"{team_key}_name"),
+            (payload or {}).get(f"{team_key}_slug"),
+        ]
+        return [value for value in values if value]
+
+    @staticmethod
+    def _lpl_bo3_match_slug_candidates(event):
+        team_a_slug = SportsDashboard._lpl_bo3_team_slug(event or {}, "a")
+        team_b_slug = SportsDashboard._lpl_bo3_team_slug(event or {}, "b")
+        date_part = SportsDashboard._lpl_bo3_slug_date(event or {})
+        if not (team_a_slug and team_b_slug and date_part):
+            return []
+        candidates = []
+        for first, second in ((team_a_slug, team_b_slug), (team_b_slug, team_a_slug)):
+            slug = f"{first}-vs-{second}-{date_part}"
+            if slug not in candidates:
+                candidates.append(slug)
+        return candidates
+
+    @staticmethod
+    def _lpl_bo3_team_slug(event, side):
+        normalized = SportsDashboard._normalize_odds_team_name((event or {}).get(f"team_{side}"))
+        if not normalized:
+            return None
+        for code, slug in BO3_LPL_TEAM_SLUGS.items():
+            aliases = {
+                SportsDashboard._normalize_odds_team_name(alias)
+                for alias in (code, *LPL_ODDS_TEAM_ALIASES.get(code, ()))
+                if SportsDashboard._normalize_odds_team_name(alias)
+            }
+            if normalized in aliases:
+                return slug
+        return None
+
+    @staticmethod
+    def _lpl_bo3_slug_date(event):
+        start = SportsDashboard._parse_lpl_frame_time((event or {}).get("start"))
+        if not start:
+            start = datetime.now(timezone.utc)
+        return start.strftime("%d-%m-%Y")
 
     def _fetch_lpl_event_details_payload(self, event_id):
         session = get_http_session()
@@ -927,6 +1169,8 @@ class SportsDashboard(BasePlugin):
         frame = SportsDashboard._lpl_latest_stats_frame(window)
         if not frame:
             return None
+        if SportsDashboard._lpl_stats_frame_is_stale(frame):
+            return None
         side_scores = {
             "blue": SportsDashboard._lpl_side_total_kills(frame.get("blueTeam")),
             "red": SportsDashboard._lpl_side_total_kills(frame.get("redTeam")),
@@ -946,6 +1190,23 @@ class SportsDashboard(BasePlugin):
             "game_number": SportsDashboard._lpl_int_value((game or {}).get("number")),
             "frame_time": frame.get("rfc460Timestamp") or "",
         }
+
+    @staticmethod
+    def _lpl_stats_frame_is_stale(frame, now=None):
+        frame_time = SportsDashboard._parse_lpl_frame_time((frame or {}).get("rfc460Timestamp"))
+        if not frame_time:
+            return False
+        now = now or datetime.now(timezone.utc)
+        return frame_time < now.astimezone(timezone.utc) - LPL_LIVE_STATS_MAX_FRAME_AGE
+
+    @staticmethod
+    def _parse_lpl_frame_time(value):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            return None
 
     @staticmethod
     def _lpl_latest_stats_frame(window):
@@ -3002,10 +3263,6 @@ class SportsDashboard(BasePlugin):
     def _draw_lpl_little_round(self, draw, center_x, y, event):
         little_round = (event or {}).get("little_round") or {}
         if not little_round:
-            return
-        if little_round.get("state") == "intermission":
-            text, font = self._fit_text(draw, "中场休息", 64, 11, bold=True, min_size=8)
-            self._draw_centered_in_box(draw, (center_x - 34, y + 97, center_x + 34, y + 113), text, font, COLORS["amber"])
             return
         score = str(little_round.get("score") or "").strip()
         if not score:

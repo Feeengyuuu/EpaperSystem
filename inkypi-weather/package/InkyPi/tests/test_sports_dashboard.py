@@ -213,6 +213,11 @@ def _sports_dashboard_tmp(name):
     return path
 
 
+def _fresh_lpl_frame_time(minutes_ago=0):
+    frame_time = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return frame_time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def test_lpl_parser_converts_utc_starts_to_california_time():
     la = ZoneInfo("America/Los_Angeles")
 
@@ -459,7 +464,7 @@ def test_lpl_realtime_info_reads_little_round_in_event_team_order():
         "esportsGameId": game_id,
         "frames": [
             {
-                "rfc460Timestamp": "2026-06-03T10:25:00Z",
+                "rfc460Timestamp": _fresh_lpl_frame_time(),
                 "blueTeam": {"totalKills": 5},
                 "redTeam": {"totalKills": 7},
             }
@@ -472,6 +477,178 @@ def test_lpl_realtime_info_reads_little_round_in_event_team_order():
     assert info["score"] == "7-5"
     assert info["game_id"] == "game-2"
     assert info["game_number"] == 2
+
+
+def test_lpl_realtime_info_falls_back_to_stats_window_when_detail_games_lag():
+    plugin = _plugin()
+    event = {
+        "event_id": "match-blg-jdg",
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "wins_a": 0,
+        "wins_b": 0,
+        "best_of": 5,
+    }
+    plugin._fetch_lpl_event_details_payload = lambda event_id: {
+        "data": {
+            "event": {
+                "match": {
+                    "teams": [
+                        {"id": "team-blg", "code": "BLG", "result": {"gameWins": 0}},
+                        {"id": "team-jdg", "code": "JDG", "result": {"gameWins": 0}},
+                    ],
+                    "games": [
+                        {
+                            "number": 1,
+                            "id": "game-1",
+                            "state": "unstarted",
+                            "teams": [
+                                {"id": "team-blg", "side": "blue"},
+                                {"id": "team-jdg", "side": "red"},
+                            ],
+                        },
+                        {"number": 2, "id": "game-2", "state": "unstarted", "teams": []},
+                    ],
+                }
+            }
+        }
+    }
+    plugin._fetch_lpl_live_stats_window = lambda game_id: {
+        "esportsGameId": game_id,
+        "frames": [
+            {
+                "rfc460Timestamp": _fresh_lpl_frame_time(),
+                "blueTeam": {"totalKills": 2},
+                "redTeam": {"totalKills": 1},
+            }
+        ],
+    }
+
+    info = plugin._fetch_lpl_realtime_info(event)
+
+    assert info["label"] == "Little Round"
+    assert info["score"] == "2-1"
+    assert info["game_id"] == "game-1"
+    assert info["game_number"] == 1
+
+
+def test_lpl_realtime_info_falls_back_to_bo3_when_riot_frame_is_stale():
+    plugin = _plugin()
+    event = {
+        "event_id": "match-blg-jdg",
+        "start": datetime(2026, 6, 6, 9, 0, tzinfo=timezone.utc),
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "wins_a": 0,
+        "wins_b": 1,
+        "best_of": 5,
+    }
+    plugin._fetch_lpl_event_details_payload = lambda event_id: {
+        "data": {
+            "event": {
+                "match": {
+                    "teams": [
+                        {"id": "team-blg", "code": "BLG", "result": {"gameWins": 0}},
+                        {"id": "team-jdg", "code": "JDG", "result": {"gameWins": 1}},
+                    ],
+                    "games": [
+                        {
+                            "number": 2,
+                            "id": "game-2",
+                            "state": "inProgress",
+                            "teams": [
+                                {"id": "team-blg", "side": "blue"},
+                                {"id": "team-jdg", "side": "red"},
+                            ],
+                        },
+                    ],
+                }
+            }
+        }
+    }
+    plugin._fetch_lpl_live_stats_window = lambda game_id: {
+        "esportsGameId": game_id,
+        "frames": [
+            {
+                "rfc460Timestamp": _fresh_lpl_frame_time(minutes_ago=20),
+                "blueTeam": {"totalKills": 0},
+                "redTeam": {"totalKills": 0},
+            }
+        ],
+    }
+    plugin._fetch_lpl_bo3_match_payload = lambda event: {
+        "id": 116291,
+        "slug": "jd-gaming-lol-vs-bilibili-gaming-lol-06-06-2026",
+        "status": "current",
+        "start_date": "2026-06-06T09:00:00.000+00:00",
+        "team1_score": 0,
+        "team2_score": 1,
+        "team1": {"name": "JD Gaming", "slug": "jd-gaming-lol"},
+        "team2": {"name": "Bilibili Gaming", "slug": "bilibili-gaming-lol"},
+        "live_updates": {
+            "team_1": {"game_score": 10, "match_score": 1},
+            "team_2": {"game_score": 3, "match_score": 0},
+            "game_number": 2,
+        },
+    }
+
+    info = plugin._fetch_lpl_realtime_info(event)
+
+    assert info["label"] == "Little Round"
+    assert info["score"] == "3-10"
+    assert info["game_id"] == "bo3:116291"
+    assert info["game_number"] == 2
+    assert info["source"] == "bo3.gg"
+
+
+def test_lpl_realtime_info_hides_stale_riot_frame_when_bo3_is_disabled():
+    plugin = _plugin()
+    event = {
+        "event_id": "match-blg-jdg",
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "wins_a": 0,
+        "wins_b": 0,
+        "best_of": 5,
+    }
+    plugin._fetch_lpl_event_details_payload = lambda event_id: {
+        "data": {
+            "event": {
+                "match": {
+                    "teams": [
+                        {"id": "team-blg", "code": "BLG", "result": {"gameWins": 0}},
+                        {"id": "team-jdg", "code": "JDG", "result": {"gameWins": 0}},
+                    ],
+                    "games": [
+                        {
+                            "number": 1,
+                            "id": "game-1",
+                            "state": "inProgress",
+                            "teams": [
+                                {"id": "team-blg", "side": "blue"},
+                                {"id": "team-jdg", "side": "red"},
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    plugin._fetch_lpl_live_stats_window = lambda game_id: {
+        "esportsGameId": game_id,
+        "frames": [
+            {
+                "rfc460Timestamp": _fresh_lpl_frame_time(minutes_ago=20),
+                "blueTeam": {"totalKills": 0},
+                "redTeam": {"totalKills": 0},
+            }
+        ],
+    }
+    plugin._fetch_lpl_bo3_match_payload = lambda event: (_ for _ in ()).throw(AssertionError("bo3 called"))
+
+    info = plugin._fetch_lpl_realtime_info(event, {"lplBo3LiveApiEnabled": False})
+
+    assert info is None
 
 
 def test_lpl_realtime_info_shows_intermission_between_series_games():
@@ -504,7 +681,42 @@ def test_lpl_realtime_info_shows_intermission_between_series_games():
 
     info = plugin._fetch_lpl_realtime_info(event)
 
-    assert info == {"state": "intermission", "label": "中场休息"}
+    assert info == {"state": "intermission", "label": "Little Round", "score": "0-0"}
+
+
+def test_lpl_bo3_completed_game_resets_little_round_for_intermission():
+    event = {
+        "start": datetime(2026, 6, 6, 9, 0, tzinfo=timezone.utc),
+        "team_a": "BLG",
+        "team_b": "JDG",
+        "wins_a": 1,
+        "wins_b": 0,
+        "best_of": 5,
+    }
+    payload = {
+        "id": 116291,
+        "slug": "jd-gaming-lol-vs-bilibili-gaming-lol-06-06-2026",
+        "start_date": "2026-06-06T09:00:00.000+00:00",
+        "team1_score": 0,
+        "team2_score": 1,
+        "team1": {"name": "JD Gaming", "slug": "jd-gaming-lol"},
+        "team2": {"name": "Bilibili Gaming", "slug": "bilibili-gaming-lol"},
+        "live_updates": {
+            "team_1": {"game_score": 23, "match_score": 0},
+            "team_2": {"game_score": 6, "match_score": 1},
+            "game_number": 1,
+            "game_ended": True,
+        },
+    }
+
+    info = SportsDashboard._lpl_little_round_from_bo3_payload(payload, event)
+
+    assert info["state"] == "intermission"
+    assert info["label"] == "Little Round"
+    assert info["score"] == "0-0"
+    assert info["game_id"] == "bo3:116291"
+    assert info["game_number"] == 2
+    assert info["source"] == "bo3.gg"
 
 
 def test_lpl_live_state_file_marks_inferred_live_window():
