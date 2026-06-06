@@ -138,7 +138,7 @@ first item of a new round must not be the plugin that was just displayed.
 | Date | `simple_calendar` | daily at `00:00` |
 | Weather | `mini_weather` | every 30 minutes |
 | Robot | `epaper_pet` | every 15 minutes |
-| Money | `stocktracker` | daily at `00:00` |
+| Money | `stocktracker` | daily at `13:10` Pacific, shortly after the regular US market close |
 | GitHub | `github` | daily at `00:00` |
 | Bambu | `bambu_monitor` | every 5 minutes |
 | SteamDailyArt | `steam_daily_art` | every 60 minutes |
@@ -202,7 +202,7 @@ internet sources do not block screen rotation or stack API bursts.
 | Daily AI News | RSS + market data + OpenAI | Daily scheduled RSS/OpenAI refresh at `07:30`, with forced same-day cache bypass and a limit of 2 API calls/day. |
 | SteamDaily | Steam Web API + Store API | Five-minute live status refresh; heavier profile data remains cached for 15 minutes. |
 | Weather | OpenWeatherMap | 30-minute weather refresh with OpenWeather cost guards. |
-| Money | Yahoo Finance via `yfinance` | Daily scheduled portfolio data fetch. |
+| Money | Yahoo Finance via `yfinance` | Daily scheduled portfolio data fetch at `13:10` Pacific, shortly after the regular US market close. |
 | GitHub | GitHub GraphQL API | Daily contributions dashboard fetch using the configured `GITHUB_SECRET`; production render stays Pillow-based. |
 | Bambu | Bambu local MQTT/TLS + camera TLS | Five-minute read-only local printer status refresh against `192.168.1.137:8883`; each render also captures one A1 camera frame from `192.168.1.137:6000`; keep Bambu Cloud/mobile access enabled when possible. |
 | SteamDailyArt | Steam Store front page + CDN | Hourly fresh Steam front-page art fetch with no-repeat selection. |
@@ -217,8 +217,10 @@ internet sources do not block screen rotation or stack API bursts.
 ## Important Current Caveats
 
 - `Money` is the configured `stocktracker` instance. Preserve the non-empty
-  `tickers`, `shares`, and `period` values above; do not reintroduce the old
-  unconfigured `Stock` placeholder.
+  `tickers`, `shares`, and `period` values above; keep its `refresh` set to
+  `{"scheduled": "13:10"}` in the device timezone (`America/Los_Angeles`) so
+  the internet quote fetch runs shortly after the regular US market close. Do
+  not reintroduce the old unconfigured `Stock` placeholder.
 - `Bambu` is a read-only `bambu_monitor` instance. Keep the Access Code in
   `.env` as `BAMBU_ACCESS_CODE`, not in `device.json`. Do not add pause, stop,
   heat, or G-code control actions. Prefer the current cloud-connected printer
