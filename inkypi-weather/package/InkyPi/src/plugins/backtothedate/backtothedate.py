@@ -122,6 +122,21 @@ class BacktotheDate(BasePlugin):
         attempts = self._safe_int(settings.get("attempts"), 8, minimum=1, maximum=20)
         errors = []
 
+        forced_poster = self._forced_poster_from_settings(settings)
+        if forced_poster:
+            image = self._load_poster_image(forced_poster["image_url"], dimensions)
+            if not image:
+                raise RuntimeError(f"Could not load forced Chinese poster image: {forced_poster['image_url']}")
+            image = self._normalize_image(image)
+            rendered = self._compose_single_display_image(forced_poster, image, dimensions, settings)
+            self._remember_success([forced_poster])
+            logger.info(
+                "Selected forced Chinese poster preview: %s | %s",
+                forced_poster.get("title") or forced_poster["page_url"],
+                forced_poster["image_url"],
+            )
+            return rendered
+
         if self._fit_mode(settings) in {"triptych", "three_vertical", "three_posters", "gallery"}:
             try:
                 return self._generate_triptych_image(settings, dimensions, attempts)
@@ -152,7 +167,6 @@ class BacktotheDate(BasePlugin):
 
     def _generate_triptych_image(self, settings, dimensions, attempts):
         selected = []
-        landscape_fallbacks = []
         seen_urls = set()
         max_attempts = max(attempts * 3, TRIPTYCH_POSTER_COUNT * 3)
 
@@ -170,16 +184,22 @@ class BacktotheDate(BasePlugin):
                 continue
             image = self._normalize_image(image)
 
-            target = selected if self._is_portrait(image) else landscape_fallbacks
-            target.append((poster, image))
+            if not self._is_portrait(image):
+                self._remember_success([poster])
+                logger.info(
+                    "Selected landscape Chinese poster as single display: %s | %s",
+                    poster.get("title") or poster["page_url"],
+                    poster["image_url"],
+                )
+                return self._compose_single_display_image(poster, image, dimensions, settings)
+
+            selected.append((poster, image))
             if len(selected) >= TRIPTYCH_POSTER_COUNT:
                 break
 
         poster_images = selected[:TRIPTYCH_POSTER_COUNT]
         if len(poster_images) < TRIPTYCH_POSTER_COUNT:
-            poster_images.extend(landscape_fallbacks[:TRIPTYCH_POSTER_COUNT - len(poster_images)])
-        if len(poster_images) < TRIPTYCH_POSTER_COUNT:
-            raise RuntimeError(f"Only found {len(poster_images)} usable posters for triptych layout.")
+            raise RuntimeError(f"Only found {len(poster_images)} portrait posters for triptych layout.")
 
         posters = [poster for poster, _image in poster_images]
         self._remember_success(posters)
@@ -188,6 +208,33 @@ class BacktotheDate(BasePlugin):
             " | ".join((poster.get("title") or poster["page_url"]) for poster in posters),
         )
         return self._compose_triptych_display_image(poster_images, dimensions, settings)
+
+    def _forced_poster_from_settings(self, settings):
+        image_url = str(settings.get("posterImageUrl") or settings.get("previewImageUrl") or "").strip()
+        if not image_url:
+            return None
+
+        image_url = urljoin(BASE_URL, image_url)
+        parsed_image = urlparse(image_url)
+        if parsed_image.netloc.lower() != urlparse(BASE_URL).netloc.lower():
+            raise RuntimeError("Forced Chinese poster preview URL must come from chineseposters.net.")
+        if not IMAGE_PATH_RE.search(parsed_image.path):
+            raise RuntimeError("Forced Chinese poster preview URL must be a Chinese Posters image asset.")
+
+        page_url = str(settings.get("posterPageUrl") or "").strip()
+        if page_url:
+            page_url = urljoin(BASE_URL, page_url)
+            parsed_page = urlparse(page_url)
+            if parsed_page.netloc.lower() != urlparse(BASE_URL).netloc.lower() or not POSTER_PATH_RE.match(parsed_page.path):
+                page_url = image_url
+        else:
+            page_url = image_url
+
+        return {
+            "page_url": page_url,
+            "image_url": image_url,
+            "title": _clean_text(settings.get("posterTitle") or "Chinese poster preview"),
+        }
 
     def _display_dimensions(self, device_config):
         dimensions = device_config.get_resolution()
@@ -419,7 +466,13 @@ class BacktotheDate(BasePlugin):
         }
 
     def _compose_display_image(self, poster, image, dimensions, settings):
-        return self._fit_image(image, dimensions, settings), [poster]
+        return self._compose_single_display_image(poster, image, dimensions, settings), [poster]
+
+    def _compose_single_display_image(self, poster, image, dimensions, settings):
+        fit_mode = self._fit_mode(settings)
+        if fit_mode in {"triptych", "three_vertical", "three_posters", "gallery"} and not self._is_portrait(image):
+            return self._fit_landscape(image, dimensions, settings)
+        return self._fit_image(image, dimensions, settings)
 
     def _load_poster_image(self, image_url, dimensions):
         image = self.image_loader.from_url(

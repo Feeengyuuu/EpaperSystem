@@ -250,6 +250,121 @@ def test_generate_image_triptych_loads_three_posters_and_remembers_all(monkeypat
     ]
 
 
+def test_generate_image_triptych_displays_landscape_poster_as_single_full_image(monkeypatch):
+    plugin = make_plugin("triptych-landscape-single")
+    source = Image.new("RGB", (500, 260), (20, 120, 220))
+    loader = FakeImageLoader(source)
+    plugin.image_loader = loader
+    rendered_sizes = []
+
+    poster = {
+        "page_url": "https://chineseposters.net/posters/landscape",
+        "image_url": "https://chineseposters.net/sites/default/files/images/landscape.jpg",
+        "title": "Landscape",
+    }
+
+    def fake_fit_landscape(image, dimensions, settings):
+        rendered_sizes.append(image.size)
+        return Image.new("RGB", dimensions, (12, 34, 56))
+
+    monkeypatch.setattr(plugin, "_select_random_poster", lambda settings: poster)
+    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+
+    image = plugin.generate_image({"fitMode": "triptych", "attempts": 3}, DeviceConfig())
+    state = plugin._read_state()
+
+    assert image.size == (800, 480)
+    assert image.getpixel((0, 0)) == (12, 34, 56)
+    assert rendered_sizes == [(500, 260)]
+    assert len(loader.calls) == 1
+    assert state["last_page_urls"] == ["https://chineseposters.net/posters/landscape"]
+
+
+def test_generate_image_forced_landscape_preview_uses_single_full_image(monkeypatch):
+    plugin = make_plugin("forced-landscape-preview")
+    source = Image.new("RGB", (500, 260), (20, 120, 220))
+    loader = FakeImageLoader(source)
+    plugin.image_loader = loader
+    rendered_sizes = []
+
+    def fake_fit_landscape(image, dimensions, settings):
+        rendered_sizes.append(image.size)
+        return Image.new("RGB", dimensions, (12, 34, 56))
+
+    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+
+    image = plugin.generate_image(
+        {
+            "fitMode": "triptych",
+            "posterImageUrl": "https://chineseposters.net/sites/default/files/images/landscape.jpg",
+            "posterPageUrl": "https://chineseposters.net/posters/landscape",
+            "posterTitle": "Landscape",
+        },
+        DeviceConfig(),
+    )
+    state = plugin._read_state()
+
+    assert image.size == (800, 480)
+    assert image.getpixel((0, 0)) == (12, 34, 56)
+    assert rendered_sizes == [(500, 260)]
+    assert len(loader.calls) == 1
+    assert state["last_page_urls"] == ["https://chineseposters.net/posters/landscape"]
+
+
+def test_generate_image_triptych_does_not_use_landscape_as_fallback_column(monkeypatch):
+    plugin = make_plugin("triptych-landscape-not-column")
+    loader = FakeImageLoader([
+        Image.new("RGB", (200, 400), (220, 0, 0)),
+        Image.new("RGB", (210, 400), (0, 160, 0)),
+        Image.new("RGB", (500, 260), (20, 120, 220)),
+    ])
+    plugin.image_loader = loader
+    rendered_sizes = []
+    landscape = {
+        "page_url": "https://chineseposters.net/posters/landscape",
+        "image_url": "https://chineseposters.net/sites/default/files/images/landscape.jpg",
+        "title": "Landscape",
+    }
+    posters = [
+        {
+            "page_url": "https://chineseposters.net/posters/one",
+            "image_url": "https://chineseposters.net/sites/default/files/images/one.jpg",
+            "title": "One",
+        },
+        {
+            "page_url": "https://chineseposters.net/posters/two",
+            "image_url": "https://chineseposters.net/sites/default/files/images/two.jpg",
+            "title": "Two",
+        },
+        landscape,
+    ]
+
+    def fake_select(_settings):
+        if posters:
+            return posters.pop(0)
+        return landscape
+
+    def fake_fit_landscape(image, dimensions, settings):
+        rendered_sizes.append(image.size)
+        return Image.new("RGB", dimensions, (12, 34, 56))
+
+    def fail_triptych(_poster_images, _dimensions, _settings):
+        raise AssertionError("Landscape posters must not be placed in triptych columns")
+
+    monkeypatch.setattr(plugin, "_select_random_poster", fake_select)
+    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+    monkeypatch.setattr(plugin, "_compose_triptych_display_image", fail_triptych)
+
+    image = plugin.generate_image({"fitMode": "triptych", "attempts": 1}, DeviceConfig())
+    state = plugin._read_state()
+
+    assert image.size == (800, 480)
+    assert image.getpixel((0, 0)) == (12, 34, 56)
+    assert rendered_sizes == [(500, 260)]
+    assert len(loader.calls) == 3
+    assert state["last_page_urls"] == ["https://chineseposters.net/posters/landscape"]
+
+
 def test_landscape_mode_uses_plain_full_image_without_blur_backdrop():
     plugin = make_plugin("landscape-plain")
     source = Image.new("RGB", (100, 50), (220, 0, 0))
