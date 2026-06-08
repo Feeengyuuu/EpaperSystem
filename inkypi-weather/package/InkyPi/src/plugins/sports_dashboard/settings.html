@@ -111,7 +111,29 @@
 
 <div class="form-group">
     <label for="worldCupVisibleMatches" class="form-label">World Cup visible matches:</label>
-    <input type="number" id="worldCupVisibleMatches" name="worldCupVisibleMatches" min="1" max="7" placeholder="7" class="form-input">
+    <input type="number" id="worldCupVisibleMatches" name="worldCupVisibleMatches" min="1" max="4" placeholder="4" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupTopHeight" class="form-label">World Cup top panel height:</label>
+    <input type="number" id="worldCupTopHeight" name="worldCupTopHeight" min="150" max="300" placeholder="208" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="worldCupLiveRefreshEnabled" name="worldCupLiveRefreshEnabled" value="true">
+        Quasi realtime World Cup refresh during live matches
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="worldCupLiveRefreshIntervalSeconds" class="form-label">World Cup live image refresh seconds:</label>
+    <input type="number" id="worldCupLiveRefreshIntervalSeconds" name="worldCupLiveRefreshIntervalSeconds" min="60" max="900" placeholder="60" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupLiveRefreshSeconds" class="form-label">World Cup live data cache seconds:</label>
+    <input type="number" id="worldCupLiveRefreshSeconds" name="worldCupLiveRefreshSeconds" min="30" max="900" placeholder="180" class="form-input">
 </div>
 
 <div class="form-group">
@@ -122,6 +144,85 @@
 <div class="form-group">
     <label for="localTimezone" class="form-label">Match timezone:</label>
     <input type="text" id="localTimezone" name="localTimezone" placeholder="America/Los_Angeles" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaScoreboardUrl" class="form-label">NBA ESPN scoreboard URL:</label>
+    <input type="text" id="nbaScoreboardUrl" name="nbaScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaCacheHours" class="form-label">NBA normal cache hours:</label>
+    <input type="number" id="nbaCacheHours" name="nbaCacheHours" min="1" max="12" placeholder="1" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="nbaLiveRefreshEnabled" name="nbaLiveRefreshEnabled" value="true">
+        Quasi realtime NBA refresh during live games
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="nbaLiveRefreshIntervalSeconds" class="form-label">NBA live image refresh seconds:</label>
+    <input type="number" id="nbaLiveRefreshIntervalSeconds" name="nbaLiveRefreshIntervalSeconds" min="60" max="900" placeholder="60" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaLiveRefreshSeconds" class="form-label">NBA live score cache seconds:</label>
+    <input type="number" id="nbaLiveRefreshSeconds" name="nbaLiveRefreshSeconds" min="30" max="900" placeholder="180" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaDailyLimit" class="form-label">NBA daily request limit:</label>
+    <input type="number" id="nbaDailyLimit" name="nbaDailyLimit" min="1" max="120" placeholder="96" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaLookbackDays" class="form-label">NBA recent lookback days:</label>
+    <input type="number" id="nbaLookbackDays" name="nbaLookbackDays" min="0" max="30" placeholder="10" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaLookaheadDays" class="form-label">NBA upcoming lookahead days:</label>
+    <input type="number" id="nbaLookaheadDays" name="nbaLookaheadDays" min="1" max="60" placeholder="21" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="nbaOddsEnabled" name="nbaOddsEnabled" value="true">
+        Show NBA win odds
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsProvider" class="form-label">NBA odds provider:</label>
+    <input type="text" id="nbaOddsProvider" name="nbaOddsProvider" placeholder="theoddsapi or oddsapiio" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsRegions" class="form-label">NBA odds regions:</label>
+    <input type="text" id="nbaOddsRegions" name="nbaOddsRegions" placeholder="us" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsBookmakers" class="form-label">NBA odds bookmakers:</label>
+    <input type="text" id="nbaOddsBookmakers" name="nbaOddsBookmakers" placeholder="Bet365" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsApiIoLeague" class="form-label">odds-api.io NBA league:</label>
+    <input type="text" id="nbaOddsApiIoLeague" name="nbaOddsApiIoLeague" placeholder="usa-nba" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsCacheHours" class="form-label">NBA odds cache hours:</label>
+    <input type="number" id="nbaOddsCacheHours" name="nbaOddsCacheHours" min="1" max="24" placeholder="6" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOddsDailyLimit" class="form-label">NBA odds daily request limit:</label>
+    <input type="number" id="nbaOddsDailyLimit" name="nbaOddsDailyLimit" min="1" max="30" placeholder="8" class="form-input">
 </div>
 
 <div class="form-group">
@@ -200,8 +301,27 @@
             document.getElementById('worldCupOddsDailyLimit').value = pluginSettings.worldCupOddsDailyLimit || '';
             document.getElementById('worldCupLeftWidth').value = pluginSettings.worldCupLeftWidth || '';
             document.getElementById('worldCupVisibleMatches').value = pluginSettings.worldCupVisibleMatches || '';
+            document.getElementById('worldCupTopHeight').value = pluginSettings.worldCupTopHeight || '';
+            document.getElementById('worldCupLiveRefreshEnabled').checked = pluginSettings.worldCupLiveRefreshEnabled !== 'false';
+            document.getElementById('worldCupLiveRefreshIntervalSeconds').value = pluginSettings.worldCupLiveRefreshIntervalSeconds || '';
+            document.getElementById('worldCupLiveRefreshSeconds').value = pluginSettings.worldCupLiveRefreshSeconds || '';
             document.getElementById('worldCupCaptureWidth').value = pluginSettings.worldCupCaptureWidth || '';
             document.getElementById('localTimezone').value = pluginSettings.localTimezone || '';
+            document.getElementById('nbaScoreboardUrl').value = pluginSettings.nbaScoreboardUrl || '';
+            document.getElementById('nbaCacheHours').value = pluginSettings.nbaCacheHours || '';
+            document.getElementById('nbaLiveRefreshEnabled').checked = pluginSettings.nbaLiveRefreshEnabled !== 'false';
+            document.getElementById('nbaLiveRefreshIntervalSeconds').value = pluginSettings.nbaLiveRefreshIntervalSeconds || '';
+            document.getElementById('nbaLiveRefreshSeconds').value = pluginSettings.nbaLiveRefreshSeconds || '';
+            document.getElementById('nbaDailyLimit').value = pluginSettings.nbaDailyLimit || '';
+            document.getElementById('nbaLookbackDays').value = pluginSettings.nbaLookbackDays || '';
+            document.getElementById('nbaLookaheadDays').value = pluginSettings.nbaLookaheadDays || '';
+            document.getElementById('nbaOddsEnabled').checked = pluginSettings.nbaOddsEnabled !== 'false';
+            document.getElementById('nbaOddsProvider').value = pluginSettings.nbaOddsProvider || '';
+            document.getElementById('nbaOddsRegions').value = pluginSettings.nbaOddsRegions || '';
+            document.getElementById('nbaOddsBookmakers').value = pluginSettings.nbaOddsBookmakers || '';
+            document.getElementById('nbaOddsApiIoLeague').value = pluginSettings.nbaOddsApiIoLeague || '';
+            document.getElementById('nbaOddsCacheHours').value = pluginSettings.nbaOddsCacheHours || '';
+            document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
             document.getElementById('lplLeagueId').value = pluginSettings.lplLeagueId || '';
             document.getElementById('lplLiveRefreshEnabled').checked = pluginSettings.lplLiveRefreshEnabled !== 'false';
             document.getElementById('lplLiveRefreshIntervalSeconds').value = pluginSettings.lplLiveRefreshIntervalSeconds || '';

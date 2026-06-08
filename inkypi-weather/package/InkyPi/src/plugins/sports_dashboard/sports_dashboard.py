@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import hashlib
 import json
+import re
 import unicodedata
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
@@ -25,8 +26,16 @@ except Exception:  # pragma: no cover - theme_utils can be unavailable in lightw
 
 logger = logging.getLogger(__name__)
 
+SECRET_QUERY_PARAM_RE = re.compile(r"([?&](?:apiKey|api_key|apikey|key|token)=)[^&\s]+", re.IGNORECASE)
+
+
+def _safe_exception_text(exc):
+    return SECRET_QUERY_PARAM_RE.sub(r"\1<redacted>", str(exc))
+
 DEFAULT_WORLD_CUP_URL = "https://www.sportbusy.com/embed/world-cup"
-DEFAULT_WORLD_CUP_VISIBLE_MATCHES = 7
+DEFAULT_WORLD_CUP_VISIBLE_MATCHES = 4
+WORLD_CUP_VISIBLE_MATCH_LIMIT = 4
+DEFAULT_WORLD_CUP_TOP_HEIGHT = 208
 DEFAULT_WORLD_CUP_ZOOM_WIDTH = 420
 DEFAULT_WORLD_CUP_SEASON = "2026"
 DEFAULT_WORLD_CUP_API_LEAGUE_ID = "1"
@@ -40,10 +49,36 @@ FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 SPORTS_DASHBOARD_STATE_VERSION = "sports-dashboard-api-v1"
 FOOTBALL_DATA_STATE_VERSION = "sports-dashboard-football-data-v1"
 WORLD_CUP_ODDS_STATE_VERSION = "sports-dashboard-worldcup-odds-v1"
+WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
+WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
 LPL_ODDS_STATE_VERSION = "sports-dashboard-lpl-odds-v1"
 LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
+NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
+NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
+NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
 THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
 ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
+DEFAULT_NBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+DEFAULT_NBA_CACHE_HOURS = 1
+DEFAULT_NBA_DAILY_LIMIT = 96
+DEFAULT_NBA_LOOKBACK_DAYS = 10
+DEFAULT_NBA_LOOKAHEAD_DAYS = 21
+DEFAULT_NBA_LIVE_REFRESH_SECONDS = 180
+NBA_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live", "in"}
+NBA_FINISHED_STATES = {"completed", "post", "final", "finished"}
+NBA_INFERRED_LIVE_WINDOW = timedelta(hours=4)
+NBA_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
+DEFAULT_NBA_ODDS_PROVIDER = "theoddsapi"
+DEFAULT_NBA_ODDS_SPORT_KEY = "basketball_nba"
+DEFAULT_NBA_ODDS_REGIONS = "us"
+DEFAULT_NBA_ODDS_MARKETS = "h2h"
+DEFAULT_NBA_ODDS_CACHE_HOURS = 6
+DEFAULT_NBA_ODDS_DAILY_LIMIT = 8
+DEFAULT_NBA_ODDS_BOOKMAKERS = "Bet365"
+DEFAULT_NBA_ODDS_API_IO_SPORT = "basketball"
+DEFAULT_NBA_ODDS_API_IO_LEAGUE = "usa-nba"
+DEFAULT_NBA_ODDS_API_IO_STATUS = "pending"
+DEFAULT_NBA_ODDS_API_IO_LIMIT = 10
 DEFAULT_WORLD_CUP_ODDS_PROVIDER = "theoddsapi"
 DEFAULT_WORLD_CUP_ODDS_SPORT_KEY = "soccer_fifa_world_cup"
 DEFAULT_WORLD_CUP_ODDS_API_IO_SPORT = "football"
@@ -55,6 +90,14 @@ DEFAULT_WORLD_CUP_ODDS_MARKETS = "h2h"
 DEFAULT_WORLD_CUP_ODDS_CACHE_HOURS = 6
 DEFAULT_WORLD_CUP_ODDS_DAILY_LIMIT = 8
 DEFAULT_WORLD_CUP_ODDS_BOOKMAKERS = "Bet365"
+DEFAULT_WORLD_CUP_LIVE_REFRESH_SECONDS = 180
+DEFAULT_WORLD_CUP_LINEUP_CACHE_SECONDS = 600
+WORLD_CUP_LIVE_STATES = {"1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT", "IN_PLAY", "PAUSED"}
+WORLD_CUP_FINISHED_STATES = {"FT", "AET", "PEN", "FINISHED", "AWARDED"}
+WORLD_CUP_INFERRED_LIVE_WINDOW = timedelta(hours=3)
+WORLD_CUP_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
+WORLD_CUP_LINEUP_LOOKAHEAD = timedelta(hours=3)
+WORLD_CUP_LINEUP_POSTMATCH_WINDOW = timedelta(hours=8)
 DEFAULT_LPL_ODDS_API_IO_SPORT = "esports"
 DEFAULT_LPL_ODDS_API_IO_LEAGUE = "league-of-legends-lpl"
 DEFAULT_LPL_ODDS_API_IO_STATUS = "pending"
@@ -73,8 +116,13 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 LPL_SEPARATOR_WIDTH = 4
 MIN_LPL_SIDEBAR_WIDTH = 240
 LOCAL_TEAM_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos"))
+LOCAL_DECOR_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "decor"))
 LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
+LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
+LOCAL_WORLDCUP_PITCH_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_pitch_strip.png")
+LOCAL_WORLDCUP_HEADER_BANNER_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_header_banner.png")
+LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOLESPORTS_API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 LOLESPORTS_SCHEDULE_URL = (
     "https://esports-api.lolesports.com/persisted/gw/getSchedule"
@@ -125,6 +173,80 @@ BO3_LPL_TEAM_SLUGS = {
     "UP": "ultra-prime-lol",
     "WBG": "weibo-gaming-lol",
     "WE": "team-we-lol",
+}
+
+NBA_TEAM_ZH_NAMES = {
+    "ATL": "\u8001\u9e70",
+    "BKN": "\u7bee\u7f51",
+    "BOS": "\u51ef\u5c14\u7279\u4eba",
+    "CHA": "\u9ec4\u8702",
+    "CHI": "\u516c\u725b",
+    "CLE": "\u9a91\u58eb",
+    "DAL": "\u72ec\u884c\u4fa0",
+    "DEN": "\u6398\u91d1",
+    "DET": "\u6d3b\u585e",
+    "GS": "\u52c7\u58eb",
+    "GSW": "\u52c7\u58eb",
+    "HOU": "\u706b\u7bad",
+    "IND": "\u6b65\u884c\u8005",
+    "LAC": "\u5feb\u8239",
+    "LAL": "\u6e56\u4eba",
+    "MEM": "\u7070\u718a",
+    "MIA": "\u70ed\u706b",
+    "MIL": "\u96c4\u9e7f",
+    "MIN": "\u68ee\u6797\u72fc",
+    "NO": "\u9e48\u9e55",
+    "NOP": "\u9e48\u9e55",
+    "NY": "\u5c3c\u514b\u65af",
+    "NYK": "\u5c3c\u514b\u65af",
+    "OKC": "\u96f7\u9706",
+    "ORL": "\u9b54\u672f",
+    "PHI": "76\u4eba",
+    "PHX": "\u592a\u9633",
+    "POR": "\u5f00\u62d3\u8005",
+    "SA": "\u9a6c\u523a",
+    "SAS": "\u9a6c\u523a",
+    "SAC": "\u56fd\u738b",
+    "TOR": "\u731b\u9f99",
+    "UTA": "\u7235\u58eb",
+    "WSH": "\u5947\u624d",
+}
+
+NBA_ODDS_TEAM_ALIASES = {
+    "ATL": ("Atlanta Hawks", "Hawks"),
+    "BKN": ("Brooklyn Nets", "Nets"),
+    "BOS": ("Boston Celtics", "Celtics"),
+    "CHA": ("Charlotte Hornets", "Hornets"),
+    "CHI": ("Chicago Bulls", "Bulls"),
+    "CLE": ("Cleveland Cavaliers", "Cavaliers", "Cavs"),
+    "DAL": ("Dallas Mavericks", "Mavericks", "Mavs"),
+    "DEN": ("Denver Nuggets", "Nuggets"),
+    "DET": ("Detroit Pistons", "Pistons"),
+    "GS": ("Golden State Warriors", "Warriors", "GSW"),
+    "GSW": ("Golden State Warriors", "Warriors", "GS"),
+    "HOU": ("Houston Rockets", "Rockets"),
+    "IND": ("Indiana Pacers", "Pacers"),
+    "LAC": ("LA Clippers", "Los Angeles Clippers", "Clippers"),
+    "LAL": ("Los Angeles Lakers", "Lakers"),
+    "MEM": ("Memphis Grizzlies", "Grizzlies"),
+    "MIA": ("Miami Heat", "Heat"),
+    "MIL": ("Milwaukee Bucks", "Bucks"),
+    "MIN": ("Minnesota Timberwolves", "Timberwolves", "Wolves"),
+    "NO": ("New Orleans Pelicans", "Pelicans", "NOP"),
+    "NOP": ("New Orleans Pelicans", "Pelicans", "NO"),
+    "NY": ("New York Knicks", "Knicks", "NYK"),
+    "NYK": ("New York Knicks", "Knicks", "NY"),
+    "OKC": ("Oklahoma City Thunder", "Thunder"),
+    "ORL": ("Orlando Magic", "Magic"),
+    "PHI": ("Philadelphia 76ers", "76ers", "Sixers"),
+    "PHX": ("Phoenix Suns", "Suns"),
+    "POR": ("Portland Trail Blazers", "Trail Blazers", "Blazers"),
+    "SA": ("San Antonio Spurs", "Spurs", "SAS"),
+    "SAS": ("San Antonio Spurs", "Spurs", "SA"),
+    "SAC": ("Sacramento Kings", "Kings"),
+    "TOR": ("Toronto Raptors", "Raptors"),
+    "UTA": ("Utah Jazz", "Jazz"),
+    "WSH": ("Washington Wizards", "Wizards"),
 }
 
 # Color tokens follow docs/color-ui-guidelines.md: warm paper, process black
@@ -354,13 +476,17 @@ class SportsDashboard(BasePlugin):
     def _generate_image_with_active_colors(self, settings, device_config, dimensions, timezone_info, now):
         left_width = self._left_width(settings, dimensions)
         visible_worldcup_matches = self._visible_worldcup_matches(settings)
+        separator_height = 4
+        worldcup_height = self._worldcup_top_height(settings, (left_width, dimensions[1]), visible_worldcup_matches)
+        nba_top = worldcup_height + separator_height
+        nba_height = max(1, dimensions[1] - nba_top)
 
         image = Image.new("RGB", dimensions, COLORS["paper"])
         left_source = "api"
         left = self._try_worldcup_football_data_panel(
             settings,
             device_config,
-            (left_width, dimensions[1]),
+            (left_width, worldcup_height),
             timezone_info,
             visible_worldcup_matches,
             now,
@@ -369,25 +495,26 @@ class SportsDashboard(BasePlugin):
             left = self._try_worldcup_api_panel(
                 settings,
                 device_config,
-                (left_width, dimensions[1]),
+                (left_width, worldcup_height),
                 timezone_info,
                 visible_worldcup_matches,
                 now,
             )
         if left is None:
-            left_source = "screenshot"
-            left = self._take_worldcup_screenshot(
-                settings,
-                (left_width, dimensions[1]),
-                self._timezone_key(timezone_info),
-                visible_worldcup_matches,
-            )
+            if self._bool_setting(settings, "worldCupScreenshotFallback", False):
+                left_source = "screenshot"
+                left = self._take_worldcup_screenshot(
+                    settings,
+                    (left_width, worldcup_height),
+                    self._timezone_key(timezone_info),
+                    visible_worldcup_matches,
+                )
         if left is None:
             left_source = "fallback"
-            left = self._render_worldcup_fallback((left_width, dimensions[1]), visible_worldcup_matches)
+            left = self._render_worldcup_fallback((left_width, worldcup_height), visible_worldcup_matches)
         left, worldcup_content_box = self._prepare_worldcup_panel(
             left.convert("RGB"),
-            (left_width, dimensions[1]),
+            (left_width, worldcup_height),
             visible_worldcup_matches,
         )
         image.paste(left, (0, 0))
@@ -401,12 +528,31 @@ class SportsDashboard(BasePlugin):
                 worldcup_content_box,
             )
 
-        events, source_state = self._load_lpl_events(settings, timezone_info)
-        events = self._attach_lpl_odds(events, settings, device_config, timezone_info)
-        selected = self._select_lpl_events(events, now)
-        self._attach_lpl_realtime_info(selected, settings)
-        self._write_lpl_live_state(selected, now, source_state)
-        self._draw_lpl_sidebar(image, left_width, selected, source_state, now)
+        draw = ImageDraw.Draw(image)
+        separator_y = worldcup_height
+        draw.rectangle((0, separator_y, left_width - 1, separator_y + separator_height - 1), fill=COLORS["border"])
+        if separator_height > 2:
+            draw.line((0, separator_y + 2, left_width - 1, separator_y + 2), fill=COLORS["line"], width=1)
+
+        nba_events, nba_source_state = self._load_nba_events(settings, timezone_info)
+        nba_events = self._attach_nba_odds(nba_events, settings, device_config, timezone_info)
+        nba_selected = self._select_nba_events(nba_events, now)
+        self._write_nba_live_state(nba_selected, now, nba_source_state)
+        self._draw_nba_compact_panel(
+            image,
+            draw,
+            (0, nba_top, left_width - 1, nba_top + nba_height - 1),
+            nba_selected,
+            nba_source_state,
+            now,
+        )
+
+        lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
+        lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
+        lpl_selected = self._select_lpl_events(lpl_events, now)
+        self._attach_lpl_realtime_info(lpl_selected, settings)
+        self._write_lpl_live_state(lpl_selected, now, lpl_source_state)
+        self._draw_lpl_sidebar(image, left_width, lpl_selected, lpl_source_state, now)
         return image
 
     @staticmethod
@@ -480,7 +626,22 @@ class SportsDashboard(BasePlugin):
             visible_matches = int(raw_value)
         except (TypeError, ValueError):
             visible_matches = DEFAULT_WORLD_CUP_VISIBLE_MATCHES
-        return max(1, min(7, visible_matches))
+        return max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, visible_matches))
+
+    @staticmethod
+    def _worldcup_top_height(settings, dimensions, visible_matches):
+        width, height = dimensions
+        default_height = min(DEFAULT_WORLD_CUP_TOP_HEIGHT, max(160, height - 220))
+        raw_value = settings.get("worldCupTopHeight", default_height)
+        try:
+            top_height = int(raw_value)
+        except (TypeError, ValueError):
+            top_height = default_height
+        minimum = 150 if visible_matches <= 3 else 188
+        maximum = max(minimum, height - 180)
+        if width < 600:
+            minimum = max(140, minimum - 18)
+        return max(minimum, min(maximum, top_height))
 
     @staticmethod
     def _worldcup_crop_height(visible_matches):
@@ -557,6 +718,1028 @@ class SportsDashboard(BasePlugin):
         except Exception as exc:
             logger.warning("LPL schedule fetch failed: %s", exc)
         return self._fallback_lpl_events(timezone_info), "CACHE DATA"
+
+    def _load_nba_events(self, settings, timezone_info):
+        try:
+            payload, source_state, _fetched_at = self._load_nba_scoreboard(settings, timezone_info)
+            events = self._parse_nba_espn_events(payload, timezone_info)
+            if events:
+                return events, source_state
+        except Exception as exc:
+            logger.warning("NBA scoreboard fetch failed: %s", exc)
+        return self._fallback_nba_events(timezone_info), "NBA FALLBACK"
+
+    def _load_nba_scoreboard(self, settings, timezone_info):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._nba_scoreboard_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._nba_scoreboard_cache_key(settings, timezone_info, now_utc)
+        force_refresh = self._force_refresh_requested(settings)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("scoreboard"), dict)
+        if (
+            has_compatible_cache
+            and not force_refresh
+            and self._nba_scoreboard_cache_is_fresh(cache, settings, timezone_info, now_utc)
+        ):
+            return cache["scoreboard"], "ESPN CACHE", cache.get("fetched_at")
+
+        if self._nba_scoreboard_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            return {}, "ESPN LIMIT", None
+
+        try:
+            payload = self._fetch_nba_scoreboard_payload(settings, timezone_info, cache_key, now_utc)
+        except Exception:
+            if has_compatible_cache:
+                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            raise
+
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write NBA scoreboard cache: %s", exc)
+        return payload["scoreboard"], "ESPN LIVE", payload.get("fetched_at")
+
+    def _fetch_nba_scoreboard_payload(self, settings, timezone_info, cache_key, now_utc):
+        start_date, end_date = self._nba_scoreboard_date_range(settings, timezone_info, now_utc)
+        url = self._nba_scoreboard_url(settings)
+        session = get_http_session()
+        try:
+            response = session.get(
+                url,
+                params={
+                    "dates": f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}",
+                    "limit": "100",
+                },
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+                timeout=20,
+            )
+        finally:
+            self._record_nba_scoreboard_call(settings, now_utc)
+        response.raise_for_status()
+        return {
+            "version": NBA_SCOREBOARD_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "range_start": start_date.isoformat(),
+            "range_end": end_date.isoformat(),
+            "scoreboard": response.json(),
+        }
+
+    @staticmethod
+    def _parse_nba_espn_events(payload, timezone_info):
+        parsed = []
+        for event in (payload or {}).get("events") or []:
+            competitions = event.get("competitions") or []
+            competition = competitions[0] if competitions else {}
+            start_time = SportsDashboard._parse_start_time(
+                competition.get("date") or event.get("date"),
+                timezone_info,
+            )
+            if not start_time:
+                continue
+            away, home = SportsDashboard._nba_competitors_by_side(competition.get("competitors") or [])
+            if not away or not home:
+                continue
+            state = SportsDashboard._nba_event_state(event, competition)
+            show_score = SportsDashboard._nba_state_has_score(state)
+            team_a, team_a_name, team_a_code, team_a_logo, wins_a, periods_a = SportsDashboard._nba_team_info(away, show_score)
+            team_b, team_b_name, team_b_code, team_b_logo, wins_b, periods_b = SportsDashboard._nba_team_info(home, show_score)
+            series_wins_a, series_wins_b = SportsDashboard._nba_series_wins_by_side(event, competition, away, home)
+            parsed.append(
+                {
+                    "event_id": str(event.get("id") or competition.get("id") or "").strip(),
+                    "start": start_time,
+                    "state": state,
+                    "team_a": team_a,
+                    "team_b": team_b,
+                    "team_a_name": team_a_name,
+                    "team_b_name": team_b_name,
+                    "team_a_code": team_a_code,
+                    "team_b_code": team_b_code,
+                    "team_a_source_aliases": SportsDashboard._nba_team_source_aliases(away, team_a, team_a_code),
+                    "team_b_source_aliases": SportsDashboard._nba_team_source_aliases(home, team_b, team_b_code),
+                    "team_a_logo": team_a_logo,
+                    "team_b_logo": team_b_logo,
+                    "wins_a": wins_a,
+                    "wins_b": wins_b,
+                    "series_wins_a": series_wins_a,
+                    "series_wins_b": series_wins_b,
+                    "period_scores_a": periods_a,
+                    "period_scores_b": periods_b,
+                    "status_text": SportsDashboard._nba_status_text(event, competition, start_time),
+                    "period": SportsDashboard._lpl_int_value((competition.get("status") or {}).get("period")),
+                    "block": SportsDashboard._nba_event_block(event, competition),
+                }
+            )
+        parsed = sorted(parsed, key=lambda item: item["start"])
+        unique = []
+        seen = set()
+        for event in parsed:
+            key = event.get("event_id") or f"{event['start'].isoformat()}|{event['team_a']}|{event['team_b']}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(event)
+        return unique
+
+    @staticmethod
+    def _nba_competitors_by_side(competitors):
+        away = None
+        home = None
+        for competitor in competitors or []:
+            side = str((competitor or {}).get("homeAway") or "").strip().lower()
+            if side == "away":
+                away = competitor
+            elif side == "home":
+                home = competitor
+        if away is None and len(competitors or []) > 0:
+            away = competitors[0]
+        if home is None and len(competitors or []) > 1:
+            home = competitors[1]
+        return away, home
+
+    @staticmethod
+    def _nba_team_info(competitor, show_score):
+        team = (competitor or {}).get("team") or {}
+        code = str(
+            team.get("abbreviation")
+            or team.get("shortDisplayName")
+            or team.get("name")
+            or "TBD"
+        ).strip().upper() or "TBD"
+        name = str(team.get("shortDisplayName") or team.get("displayName") or code).strip() or code
+        display_name = SportsDashboard._nba_display_team_name(code, name)
+        logo = str(team.get("logo") or "").strip()
+        if not logo:
+            logos = team.get("logos") or []
+            if logos:
+                logo = str((logos[0] or {}).get("href") or "").strip()
+        score = SportsDashboard._lpl_int_value((competitor or {}).get("score")) if show_score else None
+        periods = SportsDashboard._nba_period_scores(competitor) if show_score else []
+        return display_name, name, code, logo, score, periods
+
+    @staticmethod
+    def _nba_team_source_aliases(competitor, display_name, code):
+        team = (competitor or {}).get("team") or {}
+        values = [
+            display_name,
+            code,
+            team.get("abbreviation"),
+            team.get("shortDisplayName"),
+            team.get("displayName"),
+            team.get("name"),
+            team.get("location"),
+        ]
+        normalized_code = str(code or "").strip().upper()
+        if normalized_code in NBA_ODDS_TEAM_ALIASES:
+            values.extend(NBA_ODDS_TEAM_ALIASES[normalized_code])
+        return [str(value).strip() for value in values if str(value or "").strip()]
+
+    @staticmethod
+    def _nba_series_wins_by_side(event, competition, away, home):
+        series = (competition or {}).get("series") or (event or {}).get("series") or {}
+        series_scores = {}
+        for competitor in (series.get("competitors") if isinstance(series, dict) else []) or []:
+            wins = SportsDashboard._lpl_int_value((competitor or {}).get("wins"))
+            if wins is None:
+                continue
+            for key in SportsDashboard._nba_competitor_keys(competitor):
+                series_scores[key] = wins
+
+        def find_series_wins(competitor):
+            for key in SportsDashboard._nba_competitor_keys(competitor):
+                if key in series_scores:
+                    return series_scores[key]
+            return None
+
+        series_a = find_series_wins(away)
+        series_b = find_series_wins(home)
+        if series_a is not None and series_b is not None:
+            return series_a, series_b
+
+        away_record = SportsDashboard._nba_record_pair((away or {}).get("record"))
+        if away_record:
+            series_a = away_record[0] if series_a is None else series_a
+            series_b = away_record[1] if series_b is None else series_b
+
+        home_record = SportsDashboard._nba_record_pair((home or {}).get("record"))
+        if home_record:
+            series_b = home_record[0] if series_b is None else series_b
+            series_a = home_record[1] if series_a is None else series_a
+        return series_a, series_b
+
+    @staticmethod
+    def _nba_competitor_keys(competitor):
+        team = (competitor or {}).get("team") or {}
+        values = [
+            (competitor or {}).get("id"),
+            (competitor or {}).get("uid"),
+            team.get("id"),
+            team.get("uid"),
+            team.get("abbreviation"),
+            team.get("shortDisplayName"),
+            team.get("displayName"),
+            team.get("name"),
+        ]
+        return {
+            str(value).strip().upper()
+            for value in values
+            if str(value or "").strip()
+        }
+
+    @staticmethod
+    def _nba_record_pair(value):
+        text = str(value or "").strip()
+        parts = text.split("-")
+        if len(parts) != 2:
+            return None
+        first = SportsDashboard._lpl_int_value(parts[0])
+        second = SportsDashboard._lpl_int_value(parts[1])
+        if first is None or second is None:
+            return None
+        return first, second
+
+    @staticmethod
+    def _nba_display_team_name(code, fallback):
+        normalized = str(code or "").strip().upper()
+        return NBA_TEAM_ZH_NAMES.get(normalized, str(fallback or normalized or "TBD").strip() or "TBD")
+
+    @staticmethod
+    def _nba_period_scores(competitor):
+        scores = []
+        for item in (competitor or {}).get("linescores") or (competitor or {}).get("lineScores") or []:
+            value = item.get("value")
+            if value is None:
+                value = item.get("displayValue")
+            parsed = SportsDashboard._lpl_int_value(value)
+            if parsed is not None:
+                scores.append(parsed)
+        return scores
+
+    @staticmethod
+    def _nba_event_state(event, competition):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") or {}
+        state = str(status_type.get("state") or "").strip().lower()
+        name = str(status_type.get("name") or "").strip().lower()
+        description = str(status_type.get("description") or "").strip().lower()
+        detail = str(status_type.get("detail") or status_type.get("shortDetail") or "").strip().lower()
+        if status_type.get("completed") is True or state == "post" or "final" in name or "final" in description:
+            return "completed"
+        if state == "in" or "progress" in name or "halftime" in detail or "end of" in detail:
+            return "inprogress"
+        return "unstarted"
+
+    @staticmethod
+    def _nba_status_text(event, competition, start_time):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") or {}
+        state = SportsDashboard._nba_event_state(event, competition)
+        if state == "inprogress":
+            period = SportsDashboard._lpl_int_value(status.get("period"))
+            clock = str(status.get("displayClock") or "").strip()
+            if period and clock:
+                return f"Q{period} {clock}"
+            return str(status_type.get("shortDetail") or status_type.get("detail") or "LIVE").strip() or "LIVE"
+        if state == "completed":
+            return str(status_type.get("shortDetail") or status_type.get("detail") or status_type.get("description") or "Final").strip() or "Final"
+        return SportsDashboard._format_time(start_time)
+
+    @staticmethod
+    def _nba_event_block(event, competition):
+        season = (event or {}).get("season") or {}
+        season_slug = str(season.get("slug") or season.get("type") or "").strip().replace("-", " ")
+        if season_slug:
+            return season_slug.upper()
+        competition_type = (competition or {}).get("type") or {}
+        value = str(competition_type.get("abbreviation") or competition_type.get("text") or "").strip()
+        return value.upper() if value else "NBA"
+
+    @staticmethod
+    def _nba_state_has_score(state):
+        return str(state or "").strip().lower() in NBA_LIVE_STATES.union(NBA_FINISHED_STATES)
+
+    @staticmethod
+    def _fallback_nba_events(timezone_info):
+        rows = [
+            (
+                "2026-06-05T00:30:00+00:00",
+                "completed",
+                "NY",
+                "SA",
+                112,
+                106,
+                2,
+                0,
+                [28, 27, 31, 26],
+                [25, 29, 24, 28],
+                "Final",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-09T00:30:00+00:00",
+                "unstarted",
+                "SA",
+                "NY",
+                None,
+                None,
+                0,
+                2,
+                [],
+                [],
+                "5:30 PM",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-10T00:30:00+00:00",
+                "unstarted",
+                "NY",
+                "SA",
+                None,
+                None,
+                2,
+                0,
+                [],
+                [],
+                "5:30 PM",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-11T00:30:00+00:00",
+                "unstarted",
+                "SA",
+                "NY",
+                None,
+                None,
+                0,
+                2,
+                [],
+                [],
+                "5:30 PM",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-12T00:30:00+00:00",
+                "unstarted",
+                "NY",
+                "SA",
+                None,
+                None,
+                2,
+                0,
+                [],
+                [],
+                "5:30 PM",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-13T00:30:00+00:00",
+                "unstarted",
+                "SA",
+                "NY",
+                None,
+                None,
+                0,
+                2,
+                [],
+                [],
+                "5:30 PM",
+                "POSTSEASON",
+            ),
+            (
+                "2026-06-03T00:30:00+00:00",
+                "completed",
+                "SA",
+                "NY",
+                101,
+                109,
+                0,
+                1,
+                [22, 25, 27, 27],
+                [26, 24, 30, 29],
+                "Final",
+                "POSTSEASON",
+            ),
+        ]
+        events = []
+        for (
+            start,
+            state,
+            team_a,
+            team_b,
+            wins_a,
+            wins_b,
+            series_wins_a,
+            series_wins_b,
+            periods_a,
+            periods_b,
+            status_text,
+            block,
+        ) in rows:
+            team_a_code = team_a
+            team_b_code = team_b
+            events.append(
+                {
+                    "event_id": "",
+                    "start": datetime.fromisoformat(start).astimezone(timezone_info),
+                    "state": state,
+                    "team_a": SportsDashboard._nba_display_team_name(team_a_code, team_a_code),
+                    "team_b": SportsDashboard._nba_display_team_name(team_b_code, team_b_code),
+                    "team_a_name": team_a,
+                    "team_b_name": team_b,
+                    "team_a_code": team_a_code,
+                    "team_b_code": team_b_code,
+                    "team_a_source_aliases": [team_a_code, *NBA_ODDS_TEAM_ALIASES.get(team_a_code, ())],
+                    "team_b_source_aliases": [team_b_code, *NBA_ODDS_TEAM_ALIASES.get(team_b_code, ())],
+                    "team_a_logo": "",
+                    "team_b_logo": "",
+                    "wins_a": wins_a,
+                    "wins_b": wins_b,
+                    "series_wins_a": series_wins_a,
+                    "series_wins_b": series_wins_b,
+                    "period_scores_a": periods_a,
+                    "period_scores_b": periods_b,
+                    "status_text": status_text,
+                    "period": None,
+                    "block": block,
+                }
+            )
+        return sorted(events, key=lambda item: item["start"])
+
+    @staticmethod
+    def _select_nba_events(events, now):
+        live = [event for event in events if SportsDashboard._is_nba_live_event(event)]
+        upcoming = [
+            event for event in events
+            if not SportsDashboard._is_nba_live_event(event)
+            and not SportsDashboard._is_nba_finished_event(event)
+            and event["start"] >= now
+        ]
+        recent = sorted(
+            [
+                event for event in events
+                if not SportsDashboard._is_nba_live_event(event)
+                and (SportsDashboard._is_nba_finished_event(event) or event["start"] < now)
+            ],
+            key=lambda item: item["start"],
+            reverse=True,
+        )
+        main = live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None))
+        return {
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "main": main,
+        }
+
+    @staticmethod
+    def _is_nba_live_event(event):
+        return str((event or {}).get("state") or "").strip().lower() in NBA_LIVE_STATES
+
+    @staticmethod
+    def _is_nba_finished_event(event):
+        return str((event or {}).get("state") or "").strip().lower() in NBA_FINISHED_STATES
+
+    def _nba_scoreboard_cache_key(self, settings, timezone_info, now_utc):
+        start_date, end_date = self._nba_scoreboard_date_range(settings, timezone_info, now_utc)
+        return "|".join(
+            [
+                NBA_SCOREBOARD_STATE_VERSION,
+                self._nba_scoreboard_url(settings),
+                start_date.isoformat(),
+                end_date.isoformat(),
+                getattr(timezone_info, "key", DEFAULT_TIMEZONE),
+            ]
+        )
+
+    @staticmethod
+    def _nba_scoreboard_url(settings):
+        value = str(settings.get("nbaScoreboardUrl") or DEFAULT_NBA_SCOREBOARD_URL).strip()
+        return value or DEFAULT_NBA_SCOREBOARD_URL
+
+    @staticmethod
+    def _nba_scoreboard_date_range(settings, timezone_info, now_utc):
+        local_date = now_utc.astimezone(timezone_info).date()
+        lookback = SportsDashboard._int_setting(settings, "nbaLookbackDays", DEFAULT_NBA_LOOKBACK_DAYS, 0, 30)
+        lookahead = SportsDashboard._int_setting(settings, "nbaLookaheadDays", DEFAULT_NBA_LOOKAHEAD_DAYS, 1, 60)
+        return local_date - timedelta(days=lookback), local_date + timedelta(days=lookahead)
+
+    def _nba_scoreboard_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "nba_scoreboard.json"
+
+    def _nba_scoreboard_state_path(self):
+        return self._sports_dashboard_cache_dir() / "nba_scoreboard_state.json"
+
+    def _nba_scoreboard_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
+        cache_hours = self._int_setting(settings, "nbaCacheHours", DEFAULT_NBA_CACHE_HOURS, 1, 12)
+        if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return False
+        if self._nba_scoreboard_cache_has_live_poll_candidate(cache, timezone_info, now_utc):
+            return self._cache_is_fresh_seconds(cache, self._nba_live_refresh_seconds(settings), now_utc)
+        return True
+
+    def _nba_scoreboard_cache_has_live_poll_candidate(self, cache, timezone_info, now_utc):
+        try:
+            events = self._parse_nba_espn_events(cache.get("scoreboard") or {}, timezone_info)
+        except Exception as exc:
+            logger.debug("NBA live cache candidate parse failed: %s", exc)
+            return False
+        return self._should_poll_nba_live_scoreboard(events, now_utc.astimezone(timezone_info))
+
+    @staticmethod
+    def _should_poll_nba_live_scoreboard(events, now):
+        return any(SportsDashboard._is_nba_live_poll_candidate(event, now) for event in events or [])
+
+    @staticmethod
+    def _is_nba_live_poll_candidate(event, now):
+        if SportsDashboard._is_nba_live_event(event):
+            return True
+        if SportsDashboard._is_nba_finished_event(event):
+            return False
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime) or now is None:
+            return False
+        return start - NBA_LIVE_PREGAME_WINDOW <= now < start + NBA_INFERRED_LIVE_WINDOW
+
+    @staticmethod
+    def _nba_live_refresh_seconds(settings):
+        return SportsDashboard._int_setting(settings, "nbaLiveRefreshSeconds", DEFAULT_NBA_LIVE_REFRESH_SECONDS, 30, 900)
+
+    def _nba_scoreboard_calls_left(self, settings, now_utc):
+        limit = self._int_setting(settings, "nbaDailyLimit", DEFAULT_NBA_DAILY_LIMIT, 1, 120)
+        state = self._read_json_file(self._nba_scoreboard_state_path())
+        today = now_utc.date().isoformat()
+        if state.get("date") != today:
+            return limit
+        try:
+            count = int(state.get("count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return max(0, limit - count)
+
+    def _record_nba_scoreboard_call(self, settings, now_utc):
+        path = self._nba_scoreboard_state_path()
+        state = self._read_json_file(path)
+        today = now_utc.date().isoformat()
+        count = 0
+        if state.get("date") == today:
+            try:
+                count = int(state.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+        payload = {"date": today, "count": count + 1}
+        try:
+            self._write_json_file(path, payload)
+        except OSError as exc:
+            logger.warning("Failed to update NBA scoreboard request counter: %s", exc)
+
+    def _attach_nba_odds(self, events, settings, device_config, timezone_info):
+        if not events or not self._bool_setting(settings, "nbaOddsEnabled", True):
+            return events
+        provider = self._nba_odds_provider(settings, device_config)
+        api_key = self._nba_odds_api_key(settings, device_config, provider)
+        if not api_key:
+            return events
+        try:
+            odds_events, _source_state, _fetched_at = self._load_nba_odds(settings, api_key, provider)
+            if not odds_events:
+                return events
+            return self._merge_nba_odds(events, odds_events, timezone_info, settings)
+        except Exception as exc:
+            logger.warning("NBA odds overlay failed: %s", _safe_exception_text(exc))
+            return events
+
+    @staticmethod
+    def _nba_odds_api_key(settings, device_config=None, provider=None):
+        provider = provider or SportsDashboard._nba_odds_provider(settings, device_config)
+        if provider == "oddsapiio":
+            key_names = ("nbaOddsApiIoKey", "oddsApiIoKey")
+            env_names = (
+                "NBA_ODDS_API_IO_KEY",
+                "NBA_ODDSAPI_IO_KEY",
+                "ODDS_API_IO_KEY",
+                "ODDSAPI_IO_KEY",
+                "nbaOddsApiIoKey",
+                "oddsApiIoKey",
+            )
+        else:
+            key_names = ("nbaTheOddsApiKey", "nbaOddsApiKey", "theOddsApiKey", "oddsApiKey")
+            env_names = (
+                "NBA_THE_ODDS_API_KEY",
+                "NBA_ODDS_API_KEY",
+                "THE_ODDS_API_KEY",
+                "ODDS_API_KEY",
+                "nbaTheOddsApiKey",
+                "nbaOddsApiKey",
+                "theOddsApiKey",
+                "oddsApiKey",
+            )
+        for key_name in key_names:
+            value = str(settings.get(key_name) or "").strip()
+            if value:
+                return value
+        if device_config and hasattr(device_config, "get_config"):
+            for key_name in key_names:
+                value = str(device_config.get_config(key_name, "") or "").strip()
+                if value:
+                    return value
+        if device_config and hasattr(device_config, "load_env_key"):
+            for env_name in env_names:
+                value = str(device_config.load_env_key(env_name) or "").strip()
+                if value:
+                    return value
+        for env_name in env_names:
+            value = str(os.environ.get(env_name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _load_nba_odds(self, settings, api_key, provider=None):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._nba_odds_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._nba_odds_cache_key(settings, api_key, provider)
+        force_refresh = self._force_refresh_requested(settings)
+        cache_hours = self._int_setting(settings, "nbaOddsCacheHours", DEFAULT_NBA_ODDS_CACHE_HOURS, 1, 24)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("odds_events"), list)
+        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return cache["odds_events"], "NBA ODDS CACHE", cache.get("fetched_at")
+
+        if self._nba_odds_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                return cache["odds_events"], "NBA ODDS STALE", cache.get("fetched_at")
+            return [], "NBA ODDS LIMIT", None
+
+        try:
+            payload = self._fetch_nba_odds_payload(settings, api_key, cache_key, now_utc, provider)
+        except Exception:
+            if has_compatible_cache:
+                return cache["odds_events"], "NBA ODDS STALE", cache.get("fetched_at")
+            raise
+
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write NBA odds cache: %s", exc)
+        return payload["odds_events"], "NBA ODDS LIVE", payload.get("fetched_at")
+
+    def _fetch_nba_odds_payload(self, settings, api_key, cache_key, now_utc, provider=None):
+        if (provider or self._nba_odds_provider(settings)) == "oddsapiio":
+            return self._fetch_nba_odds_api_io_payload(settings, api_key, cache_key, now_utc)
+        return self._fetch_nba_the_odds_api_payload(settings, api_key, cache_key, now_utc)
+
+    def _fetch_nba_the_odds_api_payload(self, settings, api_key, cache_key, now_utc):
+        sport_key = self._nba_odds_sport_key(settings)
+        session = get_http_session()
+        try:
+            response = session.get(
+                f"{THE_ODDS_API_BASE_URL}/sports/{sport_key}/odds/",
+                params={
+                    "apiKey": api_key,
+                    "regions": self._nba_odds_regions(settings),
+                    "markets": self._nba_odds_markets(settings),
+                    "oddsFormat": "decimal",
+                    "dateFormat": "iso",
+                },
+                headers={"Accept": "application/json"},
+                timeout=25,
+            )
+        finally:
+            self._record_nba_odds_call(settings, now_utc)
+        response.raise_for_status()
+        odds_events = response.json()
+        if not isinstance(odds_events, list):
+            odds_events = []
+        return {
+            "version": NBA_ODDS_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "theoddsapi",
+            "sport_key": sport_key,
+            "regions": self._nba_odds_regions(settings),
+            "markets": self._nba_odds_markets(settings),
+            "odds_events": odds_events,
+        }
+
+    def _fetch_nba_odds_api_io_payload(self, settings, api_key, cache_key, now_utc):
+        events = self._nba_odds_api_io_get_json(
+            "/events",
+            {
+                "apiKey": api_key,
+                "sport": self._nba_odds_api_io_sport(settings),
+                "league": self._nba_odds_api_io_league(settings),
+                "status": self._nba_odds_api_io_status(settings),
+                "limit": str(self._nba_odds_api_io_limit(settings)),
+            },
+            settings,
+            now_utc,
+        )
+        if not isinstance(events, list):
+            events = []
+        event_ids = [str(item.get("id")) for item in events if item.get("id") is not None][:10]
+        odds_events = []
+        if event_ids:
+            odds_events = self._nba_odds_api_io_get_json(
+                "/odds/multi",
+                {
+                    "apiKey": api_key,
+                    "eventIds": ",".join(event_ids),
+                    "bookmakers": self._nba_odds_bookmakers(settings),
+                },
+                settings,
+                now_utc,
+            )
+            if not isinstance(odds_events, list):
+                odds_events = []
+        return {
+            "version": NBA_ODDS_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "oddsapiio",
+            "sport": self._nba_odds_api_io_sport(settings),
+            "league": self._nba_odds_api_io_league(settings),
+            "status": self._nba_odds_api_io_status(settings),
+            "bookmakers": self._nba_odds_bookmakers(settings),
+            "events": events,
+            "odds_events": odds_events,
+        }
+
+    def _nba_odds_api_io_get_json(self, path, params, settings, now_utc):
+        if self._nba_odds_calls_left(settings, now_utc) <= 0:
+            raise RuntimeError("NBA odds daily request limit reached")
+        session = get_http_session()
+        try:
+            response = session.get(
+                f"{ODDS_API_IO_BASE_URL}{path}",
+                params=params,
+                headers={"Accept": "application/json"},
+                timeout=25,
+            )
+        finally:
+            self._record_nba_odds_call(settings, now_utc)
+        response.raise_for_status()
+        return response.json()
+
+    def _nba_odds_cache_key(self, settings, api_key, provider=None):
+        token_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:10]
+        return "|".join(
+            [
+                NBA_ODDS_STATE_VERSION,
+                provider or self._nba_odds_provider(settings),
+                self._nba_odds_sport_key(settings),
+                self._nba_odds_api_io_sport(settings),
+                self._nba_odds_api_io_league(settings),
+                self._nba_odds_bookmakers(settings).lower(),
+                self._nba_odds_regions(settings).lower(),
+                self._nba_odds_markets(settings).lower(),
+                token_hash,
+            ]
+        )
+
+    @staticmethod
+    def _nba_odds_provider(settings, device_config=None):
+        provider = str(settings.get("nbaOddsProvider") or "").strip().lower()
+        provider = provider.replace("-", "").replace("_", "")
+        if provider in {"oddsapiio", "oddsio"}:
+            return "oddsapiio"
+        if provider:
+            return "theoddsapi"
+        if SportsDashboard._nba_odds_api_io_key_available(settings, device_config):
+            return "oddsapiio"
+        return "theoddsapi"
+
+    @staticmethod
+    def _nba_odds_api_io_key_available(settings, device_config=None):
+        key_names = ("nbaOddsApiIoKey", "oddsApiIoKey")
+        for key_name in key_names:
+            if str(settings.get(key_name) or "").strip():
+                return True
+        if device_config and hasattr(device_config, "get_config"):
+            for key_name in key_names:
+                if str(device_config.get_config(key_name, "") or "").strip():
+                    return True
+        env_names = (
+            "NBA_ODDS_API_IO_KEY",
+            "NBA_ODDSAPI_IO_KEY",
+            "ODDS_API_IO_KEY",
+            "ODDSAPI_IO_KEY",
+            "nbaOddsApiIoKey",
+            "oddsApiIoKey",
+        )
+        if device_config and hasattr(device_config, "load_env_key"):
+            for env_name in env_names:
+                if str(device_config.load_env_key(env_name) or "").strip():
+                    return True
+        for env_name in env_names:
+            if str(os.environ.get(env_name) or "").strip():
+                return True
+        return False
+
+    @staticmethod
+    def _nba_odds_sport_key(settings):
+        sport_key = str(settings.get("nbaOddsSportKey") or DEFAULT_NBA_ODDS_SPORT_KEY).strip()
+        return sport_key or DEFAULT_NBA_ODDS_SPORT_KEY
+
+    @staticmethod
+    def _nba_odds_api_io_sport(settings):
+        sport = str(settings.get("nbaOddsApiIoSport") or DEFAULT_NBA_ODDS_API_IO_SPORT).strip()
+        return sport or DEFAULT_NBA_ODDS_API_IO_SPORT
+
+    @staticmethod
+    def _nba_odds_api_io_league(settings):
+        league = str(settings.get("nbaOddsApiIoLeague") or DEFAULT_NBA_ODDS_API_IO_LEAGUE).strip()
+        return league or DEFAULT_NBA_ODDS_API_IO_LEAGUE
+
+    @staticmethod
+    def _nba_odds_api_io_status(settings):
+        status = str(settings.get("nbaOddsApiIoStatus") or DEFAULT_NBA_ODDS_API_IO_STATUS).strip()
+        return status or DEFAULT_NBA_ODDS_API_IO_STATUS
+
+    @staticmethod
+    def _nba_odds_api_io_limit(settings):
+        return SportsDashboard._int_setting(settings, "nbaOddsApiIoLimit", DEFAULT_NBA_ODDS_API_IO_LIMIT, 1, 10)
+
+    @staticmethod
+    def _nba_odds_regions(settings):
+        regions = str(settings.get("nbaOddsRegions") or DEFAULT_NBA_ODDS_REGIONS).strip()
+        return regions or DEFAULT_NBA_ODDS_REGIONS
+
+    @staticmethod
+    def _nba_odds_markets(settings):
+        markets = str(settings.get("nbaOddsMarkets") or DEFAULT_NBA_ODDS_MARKETS).strip()
+        return markets or DEFAULT_NBA_ODDS_MARKETS
+
+    @staticmethod
+    def _nba_odds_bookmakers(settings):
+        bookmakers = str(settings.get("nbaOddsBookmakers") or settings.get("nbaOddsBookmaker") or DEFAULT_NBA_ODDS_BOOKMAKERS).strip()
+        return bookmakers or DEFAULT_NBA_ODDS_BOOKMAKERS
+
+    @staticmethod
+    def _nba_odds_preferred_bookmakers(settings):
+        raw = SportsDashboard._nba_odds_bookmakers(settings)
+        return [
+            SportsDashboard._normalize_odds_team_name(item)
+            for item in raw.replace(";", ",").split(",")
+            if item.strip()
+        ]
+
+    def _nba_odds_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "nba_odds.json"
+
+    def _nba_odds_state_path(self):
+        return self._sports_dashboard_cache_dir() / "nba_odds_state.json"
+
+    def _nba_odds_calls_left(self, settings, now_utc):
+        limit = self._int_setting(settings, "nbaOddsDailyLimit", DEFAULT_NBA_ODDS_DAILY_LIMIT, 1, 30)
+        state = self._read_json_file(self._nba_odds_state_path())
+        today = now_utc.date().isoformat()
+        if state.get("date") != today:
+            return limit
+        try:
+            count = int(state.get("count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return max(0, limit - count)
+
+    def _record_nba_odds_call(self, settings, now_utc):
+        path = self._nba_odds_state_path()
+        state = self._read_json_file(path)
+        today = now_utc.date().isoformat()
+        count = 0
+        if state.get("date") == today:
+            try:
+                count = int(state.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+        try:
+            self._write_json_file(
+                path,
+                {
+                    "version": NBA_ODDS_STATE_VERSION,
+                    "date": today,
+                    "count": count + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to write NBA odds request counter: %s", exc)
+
+    def _merge_nba_odds(self, events, odds_events, timezone_info, settings):
+        offers = self._nba_odds_offers(odds_events, timezone_info, settings)
+        if not offers:
+            return events
+        enriched = []
+        for event in events:
+            next_event = dict(event)
+            matched = self._match_nba_odds_offer(event, offers)
+            if matched:
+                offer, reversed_order = matched
+                next_event["odds"] = self._nba_event_odds_from_offer(offer, reversed_order)
+            enriched.append(next_event)
+        return enriched
+
+    def _nba_odds_offers(self, odds_events, timezone_info, settings):
+        preferred_bookmakers = self._nba_odds_preferred_bookmakers(settings)
+        offers = []
+        for item in odds_events or []:
+            home_team = str(item.get("home_team") or item.get("home") or "").strip()
+            away_team = str(item.get("away_team") or item.get("away") or "").strip()
+            if not home_team or not away_team:
+                continue
+            odds = self._pick_worldcup_h2h_odds(item, preferred_bookmakers)
+            if not odds:
+                continue
+            start = self._parse_start_time(item.get("commence_time") or item.get("date"), timezone_info)
+            offers.append(
+                {
+                    "start": start,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    **odds,
+                }
+            )
+        return offers
+
+    @staticmethod
+    def _match_nba_odds_offer(event, offers):
+        team_a_aliases = SportsDashboard._nba_event_team_aliases(event, "a")
+        team_b_aliases = SportsDashboard._nba_event_team_aliases(event, "b")
+        for offer in offers:
+            if not SportsDashboard._nba_odds_time_matches(event.get("start"), offer.get("start")):
+                continue
+            home_matches_a = SportsDashboard._nba_team_matches_aliases(offer.get("home_team"), team_a_aliases)
+            away_matches_b = SportsDashboard._nba_team_matches_aliases(offer.get("away_team"), team_b_aliases)
+            if home_matches_a and away_matches_b:
+                return offer, False
+            home_matches_b = SportsDashboard._nba_team_matches_aliases(offer.get("home_team"), team_b_aliases)
+            away_matches_a = SportsDashboard._nba_team_matches_aliases(offer.get("away_team"), team_a_aliases)
+            if home_matches_b and away_matches_a:
+                return offer, True
+        return None
+
+    @staticmethod
+    def _nba_event_odds_from_offer(offer, reversed_order):
+        if reversed_order:
+            team_a = offer.get("away_odds") or ""
+            team_b = offer.get("home_odds") or ""
+        else:
+            team_a = offer.get("home_odds") or ""
+            team_b = offer.get("away_odds") or ""
+        return {
+            "team_a": team_a,
+            "team_b": team_b,
+            "bookmaker": offer.get("bookmaker") or "",
+        }
+
+    @staticmethod
+    def _nba_odds_time_matches(event_start, odds_start):
+        if not event_start or not odds_start:
+            return True
+        try:
+            event_utc = event_start.astimezone(timezone.utc)
+            odds_utc = odds_start.astimezone(timezone.utc)
+        except (AttributeError, ValueError):
+            return True
+        return abs((event_utc - odds_utc).total_seconds()) <= 12 * 60 * 60
+
+    @staticmethod
+    def _nba_event_team_aliases(event, side):
+        aliases = []
+        for key in (f"team_{side}", f"team_{side}_name", f"team_{side}_code"):
+            value = event.get(key)
+            if value:
+                aliases.append(value)
+        for value in event.get(f"team_{side}_source_aliases") or []:
+            if value:
+                aliases.append(value)
+        code = str(event.get(f"team_{side}_code") or "").strip().upper()
+        if code in NBA_ODDS_TEAM_ALIASES:
+            aliases.extend((code, *NBA_ODDS_TEAM_ALIASES[code]))
+        normalized_values = {
+            SportsDashboard._normalize_odds_team_name(alias)
+            for alias in aliases
+            if SportsDashboard._normalize_odds_team_name(alias)
+        }
+        for candidate_code, candidate_aliases in NBA_ODDS_TEAM_ALIASES.items():
+            normalized_aliases = {
+                SportsDashboard._normalize_odds_team_name(alias)
+                for alias in (candidate_code, *candidate_aliases)
+                if SportsDashboard._normalize_odds_team_name(alias)
+            }
+            if normalized_values.intersection(normalized_aliases):
+                return normalized_values.union(normalized_aliases)
+        return normalized_values
+
+    @staticmethod
+    def _nba_team_matches_aliases(team_name, aliases):
+        normalized = SportsDashboard._normalize_odds_team_name(team_name)
+        if not normalized:
+            return False
+        if normalized in aliases:
+            return True
+        return any(len(alias) >= 4 and (alias in normalized or normalized in alias) for alias in aliases)
 
     def _fetch_lpl_events(self, settings, timezone_info):
         league_id = str(settings.get("lplLeagueId") or DEFAULT_LPL_LEAGUE_ID).strip()
@@ -835,6 +2018,35 @@ class SportsDashboard(BasePlugin):
         wins_needed = best_of // 2 + 1
         return max(wins_a or 0, wins_b or 0) < wins_needed
 
+    def _write_nba_live_state(self, selected, now, source_state):
+        live_events = (selected or {}).get("live") or []
+        event = live_events[0] if live_events else None
+        payload = {
+            "version": NBA_LIVE_STATE_VERSION,
+            "updated_at": now.astimezone(timezone.utc).isoformat(),
+            "source_state": source_state,
+            "has_live": bool(event),
+            "live_until": None,
+        }
+        if event:
+            start = event.get("start")
+            live_until = start + NBA_INFERRED_LIVE_WINDOW if isinstance(start, datetime) else now + NBA_INFERRED_LIVE_WINDOW
+            payload.update(
+                {
+                    "live_until": live_until.astimezone(timezone.utc).isoformat(),
+                    "event_id": event.get("event_id"),
+                    "team_a": event.get("team_a"),
+                    "team_b": event.get("team_b"),
+                    "score_a": event.get("wins_a"),
+                    "score_b": event.get("wins_b"),
+                    "status_text": event.get("status_text"),
+                }
+            )
+        try:
+            self._write_json_file(self._nba_live_state_path(), payload)
+        except OSError as exc:
+            logger.warning("Failed to write NBA live refresh state: %s", exc)
+
     def _write_lpl_live_state(self, selected, now, source_state):
         live_events = (selected or {}).get("live") or []
         event = live_events[0] if live_events else None
@@ -865,6 +2077,37 @@ class SportsDashboard(BasePlugin):
             self._write_json_file(self._lpl_live_state_path(), payload)
         except OSError as exc:
             logger.warning("Failed to write LPL live refresh state: %s", exc)
+
+    def _write_worldcup_live_state(self, selected, now, source_state):
+        live_events = (selected or {}).get("live") or []
+        event = live_events[0] if live_events else None
+        payload = {
+            "version": WORLD_CUP_LIVE_STATE_VERSION,
+            "updated_at": now.astimezone(timezone.utc).isoformat(),
+            "source_state": source_state,
+            "has_live": bool(event),
+            "live_until": None,
+        }
+        if event:
+            start = event.get("start")
+            live_until = start + WORLD_CUP_INFERRED_LIVE_WINDOW if isinstance(start, datetime) else now + WORLD_CUP_INFERRED_LIVE_WINDOW
+            payload.update(
+                {
+                    "live_until": live_until.astimezone(timezone.utc).isoformat(),
+                    "event_id": event.get("event_id") or "",
+                    "team_a": event.get("team_a") or "",
+                    "team_b": event.get("team_b") or "",
+                    "score": self._worldcup_score_or_vs(event),
+                    "state": event.get("state") or "",
+                    "status": event.get("status") or "",
+                    "elapsed": event.get("elapsed"),
+                    "started_at": start.astimezone(timezone.utc).isoformat() if isinstance(start, datetime) else None,
+                }
+            )
+        try:
+            self._write_json_file(self._worldcup_live_state_path(), payload)
+        except OSError as exc:
+            logger.warning("Failed to write World Cup live refresh state: %s", exc)
 
     def _attach_lpl_realtime_info(self, selected, settings):
         if not self._bool_setting(settings, "lplLiveStatsEnabled", True):
@@ -1251,7 +2494,7 @@ class SportsDashboard(BasePlugin):
                 return events
             return self._merge_lpl_odds(events, odds_events, timezone_info, settings)
         except Exception as exc:
-            logger.warning("LPL odds overlay failed: %s", exc)
+            logger.warning("LPL odds overlay failed: %s", _safe_exception_text(exc))
             return events
 
     @staticmethod
@@ -1409,6 +2652,12 @@ class SportsDashboard(BasePlugin):
     def _lpl_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "lpl_live_state.json"
 
+    def _nba_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "nba_live_state.json"
+
+    def _worldcup_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "worldcup_live_state.json"
+
     def _lpl_odds_calls_left(self, settings, now_utc):
         limit = self._int_setting(settings, "lplOddsDailyLimit", DEFAULT_LPL_ODDS_DAILY_LIMIT, 1, 12)
         state = self._read_json_file(self._lpl_odds_state_path())
@@ -1554,10 +2803,12 @@ class SportsDashboard(BasePlugin):
         try:
             matches, source_state, fetched_at = self._load_football_data_matches(settings, api_key, timezone_info)
             events = self._parse_football_data_events(matches, timezone_info)
-            selected = self._select_worldcup_events(events, now, visible_matches)
+            events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
                 return None
-            selected = self._attach_worldcup_odds(selected, settings, device_config, timezone_info)
+            self._attach_worldcup_lineup_summary_from_api(selected, settings, device_config, timezone_info, now)
+            self._write_worldcup_live_state(selected, now, source_state)
             return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
         except Exception as exc:
             logger.warning("football-data.org World Cup panel failed: %s", exc)
@@ -1600,15 +2851,8 @@ class SportsDashboard(BasePlugin):
         cache = self._read_json_file(cache_path)
         cache_key = self._football_data_cache_key(settings, api_key, timezone_info)
         force_refresh = self._force_refresh_requested(settings)
-        cache_hours = self._int_setting(
-            settings,
-            "footballDataCacheHours",
-            DEFAULT_FOOTBALL_DATA_CACHE_HOURS,
-            1,
-            24,
-        )
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("matches"), list)
-        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+        if has_compatible_cache and not force_refresh and self._football_data_cache_is_fresh(cache, settings, timezone_info, now_utc):
             return cache["matches"], "FOOTBALL CACHE", cache.get("fetched_at")
 
         if self._football_data_calls_left(settings, now_utc) <= 0:
@@ -1651,6 +2895,28 @@ class SportsDashboard(BasePlugin):
             "timezone": getattr(timezone_info, "key", DEFAULT_TIMEZONE),
             "matches": matches,
         }
+
+    def _football_data_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
+        cache_hours = self._int_setting(
+            settings,
+            "footballDataCacheHours",
+            DEFAULT_FOOTBALL_DATA_CACHE_HOURS,
+            1,
+            24,
+        )
+        if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return False
+        if self._football_data_cache_has_live_poll_candidate(cache, timezone_info, now_utc):
+            return self._cache_is_fresh_seconds(cache, self._worldcup_live_refresh_seconds(settings), now_utc)
+        return True
+
+    def _football_data_cache_has_live_poll_candidate(self, cache, timezone_info, now_utc):
+        try:
+            events = self._parse_football_data_events(cache.get("matches") or [], timezone_info)
+        except Exception as exc:
+            logger.debug("football-data.org live cache candidate parse failed: %s", exc)
+            return False
+        return self._should_poll_worldcup_live_data(events, now_utc.astimezone(timezone_info))
 
     def _football_data_get_json(self, path, params, api_key, settings, now_utc):
         if self._football_data_calls_left(settings, now_utc) <= 0:
@@ -1742,14 +3008,86 @@ class SportsDashboard(BasePlugin):
         try:
             fixtures, source_state, fetched_at = self._load_worldcup_api_fixtures(settings, api_key, timezone_info)
             events = self._parse_worldcup_api_events(fixtures, timezone_info)
-            selected = self._select_worldcup_events(events, now, visible_matches)
+            events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
                 return None
-            selected = self._attach_worldcup_odds(selected, settings, device_config, timezone_info)
+            self._attach_worldcup_lineup_summary_from_api(
+                selected,
+                settings,
+                device_config,
+                timezone_info,
+                now,
+                api_key=api_key,
+                api_events=events,
+            )
+            self._write_worldcup_live_state(selected, now, source_state)
             return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
         except Exception as exc:
             logger.warning("World Cup API panel failed: %s", exc)
             return None
+
+    def _attach_worldcup_lineup_summary_from_api(
+        self,
+        selected,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+        api_key="",
+        api_events=None,
+    ):
+        if not selected or not self._bool_setting(settings, "worldCupLineupsEnabled", True):
+            return selected
+        event = selected.get("main")
+        if not event or not self._should_fetch_worldcup_lineups(event, now):
+            return selected
+        api_key = api_key or self._api_sports_key(settings, device_config)
+        if not api_key:
+            return selected
+        if not str(event.get("fixture_id") or "").strip():
+            try:
+                if api_events is None:
+                    fixtures, _source_state, _fetched_at = self._load_worldcup_api_fixtures(settings, api_key, timezone_info)
+                    api_events = self._parse_worldcup_api_events(fixtures, timezone_info)
+                matched = self._match_worldcup_api_lineup_event(event, api_events)
+                if matched:
+                    event["fixture_id"] = matched.get("fixture_id")
+            except Exception as exc:
+                logger.warning("World Cup lineup fixture match failed: %s", exc)
+                return selected
+        return self._attach_worldcup_lineup_summary(selected, settings, api_key, timezone_info, now)
+
+    @staticmethod
+    def _match_worldcup_api_lineup_event(event, api_events):
+        team_a_aliases = SportsDashboard._worldcup_event_team_aliases(event, "a")
+        team_b_aliases = SportsDashboard._worldcup_event_team_aliases(event, "b")
+        for candidate in api_events or []:
+            if not str((candidate or {}).get("fixture_id") or "").strip():
+                continue
+            if not SportsDashboard._worldcup_odds_time_matches(event.get("start"), candidate.get("start")):
+                continue
+            candidate_a_matches_a = SportsDashboard._worldcup_team_matches_aliases(
+                candidate.get("team_a_source_name") or candidate.get("team_a"),
+                team_a_aliases,
+            )
+            candidate_b_matches_b = SportsDashboard._worldcup_team_matches_aliases(
+                candidate.get("team_b_source_name") or candidate.get("team_b"),
+                team_b_aliases,
+            )
+            if candidate_a_matches_a and candidate_b_matches_b:
+                return candidate
+            candidate_a_matches_b = SportsDashboard._worldcup_team_matches_aliases(
+                candidate.get("team_a_source_name") or candidate.get("team_a"),
+                team_b_aliases,
+            )
+            candidate_b_matches_a = SportsDashboard._worldcup_team_matches_aliases(
+                candidate.get("team_b_source_name") or candidate.get("team_b"),
+                team_a_aliases,
+            )
+            if candidate_a_matches_b and candidate_b_matches_a:
+                return candidate
+        return None
 
     @staticmethod
     def _api_sports_key(settings, device_config=None):
@@ -1791,17 +3129,10 @@ class SportsDashboard(BasePlugin):
         cache = self._read_json_file(cache_path)
         cache_key = self._worldcup_api_cache_key(settings, api_key, timezone_info)
         force_refresh = self._force_refresh_requested(settings)
-        cache_hours = self._int_setting(
-            settings,
-            "worldCupApiCacheHours",
-            DEFAULT_WORLD_CUP_API_CACHE_HOURS,
-            1,
-            24,
-        )
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("fixtures"), list)
         if has_compatible_cache and not force_refresh and self._worldcup_api_block_is_fresh(cache, now_utc):
             return [], str(cache.get("source_state") or "API BLOCKED"), cache.get("fetched_at")
-        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+        if has_compatible_cache and not force_refresh and self._worldcup_api_cache_is_fresh(cache, settings, timezone_info, now_utc):
             return cache["fixtures"], "API CACHE", cache.get("fetched_at")
 
         if self._worldcup_api_calls_left(settings, now_utc) <= 0:
@@ -1813,6 +3144,13 @@ class SportsDashboard(BasePlugin):
             payload = self._fetch_worldcup_api_payload(settings, api_key, timezone_info, cache, cache_key, now_utc)
         except Exception as exc:
             if self._is_worldcup_free_plan_error(exc):
+                cache_hours = self._int_setting(
+                    settings,
+                    "worldCupApiCacheHours",
+                    DEFAULT_WORLD_CUP_API_CACHE_HOURS,
+                    1,
+                    24,
+                )
                 blocked_payload = self._worldcup_api_block_payload(cache_key, now_utc, cache_hours, exc)
                 try:
                     self._write_json_file(cache_path, blocked_payload)
@@ -1828,6 +3166,28 @@ class SportsDashboard(BasePlugin):
         except OSError as exc:
             logger.warning("Failed to write World Cup API cache: %s", exc)
         return payload["fixtures"], "API LIVE", payload.get("fetched_at")
+
+    def _worldcup_api_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
+        cache_hours = self._int_setting(
+            settings,
+            "worldCupApiCacheHours",
+            DEFAULT_WORLD_CUP_API_CACHE_HOURS,
+            1,
+            24,
+        )
+        if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return False
+        if self._worldcup_api_cache_has_live_poll_candidate(cache, timezone_info, now_utc):
+            return self._cache_is_fresh_seconds(cache, self._worldcup_live_refresh_seconds(settings), now_utc)
+        return True
+
+    def _worldcup_api_cache_has_live_poll_candidate(self, cache, timezone_info, now_utc):
+        try:
+            events = self._parse_worldcup_api_events(cache.get("fixtures") or [], timezone_info)
+        except Exception as exc:
+            logger.debug("World Cup API live cache candidate parse failed: %s", exc)
+            return False
+        return self._should_poll_worldcup_live_data(events, now_utc.astimezone(timezone_info))
 
     def _fetch_worldcup_api_payload(self, settings, api_key, timezone_info, cache, cache_key, now_utc):
         season = self._worldcup_api_season(settings)
@@ -1906,6 +3266,129 @@ class SportsDashboard(BasePlugin):
         response.raise_for_status()
         return response.json()
 
+    def _attach_worldcup_lineup_summary(self, selected, settings, api_key, timezone_info, now):
+        if not selected or not self._bool_setting(settings, "worldCupLineupsEnabled", True):
+            return selected
+        event = selected.get("main")
+        fixture_id = str((event or {}).get("fixture_id") or "").strip()
+        if not event or not fixture_id or not self._should_fetch_worldcup_lineups(event, now):
+            return selected
+        try:
+            lineups, _source_state, _fetched_at = self._load_worldcup_lineups(settings, api_key, fixture_id, now)
+            formation_a, formation_b = self._worldcup_formations_from_lineups(lineups, event)
+        except Exception as exc:
+            logger.warning("World Cup lineups failed for fixture %s: %s", fixture_id, exc)
+            return selected
+        if formation_a and formation_b:
+            event["formation_a"] = formation_a
+            event["formation_b"] = formation_b
+            event["lineups_ready"] = True
+        return selected
+
+    @staticmethod
+    def _should_fetch_worldcup_lineups(event, now):
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime) or now is None:
+            return False
+        return start - WORLD_CUP_LINEUP_LOOKAHEAD <= now <= start + WORLD_CUP_LINEUP_POSTMATCH_WINDOW
+
+    def _load_worldcup_lineups(self, settings, api_key, fixture_id, now):
+        now_utc = now.astimezone(timezone.utc) if isinstance(now, datetime) else datetime.now(timezone.utc)
+        fixture_id = str(fixture_id or "").strip()
+        cache_path = self._worldcup_lineups_cache_path()
+        cache = self._read_json_file(cache_path)
+        fixture_cache = cache.get("fixtures") if isinstance(cache.get("fixtures"), Mapping) else {}
+        entry = fixture_cache.get(fixture_id) if isinstance(fixture_cache, Mapping) else None
+        if isinstance(entry, Mapping):
+            cache_seconds = self._worldcup_lineup_cache_seconds(settings)
+            if not entry.get("lineups"):
+                cache_seconds = min(cache_seconds, self._worldcup_live_refresh_seconds(settings))
+            if self._cache_is_fresh_seconds(entry, cache_seconds, now_utc):
+                return entry.get("lineups") or [], "LINEUP CACHE", entry.get("fetched_at")
+            if self._worldcup_api_calls_left(settings, now_utc) <= 0:
+                return entry.get("lineups") or [], "LINEUP STALE", entry.get("fetched_at")
+
+        payload = self._api_football_get_json("/fixtures/lineups", {"fixture": fixture_id}, api_key, settings, now_utc)
+        errors = payload.get("errors")
+        if errors:
+            raise RuntimeError(f"API-Sports lineups returned errors: {errors}")
+        lineups = payload.get("response") or []
+        if not isinstance(lineups, list):
+            lineups = []
+        updated_fixtures = dict(fixture_cache) if isinstance(fixture_cache, Mapping) else {}
+        updated_fixtures[fixture_id] = {
+            "fixture_id": fixture_id,
+            "fetched_at": now_utc.isoformat(),
+            "lineups": lineups,
+        }
+        try:
+            self._write_json_file(
+                cache_path,
+                {
+                    "version": WORLD_CUP_LINEUP_STATE_VERSION,
+                    "updated_at": now_utc.isoformat(),
+                    "fixtures": updated_fixtures,
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to write World Cup lineup cache: %s", exc)
+        return lineups, "LINEUP LIVE", now_utc.isoformat()
+
+    @staticmethod
+    def _worldcup_formations_from_lineups(lineups, event):
+        formation_a = ""
+        formation_b = ""
+        fallback = []
+        aliases_a = SportsDashboard._normalized_alias_set(
+            [event.get("team_a_source_name"), event.get("team_a_tla"), event.get("team_a"), *(event.get("team_a_source_aliases") or [])]
+        )
+        aliases_b = SportsDashboard._normalized_alias_set(
+            [event.get("team_b_source_name"), event.get("team_b_tla"), event.get("team_b"), *(event.get("team_b_source_aliases") or [])]
+        )
+        for item in lineups or []:
+            if not isinstance(item, Mapping):
+                continue
+            formation = str(item.get("formation") or "").strip()
+            if not formation:
+                continue
+            team = item.get("team") or {}
+            team_aliases = SportsDashboard._normalized_alias_set(
+                [team.get("name"), team.get("code"), team.get("id"), team.get("country")]
+            )
+            if team_aliases & aliases_a and not formation_a:
+                formation_a = formation
+            elif team_aliases & aliases_b and not formation_b:
+                formation_b = formation
+            else:
+                fallback.append(formation)
+        if not formation_a and fallback:
+            formation_a = fallback.pop(0)
+        if not formation_b and fallback:
+            formation_b = fallback.pop(0)
+        return formation_a, formation_b
+
+    @staticmethod
+    def _normalized_alias_set(values):
+        aliases = set()
+        for value in values or []:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            normalized = SportsDashboard._normalize_odds_team_name(text)
+            if normalized:
+                aliases.add(normalized)
+        return aliases
+
+    @staticmethod
+    def _worldcup_lineup_cache_seconds(settings):
+        return SportsDashboard._int_setting(
+            settings,
+            "worldCupLineupCacheSeconds",
+            DEFAULT_WORLD_CUP_LINEUP_CACHE_SECONDS,
+            60,
+            3600,
+        )
+
     def _worldcup_api_cache_key(self, settings, api_key, timezone_info):
         token_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:10]
         league_id = str(settings.get("worldCupApiLeagueId") or DEFAULT_WORLD_CUP_API_LEAGUE_ID).strip() or "auto"
@@ -1930,6 +3413,9 @@ class SportsDashboard(BasePlugin):
     def _worldcup_api_state_path(self):
         return self._sports_dashboard_cache_dir() / "api_state.json"
 
+    def _worldcup_lineups_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "worldcup_lineups.json"
+
     def _sports_dashboard_cache_dir(self):
         cache_dir = Path(self.get_plugin_dir("cache"))
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1941,6 +3427,13 @@ class SportsDashboard(BasePlugin):
         if fetched_at is None:
             return False
         return now_utc - fetched_at <= timedelta(hours=cache_hours)
+
+    @staticmethod
+    def _cache_is_fresh_seconds(cache, cache_seconds, now_utc):
+        fetched_at = SportsDashboard._parse_cached_utc(cache.get("fetched_at"))
+        if fetched_at is None:
+            return False
+        return now_utc - fetched_at <= timedelta(seconds=cache_seconds)
 
     @staticmethod
     def _worldcup_api_block_is_fresh(cache, now_utc):
@@ -2029,7 +3522,7 @@ class SportsDashboard(BasePlugin):
                 return events
             return self._merge_worldcup_odds(events, odds_events, timezone_info, settings)
         except Exception as exc:
-            logger.warning("World Cup odds overlay failed: %s", exc)
+            logger.warning("World Cup odds overlay failed: %s", _safe_exception_text(exc))
             return events
 
     @staticmethod
@@ -2653,6 +4146,7 @@ class SportsDashboard(BasePlugin):
             fulltime = score.get("fulltime") or {}
             parsed.append(
                 {
+                    "fixture_id": str(fixture.get("id") or "").strip(),
                     "start": start_time,
                     "state": str(status.get("short") or "").upper(),
                     "status": str(status.get("long") or "").strip(),
@@ -2696,76 +4190,559 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _select_worldcup_events(events, now, visible_matches):
-        live_states = {"1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT", "IN_PLAY", "PAUSED"}
-        finished_states = {"FT", "AET", "PEN", "FINISHED", "AWARDED"}
-        live = [event for event in events if event["state"] in live_states]
-        upcoming = [event for event in events if event["state"] not in finished_states and event["start"] >= now]
+        selected = SportsDashboard._select_worldcup_event_sections(events, now, visible_matches)
+        if not selected:
+            return []
+        main = selected.get("main")
+        rows = []
+        if main:
+            rows.append(main)
+        for event in selected.get("upcoming") or []:
+            if event is not main and event not in rows:
+                rows.append(event)
+        for event in selected.get("recent") or []:
+            if event is not main and event not in rows:
+                rows.append(event)
+        return rows[: selected.get("visible_matches", visible_matches)]
+
+    @staticmethod
+    def _select_worldcup_event_sections(events, now, visible_matches):
+        events = list(events or [])
+        if not events:
+            return None
+        visible_matches = max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
+        live = [event for event in events if SportsDashboard._is_worldcup_live_event(event)]
+        upcoming = [
+            event for event in events
+            if event not in live
+            and not SportsDashboard._is_worldcup_finished_event(event)
+            and event["start"] >= now
+        ]
         recent = sorted(
-            [event for event in events if event["state"] in finished_states or event["start"] < now],
+            [event for event in events if event not in live and (SportsDashboard._is_worldcup_finished_event(event) or event["start"] < now)],
             key=lambda item: item["start"],
             reverse=True,
         )
-        selected = live + upcoming
-        if len(selected) < visible_matches:
-            selected.extend(recent[: visible_matches - len(selected)])
-        return selected[:visible_matches]
+        main = live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None))
+        return {
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "main": main,
+            "visible_matches": visible_matches,
+        }
+
+    @staticmethod
+    def _should_poll_worldcup_live_data(events, now):
+        return any(SportsDashboard._is_worldcup_live_poll_candidate(event, now) for event in events or [])
+
+    @staticmethod
+    def _is_worldcup_live_poll_candidate(event, now):
+        if SportsDashboard._is_worldcup_live_event(event):
+            return True
+        if SportsDashboard._is_worldcup_finished_event(event):
+            return False
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime) or now is None:
+            return False
+        return start - WORLD_CUP_LIVE_PREGAME_WINDOW <= now < start + WORLD_CUP_INFERRED_LIVE_WINDOW
+
+    @staticmethod
+    def _is_worldcup_live_event(event):
+        return str((event or {}).get("state") or "").strip().upper() in WORLD_CUP_LIVE_STATES
+
+    @staticmethod
+    def _is_worldcup_finished_event(event):
+        return str((event or {}).get("state") or "").strip().upper() in WORLD_CUP_FINISHED_STATES
+
+    @staticmethod
+    def _worldcup_live_refresh_seconds(settings):
+        return SportsDashboard._int_setting(settings, "worldCupLiveRefreshSeconds", DEFAULT_WORLD_CUP_LIVE_REFRESH_SECONDS, 30, 900)
 
     def _render_worldcup_api_panel(self, dimensions, events, source_state, fetched_at, visible_matches, now):
         image = Image.new("RGB", dimensions, COLORS["paper"])
         draw = ImageDraw.Draw(image)
         width, height = dimensions
-        visible_matches = max(1, min(7, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
-        self._draw_halftone(draw, (0, 0, width, height), COLORS["cyan"], COLORS["paper"], 20, 1)
-        draw.rectangle((14, 12, width - 14, 68), fill=COLORS["panel_gold"], outline=COLORS["border"], width=2)
-        self._draw_worldcup_header_brand(image, draw, width)
+        visible_matches = max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
+        selected = events if isinstance(events, Mapping) else self._select_worldcup_event_sections(events, now, visible_matches)
+        if not selected:
+            selected = {"live": [], "upcoming": [], "recent": [], "main": None, "visible_matches": visible_matches}
+        self._draw_worldcup_compact_panel(
+            image,
+            draw,
+            (0, 0, width - 1, height - 1),
+            selected,
+            source_state,
+            fetched_at,
+            now,
+        )
+        return image
+
+    def _draw_worldcup_compact_panel(self, image, draw, bounds, selected, source_state, fetched_at, now):
+        x1, y1, x2, y2 = [int(value) for value in bounds]
+        panel_w = x2 - x1 + 1
+        panel_h = y2 - y1 + 1
+        draw.rectangle((x1, y1, x2, y2), fill=COLORS["paper"])
+        self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["cyan"], COLORS["paper"], 20, 1)
+
+        header_y = y1 + 8
+        logo_size = 30
+        self._draw_worldcup_logo(image, draw, x1 + 14, header_y - 1, logo_size)
+        title, title_font = self._fit_text(draw, "2026 World Cup", 178, 20, bold=True, min_size=15)
+        draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source = self._worldcup_api_source_label(source_state, fetched_at)
-        source_text, source_font = self._fit_text(draw, source, 122, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (width - 24, 52), source_text, source_font, COLORS["text"])
+        source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
+        draw.text((x1 + 52, header_y + 24), source_text, font=source_font, fill=COLORS["muted"])
+        self._draw_worldcup_header_banner(image, x1 + 229, header_y, x2 - 94, y1 + 47)
 
-        row_top = 82
-        row_gap = 6
-        row_height = max(42, min(54, (height - row_top - 14 - row_gap * (visible_matches - 1)) // visible_matches))
+        live = selected.get("live") or []
+        upcoming = selected.get("upcoming") or []
+        recent = selected.get("recent") or []
+        main_event = selected.get("main")
+        is_live = bool(live and main_event is live[0])
+        self._draw_status_pill(draw, x2 - 84, header_y + 4, "LIVE" if is_live else "NEXT", is_live)
+        draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
+
+        content_y = y1 + 57
+        content_bottom = y2 - 8
+        split_x = x1 + max(250, min(296, int(panel_w * 0.50)))
+        left_x1 = x1 + 12
+        left_x2 = split_x - 10
+        right_x1 = split_x + 4
+        right_x2 = x2 - 12
+        if panel_h < 190:
+            content_y = y1 + 53
+            content_bottom = y2 - 6
+        draw.line((split_x - 3, content_y - 5, split_x - 3, content_bottom), fill=COLORS["border"], width=1)
+        draw.line((split_x - 1, content_y - 5, split_x - 1, content_bottom), fill=COLORS["line"], width=1)
+
+        self._draw_worldcup_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, is_live)
+
+        visible_matches = max(1, int(selected.get("visible_matches") or DEFAULT_WORLD_CUP_VISIBLE_MATCHES))
+        upcoming_rows = [event for event in upcoming if event is not main_event]
+        recent_rows = [event for event in recent if event is not main_event]
+        if recent_rows:
+            upcoming_rows = upcoming_rows[:2]
+            recent_rows = recent_rows[:1]
+        else:
+            upcoming_rows = upcoming_rows[: max(0, visible_matches - 1)]
+
+        upcoming_y = content_y
+        upcoming_used_bottom = self._draw_worldcup_mini_rows(
+            image,
+            draw,
+            right_x1,
+            right_x2,
+            upcoming_y,
+            content_bottom,
+            "UPCOMING",
+            upcoming_rows,
+            show_time=True,
+        )
+        if recent_rows:
+            recent_y = upcoming_y + 20 + len(upcoming_rows) * 35 + 6
+            if recent_y + 54 <= content_bottom:
+                self._draw_worldcup_mini_rows(
+                    image,
+                    draw,
+                    right_x1,
+                    right_x2,
+                    recent_y,
+                    content_bottom,
+                    "RECENT",
+                    recent_rows,
+                    show_time=False,
+                )
+        else:
+            self._draw_worldcup_tactics_strip(image, draw, right_x1, right_x2, upcoming_used_bottom + 2, content_bottom, main_event)
+
+    def _draw_worldcup_main_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
+        accent = COLORS["red"] if is_live else COLORS["blue"]
+        draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["amber"])
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
+        if not event:
+            message, message_font = self._fit_text(draw, "No World Cup schedule", x2 - x1 - 36, 15, bold=True, min_size=10)
+            self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), message, message_font, COLORS["text"])
+            return
+
+        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
+        tag_w = 104 if is_live else 88
+        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
+        draw.rectangle((x1 + 14, y1 + 9, x1 + 14 + tag_w, y1 + 27), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 18, y1 + 10), tag_text, font=tag_font, fill=COLORS["text"])
+        date_text = event["start"].strftime("%m/%d")
+        date_text, date_font = self._fit_text(draw, date_text, 52, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
+
+        stage = self._clean_worldcup_stage(event.get("block"))
+        stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 8, bold=True, min_size=6)
+        draw.text((x1 + 18, y1 + 30), stage_text, font=stage_font, fill=COLORS["blue"])
+
+        status_text = self._worldcup_event_status_label(event, now)
+        status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
+        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), status_text, status_font, COLORS["text"])
+
+        center_x = (x1 + x2) / 2
+        flag_w, flag_h = 44, 30
+        left_area = (x1 + 18, center_x - 21)
+        right_area = (center_x + 21, x2 - 18)
+        flag_y = y1 + 58
+        left_flag_x = int((left_area[0] + left_area[1] - flag_w) / 2)
+        right_flag_x = int((right_area[0] + right_area[1] - flag_w) / 2)
+        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_w, flag_h, event.get("team_a_tla"))
+        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_w, flag_h, event.get("team_b_tla"))
+        center_label = self._worldcup_score_or_vs(event)
+        center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
+        self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
+
+        team_y = flag_y + flag_h + 16
+        team_a, team_a_font = self._fit_text(draw, event.get("team_a"), left_area[1] - left_area[0], 16, bold=True, min_size=9)
+        team_b, team_b_font = self._fit_text(draw, event.get("team_b"), right_area[1] - right_area[0], 16, bold=True, min_size=9)
+        self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, team_a_font, COLORS["text"])
+        self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, team_b_font, COLORS["text"])
+
+        points_y = team_y + 13
+        self._draw_worldcup_points_text(draw, (left_area[0], points_y, left_area[1], points_y + 11), event, "a", max_size=8)
+        self._draw_worldcup_points_text(draw, (right_area[0], points_y, right_area[1], points_y + 11), event, "b", max_size=8)
+
+        if self._worldcup_event_has_odds(event):
+            odds_y = points_y + 11
+            odds = event.get("odds") or {}
+            self._draw_worldcup_odds_text(draw, (left_area[0], odds_y, left_area[1], odds_y + 12), (event.get("odds") or {}).get("team_a"), max_size=9)
+            if odds.get("draw"):
+                self._draw_worldcup_odds_text(draw, (center_x - 26, odds_y, center_x + 26, odds_y + 12), f"X {odds.get('draw')}", max_size=9)
+            self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
+
+    def _draw_worldcup_mini_rows(self, image, draw, x1, x2, y, bottom, title, events, show_time):
+        self._draw_worldcup_mini_section_header(draw, x1, x2, y, title)
         if not events:
-            draw.rectangle((18, row_top, width - 20, row_top + row_height), fill=COLORS["panel"], outline=COLORS["border"], width=2)
-            message, message_font = self._fit_text(draw, "API connected - no fixtures returned yet", width - 64, 17, bold=True, min_size=11)
-            self._draw_centered(draw, (width / 2, row_top + row_height / 2), message, message_font, COLORS["text"])
-            return image
-
-        for index, event in enumerate(events[:visible_matches]):
-            y = row_top + index * (row_height + row_gap)
-            fill = COLORS["panel"] if index % 2 == 0 else COLORS["panel_blue"]
-            shadow = COLORS["orange"] if index % 2 == 0 else COLORS["blue"]
-            draw.rectangle((20, y + 3, width - 18, y + row_height + 3), fill=shadow)
-            draw.rectangle((16, y, width - 22, y + row_height), fill=fill, outline=COLORS["border"], width=2)
-
-            regions = self._worldcup_row_regions(width)
-            group_x1, group_x2 = regions["group"]
-            draw.rectangle((group_x1, y + 8, group_x2, y + row_height - 8), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
-            draw.rectangle((group_x1, y + 8, group_x1 + 6, y + row_height - 8), fill=self._worldcup_status_color(event))
-            stage = self._clean_worldcup_stage(event.get("block"))
-            stage_text, stage_font = self._fit_text(draw, stage, group_x2 - group_x1 - 14, 16, bold=True, min_size=10)
-            draw.text((group_x1 + 12, y + 11), stage_text, font=stage_font, fill=COLORS["text"])
-
-            date_x1, date_x2 = regions["date"]
-            time_x1, time_x2 = regions["time"]
-            draw.rectangle((date_x1, y + 9, date_x2, y + row_height - 9), fill=COLORS["panel"], outline=COLORS["border"], width=1)
-            date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), date_x2 - date_x1 - 8, 15, bold=True, min_size=10)
-            self._draw_centered_in_box(draw, (date_x1, y + 9, date_x2, y + row_height - 9), date_text, date_font, COLORS["text"])
-            time_text = self._worldcup_event_time_label(event)
-            draw.rectangle((time_x1, y + 9, time_x2, y + row_height - 9), fill=COLORS["panel"], outline=COLORS["border"], width=1)
-            time_text, time_font = self._fit_text(draw, time_text, time_x2 - time_x1 - 8, 15, bold=True, min_size=10)
-            self._draw_centered_in_box(draw, (time_x1, y + 9, time_x2, y + row_height - 9), time_text, time_font, COLORS["text"])
-
-            match_x, match_x2 = regions["match"]
-            self._draw_worldcup_matchup(
+            message = "No more World Cup schedule" if title == "UPCOMING" else "No recent results"
+            message, message_font = self._fit_text(draw, message, x2 - x1 - 16, 10, bold=True, min_size=7)
+            draw.text((x1 + 10, y + 23), message, font=message_font, fill=COLORS["muted"])
+            return y + 38
+        row_y = y + 21
+        row_h = 33
+        max_rows = max(1, (bottom - row_y + 1) // (row_h + 2))
+        rows = events[:max_rows]
+        for index, event in enumerate(rows):
+            center_text = "VS" if show_time else self._worldcup_score_or_vs(event)
+            self._draw_worldcup_mini_match_row(
                 image,
                 draw,
+                x1,
+                x2,
+                row_y + index * (row_h + 2),
+                row_h,
                 event,
-                match_x,
-                y + self._worldcup_matchup_row_offset(row_height),
-                max(1, match_x2 - match_x),
+                center_text,
+                show_time=show_time,
             )
-        return image
+        return row_y + len(rows) * (row_h + 2) - 2
+
+    def _draw_worldcup_mini_section_header(self, draw, x1, x2, y, title):
+        draw.rectangle((x1, y + 2, x1 + 8, y + 17), fill=COLORS["blue"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
+        draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
+
+    def _draw_worldcup_mini_match_row(self, image, draw, x1, x2, y, row_h, event, center_text, show_time=False):
+        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
+        date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), 36, 9, bold=True, min_size=7)
+        draw.text((x1 + 9, y + 1), date_text, font=date_font, fill=COLORS["muted"])
+        stage = self._clean_worldcup_stage(event.get("block"))
+        stage_text, stage_font = self._fit_text(draw, stage, 78, 9, bold=True, min_size=7)
+        draw.text((x1 + 47, y + 1), stage_text, font=stage_font, fill=COLORS["muted"])
+        if show_time:
+            time_text, time_font = self._fit_text(draw, self._worldcup_event_time_label(event), 48, 9, bold=True, min_size=7)
+            self._draw_right_aligned(draw, (x2 - 8, y + 1), time_text, time_font, COLORS["text"])
+        self._draw_worldcup_row_lineup(image, draw, x1 + 9, x2 - 8, y + 13, event, center_text)
+
+    def _draw_worldcup_row_lineup(self, image, draw, x1, x2, y, event, center_text):
+        center_x = (x1 + x2) / 2
+        flag_w, flag_h = 18, 12
+        left_flag_x = x1 + 1
+        right_flag_x = x2 - flag_w - 1
+        has_odds = center_text == "VS" and self._worldcup_event_has_odds(event)
+        team_bottom = y + 11
+        flag_y = y - 1
+        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_w, flag_h, event.get("team_a_tla"))
+        team_a, font_a = self._fit_text(draw, event.get("team_a"), max(24, center_x - left_flag_x - flag_w - 24), 10, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (left_flag_x + flag_w + 4, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
+        center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
+        self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
+        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_w, flag_h, event.get("team_b_tla"))
+        team_b, font_b = self._fit_text(draw, event.get("team_b"), max(24, right_flag_x - center_x - 31), 10, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_flag_x - 4, team_bottom), team_b, font_b, COLORS["text"], align="right")
+        left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
+        right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
+        self._draw_worldcup_odds_text(draw, (left_flag_x + flag_w + 4, y + 11, center_x - 28, y + 20), left_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_flag_x - 4, y + 20), right_meta, max_size=7)
+        if has_odds:
+            odds = event.get("odds") or {}
+            if odds.get("draw"):
+                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X {odds.get('draw')}", max_size=6)
+
+    def _draw_worldcup_tactics_strip(self, image, draw, x1, x2, y1, y2, event):
+        x1 = int(x1)
+        x2 = int(x2)
+        y1 = int(y1)
+        y2 = int(y2)
+        if y2 - y1 < 12 or x2 - x1 < 80:
+            return
+        formation_pair = self._worldcup_formation_pair(event)
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=3, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 5, y2 - 1), fill=COLORS["blue"])
+        if formation_pair:
+            left_text, right_text = formation_pair
+            center_x = (x1 + x2) / 2
+            text_y = y1 + max(1, (y2 - y1 - 10) // 2)
+            label, label_font = self._fit_text(draw, "\u9996\u53d1", 28, 9, bold=True, min_size=7)
+            draw.text((x1 + 10, text_y), label, font=label_font, fill=COLORS["amber"])
+            vs_text, vs_font = self._fit_text(draw, "VS", 18, 9, bold=True, min_size=7)
+            self._draw_centered(draw, (center_x, text_y + 5), vs_text, vs_font, COLORS["text"])
+            left_width = max(24, int(center_x - (x1 + 43) - 10))
+            right_width = max(24, int((x2 - 8) - (center_x + 14)))
+            left_text, left_font = self._fit_text(draw, left_text, left_width, 9, bold=True, min_size=6)
+            draw.text((x1 + 43, text_y), left_text, font=left_font, fill=COLORS["text"])
+            right_text, right_font = self._fit_text(draw, right_text, right_width, 9, bold=True, min_size=6)
+            self._draw_right_aligned(draw, (x2 - 8, text_y), right_text, right_font, COLORS["text"])
+            return
+        self._draw_worldcup_pitch_strip(image, draw, x1 + 6, y1 + 2, x2 - 1, y2)
+
+    @staticmethod
+    def _worldcup_formation_summary(event):
+        formation_a = str((event or {}).get("formation_a") or "").strip()
+        formation_b = str((event or {}).get("formation_b") or "").strip()
+        if not formation_a or not formation_b:
+            return ""
+        return f"{formation_a} VS {formation_b}"
+
+    @staticmethod
+    def _worldcup_formation_pair(event):
+        formation_a = str((event or {}).get("formation_a") or "").strip()
+        formation_b = str((event or {}).get("formation_b") or "").strip()
+        if not formation_a or not formation_b:
+            return None
+        team_a = SportsDashboard._worldcup_tactics_team_label(event, "a")
+        team_b = SportsDashboard._worldcup_tactics_team_label(event, "b")
+        return f"{team_a} {formation_a}", f"{formation_b} {team_b}"
+
+    @staticmethod
+    def _worldcup_tactics_team_label(event, side):
+        team = str((event or {}).get(f"team_{side}") or "").strip()
+        tla = str((event or {}).get(f"team_{side}_tla") or "").strip().upper()
+        if team and len(team) <= 5:
+            return team
+        if tla:
+            return tla
+        return team[:5] if team else "TBD"
+
+    def _draw_worldcup_pitch_strip(self, image, draw, x1, y1, x2, y2):
+        x1 = int(x1)
+        y1 = int(y1)
+        x2 = int(x2)
+        y2 = int(y2)
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        if width < 16 or height < 5:
+            return
+        pitch_strip = self._load_worldcup_pitch_strip((width, height))
+        if pitch_strip:
+            image.paste(pitch_strip, (x1, y1))
+            return
+
+        white = (255, 255, 255)
+        black = (0, 0, 0)
+        field = Image.new("RGB", (width, height), black)
+        field_draw = ImageDraw.Draw(field)
+        right = width - 1
+        bottom = height - 1
+
+        field_draw.rectangle((0, 0, right, bottom), outline=white, width=1)
+        mid_x = width // 2
+        field_draw.line((mid_x, 1, mid_x, bottom - 1), fill=white, width=1)
+        field_draw.point((mid_x, height // 2), fill=white)
+        if width >= 52 and height >= 9:
+            circle_r = max(2, min(height // 3, width // 18))
+            field_draw.ellipse(
+                (mid_x - circle_r, height // 2 - circle_r, mid_x + circle_r, height // 2 + circle_r),
+                outline=white,
+                width=1,
+            )
+
+        box_w = max(5, min(width // 7, 24))
+        box_h = max(3, height - 4)
+        box_y1 = max(1, (height - box_h) // 2)
+        box_y2 = min(bottom - 1, box_y1 + box_h)
+        field_draw.rectangle((1, box_y1, box_w, box_y2), outline=white, width=1)
+        field_draw.rectangle((right - box_w, box_y1, right - 1, box_y2), outline=white, width=1)
+        if width >= 84 and height >= 10:
+            six_w = max(3, box_w // 2)
+            six_h = max(2, box_h // 2)
+            six_y1 = max(1, (height - six_h) // 2)
+            field_draw.rectangle((1, six_y1, six_w, six_y1 + six_h), outline=white, width=1)
+            field_draw.rectangle((right - six_w, six_y1, right - 1, six_y1 + six_h), outline=white, width=1)
+
+        player_size = 1 if height <= 12 else 2
+        players = (
+            (0.18, 0.38),
+            (0.26, 0.68),
+            (0.36, 0.28),
+            (0.45, 0.58),
+            (0.57, 0.35),
+            (0.66, 0.72),
+            (0.76, 0.45),
+            (0.86, 0.64),
+        )
+        for px_frac, py_frac in players:
+            px = max(2, min(right - 2, int(width * px_frac)))
+            py = max(2, min(bottom - 2, int(height * py_frac)))
+            if player_size == 1:
+                field_draw.point((px, py), fill=white)
+                field_draw.point((px, max(1, py - 1)), fill=white)
+            else:
+                field_draw.rectangle((px - 1, py - 1, px + 1, py + 1), fill=white)
+                field_draw.point((px, max(1, py - 2)), fill=white)
+        ball_x = max(3, min(right - 3, int(width * 0.31)))
+        ball_y = max(2, min(bottom - 2, int(height * 0.48)))
+        field_draw.point((ball_x, ball_y), fill=white)
+
+        image.paste(field, (x1, y1))
+
+    @staticmethod
+    def _load_worldcup_pitch_strip(size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = LOCAL_WORLDCUP_PITCH_STRIP_PATH
+        cache_key = (path, (width, height), "worldcup-pitch-strip-v3")
+        if cache_key in TEAM_LOGO_CACHE:
+            return TEAM_LOGO_CACHE[cache_key]
+        if not os.path.exists(path):
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+        try:
+            with Image.open(path) as source:
+                strip = source.convert("RGB")
+            if strip.size != (width, height):
+                strip = strip.resize((width, height), Image.NEAREST)
+            TEAM_LOGO_CACHE[cache_key] = strip
+            return strip
+        except Exception as exc:
+            logger.warning("Failed to load World Cup pitch strip %s: %s", path, exc)
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+
+    @staticmethod
+    def _load_worldcup_header_banner(size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = LOCAL_WORLDCUP_HEADER_BANNER_PATH
+        cache_key = (path, (width, height), "worldcup-header-banner-v1")
+        if cache_key in TEAM_LOGO_CACHE:
+            return TEAM_LOGO_CACHE[cache_key]
+        if not os.path.exists(path):
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+        try:
+            with Image.open(path) as source:
+                banner = source.convert("RGBA")
+            if banner.size != (width, height):
+                banner = banner.resize((width, height), Image.LANCZOS)
+            TEAM_LOGO_CACHE[cache_key] = banner
+            return banner
+        except Exception as exc:
+            logger.warning("Failed to load World Cup header banner %s: %s", path, exc)
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+
+    def _draw_worldcup_header_banner(self, image, x1, y1, x2, y2):
+        x1 = int(x1)
+        y1 = int(y1)
+        x2 = int(x2)
+        y2 = int(y2)
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        if width < 80 or height < 18:
+            return
+        banner = self._load_worldcup_header_banner((width, height))
+        if banner:
+            image.paste(banner, (x1, y1), banner)
+
+    @staticmethod
+    def _load_nba_court_strip(size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = LOCAL_NBA_COURT_STRIP_PATH
+        cache_key = (path, (width, height), "nba-court-strip-v2")
+        if cache_key in TEAM_LOGO_CACHE:
+            return TEAM_LOGO_CACHE[cache_key]
+        if not os.path.exists(path):
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+        try:
+            with Image.open(path) as source:
+                strip = source.convert("RGBA")
+            if strip.size != (width, height):
+                strip = strip.resize((width, height), Image.NEAREST)
+            TEAM_LOGO_CACHE[cache_key] = strip
+            return strip
+        except Exception as exc:
+            logger.warning("Failed to load NBA court strip %s: %s", path, exc)
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+
+    @staticmethod
+    def _worldcup_event_has_odds(event):
+        odds = (event or {}).get("odds") or {}
+        return bool(odds.get("team_a") and odds.get("team_b"))
+
+    @staticmethod
+    def _worldcup_score_or_vs(event):
+        if (event or {}).get("wins_a") is None or (event or {}).get("wins_b") is None:
+            return "VS"
+        return f"{event['wins_a']}-{event['wins_b']}"
+
+    @staticmethod
+    def _worldcup_group_points_value(event, side):
+        if not isinstance(event, Mapping):
+            return None
+        side = "a" if side == "a" else "b"
+        team_key = f"team_{side}"
+        keys = (
+            f"{team_key}_group_points",
+            f"{team_key}_standing_points",
+            f"group_points_{side}",
+            f"standing_points_{side}",
+        )
+        for key in keys:
+            value = event.get(key)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value:
+                return value
+        return None
+
+    @staticmethod
+    def _worldcup_group_points_label(event, side):
+        value = SportsDashboard._worldcup_group_points_value(event, side)
+        return f"PTS {value}" if value is not None else "PTS -"
+
+    @staticmethod
+    def _worldcup_team_points_meta(event, side, include_odds=False):
+        points = SportsDashboard._worldcup_group_points_label(event, side)
+        if not include_odds:
+            return points
+        odds_key = "team_a" if side == "a" else "team_b"
+        event_data = event if isinstance(event, Mapping) else {}
+        odds_value = (event_data.get("odds") or {}).get(odds_key)
+        if not odds_value:
+            return points
+        return f"{points}  {odds_value}"
 
     def _draw_worldcup_logo(self, image, draw, x, y, size):
         x = int(x)
@@ -2783,17 +4760,17 @@ class SportsDashboard(BasePlugin):
         text, font = self._fit_text(draw, "WC", max(10, size - 8), max(10, int(size * 0.42)), bold=True, min_size=8)
         self._draw_centered(draw, (x + size / 2, y + size / 2), text, font, COLORS["text"])
 
-    def _draw_worldcup_header_brand(self, image, draw, width):
-        logo_size = 36
-        gap = 14
+    def _draw_worldcup_header_brand(self, image, draw, width, compact=False):
+        logo_size = 28 if compact else 36
+        gap = 10 if compact else 14
         title = "2026 World Cup"
-        title_text, title_font = self._fit_text(draw, title, max(150, width - 150), 22, bold=True, min_size=16)
+        title_text, title_font = self._fit_text(draw, title, max(150, width - 150), 18 if compact else 22, bold=True, min_size=14)
         text_box = draw.textbbox((0, 0), title_text, font=title_font)
         title_w = text_box[2] - text_box[0]
         title_h = text_box[3] - text_box[1]
         total_w = logo_size + gap + title_w
         group_x = int((width - total_w) / 2)
-        center_y = 40
+        center_y = 29 if compact else 40
         logo_y = int(center_y - logo_size / 2)
         title_x = group_x + logo_size + gap - text_box[0]
         title_y = center_y - title_h / 2 - text_box[1]
@@ -2832,10 +4809,15 @@ class SportsDashboard(BasePlugin):
     def _worldcup_matchup_row_offset(row_height):
         return max(8, int((row_height - 21) / 2))
 
-    def _draw_worldcup_matchup(self, image, draw, event, x, y, max_width):
+    def _draw_worldcup_matchup(self, image, draw, event, x, y, max_width, row_height=None):
         max_width = max(1, int(max_width))
+        row_height = int(row_height) if row_height is not None else None
         odds = event.get("odds") or {}
         has_team_odds = bool(odds.get("team_a") and odds.get("team_b"))
+        compact_odds = has_team_odds and row_height is not None and row_height <= 38
+        line_y = int(y)
+        if row_height is not None:
+            line_y += 3 if compact_odds else self._worldcup_matchup_row_offset(row_height)
         if has_team_odds:
             center_width = 34
             side_gap = 8
@@ -2843,6 +4825,18 @@ class SportsDashboard(BasePlugin):
             side_width = max(44, int((max_width - center_width - side_gap * 2) / 2))
             left_country_x = int(center_x - center_width / 2 - side_gap - side_width)
             right_country_x = int(center_x + center_width / 2 + side_gap)
+            if compact_odds:
+                odds_bottom = int(y + row_height - 2)
+                odds_top = max(line_y + 16, odds_bottom - 11)
+                side_odds_size = 9
+                draw_odds_size = 8
+                vs_y = line_y + 7
+            else:
+                odds_top = line_y + 20
+                odds_bottom = line_y + 35
+                side_odds_size = 11
+                draw_odds_size = 10
+                vs_y = line_y + 8
             self._draw_worldcup_country(
                 image,
                 draw,
@@ -2850,14 +4844,25 @@ class SportsDashboard(BasePlugin):
                 event.get("team_a"),
                 event.get("team_a_tla"),
                 left_country_x,
-                y,
+                line_y,
                 side_width,
                 "left",
+                compact=compact_odds,
             )
-            self._draw_worldcup_odds_text(draw, (left_country_x, y + 20, left_country_x + side_width, y + 35), odds.get("team_a"), max_size=11)
-            self._draw_centered(draw, (center_x, y + 8), "VS", self._font(11, True), COLORS["text"])
+            self._draw_worldcup_odds_text(
+                draw,
+                (left_country_x, odds_top, left_country_x + side_width, odds_bottom),
+                odds.get("team_a"),
+                max_size=side_odds_size,
+            )
+            self._draw_centered(draw, (center_x, vs_y), "VS", self._font(10 if compact_odds else 11, True), COLORS["text"])
             if odds.get("draw"):
-                self._draw_worldcup_odds_text(draw, (center_x - 24, y + 20, center_x + 24, y + 35), f"X {odds.get('draw')}", max_size=10)
+                self._draw_worldcup_odds_text(
+                    draw,
+                    (center_x - 24, odds_top, center_x + 24, odds_bottom),
+                    f"X {odds.get('draw')}",
+                    max_size=draw_odds_size,
+                )
             self._draw_worldcup_country(
                 image,
                 draw,
@@ -2865,11 +4870,17 @@ class SportsDashboard(BasePlugin):
                 event.get("team_b"),
                 event.get("team_b_tla"),
                 right_country_x,
-                y,
+                line_y,
                 side_width,
                 "right",
+                compact=compact_odds,
             )
-            self._draw_worldcup_odds_text(draw, (right_country_x, y + 20, right_country_x + side_width, y + 35), odds.get("team_b"), max_size=11)
+            self._draw_worldcup_odds_text(
+                draw,
+                (right_country_x, odds_top, right_country_x + side_width, odds_bottom),
+                odds.get("team_b"),
+                max_size=side_odds_size,
+            )
             return
 
         center_x = x + max_width / 2
@@ -2881,11 +4892,11 @@ class SportsDashboard(BasePlugin):
             event.get("team_a"),
             event.get("team_a_tla"),
             x,
-            y,
+            line_y,
             side_width,
             "left",
         )
-        self._draw_centered(draw, (center_x, y + 11), "VS", self._font(12, True), COLORS["text"])
+        self._draw_centered(draw, (center_x, line_y + 11), "VS", self._font(12, True), COLORS["text"])
         self._draw_worldcup_country(
             image,
             draw,
@@ -2893,7 +4904,7 @@ class SportsDashboard(BasePlugin):
             event.get("team_b"),
             event.get("team_b_tla"),
             int(center_x + 21),
-            y,
+            line_y,
             side_width,
             "right",
         )
@@ -2915,15 +4926,24 @@ class SportsDashboard(BasePlugin):
         fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, COLORS["text"])
 
-    def _draw_worldcup_country(self, image, draw, flag_url, label, fallback_text, x, y, width, align):
-        flag_w, flag_h = 26, 19
-        text_gap = 5
+    def _draw_worldcup_points_text(self, draw, box, event, side, max_size=8):
+        text = self._worldcup_group_points_label(event, side)
+        left, top, right, bottom = [int(value) for value in box]
+        fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=6)
+        fill = COLORS["green"] if self._worldcup_group_points_value(event, side) is not None else COLORS["muted"]
+        self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, fill)
+
+    def _draw_worldcup_country(self, image, draw, flag_url, label, fallback_text, x, y, width, align, compact=False):
+        flag_w, flag_h = (22, 15) if compact else (26, 19)
+        text_gap = 4 if compact else 5
+        label_max_size = 14 if compact else 17
+        label_min_size = 7 if compact else 8
         label = str(label or fallback_text or "TBD")
-        row_h = max(flag_h, 20)
+        row_h = max(flag_h, 17 if compact else 20)
         flag_y = int(y + (row_h - flag_h) / 2)
         if align == "right":
             text_max = max(16, width - flag_w - text_gap)
-            label_text, label_font = self._fit_text(draw, label, text_max, 17, bold=True, min_size=8)
+            label_text, label_font = self._fit_text(draw, label, text_max, label_max_size, bold=True, min_size=label_min_size)
             text_w = self._text_width(draw, label_text, label_font)
             total_w = min(width, flag_w + text_gap + text_w)
             start_x = int(x + max(0, width - total_w))
@@ -2932,7 +4952,7 @@ class SportsDashboard(BasePlugin):
             self._draw_text_in_box(draw, (text_x, y, text_x + text_w, y + row_h), label_text, label_font, COLORS["text"], align="right")
         else:
             text_max = max(16, width - flag_w - text_gap)
-            label_text, label_font = self._fit_text(draw, label, text_max, 17, bold=True, min_size=8)
+            label_text, label_font = self._fit_text(draw, label, text_max, label_max_size, bold=True, min_size=label_min_size)
             text_w = self._text_width(draw, label_text, label_font)
             total_w = min(width, flag_w + text_gap + text_w)
             start_x = int(x)
@@ -2993,6 +5013,8 @@ class SportsDashboard(BasePlugin):
             prefix = "STALE CACHE"
         elif state == "API LIMIT":
             prefix = "API LIMIT"
+        elif state in {"BACKUP SCHEDULE", "FALLBACK"}:
+            prefix = "BACKUP VIEW"
         else:
             prefix = "API CACHE"
         return f"{prefix} {time_text}".strip()
@@ -3031,57 +5053,41 @@ class SportsDashboard(BasePlugin):
         return SportsDashboard._format_time_24h(event["start"])
 
     def _render_worldcup_fallback(self, dimensions, visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES):
-        image = Image.new("RGB", dimensions, COLORS["paper"])
-        draw = ImageDraw.Draw(image)
-        width, height = dimensions
-        visible_matches = max(1, min(7, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
-        self._draw_halftone(draw, (0, 0, width, height), COLORS["blue"], COLORS["paper"], 20, 1)
-        draw.rectangle((14, 12, width - 14, 68), fill=COLORS["panel_gold"], outline=COLORS["border"], width=2)
-        self._draw_worldcup_header_brand(image, draw, width)
-        subtitle, subtitle_font = self._fit_text(
-            draw,
-            "Website timed out - backup schedule view",
-            150,
-            10,
-            bold=True,
-            min_size=7,
-        )
-        self._draw_right_aligned(draw, (width - 24, 52), subtitle, subtitle_font, COLORS["text"])
-
+        visible_matches = max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
+        timezone_info = ZoneInfo(DEFAULT_TIMEZONE)
         labels = self._worldcup_local_time_labels()
-        row_top = 82
-        row_gap = 6
-        row_height = max(42, min(54, (height - row_top - 14 - row_gap * (visible_matches - 1)) // visible_matches))
+        fallback_events = []
         for index in range(visible_matches):
-            y = row_top + index * (row_height + row_gap)
-            fill = COLORS["panel"] if index % 2 == 0 else COLORS["panel_blue"]
-            shadow = COLORS["orange"] if index % 2 == 0 else COLORS["blue"]
-            draw.rectangle((20, y + 3, width - 18, y + row_height + 3), fill=shadow)
-            draw.rectangle((16, y, width - 22, y + row_height), fill=fill, outline=COLORS["border"], width=2)
-
-            regions = self._worldcup_row_regions(width)
-            group_x1, group_x2 = regions["group"]
-            draw.rectangle((group_x1, y + 8, group_x2, y + row_height - 8), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
-            draw.rectangle((group_x1, y + 8, group_x1 + 6, y + row_height - 8), fill=COLORS["blue"])
-            stage = "Opening Match" if index == 0 else "Group Stage"
-            stage_text, stage_font = self._fit_text(draw, stage, group_x2 - group_x1 - 14, 16, bold=True, min_size=10)
-            draw.text((group_x1 + 12, y + 11), stage_text, font=stage_font, fill=COLORS["text"])
-
-            date_x1, date_x2 = regions["date"]
-            time_x1, time_x2 = regions["time"]
-            date_text = f"06/{11 + index:02d}"
-            draw.rectangle((date_x1, y + 9, date_x2, y + row_height - 9), fill=COLORS["panel"], outline=COLORS["border"], width=1)
-            date_text, date_font = self._fit_text(draw, date_text, date_x2 - date_x1 - 8, 15, bold=True, min_size=10)
-            self._draw_centered_in_box(draw, (date_x1, y + 9, date_x2, y + row_height - 9), date_text, date_font, COLORS["text"])
-            time_text = labels[index]
-            draw.rectangle((time_x1, y + 9, time_x2, y + row_height - 9), fill=COLORS["panel"], outline=COLORS["border"], width=1)
-            time_text, time_font = self._fit_text(draw, time_text, time_x2 - time_x1 - 8, 15, bold=True, min_size=10)
-            self._draw_centered_in_box(draw, (time_x1, y + 9, time_x2, y + row_height - 9), time_text, time_font, COLORS["text"])
-
-            match_x1, match_x2 = regions["match"]
-            match_text, match_font = self._fit_text(draw, "Teams TBD", max(20, match_x2 - match_x1), 17, bold=True, min_size=9)
-            draw.text((match_x1, y + self._worldcup_matchup_row_offset(row_height) + 1), match_text, font=match_font, fill=COLORS["text"])
-        return image
+            hour, minute = [int(part) for part in labels[index].split(":")]
+            fallback_events.append(
+                {
+                    "start": datetime(2026, 6, 11 + index, hour, minute, tzinfo=timezone_info),
+                    "state": "SCHEDULED",
+                    "status": "Scheduled",
+                    "team_a": "Teams",
+                    "team_b": "TBD",
+                    "team_a_tla": "TBD",
+                    "team_b_tla": "TBD",
+                    "team_a_flag": "",
+                    "team_b_flag": "",
+                    "wins_a": None,
+                    "wins_b": None,
+                    "block": "Opening Match" if index == 0 else "Group Stage",
+                }
+            )
+        selected = self._select_worldcup_event_sections(
+            fallback_events,
+            datetime.now(timezone_info),
+            visible_matches,
+        )
+        return self._render_worldcup_api_panel(
+            dimensions,
+            selected,
+            "BACKUP SCHEDULE",
+            None,
+            visible_matches,
+            datetime.now(timezone_info),
+        )
 
     def _overlay_worldcup_local_times(self, image, left_width, timezone_info, visible_matches, content_box):
         if self._timezone_key(timezone_info) != DEFAULT_TIMEZONE:
@@ -3109,6 +5115,557 @@ class SportsDashboard(BasePlugin):
     @staticmethod
     def _worldcup_local_time_labels():
         return ["12:00", "19:00", "12:00", "18:00", "12:00", "15:00", "18:00"]
+
+    def _draw_nba_compact_panel(self, image, draw, bounds, selected, source_state, now):
+        x1, y1, x2, y2 = [int(value) for value in bounds]
+        panel_w = x2 - x1 + 1
+        draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])
+        self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["blue"], COLORS["panel"], 22, 1)
+        header_y = y1 + 8
+        self._draw_nba_logo(image, draw, x1 + 14, header_y - 2, 30, 34)
+        title, title_font = self._fit_text(draw, "NBA", 86, 22, bold=True, min_size=17)
+        draw.text((x1 + 52, header_y), title, font=title_font, fill=COLORS["text"])
+        source_label = self._source_label(source_state)
+        source_label, source_font = self._fit_text(draw, source_label, 96, 10, bold=True, min_size=7)
+        draw.text((x1 + 52, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
+        self._draw_nba_header_court_strip(image, x1 + 150, header_y + 2, x2 - 92, y1 + 47)
+
+        live = selected.get("live") or []
+        upcoming = selected.get("upcoming") or []
+        recent = selected.get("recent") or []
+        main_event = live[0] if live else (upcoming[0] if upcoming else selected.get("main"))
+        remaining_upcoming = [event for event in upcoming if event is not main_event][:4]
+        self._draw_status_pill(draw, x2 - 84, header_y + 4, "LIVE" if live else "NEXT", bool(live))
+        draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
+
+        content_y = y1 + 58
+        content_bottom = y2 - 8
+        split_x = x1 + max(254, min(292, int(panel_w * 0.51)))
+        left_x1 = x1 + 12
+        left_x2 = split_x - 10
+        right_x1 = split_x + 4
+        right_x2 = x2 - 12
+        draw.line((split_x - 3, content_y - 5, split_x - 3, content_bottom), fill=COLORS["border"], width=1)
+        draw.line((split_x - 1, content_y - 5, split_x - 1, content_bottom), fill=COLORS["line"], width=1)
+
+        self._draw_nba_compact_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, bool(live))
+        upcoming_rows = remaining_upcoming[:4]
+        recent_rows = recent[:1] if len(upcoming_rows) >= 4 else recent[:2]
+        upcoming_y = content_y
+        recent_y = upcoming_y + 21 + max(1, len(upcoming_rows)) * 31 + 8
+        if recent_rows and recent_y + 48 > content_bottom:
+            recent_y = max(upcoming_y + 54, content_bottom - 48)
+        self._draw_nba_compact_upcoming_rows(image, draw, right_x1, right_x2, upcoming_y, upcoming_rows)
+        self._draw_nba_compact_recent_rows(image, draw, right_x1, right_x2, recent_y, content_bottom, recent_rows)
+
+    def _draw_nba_header_court_strip(self, image, x1, y1, x2, y2):
+        x1 = int(x1)
+        y1 = int(y1)
+        x2 = int(x2)
+        y2 = int(y2)
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        if width < 40 or height < 10:
+            return
+        strip = self._load_nba_court_strip((width, height))
+        if strip:
+            if strip.mode != "RGBA":
+                strip = strip.convert("RGBA")
+            strip = self._tint_alpha_art(strip, COLORS["text"])
+            image.paste(strip, (x1, y1), strip)
+
+    @staticmethod
+    def _tint_alpha_art(source, color):
+        alpha = source.getchannel("A")
+        tinted = Image.new("RGBA", source.size, tuple(color) + (255,))
+        tinted.putalpha(alpha)
+        return tinted
+
+    def _draw_nba_compact_main_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
+        accent = COLORS["red"] if is_live else COLORS["blue"]
+        draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["amber"])
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
+        if not event:
+            draw.text((x1 + 18, y1 + 62), "No NBA schedule", font=self._font(16, True), fill=COLORS["text"])
+            return
+
+        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
+        tag_w = 104 if is_live else 88
+        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
+        draw.rectangle((x1 + 14, y1 + 10, x1 + 14 + tag_w, y1 + 28), fill=COLORS["red"] if is_live else COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 18, y1 + 11), tag_text, font=tag_font, fill=COLORS["text"])
+        date_text = event["start"].strftime("%m/%d")
+        date_text, date_font = self._fit_text(draw, date_text, 52, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
+
+        time_text = str(event.get("status_text") or ("LIVE" if is_live else self._format_time(event["start"])))
+        time_text = "IN PROGRESS" if is_live and not time_text else time_text
+        time_text, time_font = self._fit_text(draw, time_text, x2 - x1 - 42, 17, bold=True, min_size=10)
+        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), time_text, time_font, COLORS["text"])
+
+        center_x = (x1 + x2) / 2
+        logo_size = 34
+        left_area = (x1 + 20, center_x - 17)
+        right_area = (center_x + 17, x2 - 20)
+        logo_y = y1 + 66
+        left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
+        right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
+        has_series_score = event.get("series_wins_a") is not None and event.get("series_wins_b") is not None
+        score_text = self._nba_score_label(event)
+        score_text, score_font = self._fit_text(draw, score_text, 50, 13, bold=True, min_size=9)
+        self._draw_centered(draw, (center_x, logo_y + 19), score_text, score_font, COLORS["text"])
+
+        team_y = logo_y + 47
+        team_a, font_a = self._fit_text(draw, event["team_a"], left_area[1] - left_area[0], 18, bold=True, min_size=10)
+        team_b, font_b = self._fit_text(draw, event["team_b"], right_area[1] - right_area[0], 18, bold=True, min_size=10)
+        self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
+        self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
+        has_odds = self._nba_event_has_moneyline_odds(event)
+        if has_odds:
+            self._draw_nba_odds_pair(draw, left_area, right_area, team_y + 14, event, max_size=10)
+        if has_series_score:
+            self._draw_nba_main_series_score(draw, left_area, right_area, center_x, team_y + (32 if has_odds else 21), event)
+
+        block = str(event.get("block") or "NBA").upper()
+        block_text, block_font = self._fit_text(draw, block, x2 - x1 - 88, 9, bold=True, min_size=7)
+        draw.text((x1 + 15, y2 - 17), block_text, font=block_font, fill=COLORS["blue"])
+        period_label = self._nba_period_label(event, max_parts=2)
+        if period_label:
+            period_label, period_font = self._fit_text(draw, period_label, 102, 8, bold=True, min_size=7)
+            self._draw_right_aligned(draw, (x2 - 14, y2 - 17), period_label, period_font, COLORS["muted"])
+
+    def _draw_nba_main_series_score(self, draw, left_area, right_area, center_x, y, event):
+        left_score = str(event.get("series_wins_a"))
+        right_score = str(event.get("series_wins_b"))
+        score_font = self._font(18, True)
+        score_y1 = y - 3
+        score_y2 = y + 22
+        left_score, left_font = self._fit_text(draw, left_score, left_area[1] - left_area[0], 19, bold=True, min_size=12)
+        right_score, right_font = self._fit_text(draw, right_score, right_area[1] - right_area[0], 19, bold=True, min_size=12)
+        self._draw_centered_in_box(draw, (left_area[0], score_y1, left_area[1], score_y2), left_score, left_font, COLORS["red"])
+        self._draw_centered_in_box(draw, (center_x - 16, score_y1, center_x + 16, score_y2), "-", score_font, COLORS["muted"])
+        self._draw_centered_in_box(draw, (right_area[0], score_y1, right_area[1], score_y2), right_score, right_font, COLORS["red"])
+
+    def _draw_nba_compact_detail_card(self, image, draw, x1, y1, x2, y2, main_event, detail_event):
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 6, y2 - 1), fill=COLORS["blue"])
+        if not main_event:
+            draw.text((x1 + 14, y1 + 24), "No NBA detail", font=self._font(12, True), fill=COLORS["muted"])
+            return
+        date_text = main_event["start"].strftime("%m/%d")
+        status_text = str(main_event.get("status_text") or self._format_time(main_event["start"]))
+        date_text, date_font = self._fit_text(draw, date_text, 42, 10, bold=True, min_size=7)
+        status_text, status_font = self._fit_text(draw, status_text, 78, 10, bold=True, min_size=7)
+        draw.text((x1 + 12, y1 + 3), date_text, font=date_font, fill=COLORS["muted"])
+        self._draw_right_aligned(draw, (x2 - 10, y1 + 3), status_text, status_font, COLORS["muted"])
+        self._draw_nba_lineup_inline(image, draw, x1 + 10, x2 - 10, y1 + 17, main_event, self._nba_score_label(main_event), logo_size=13, team_size=10, score_w=42)
+
+        if detail_event:
+            self._draw_nba_detail_scoreline(draw, x1 + 12, x2 - 10, y1 + 33, detail_event, detail_event is not main_event)
+            period_label = self._nba_period_label(detail_event, max_parts=4)
+            if period_label:
+                period_label = f"\u5c0f\u8282 {period_label}"
+                period_label, period_font = self._fit_text(draw, period_label, x2 - x1 - 28, 7, bold=True, min_size=6)
+                self._draw_centered_in_box(draw, (x1 + 12, y2 - 15, x2 - 10, y2 - 3), period_label, period_font, COLORS["muted"])
+
+    def _draw_nba_detail_scoreline(self, draw, x1, x2, y, event, show_date=False):
+        has_score = event.get("wins_a") is not None and event.get("wins_b") is not None
+        left_team = str(event.get("team_a") or "TBD")
+        right_team = str(event.get("team_b") or "TBD")
+        if has_score:
+            left_text = f"{left_team} {event['wins_a']}"
+            right_text = f"{right_team} {event['wins_b']}"
+        else:
+            left_text = f"{left_team} -"
+            right_text = f"{right_team} -"
+        if show_date:
+            left_text = f"{event['start'].strftime('%m/%d')} {left_text}"
+        center_x = (x1 + x2) / 2
+        color = COLORS["red"] if has_score else COLORS["muted"]
+        left_text, left_font = self._fit_text(draw, left_text, max(44, center_x - x1 - 4), 11, bold=True, min_size=7)
+        right_text, right_font = self._fit_text(draw, right_text, max(44, x2 - center_x - 4), 11, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (x1, y - 1, center_x - 4, y + 14), left_text, left_font, color)
+        self._draw_text_in_box(draw, (center_x + 4, y - 1, x2, y + 14), right_text, right_font, color, align="right")
+
+    def _draw_nba_compact_upcoming_rows(self, image, draw, x1, x2, y, events):
+        self._draw_nba_mini_section_header(draw, x1, x2, y, "UPCOMING")
+        if not events:
+            draw.text((x1 + 10, y + 23), "No more NBA schedule", font=self._font(10, True), fill=COLORS["muted"])
+            return
+        row_y = y + 21
+        for index, event in enumerate(events[:4]):
+            self._draw_nba_mini_match_row(image, draw, x1, x2, row_y + index * 31, event, "VS", show_time=True)
+
+    def _draw_nba_compact_recent_rows(self, image, draw, x1, x2, y, bottom, events):
+        self._draw_nba_mini_section_header(draw, x1, x2, y, "RECENT")
+        if not events:
+            draw.text((x1 + 10, y + 23), "No recent NBA results", font=self._font(10, True), fill=COLORS["muted"])
+            return
+        row_y = y + 21
+        row_gap = 27
+        for index, event in enumerate(events[:2]):
+            self._draw_nba_mini_match_row(image, draw, x1, x2, row_y + index * row_gap, event, self._nba_score_label(event), show_date=True)
+
+    def _draw_nba_mini_section_header(self, draw, x1, x2, y, title):
+        draw.rectangle((x1, y + 2, x1 + 8, y + 17), fill=COLORS["blue"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
+        draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
+
+    def _draw_nba_mini_match_row(self, image, draw, x1, x2, y, event, center_text, show_time=False, show_date=False):
+        has_odds = center_text == "VS" and self._nba_event_has_moneyline_odds(event)
+        row_h = 31 if has_odds else 27
+        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=COLORS["blue"])
+        left_label = event["start"].strftime("%m/%d") if show_date or show_time else ""
+        matchup_x1 = x1 + 8
+        if left_label:
+            left_label, label_font = self._fit_text(draw, left_label, 36, 9, bold=True, min_size=7)
+            draw.text((x1 + 9, y + 1), left_label, font=label_font, fill=COLORS["muted"])
+            matchup_x1 = x1 + 45
+        matchup_x2 = x2 - 7
+        if show_time:
+            time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 58, 9, bold=True, min_size=7)
+            self._draw_centered(draw, ((matchup_x1 + matchup_x2) / 2, y + 6), time_text, time_font, COLORS["text"])
+        row_y = y + 11 if show_time else y + 8
+        self._draw_nba_lineup_inline(image, draw, matchup_x1, matchup_x2, row_y, event, center_text, logo_size=12, team_size=10, score_w=46)
+
+    def _draw_nba_lineup_inline(self, image, draw, x1, x2, y, event, center_text, logo_size=14, team_size=11, score_w=42):
+        center_x = (x1 + x2) / 2
+        left_logo_x = x1 + 2
+        right_logo_x = x2 - logo_size - 2
+        has_odds = center_text == "VS" and self._nba_event_has_moneyline_odds(event)
+        team_bottom = y + (10 if has_odds else 15)
+        team_font_size = min(team_size, 9) if has_odds else team_size
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
+        team_a_box = (left_logo_x + logo_size + 4, y - 1, center_x - score_w / 2 - 3, team_bottom)
+        team_b_box = (center_x + score_w / 2 + 3, y - 1, right_logo_x - 4, team_bottom)
+        team_a, font_a = self._fit_text(draw, event["team_a"], max(24, team_a_box[2] - team_a_box[0]), team_font_size, bold=True, min_size=7)
+        self._draw_text_in_box(draw, team_a_box, team_a, font_a, COLORS["text"])
+        center_text, center_font = self._fit_text(draw, center_text, score_w, team_font_size, bold=True, min_size=8)
+        self._draw_centered_in_box(draw, (center_x - score_w / 2, y - 1, center_x + score_w / 2, team_bottom), center_text, center_font, COLORS["text"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
+        team_b, font_b = self._fit_text(draw, event["team_b"], max(24, team_b_box[2] - team_b_box[0]), team_font_size, bold=True, min_size=7)
+        self._draw_text_in_box(draw, team_b_box, team_b, font_b, COLORS["text"], align="right")
+        if has_odds:
+            odds = event.get("odds") or {}
+            self._draw_nba_odds_text(draw, (team_a_box[0], y + 11, team_a_box[2], y + 21), odds.get("team_a"), max_size=8, align="left")
+            self._draw_nba_odds_text(draw, (team_b_box[0], y + 11, team_b_box[2], y + 21), odds.get("team_b"), max_size=8, align="right")
+
+    @staticmethod
+    def _nba_event_has_moneyline_odds(event):
+        odds = (event or {}).get("odds") or {}
+        return bool(odds.get("team_a") and odds.get("team_b"))
+
+    def _draw_nba_odds_pair(self, draw, left_area, right_area, y, event, max_size=9):
+        odds = event.get("odds") or {}
+        if not (odds.get("team_a") and odds.get("team_b")):
+            return
+        self._draw_nba_odds_text(draw, (left_area[0], y, left_area[1], y + 12), odds.get("team_a"), max_size=max_size)
+        self._draw_nba_odds_text(draw, (right_area[0], y, right_area[1], y + 12), odds.get("team_b"), max_size=max_size)
+
+    def _draw_nba_odds_text(self, draw, box, text, max_size=9, align="center"):
+        text = str(text or "").strip()
+        if not text:
+            return
+        left, top, right, bottom = [int(value) for value in box]
+        fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=6)
+        self._draw_text_in_box(draw, (left, top, right, bottom), fitted, font, COLORS["blue"], align=align)
+
+    def _draw_nba_compact_focus_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
+        accent = COLORS["red"] if is_live else COLORS["blue"]
+        compact_card = (y2 - y1) <= 84
+        draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["amber"])
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 7, y2 - 1), fill=accent)
+        if not event:
+            draw.text((x1 + 18, y1 + 36), "No NBA schedule", font=self._font(16, True), fill=COLORS["text"])
+            return
+        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
+        tag_w = 104 if is_live else 92
+        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
+        draw.rectangle((x1 + 14, y1 + 9, x1 + 14 + tag_w, y1 + 27), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 18, y1 + 10), tag_text, font=tag_font, fill=COLORS["text"])
+        date_time = f"{event['start'].strftime('%m/%d')} {event.get('status_text') or self._format_time(event['start'])}"
+        date_time, date_font = self._fit_text(draw, date_time, 112, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_time, date_font, COLORS["muted"])
+        score = self._nba_score_label(event)
+        core_y = y1 + 29 if compact_card else y1 + 34
+        logo_size = 22 if compact_card else 28
+        team_size = 12 if compact_card else 15
+        self._draw_compact_match_core(image, draw, x1 + 14, x2 - 14, core_y, event, score, logo_size=logo_size, team_size=team_size)
+        small_score = self._nba_period_label(event, max_parts=4)
+        if small_score and not compact_card:
+            small_score, small_font = self._fit_text(draw, small_score, x2 - x1 - 42, 8, bold=True, min_size=7)
+            self._draw_centered_in_box(draw, (x1 + 20, y2 - 31, x2 - 20, y2 - 19), small_score, small_font, COLORS["muted"])
+        if not compact_card:
+            block = str(event.get("block") or "NBA").upper()
+            block_text, block_font = self._fit_text(draw, block, x2 - x1 - 36, 9, bold=True, min_size=7)
+            draw.text((x1 + 16, y2 - 18), block_text, font=block_font, fill=COLORS["blue"])
+
+    def _draw_compact_match_core(self, image, draw, x1, x2, y, event, center_text, logo_size=24, team_size=13):
+        center_x = (x1 + x2) / 2
+        left_area = (x1, center_x - 40)
+        right_area = (center_x + 40, x2)
+        left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
+        right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
+        center_text, center_font = self._fit_text(draw, center_text, 72, 19 if center_text != "VS" else 16, bold=True, min_size=11)
+        self._draw_centered(draw, (center_x, y + logo_size / 2 + 1), center_text, center_font, COLORS["text"])
+        team_y = y + logo_size + 14
+        team_a, font_a = self._fit_text(draw, event["team_a"], left_area[1] - left_area[0], team_size, bold=True, min_size=9)
+        team_b, font_b = self._fit_text(draw, event["team_b"], right_area[1] - right_area[0], team_size, bold=True, min_size=9)
+        self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
+        self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
+
+    def _draw_compact_match_row(self, image, draw, x1, x2, y, event, center_text, show_time=False, show_date=False):
+        row_h = 31
+        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=COLORS["blue"])
+        left_label = event["start"].strftime("%m/%d") if (show_date or show_time) else ""
+        if left_label:
+            left_label, label_font = self._fit_text(draw, left_label, 38, 10, bold=True, min_size=7)
+            draw.text((x1 + 11, y + 2), left_label, font=label_font, fill=COLORS["muted"])
+        top_label = self._format_time(event["start"]) if show_time else ""
+        if top_label:
+            top_label, top_font = self._fit_text(draw, top_label, 62, 10, bold=True, min_size=7)
+            self._draw_centered(draw, ((x1 + x2) / 2, y + 7), top_label, top_font, COLORS["text"])
+        row_y = y + 13 if show_time else y + 7
+        self._draw_compact_row_teams(image, draw, x1 + 8, x2 - 8, row_y, event, center_text)
+
+    def _draw_compact_row_teams(self, image, draw, x1, x2, y, event, center_text):
+        center_x = (x1 + x2) / 2
+        logo_size = 14
+        left_logo_x = x1 + 2
+        right_logo_x = x2 - logo_size - 2
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
+        team_a, font_a = self._fit_text(draw, event["team_a"], max(24, center_x - left_logo_x - logo_size - 22), 11, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (left_logo_x + logo_size + 4, y - 1, center_x - 28, y + 16), team_a, font_a, COLORS["text"])
+        center_text, center_font = self._fit_text(draw, center_text, 54, 11, bold=True, min_size=8)
+        self._draw_centered_in_box(draw, (center_x - 27, y - 1, center_x + 27, y + 16), center_text, center_font, COLORS["text"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
+        team_b, font_b = self._fit_text(draw, event["team_b"], max(24, right_logo_x - center_x - 31), 11, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_logo_x - 4, y + 16), team_b, font_b, COLORS["text"], align="right")
+
+    def _draw_nba_recent_score_block(self, image, draw, x1, x2, y1, y2, event):
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 6, y2 - 1), fill=COLORS["red"])
+        date_text = event["start"].strftime("%m/%d")
+        date_text, date_font = self._fit_text(draw, date_text, 42, 11, bold=True, min_size=7)
+        draw.text((x1 + 12, y1 + 5), date_text, font=date_font, fill=COLORS["muted"])
+
+        team_text = f"{event['team_a']} vs {event['team_b']}"
+        score_label = f"\u603b\u5206 {self._nba_score_label(event)}"
+        score_label, score_font = self._fit_text(draw, score_label, 105, 15, bold=True, min_size=10)
+        score_box = draw.textbbox((0, 0), score_label, font=score_font)
+        score_w = score_box[2] - score_box[0]
+        score_left = x2 - score_w - 11
+        team_text, team_font = self._fit_text(draw, team_text, max(72, score_left - x1 - 67), 12, bold=True, min_size=8)
+        draw.text((x1 + 58, y1 + 4), team_text, font=team_font, fill=COLORS["text"])
+        draw.text((score_left, y1 + 2), score_label, font=score_font, fill=COLORS["red"])
+
+        period_label = self._nba_period_label(event, max_parts=4)
+        if period_label:
+            period_label = f"\u5c0f\u8282 {period_label}"
+        else:
+            period_label = "\u5c0f\u8282 -"
+        period_label, period_font = self._fit_text(draw, period_label, x2 - x1 - 24, 9, bold=True, min_size=7)
+        self._draw_centered_in_box(draw, (x1 + 12, y2 - 18, x2 - 12, y2 - 4), period_label, period_font, COLORS["muted"])
+
+    def _draw_nba_panel(self, image, top_y, panel_height, selected, source_state, now):
+        draw = ImageDraw.Draw(image)
+        width, _height = image.size
+        bottom_y = top_y + panel_height - 1
+        draw.rectangle((0, top_y, width - 1, bottom_y), fill=COLORS["panel"])
+        self._draw_halftone(draw, (0, top_y, width - 1, bottom_y), COLORS["blue"], COLORS["panel"], 22, 1)
+        draw.line((0, top_y, width, top_y), fill=COLORS["border"], width=2)
+
+        live = selected.get("live") or []
+        upcoming = selected.get("upcoming") or []
+        recent = selected.get("recent") or []
+        main_event = live[0] if live else (upcoming[0] if upcoming else selected.get("main"))
+        remaining_upcoming = [event for event in upcoming if event is not main_event][:2]
+
+        header_y = top_y + 8
+        self._draw_nba_logo(image, draw, 16, header_y - 2, 34, 38)
+        title_text, title_font = self._fit_text(draw, "NBA", 82, 25, bold=True, min_size=18)
+        draw.text((58, header_y + 2), title_text, font=title_font, fill=COLORS["text"])
+        source_label = self._source_label(source_state)
+        source_label, source_font = self._fit_text(draw, source_label, 116, 11, bold=True, min_size=8)
+        draw.text((58, header_y + 29), source_label, font=source_font, fill=COLORS["muted"])
+        self._draw_status_pill(draw, width - 92, header_y + 4, "LIVE" if live else "NEXT", bool(live))
+        draw.line((14, top_y + 48, width - 14, top_y + 48), fill=COLORS["border"], width=1)
+
+        content_y = top_y + 58
+        focus_x1 = 14
+        focus_x2 = min(width - 14, 366)
+        focus_h = max(164, panel_height - 72)
+        self._draw_nba_focus_card(
+            image,
+            draw,
+            focus_x1,
+            content_y,
+            focus_x2,
+            min(bottom_y - 10, content_y + focus_h),
+            main_event,
+            now,
+            bool(live),
+        )
+
+        right_x = focus_x2 + 16
+        right_w = width - right_x - 14
+        if right_w < 240:
+            return
+        self._draw_nba_upcoming_rows(image, draw, right_x, right_w, content_y, remaining_upcoming, now)
+        recent_y = min(bottom_y - 94, content_y + 128)
+        self._draw_nba_recent_rows(image, draw, right_x, right_w, recent_y, recent[:2])
+
+    def _draw_nba_logo(self, image, draw, x, y, width, height):
+        x = int(x)
+        y = int(y)
+        width = int(width)
+        height = int(height)
+        logo = self._load_local_logo(LOCAL_NBA_LOGO_PATH, (width, height), alpha_threshold=8)
+        if logo:
+            image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
+            return
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((x + 3, y + 3, x + width // 2, y + height - 3), fill=COLORS["blue"])
+        draw.rectangle((x + width // 2, y + 3, x + width - 3, y + height - 3), fill=COLORS["red"])
+        text, font = self._fit_text(draw, "NBA", width - 8, 12, bold=True, min_size=8)
+        self._draw_centered(draw, (x + width / 2, y + height / 2), text, font, COLORS["paper_text"])
+
+    def _draw_nba_focus_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
+        accent = COLORS["red"] if is_live else COLORS["blue"]
+        draw.rounded_rectangle((x1 + 4, y1 + 4, x2 + 4, y2 + 4), radius=6, fill=COLORS["amber"])
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
+        if not event:
+            draw.text((x1 + 22, y1 + 72), "No NBA schedule", font=self._font(20, True), fill=COLORS["text"])
+            return
+
+        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
+        tag_w = 114 if is_live else 94
+        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
+        draw.rectangle((x1 + 18, y1 + 12, x1 + 18 + tag_w, y1 + 31), fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        draw.text((x1 + 23, y1 + 13), tag_text, font=tag_font, fill=COLORS["text"])
+        date_text = event["start"].strftime("%m/%d")
+        status_text = str(event.get("status_text") or self._format_time(event["start"]))
+        right_label, right_font = self._fit_text(draw, f"{date_text} {status_text}", 120, 12, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (x2 - 14, y1 + 13), right_label, right_font, COLORS["muted"])
+
+        center_x = (x1 + x2) / 2
+        logo_size = 42
+        left_area = (x1 + 22, center_x - 54)
+        right_area = (center_x + 54, x2 - 22)
+        logo_y = y1 + 52
+        left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
+        right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
+
+        score = self._nba_score_label(event)
+        if score != "VS":
+            label, label_font = self._fit_text(draw, "TOTAL", 50, 9, bold=True, min_size=7)
+            self._draw_centered(draw, (center_x, y1 + 64), label, label_font, COLORS["muted"])
+        score_text, score_font = self._fit_text(draw, score, 82, 31 if score != "VS" else 25, bold=True, min_size=17)
+        self._draw_centered(draw, (center_x, y1 + 87), score_text, score_font, COLORS["text"])
+
+        team_y = y1 + 111
+        team_a, font_a = self._fit_text(draw, event["team_a"], left_area[1] - left_area[0], 20, bold=True, min_size=12)
+        team_b, font_b = self._fit_text(draw, event["team_b"], right_area[1] - right_area[0], 20, bold=True, min_size=12)
+        self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
+        self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
+
+        small_score = self._nba_period_label(event, max_parts=4)
+        if small_score:
+            box_y1 = y1 + 130
+            box_y2 = min(y2 - 34, box_y1 + 24)
+            draw.rounded_rectangle((x1 + 18, box_y1, x2 - 18, box_y2), radius=5, fill=COLORS["panel_blue"], outline=COLORS["border"], width=1)
+            label, label_font = self._fit_text(draw, "QTR", 28, 9, bold=True, min_size=7)
+            draw.text((x1 + 25, box_y1 + 6), label, font=label_font, fill=COLORS["blue"])
+            small_text, small_font = self._fit_text(draw, small_score, x2 - x1 - 88, 12, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (x1 + 58, box_y1, x2 - 24, box_y2), small_text, small_font, COLORS["text"])
+
+        block = str(event.get("block") or "NBA").upper()
+        block_text, block_font = self._fit_text(draw, block, x2 - x1 - 42, 11, bold=True, min_size=8)
+        draw.text((x1 + 18, y2 - 23), block_text, font=block_font, fill=COLORS["blue"])
+
+    def _draw_nba_upcoming_rows(self, image, draw, right_x, right_w, y, events, now):
+        self._draw_section_header(draw, right_x, right_w, y, "UPCOMING")
+        if not events:
+            draw.text((right_x + 18, y + 36), "No more NBA schedule", font=self._font(14, True), fill=COLORS["muted"])
+            return
+        row_y = y + 27
+        for index, event in enumerate(events[:2]):
+            self._draw_nba_match_row(image, draw, right_x, right_w, row_y + index * 46, event, now)
+
+    def _draw_nba_match_row(self, image, draw, right_x, right_w, y, event, now):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        draw.rounded_rectangle((row_x1, y, row_x2, y + 40), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + 39), fill=COLORS["blue"])
+        date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), 42, 11, bold=True, min_size=8)
+        draw.text((row_x1 + 12, y + 2), date_text, font=date_font, fill=COLORS["muted"])
+        time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 78, 12, bold=True, min_size=9)
+        self._draw_centered(draw, (right_x + right_w / 2, y + 8), time_text, time_font, COLORS["text"])
+        self._draw_nba_teams_inline(image, draw, row_x1, row_x2, y + 17, event, "VS")
+
+    def _draw_nba_recent_rows(self, image, draw, right_x, right_w, y, events):
+        self._draw_section_header(draw, right_x, right_w, y, "RECENT")
+        if not events:
+            draw.text((right_x + 18, y + 36), "No recent NBA results", font=self._font(14, True), fill=COLORS["muted"])
+            return
+        row_y = y + 25
+        for index, event in enumerate(events[:2]):
+            self._draw_nba_recent_row(image, draw, right_x, right_w, row_y + index * 38, event)
+
+    def _draw_nba_recent_row(self, image, draw, right_x, right_w, y, event):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        draw.line((row_x1, y - 5, row_x2, y - 5), fill=COLORS["line"], width=1)
+        draw.text((row_x1 + 2, y + 6), event["start"].strftime("%m/%d"), font=self._font(11, True), fill=COLORS["text"])
+        score = self._nba_score_label(event)
+        self._draw_nba_teams_inline(image, draw, row_x1 + 44, row_x2, y + 2, event, score)
+        small_score = self._nba_period_label(event, max_parts=2)
+        if small_score:
+            small_score, small_font = self._fit_text(draw, small_score, row_x2 - row_x1 - 92, 9, bold=True, min_size=7)
+            self._draw_centered_in_box(draw, (row_x1 + 68, y + 20, row_x2 - 68, y + 34), small_score, small_font, COLORS["muted"])
+
+    def _draw_nba_teams_inline(self, image, draw, x1, x2, y, event, center_text):
+        center_x = (x1 + x2) / 2
+        logo_size = 17
+        left_logo_x = x1 + 8
+        right_logo_x = x2 - 8 - logo_size
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
+        team_a, font_a = self._fit_text(draw, event["team_a"], max(28, center_x - left_logo_x - logo_size - 20), 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (left_logo_x + logo_size + 5, y - 1, center_x - 25, y + 18), team_a, font_a, COLORS["text"])
+        center_text, center_font = self._fit_text(draw, center_text, 54, 13, bold=True, min_size=9)
+        self._draw_centered_in_box(draw, (center_x - 27, y - 1, center_x + 27, y + 18), center_text, center_font, COLORS["text"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
+        team_b, font_b = self._fit_text(draw, event["team_b"], max(28, right_logo_x - center_x - 32), 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_logo_x - 5, y + 18), team_b, font_b, COLORS["text"], align="right")
+
+    @staticmethod
+    def _nba_score_label(event):
+        score = SportsDashboard._score_label(event or {})
+        return "VS" if score == "vs" else score
+
+    @staticmethod
+    def _nba_period_label(event, max_parts=4):
+        scores_a = list((event or {}).get("period_scores_a") or [])
+        scores_b = list((event or {}).get("period_scores_b") or [])
+        pair_count = min(len(scores_a), len(scores_b), max_parts)
+        if pair_count <= 0:
+            return ""
+        parts = []
+        for index in range(pair_count):
+            label = f"Q{index + 1}" if index < 4 else f"OT{index - 3}"
+            parts.append(f"{label} {scores_a[index]}-{scores_b[index]}")
+        return "  ".join(parts)
 
     def _draw_lpl_sidebar(self, image, left_width, selected, source_state, now):
         draw = ImageDraw.Draw(image)

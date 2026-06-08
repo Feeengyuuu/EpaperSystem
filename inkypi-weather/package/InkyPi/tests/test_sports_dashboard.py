@@ -39,8 +39,14 @@ from plugins.sports_dashboard.sports_dashboard import (
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
     LOCAL_LPL_LOGO_PATH,
+    LOCAL_NBA_COURT_STRIP_PATH,
+    LOCAL_NBA_LOGO_PATH,
+    LOCAL_WORLDCUP_HEADER_BANNER_PATH,
+    LOCAL_WORLDCUP_PITCH_STRIP_PATH,
     LOCAL_WORLDCUP_LOGO_PATH,
     SportsDashboard,
+    _ACTIVE_COLORS,
+    _safe_exception_text,
 )
 
 
@@ -66,6 +72,21 @@ class FakeDeviceConfig:
 
 def _plugin():
     return SportsDashboard({"id": "sports_dashboard"})
+
+
+def test_safe_exception_text_redacts_query_secrets():
+    text = _safe_exception_text(
+        RuntimeError(
+            "401 Client Error for url: "
+            "https://api.example.test/odds?apiKey=secret-key-123&token=secret-token&regions=us"
+        )
+    )
+
+    assert "secret-key-123" not in text
+    assert "secret-token" not in text
+    assert "apiKey=<redacted>" in text
+    assert "token=<redacted>" in text
+    assert "regions=us" in text
 
 
 def _sample_payload():
@@ -108,6 +129,7 @@ def _sample_payload():
 def _sample_worldcup_fixture():
     return {
         "fixture": {
+            "id": 10101,
             "date": "2026-06-12T00:00:00+00:00",
             "status": {"short": "NS", "long": "Not Started", "elapsed": None},
         },
@@ -118,6 +140,161 @@ def _sample_worldcup_fixture():
         },
         "goals": {"home": None, "away": None},
         "score": {"fulltime": {"home": None, "away": None}},
+    }
+
+
+def _sample_nba_scoreboard_payload():
+    return {
+        "events": [
+            {
+                "id": "401000001",
+                "date": "2026-06-05T00:30Z",
+                "season": {"slug": "post-season"},
+                "competitions": [
+                    {
+                        "id": "401000001",
+                        "date": "2026-06-05T00:30Z",
+                        "status": {
+                            "period": 4,
+                            "displayClock": "0.0",
+                            "type": {
+                                "state": "post",
+                                "completed": True,
+                                "description": "Final",
+                                "shortDetail": "Final",
+                            },
+                        },
+                        "series": {
+                            "competitors": [
+                                {"team": {"id": "18", "abbreviation": "NY"}, "wins": 2},
+                                {"team": {"id": "24", "abbreviation": "SA"}, "wins": 0},
+                            ]
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "score": "112",
+                                "team": {
+                                    "abbreviation": "NY",
+                                    "shortDisplayName": "Knicks",
+                                    "displayName": "New York Knicks",
+                                    "logo": "https://example.com/ny.png",
+                                },
+                                "linescores": [{"value": 28}, {"value": 27}, {"value": 31}, {"value": 26}],
+                            },
+                            {
+                                "homeAway": "away",
+                                "score": "106",
+                                "team": {
+                                    "abbreviation": "SA",
+                                    "shortDisplayName": "Spurs",
+                                    "displayName": "San Antonio Spurs",
+                                    "logo": "https://example.com/sa.png",
+                                },
+                                "linescores": [{"value": 25}, {"value": 29}, {"value": 24}, {"value": 28}],
+                            },
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "401000002",
+                "date": "2026-06-09T00:30Z",
+                "season": {"slug": "post-season"},
+                "competitions": [
+                    {
+                        "id": "401000002",
+                        "date": "2026-06-09T00:30Z",
+                        "status": {
+                            "period": 0,
+                            "displayClock": "",
+                            "type": {
+                                "state": "pre",
+                                "completed": False,
+                                "description": "Scheduled",
+                                "shortDetail": "Tue, Jun 9",
+                            },
+                        },
+                        "series": {
+                            "competitors": [
+                                {"team": {"id": "18", "abbreviation": "NY"}, "wins": 2},
+                                {"team": {"id": "24", "abbreviation": "SA"}, "wins": 0},
+                            ]
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "score": "0",
+                                "team": {
+                                    "abbreviation": "NY",
+                                    "shortDisplayName": "Knicks",
+                                    "displayName": "New York Knicks",
+                                    "logo": "https://example.com/ny.png",
+                                },
+                                "linescores": [],
+                            },
+                            {
+                                "homeAway": "away",
+                                "score": "0",
+                                "team": {
+                                    "abbreviation": "SA",
+                                    "shortDisplayName": "Spurs",
+                                    "displayName": "San Antonio Spurs",
+                                    "logo": "https://example.com/sa.png",
+                                },
+                                "linescores": [],
+                            },
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+
+
+def _sample_nba_odds_event():
+    return {
+        "id": "nba-ny-sa",
+        "sport_key": "basketball_nba",
+        "commence_time": "2026-06-09T00:30:00Z",
+        "home_team": "New York Knicks",
+        "away_team": "San Antonio Spurs",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "title": "DraftKings",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": "New York Knicks", "price": 1.75},
+                            {"name": "San Antonio Spurs", "price": 2.05},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _sample_nba_odds_api_io_event():
+    return {
+        "id": 88112233,
+        "home": "New York Knicks",
+        "away": "San Antonio Spurs",
+        "date": "2026-06-09T00:30:00Z",
+        "status": "pending",
+        "league": {"name": "USA - NBA", "slug": "usa-nba"},
+        "bookmakers": {
+            "Bet365": [
+                {
+                    "name": "ML",
+                    "odds": [
+                        {"home": "1.650", "away": "2.100"},
+                    ],
+                }
+            ]
+        },
     }
 
 
@@ -245,6 +422,314 @@ def test_select_lpl_events_returns_next_match_and_recent_result():
     assert selected["upcoming"][0]["team_b"] == "EDG"
     assert selected["recent"][0]["team_a"] == "TT"
     assert SportsDashboard._result_label(selected["recent"][0]) == "TT 2-3 LGD"
+
+
+def test_nba_espn_parser_uses_chinese_team_names_and_period_scores():
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+
+    assert events[0]["team_a"] == "\u9a6c\u523a"
+    assert events[0]["team_b"] == "\u5c3c\u514b\u65af"
+    assert events[0]["team_a_code"] == "SA"
+    assert events[0]["wins_a"] == 106
+    assert events[0]["wins_b"] == 112
+    assert events[0]["series_wins_a"] == 0
+    assert events[0]["series_wins_b"] == 2
+    assert events[0]["period_scores_a"] == [25, 29, 24, 28]
+    assert SportsDashboard._nba_period_label(events[0]) == "Q1 25-28  Q2 29-27  Q3 24-31  Q4 28-26"
+
+
+def test_select_nba_events_returns_next_upcoming_and_recent_result():
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+    now = datetime(2026, 6, 6, 12, 0, tzinfo=la)
+
+    selected = SportsDashboard._select_nba_events(events, now)
+
+    assert selected["main"]["state"] == "unstarted"
+    assert selected["upcoming"][0]["team_a"] == "\u9a6c\u523a"
+    assert selected["recent"][0]["team_b"] == "\u5c3c\u514b\u65af"
+    assert SportsDashboard._nba_score_label(selected["recent"][0]) == "106-112"
+
+
+def test_nba_scoreboard_live_cache_uses_short_refresh_window():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("nba_live_score_refresh")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    la = ZoneInfo("America/Los_Angeles")
+    settings = {"nbaCacheHours": "1", "nbaLiveRefreshSeconds": "180"}
+    now_utc = datetime.now(timezone.utc)
+    cache_key = plugin._nba_scoreboard_cache_key(settings, la, now_utc)
+
+    cached_scoreboard = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    cached_status = cached_scoreboard["events"][0]["competitions"][0]["status"]["type"]
+    cached_status["state"] = "in"
+    cached_status["completed"] = False
+    cached_status["description"] = "In Progress"
+    cached_status["shortDetail"] = "4th Quarter"
+
+    fresh_scoreboard = json.loads(json.dumps(cached_scoreboard))
+    fresh_competitors = fresh_scoreboard["events"][0]["competitions"][0]["competitors"]
+    fresh_competitors[0]["score"] = "118"
+    fresh_competitors[1]["score"] = "111"
+    fresh_payload = {
+        "version": "sports-dashboard-nba-scoreboard-v1",
+        "cache_key": cache_key,
+        "fetched_at": now_utc.isoformat(),
+        "range_start": "2026-06-01",
+        "range_end": "2026-06-30",
+        "scoreboard": fresh_scoreboard,
+    }
+    calls = []
+    plugin._fetch_nba_scoreboard_payload = lambda *args, **kwargs: calls.append(args) or fresh_payload
+    SportsDashboard._write_json_file(
+        tmp_path / "nba_scoreboard.json",
+        {
+            "version": "sports-dashboard-nba-scoreboard-v1",
+            "cache_key": cache_key,
+            "fetched_at": (now_utc - timedelta(seconds=240)).isoformat(),
+            "scoreboard": cached_scoreboard,
+        },
+    )
+
+    payload, source_state, _fetched_at = plugin._load_nba_scoreboard(settings, la)
+
+    assert calls
+    assert source_state == "ESPN LIVE"
+    assert payload["events"][0]["competitions"][0]["competitors"][0]["score"] == "118"
+
+
+def test_nba_live_state_tracks_active_scoreboard_event():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("nba_live_state")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    la = ZoneInfo("America/Los_Angeles")
+    scoreboard = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    status = scoreboard["events"][0]["competitions"][0]["status"]["type"]
+    status["state"] = "in"
+    status["completed"] = False
+    status["description"] = "In Progress"
+    events = SportsDashboard._parse_nba_espn_events(scoreboard, la)
+    selected = SportsDashboard._select_nba_events(events, events[0]["start"] + timedelta(hours=1))
+
+    plugin._write_nba_live_state(selected, events[0]["start"] + timedelta(hours=1), "ESPN LIVE")
+    state = json.loads((tmp_path / "nba_live_state.json").read_text(encoding="utf-8"))
+
+    assert state["version"] == "sports-dashboard-nba-live-v1"
+    assert state["has_live"] is True
+    assert state["team_a"] == "\u9a6c\u523a"
+    assert state["team_b"] == "\u5c3c\u514b\u65af"
+    assert state["live_until"] == (events[0]["start"] + timedelta(hours=4)).astimezone(timezone.utc).isoformat()
+
+
+def test_nba_odds_match_espn_event_with_chinese_team_names():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+
+    enriched = plugin._merge_nba_odds(events, [_sample_nba_odds_event()], la, {"nbaOddsBookmakers": "DraftKings"})
+    upcoming = next(event for event in enriched if event["state"] == "unstarted")
+
+    assert upcoming["team_a"] == "\u9a6c\u523a"
+    assert upcoming["team_b"] == "\u5c3c\u514b\u65af"
+    assert upcoming["odds"]["team_a"] == "2.05"
+    assert upcoming["odds"]["team_b"] == "1.75"
+    assert upcoming["odds"]["bookmaker"] == "DraftKings"
+
+
+def test_nba_odds_api_io_match_espn_event():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+
+    enriched = plugin._merge_nba_odds(
+        events,
+        [_sample_nba_odds_api_io_event()],
+        la,
+        {"nbaOddsProvider": "oddsapiio", "nbaOddsBookmakers": "Bet365"},
+    )
+    upcoming = next(event for event in enriched if event["state"] == "unstarted")
+
+    assert upcoming["odds"]["team_a"] == "2.10"
+    assert upcoming["odds"]["team_b"] == "1.65"
+    assert upcoming["odds"]["bookmaker"] == "Bet365"
+
+
+def test_nba_odds_uses_fresh_cache_without_network():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("nba_odds_fresh_cache")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._fetch_nba_odds_payload = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network called"))
+    settings = {"nbaOddsCacheHours": "6"}
+    cache_key = plugin._nba_odds_cache_key(settings, "secret")
+    odds_event = _sample_nba_odds_event()
+    SportsDashboard._write_json_file(
+        tmp_path / "nba_odds.json",
+        {
+            "version": "sports-dashboard-nba-odds-v1",
+            "cache_key": cache_key,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "odds_events": [odds_event],
+        },
+    )
+
+    odds_events, source_state, _fetched_at = plugin._load_nba_odds(settings, "secret")
+
+    assert odds_events == [odds_event]
+    assert source_state == "NBA ODDS CACHE"
+
+
+def test_nba_odds_api_io_payload_fetches_event_ids_then_multi_odds():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("nba_odds_api_io_fetch")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    calls = []
+
+    def fake_get_json(path, params, settings, now_utc):
+        calls.append((path, params))
+        if path == "/events":
+            return [{"id": 88112233}, {"id": 88112234}]
+        return [_sample_nba_odds_api_io_event()]
+
+    plugin._nba_odds_api_io_get_json = fake_get_json
+    settings = {"nbaOddsProvider": "oddsapiio", "nbaOddsBookmakers": "Bet365"}
+
+    payload = plugin._fetch_nba_odds_payload(settings, "secret", "cache", datetime.now(timezone.utc))
+
+    assert payload["provider"] == "oddsapiio"
+    assert payload["odds_events"] == [_sample_nba_odds_api_io_event()]
+    assert calls[0][0] == "/events"
+    assert calls[0][1]["sport"] == "basketball"
+    assert calls[0][1]["league"] == "usa-nba"
+    assert calls[1][0] == "/odds/multi"
+    assert calls[1][1]["eventIds"] == "88112233,88112234"
+
+
+def test_nba_mini_match_row_renders_moneyline_odds():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 60), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+    event = plugin._merge_nba_odds(events, [_sample_nba_odds_event()], la, {"nbaOddsBookmakers": "DraftKings"})[1]
+    odds_text = []
+    odds_sizes = []
+    original_draw_odds_text = plugin._draw_nba_odds_text
+
+    def record_odds_text(draw, box, text, max_size=9, align="center"):
+        if text:
+            odds_text.append(text)
+            odds_sizes.append(max_size)
+        return original_draw_odds_text(draw, box, text, max_size=max_size, align=align)
+
+    plugin._draw_nba_odds_text = record_odds_text
+
+    plugin._draw_nba_mini_match_row(image, draw, 4, 236, 4, event, "VS", show_time=True)
+
+    assert odds_text == ["2.05", "1.75"]
+    assert odds_sizes == [8, 8]
+
+
+def test_nba_focus_card_renders_larger_moneyline_odds():
+    plugin = _plugin()
+    image = Image.new("RGB", (300, 190), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+    event = dict(plugin._merge_nba_odds(events, [_sample_nba_odds_event()], la, {"nbaOddsBookmakers": "DraftKings"})[1])
+    event["team_a_logo"] = ""
+    event["team_b_logo"] = ""
+    odds_sizes = []
+    original_draw_odds_text = plugin._draw_nba_odds_text
+
+    def record_odds_text(draw, box, text, max_size=9, align="center"):
+        if text:
+            odds_sizes.append(max_size)
+        return original_draw_odds_text(draw, box, text, max_size=max_size, align=align)
+
+    plugin._draw_nba_odds_text = record_odds_text
+
+    plugin._draw_nba_compact_main_card(image, draw, 4, 4, 276, 172, event, datetime.now(la), False)
+
+    assert odds_sizes == [10, 10]
+
+
+def test_nba_header_court_strip_asset_renders_in_empty_header_space():
+    plugin = _plugin()
+    assert Path(LOCAL_NBA_COURT_STRIP_PATH).exists()
+    with Image.open(LOCAL_NBA_COURT_STRIP_PATH) as strip:
+        assert strip.size == (310, 38)
+        assert "A" in strip.getbands()
+        assert strip.getchannel("A").getextrema() == (0, 255)
+        bottom_alpha = strip.getchannel("A").crop((0, strip.height - 1, strip.width, strip.height))
+        assert sum(bottom_alpha.histogram()[1:]) > 250
+
+    def render_header(colors):
+        token = _ACTIVE_COLORS.set(colors)
+        try:
+            image = Image.new("RGB", (552, 268), COLORS["paper"])
+            draw = ImageDraw.Draw(image)
+            la = ZoneInfo("America/Los_Angeles")
+            events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+            now = datetime(2026, 6, 6, 12, 0, tzinfo=la)
+            selected = SportsDashboard._select_nba_events(events, now)
+            plugin._load_team_logo = lambda _logo_url, _size: None
+
+            plugin._draw_nba_compact_panel(image, draw, (0, 0, 551, 267), selected, "ESPN LIVE", now)
+            return image
+        finally:
+            _ACTIVE_COLORS.reset(token)
+
+    image = render_header(DAY_COLORS)
+    pixels = image.load()
+    dark_pixels = 0
+    background_pixels = 0
+    for y in range(10, 48):
+        for x in range(150, 460):
+            if pixels[x, y] == DAY_COLORS["text"]:
+                dark_pixels += 1
+            if pixels[x, y] not in (DAY_COLORS["text"], DAY_COLORS["panel"]):
+                background_pixels += 1
+    assert dark_pixels > 20
+    assert background_pixels > 200
+
+    image = render_header(DEEP_NIGHT_COLORS)
+    pixels = image.load()
+    light_pixels = 0
+    background_pixels = 0
+    for y in range(10, 48):
+        for x in range(150, 460):
+            if pixels[x, y] == DEEP_NIGHT_COLORS["text"]:
+                light_pixels += 1
+            if pixels[x, y] not in (DEEP_NIGHT_COLORS["text"], DEEP_NIGHT_COLORS["panel"]):
+                background_pixels += 1
+    assert light_pixels > 20
+    assert background_pixels > 200
+
+
+def test_worldcup_header_banner_asset_renders_in_empty_header_space():
+    plugin = _plugin()
+    assert Path(LOCAL_WORLDCUP_HEADER_BANNER_PATH).exists()
+    with Image.open(LOCAL_WORLDCUP_HEADER_BANNER_PATH) as banner:
+        assert banner.size == (233, 40)
+        assert "A" in banner.getbands()
+        assert banner.getchannel("A").getextrema() == (0, 255)
+
+    image = Image.new("RGB", (556, 208), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    plugin._draw_worldcup_header_banner(image, 229, 8, 461, 47)
+
+    pixels = image.load()
+    changed_pixels = 0
+    paper_pixels = 0
+    for y in range(8, 48):
+        for x in range(229, 462):
+            if pixels[x, y] != COLORS["paper"]:
+                changed_pixels += 1
+            else:
+                paper_pixels += 1
+    assert changed_pixels > 900
+    assert paper_pixels > 100
 
 
 def test_live_lpl_event_becomes_now_playing_without_duplicate_rows():
@@ -858,20 +1343,58 @@ def test_left_width_keeps_lpl_sidebar_usable():
     assert width == 556
 
 
-def test_worldcup_defaults_to_full_visible_match_list():
-    assert SportsDashboard._visible_worldcup_matches({}) == 7
-    assert SportsDashboard._worldcup_capture_width({}, 552, 7) == 552
+def test_worldcup_defaults_to_four_visible_matches():
+    assert SportsDashboard._visible_worldcup_matches({}) == 4
+    assert SportsDashboard._visible_worldcup_matches({"worldCupVisibleMatches": "7"}) == 4
+    assert SportsDashboard._worldcup_capture_width({}, 800, 4) == 800
     assert SportsDashboard._worldcup_local_time_labels()[0] == "12:00"
 
 
-def test_worldcup_fallback_renders_full_schedule_list():
+def test_worldcup_group_points_labels_reserve_future_slots():
+    assert SportsDashboard._worldcup_group_points_label({}, "a") == "PTS -"
+    assert SportsDashboard._worldcup_group_points_label({"team_a_group_points": 3}, "a") == "PTS 3"
+    assert SportsDashboard._worldcup_group_points_label({"group_points_b": "0"}, "b") == "PTS 0"
+    assert SportsDashboard._worldcup_team_points_meta({"team_b_standing_points": 4}, "b") == "PTS 4"
+
+
+def test_worldcup_live_state_file_tracks_active_match():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("worldcup_live_state")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 6, 11, 12, 15, tzinfo=timezone.utc)
+    event = {
+        "event_id": "wc-mex-rsa",
+        "start": datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc),
+        "state": "IN_PLAY",
+        "status": "In Play",
+        "elapsed": 15,
+        "team_a": "\u58a8\u897f\u54e5",
+        "team_b": "\u5357\u975e",
+        "wins_a": 1,
+        "wins_b": 0,
+        "block": "Group A",
+    }
+    selected = SportsDashboard._select_worldcup_event_sections([event], now, 4)
+
+    plugin._write_worldcup_live_state(selected, now, "FOOTBALL LIVE")
+    state = json.loads((tmp_path / "worldcup_live_state.json").read_text(encoding="utf-8"))
+
+    assert state["version"] == "sports-dashboard-worldcup-live-v1"
+    assert state["has_live"] is True
+    assert state["team_a"] == "\u58a8\u897f\u54e5"
+    assert state["team_b"] == "\u5357\u975e"
+    assert state["score"] == "1-0"
+    assert state["live_until"] == "2026-06-11T15:00:00+00:00"
+
+
+def test_worldcup_fallback_renders_compact_four_match_list():
     plugin = _plugin()
 
-    image = plugin._render_worldcup_fallback((552, 480), 7)
+    image = plugin._render_worldcup_fallback((800, 208), 4)
 
-    assert image.size == (552, 480)
-    assert image.getpixel((18, 84)) != COLORS["paper"]
-    assert image.getpixel((30, 450)) != COLORS["paper"]
+    assert image.size == (800, 208)
+    assert image.getpixel((18, 64)) != COLORS["paper"]
+    assert image.getpixel((30, 190)) != COLORS["paper"]
 
 
 def test_worldcup_api_parser_converts_fixture_to_local_match_row():
@@ -884,6 +1407,118 @@ def test_worldcup_api_parser_converts_fixture_to_local_match_row():
     assert events[0]["team_b"] == "MEX"
     assert events[0]["state"] == "NS"
     assert events[0]["block"] == "Group Stage - 1"
+    assert events[0]["fixture_id"] == "10101"
+
+
+def test_worldcup_lineups_attach_formation_summary_from_api_cache():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("worldcup_lineups")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_worldcup_api_events([_sample_worldcup_fixture()], la)[0]
+    selected = {"main": event}
+
+    def fake_api(path, params, api_key, settings, now_utc):
+        assert path == "/fixtures/lineups"
+        assert params == {"fixture": "10101"}
+        return {
+            "response": [
+                {"team": {"name": "United States"}, "formation": "4-3-3"},
+                {"team": {"name": "Mexico"}, "formation": "4-2-3-1"},
+            ]
+        }
+
+    plugin._api_football_get_json = fake_api
+    plugin._attach_worldcup_lineup_summary(
+        selected,
+        {"worldCupLineupCacheSeconds": "600"},
+        "secret",
+        la,
+        datetime(2026, 6, 11, 16, 30, tzinfo=la),
+    )
+
+    assert event["formation_a"] == "4-3-3"
+    assert event["formation_b"] == "4-2-3-1"
+    assert event["lineups_ready"] is True
+
+
+def test_worldcup_formation_pair_includes_team_labels():
+    pair = SportsDashboard._worldcup_formation_pair(
+        {
+            "team_a": "\u58a8\u897f\u54e5",
+            "team_b": "\u5357\u975e",
+            "formation_a": "4-3-3",
+            "formation_b": "4-2-3-1",
+        }
+    )
+
+    assert pair == ("\u58a8\u897f\u54e5 4-3-3", "4-2-3-1 \u5357\u975e")
+
+    pair = SportsDashboard._worldcup_formation_pair(
+        {
+            "team_a": "United States",
+            "team_a_tla": "USA",
+            "team_b": "Netherlands",
+            "team_b_tla": "NED",
+            "formation_a": "4-3-3",
+            "formation_b": "3-4-2-1",
+        }
+    )
+
+    assert pair == ("USA 4-3-3", "3-4-2-1 NED")
+
+
+def test_worldcup_tactics_strip_draws_pitch_when_lineups_missing():
+    plugin = _plugin()
+    assert Path(LOCAL_WORLDCUP_PITCH_STRIP_PATH).exists()
+    with Image.open(LOCAL_WORLDCUP_PITCH_STRIP_PATH) as pitch_strip:
+        assert pitch_strip.size == (248, 13)
+        pitch_strip = pitch_strip.convert("RGB")
+        left_goal_pixels = 0
+        right_goal_pixels = 0
+        for y in range(pitch_strip.height):
+            for x in range(0, 32):
+                if pitch_strip.getpixel((x, y)) == (255, 255, 255):
+                    left_goal_pixels += 1
+            for x in range(pitch_strip.width - 32, pitch_strip.width):
+                if pitch_strip.getpixel((x, y)) == (255, 255, 255):
+                    right_goal_pixels += 1
+        assert left_goal_pixels > 0
+        assert right_goal_pixels > 0
+
+    image = Image.new("RGB", (340, 18), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_worldcup_tactics_strip(image, draw, 0, 339, 0, 17, {})
+
+    pixels = image.load()
+    white_pixels = 0
+    dark_pixels = 0
+    left_edge_pixels = 0
+    right_edge_pixels = 0
+    for y in range(2, 16):
+        for x in range(8, 332):
+            if pixels[x, y] == (255, 255, 255):
+                white_pixels += 1
+            if pixels[x, y] == (0, 0, 0):
+                dark_pixels += 1
+    for y in range(2, 16):
+        for x in range(8, 42):
+            if pixels[x, y] == (255, 255, 255):
+                left_edge_pixels += 1
+        for x in range(298, 332):
+            if pixels[x, y] == (255, 255, 255):
+                right_edge_pixels += 1
+    assert white_pixels > 10
+    assert dark_pixels > 10
+    assert left_edge_pixels > 0
+    assert right_edge_pixels > 0
+    assert pixels[337, 8] in {(0, 0, 0), (255, 255, 255)}
+    bottom_line_pixels = 0
+    for x in range(8, 338):
+        if pixels[x, 17] == (255, 255, 255):
+            bottom_line_pixels += 1
+    assert bottom_line_pixels > 120
 
 
 def test_worldcup_api_key_can_come_from_device_env_alias():
@@ -905,6 +1540,21 @@ def test_worldcup_odds_key_can_come_from_device_env_alias():
     device_config.env["THE_ODDS_API_KEY"] = "secret"
 
     assert SportsDashboard._the_odds_api_key({}, device_config) == "secret"
+
+
+def test_nba_odds_provider_auto_detects_odds_api_io_env_key():
+    device_config = FakeDeviceConfig()
+    device_config.env["ODDS_API_IO_KEY"] = "secret"
+
+    assert SportsDashboard._nba_odds_provider({}, device_config) == "oddsapiio"
+    assert SportsDashboard._nba_odds_api_key({}, device_config, "oddsapiio") == "secret"
+
+
+def test_nba_the_odds_api_provider_does_not_reuse_odds_api_io_key():
+    device_config = FakeDeviceConfig()
+    device_config.env["ODDS_API_IO_KEY"] = "secret"
+
+    assert SportsDashboard._nba_odds_api_key({}, device_config, "theoddsapi") == ""
 
 
 def test_football_data_parser_uses_chinese_country_names_and_flat_flags():
@@ -980,6 +1630,43 @@ def test_football_data_force_refresh_bypasses_fresh_cache():
     assert source_state == "FOOTBALL LIVE"
 
 
+def test_football_data_live_cache_uses_short_refresh_window():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("football_data_live_cache")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    settings = {"footballDataKey": "secret", "footballDataCacheHours": "6", "worldCupLiveRefreshSeconds": "180"}
+    la = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime.now(timezone.utc)
+    cache_key = plugin._football_data_cache_key(settings, "secret", la)
+    cached_match = {**_sample_football_data_match(), "status": "IN_PLAY"}
+    fresh_match = {
+        **cached_match,
+        "score": {"fullTime": {"home": 1, "away": 0}},
+    }
+    calls = []
+    plugin._fetch_football_data_payload = lambda *args, **kwargs: calls.append(args) or {
+        "version": "sports-dashboard-football-data-v1",
+        "cache_key": cache_key,
+        "fetched_at": now_utc.isoformat(),
+        "matches": [fresh_match],
+    }
+    SportsDashboard._write_json_file(
+        tmp_path / "football_data_worldcup.json",
+        {
+            "version": "sports-dashboard-football-data-v1",
+            "cache_key": cache_key,
+            "fetched_at": (now_utc - timedelta(seconds=240)).isoformat(),
+            "matches": [cached_match],
+        },
+    )
+
+    matches, source_state, _fetched_at = plugin._load_football_data_matches(settings, "secret", la)
+
+    assert calls
+    assert matches == [fresh_match]
+    assert source_state == "FOOTBALL LIVE"
+
+
 def test_worldcup_api_uses_fresh_cache_without_network():
     plugin = _plugin()
     tmp_path = _sports_dashboard_tmp("fresh_cache")
@@ -1003,6 +1690,50 @@ def test_worldcup_api_uses_fresh_cache_without_network():
 
     assert fixtures == [fixture]
     assert source_state == "API CACHE"
+
+
+def test_worldcup_api_live_cache_uses_short_refresh_window():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("worldcup_api_live_cache")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    settings = {"apiSportsKey": "secret", "worldCupApiCacheHours": "6", "worldCupLiveRefreshSeconds": "180"}
+    la = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime.now(timezone.utc)
+    cache_key = plugin._worldcup_api_cache_key(settings, "secret", la)
+    cached_fixture = {
+        **_sample_worldcup_fixture(),
+        "fixture": {
+            **_sample_worldcup_fixture()["fixture"],
+            "status": {"short": "1H", "long": "First Half", "elapsed": 22},
+        },
+        "goals": {"home": 0, "away": 0},
+    }
+    fresh_fixture = {
+        **cached_fixture,
+        "goals": {"home": 1, "away": 0},
+    }
+    calls = []
+    plugin._fetch_worldcup_api_payload = lambda *args, **kwargs: calls.append(args) or {
+        "version": "sports-dashboard-api-v1",
+        "cache_key": cache_key,
+        "fetched_at": now_utc.isoformat(),
+        "fixtures": [fresh_fixture],
+    }
+    SportsDashboard._write_json_file(
+        tmp_path / "worldcup_api.json",
+        {
+            "version": "sports-dashboard-api-v1",
+            "cache_key": cache_key,
+            "fetched_at": (now_utc - timedelta(seconds=240)).isoformat(),
+            "fixtures": [cached_fixture],
+        },
+    )
+
+    fixtures, source_state, _fetched_at = plugin._load_worldcup_api_fixtures(settings, "secret", la)
+
+    assert calls
+    assert fixtures == [fresh_fixture]
+    assert source_state == "API LIVE"
 
 
 def test_worldcup_api_daily_limit_uses_stale_cache_without_network():
@@ -1178,7 +1909,7 @@ def test_worldcup_odds_api_io_payload_fetches_event_ids_then_multi_odds():
     assert calls[1][1]["eventIds"] == "66456904,66456906"
 
 
-def test_generate_image_builds_narrow_worldcup_panel_and_lpl_sidebar():
+def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     plugin._try_worldcup_football_data_panel = lambda *args, **kwargs: None
@@ -1188,19 +1919,28 @@ def test_generate_image_builds_narrow_worldcup_panel_and_lpl_sidebar():
         SportsDashboard._parse_lpl_events(_sample_payload(), la),
         "LIVE DATA",
     )
+    plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._load_nba_events = lambda settings, timezone_info: (
+        SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
+        "ESPN LIVE",
+    )
+    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._write_nba_live_state = lambda selected, now, source_state: None
+    plugin._write_lpl_live_state = lambda selected, now, source_state: None
     plugin._load_team_logo = lambda logo_url, size: None
 
     image = plugin.generate_image(
-        {"worldCupLeftWidth": "540", "overlayWorldCupLocalTimes": "false"},
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
         FakeDeviceConfig(),
     )
 
     assert image.size == (800, 480)
     assert image.mode == "RGB"
-    assert image.getpixel((10, 10)) == (1, 2, 3)
-    assert image.getpixel((10, 360)) == (1, 2, 3)
-    assert image.getpixel((10, 479)) != (1, 2, 3)
-    assert image.getpixel((560, 10)) != (1, 2, 3)
+    assert image.getpixel((10, 10)) != (1, 2, 3)
+    assert image.getpixel((10, 190)) != (1, 2, 3)
+    assert image.getpixel((10, 230)) != (1, 2, 3)
+    assert image.getpixel((360, 230)) != (1, 2, 3)
+    assert image.getpixel((560, 230)) != (1, 2, 3)
 
 
 def test_worldcup_panel_preserves_screenshot_aspect_ratio():
@@ -1247,12 +1987,84 @@ def test_worldcup_api_panel_renders_flat_flag_matchup():
     assert time_range[0] < date_range[0]
     assert SportsDashboard._worldcup_matchup_row_offset(54) == 16
     assert image.getpixel((28, 92)) != COLORS["paper"]
-    assert image.getpixel((146, 110)) == (0, 92, 185)
-    assert image.getpixel((214, 100)) != COLORS["panel_gold"]
-    assert image.getpixel((290, 100)) != COLORS["panel_gold"]
+    assert image.getpixel((65, 123)) == (0, 92, 185)
     assert image.getpixel((214, 124)) != COLORS["paper"]
-    assert image.getpixel((date_range[0] + 2, 92)) != COLORS["paper"]
-    assert image.getpixel((time_range[0] + 2, 92)) != COLORS["paper"]
+
+
+def test_worldcup_compact_api_odds_stay_inside_each_match_row():
+    plugin = _plugin()
+    plugin._load_flag_image = lambda _url, size: Image.new("RGBA", size, (0, 92, 185, 255))
+    la = ZoneInfo("America/Los_Angeles")
+    base_event = plugin._merge_worldcup_odds(
+        SportsDashboard._parse_football_data_events([_sample_football_data_match()], la),
+        [_sample_worldcup_odds_event()],
+        la,
+        {},
+    )[0]
+    events = []
+    for index, (team_a, team_b) in enumerate(
+        [
+            ("\u58a8\u897f\u54e5", "\u5357\u975e"),
+            ("\u97e9\u56fd", "\u6377\u514b"),
+            ("\u52a0\u62ff\u5927", "\u6ce2\u9ed1"),
+            ("\u7f8e\u56fd", "\u5df4\u62c9\u572d"),
+        ]
+    ):
+        event = dict(base_event)
+        event["team_a"] = team_a
+        event["team_b"] = team_b
+        event["team_a_tla"] = team_a[:2]
+        event["team_b_tla"] = team_b[:2]
+        event["start"] = base_event["start"] + timedelta(days=index)
+        event["odds"] = dict(base_event["odds"])
+        events.append(event)
+
+    odds_boxes = []
+    original_draw_odds_text = plugin._draw_worldcup_odds_text
+
+    def record_odds_text(draw, box, text, max_size=11):
+        if text:
+            odds_boxes.append(tuple(int(value) for value in box))
+        return original_draw_odds_text(draw, box, text, max_size=max_size)
+
+    plugin._draw_worldcup_odds_text = record_odds_text
+    image = plugin._render_worldcup_api_panel(
+        (552, 208),
+        events,
+        "FOOTBALL LIVE",
+        datetime.now(timezone.utc).isoformat(),
+        4,
+        datetime(2026, 6, 10, 12, 0, tzinfo=la),
+    )
+
+    assert image.size == (552, 208)
+    assert len(odds_boxes) == 12
+    for box in odds_boxes:
+        assert 0 <= box[0] < box[2] <= 552
+        assert 57 <= box[1] < box[3] <= 208
+
+
+def test_worldcup_compact_row_uses_larger_flags():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = plugin._merge_worldcup_odds(
+        SportsDashboard._parse_football_data_events([_sample_football_data_match()], la),
+        [_sample_worldcup_odds_event()],
+        la,
+        {},
+    )[0]
+    image = Image.new("RGB", (260, 40), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    flag_sizes = []
+
+    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback):
+        flag_sizes.append((width, height))
+
+    plugin._draw_worldcup_flag = record_flag
+
+    plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
+
+    assert flag_sizes == [(18, 12), (18, 12)]
 
 
 def test_forced_night_theme_uses_deep_night_palette_without_leaking():
@@ -1267,27 +2079,39 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
         "LIVE DATA",
     )
     plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._write_nba_live_state = lambda selected, now, source_state: None
+    plugin._write_lpl_live_state = lambda selected, now, source_state: None
+    plugin._load_nba_events = lambda _settings, timezone_info: (
+        SportsDashboard._fallback_nba_events(timezone_info),
+        "ESPN CACHE",
+    )
     plugin._load_team_logo = lambda _logo_url, _size: None
 
     image = plugin.generate_image(
-        {"sportsDashboardTheme": "night", "localTimezone": "UTC", "worldCupLeftWidth": "540"},
+        {"sportsDashboardTheme": "night", "localTimezone": "UTC", "worldCupTopHeight": "208"},
         FakeDeviceConfig(timezone="UTC"),
     )
 
-    assert max(image.getpixel((560, 8))) < 90
-    assert image.getpixel((560, 8)) != DAY_COLORS["paper"]
+    assert max(image.getpixel((620, 120))) < 90
+    assert image.getpixel((620, 120)) != DAY_COLORS["paper"]
     assert DEEP_NIGHT_COLORS["paper"] != DAY_COLORS["paper"]
     assert COLORS["paper"] == DAY_COLORS["paper"]
 
 
 def test_uploaded_brand_logos_are_loaded_from_local_assets():
     lpl_logo = SportsDashboard._load_local_logo(LOCAL_LPL_LOGO_PATH, (74, 38), alpha_threshold=8)
+    nba_logo = SportsDashboard._load_local_logo(LOCAL_NBA_LOGO_PATH, (34, 38), alpha_threshold=8)
     worldcup_logo = SportsDashboard._load_local_logo(LOCAL_WORLDCUP_LOGO_PATH, (36, 36), alpha_threshold=16)
 
     assert lpl_logo is not None
     assert lpl_logo.size[0] <= 74
     assert lpl_logo.size[1] <= 38
     assert lpl_logo.getchannel("A").getextrema()[0] == 0
+    assert nba_logo is not None
+    assert nba_logo.size[0] <= 34
+    assert nba_logo.size[1] <= 38
+    assert nba_logo.getchannel("A").getextrema()[0] == 0
     assert worldcup_logo is not None
     assert worldcup_logo.size[0] <= 36
     assert worldcup_logo.size[1] <= 36
