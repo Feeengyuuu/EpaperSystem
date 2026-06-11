@@ -105,6 +105,14 @@ COVER_HEADERS = {
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     "Referer": "https://liveradar.pages.dev/",
 }
+BILIBILI_ROOM_INFO_URL = "https://api.live.bilibili.com/room/v1/Room/get_info"
+BILIBILI_UID_STATUS_URL = "https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids"
+BILIBILI_DIRECT_BATCH_LIMIT = 50
+BILIBILI_API_HEADERS = {
+    "User-Agent": COVER_HEADERS["User-Agent"],
+    "Accept": "application/json",
+    "Referer": "https://live.bilibili.com/",
+}
 
 PLATFORMS = {
     "douyu": {"label": "DOUYU", "short": "DY"},
@@ -125,6 +133,8 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
+HEADER_ART_FILE = "liveradar_header_art.png"
+HEADER_ART_SIZE = (270, 64)
 TITLE_LOGO_SCALE = 1.4
 SANS_FONT_PATHS = {
     "normal": (
@@ -269,7 +279,7 @@ class LiveRadar(BasePlugin):
                                 "status": self._default_status(room, is_error=True),
                             }
                         )
-        return all_results
+        return self._repair_bilibili_results(session, rooms, all_results, timeout, fetch_avatars)
 
     def _post_status_chunk(self, session, rooms, api_url, timeout, fetch_avatars):
         payload = {
@@ -295,6 +305,153 @@ class LiveRadar(BasePlugin):
         if data.get("status"):
             return [data]
         raise RuntimeError("LiveRadar API returned no status results.")
+
+    def _repair_bilibili_results(self, session, rooms, results, timeout, fetch_avatars):
+        fallback_rooms = []
+        for index, room in enumerate(rooms):
+            result = results[index] if index < len(results) and isinstance(results[index], dict) else {}
+            if self._needs_bilibili_direct_fallback(room, result):
+                fallback_rooms.append((index, room))
+        if not fallback_rooms:
+            return results
+
+        try:
+            direct_results = self._fetch_bilibili_statuses_direct(
+                session,
+                [room for _index, room in fallback_rooms],
+                timeout,
+                fetch_avatars,
+            )
+        except Exception as exc:
+            logger.warning("LiveRadar direct Bilibili fallback failed: %s", exc)
+            return results
+
+        repaired = list(results)
+        for (index, _room), direct_result in zip(fallback_rooms, direct_results):
+            if not isinstance(direct_result, dict) or not direct_result.get("ok"):
+                continue
+            while len(repaired) <= index:
+                repaired.append({})
+            repaired[index] = direct_result
+        return repaired
+
+    @staticmethod
+    def _needs_bilibili_direct_fallback(room, result):
+        if str(room.get("platform") or "").lower() != "bilibili":
+            return False
+        if not isinstance(result, dict) or not result:
+            return True
+        status = result.get("status") if isinstance(result.get("status"), dict) else {}
+        return result.get("ok") is False or bool(status.get("isError")) or not status
+
+    def _fetch_bilibili_statuses_direct(self, session, rooms, timeout, fetch_avatars):
+        room_info_by_id = {}
+        uids = []
+        for room in rooms:
+            room_id = str(room.get("id") or "")
+            try:
+                payload = self._bilibili_get_json(
+                    session,
+                    BILIBILI_ROOM_INFO_URL,
+                    timeout,
+                    params={"room_id": room_id},
+                )
+                data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                if not data:
+                    raise RuntimeError("Bilibili room info returned no data.")
+                room_info_by_id[room_id] = data
+                uid = str(data.get("uid") or "")
+                if uid:
+                    uids.append(uid)
+            except Exception as exc:
+                logger.warning("LiveRadar direct Bilibili room info failed for %s: %s", room_id, exc)
+
+        status_by_uid = {}
+        for start in range(0, len(uids), BILIBILI_DIRECT_BATCH_LIMIT):
+            chunk = uids[start : start + BILIBILI_DIRECT_BATCH_LIMIT]
+            try:
+                payload = self._bilibili_get_json(
+                    session,
+                    BILIBILI_UID_STATUS_URL,
+                    timeout,
+                    params=[("uids[]", uid) for uid in chunk],
+                )
+                data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                status_by_uid.update({str(uid): status for uid, status in data.items() if isinstance(status, dict)})
+            except Exception as exc:
+                logger.warning("LiveRadar direct Bilibili UID status failed: %s", exc)
+
+        results = []
+        for room in rooms:
+            room_id = str(room.get("id") or "")
+            room_info = room_info_by_id.get(room_id)
+            if not room_info:
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": "bilibili",
+                        "id": room_id,
+                        "error": "bilibili_direct_room_info_failed",
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+                continue
+            uid = str(room_info.get("uid") or "")
+            status = self._bilibili_status_from_payload(room, room_info, status_by_uid.get(uid), fetch_avatars)
+            results.append(
+                {
+                    "ok": True,
+                    "platform": "bilibili",
+                    "id": room_id,
+                    "status": status,
+                    "cache": "BILIBILI_DIRECT",
+                    "error": None,
+                }
+            )
+        return results
+
+    def _bilibili_get_json(self, session, url, timeout, params=None):
+        response = session.get(url, params=params, timeout=timeout, headers=BILIBILI_API_HEADERS)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("Bilibili API returned invalid JSON.")
+        if payload.get("code") not in (0, "0"):
+            raise RuntimeError(f"Bilibili API returned code {payload.get('code')}: {payload.get('message') or payload.get('msg')}")
+        return payload
+
+    def _bilibili_status_from_payload(self, room, room_info, uid_status, fetch_avatars):
+        uid_status = uid_status if isinstance(uid_status, dict) else {}
+        live_status = self._safe_int(uid_status.get("live_status", room_info.get("live_status")), 0)
+        cover = (
+            uid_status.get("keyframe")
+            or uid_status.get("cover_from_user")
+            or room_info.get("keyframe")
+            or room_info.get("user_cover")
+            or ""
+        )
+        return {
+            "isLive": live_status == 1,
+            "isReplay": live_status == 2,
+            "title": uid_status.get("title") or room_info.get("title") or "",
+            "owner": uid_status.get("uname") or room.get("label") or room.get("id") or "",
+            "cover": cover,
+            "avatar": uid_status.get("face") if fetch_avatars else "",
+            "heatValue": self._safe_int(uid_status.get("online", room_info.get("online")), 0),
+            "isError": False,
+            "startTime": self._bilibili_start_time(uid_status.get("live_time") or room_info.get("live_time")),
+            "platform": "bilibili",
+            "id": str(room.get("id") or ""),
+        }
+
+    @staticmethod
+    def _bilibili_start_time(value):
+        if value in (None, "", 0, "0", "0000-00-00 00:00:00"):
+            return None
+        try:
+            return int(float(value)) * 1000
+        except (TypeError, ValueError):
+            return None
 
     def _merge_results(self, rooms, results):
         cards = []
@@ -353,7 +510,7 @@ class LiveRadar(BasePlugin):
             title_x = margin + logo_size + 10
         draw.text((title_x, 13), "LiveRadar", fill=theme["ink"], font=title_font)
         draw.text((title_x + 3, 51), "STREAM CARD WALL", fill=theme["muted"], font=sub_font)
-        self._draw_status_totals(
+        status_left = self._draw_status_totals(
             draw,
             width - margin,
             16,
@@ -366,6 +523,24 @@ class LiveRadar(BasePlugin):
             theme,
         )
         header_rule_y = max(73, logo_y + logo_size + 6)
+        title_right = max(
+            title_x + draw.textlength("LiveRadar", font=title_font),
+            title_x + 3 + draw.textlength("STREAM CARD WALL", font=sub_font),
+        )
+        art_left_bound = int(title_right) + 10
+        art_right_bound = int(status_left) - 4
+        art_bottom_bound = header_rule_y + 1
+        art_top_bound = art_bottom_bound - HEADER_ART_SIZE[1]
+        art_available_w = max(0, art_right_bound - art_left_bound)
+        art_available_h = max(0, art_bottom_bound - art_top_bound)
+        art_w = min(HEADER_ART_SIZE[0], art_available_w)
+        art_h = min(HEADER_ART_SIZE[1], art_available_h)
+        art_x = art_left_bound + max(0, int((art_available_w - art_w) / 2))
+        art_y = art_top_bound + max(0, int((art_available_h - art_h) / 2))
+        self._draw_header_art(
+            image,
+            (art_x, art_y, art_x + art_w, art_y + art_h),
+        )
         draw.line((margin, header_rule_y, width - margin, header_rule_y), fill=theme["line"], width=2)
 
         max_live = max(1, min(3, int(layout.get("max_live_cards") or 3)))
@@ -1168,14 +1343,17 @@ class LiveRadar(BasePlugin):
 
     def _draw_status_totals(self, draw, right_x, y, stats, font, theme):
         x = right_x
+        left_edge = right_x
         for label, count, kind in reversed(stats):
             text = f"{label} {count}"
             text_w = draw.textlength(text, font=font)
             w = text_w + 18
             x -= w
+            left_edge = min(left_edge, x)
             fill, ink, line = self._status_total_palette(kind, theme)
             self._draw_pill(draw, (x, y, x + w, y + 25), text, font, fill=fill, ink=ink, outline=line)
             x -= 7
+        return left_edge
 
     def _live_overflow_text(self, cards, draw, font, max_width):
         names = [self._overflow_live_name(card) for card in cards]
@@ -1220,6 +1398,29 @@ class LiveRadar(BasePlugin):
             logger.warning("LiveRadar title logo unavailable: %s", exc)
             return False
 
+    def _draw_header_art(self, image, box):
+        left, top, right, bottom = [int(round(value)) for value in box]
+        target_w = max(0, right - left)
+        target_h = max(0, bottom - top)
+        if target_w < 80 or target_h < 24:
+            return False
+
+        source = self._load_header_art()
+        if source is None:
+            return False
+
+        try:
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=self._resampling_filter())
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - art.width) / 2)
+            paste_y = int((target_h - art.height) / 2)
+            layer.alpha_composite(art, (paste_x, paste_y))
+            image.paste(layer.convert("RGB"), (left, top), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning("LiveRadar header art unavailable: %s", exc)
+            return False
+
     @staticmethod
     def _title_logo_layout(height):
         base_size = max(34, int(height * 0.09))
@@ -1255,6 +1456,18 @@ class LiveRadar(BasePlugin):
             return Image.open(path).convert("RGBA")
         except Exception as exc:
             logger.warning("Could not load LiveRadar title logo %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_header_art():
+        path = os.path.join(PLUGIN_DIR, HEADER_ART_FILE)
+        if not os.path.isfile(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load LiveRadar header art %s: %s", path, exc)
             return None
 
     def _draw_pill(self, draw, box, text, font, fill, ink, outline):

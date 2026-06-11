@@ -272,6 +272,49 @@ END:VCALENDAR
     }]
 
 
+def test_fetch_personal_calendar_can_read_file_url(tmp_path, monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    ics_path = tmp_path / "nintendo_direct.ics"
+    ics_path.write_text(
+        """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART:20260609T140000Z
+DTEND:20260609T145000Z
+SUMMARY:Nintendo Direct + Treehouse Live
+END:VEVENT
+END:VCALENDAR
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.requests.get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network called")),
+    )
+    events = plugin._fetch_holiday_events(
+        {
+            "url": ics_path.as_uri(),
+            "label": "NIN",
+            "color": (230, 0, 18),
+            "kind": "personal",
+        },
+        date(2026, 6, 8),
+        tz,
+    )
+
+    assert events == [{
+        "date": date(2026, 6, 9),
+        "title": "Nintendo Direct + Treehouse Live",
+        "label": "NIN",
+        "color": (230, 0, 18),
+        "kind": "personal",
+        "time": "7a",
+        "starts_at": tz.localize(datetime(2026, 6, 9, 7, 0)),
+    }]
+
+
 def test_extract_personal_monthly_rrule_expands_current_month():
     plugin = SimpleCalendar({"id": "simple_calendar"})
     tz = pytz.timezone("America/Los_Angeles")

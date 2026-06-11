@@ -22,7 +22,7 @@ from utils.theme_utils import get_theme_context
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "lol_info"
-STYLE_VERSION = "lol-info-v7-owned-latest-skin-pool"
+STYLE_VERSION = "lol-info-v12-full-champion-list-names"
 DEFAULT_GAME_NAME = "Hide on bush"
 DEFAULT_TAG_LINE = "KR1"
 DEFAULT_PLATFORM = "kr"
@@ -184,13 +184,16 @@ class LoLInfo(BasePlugin):
             summary = self._match_summary(detail, puuid, champions)
             if summary:
                 matches.append(summary)
+        local_matches = self._local_match_summaries(settings, account, champions)
+        matches = self._merge_match_summaries(local_matches, matches, recent_limit)
+        match_source_counts = self._match_source_counts(matches)
 
         mastery_summaries = [self._mastery_summary(item, champions) for item in mastery]
         featured_champions = self._featured_champions(mastery_summaries, matches)
         skin_art_pool = self._skin_art_pool(featured_champions, champions, settings)
         ranked = self._best_rank(leagues)
         return {
-            "source": "Riot Games API",
+            "source": self._match_source_label(match_source_counts),
             "api_calls": calls,
             "region": region.upper(),
             "platform": platform.upper(),
@@ -200,9 +203,11 @@ class LoLInfo(BasePlugin):
             "leagues": leagues,
             "mastery": mastery_summaries,
             "matches": matches,
+            "match_source_counts": match_source_counts,
             "featured_champions": featured_champions,
             "skin_art_pool": skin_art_pool,
             "summary": self._recent_summary(matches),
+            "match_history_status": self._match_history_status(matches, summoner),
             "challenge_points": self._challenge_points(challenge_data),
             "active_game": active_game,
             "champions": champions,
@@ -239,6 +244,199 @@ class LoLInfo(BasePlugin):
             "damage": int(player.get("totalDamageDealtToChampions") or 0),
             "kp": (int(player.get("kills") or 0) + int(player.get("assists") or 0)) / team_kills * 100 if team_kills else 0,
         }
+
+    def _merge_match_summaries(self, preferred, fallback, recent_limit):
+        combined = {}
+        for row in list(preferred or []) + list(fallback or []):
+            if not isinstance(row, dict):
+                continue
+            key = row.get("match_id") or "|".join(
+                [
+                    str(row.get("champion_key") or row.get("champion_name") or ""),
+                    str(row.get("timestamp") or ""),
+                    str(row.get("kills") or 0),
+                    str(row.get("deaths") or 0),
+                    str(row.get("assists") or 0),
+                ]
+            )
+            if key and key not in combined:
+                combined[key] = row
+        return sorted(
+            combined.values(),
+            key=lambda row: int(row.get("timestamp") or 0),
+            reverse=True,
+        )[:recent_limit]
+
+    def _local_match_summaries(self, settings, account, champions):
+        payload = self._local_match_history_payload(settings)
+        if not isinstance(payload, dict):
+            return []
+        matches = payload.get("matches")
+        if isinstance(matches, list):
+            return [row for row in (self._normalize_local_match(item, champions) for item in matches) if row]
+        games = payload.get("games")
+        if isinstance(games, dict):
+            games = games.get("games")
+        if isinstance(games, dict):
+            games = games.get("games")
+        if not isinstance(games, list):
+            return []
+        puuid_candidates = {
+            str((account or {}).get("puuid") or "").strip(),
+            str(payload.get("puuid") or "").strip(),
+            str(payload.get("subject") or "").strip(),
+        }
+        puuid_candidates = {value for value in puuid_candidates if value}
+        return [
+            summary
+            for summary in (self._lcu_game_summary(game, puuid_candidates, champions) for game in games)
+            if summary
+        ]
+
+    def _local_match_history_payload(self, settings):
+        for path in self._local_match_history_paths(settings):
+            try:
+                if path.exists():
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(payload, dict):
+                        return payload
+            except Exception as exc:
+                logger.warning("LoL local match history unavailable from %s: %s", path, exc)
+        return {}
+
+    def _local_match_history_paths(self, settings):
+        candidates = []
+        for value in (
+            settings.get("localMatchHistoryPath"),
+            settings.get("matchHistoryPath"),
+            os.getenv("INKYPI_LOL_INFO_MATCH_HISTORY"),
+        ):
+            if value:
+                candidates.append(Path(str(value)))
+        candidates.extend([
+            self._cache_dir() / "league_client_matches.json",
+            Path(self.get_plugin_dir("league_client_matches.json")),
+        ])
+        result = []
+        seen = set()
+        for path in candidates:
+            try:
+                resolved = str(path.expanduser())
+            except Exception:
+                resolved = str(path)
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                result.append(Path(resolved))
+        return result
+
+    def _local_match_history_signature(self, settings):
+        parts = []
+        for path in self._local_match_history_paths(settings):
+            try:
+                stat = path.stat()
+            except Exception:
+                continue
+            parts.append(f"{path}:{int(stat.st_mtime)}:{stat.st_size}")
+        return "|".join(parts)
+
+    def _lcu_game_summary(self, game, puuid_candidates, champions):
+        if not isinstance(game, dict):
+            return None
+        participants = game.get("participants") or []
+        identities = game.get("participantIdentities") or []
+        identity_by_id = {}
+        for identity in identities:
+            if not isinstance(identity, dict):
+                continue
+            participant_id = identity.get("participantId")
+            if participant_id is not None:
+                identity_by_id[int(participant_id)] = identity.get("player") or {}
+        player = None
+        for participant in participants:
+            if not isinstance(participant, dict):
+                continue
+            identity = identity_by_id.get(int(participant.get("participantId") or 0), {})
+            possible_ids = {
+                str(participant.get("puuid") or "").strip(),
+                str(identity.get("puuid") or "").strip(),
+                str(identity.get("currentAccountId") or "").strip(),
+            }
+            if puuid_candidates and possible_ids & puuid_candidates:
+                player = dict(participant)
+                player["_identity"] = identity
+                break
+        if player is None and len(participants) == 1:
+            player = dict(participants[0])
+            player["_identity"] = identity_by_id.get(int(player.get("participantId") or 0), {})
+        if player is None:
+            return None
+        stats = player.get("stats") or {}
+        timeline = player.get("timeline") or {}
+        champion = self._champion_info(player.get("championId"), player.get("championName"), champions)
+        team_id = player.get("teamId")
+        team_kills = 0
+        for participant in participants:
+            if participant.get("teamId") == team_id:
+                team_stats = participant.get("stats") or {}
+                team_kills += int(team_stats.get("kills") or participant.get("kills") or 0)
+        duration = self._safe_int(game.get("gameDuration")) or 0
+        timestamp = self._safe_int(game.get("gameEndTimestamp"))
+        if timestamp is None:
+            creation = self._safe_int(game.get("gameCreation")) or self._safe_int(game.get("gameStartTimestamp")) or 0
+            timestamp = creation + max(0, duration) * 1000 if creation else 0
+        kills = int(stats.get("kills") or player.get("kills") or 0)
+        deaths = int(stats.get("deaths") or player.get("deaths") or 0)
+        assists = int(stats.get("assists") or player.get("assists") or 0)
+        return {
+            "match_id": str(game.get("gameId") or game.get("matchId") or ""),
+            "champion_id": player.get("championId"),
+            "champion_key": champion.get("id"),
+            "champion_name": champion.get("name") or player.get("championName") or "未知英雄",
+            "champion_icon": champion.get("icon_url") or "",
+            "kills": kills,
+            "deaths": deaths,
+            "assists": assists,
+            "win": self._win_bool(stats.get("win") if "win" in stats else player.get("win")),
+            "lane": stats.get("teamPosition") or timeline.get("lane") or timeline.get("role") or "-",
+            "queue": self._queue_label(game.get("queueId")),
+            "timestamp": int(timestamp or 0),
+            "duration": max(1, int(duration or 0)),
+            "cs": int(stats.get("totalMinionsKilled") or 0) + int(stats.get("neutralMinionsKilled") or 0),
+            "gold": int(stats.get("goldEarned") or 0),
+            "damage": int(stats.get("totalDamageDealtToChampions") or 0),
+            "kp": self._kill_participation(kills, assists, team_kills),
+            "source": "local_lcu",
+        }
+
+    def _normalize_local_match(self, row, champions):
+        if not isinstance(row, dict):
+            return None
+        if row.get("participants") or row.get("participantIdentities"):
+            return self._lcu_game_summary(row, set(), champions)
+        champion = self._champion_info(row.get("champion_id") or row.get("championId"), row.get("champion_key") or row.get("championName"), champions)
+        try:
+            return {
+                "match_id": str(row.get("match_id") or row.get("matchId") or row.get("gameId") or ""),
+                "champion_id": row.get("champion_id") or row.get("championId"),
+                "champion_key": row.get("champion_key") or champion.get("id"),
+                "champion_name": row.get("champion_name") or row.get("championName") or champion.get("name") or "未知英雄",
+                "champion_icon": row.get("champion_icon") or champion.get("icon_url") or "",
+                "kills": int(row.get("kills") or 0),
+                "deaths": int(row.get("deaths") or 0),
+                "assists": int(row.get("assists") or 0),
+                "win": self._win_bool(row.get("win")),
+                "lane": row.get("lane") or "-",
+                "queue": row.get("queue") or self._queue_label(row.get("queueId")),
+                "timestamp": int(row.get("timestamp") or row.get("gameEndTimestamp") or row.get("gameCreation") or 0),
+                "duration": max(1, int(row.get("duration") or row.get("gameDuration") or 0)),
+                "cs": int(row.get("cs") or 0),
+                "gold": int(row.get("gold") or row.get("goldEarned") or 0),
+                "damage": int(row.get("damage") or row.get("totalDamageDealtToChampions") or 0),
+                "kp": float(row.get("kp") or 0),
+                "source": row.get("source") or "local_lcu",
+            }
+        except Exception:
+            return None
 
     def _mastery_summary(self, item, champions):
         champion = self._champion_info(item.get("championId"), None, champions)
@@ -582,6 +780,23 @@ class LoLInfo(BasePlugin):
         except Exception:
             return None
 
+    @staticmethod
+    def _win_bool(value):
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        if text in {"win", "won", "victory", "true", "1", "yes"}:
+            return True
+        if text in {"fail", "loss", "lost", "defeat", "false", "0", "no"}:
+            return False
+        return bool(value)
+
+    @staticmethod
+    def _kill_participation(kills, assists, team_kills):
+        if not team_kills:
+            return 0
+        return max(0, min(100, (int(kills or 0) + int(assists or 0)) / int(team_kills) * 100))
+
     def _dragon_champion_detail(self, champion_key, version):
         safe_key = "".join(ch for ch in str(champion_key or "") if ch.isalnum())
         safe_version = "".join(ch for ch in str(version or "") if ch.isalnum() or ch in ".-_")
@@ -612,6 +827,15 @@ class LoLInfo(BasePlugin):
             return by_id[str(champion_name).lower()]
         return {"id": str(champion_name or champion_id or ""), "name": str(champion_name or "未知英雄"), "icon_url": ""}
 
+    def _champion_full_name_from_match(self, match, champions):
+        match = match or {}
+        champion = self._champion_info(match.get("champion_id"), match.get("champion_key") or match.get("champion_name"), champions or {})
+        name = str(champion.get("name") or match.get("champion_name") or "未知英雄").strip()
+        title = str(champion.get("title") or "").strip()
+        if title and name and title not in name and name not in title:
+            return f"{name} {title}"
+        return name or str(match.get("champion_name") or "未知英雄")
+
     def _best_rank(self, leagues):
         if not leagues:
             return {}
@@ -636,6 +860,41 @@ class LoLInfo(BasePlugin):
             "winrate": wins / games * 100 if games else 0,
             "cs_per_min": sum(row["cs"] for row in matches) / minutes if minutes else 0,
             "kp": sum(row["kp"] for row in matches) / games if games else 0,
+        }
+
+    def _match_source_counts(self, matches):
+        local = sum(1 for row in matches or [] if row.get("source") == "local_lcu")
+        total = len(matches or [])
+        return {
+            "local_lcu": local,
+            "match_v5": max(0, total - local),
+            "total": total,
+        }
+
+    @staticmethod
+    def _match_source_label(source_counts):
+        counts = source_counts or {}
+        if int(counts.get("local_lcu") or 0) > 0:
+            return "Riot API + 本机记录"
+        return "Riot Games API"
+
+    def _match_history_status(self, matches, summoner):
+        latest_match_ts = 0
+        for row in matches or []:
+            try:
+                latest_match_ts = max(latest_match_ts, int(row.get("timestamp") or 0))
+            except Exception:
+                continue
+        try:
+            summoner_revision_ts = int((summoner or {}).get("revisionDate") or 0)
+        except Exception:
+            summoner_revision_ts = 0
+        stale_gap_ms = 14 * 24 * 60 * 60 * 1000
+        stale = bool(latest_match_ts and summoner_revision_ts and summoner_revision_ts - latest_match_ts > stale_gap_ms)
+        return {
+            "stale": stale,
+            "latest_match_ts": latest_match_ts,
+            "summoner_revision_ts": summoner_revision_ts,
         }
 
     def _challenge_points(self, challenge_data):
@@ -692,26 +951,60 @@ class LoLInfo(BasePlugin):
         x0, y0, x1, y1 = box
         account = data.get("account") or {}
         summoner = data.get("summoner") or {}
-        name = f"{account.get('gameName') or DEFAULT_GAME_NAME} #{account.get('tagLine') or DEFAULT_TAG_LINE}"
-        self._paste_asset_logo(image, LOL_LOGO_FILE, (x0 + 13, y0 + 8, x0 + 95, y0 + 48))
-        self._text(draw, (x0 + 104, y0 + 15), "LoLInfo", fonts["section"], cyan)
-        self._text(draw, (x0 + 104, y0 + 39), "账号档案", fonts["tiny"], muted)
-        icon = self._profile_icon(summoner.get("profileIconId"), data.get("champions") or {}, 78)
-        image.paste(icon, (x0 + 15, y0 + 62), icon)
-        self._single(draw, (x0 + 104, y0 + 64), name, fonts["body"], ink, x1 - x0 - 118, 9)
-        route_text = f"{data.get('platform') or '-'} / {data.get('region') or '-'}"
-        self._single(draw, (x0 + 104, y0 + 92), route_text, fonts["tiny"], cyan, x1 - x0 - 118, 8)
-        self._stat_line(draw, x0 + 16, y0 + 146, "等级", self._fmt(summoner.get("summonerLevel")), fonts, gold, ink, x1 - 18)
         ranked = data.get("ranked") or {}
-        self._stat_line(draw, x0 + 16, y0 + 173, "排位", self._rank_text(ranked), fonts, cyan, ink, x1 - 18)
-        self._stat_line(draw, x0 + 16, y0 + 194, "在线", "对局中" if data.get("active_game") else "未在对局中", fonts, green if data.get("active_game") else muted, ink, x1 - 18)
-        self._text(draw, (x0 + 16, y1 - 35), f"Riot API · {data.get('api_calls', 0)} calls", fonts["tiny"], muted)
-        self._text(draw, (x0 + 16, y1 - 19), f"更新 {data.get('updated_at') or '-'}", fonts["tiny"], muted)
+        game_name = account.get("gameName") or DEFAULT_GAME_NAME
+        tagline = account.get("tagLine") or DEFAULT_TAG_LINE
+        route_text = f"{data.get('platform') or '-'} / {data.get('region') or '-'}"
+        active = bool(data.get("active_game"))
+        status_text = "对局中" if active else "空闲"
+        status_color = green if active else muted
+
+        logo_w = 124
+        logo_left = x0 + (x1 - x0 - logo_w) // 2
+        self._paste_asset_logo(image, LOL_LOGO_FILE, (logo_left, y0 + 9, logo_left + logo_w, y0 + 43))
+        draw.line((x0 + 14, y0 + 53, x1 - 14, y0 + 53), fill=(70, 66, 52), width=1)
+
+        icon_size = 68
+        icon_x = x0 + 15
+        icon_y = y0 + 65
+        icon = self._profile_icon(summoner.get("profileIconId"), data.get("champions") or {}, icon_size)
+        image.paste(icon, (icon_x, icon_y), icon)
+
+        info_x = x0 + 94
+        info_w = x1 - info_x - 14
+        self._single(draw, (info_x, y0 + 63), game_name, fonts["body"], ink, info_w, 9)
+        self._single(draw, (info_x, y0 + 85), f"#{tagline}", fonts["tiny"], muted, info_w, 8)
+        self._single(draw, (info_x, y0 + 104), route_text, fonts["tiny"], cyan, info_w, 8)
+        draw.ellipse((info_x, y0 + 126, info_x + 7, y0 + 133), fill=status_color)
+        self._text(draw, (info_x + 13, y0 + 122), status_text, fonts["small"], status_color)
+
+        stat_y0 = y0 + 147
+        stat_y1 = y0 + 195
+        stat_mid = x0 + 104
+        draw.rectangle((x0 + 14, stat_y0, x1 - 14, stat_y1), fill=(12, 17, 27), outline=(78, 68, 40), width=1)
+        draw.line((stat_mid, stat_y0 + 5, stat_mid, stat_y1 - 5), fill=(68, 62, 48), width=1)
+        self._text(draw, (x0 + 23, stat_y0 + 7), "等级", fonts["tiny"], gold)
+        self._single(draw, (x0 + 23, stat_y0 + 22), self._fmt(summoner.get("summonerLevel")), fonts["section"], ink, stat_mid - x0 - 33, 10)
+        self._text(draw, (stat_mid + 11, stat_y0 + 7), "排位", fonts["tiny"], cyan)
+        self._single(draw, (stat_mid + 11, stat_y0 + 22), self._rank_text(ranked) or "暂无", fonts["section"], ink, x1 - stat_mid - 25, 10)
+
+        source_label = str(data.get("source") or "Riot API")
+        source_label = source_label.replace("Riot API", "API").replace("本机记录", "本机").replace(" + ", "+")
+        updated = str(data.get("updated_at") or "-")
+        if len(updated) >= 16 and updated[:2] == "20":
+            updated = updated[5:]
+        self._single(draw, (x0 + 16, y1 - 35), f"来源 {source_label} · {data.get('api_calls', 0)}次", fonts["tiny"], muted, x1 - x0 - 32, 8)
+        self._single(draw, (x0 + 16, y1 - 19), f"更新 {updated}", fonts["tiny"], muted, x1 - x0 - 32, 8)
 
     def _draw_recent(self, image, draw, data, box, fonts, ink, muted, gold, green, red, cyan):
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 14, y0 + 12), "最近比赛", fonts["section"], ink)
-        headers = [("英雄", x0 + 52), ("K/D/A", x0 + 178), ("结果", x0 + 250), ("位置", x0 + 294)]
+        champions = data.get("champions") or {}
+        name_x = x0 + 52
+        kda_x = x0 + 213
+        result_x = x0 + 274
+        position_x = x0 + 306
+        headers = [("英雄", name_x), ("K/D/A", kda_x), ("结果", result_x - 2), ("位置", position_x)]
         for label, x in headers:
             self._text(draw, (x, y0 + 40), label, fonts["tiny"], muted)
         y = y0 + 62
@@ -720,11 +1013,12 @@ class LoLInfo(BasePlugin):
                 break
             icon = self._icon_from_url(match.get("champion_icon"), 30, match.get("champion_name"))
             image.paste(icon, (x0 + 14, y - 2), icon)
-            self._single(draw, (x0 + 52, y), match.get("champion_name"), fonts["small"], ink, 116, 9)
-            self._text(draw, (x0 + 178, y), f"{match['kills']}/{match['deaths']}/{match['assists']}", fonts["small"], ink)
-            self._text(draw, (x0 + 254, y), "胜" if match.get("win") else "负", fonts["small"], green if match.get("win") else red)
-            self._text(draw, (x0 + 294, y), self._lane_label(match.get("lane")), fonts["tiny"], muted)
-            self._text(draw, (x0 + 294, y + 14), self._relative(match.get("timestamp")), fonts["micro"], muted)
+            champion_name = self._champion_full_name_from_match(match, champions)
+            self._single(draw, (name_x, y), champion_name, fonts["small"], ink, kda_x - name_x - 8, 8)
+            self._text(draw, (kda_x, y), f"{match['kills']}/{match['deaths']}/{match['assists']}", fonts["small"], ink)
+            self._text(draw, (result_x, y), "胜" if match.get("win") else "负", fonts["small"], green if match.get("win") else red)
+            self._text(draw, (position_x, y), self._lane_label(match.get("lane")), fonts["tiny"], muted)
+            self._text(draw, (position_x, y + 14), self._relative(match.get("timestamp")), fonts["micro"], muted)
             y += 35
         if not data.get("matches"):
             self._text(draw, (x0 + 16, y0 + 70), "没有可显示的近期比赛", fonts["body"], muted)
@@ -826,16 +1120,30 @@ class LoLInfo(BasePlugin):
         account = data.get("account") or {}
         summary = data.get("summary") or {}
         ranked = data.get("ranked") or {}
+        matches = data.get("matches") or []
+        source_counts = data.get("match_source_counts") or self._match_source_counts(matches)
+        source = data.get("source") or self._match_source_label(source_counts)
+        latest = matches[0] if matches else {}
+        latest_text = ""
+        if latest:
+            latest_text = f", 最近一局 {latest.get('champion_name', '-')}: {latest.get('kills', 0)}/{latest.get('deaths', 0)}/{latest.get('assists', 0)}"
         write_context(
             PLUGIN_ID,
             {
                 "kind": "lol_info",
-                "source": "Riot Games API",
-                "summary": f"{account.get('gameName', '')}#{account.get('tagLine', '')}: {self._rank_text(ranked) or '暂无排位'}, {summary.get('wins', 0)}W/{summary.get('losses', 0)}L",
+                "source": source,
+                "summary": f"{account.get('gameName', '')}#{account.get('tagLine', '')}: {self._rank_text(ranked) or '暂无排位'}, 最近{summary.get('games', 0)}场 {summary.get('wins', 0)}W/{summary.get('losses', 0)}L, KDA {summary.get('kda', 0):.2f}, 胜率 {summary.get('winrate', 0):.1f}%{latest_text}",
                 "game_name": account.get("gameName"),
                 "tag_line": account.get("tagLine"),
                 "rank": self._rank_text(ranked),
                 "recent_games": summary.get("games", 0),
+                "recent_wins": summary.get("wins", 0),
+                "recent_losses": summary.get("losses", 0),
+                "recent_kda": round(float(summary.get("kda") or 0), 2),
+                "recent_winrate": round(float(summary.get("winrate") or 0), 1),
+                "local_match_count": source_counts.get("local_lcu", 0),
+                "match_v5_count": source_counts.get("match_v5", 0),
+                "latest_match": latest,
                 "active_game": bool(data.get("active_game")),
             },
             generated_at=datetime.fromtimestamp(float(generated_at), timezone.utc),
@@ -1017,7 +1325,7 @@ class LoLInfo(BasePlugin):
         return f"{label} {rank}".strip()
 
     def _queue_label(self, queue_id):
-        labels = {420: "单双排", 440: "灵活排位", 450: "极地乱斗", 400: "匹配", 430: "匹配"}
+        labels = {420: "单双排", 440: "灵活排位", 450: "极地乱斗", 400: "匹配", 430: "匹配", 2400: "大混战", 3140: "自定义"}
         try:
             return labels.get(int(queue_id), str(queue_id or "-"))
         except Exception:
@@ -1117,6 +1425,7 @@ class LoLInfo(BasePlugin):
             str(self._enabled(settings.get("includeLatestSkins"), default=True)),
             str(self._bounded_int(settings.get("latestSkinCount"), 8, 0, 24)),
             str(self._bounded_int(settings.get("latestSkinCacheHours"), 6, 1, 168)),
+            self._local_match_history_signature(settings),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
 

@@ -6,7 +6,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.daily_knowledge.daily_knowledge import DailyKnowledge  # noqa: E402
+from plugins.daily_knowledge.daily_knowledge import DailyKnowledge, LOCAL_FALLBACK_FACTS  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -78,6 +78,45 @@ def test_daily_payload_fetches_once_then_reuses_cache(tmp_path, monkeypatch):
     assert first["from_cache"] is False
     assert second["from_cache"] is True
     assert calls == {"useless": 1, "world": 1}
+
+
+def test_chinese_fallback_uses_two_fresh_sentences_per_day(tmp_path):
+    plugin = _plugin(tmp_path)
+
+    first = plugin._fallback_fact("zh", "2026-06-07", 0)
+    second = plugin._fallback_fact("zh", "2026-06-07", 1)
+    repeated_first = plugin._fallback_fact("zh", "2026-06-07", 0)
+    repeated_second = plugin._fallback_fact("zh", "2026-06-07", 1)
+
+    assert first.text != second.text
+    assert repeated_first.text == first.text
+    assert repeated_second.text == second.text
+
+
+def test_chinese_fallback_does_not_repeat_until_pool_is_exhausted(tmp_path):
+    plugin = _plugin(tmp_path)
+    chinese_pool_size = sum(1 for item in LOCAL_FALLBACK_FACTS if item["language"] == "zh")
+    seen = set()
+
+    for day in range(1, chinese_pool_size + 1):
+        fact = plugin._fallback_fact("zh", f"2026-07-{day:02d}", 0)
+        assert fact.text not in seen
+        seen.add(fact.text)
+
+    assert len(seen) == chinese_pool_size
+
+
+def test_daily_payload_rotates_chinese_local_sentences_across_dates(tmp_path):
+    plugin = _plugin(tmp_path)
+    device = FakeDeviceConfig()
+    settings = {"language": "zh", "use_useless_facts": False, "use_world_fun_facts": False}
+
+    first = plugin._daily_payload(settings, device, datetime(2026, 6, 7, 9, 30))
+    second = plugin._daily_payload(settings, device, datetime(2026, 6, 8, 9, 30))
+
+    first_texts = {fact["text"] for fact in first["facts"]}
+    second_texts = {fact["text"] for fact in second["facts"]}
+    assert first_texts.isdisjoint(second_texts)
 
 
 def test_render_page_returns_image(tmp_path):

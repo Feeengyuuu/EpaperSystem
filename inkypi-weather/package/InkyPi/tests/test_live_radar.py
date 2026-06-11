@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw
 import plugins.live_radar.live_radar as live_radar_module
 from plugins.live_radar.live_radar import (
     DEFAULT_ROOMS_TEXT,
+    HEADER_ART_FILE,
+    HEADER_ART_SIZE,
     LIVE_STATUS_DOT,
     STATUS_TOTAL_DARK_OFFLINE_FILL,
     STATUS_TOTAL_FILLS,
@@ -275,6 +277,102 @@ def test_fetch_statuses_falls_back_to_single_room_after_batch_failure(monkeypatc
     assert [result["id"] for result in results] == ["0", "1"]
 
 
+def test_fetch_statuses_repairs_bilibili_batch_failures_with_direct_api(monkeypatch):
+    plugin = _plugin()
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            return FakeResponse(
+                {
+                    "ok": True,
+                    "results": [
+                        {
+                            "ok": False,
+                            "platform": "bilibili",
+                            "id": "545318",
+                            "status": None,
+                            "error": "bilibili_batch_fetch_failed",
+                        },
+                        {
+                            "ok": True,
+                            "platform": "douyu",
+                            "id": "6979222",
+                            "status": {"isLive": False, "isReplay": True, "owner": "玩机器"},
+                        },
+                    ],
+                }
+            )
+
+        def get(self, url, params, timeout, headers):
+            calls.append((url, params, timeout, headers))
+            if "get_info" in url:
+                assert params == {"room_id": "545318"}
+                return FakeResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "uid": 15810,
+                            "room_id": 545318,
+                            "live_status": 1,
+                            "title": "线路测试",
+                            "online": 38000,
+                            "user_cover": "https://example.test/room.jpg",
+                        },
+                    }
+                )
+            assert "get_status_info_by_uids" in url
+            assert params == [("uids[]", "15810")]
+            return FakeResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "15810": {
+                            "uid": 15810,
+                            "room_id": 545318,
+                            "live_status": 1,
+                            "title": "线路测试",
+                            "uname": "Mr.Quin",
+                            "face": "https://example.test/face.jpg",
+                            "keyframe": "https://example.test/keyframe.jpg",
+                            "online": 38600,
+                            "live_time": 1780859458,
+                        }
+                    },
+                }
+            )
+
+    monkeypatch.setattr("plugins.live_radar.live_radar.get_http_session", lambda: FakeSession())
+    rooms = [
+        {"platform": "bilibili", "id": "545318", "label": "", "isFav": True},
+        {"platform": "douyu", "id": "6979222", "label": "", "isFav": False},
+    ]
+
+    results = plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert results[0]["ok"] is True
+    assert results[0]["cache"] == "BILIBILI_DIRECT"
+    assert results[0]["status"]["isLive"] is True
+    assert results[0]["status"]["owner"] == "Mr.Quin"
+    assert results[0]["status"]["avatar"] == "https://example.test/face.jpg"
+    assert results[0]["status"]["cover"] == "https://example.test/keyframe.jpg"
+    assert results[0]["status"]["heatValue"] == 38600
+    assert results[0]["status"]["startTime"] == 1780859458000
+    assert results[1]["platform"] == "douyu"
+    assert results[1]["status"]["isReplay"] is True
+    assert len(calls) == 2
+
+
 def test_generate_image_renders_card_wall_without_network():
     plugin = _plugin()
     _memory_cache(plugin)
@@ -338,6 +436,35 @@ def test_title_logo_layout_scales_logo_body_by_40_percent():
     assert logo_size == round(base_size * TITLE_LOGO_SCALE)
     assert TITLE_LOGO_SCALE == 1.4
     assert logo_y < 16
+
+
+def test_header_art_asset_is_transparent_measured_strip():
+    path = Path(live_radar_module.PLUGIN_DIR) / HEADER_ART_FILE
+
+    with Image.open(path) as image:
+        assert image.mode == "RGBA"
+        assert image.size == HEADER_ART_SIZE
+        assert image.getchannel("A").getextrema()[0] == 0
+
+
+def test_dashboard_positions_header_art_between_title_and_status():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    seen = {}
+
+    def fake_draw_header_art(image, box):
+        seen["box"] = tuple(int(value) for value in box)
+        return True
+
+    plugin._draw_header_art = fake_draw_header_art
+    plugin._render_dashboard([], (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    left, top, right, bottom = seen["box"]
+    assert (right - left, bottom - top) == HEADER_ART_SIZE
+    assert 8 <= top <= 13
+    assert 74 <= bottom <= 76
+    assert 266 <= left <= 286
+    assert 536 <= right <= 556
 
 
 def test_status_total_badges_use_semantic_backgrounds_in_both_themes():

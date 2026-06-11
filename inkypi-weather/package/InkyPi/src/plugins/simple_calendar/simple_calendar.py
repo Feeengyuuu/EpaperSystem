@@ -1,9 +1,11 @@
 import calendar
 import hashlib
 import logging
+import os
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import icalendar
 import pytz
@@ -1248,14 +1250,29 @@ class SimpleCalendar(BasePlugin):
         return sources
 
     def _fetch_holiday_events(self, source, selected_date, tz):
+        content = self._read_calendar_source(source["url"])
+        cal = icalendar.Calendar.from_ical(content)
+        return self._extract_holiday_events(cal, source, selected_date, tz)
+
+    def _read_calendar_source(self, url):
+        url = str(url or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme == "file":
+            path_text = unquote(parsed.path)
+            if parsed.netloc:
+                path_text = f"//{parsed.netloc}{path_text}"
+            if os.name == "nt" and path_text.startswith("/") and len(path_text) > 2 and path_text[2] == ":":
+                path_text = path_text[1:]
+            return Path(path_text).read_bytes()
+        if not parsed.scheme and url.startswith("/"):
+            return Path(url).read_bytes()
         response = requests.get(
-            source["url"],
+            url,
             timeout=20,
             headers={"User-Agent": "InkyPi SimpleCalendar/1.0"},
         )
         response.raise_for_status()
-        cal = icalendar.Calendar.from_ical(response.content)
-        return self._extract_holiday_events(cal, source, selected_date, tz)
+        return response.content
 
     def _extract_holiday_events(self, cal, source, selected_date, tz):
         month_start = date(selected_date.year, selected_date.month, 1)

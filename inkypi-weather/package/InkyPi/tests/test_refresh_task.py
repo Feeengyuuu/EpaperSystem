@@ -194,7 +194,9 @@ def test_refresh_due_plugin_instances_updates_sports_dashboard_live_cache_early(
     )
     device_config = FakeDeviceConfig(tmp_path)
     task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
@@ -267,10 +269,92 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch)
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
 
     wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
+    )
+
+    assert wait_seconds == 60
+
+
+def test_sports_dashboard_live_refresh_wait_seconds_uses_nba_live_state(monkeypatch):
+    tmp_path = make_test_dir("sports-nba-live-wait")
+    state_path = tmp_path / "nba_live_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-nba-live-v1",
+                "has_live": True,
+                "live_until": "2026-05-26T08:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports", "nbaLiveRefreshIntervalSeconds": "120"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(state_path))
+
+    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+        datetime(2026, 5, 26, 7, 1, tzinfo=timezone.utc)
+    )
+
+    assert wait_seconds == 60
+
+
+def test_sports_dashboard_live_refresh_wait_seconds_uses_worldcup_live_state(monkeypatch):
+    tmp_path = make_test_dir("sports-worldcup-live-wait")
+    state_path = tmp_path / "worldcup_live_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-worldcup-live-v1",
+                "has_live": True,
+                "live_until": "2026-05-26T08:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports", "worldCupLiveRefreshIntervalSeconds": "120"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
+
+    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+        datetime(2026, 5, 26, 7, 1, tzinfo=timezone.utc)
     )
 
     assert wait_seconds == 60
@@ -305,7 +389,9 @@ def test_sports_dashboard_live_refresh_wait_seconds_defaults_to_one_minute(monke
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
 
     wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 0, 30, tzinfo=timezone.utc)
@@ -332,7 +418,9 @@ def test_sports_dashboard_live_refresh_is_not_due_without_live_state(monkeypatch
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
 
     live_due = task._sports_dashboard_live_refresh_due(

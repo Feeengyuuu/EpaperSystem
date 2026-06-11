@@ -20,8 +20,10 @@ STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/publ
 STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v13"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v16"
 STEAM_BACKGROUND_IMAGE = "background.png"
+STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
+STEAM_GAME_STRIP_IMAGE = "game_strip.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
 
@@ -613,6 +615,13 @@ class SteamProfileDashboard(BasePlugin):
         friend_panel_x = panel_x + panel_w - 18 - friend_panel_w
         friend_panel_y = panel_y + max(0, (panel_h - friend_group_h) // 2)
         top_text_right = friend_panel_x - 22 if online_avatar_friends else panel_x + panel_w - 18
+        lower_y = panel_y + panel_h + 38
+
+        backdrop_x = 0
+        backdrop_y = max(0, panel_y - 18)
+        backdrop_w = width
+        backdrop_h = max(1, lower_y - backdrop_y)
+        self._draw_game_backdrop(image, backdrop_x, backdrop_y, backdrop_w, backdrop_h)
 
         avatar_box = (margin + 10, panel_y + 2, margin + 10 + avatar_size, panel_y + 2 + avatar_size)
         avatar = self._avatar_image(data["profile"].get("avatarfull"), avatar_size)
@@ -687,7 +696,12 @@ class SteamProfileDashboard(BasePlugin):
                 ink,
             )
 
-        lower_y = panel_y + panel_h + 38
+        strip_x = margin + 8
+        strip_y = panel_y + panel_h
+        strip_w = max(1, width - margin - strip_x)
+        strip_h = max(1, lower_y - strip_y)
+        self._draw_game_strip(image, strip_x, strip_y, strip_w, strip_h)
+
         lower_h = height - lower_y - 28
         self._rounded_rect(
             draw,
@@ -902,6 +916,46 @@ class SteamProfileDashboard(BasePlugin):
         except Exception as e:
             logger.warning(f"Steam dashboard background unavailable: {e}")
             return Image.new("RGB", dimensions, fallback_color)
+
+    def _draw_game_backdrop(self, image, x, y, width, height):
+        if width <= 0 or height <= 0:
+            return
+        backdrop = self._game_backdrop_image((width, height))
+        if backdrop:
+            image.paste(backdrop, (int(x), int(y)))
+
+    def _game_backdrop_image(self, size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = self.get_plugin_dir(STEAM_GAME_BACKDROP_IMAGE)
+        try:
+            with Image.open(path) as source:
+                backdrop = source.convert("RGB")
+            return ImageOps.fit(backdrop, (width, height), method=Image.Resampling.LANCZOS)
+        except Exception as e:
+            logger.warning(f"Steam dashboard game backdrop unavailable: {e}")
+            return None
+
+    def _draw_game_strip(self, image, x, y, width, height):
+        if width <= 0 or height <= 0:
+            return
+        strip = self._game_strip_image((width, height))
+        if strip:
+            image.paste(strip, (int(x), int(y)))
+
+    def _game_strip_image(self, size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = self.get_plugin_dir(STEAM_GAME_STRIP_IMAGE)
+        try:
+            with Image.open(path) as source:
+                strip = source.convert("RGB")
+            return ImageOps.fit(strip, (width, height), method=Image.Resampling.LANCZOS)
+        except Exception as e:
+            logger.warning(f"Steam dashboard game strip unavailable: {e}")
+            return None
 
     def _recent_items(self, data):
         items = []

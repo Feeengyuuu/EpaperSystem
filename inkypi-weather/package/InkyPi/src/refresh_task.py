@@ -16,8 +16,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
+SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
+SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
+DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 60
+DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS = 60
 REFRESH_ON_DISPLAY_PLUGIN_IDS = {"backtothedate", "lol_info"}
 
 
@@ -505,15 +509,17 @@ class RefreshTask:
     def _sports_dashboard_live_refresh_due(self, plugin_instance, current_dt):
         if getattr(plugin_instance, "plugin_id", None) != SPORTS_DASHBOARD_PLUGIN_ID:
             return False
-        if not self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance):
-            return False
-        if not self._sports_dashboard_lpl_live_state_active(current_dt):
+        active_sources = self._sports_dashboard_enabled_live_sources(plugin_instance, current_dt)
+        if not active_sources:
             return False
         latest_refresh_dt = plugin_instance.get_latest_refresh_dt()
         if not latest_refresh_dt:
             return True
         latest_refresh_dt = self._align_datetime_tz(latest_refresh_dt, current_dt)
-        interval = self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
+        interval = min(
+            self._sports_dashboard_live_refresh_interval(plugin_instance, source)
+            for source in active_sources
+        )
         return (current_dt - latest_refresh_dt) >= timedelta(seconds=interval)
 
     def _sports_dashboard_live_refresh_wait_seconds(self, current_dt):
@@ -522,14 +528,15 @@ class RefreshTask:
             playlist = playlist_manager.determine_active_playlist(current_dt)
         except Exception:
             return None
-        if not playlist or not self._sports_dashboard_lpl_live_state_active(current_dt):
+        if not playlist or not self._sports_dashboard_active_live_sources(current_dt):
             return None
 
         waits = []
         for plugin_instance in list(getattr(playlist, "plugins", []) or []):
             if getattr(plugin_instance, "plugin_id", None) != SPORTS_DASHBOARD_PLUGIN_ID:
                 continue
-            if not self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance):
+            active_sources = self._sports_dashboard_enabled_live_sources(plugin_instance, current_dt)
+            if not active_sources:
                 continue
             latest_refresh_dt = plugin_instance.get_latest_refresh_dt()
             if not latest_refresh_dt:
@@ -537,11 +544,67 @@ class RefreshTask:
                 continue
             latest_refresh_dt = self._align_datetime_tz(latest_refresh_dt, current_dt)
             elapsed = (current_dt - latest_refresh_dt).total_seconds()
-            interval = self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
+            interval = min(
+                self._sports_dashboard_live_refresh_interval(plugin_instance, source)
+                for source in active_sources
+            )
             waits.append(interval - elapsed)
         if not waits:
             return None
         return min(waits)
+
+    def _sports_dashboard_enabled_live_sources(self, plugin_instance, current_dt):
+        return [
+            source
+            for source in self._sports_dashboard_active_live_sources(current_dt)
+            if self._sports_dashboard_live_refresh_enabled(plugin_instance, source)
+        ]
+
+    def _sports_dashboard_active_live_sources(self, current_dt):
+        sources = []
+        if self._sports_dashboard_worldcup_live_state_active(current_dt):
+            sources.append("worldcup")
+        if self._sports_dashboard_lpl_live_state_active(current_dt):
+            sources.append("lpl")
+        if self._sports_dashboard_nba_live_state_active(current_dt):
+            sources.append("nba")
+        return sources
+
+    def _sports_dashboard_live_refresh_enabled(self, plugin_instance, source):
+        if source == "nba":
+            settings = getattr(plugin_instance, "settings", None) or {}
+            if "nbaLiveRefreshEnabled" not in settings:
+                return True
+            return _setting_enabled(settings.get("nbaLiveRefreshEnabled"))
+        if source == "worldcup":
+            settings = getattr(plugin_instance, "settings", None) or {}
+            if "worldCupLiveRefreshEnabled" not in settings:
+                return True
+            return _setting_enabled(settings.get("worldCupLiveRefreshEnabled"))
+        return self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance)
+
+    def _sports_dashboard_live_refresh_interval(self, plugin_instance, source):
+        if source == "nba":
+            settings = getattr(plugin_instance, "settings", None) or {}
+            try:
+                value = int(settings.get(
+                    "nbaLiveRefreshIntervalSeconds",
+                    DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS,
+                ))
+            except (TypeError, ValueError):
+                value = DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS
+            return max(60, min(900, value))
+        if source == "worldcup":
+            settings = getattr(plugin_instance, "settings", None) or {}
+            try:
+                value = int(settings.get(
+                    "worldCupLiveRefreshIntervalSeconds",
+                    DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS,
+                ))
+            except (TypeError, ValueError):
+                value = DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
+            return max(60, min(900, value))
+        return self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
 
     def _sports_dashboard_lpl_live_refresh_enabled(self, plugin_instance):
         settings = getattr(plugin_instance, "settings", None) or {}
@@ -561,14 +624,35 @@ class RefreshTask:
         return max(60, min(900, value))
 
     def _sports_dashboard_lpl_live_state_active(self, current_dt):
+        return self._sports_dashboard_live_state_active(
+            current_dt,
+            self._sports_dashboard_lpl_live_state_path(),
+            SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION,
+        )
+
+    def _sports_dashboard_worldcup_live_state_active(self, current_dt):
+        return self._sports_dashboard_live_state_active(
+            current_dt,
+            self._sports_dashboard_worldcup_live_state_path(),
+            SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION,
+        )
+
+    def _sports_dashboard_nba_live_state_active(self, current_dt):
+        return self._sports_dashboard_live_state_active(
+            current_dt,
+            self._sports_dashboard_nba_live_state_path(),
+            SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION,
+        )
+
+    def _sports_dashboard_live_state_active(self, current_dt, path, version):
         try:
-            with open(self._sports_dashboard_lpl_live_state_path(), "r", encoding="utf-8") as handle:
+            with open(path, "r", encoding="utf-8") as handle:
                 state = json.load(handle)
         except (FileNotFoundError, OSError, ValueError):
             return False
         if not isinstance(state, dict):
             return False
-        if state.get("version") != SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION:
+        if state.get("version") != version:
             return False
         if not state.get("has_live"):
             return False
@@ -584,6 +668,24 @@ class RefreshTask:
             SPORTS_DASHBOARD_PLUGIN_ID,
             "cache",
             "lpl_live_state.json",
+        )
+
+    def _sports_dashboard_worldcup_live_state_path(self):
+        return os.path.join(
+            os.path.dirname(__file__),
+            "plugins",
+            SPORTS_DASHBOARD_PLUGIN_ID,
+            "cache",
+            "worldcup_live_state.json",
+        )
+
+    def _sports_dashboard_nba_live_state_path(self):
+        return os.path.join(
+            os.path.dirname(__file__),
+            "plugins",
+            SPORTS_DASHBOARD_PLUGIN_ID,
+            "cache",
+            "nba_live_state.json",
         )
 
     @staticmethod

@@ -238,7 +238,7 @@
       "service": "Odds-API.io",
       "features": ["Sports Dashboard odds"],
       "required": false,
-      "aliases": ["ODDSAPI_IO_KEY", "WORLD_CUP_ODDS_API_IO_KEY"],
+      "aliases": ["Odds_API_IO_KEY", "ODDSAPI_IO_KEY", "WORLD_CUP_ODDS_API_IO_KEY"],
       "signup_url": "https://odds-api.io/",
       "docs_url": "https://docs.odds-api.io/",
       "notes": "Optional odds provider, including LPL odds mode."

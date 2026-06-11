@@ -28,7 +28,7 @@ REQUEST_HEADERS = {
     )
 }
 
-DEFAULT_SOURCES = """TIME|https://magazineshop.us/collections/time
+CORE_DEFAULT_SOURCES = """TIME|https://magazineshop.us/collections/time
 Rolling Stone|https://magazineshop.us/collections/rolling-stone
 Billboard|https://magazineshop.us/collections/billboard
 Vanity Fair|https://www.vanityfair.com/magazine
@@ -42,11 +42,35 @@ Reader's Digest|https://magazineshop.us/collections/readers-digest
 Taste of Home|https://magazineshop.us/collections/taste-of-home
 TV Guide|https://magazineshop.us/collections/tv-guide-tv"""
 
+ADDITIONAL_DEFAULT_SOURCES = """Newest Releases|https://magazineshop.us/collections/new-releases
+Newest Releases Page 2|https://magazineshop.us/collections/new-releases?page=2
+Newest Releases Page 3|https://magazineshop.us/collections/new-releases?page=3
+Best Sellers|https://magazineshop.us/collections/best-sellers
+Digital Magazines|https://magazineshop.us/collections/digital-magazines
+Digital Magazines Page 2|https://magazineshop.us/collections/digital-magazines?page=2
+People Magazine|https://magazineshop.us/collections/people-magazine
+People Special Editions|https://magazineshop.us/collections/people-special-editions
+Newsweek|https://magazineshop.us/collections/newsweek
+Men's Journal|https://magazineshop.us/collections/mens-journal
+Athlon Sports|https://magazineshop.us/collections/athlon-sports
+Surfer|https://magazineshop.us/collections/surfer
+Powder|https://magazineshop.us/collections/powder-magazine
+First for Women|https://magazineshop.us/collections/first-for-women-magazine
+Woman's World Specials|https://magazineshop.us/collections/womans-world-special
+Health Food & Wellness|https://magazineshop.us/collections/health-food-and-wellness
+Entertainment & Celebrity|https://magazineshop.us/collections/entertainment
+Food & Recipes|https://magazineshop.us/collections/food-and-recipes
+Football|https://magazineshop.us/collections/football
+Politics|https://magazineshop.us/collections/politics"""
+
+DEFAULT_SOURCES = f"{CORE_DEFAULT_SOURCES}\n{ADDITIONAL_DEFAULT_SOURCES}"
+
 ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
 COVER_CACHE_VERSION = "magazine-covers-cache-v2-title-crop"
 IMAGE_CACHE_TTL = timedelta(hours=20)
 DAILY_LIBRARY_STATE_VERSION = "magazine-covers-daily-library-v1"
-DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=12)
+DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=6)
+LEGACY_DAILY_LIBRARY_REFRESH_HOURS = 12
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
@@ -151,7 +175,7 @@ class MagazineCovers(BasePlugin):
     def generate_image(self, settings, device_config):
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
-        sources = self._parse_sources(settings.get("sources") or DEFAULT_SOURCES)
+        sources = self._sources_from_settings(settings)
         if not sources:
             raise RuntimeError("No magazine cover sources configured.")
 
@@ -466,6 +490,27 @@ class MagazineCovers(BasePlugin):
             sources.append({"name": name or urlparse(url).netloc or url, "url": url})
         return sources
 
+    def _sources_from_settings(self, settings):
+        configured_text = settings.get("sources") or ""
+        configured = self._parse_sources(configured_text)
+        defaults = self._parse_sources(DEFAULT_SOURCES)
+        if not configured:
+            return defaults
+
+        legacy_default_ids = {self._source_id(source) for source in self._parse_sources(CORE_DEFAULT_SOURCES)}
+        configured_ids = {self._source_id(source) for source in configured}
+        if configured_ids == legacy_default_ids:
+            merged = list(configured)
+            merged_ids = set(configured_ids)
+            for source in defaults:
+                source_id = self._source_id(source)
+                if source_id not in merged_ids:
+                    merged.append(source)
+                    merged_ids.add(source_id)
+            return merged
+
+        return configured
+
     def _rotation_order(self, sources):
         if len(sources) <= 1:
             return sources
@@ -621,6 +666,24 @@ class MagazineCovers(BasePlugin):
             ("digest", 16),
             ("taste", 16),
             ("tv-guide", 16),
+            ("newest", 14),
+            ("best", 14),
+            ("digital", 14),
+            ("people", 14),
+            ("newsweek", 14),
+            ("mens", 14),
+            ("journal", 14),
+            ("athlon", 14),
+            ("surfer", 14),
+            ("powder", 14),
+            ("first", 14),
+            ("woman", 14),
+            ("health", 14),
+            ("wellness", 14),
+            ("entertainment", 14),
+            ("food", 14),
+            ("football", 14),
+            ("politics", 14),
         ]:
             if token in haystack:
                 score += weight
@@ -1180,7 +1243,7 @@ class MagazineCovers(BasePlugin):
             hours = float(settings.get("libraryRefreshHours") or 0)
         except (TypeError, ValueError):
             hours = 0
-        if hours <= 0:
+        if hours <= 0 or hours == LEGACY_DAILY_LIBRARY_REFRESH_HOURS:
             return DAILY_LIBRARY_REFRESH_INTERVAL
         return timedelta(hours=max(1.0, hours))
 

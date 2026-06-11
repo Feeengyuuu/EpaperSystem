@@ -47,6 +47,7 @@ def install_import_stubs():
 
 install_import_stubs()
 
+import plugins.lol_info.lol_info as lol_info_module  # noqa: E402
 from plugins.lol_info.lol_info import LoLInfo, STYLE_VERSION  # noqa: E402
 
 
@@ -125,6 +126,225 @@ def test_recent_summary_calculates_metrics(tmp_path):
     assert summary["losses"] == 1
     assert round(summary["kda"], 2) == 3.33
     assert summary["cs_per_min"] == 6
+
+
+def test_champion_full_name_combines_title_and_name(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    label = plugin._champion_full_name_from_match(
+        {"champion_id": 201, "champion_name": "布隆"},
+        {
+            "by_key": {
+                "201": {
+                    "id": "Braum",
+                    "name": "弗雷尔卓德之心",
+                    "title": "布隆",
+                    "icon_url": "",
+                }
+            },
+            "by_id": {},
+        },
+    )
+
+    assert label == "弗雷尔卓德之心 布隆"
+
+
+def test_match_history_status_marks_stale_match_v5_data(tmp_path):
+    plugin = make_plugin(tmp_path)
+    latest = 1_000_000
+    revision = latest + 15 * 24 * 60 * 60 * 1000
+
+    status = plugin._match_history_status(
+        [{"timestamp": latest}],
+        {"revisionDate": revision},
+    )
+
+    assert status["stale"] is True
+    assert status["latest_match_ts"] == latest
+    assert status["summoner_revision_ts"] == revision
+
+
+def test_match_history_status_keeps_recent_match_v5_data(tmp_path):
+    plugin = make_plugin(tmp_path)
+    latest = 1_000_000
+    revision = latest + 2 * 24 * 60 * 60 * 1000
+
+    status = plugin._match_history_status(
+        [{"timestamp": latest}],
+        {"revisionDate": revision},
+    )
+
+    assert status["stale"] is False
+
+
+def test_local_match_history_merges_ahead_of_match_v5_matches(tmp_path):
+    plugin = make_plugin(tmp_path)
+    history_path = tmp_path / "league_client_matches.json"
+    history_path.write_text(json.dumps({
+        "matches": [
+            {
+                "match_id": "LCU_20260610",
+                "champion_id": 32,
+                "champion_name": "Amumu",
+                "kills": 4,
+                "deaths": 13,
+                "assists": 21,
+                "win": "Fail",
+                "lane": "ARAM",
+                "queueId": 450,
+                "timestamp": 1781132529188,
+                "duration": 902,
+                "cs": 28,
+                "gold": 11914,
+                "damage": 18000,
+                "kp": 56,
+            }
+        ]
+    }), encoding="utf-8")
+    stale = [
+        {
+            "match_id": "NA1_5161178880",
+            "champion_id": 115,
+            "champion_name": "Ziggs",
+            "kills": 7,
+            "deaths": 9,
+            "assists": 25,
+            "win": True,
+            "lane": "ARAM",
+            "queue": "ARAM",
+            "timestamp": 1732338189188,
+            "duration": 1435,
+            "cs": 64,
+            "gold": 15667,
+            "damage": 24000,
+            "kp": 60,
+        }
+    ]
+
+    local = plugin._local_match_summaries(
+        {"localMatchHistoryPath": str(history_path)},
+        {"puuid": "test-puuid"},
+        {"by_key": {"32": {"id": "Amumu", "name": "Amumu", "icon_url": "amumu.png"}}},
+    )
+    merged = plugin._merge_match_summaries(local, stale, 5)
+
+    assert [row["match_id"] for row in merged] == ["LCU_20260610", "NA1_5161178880"]
+    assert merged[0]["source"] == "local_lcu"
+    assert merged[0]["win"] is False
+    assert merged[0]["champion_key"] == "Amumu"
+
+
+def test_lcu_raw_match_history_payload_normalizes_player_stats(tmp_path):
+    plugin = make_plugin(tmp_path)
+    history_path = tmp_path / "league_client_matches.json"
+    history_path.write_text(json.dumps({
+        "puuid": "player-puuid",
+        "games": {
+            "games": {
+                "games": [
+                    {
+                        "gameId": 123456,
+                        "queueId": 2400,
+                        "gameCreation": 1781131619000,
+                        "gameDuration": 902,
+                        "participants": [
+                            {
+                                "participantId": 1,
+                                "teamId": 100,
+                                "championId": 32,
+                                "stats": {
+                                    "kills": 4,
+                                    "deaths": 13,
+                                    "assists": 21,
+                                    "win": "Fail",
+                                    "totalMinionsKilled": 26,
+                                    "neutralMinionsKilled": 2,
+                                    "goldEarned": 11914,
+                                    "totalDamageDealtToChampions": 18000,
+                                },
+                                "timeline": {"lane": "MIDDLE"},
+                            },
+                            {
+                                "participantId": 2,
+                                "teamId": 100,
+                                "championId": 81,
+                                "stats": {"kills": 6, "assists": 9},
+                            },
+                        ],
+                        "participantIdentities": [
+                            {"participantId": 1, "player": {"puuid": "player-puuid"}},
+                            {"participantId": 2, "player": {"puuid": "other-puuid"}},
+                        ],
+                    }
+                ]
+            }
+        },
+    }), encoding="utf-8")
+
+    matches = plugin._local_match_summaries(
+        {"localMatchHistoryPath": str(history_path)},
+        {"puuid": "player-puuid"},
+        {"by_key": {"32": {"id": "Amumu", "name": "Amumu", "icon_url": "amumu.png"}}},
+    )
+
+    assert len(matches) == 1
+    assert matches[0]["match_id"] == "123456"
+    assert matches[0]["kills"] == 4
+    assert matches[0]["deaths"] == 13
+    assert matches[0]["assists"] == 21
+    assert matches[0]["win"] is False
+    assert matches[0]["cs"] == 28
+    assert matches[0]["gold"] == 11914
+    assert matches[0]["queue"] == "大混战"
+    assert round(matches[0]["kp"], 1) == 100.0
+    assert matches[0]["timestamp"] == 1781132521000
+
+
+def test_write_context_includes_local_match_metrics(tmp_path):
+    plugin = make_plugin(tmp_path)
+    captured = {}
+    original = lol_info_module.write_context
+
+    def fake_write_context(plugin_id, payload, **kwargs):
+        captured["plugin_id"] = plugin_id
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+        return True
+
+    lol_info_module.write_context = fake_write_context
+    try:
+        plugin._write_context(
+            {
+                "account": {"gameName": "Test", "tagLine": "NA1"},
+                "ranked": {},
+                "summary": {"games": 5, "wins": 2, "losses": 3, "kda": 2.89, "winrate": 40.0},
+                "matches": [
+                    {
+                        "champion_name": "Amumu",
+                        "kills": 4,
+                        "deaths": 13,
+                        "assists": 21,
+                        "source": "local_lcu",
+                    }
+                ],
+                "match_source_counts": {"local_lcu": 1, "match_v5": 4, "total": 5},
+                "source": "Riot API + 本机记录",
+                "active_game": None,
+            },
+            time.time(),
+            120,
+        )
+    finally:
+        lol_info_module.write_context = original
+
+    payload = captured["payload"]
+    assert payload["source"] == "Riot API + 本机记录"
+    assert payload["recent_games"] == 5
+    assert payload["recent_kda"] == 2.89
+    assert payload["recent_winrate"] == 40.0
+    assert payload["local_match_count"] == 1
+    assert payload["match_v5_count"] == 4
+    assert "最近一局 Amumu: 4/13/21" in payload["summary"]
 
 
 def test_featured_champions_combines_mastery_and_recent_usage(tmp_path):

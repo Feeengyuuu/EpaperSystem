@@ -2,9 +2,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.daily_ai_news.daily_ai_news import DailyAINews
+import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
+from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE
 
 
 def _plugin():
@@ -171,3 +174,47 @@ def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
     assert image.size == (800, 480)
     assert font_calls
     assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}
+
+
+def test_title_background_asset_is_transparent_measured_strip():
+    path = daily_ai_news_module.PLUGIN_DIR / TITLE_BACKGROUND_IMAGE
+
+    with Image.open(path) as image:
+        assert image.mode == "RGBA"
+        assert image.size == TITLE_BACKGROUND_SIZE
+        assert image.getchannel("A").getextrema()[0] == 0
+
+
+def test_render_positions_title_background_between_title_and_meta(monkeypatch):
+    plugin = _plugin()
+    seen = {}
+
+    def fake_draw_title_background(image, box):
+        seen["box"] = tuple(int(value) for value in box)
+        return True
+
+    monkeypatch.setattr(plugin, "_draw_title_background", fake_draw_title_background)
+    payload = {
+        "date": "2026-06-08",
+        "generated_at": "2026-06-08T05:51:00",
+        "model": "gpt-5-nano",
+        "from_cache": True,
+        "brief": {
+            "lede": "朝韩互访成为最新热点，平壤迎来中国领导人访问并再度举行高规格接待",
+            "top": [],
+            "a_share": {"summary": "上证-2.84%", "analysis": "主要指数同步走弱。"},
+            "us_stock": {"summary": "标普-2.58%", "analysis": "主要指数同步走弱。"},
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": ""}, payload, datetime(2026, 6, 8), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    left, top, right, bottom = seen["box"]
+    assert (right - left, bottom - top) == TITLE_BACKGROUND_SIZE
+    assert 210 <= left <= 214
+    assert top == 8
+    assert 535 <= right <= 539
+    assert bottom == 73

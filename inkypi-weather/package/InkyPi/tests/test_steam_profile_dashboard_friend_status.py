@@ -137,3 +137,56 @@ def test_friend_game_status_includes_playing_prefix():
     assert prefix_position[0] < icon_left
     assert icon_right < game_position[0]
     assert game_position[0] - icon_right <= 4
+
+
+def test_game_strip_asset_is_exact_dashboard_slot_size():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    strip = plugin._game_strip_image((740, 38))
+
+    assert strip.size == (740, 38)
+    assert strip.getbbox() is not None
+    assert len(strip.getcolors(maxcolors=740 * 38)) > 20
+
+
+def test_game_strip_preserves_aspect_ratio_when_short():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    source = plugin._game_strip_image((740, 38))
+    distorted = source.resize((740, 19), Image.Resampling.LANCZOS)
+
+    fitted = plugin._game_strip_image((740, 19))
+
+    assert fitted.size == (740, 19)
+    assert fitted.tobytes() != distorted.tobytes()
+
+
+def test_game_strip_draws_into_gap_area():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    image = Image.new("RGB", (800, 480), "black")
+    baseline = image.copy()
+
+    plugin._draw_game_strip(image, 34, 210, 740, 38)
+
+    diff = ImageChops.difference(image, baseline)
+    assert diff.crop((34, 210, 774, 248)).getbbox() is not None
+    assert diff.crop((0, 0, 800, 200)).getbbox() is None
+
+
+def test_game_backdrop_asset_is_exact_dashboard_slot_size():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    backdrop = plugin._game_backdrop_image((800, 232))
+
+    assert backdrop.size == (800, 232)
+    assert backdrop.getbbox() is not None
+    assert len(backdrop.getcolors(maxcolors=800 * 232)) > 20
+
+
+def test_game_backdrop_draws_behind_top_dashboard_area():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    image = Image.new("RGB", (800, 480), "black")
+    baseline = image.copy()
+
+    plugin._draw_game_backdrop(image, 0, 16, 800, 232)
+
+    diff = ImageChops.difference(image, baseline)
+    assert diff.crop((0, 16, 800, 248)).getbbox() is not None
+    assert diff.crop((0, 0, 800, 12)).getbbox() is None

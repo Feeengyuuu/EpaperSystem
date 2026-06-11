@@ -9,7 +9,9 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.magazine_covers.magazine_covers import (  # noqa: E402
+    CORE_DEFAULT_SOURCES,
     DAILY_LIBRARY_REFRESH_INTERVAL,
+    DEFAULT_SOURCES,
     MAX_PI_SAFE_SOURCE_PIXELS,
     MagazineCovers,
     _ImageCandidateParser,
@@ -64,11 +66,41 @@ def test_srcset_candidates_are_ordered_small_to_large():
     ) == ["small.jpg", "medium.jpg", "large.jpg"]
 
 
-def test_default_daily_library_refresh_interval_is_half_day():
+def test_default_source_pool_has_fresh_collection_sources():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    sources = plugin._parse_sources(DEFAULT_SOURCES)
+    source_ids = {plugin._source_id(source) for source in sources}
+
+    assert len(sources) >= 30
+    assert "Newest Releases Page 2|https://magazineshop.us/collections/new-releases?page=2" in source_ids
+    assert "Newsweek|https://magazineshop.us/collections/newsweek" in source_ids
+    assert "Athlon Sports|https://magazineshop.us/collections/athlon-sports" in source_ids
+
+
+def test_legacy_saved_default_sources_are_expanded_with_new_pool():
     plugin = MagazineCovers({"id": "magazine_covers"})
 
-    assert DAILY_LIBRARY_REFRESH_INTERVAL == timedelta(hours=12)
-    assert plugin._daily_library_refresh_interval({}) == timedelta(hours=12)
+    sources = plugin._sources_from_settings({"sources": CORE_DEFAULT_SOURCES})
+
+    assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
+    assert sources[0]["name"] == "TIME"
+    assert sources[-1]["name"] == "Politics"
+
+
+def test_custom_saved_sources_are_not_expanded_with_defaults():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    sources = plugin._sources_from_settings({"sources": "Custom|https://example.com/current"})
+
+    assert sources == [{"name": "Custom", "url": "https://example.com/current"}]
+
+
+def test_default_daily_library_refresh_interval_is_six_hours():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    assert DAILY_LIBRARY_REFRESH_INTERVAL == timedelta(hours=6)
+    assert plugin._daily_library_refresh_interval({}) == timedelta(hours=6)
+    assert plugin._daily_library_refresh_interval({"libraryRefreshHours": "12"}) == timedelta(hours=6)
     assert plugin._daily_library_refresh_interval({"libraryRefreshHours": "23"}) == timedelta(hours=23)
 
 

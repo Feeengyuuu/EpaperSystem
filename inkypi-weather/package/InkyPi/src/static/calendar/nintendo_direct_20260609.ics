@@ -1,0 +1,15 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//InkyPi//Manual Events//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:nintendo-direct-treehouse-20260609@inkypi.local
+DTSTAMP:20260608T210000Z
+DTSTART:20260609T140000Z
+DTEND:20260609T145000Z
+SUMMARY:Nintendo Direct + Treehouse Live
+DESCRIPTION:Nintendo Direct 6.9.2026 starts at 7:00 AM PT / 10:00 AM ET and runs roughly 50 minutes. Nintendo Treehouse: Live follows immediately.
+URL:https://www.nintendo.com/en-ca/nintendo-direct/6-9-2026/
+END:VEVENT
+END:VCALENDAR

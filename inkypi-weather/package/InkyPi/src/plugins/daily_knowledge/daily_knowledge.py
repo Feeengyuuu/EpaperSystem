@@ -23,7 +23,9 @@ from utils.theme_utils import get_theme_context, get_theme_palette
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "daily_knowledge"
-CACHE_SCHEMA_VERSION = "daily-knowledge-v2"
+CACHE_SCHEMA_VERSION = "daily-knowledge-v3"
+SENTENCE_STATE_SCHEMA_VERSION = "daily-knowledge-fallback-history-v1"
+SENTENCE_HISTORY_FILENAME = "fallback_history.json"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 DEFAULT_FONT = "Jost"
 USELESS_FACTS_BASE_URL = "https://uselessfacts.jsph.pl/api/v2/facts"
@@ -111,6 +113,181 @@ LOCAL_FALLBACK_FACTS = (
     },
     {
         "text": "青铜器上的铭文又称金文，是研究商周历史和文字演变的重要材料。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "地球大气中的氮气约占百分之七十八，氧气约占百分之二十一。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "蜜蜂会用舞蹈传递花源方向和距离，帮助同伴找到食物。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "光从太阳到达地球大约需要八分钟多一点，因此我们看到的是稍早的太阳。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "二十四节气反映太阳在黄道上的位置变化，最初常服务于农事安排。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "铅笔芯主要由石墨和黏土制成，并不含金属铅。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "人眼视网膜中的视锥细胞负责颜色感知，视杆细胞更擅长弱光感知。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "地图上的等高线越密集，通常表示地形坡度越陡。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "声音在水中传播速度比在空气中更快，主要因为水更难被压缩。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "树木年轮可以记录生长季节的环境线索，例如干旱、火灾和温度变化。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "彩虹通常由阳光在水滴中折射、反射和色散形成。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "太阳黑子是太阳表面较暗的磁活动区域，温度低于周围光球。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "DNA 双螺旋由两条反向平行的链组成，碱基配对帮助维持结构。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "云的形状与空气上升、湿度和温度变化有关。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "古代丝绸之路不是单一路线，而是多条陆海贸易网络的统称。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "印刷术的发展降低了书籍复制成本，也推动了知识传播。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "珊瑚礁由珊瑚虫和共生藻类共同构成，对水温变化非常敏感。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "北极星并非永远同一颗，地轴进动会让北天极附近的亮星随时代变化。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "茶叶中的茶多酚会影响茶汤涩感，也参与形成不同茶类的风味。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "火山灰颗粒细小坚硬，进入高空后会影响航空发动机安全。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "金属汞在常温常压下呈液态，曾用于温度计，但具有毒性。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "铁锈主要是铁与氧和水反应后形成的氧化物水合物。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "电池把化学能转化为电能，充电电池还能在一定条件下逆向反应。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "石英晶体能产生压电效应，因此常用于稳定的计时振荡器。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "章鱼的神经元有相当一部分分布在腕足中，能进行局部协调。",
+        "source": "本地知识",
+        "source_url": "",
+        "language": "zh",
+        "source_state": "local",
+    },
+    {
+        "text": "斐波那契数列常见于叶序和花盘排列，但自然界并不总是严格遵循。",
         "source": "本地知识",
         "source_url": "",
         "language": "zh",
@@ -305,8 +482,7 @@ class DailyKnowledge(BasePlugin):
         candidates = [item for item in LOCAL_FALLBACK_FACTS if item["language"] == language]
         if not candidates:
             candidates = [item for item in LOCAL_FALLBACK_FACTS if item["language"] == "en"]
-        rng = random.Random(f"{date_key}|{language}|{offset}")
-        item = dict(rng.choice(candidates))
+        item = self._select_fallback_candidate(candidates, language, date_key, offset)
         return KnowledgeFact(
             title="Knowledge Note" if language != "zh" else "知识札记",
             text=item["text"],
@@ -315,6 +491,62 @@ class DailyKnowledge(BasePlugin):
             language=item.get("language", language),
             source_state=item.get("source_state", "local"),
         )
+
+    def _select_fallback_candidate(self, candidates, language, date_key, offset=0):
+        indexed = {self._fallback_fact_id(item): dict(item) for item in candidates}
+        if not indexed:
+            return {}
+
+        ids = list(indexed.keys())
+        state_file = self._cache_dir() / SENTENCE_HISTORY_FILENAME
+        state = self._read_json(state_file, {})
+        if state.get("schema") != SENTENCE_STATE_SCHEMA_VERSION or not isinstance(state.get("languages"), dict):
+            state = {"schema": SENTENCE_STATE_SCHEMA_VERSION, "languages": {}}
+
+        languages = state["languages"]
+        lang_state = languages.setdefault(language, {})
+        if not isinstance(lang_state, dict):
+            lang_state = {}
+            languages[language] = lang_state
+
+        daily = lang_state.get("daily")
+        if not isinstance(daily, dict):
+            daily = {}
+            lang_state["daily"] = daily
+
+        today_ids = [item_id for item_id in daily.get(date_key, []) if item_id in indexed]
+        daily[date_key] = today_ids
+        if len(today_ids) > offset:
+            return dict(indexed[today_ids[offset]])
+
+        recent = [item_id for item_id in lang_state.get("recent", []) if item_id in indexed]
+        blocked = set(recent) | set(today_ids)
+        available = [item_id for item_id in ids if item_id not in blocked]
+        if not available:
+            recent = []
+            available = [item_id for item_id in ids if item_id not in set(today_ids)]
+        if not available:
+            available = ids
+
+        rng = random.Random(f"{date_key}|{language}|{offset}|{len(ids)}")
+        selected_id = rng.choice(available)
+        today_ids.append(selected_id)
+        daily[date_key] = today_ids
+        lang_state["recent"] = (recent + [selected_id])[-len(ids):]
+        self._prune_daily_sentence_history(daily)
+        self._write_json(state_file, state)
+        return dict(indexed[selected_id])
+
+    def _fallback_fact_id(self, item):
+        text = str(item.get("text") or "")
+        language = str(item.get("language") or "")
+        return hashlib.sha1(f"{language}|{text}".encode("utf-8")).hexdigest()[:16]
+
+    def _prune_daily_sentence_history(self, daily):
+        if len(daily) <= 45:
+            return
+        for date_key in sorted(daily)[:-45]:
+            daily.pop(date_key, None)
 
     def _render_page(self, dimensions, payload, settings, now, palette):
         width, height = dimensions

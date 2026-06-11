@@ -8,13 +8,14 @@ import os
 import re
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import feedparser
 from openai import OpenAI
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import pytz
 import requests
 
@@ -31,6 +32,9 @@ DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TITLE = "整点新闻"
 DEFAULT_FONT = "Microsoft YaHei"
 BACKGROUND_IMAGE = "background_world_news.png"
+PLUGIN_DIR = Path(__file__).resolve().parent
+TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
+TITLE_BACKGROUND_SIZE = (325, 65)
 SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v7"
 DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
 BBC World|https://feeds.bbci.co.uk/news/world/rss.xml
@@ -1384,15 +1388,26 @@ class DailyAINews(BasePlugin):
 
         margin = 24
         draw.rectangle((0, 0, width, 74), fill=header_bg)
-        draw.text((margin, 17), title, font=title_font, fill=ink)
-        draw.line((margin, 64, margin + min(210, self._tw(draw, title, title_font)), 64), fill=red, width=3)
-
         date_label = self._date_label(payload, now)
         meta = f"{date_label}  |  {payload.get('model', DEFAULT_MODEL)}"
         if payload.get("from_cache"):
             meta += "  |  cache"
-        draw.text((width - margin - self._tw(draw, meta, meta_font), 20), meta, font=meta_font, fill=muted)
         theme_label = "MIDNIGHT BRIEF" if (theme_context or {}).get("mode") == "night" else "DAY BRIEF"
+        meta_left = width - margin - max(self._tw(draw, meta, meta_font), self._tw(draw, theme_label, meta_font))
+
+        draw.text((margin, 17), title, font=title_font, fill=ink)
+        draw.line((margin, 64, margin + min(210, self._tw(draw, title, title_font)), 64), fill=red, width=3)
+        title_right = margin + self._tw(draw, title, title_font)
+        self._draw_title_background(
+            img,
+            (
+                int(title_right + 12),
+                8,
+                int(meta_left - 12),
+                73,
+            ),
+        )
+        draw.text((width - margin - self._tw(draw, meta, meta_font), 20), meta, font=meta_font, fill=muted)
         draw.text((width - margin - self._tw(draw, theme_label, meta_font), 45), theme_label, font=meta_font, fill=cyan)
 
         lede = str(brief.get("lede") or "")
@@ -1483,6 +1498,42 @@ class DailyAINews(BasePlugin):
 
     def _base_background(self, dimensions, bg, theme_mode="day") -> Image.Image:
         return Image.new("RGB", dimensions, bg)
+
+    def _draw_title_background(self, image: Image.Image, box) -> bool:
+        left, top, right, bottom = [int(round(value)) for value in box]
+        target_w = max(0, right - left)
+        target_h = max(0, bottom - top)
+        if target_w < 80 or target_h < 24:
+            return False
+
+        source = self._load_title_background()
+        if source is None:
+            return False
+
+        try:
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - art.width) / 2)
+            paste_y = int((target_h - art.height) / 2)
+            layer.alpha_composite(art, (paste_x, paste_y))
+            image.paste(layer.convert("RGB"), (left, top), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning("Daily AI News title background unavailable: %s", exc)
+            return False
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_title_background():
+        path = PLUGIN_DIR / TITLE_BACKGROUND_IMAGE
+        if not path.is_file():
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load Daily AI News title background %s: %s", path, exc)
+            return None
 
     def _font(self, family: str, size: int, weight: str = "normal"):
         if str(family or "").strip().lower() == DEFAULT_FONT.lower():
