@@ -94,6 +94,58 @@ def _stock(symbol, prices, shares):
     }
 
 
+def test_stock_tracker_can_pin_and_sink_holdings_display_order():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        _stock("AAPL", [100], 100),
+        _stock("SPY", [100], 80),
+        _stock("SPCX", [100], 1),
+        _stock("NVDA", [100], 90),
+    ]
+
+    ordered = plugin._ordered_holdings(stock_data, "SPCX", "SPY")
+
+    assert [row["symbol"] for row in ordered] == ["SPCX", "AAPL", "NVDA", "SPY"]
+
+
+def test_stock_tracker_sinks_cash_below_equity_holdings_by_default():
+    plugin = StockTracker({"id": "stocktracker"})
+    cash = _stock("CASH", [1], 10_000)
+    cash["is_cash"] = True
+    stock_data = [
+        _stock("AAPL", [100], 10),
+        cash,
+        _stock("NVDA", [100], 9),
+    ]
+
+    ordered = plugin._ordered_holdings(stock_data)
+
+    assert [row["symbol"] for row in ordered] == ["AAPL", "NVDA", "CASH"]
+    assert [row["symbol"] for row in plugin._ordered_holdings(stock_data, "CASH")] == ["AAPL", "NVDA", "CASH"]
+
+
+def test_stock_tracker_adds_robinhood_cash_to_portfolio_rows_and_total():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [_stock("AAPL", [100, 110], 2)]
+    portfolio_meta = plugin._portfolio_meta_from_settings({
+        "cash_balance": "25.50",
+        "buying_power": "20.25",
+        "account_value": "250.75",
+    })
+
+    stock_data.extend(plugin._portfolio_meta_rows(portfolio_meta, stock_data))
+
+    assert [row["symbol"] for row in stock_data] == ["AAPL", "CASH"]
+    assert stock_data[1]["total_value"] == 25.5
+    assert stock_data[1]["change_text"] == "BP $20.25"
+    totals = plugin._portfolio_totals(stock_data, account_value_override=portfolio_meta["account_value"])
+
+    assert totals[0] == 250.75
+    assert totals[1] == 20.0
+    assert round(totals[2], 4) == 8.6674
+    assert plugin._portfolio_values(stock_data, account_value_override=portfolio_meta["account_value"])[-1] == 250.75
+
+
 def _near_color_count(image, target, tolerance=8):
     return sum(
         1

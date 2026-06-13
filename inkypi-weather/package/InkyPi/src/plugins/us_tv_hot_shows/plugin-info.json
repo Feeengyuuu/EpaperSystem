@@ -1,0 +1,6 @@
+{
+    "display_name": "US TV Hot Shows",
+    "id": "us_tv_hot_shows",
+    "class": "UsTvHotShows",
+    "repository": "local"
+}

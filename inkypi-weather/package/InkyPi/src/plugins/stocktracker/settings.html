@@ -31,6 +31,48 @@
 </div>
 
 <div class="form-group">
+    <label for="holdings_pin_symbols">Pinned Visible Holdings</label>
+    <input type="text" id="holdings_pin_symbols" name="holdings_pin_symbols"
+           placeholder="e.g., SPCX">
+    <small>Optional. Comma-separated symbols to keep at the top of the visible holdings table.</small>
+</div>
+
+<div class="form-group">
+    <label for="holdings_sink_symbols">Lower Priority Holdings</label>
+    <input type="text" id="holdings_sink_symbols" name="holdings_sink_symbols"
+           placeholder="e.g., SPY">
+    <small>Optional. Comma-separated symbols to move below other holdings in the table.</small>
+</div>
+
+<div class="form-group">
+    <label for="cash_balance">Robinhood Cash Balance</label>
+    <input type="text" id="cash_balance" name="cash_balance"
+           placeholder="e.g., 123.45">
+    <small>Optional. Adds a CASH row and includes cash in the rendered portfolio value.</small>
+</div>
+
+<div class="form-group">
+    <label for="buying_power">Robinhood Buying Power</label>
+    <input type="text" id="buying_power" name="buying_power"
+           placeholder="e.g., 123.45">
+    <small>Optional. Displayed on the CASH row when available.</small>
+</div>
+
+<div class="form-group">
+    <label for="pending_deposits">Robinhood Pending Deposits</label>
+    <input type="text" id="pending_deposits" name="pending_deposits"
+           placeholder="e.g., 50.00">
+    <small>Optional. Stored with the Money snapshot for Robinhood parity.</small>
+</div>
+
+<div class="form-group">
+    <label for="account_value">Robinhood Account Value</label>
+    <input type="text" id="account_value" name="account_value"
+           placeholder="e.g., 1000.00">
+    <small>Optional. Overrides the top portfolio value to match Robinhood's account value.</small>
+</div>
+
+<div class="form-group">
     <label for="period">Time Period</label>
     <select id="period" name="period" required>
         <option value="">-- Select Period --</option>
@@ -196,6 +238,24 @@
             }
             if (pluginSettings.portfolio_csv_path) {
                 document.getElementById('portfolio_csv_path').value = pluginSettings.portfolio_csv_path;
+            }
+            if (pluginSettings.holdings_pin_symbols) {
+                document.getElementById('holdings_pin_symbols').value = pluginSettings.holdings_pin_symbols;
+            }
+            if (pluginSettings.holdings_sink_symbols) {
+                document.getElementById('holdings_sink_symbols').value = pluginSettings.holdings_sink_symbols;
+            }
+            if (pluginSettings.cash_balance) {
+                document.getElementById('cash_balance').value = pluginSettings.cash_balance;
+            }
+            if (pluginSettings.buying_power) {
+                document.getElementById('buying_power').value = pluginSettings.buying_power;
+            }
+            if (pluginSettings.pending_deposits) {
+                document.getElementById('pending_deposits').value = pluginSettings.pending_deposits;
+            }
+            if (pluginSettings.account_value) {
+                document.getElementById('account_value').value = pluginSettings.account_value;
             }
             if (pluginSettings.portfolio_csv_file) {
                 document.getElementById('portfolio_csv_existing').value = pluginSettings.portfolio_csv_file;

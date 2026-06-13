@@ -1,0 +1,6 @@
+{
+    "display_name": "Mainland China Movie Chart",
+    "id": "china_box_office_top_movies",
+    "class": "ChinaBoxOfficeTopMovies",
+    "repository": "local"
+}

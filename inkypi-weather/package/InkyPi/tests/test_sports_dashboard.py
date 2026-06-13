@@ -341,6 +341,98 @@ def _sample_football_data_match():
     }
 
 
+def _sample_worldcup_espn_scoreboard_payload():
+    return {
+        "events": [
+            {
+                "id": "760415",
+                "date": "2026-06-11T19:00Z",
+                "season": {"slug": "fifa-world-cup"},
+                "competitions": [
+                    {
+                        "id": "760415",
+                        "date": "2026-06-11T19:00Z",
+                        "status": {
+                            "period": 2,
+                            "type": {
+                                "state": "post",
+                                "completed": True,
+                                "name": "STATUS_FULL_TIME",
+                                "description": "Full Time",
+                                "shortDetail": "FT",
+                                "detail": "FT",
+                            },
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "score": "2",
+                                "team": {
+                                    "abbreviation": "MEX",
+                                    "shortDisplayName": "Mexico",
+                                    "displayName": "Mexico",
+                                    "logo": "https://example.com/mex.png",
+                                },
+                            },
+                            {
+                                "homeAway": "away",
+                                "score": "0",
+                                "team": {
+                                    "abbreviation": "RSA",
+                                    "shortDisplayName": "South Africa",
+                                    "displayName": "South Africa",
+                                    "logo": "https://example.com/rsa.png",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "760414",
+                "date": "2026-06-12T02:00Z",
+                "competitions": [
+                    {
+                        "id": "760414",
+                        "date": "2026-06-12T02:00Z",
+                        "status": {
+                            "period": 1,
+                            "type": {
+                                "state": "in",
+                                "completed": False,
+                                "name": "STATUS_FIRST_HALF",
+                                "description": "First Half",
+                                "shortDetail": "9'",
+                                "detail": "9'",
+                            },
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "score": "0",
+                                "team": {
+                                    "abbreviation": "KOR",
+                                    "shortDisplayName": "South Korea",
+                                    "displayName": "South Korea",
+                                },
+                            },
+                            {
+                                "homeAway": "away",
+                                "score": "0",
+                                "team": {
+                                    "abbreviation": "CZE",
+                                    "shortDisplayName": "Czechia",
+                                    "displayName": "Czechia",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+
+
 def _sample_worldcup_odds_event():
     return {
         "id": "mex-rsa",
@@ -1633,6 +1725,115 @@ def test_worldcup_group_points_labels_reserve_future_slots():
     assert SportsDashboard._worldcup_team_points_meta({"team_b_standing_points": 4}, "b") == "PTS 4"
 
 
+def test_worldcup_api_season_can_follow_football_data_season_for_history():
+    assert SportsDashboard._worldcup_api_season({"footballDataSeason": "2022"}) == "2022"
+    assert (
+        SportsDashboard._worldcup_api_season(
+            {"footballDataSeason": "2022", "worldCupApiSeason": "2024"}
+        )
+        == "2024"
+    )
+
+
+def test_worldcup_espn_parser_reads_finished_and_live_scores():
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_worldcup_espn_events(_sample_worldcup_espn_scoreboard_payload(), la)
+
+    assert len(events) == 2
+    assert events[0]["event_id"] == "760415"
+    assert events[0]["state"] == "FT"
+    assert events[0]["team_a_tla"] == "MEX"
+    assert events[0]["team_b_tla"] == "RSA"
+    assert events[0]["wins_a"] == 2
+    assert events[0]["wins_b"] == 0
+    assert events[0]["score_source"] == "ESPN"
+    assert events[1]["state"] == "1H"
+    assert events[1]["elapsed"] == 9
+    assert SportsDashboard._worldcup_event_status_label(events[1], datetime(2026, 6, 11, 19, 10, tzinfo=la)) == "9' 0-0"
+
+
+def test_worldcup_scoreboard_overlay_updates_football_data_scores():
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_football_data_events([_sample_football_data_match()], la)
+    scoreboard_events = SportsDashboard._parse_worldcup_espn_events(_sample_worldcup_espn_scoreboard_payload(), la)
+
+    merged, attached_count = SportsDashboard._merge_worldcup_scoreboard_events(events, scoreboard_events)
+
+    assert attached_count == 1
+    assert merged[0]["state"] == "FT"
+    assert merged[0]["wins_a"] == 2
+    assert merged[0]["wins_b"] == 0
+    assert merged[0]["score_source"] == "ESPN"
+    assert SportsDashboard._worldcup_event_status_label(merged[0], datetime(2026, 6, 11, 14, 0, tzinfo=la)) == "2-0"
+
+
+def test_worldcup_scoreboard_source_label_identifies_overlay():
+    label = SportsDashboard._worldcup_api_source_label(
+        "FOOTBALL LIVE + ESPN LIVE",
+        "2026-06-11T19:12:00+00:00",
+    )
+
+    assert label.startswith("FD+ESPN")
+
+
+def test_worldcup_completed_only_selection_uses_recent_mode_and_year():
+    recent = {
+        "start": datetime(2022, 12, 18, 18, 0, tzinfo=timezone.utc),
+        "state": "FT",
+        "status": "Match Finished",
+        "team_a": "Argentina",
+        "team_b": "France",
+        "team_a_tla": "ARG",
+        "team_b_tla": "FRA",
+        "wins_a": 3,
+        "wins_b": 3,
+        "block": "Final",
+    }
+
+    selected = SportsDashboard._select_worldcup_event_sections(
+        [recent],
+        datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc),
+        4,
+    )
+
+    assert selected["main"] is recent
+    assert SportsDashboard._worldcup_main_mode(selected, recent) == "recent"
+    assert SportsDashboard._worldcup_title_year(selected) == "2022"
+
+
+def test_worldcup_group_points_are_inferred_from_completed_group_matches():
+    now = datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc)
+    completed = {
+        "start": datetime(2026, 6, 11, 19, 0, tzinfo=timezone.utc),
+        "state": "FT",
+        "team_a": "Mexico",
+        "team_b": "South Africa",
+        "team_a_tla": "MEX",
+        "team_b_tla": "RSA",
+        "wins_a": 2,
+        "wins_b": 1,
+        "block": "Group A",
+    }
+    upcoming = {
+        "start": datetime(2026, 6, 13, 19, 0, tzinfo=timezone.utc),
+        "state": "TIMED",
+        "team_a": "Mexico",
+        "team_b": "Qatar",
+        "team_a_tla": "MEX",
+        "team_b_tla": "QAT",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Group A",
+    }
+
+    SportsDashboard._select_worldcup_event_sections([completed, upcoming], now, 4)
+
+    assert completed["team_a_group_points"] == 3
+    assert completed["team_b_group_points"] == 0
+    assert upcoming["team_a_group_points"] == 3
+    assert upcoming["team_b_group_points"] == 0
+
+
 def test_worldcup_live_state_file_tracks_active_match():
     plugin = _plugin()
     tmp_path = _sports_dashboard_tmp("worldcup_live_state")
@@ -1671,6 +1872,54 @@ def test_worldcup_fallback_renders_compact_four_match_list():
     assert image.size == (800, 208)
     assert image.getpixel((18, 64)) != COLORS["paper"]
     assert image.getpixel((30, 190)) != COLORS["paper"]
+
+
+def test_worldcup_compact_panel_draws_recent_section_in_bottom_gap(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc)
+
+    def event(day, state, team_a, team_b, wins_a=None, wins_b=None):
+        return {
+            "start": datetime(2026, 6, day, 19, 0, tzinfo=timezone.utc),
+            "state": state,
+            "status": state,
+            "team_a": team_a,
+            "team_b": team_b,
+            "team_a_tla": team_a[:3].upper(),
+            "team_b_tla": team_b[:3].upper(),
+            "team_a_flag": "",
+            "team_b_flag": "",
+            "wins_a": wins_a,
+            "wins_b": wins_b,
+            "block": "Group Stage",
+        }
+
+    main = event(13, "TIMED", "USA", "Mexico")
+    second = event(14, "TIMED", "Brazil", "Morocco")
+    third = event(15, "TIMED", "Canada", "Qatar")
+    recent = event(11, "FT", "Mexico", "South Africa", 2, 1)
+    selected = {
+        "live": [],
+        "upcoming": [main, second, third],
+        "recent": [recent],
+        "main": main,
+        "visible_matches": 4,
+    }
+    calls = []
+    original = plugin._draw_worldcup_recent_rows
+
+    def record_recent_rows(image, draw, x1, x2, y, bottom, events):
+        calls.append({"x1": x1, "y": y, "bottom": bottom, "events": list(events)})
+        return original(image, draw, x1, x2, y, bottom, events)
+
+    monkeypatch.setattr(plugin, "_draw_worldcup_recent_rows", record_recent_rows)
+
+    image = plugin._render_worldcup_api_panel((556, 208), selected, "FOOTBALL LIVE", now, 4, now)
+
+    assert calls
+    assert calls[0]["events"] == [recent]
+    assert calls[0]["y"] <= calls[0]["bottom"] - 38
+    assert image.getpixel((calls[0]["x1"] + 4, calls[0]["y"] + 5)) == COLORS["worldcup_accent"]
 
 
 def test_worldcup_api_parser_converts_fixture_to_local_match_row():
@@ -2229,6 +2478,7 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     la = ZoneInfo("America/Los_Angeles")
     plugin._try_worldcup_football_data_panel = lambda *args, **kwargs: None
     plugin._try_worldcup_api_panel = lambda *args, **kwargs: None
+    plugin._try_worldcup_scoreboard_panel = lambda *args, **kwargs: None
     plugin._take_worldcup_screenshot = lambda settings, dimensions, timezone_name, visible_matches: Image.new("RGB", dimensions, (1, 2, 3))
     plugin._load_lpl_events = lambda settings, timezone_info: (
         SportsDashboard._parse_lpl_events(_sample_payload(), la),

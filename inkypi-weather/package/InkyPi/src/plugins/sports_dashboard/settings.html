@@ -24,7 +24,7 @@
 
 <div class="form-group">
     <label for="footballDataSeason" class="form-label">football-data.org season:</label>
-    <input type="number" id="footballDataSeason" name="footballDataSeason" min="2026" max="2030" placeholder="2026" class="form-input">
+    <input type="number" id="footballDataSeason" name="footballDataSeason" min="2022" max="2030" placeholder="2026" class="form-input">
 </div>
 
 <div class="form-group">
@@ -35,6 +35,38 @@
 <div class="form-group">
     <label for="footballDataDailyLimit" class="form-label">football-data.org daily request limit:</label>
     <input type="number" id="footballDataDailyLimit" name="footballDataDailyLimit" min="1" max="60" placeholder="8" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="worldCupScoreboardEnabled" name="worldCupScoreboardEnabled" value="true">
+        Use ESPN World Cup live scores
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="worldCupScoreboardUrl" class="form-label">World Cup ESPN scoreboard URL:</label>
+    <input type="text" id="worldCupScoreboardUrl" name="worldCupScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupScoreboardCacheHours" class="form-label">World Cup ESPN normal cache hours:</label>
+    <input type="number" id="worldCupScoreboardCacheHours" name="worldCupScoreboardCacheHours" min="1" max="12" placeholder="1" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupScoreboardDailyLimit" class="form-label">World Cup ESPN daily request limit:</label>
+    <input type="number" id="worldCupScoreboardDailyLimit" name="worldCupScoreboardDailyLimit" min="1" max="120" placeholder="96" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupScoreboardLookbackDays" class="form-label">World Cup ESPN recent lookback days:</label>
+    <input type="number" id="worldCupScoreboardLookbackDays" name="worldCupScoreboardLookbackDays" min="0" max="30" placeholder="3" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="worldCupScoreboardLookaheadDays" class="form-label">World Cup ESPN upcoming lookahead days:</label>
+    <input type="number" id="worldCupScoreboardLookaheadDays" name="worldCupScoreboardLookaheadDays" min="1" max="60" placeholder="5" class="form-input">
 </div>
 
 <div class="form-group">
@@ -49,7 +81,7 @@
 
 <div class="form-group">
     <label for="worldCupApiSeason" class="form-label">World Cup API season:</label>
-    <input type="number" id="worldCupApiSeason" name="worldCupApiSeason" min="2026" max="2030" placeholder="2026" class="form-input">
+    <input type="number" id="worldCupApiSeason" name="worldCupApiSeason" min="2022" max="2030" placeholder="2026" class="form-input">
 </div>
 
 <div class="form-group">
@@ -286,6 +318,12 @@
             document.getElementById('footballDataSeason').value = pluginSettings.footballDataSeason || '';
             document.getElementById('footballDataCacheHours').value = pluginSettings.footballDataCacheHours || '';
             document.getElementById('footballDataDailyLimit').value = pluginSettings.footballDataDailyLimit || '';
+            document.getElementById('worldCupScoreboardEnabled').checked = pluginSettings.worldCupScoreboardEnabled !== 'false';
+            document.getElementById('worldCupScoreboardUrl').value = pluginSettings.worldCupScoreboardUrl || '';
+            document.getElementById('worldCupScoreboardCacheHours').value = pluginSettings.worldCupScoreboardCacheHours || '';
+            document.getElementById('worldCupScoreboardDailyLimit').value = pluginSettings.worldCupScoreboardDailyLimit || '';
+            document.getElementById('worldCupScoreboardLookbackDays').value = pluginSettings.worldCupScoreboardLookbackDays || '';
+            document.getElementById('worldCupScoreboardLookaheadDays').value = pluginSettings.worldCupScoreboardLookaheadDays || '';
             document.getElementById('apiSportsKey').value = pluginSettings.apiSportsKey || '';
             document.getElementById('worldCupApiLeagueId').value = pluginSettings.worldCupApiLeagueId || '';
             document.getElementById('worldCupApiSeason').value = pluginSettings.worldCupApiSeason || '';

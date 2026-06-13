@@ -1,0 +1,26 @@
+{
+  "positions": [
+    {
+      "instrument": {
+        "symbol": "AAPL",
+        "type": "stock"
+      },
+      "quantity": "3.5"
+    },
+    {
+      "symbol": "NVDA",
+      "shares": "2.25",
+      "asset_type": "stock"
+    },
+    {
+      "symbol": "USD",
+      "quantity": "100.00",
+      "asset_type": "cash"
+    },
+    {
+      "symbol": "AAPL",
+      "quantity": "1.25",
+      "asset_type": "stock"
+    }
+  ]
+}

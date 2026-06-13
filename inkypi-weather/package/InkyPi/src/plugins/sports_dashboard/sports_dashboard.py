@@ -48,6 +48,7 @@ API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io"
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 SPORTS_DASHBOARD_STATE_VERSION = "sports-dashboard-api-v1"
 FOOTBALL_DATA_STATE_VERSION = "sports-dashboard-football-data-v1"
+WORLD_CUP_SCOREBOARD_STATE_VERSION = "sports-dashboard-worldcup-scoreboard-v1"
 WORLD_CUP_ODDS_STATE_VERSION = "sports-dashboard-worldcup-odds-v1"
 WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
@@ -64,6 +65,11 @@ DEFAULT_NBA_DAILY_LIMIT = 96
 DEFAULT_NBA_LOOKBACK_DAYS = 10
 DEFAULT_NBA_LOOKAHEAD_DAYS = 21
 DEFAULT_NBA_LIVE_REFRESH_SECONDS = 180
+DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+DEFAULT_WORLD_CUP_SCOREBOARD_CACHE_HOURS = 1
+DEFAULT_WORLD_CUP_SCOREBOARD_DAILY_LIMIT = 96
+DEFAULT_WORLD_CUP_SCOREBOARD_LOOKBACK_DAYS = 3
+DEFAULT_WORLD_CUP_SCOREBOARD_LOOKAHEAD_DAYS = 5
 NBA_MINI_LINEUP_LOGO_SIZE = 15
 NBA_MINI_LINEUP_TEAM_FONT_SIZE = 12
 NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE = 11
@@ -538,6 +544,15 @@ class SportsDashboard(BasePlugin):
                 now,
             )
         if left is None:
+            left = self._try_worldcup_scoreboard_panel(
+                settings,
+                device_config,
+                (left_width, worldcup_height),
+                timezone_info,
+                visible_worldcup_matches,
+                now,
+            )
+        if left is None:
             if self._bool_setting(settings, "worldCupScreenshotFallback", False):
                 left_source = "screenshot"
                 left = self._take_worldcup_screenshot(
@@ -548,7 +563,11 @@ class SportsDashboard(BasePlugin):
                 )
         if left is None:
             left_source = "fallback"
-            left = self._render_worldcup_fallback((left_width, worldcup_height), visible_worldcup_matches)
+            left = self._render_worldcup_fallback(
+                (left_width, worldcup_height),
+                visible_worldcup_matches,
+                self._worldcup_configured_season(settings),
+            )
         left, worldcup_content_box = self._prepare_worldcup_panel(
             left.convert("RGB"),
             (left_width, worldcup_height),
@@ -3065,6 +3084,10 @@ class SportsDashboard(BasePlugin):
         try:
             matches, source_state, fetched_at = self._load_football_data_matches(settings, api_key, timezone_info)
             events = self._parse_football_data_events(matches, timezone_info)
+            events, score_source_state, score_fetched_at = self._attach_worldcup_scoreboard_scores(events, settings, timezone_info)
+            if score_source_state:
+                source_state = self._worldcup_combined_score_source_state(source_state, score_source_state)
+                fetched_at = score_fetched_at or fetched_at
             events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
             selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
@@ -3263,6 +3286,204 @@ class SportsDashboard(BasePlugin):
         except OSError as exc:
             logger.warning("Failed to write football-data.org request counter: %s", exc)
 
+    def _try_worldcup_scoreboard_panel(self, settings, device_config, dimensions, timezone_info, visible_matches, now):
+        if not self._bool_setting(settings, "worldCupScoreboardEnabled", True):
+            return None
+        try:
+            payload, source_state, fetched_at = self._load_worldcup_scoreboard(settings, timezone_info)
+            events = self._parse_worldcup_espn_events(payload, timezone_info)
+            if not events:
+                return None
+            events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            selected = self._select_worldcup_event_sections(events, now, visible_matches)
+            if not selected:
+                return None
+            self._attach_worldcup_lineup_summary_from_api(selected, settings, device_config, timezone_info, now)
+            self._write_worldcup_live_state(selected, now, source_state)
+            return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
+        except Exception as exc:
+            logger.warning("ESPN World Cup scoreboard panel failed: %s", exc)
+            return None
+
+    def _attach_worldcup_scoreboard_scores(self, events, settings, timezone_info):
+        if not events or not self._bool_setting(settings, "worldCupScoreboardEnabled", True):
+            return events, "", None
+        try:
+            payload, source_state, fetched_at = self._load_worldcup_scoreboard(settings, timezone_info)
+            scoreboard_events = self._parse_worldcup_espn_events(payload, timezone_info)
+            if not scoreboard_events:
+                return events, "", fetched_at
+            merged, attached_count = self._merge_worldcup_scoreboard_events(events, scoreboard_events)
+            if attached_count <= 0:
+                return merged, "", fetched_at
+            return merged, source_state, fetched_at
+        except Exception as exc:
+            logger.warning("ESPN World Cup score overlay failed: %s", _safe_exception_text(exc))
+            return events, "", None
+
+    def _load_worldcup_scoreboard(self, settings, timezone_info):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._worldcup_scoreboard_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._worldcup_scoreboard_cache_key(settings, timezone_info, now_utc)
+        force_refresh = self._force_refresh_requested(settings)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("scoreboard"), dict)
+        if (
+            has_compatible_cache
+            and not force_refresh
+            and self._worldcup_scoreboard_cache_is_fresh(cache, settings, timezone_info, now_utc)
+        ):
+            return cache["scoreboard"], "ESPN CACHE", cache.get("fetched_at")
+
+        if self._worldcup_scoreboard_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            return {}, "ESPN LIMIT", None
+
+        try:
+            payload = self._fetch_worldcup_scoreboard_payload(settings, timezone_info, cache_key, now_utc)
+        except Exception:
+            if has_compatible_cache:
+                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            raise
+
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write ESPN World Cup scoreboard cache: %s", exc)
+        return payload["scoreboard"], "ESPN LIVE", payload.get("fetched_at")
+
+    def _fetch_worldcup_scoreboard_payload(self, settings, timezone_info, cache_key, now_utc):
+        start_date, end_date = self._worldcup_scoreboard_date_range(settings, timezone_info, now_utc)
+        url = self._worldcup_scoreboard_url(settings)
+        session = get_http_session()
+        try:
+            response = session.get(
+                url,
+                params={
+                    "dates": f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}",
+                    "limit": "100",
+                },
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+                timeout=20,
+            )
+        finally:
+            self._record_worldcup_scoreboard_call(settings, now_utc)
+        response.raise_for_status()
+        return {
+            "version": WORLD_CUP_SCOREBOARD_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "range_start": start_date.isoformat(),
+            "range_end": end_date.isoformat(),
+            "scoreboard": response.json(),
+        }
+
+    def _worldcup_scoreboard_cache_key(self, settings, timezone_info, now_utc):
+        start_date, end_date = self._worldcup_scoreboard_date_range(settings, timezone_info, now_utc)
+        return "|".join(
+            [
+                WORLD_CUP_SCOREBOARD_STATE_VERSION,
+                self._worldcup_scoreboard_url(settings),
+                start_date.isoformat(),
+                end_date.isoformat(),
+                getattr(timezone_info, "key", DEFAULT_TIMEZONE),
+            ]
+        )
+
+    @staticmethod
+    def _worldcup_scoreboard_url(settings):
+        value = str(settings.get("worldCupScoreboardUrl") or DEFAULT_WORLD_CUP_SCOREBOARD_URL).strip()
+        return value or DEFAULT_WORLD_CUP_SCOREBOARD_URL
+
+    @staticmethod
+    def _worldcup_scoreboard_date_range(settings, timezone_info, now_utc):
+        local_date = now_utc.astimezone(timezone_info).date()
+        lookback = SportsDashboard._int_setting(
+            settings,
+            "worldCupScoreboardLookbackDays",
+            DEFAULT_WORLD_CUP_SCOREBOARD_LOOKBACK_DAYS,
+            0,
+            30,
+        )
+        lookahead = SportsDashboard._int_setting(
+            settings,
+            "worldCupScoreboardLookaheadDays",
+            DEFAULT_WORLD_CUP_SCOREBOARD_LOOKAHEAD_DAYS,
+            1,
+            60,
+        )
+        return local_date - timedelta(days=lookback), local_date + timedelta(days=lookahead)
+
+    def _worldcup_scoreboard_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "worldcup_scoreboard.json"
+
+    def _worldcup_scoreboard_state_path(self):
+        return self._sports_dashboard_cache_dir() / "worldcup_scoreboard_state.json"
+
+    def _worldcup_scoreboard_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
+        cache_hours = self._int_setting(
+            settings,
+            "worldCupScoreboardCacheHours",
+            DEFAULT_WORLD_CUP_SCOREBOARD_CACHE_HOURS,
+            1,
+            12,
+        )
+        if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return False
+        if self._worldcup_scoreboard_cache_has_live_poll_candidate(cache, timezone_info, now_utc):
+            return self._cache_is_fresh_seconds(cache, self._worldcup_live_refresh_seconds(settings), now_utc)
+        return True
+
+    def _worldcup_scoreboard_cache_has_live_poll_candidate(self, cache, timezone_info, now_utc):
+        try:
+            events = self._parse_worldcup_espn_events(cache.get("scoreboard") or {}, timezone_info)
+        except Exception as exc:
+            logger.debug("ESPN World Cup live cache candidate parse failed: %s", exc)
+            return False
+        return self._should_poll_worldcup_live_data(events, now_utc.astimezone(timezone_info))
+
+    def _worldcup_scoreboard_calls_left(self, settings, now_utc):
+        limit = self._int_setting(
+            settings,
+            "worldCupScoreboardDailyLimit",
+            DEFAULT_WORLD_CUP_SCOREBOARD_DAILY_LIMIT,
+            1,
+            120,
+        )
+        state = self._read_json_file(self._worldcup_scoreboard_state_path())
+        today = now_utc.date().isoformat()
+        if state.get("date") != today:
+            return limit
+        try:
+            count = int(state.get("count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return max(0, limit - count)
+
+    def _record_worldcup_scoreboard_call(self, settings, now_utc):
+        path = self._worldcup_scoreboard_state_path()
+        state = self._read_json_file(path)
+        today = now_utc.date().isoformat()
+        count = 0
+        if state.get("date") == today:
+            try:
+                count = int(state.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+        try:
+            self._write_json_file(
+                path,
+                {
+                    "version": WORLD_CUP_SCOREBOARD_STATE_VERSION,
+                    "date": today,
+                    "count": count + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to update ESPN World Cup scoreboard request counter: %s", exc)
+
     def _try_worldcup_api_panel(self, settings, device_config, dimensions, timezone_info, visible_matches, now):
         api_key = self._api_sports_key(settings, device_config)
         if not api_key:
@@ -3270,6 +3491,10 @@ class SportsDashboard(BasePlugin):
         try:
             fixtures, source_state, fetched_at = self._load_worldcup_api_fixtures(settings, api_key, timezone_info)
             events = self._parse_worldcup_api_events(fixtures, timezone_info)
+            events, score_source_state, score_fetched_at = self._attach_worldcup_scoreboard_scores(events, settings, timezone_info)
+            if score_source_state:
+                source_state = self._worldcup_combined_score_source_state(source_state, score_source_state)
+                fetched_at = score_fetched_at or fetched_at
             events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
             selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
@@ -3666,7 +3891,20 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _worldcup_api_season(settings):
-        season = str(settings.get("worldCupApiSeason") or DEFAULT_WORLD_CUP_SEASON).strip()
+        season = str(
+            settings.get("worldCupApiSeason")
+            or settings.get("footballDataSeason")
+            or DEFAULT_WORLD_CUP_SEASON
+        ).strip()
+        return season if season.isdigit() and len(season) == 4 else DEFAULT_WORLD_CUP_SEASON
+
+    @staticmethod
+    def _worldcup_configured_season(settings):
+        season = str(
+            (settings or {}).get("worldCupApiSeason")
+            or (settings or {}).get("footballDataSeason")
+            or DEFAULT_WORLD_CUP_SEASON
+        ).strip()
         return season if season.isdigit() and len(season) == 4 else DEFAULT_WORLD_CUP_SEASON
 
     def _worldcup_api_cache_path(self):
@@ -4523,6 +4761,250 @@ class SportsDashboard(BasePlugin):
         return sorted(parsed, key=lambda item: item["start"])
 
     @staticmethod
+    def _parse_worldcup_espn_events(payload, timezone_info):
+        parsed = []
+        for event in (payload or {}).get("events") or []:
+            competitions = event.get("competitions") or []
+            competition = competitions[0] if competitions else {}
+            start_time = SportsDashboard._parse_start_time(
+                competition.get("date") or event.get("date"),
+                timezone_info,
+            )
+            if not start_time:
+                continue
+            away, home = SportsDashboard._nba_competitors_by_side(competition.get("competitors") or [])
+            if not away or not home:
+                continue
+            state = SportsDashboard._worldcup_espn_event_state(event, competition)
+            show_score = SportsDashboard._worldcup_state_has_score(state)
+            team_a, team_a_name, team_a_tla, team_a_flag, wins_a, team_a_aliases = SportsDashboard._worldcup_espn_team_info(
+                home,
+                show_score,
+            )
+            team_b, team_b_name, team_b_tla, team_b_flag, wins_b, team_b_aliases = SportsDashboard._worldcup_espn_team_info(
+                away,
+                show_score,
+            )
+            parsed.append(
+                {
+                    "event_id": str(event.get("id") or competition.get("id") or "").strip(),
+                    "start": start_time,
+                    "state": state,
+                    "status": SportsDashboard._worldcup_espn_status_text(event, competition, start_time),
+                    "elapsed": SportsDashboard._worldcup_espn_elapsed(event, competition),
+                    "team_a": team_a,
+                    "team_b": team_b,
+                    "team_a_tla": team_a_tla,
+                    "team_b_tla": team_b_tla,
+                    "team_a_source_name": team_a_name,
+                    "team_b_source_name": team_b_name,
+                    "team_a_source_aliases": team_a_aliases,
+                    "team_b_source_aliases": team_b_aliases,
+                    "team_a_flag": team_a_flag,
+                    "team_b_flag": team_b_flag,
+                    "wins_a": wins_a,
+                    "wins_b": wins_b,
+                    "block": SportsDashboard._worldcup_espn_event_block(event, competition),
+                    "score_source": "ESPN",
+                }
+            )
+        parsed = sorted(parsed, key=lambda item: item["start"])
+        unique = []
+        seen = set()
+        for event in parsed:
+            key = event.get("event_id") or f"{event['start'].isoformat()}|{event['team_a']}|{event['team_b']}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(event)
+        return unique
+
+    @staticmethod
+    def _worldcup_espn_team_info(competitor, show_score):
+        team = (competitor or {}).get("team") or {}
+        tla = str(
+            team.get("abbreviation")
+            or team.get("shortDisplayName")
+            or team.get("id")
+            or ""
+        ).strip().upper()
+        source_name = str(team.get("displayName") or team.get("name") or team.get("shortDisplayName") or tla).strip()
+        localized = SportsDashboard._localized_country_name(
+            {"shortName": team.get("shortDisplayName"), "name": source_name},
+            tla,
+        )
+        score = SportsDashboard._lpl_int_value((competitor or {}).get("score")) if show_score else None
+        return (
+            localized,
+            source_name or tla,
+            tla,
+            str(team.get("logo") or "").strip() or SportsDashboard._flag_url_for_tla(tla),
+            score,
+            SportsDashboard._worldcup_espn_team_aliases(team, tla),
+        )
+
+    @staticmethod
+    def _worldcup_espn_team_aliases(team, tla):
+        aliases = []
+        for value in (
+            team.get("displayName"),
+            team.get("name"),
+            team.get("shortDisplayName"),
+            team.get("abbreviation"),
+            tla,
+        ):
+            text = str(value or "").strip()
+            if text and text not in aliases:
+                aliases.append(text)
+        return aliases
+
+    @staticmethod
+    def _worldcup_espn_event_state(event, competition):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") or {}
+        state = str(status_type.get("state") or "").strip().lower()
+        name = str(status_type.get("name") or "").strip().upper()
+        description = str(status_type.get("description") or "").strip().upper()
+        detail = str(status_type.get("detail") or status_type.get("shortDetail") or "").strip().upper()
+        combined = " ".join(part for part in (name, description, detail) if part)
+        if status_type.get("completed") is True or state == "post" or "FULL_TIME" in combined or combined in {"FT", "FINAL"}:
+            if "PEN" in combined:
+                return "PEN"
+            if "AET" in combined or "EXTRA" in combined:
+                return "AET"
+            return "FT"
+        if "HALF_TIME" in combined or "HALFTIME" in combined or combined == "HT":
+            return "HT"
+        if "SECOND_HALF" in combined or "2ND" in combined:
+            return "2H"
+        if "FIRST_HALF" in combined or "1ST" in combined:
+            return "1H"
+        if "PEN" in combined:
+            return "P"
+        if "EXTRA" in combined:
+            return "ET"
+        if state == "in" or "IN_PROGRESS" in combined or "LIVE" in combined:
+            return "LIVE"
+        if "POSTPONED" in combined:
+            return "POSTPONED"
+        return "TIMED"
+
+    @staticmethod
+    def _worldcup_espn_status_text(event, competition, start_time):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") or {}
+        state = SportsDashboard._worldcup_espn_event_state(event, competition)
+        if state in WORLD_CUP_LIVE_STATES.union(WORLD_CUP_FINISHED_STATES):
+            text = str(
+                status_type.get("shortDetail")
+                or status_type.get("detail")
+                or status_type.get("description")
+                or state
+            ).strip()
+            return text or state
+        return SportsDashboard._format_time_24h(start_time)
+
+    @staticmethod
+    def _worldcup_espn_elapsed(event, competition):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        value = SportsDashboard._lpl_int_value(status.get("period"))
+        detail = str((status.get("type") or {}).get("shortDetail") or (status.get("type") or {}).get("detail") or "").strip()
+        match = re.search(r"\b(\d{1,3})(?:\+(\d{1,2}))?['’]?", detail)
+        if match:
+            value = SportsDashboard._lpl_int_value(match.group(1))
+        return value
+
+    @staticmethod
+    def _worldcup_espn_event_block(event, competition):
+        competition_type = (competition or {}).get("type") or {}
+        value = str(competition_type.get("abbreviation") or competition_type.get("text") or "").strip()
+        if value:
+            return value.upper()
+        season = (event or {}).get("season") or {}
+        season_slug = str(season.get("slug") or season.get("type") or "").strip().replace("-", " ")
+        return season_slug.upper() if season_slug else "World Cup"
+
+    @staticmethod
+    def _worldcup_state_has_score(state):
+        return str(state or "").strip().upper() in WORLD_CUP_LIVE_STATES.union(WORLD_CUP_FINISHED_STATES)
+
+    @staticmethod
+    def _merge_worldcup_scoreboard_events(events, scoreboard_events):
+        merged = []
+        attached_count = 0
+        for event in events or []:
+            next_event = dict(event)
+            matched = SportsDashboard._match_worldcup_scoreboard_event(event, scoreboard_events)
+            if matched:
+                scoreboard_event, reversed_order = matched
+                SportsDashboard._apply_worldcup_scoreboard_event(next_event, scoreboard_event, reversed_order)
+                attached_count += 1
+            merged.append(next_event)
+        return merged, attached_count
+
+    @staticmethod
+    def _match_worldcup_scoreboard_event(event, scoreboard_events):
+        team_a_aliases = SportsDashboard._worldcup_event_team_aliases(event, "a")
+        team_b_aliases = SportsDashboard._worldcup_event_team_aliases(event, "b")
+        for candidate in scoreboard_events or []:
+            if not SportsDashboard._worldcup_score_time_matches(event.get("start"), candidate.get("start")):
+                continue
+            candidate_a_matches_a = SportsDashboard._worldcup_candidate_team_matches_aliases(candidate, "a", team_a_aliases)
+            candidate_b_matches_b = SportsDashboard._worldcup_candidate_team_matches_aliases(candidate, "b", team_b_aliases)
+            if candidate_a_matches_a and candidate_b_matches_b:
+                return candidate, False
+            candidate_a_matches_b = SportsDashboard._worldcup_candidate_team_matches_aliases(candidate, "a", team_b_aliases)
+            candidate_b_matches_a = SportsDashboard._worldcup_candidate_team_matches_aliases(candidate, "b", team_a_aliases)
+            if candidate_a_matches_b and candidate_b_matches_a:
+                return candidate, True
+        return None
+
+    @staticmethod
+    def _worldcup_candidate_team_matches_aliases(event, side, aliases):
+        candidate_aliases = SportsDashboard._worldcup_event_team_aliases(event, side)
+        return bool(candidate_aliases.intersection(aliases or set()))
+
+    @staticmethod
+    def _apply_worldcup_scoreboard_event(event, scoreboard_event, reversed_order):
+        if reversed_order:
+            event["wins_a"] = scoreboard_event.get("wins_b")
+            event["wins_b"] = scoreboard_event.get("wins_a")
+            event["team_a_flag"] = event.get("team_a_flag") or scoreboard_event.get("team_b_flag", "")
+            event["team_b_flag"] = event.get("team_b_flag") or scoreboard_event.get("team_a_flag", "")
+        else:
+            event["wins_a"] = scoreboard_event.get("wins_a")
+            event["wins_b"] = scoreboard_event.get("wins_b")
+            event["team_a_flag"] = event.get("team_a_flag") or scoreboard_event.get("team_a_flag", "")
+            event["team_b_flag"] = event.get("team_b_flag") or scoreboard_event.get("team_b_flag", "")
+        for key in ("state", "status", "elapsed", "score_source"):
+            value = scoreboard_event.get(key)
+            if value is not None and str(value).strip():
+                event[key] = value
+        if scoreboard_event.get("event_id"):
+            event["scoreboard_event_id"] = scoreboard_event["event_id"]
+
+    @staticmethod
+    def _worldcup_score_time_matches(event_start, score_start):
+        if not event_start or not score_start:
+            return True
+        try:
+            event_utc = event_start.astimezone(timezone.utc)
+            score_utc = score_start.astimezone(timezone.utc)
+        except (AttributeError, ValueError):
+            return True
+        return abs((event_utc - score_utc).total_seconds()) <= 6 * 60 * 60
+
+    @staticmethod
+    def _worldcup_combined_score_source_state(base_state, score_state):
+        base = str(base_state or "API").strip().upper()
+        score = str(score_state or "").strip().upper()
+        if not score:
+            return base
+        if "ESPN" in base:
+            return base
+        return f"{base} + {score}"
+
+    @staticmethod
     def _api_team_name(team):
         return str(team.get("code") or team.get("name") or "TBD").strip() or "TBD"
 
@@ -4566,6 +5048,7 @@ class SportsDashboard(BasePlugin):
             return None
         visible_matches = max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
         live = [event for event in events if SportsDashboard._is_worldcup_live_event(event)]
+        SportsDashboard._annotate_worldcup_group_points(events)
         upcoming = [
             event for event in events
             if event not in live
@@ -4642,7 +5125,8 @@ class SportsDashboard(BasePlugin):
         header_y = y1 + 8
         logo_size = 30
         self._draw_worldcup_logo(image, draw, x1 + 14, header_y - 1, logo_size)
-        title, title_font = self._fit_text(draw, "2026 World Cup", 178, 20, bold=True, min_size=15)
+        title_year = self._worldcup_title_year(selected)
+        title, title_font = self._fit_text(draw, f"{title_year} World Cup", 178, 20, bold=True, min_size=15)
         draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source = self._worldcup_api_source_label(source_state, fetched_at)
         source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
@@ -4653,8 +5137,10 @@ class SportsDashboard(BasePlugin):
         upcoming = selected.get("upcoming") or []
         recent = selected.get("recent") or []
         main_event = selected.get("main")
-        is_live = bool(live and main_event is live[0])
-        self._draw_status_pill(draw, x2 - 84, header_y + 4, "LIVE" if is_live else "NEXT", is_live)
+        main_mode = self._worldcup_main_mode(selected, main_event)
+        is_live = main_mode == "live"
+        pill_label = "LIVE" if is_live else ("RECENT" if main_mode == "recent" else "NEXT")
+        self._draw_status_pill(draw, x2 - 84, header_y + 4, pill_label, is_live)
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
 
         content_y = y1 + 57
@@ -4670,7 +5156,7 @@ class SportsDashboard(BasePlugin):
         draw.line((split_x - 3, content_y - 5, split_x - 3, content_bottom), fill=COLORS["border"], width=1)
         draw.line((split_x - 1, content_y - 5, split_x - 1, content_bottom), fill=COLORS["line"], width=1)
 
-        self._draw_worldcup_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, is_live)
+        self._draw_worldcup_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, main_mode)
 
         visible_matches = max(1, int(selected.get("visible_matches") or DEFAULT_WORLD_CUP_VISIBLE_MATCHES))
         upcoming_rows = [event for event in upcoming if event is not main_event]
@@ -4694,24 +5180,128 @@ class SportsDashboard(BasePlugin):
             show_time=True,
         )
         if recent_rows:
-            recent_y = upcoming_y + 20 + len(upcoming_rows) * 35 + 6
-            if recent_y + 54 <= content_bottom:
-                self._draw_worldcup_mini_rows(
-                    image,
-                    draw,
-                    right_x1,
-                    right_x2,
-                    recent_y,
-                    content_bottom,
-                    "RECENT",
-                    recent_rows,
-                    show_time=False,
-                )
+            recent_y = max(upcoming_used_bottom + 1, content_bottom - 53)
+            self._draw_worldcup_recent_rows(
+                image,
+                draw,
+                right_x1,
+                right_x2,
+                recent_y,
+                content_bottom,
+                recent_rows,
+            )
         else:
             self._draw_worldcup_tactics_strip(image, draw, right_x1, right_x2, upcoming_used_bottom + 2, content_bottom, main_event)
 
-    def _draw_worldcup_main_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
-        accent = COLORS["worldcup_live"] if is_live else COLORS["worldcup_accent"]
+    @staticmethod
+    def _annotate_worldcup_group_points(events):
+        group_points = {}
+        for event in events or []:
+            group_key = SportsDashboard._worldcup_explicit_group_key(event)
+            if not group_key:
+                continue
+            for side in ("a", "b"):
+                team_key = SportsDashboard._worldcup_group_team_key(event, side)
+                if team_key:
+                    group_points.setdefault((group_key, team_key), 0)
+
+        for event in events or []:
+            group_key = SportsDashboard._worldcup_explicit_group_key(event)
+            if not group_key:
+                continue
+            if not SportsDashboard._is_worldcup_finished_event(event):
+                continue
+            wins_a = event.get("wins_a")
+            wins_b = event.get("wins_b")
+            if wins_a is None or wins_b is None:
+                continue
+            try:
+                wins_a = int(wins_a)
+                wins_b = int(wins_b)
+            except (TypeError, ValueError):
+                continue
+            team_a_key = SportsDashboard._worldcup_group_team_key(event, "a")
+            team_b_key = SportsDashboard._worldcup_group_team_key(event, "b")
+            if not team_a_key or not team_b_key:
+                continue
+            if wins_a > wins_b:
+                group_points[(group_key, team_a_key)] = group_points.get((group_key, team_a_key), 0) + 3
+            elif wins_b > wins_a:
+                group_points[(group_key, team_b_key)] = group_points.get((group_key, team_b_key), 0) + 3
+            else:
+                group_points[(group_key, team_a_key)] = group_points.get((group_key, team_a_key), 0) + 1
+                group_points[(group_key, team_b_key)] = group_points.get((group_key, team_b_key), 0) + 1
+
+        for event in events or []:
+            group_key = SportsDashboard._worldcup_explicit_group_key(event)
+            if not group_key:
+                continue
+            for side in ("a", "b"):
+                if SportsDashboard._worldcup_group_points_value(event, side) is not None:
+                    continue
+                team_key = SportsDashboard._worldcup_group_team_key(event, side)
+                if not team_key:
+                    continue
+                points = group_points.get((group_key, team_key))
+                if points is not None:
+                    event[f"team_{side}_group_points"] = points
+
+    @staticmethod
+    def _worldcup_explicit_group_key(event):
+        stage = SportsDashboard._clean_worldcup_stage((event or {}).get("block"))
+        match = re.search(r"\bGroup\s+([A-H])\b", stage, re.IGNORECASE)
+        if not match:
+            return ""
+        return f"Group {match.group(1).upper()}"
+
+    @staticmethod
+    def _worldcup_group_team_key(event, side):
+        event = event or {}
+        side = "a" if side == "a" else "b"
+        for key in (f"team_{side}_tla", f"team_{side}_source_name", f"team_{side}"):
+            value = str(event.get(key) or "").strip().upper()
+            if value and value != "TBD":
+                return value
+        return ""
+
+    @staticmethod
+    def _worldcup_main_mode(selected, main_event):
+        selected = selected or {}
+        live = selected.get("live") or []
+        upcoming = selected.get("upcoming") or []
+        recent = selected.get("recent") or []
+        if main_event and any(event is main_event for event in live):
+            return "live"
+        if main_event and any(event is main_event for event in recent) and not upcoming:
+            return "recent"
+        return "next"
+
+    @staticmethod
+    def _worldcup_title_year(selected, fallback=DEFAULT_WORLD_CUP_SEASON):
+        if isinstance(selected, Mapping):
+            configured = str(selected.get("season") or "").strip()
+            if configured.isdigit() and len(configured) == 4:
+                return configured
+            candidates = [selected.get("main")]
+            for key in ("live", "upcoming", "recent"):
+                candidates.extend(selected.get(key) or [])
+        else:
+            candidates = list(selected or [])
+        for event in candidates:
+            start = (event or {}).get("start") if isinstance(event, Mapping) else None
+            if isinstance(start, datetime):
+                return str(start.year)
+        return fallback
+
+    def _draw_worldcup_main_card(self, image, draw, x1, y1, x2, y2, event, now, main_mode):
+        is_live = main_mode == "live"
+        is_recent = main_mode == "recent"
+        if is_live:
+            accent = COLORS["worldcup_live"]
+        elif is_recent and event:
+            accent = self._worldcup_status_color(event)
+        else:
+            accent = COLORS["worldcup_accent"]
         draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["worldcup_shadow"])
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
@@ -4720,10 +5310,10 @@ class SportsDashboard(BasePlugin):
             self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), message, message_font, COLORS["text"])
             return
 
-        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
-        tag_w = 104 if is_live else 88
+        tag = "NOW PLAYING" if is_live else ("RECENT RESULT" if is_recent else "NEXT MATCH")
+        tag_w = 112 if is_recent else (104 if is_live else 88)
         tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
-        tag_fill = COLORS["worldcup_live"] if is_live else COLORS["worldcup_tag"]
+        tag_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
         draw.rectangle((x1 + 14, y1 + 9, x1 + 14 + tag_w, y1 + 27), fill=tag_fill, outline=COLORS["border"], width=1)
         draw.text((x1 + 18, y1 + 10), tag_text, font=tag_font, fill=COLORS["text"])
         date_text = event["start"].strftime("%m/%d")
@@ -4800,6 +5390,99 @@ class SportsDashboard(BasePlugin):
         draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
         draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
 
+    def _draw_worldcup_recent_rows(self, image, draw, x1, x2, y, bottom, events):
+        if bottom - y < 45:
+            return y
+        self._draw_worldcup_mini_section_header(draw, x1, x2, y, "RECENT")
+        row_y = y + 20
+        available = bottom - row_y + 1
+        row_h = min(32, available)
+        if row_h < 30:
+            return row_y
+        row_gap = 3
+        max_rows = 1 + max(0, (available - row_h) // (row_h + row_gap))
+        visible_events = list(events or [])[: min(2, max_rows)]
+        if not visible_events:
+            message, message_font = self._fit_text(draw, "No recent results", x2 - x1 - 16, 10, bold=True, min_size=7)
+            draw.text((x1 + 10, y + 23), message, font=message_font, fill=COLORS["muted"])
+            return row_y
+        for index, event in enumerate(visible_events):
+            self._draw_worldcup_recent_match_row(
+                image,
+                draw,
+                x1,
+                x2,
+                row_y + index * (row_h + row_gap),
+                row_h,
+                event,
+            )
+        return row_y + len(visible_events) * (row_h + row_gap) - row_gap
+
+    def _draw_worldcup_recent_match_row(self, image, draw, x1, x2, y, row_h, event):
+        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
+
+        center_x = (x1 + x2) / 2
+        score_w = 48
+        team_y1 = y + 8
+        team_y2 = min(y + row_h - 10, y + 20)
+        left_area = (x1 + 8, center_x - score_w / 2 - 4)
+        right_area = (center_x + score_w / 2 + 4, x2 - 8)
+        self._draw_worldcup_recent_team_identity(image, draw, event, "a", left_area, team_y1, team_y2)
+        score = self._worldcup_score_or_vs(event)
+        score, score_font = self._fit_text(draw, score, score_w, 10, bold=True, min_size=7)
+        self._draw_centered_in_box(draw, (center_x - score_w / 2, team_y1, center_x + score_w / 2, team_y2), score, score_font, COLORS["text"])
+        self._draw_worldcup_recent_team_identity(image, draw, event, "b", right_area, team_y1, team_y2)
+        points_y = y + row_h - 10
+        date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), score_w - 4, 7, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (center_x - score_w / 2, points_y, center_x + score_w / 2, y + row_h - 1), date_text, date_font, COLORS["muted"])
+        points_a = self._worldcup_group_points_label(event, "a")
+        points_b = self._worldcup_group_points_label(event, "b")
+        points_fill_a = COLORS["green"] if self._worldcup_group_points_value(event, "a") is not None else COLORS["muted"]
+        points_fill_b = COLORS["green"] if self._worldcup_group_points_value(event, "b") is not None else COLORS["muted"]
+        points_a, points_a_font = self._fit_text(draw, points_a, 42, 7, bold=True, min_size=6)
+        points_b, points_b_font = self._fit_text(draw, points_b, 42, 7, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (left_area[0], points_y, left_area[1], y + row_h - 1), points_a, points_a_font, points_fill_a)
+        self._draw_centered_in_box(draw, (right_area[0], points_y, right_area[1], y + row_h - 1), points_b, points_b_font, points_fill_b)
+
+    def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
+        left, right = [int(value) for value in area]
+        area_w = max(1, right - left)
+        flag_w, flag_h = 20, 14
+        gap = 5
+        side_key = "a" if side == "a" else "b"
+        label = event.get(f"team_{side_key}")
+        fallback = event.get(f"team_{side_key}_tla")
+        flag_url = event.get(f"team_{side_key}_flag")
+        max_text_w = max(24, area_w - flag_w - gap)
+        label, font = self._fit_text(draw, label, max_text_w, 11, bold=True, min_size=7)
+        text_w = min(max_text_w, self._text_width(draw, label, font))
+        flag_y = int(y1 + max(0, ((y2 - y1) - flag_h) / 2))
+        if side_key == "b":
+            flag_x = int(right - flag_w)
+            text_right = int(flag_x - gap)
+            text_left = max(left, int(text_right - text_w))
+            self._draw_text_in_box(
+                draw,
+                (text_left, y1, text_right, y2),
+                label,
+                font,
+                COLORS["text"],
+                align="right",
+            )
+        else:
+            flag_x = int(left)
+            text_left = int(flag_x + flag_w + gap)
+            text_right = min(right, int(text_left + text_w))
+            self._draw_text_in_box(
+                draw,
+                (text_left, y1, text_right, y2),
+                label,
+                font,
+                COLORS["text"],
+            )
+        self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback)
+
     def _draw_worldcup_mini_match_row(self, image, draw, x1, x2, y, row_h, event, center_text, show_time=False):
         draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
@@ -4831,12 +5514,12 @@ class SportsDashboard(BasePlugin):
         self._draw_text_in_box(draw, (center_x + 28, y - 1, right_flag_x - 4, team_bottom), team_b, font_b, COLORS["text"], align="right")
         left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
-        self._draw_worldcup_odds_text(draw, (left_flag_x + flag_w + 4, y + 11, center_x - 28, y + 20), left_meta, max_size=7)
-        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_flag_x - 4, y + 20), right_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (left_flag_x + flag_w + 4, y + 11, center_x - 28, y + 20), left_meta, max_size=8)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_flag_x - 4, y + 20), right_meta, max_size=8)
         if has_odds:
             odds = event.get("odds") or {}
             if odds.get("draw"):
-                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X {odds.get('draw')}", max_size=6)
+                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X {odds.get('draw')}", max_size=7)
 
     def _draw_worldcup_tactics_strip(self, image, draw, x1, x2, y1, y2, event):
         x1 = int(x1)
@@ -5407,7 +6090,19 @@ class SportsDashboard(BasePlugin):
         fetched = SportsDashboard._parse_cached_utc(fetched_at)
         time_text = fetched.astimezone(ZoneInfo(DEFAULT_TIMEZONE)).strftime("%I:%M %p").lstrip("0") if fetched else ""
         state = str(source_state or "API").upper()
-        if state == "FOOTBALL LIVE":
+        if "ESPN" in state and "FOOTBALL" in state:
+            prefix = "FD+ESPN"
+        elif "ESPN" in state and state.startswith("API"):
+            prefix = "API+ESPN"
+        elif state == "ESPN LIVE":
+            prefix = "ESPN LIVE"
+        elif state == "ESPN CACHE":
+            prefix = "ESPN CACHE"
+        elif state == "ESPN STALE":
+            prefix = "ESPN STALE"
+        elif state == "ESPN LIMIT":
+            prefix = "ESPN LIMIT"
+        elif state == "FOOTBALL LIVE":
             prefix = "FOOTBALL DATA"
         elif state == "FOOTBALL CACHE":
             prefix = "FD CACHE"
@@ -5421,6 +6116,8 @@ class SportsDashboard(BasePlugin):
             prefix = "STALE CACHE"
         elif state == "API LIMIT":
             prefix = "API LIMIT"
+        elif state in {"NO DATA", "NO HISTORICAL DATA"}:
+            prefix = "NO DATA"
         elif state in {"BACKUP SCHEDULE", "FALLBACK"}:
             prefix = "BACKUP VIEW"
         else:
@@ -5451,7 +6148,11 @@ class SportsDashboard(BasePlugin):
             return f"{event['wins_a']}-{event['wins_b']}"
         if state in {"1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT", "IN_PLAY", "PAUSED"}:
             score = SportsDashboard._score_label(event)
+            status = str(event.get("status") or "").strip()
+            status_upper = status.upper()
             if score != "vs":
+                if status and status_upper not in {"LIVE", "IN PLAY", "IN_PROGRESS", "FIRST HALF", "SECOND HALF"}:
+                    return f"{status} {score}"
                 return f"LIVE {score}"
             return "LIVE"
         return SportsDashboard._format_time_24h(event["start"])
@@ -5460,9 +6161,29 @@ class SportsDashboard(BasePlugin):
     def _worldcup_event_time_label(event):
         return SportsDashboard._format_time_24h(event["start"])
 
-    def _render_worldcup_fallback(self, dimensions, visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES):
+    def _render_worldcup_fallback(self, dimensions, visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES, season=DEFAULT_WORLD_CUP_SEASON):
         visible_matches = max(1, min(WORLD_CUP_VISIBLE_MATCH_LIMIT, int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES)))
         timezone_info = ZoneInfo(DEFAULT_TIMEZONE)
+        season = str(season or DEFAULT_WORLD_CUP_SEASON).strip()
+        if not season.isdigit() or len(season) != 4:
+            season = DEFAULT_WORLD_CUP_SEASON
+        if season != DEFAULT_WORLD_CUP_SEASON:
+            selected = {
+                "live": [],
+                "upcoming": [],
+                "recent": [],
+                "main": None,
+                "visible_matches": visible_matches,
+                "season": season,
+            }
+            return self._render_worldcup_api_panel(
+                dimensions,
+                selected,
+                "NO HISTORICAL DATA",
+                None,
+                visible_matches,
+                datetime.now(timezone_info),
+            )
         labels = self._worldcup_local_time_labels()
         fallback_events = []
         for index in range(visible_matches):

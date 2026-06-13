@@ -501,7 +501,7 @@ def test_playlist_refresh_rerenders_lol_info_on_scheduled_display():
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:05:00+00:00"
 
 
-def test_playlist_refresh_uses_placeholder_when_scheduled_cache_is_missing():
+def test_playlist_refresh_generates_when_scheduled_cache_is_missing():
     calls = []
     tmp_path = make_test_dir("scheduled-placeholder")
     device_config = FakeDeviceConfig(tmp_path)
@@ -528,9 +528,47 @@ def test_playlist_refresh_uses_placeholder_when_scheduled_cache_is_missing():
         datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
     )
 
-    assert calls == []
-    assert image.size == (200, 120)
-    assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert calls == ["missing"]
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert (tmp_path / "missing_Missing_Plugin.png").exists()
+
+
+def test_playlist_refresh_regenerates_when_scheduled_cache_is_corrupt():
+    calls = []
+    tmp_path = make_test_dir("scheduled-corrupt-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "daily_art",
+                "name": "DailyArt",
+                "plugin_settings": {"id": "daily-art"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("daily_art", "DailyArt")
+    cache_path = tmp_path / "daily_art_DailyArt.png"
+    cache_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["daily-art"]
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    with Image.open(cache_path) as saved:
+        assert saved.size == (1, 1)
 
 
 def test_playlist_force_refresh_marks_plugin_settings():

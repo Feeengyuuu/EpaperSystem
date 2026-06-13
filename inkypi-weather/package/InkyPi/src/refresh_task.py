@@ -51,6 +51,29 @@ def _settings_with_force_refresh(settings, force=False):
     return merged
 
 
+def _save_image_atomic(image, path):
+    """Write a PNG/JPEG cache image without exposing a partially-written file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    root, ext = os.path.splitext(path)
+    tmp_path = f"{root}.tmp-{os.getpid()}-{threading.get_ident()}{ext or '.png'}"
+    try:
+        image.save(tmp_path)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            logger.warning("Could not remove temporary image file: %s", tmp_path)
+
+
+def _load_image_copy(path):
+    """Load an image copy while ensuring Windows file handles are released."""
+    with open(path, "rb") as handle:
+        with Image.open(handle) as image:
+            return image.copy()
+
+
 class RefreshTask:
     """Handles the logic for refreshing the display using a background thread."""
 
@@ -487,8 +510,7 @@ class RefreshTask:
 
                 plugin = get_plugin_instance(plugin_config)
                 image = plugin.generate_image(_settings_with_force_refresh(plugin_instance.settings, force), self.device_config)
-                os.makedirs(os.path.dirname(plugin_image_path), exist_ok=True)
-                image.save(plugin_image_path)
+                _save_image_atomic(image, plugin_image_path)
                 plugin_instance.latest_refresh_time = current_dt.isoformat()
                 updated = True
             except Exception:
@@ -822,19 +844,28 @@ class PlaylistRefresh(RefreshAction):
                     f"plugin_instance: {self.plugin_instance.name}."
                 )
                 try:
-                    with Image.open(plugin_image_path) as img:
-                        return img.copy()
+                    return _load_image_copy(plugin_image_path)
                 except Exception:
                     logger.exception(
-                        "Cached plugin image could not be loaded; using placeholder. | "
+                        "Cached plugin image could not be loaded; refreshing synchronously. | "
                         f"plugin_instance: {self.plugin_instance.name}."
                     )
 
-            logger.info(
-                "Plugin instance image missing for scheduled display; using placeholder. | "
-                f"plugin_instance: '{self.plugin_instance.name}'"
-            )
-            return self._placeholder_image(device_config)
+            try:
+                logger.info(
+                    "Plugin instance image unavailable for scheduled display; refreshing now. | "
+                    f"plugin_instance: '{self.plugin_instance.name}'"
+                )
+                image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
+                _save_image_atomic(image, plugin_image_path)
+                self.plugin_instance.latest_refresh_time = current_dt.isoformat()
+                return image
+            except Exception:
+                logger.exception(
+                    "Plugin instance could not refresh for scheduled display; using placeholder. | "
+                    f"plugin_instance: '{self.plugin_instance.name}'"
+                )
+                return self._placeholder_image(device_config)
 
         # Check if a refresh is needed based on the plugin instance's criteria
         if self.plugin_instance.should_refresh(current_dt) or self.force or image_missing or refresh_on_display:
@@ -846,14 +877,12 @@ class PlaylistRefresh(RefreshAction):
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
             image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
-            os.makedirs(os.path.dirname(plugin_image_path), exist_ok=True)
-            image.save(plugin_image_path)
+            _save_image_atomic(image, plugin_image_path)
             self.plugin_instance.latest_refresh_time = current_dt.isoformat()
         else:
             logger.info(f"Not time to refresh plugin instance, using latest image. | plugin_instance: {self.plugin_instance.name}.")
             # Load the existing image from disk
-            with Image.open(plugin_image_path) as img:
-                image = img.copy()
+            image = _load_image_copy(plugin_image_path)
 
         return image
 

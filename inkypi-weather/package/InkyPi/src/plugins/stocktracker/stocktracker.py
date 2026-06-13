@@ -204,6 +204,7 @@ class StockTracker(BasePlugin):
 			dimensions = dimensions[::-1]
 
 		period, holdings = self._portfolio_holdings_from_settings(settings)
+		portfolio_meta = self._portfolio_meta_from_settings(settings)
 		data_provider = self._data_provider(settings)
 		massive_client = self._massive_client(device_config, data_provider)
 
@@ -224,16 +225,21 @@ class StockTracker(BasePlugin):
 			except Exception as e:
 				raise RuntimeError(f"Error fetching {ticker}: {str(e)}")
 
+		stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
 		if not stock_data:
 			raise RuntimeError("No valid stock data retrieved")
 
 		# Create dashboard
-		history_points = self._record_portfolio_snapshot(stock_data)
+		account_value_override = portfolio_meta.get("account_value")
+		history_points = self._record_portfolio_snapshot(stock_data, account_value_override=account_value_override)
 		return self._create_dashboard(
 			stock_data,
 			dimensions,
 			history_points,
 			tracking_window_label=self._tracking_window_label(period),
+			holdings_pin_symbols=self._symbols_setting(settings.get("holdings_pin_symbols")),
+			holdings_sink_symbols=self._symbols_setting(settings.get("holdings_sink_symbols")),
+			account_value_override=account_value_override,
 		)
 
 	def _portfolio_holdings_from_settings(self, settings):
@@ -589,10 +595,82 @@ class StockTracker(BasePlugin):
 		return f"WINDOW: {window}"
 
 	@staticmethod
+	def _symbols_setting(value):
+		if value is None:
+			return []
+		if isinstance(value, (list, tuple, set)):
+			candidates = value
+		else:
+			candidates = str(value).replace("\n", ",").replace(";", ",").split(",")
+		return [str(symbol).strip().upper() for symbol in candidates if str(symbol).strip()]
+
+	def _portfolio_meta_from_settings(self, settings):
+		settings = settings or {}
+		return {
+			"cash_balance": self._number_setting(settings, "cash_balance", "cash"),
+			"buying_power": self._number_setting(settings, "buying_power"),
+			"pending_deposits": self._number_setting(settings, "pending_deposits"),
+			"account_value": self._number_setting(settings, "account_value", "portfolio_value", "total_value"),
+			"currency": str(settings.get("currency") or "USD").strip().upper() or "USD",
+		}
+
+	def _number_setting(self, settings, *keys):
+		for key in keys:
+			number = self._parse_csv_number(settings.get(key))
+			if number is not None and math.isfinite(number):
+				return number
+		return None
+
+	def _portfolio_meta_rows(self, portfolio_meta, stock_data):
+		cash_balance = portfolio_meta.get("cash_balance")
+		if cash_balance is None or abs(cash_balance) < 0.0001:
+			return []
+
+		buying_power = portfolio_meta.get("buying_power")
+		currency = portfolio_meta.get("currency") or "USD"
+		change_text = ""
+		if buying_power is not None:
+			change_text = f"BP {self._money(buying_power)}"
+
+		return [
+			{
+				"symbol": "CASH",
+				"name": "Cash",
+				"price": 1.0,
+				"regular_price": 1.0,
+				"change": 0.0,
+				"change_percent": 0.0,
+				"shares": cash_balance,
+				"total_value": cash_balance,
+				"total_change": 0.0,
+				"history": self._constant_value_history(stock_data),
+				"quote_source": "account_cash",
+				"extended_hours": False,
+				"data_provider": "robinhood",
+				"is_cash": True,
+				"price_text": currency,
+				"shares_text": "Cash",
+				"change_text": change_text,
+				"change_text_color": MUTED,
+				"indicator_color": ACCENT_BLUE,
+			}
+		]
+
+	def _constant_value_history(self, stock_data):
+		for data in stock_data:
+			history = data.get("history")
+			if getattr(history, "empty", True):
+				continue
+			return _SimpleHistory([(date_key, 1.0) for date_key in history.index])
+
+		today = datetime.now().strftime("%Y-%m-%d")
+		return _SimpleHistory([(f"{today}-start", 1.0), (today, 1.0)])
+
+	@staticmethod
 	def _threshold_image(img):
 		return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
-	def _portfolio_values(self, stock_data):
+	def _portfolio_values(self, stock_data, account_value_override=None):
 		dates = list(stock_data[0]["history"].index)
 		values = []
 		for date in dates:
@@ -601,11 +679,13 @@ class StockTracker(BasePlugin):
 				if date in data["history"].index:
 					total += float(data["history"].loc[date, "Close"]) * data["shares"]
 			values.append(total)
+		if account_value_override is not None and values:
+			values[-1] = account_value_override
 		return values
 
-	def _record_portfolio_snapshot(self, stock_data, now=None):
+	def _record_portfolio_snapshot(self, stock_data, now=None, account_value_override=None):
 		now = now or datetime.now()
-		snapshot = self._portfolio_snapshot(stock_data, now)
+		snapshot = self._portfolio_snapshot(stock_data, now, account_value_override=account_value_override)
 		history_path = self._portfolio_history_path(stock_data)
 		history = self._read_portfolio_history(history_path)
 		history = self._upsert_portfolio_snapshot(history, snapshot)
@@ -615,16 +695,20 @@ class StockTracker(BasePlugin):
 			logging.warning(f"Could not write stock portfolio history: {type(e).__name__}: {e}")
 		return history
 
-	def _portfolio_totals(self, stock_data):
-		total_value = sum(self._finite_float(data.get("total_value")) for data in stock_data)
+	def _portfolio_totals(self, stock_data, account_value_override=None):
+		calculated_value = sum(self._finite_float(data.get("total_value")) for data in stock_data)
+		total_value = account_value_override if account_value_override is not None else calculated_value
 		total_change = sum(self._finite_float(data.get("total_change")) for data in stock_data)
 		base_value = total_value - total_change
 		total_change_percent = (total_change / base_value) * 100 if base_value else 0
 		total_change_percent = self._finite_float(total_change_percent)
 		return total_value, total_change, total_change_percent
 
-	def _portfolio_snapshot(self, stock_data, now):
-		total_value, total_change, total_change_percent = self._portfolio_totals(stock_data)
+	def _portfolio_snapshot(self, stock_data, now, account_value_override=None):
+		total_value, total_change, total_change_percent = self._portfolio_totals(
+			stock_data,
+			account_value_override=account_value_override,
+		)
 		return {
 			"date": now.strftime("%Y-%m-%d"),
 			"timestamp": now.isoformat(),
@@ -657,7 +741,7 @@ class StockTracker(BasePlugin):
 		holdings = [
 			{
 				"symbol": str(data.get("symbol", "")).upper(),
-				"shares": round(float(data.get("shares", 0)), 6),
+				"shares": 0.0 if data.get("is_cash") else round(float(data.get("shares", 0)), 6),
 			}
 			for data in stock_data
 		]
@@ -748,10 +832,13 @@ class StockTracker(BasePlugin):
 		if title:
 			draw.text((left + 12, top + 12), title, fill=INK, font=self._font(16, True))
 
-	def _draw_summary(self, draw, box, stock_data):
+	def _draw_summary(self, draw, box, stock_data, account_value_override=None):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD)
-		total_value, total_change, total_change_percent = self._portfolio_totals(stock_data)
+		total_value, total_change, total_change_percent = self._portfolio_totals(
+			stock_data,
+			account_value_override=account_value_override,
+		)
 		change_color = self._change_color(total_change_percent)
 
 		value_text = self._money(total_value)
@@ -868,7 +955,40 @@ class StockTracker(BasePlugin):
 			draw.ellipse((x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1), fill=INK)
 			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
-	def _draw_holdings(self, draw, box, stock_data, tracking_window_label=None):
+	def _ordered_holdings(self, stock_data, pin_symbols=None, sink_symbols=None):
+		pin_rank = {
+			symbol: index
+			for index, symbol in enumerate(self._symbols_setting(pin_symbols))
+		}
+		sink_set = set(self._symbols_setting(sink_symbols))
+
+		def sort_key(item):
+			symbol = str(item.get("symbol") or "").upper()
+			value_rank = -self._finite_float(item.get("total_value"))
+			if self._is_cash_holding(item):
+				return (3, 0, value_rank, symbol)
+			if symbol in pin_rank:
+				return (0, pin_rank[symbol], value_rank, symbol)
+			if symbol in sink_set:
+				return (2, 0, value_rank, symbol)
+			return (1, 0, value_rank, symbol)
+
+		return sorted(stock_data, key=sort_key)
+
+	@staticmethod
+	def _is_cash_holding(item):
+		symbol = str(item.get("symbol") or "").strip().lower()
+		return bool(item.get("is_cash")) or symbol in CASH_SYMBOLS
+
+	def _draw_holdings(
+		self,
+		draw,
+		box,
+		stock_data,
+		tracking_window_label=None,
+		holdings_pin_symbols=None,
+		holdings_sink_symbols=None,
+	):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL)
 		if tracking_window_label:
@@ -892,19 +1012,21 @@ class StockTracker(BasePlugin):
 
 		max_rows = min(len(stock_data), 6)
 		displayed_rows = 0
-		for idx, data in enumerate(sorted(stock_data, key=lambda item: item["total_value"], reverse=True)[:max_rows]):
+		display_rows = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
+		for idx, data in enumerate(display_rows[:max_rows]):
 			if y + 18 > bottom - 26:
 				break
 			row_bg = ROW_COLORS[idx % len(ROW_COLORS)]
 			draw.rounded_rectangle((left + 10, y - 4, right - 10, y + 18), radius=5, fill=row_bg)
-			change_color = self._change_color(data["change_percent"])
-			draw.rounded_rectangle((left + 5, y - 3, left + 10, y + 17), radius=3, fill=change_color)
+			change_color = data.get("change_text_color", self._change_color(data["change_percent"]))
+			indicator_color = data.get("indicator_color", change_color)
+			draw.rounded_rectangle((left + 5, y - 3, left + 10, y + 17), radius=3, fill=indicator_color)
 			row_items = [
 				(cols["symbol"], data["symbol"], symbol_font, INK),
-				(cols["price"], self._money(data["price"]), row_font, INK),
-				(cols["shares"], self._shares(data["shares"]), row_font, INK),
-				(cols["value"], self._money(data["total_value"]), row_font, INK),
-				(cols["change"], f"{data['change_percent']:+.2f}%", row_font, change_color),
+				(cols["price"], data.get("price_text", self._money(data["price"])), row_font, INK),
+				(cols["shares"], data.get("shares_text", self._shares(data["shares"])), row_font, INK),
+				(cols["value"], data.get("value_text", self._money(data["total_value"])), row_font, INK),
+				(cols["change"], data.get("change_text", f"{data['change_percent']:+.2f}%"), row_font, change_color),
 			]
 			for x, text, font, fill in row_items:
 				draw.text((x, y), text, fill=fill, font=font)
@@ -917,7 +1039,16 @@ class StockTracker(BasePlugin):
 			remaining = len(stock_data) - displayed_rows
 			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=MUTED, font=self._font(13, True))
 
-	def _create_dashboard(self, stock_data, dimensions, history_points=None, tracking_window_label=None):
+	def _create_dashboard(
+		self,
+		stock_data,
+		dimensions,
+		history_points=None,
+		tracking_window_label=None,
+		holdings_pin_symbols=None,
+		holdings_sink_symbols=None,
+		account_value_override=None,
+	):
 		"""Create a color dashboard that preserves the original stock layout."""
 		width, height = dimensions
 		img = Image.new("RGB", (width, height), PAPER)
@@ -929,9 +1060,21 @@ class StockTracker(BasePlugin):
 		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
 		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
 
-		self._draw_summary(draw, (24, 60, 284, 204), stock_data)
-		self._draw_sparkline(draw, (304, 60, width - 24, 204), self._portfolio_values(stock_data), history_points)
-		self._draw_holdings(draw, (24, 224, width - 24, height - 24), stock_data, tracking_window_label)
+		self._draw_summary(draw, (24, 60, 284, 204), stock_data, account_value_override=account_value_override)
+		self._draw_sparkline(
+			draw,
+			(304, 60, width - 24, 204),
+			self._portfolio_values(stock_data, account_value_override=account_value_override),
+			history_points,
+		)
+		self._draw_holdings(
+			draw,
+			(24, 224, width - 24, height - 24),
+			stock_data,
+			tracking_window_label,
+			holdings_pin_symbols,
+			holdings_sink_symbols,
+		)
 
 		return img
 
@@ -940,6 +1083,11 @@ class StockTracker(BasePlugin):
 		if any(data.get("extended_hours") for data in stock_data):
 			return "Yahoo realtime + extended hours"
 		providers = {str(data.get("data_provider") or "yfinance") for data in stock_data}
+		if "robinhood" in providers:
+			providers.discard("robinhood")
+			if not providers:
+				return "Robinhood account data"
+			return "Yahoo + Robinhood account data"
 		if providers == {"massive"}:
 			return "Massive market data"
 		if "massive" in providers:

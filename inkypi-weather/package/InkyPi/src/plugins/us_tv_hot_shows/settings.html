@@ -1,0 +1,101 @@
+<div style="margin-bottom:14px;">
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
+        Displays a US TV hot-shows chart using TMDb TV discovery or trending data. This is a popularity chart, not Nielsen ratings.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="sourceMode" class="form-label">Chart source:</label>
+    <select id="sourceMode" name="sourceMode" class="form-input">
+        <option value="tmdb_us_on_air" selected>TMDb US shows airing recently</option>
+        <option value="tmdb_us_trending_week">TMDb weekly trending, filtered to US shows</option>
+        <option value="tmdb_us_popular">TMDb US-origin popular shows</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="itemsCount" class="form-label">Number of shows:</label>
+    <select id="itemsCount" name="itemsCount" class="form-input">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5" selected>5</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="activeWindowDays" class="form-label">Recent airing window:</label>
+    <select id="activeWindowDays" name="activeWindowDays" class="form-input">
+        <option value="30">30 days</option>
+        <option value="45" selected>45 days</option>
+        <option value="60">60 days</option>
+        <option value="90">90 days</option>
+    </select>
+    <small>Used by the airing-recently source.</small>
+</div>
+
+<div class="form-group">
+    <label for="tmdbLanguage" class="form-label">TMDb display language:</label>
+    <input id="tmdbLanguage" name="tmdbLanguage" class="form-input" value="zh-CN" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="withOriginalLanguage" class="form-label">Original language filter:</label>
+    <input id="withOriginalLanguage" name="withOriginalLanguage" class="form-input" value="en" spellcheck="false">
+    <small>Use en for English-language American shows; leave blank to include all US-origin languages.</small>
+</div>
+
+<div class="form-group">
+    <label for="tmdbBearerTokenEnv" class="form-label">TMDb bearer token env key:</label>
+    <input id="tmdbBearerTokenEnv" name="tmdbBearerTokenEnv" class="form-input" value="TMDB_BEARER_TOKEN" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbApiKeyEnv" class="form-label">TMDb API key env key:</label>
+    <input id="tmdbApiKeyEnv" name="tmdbApiKeyEnv" class="form-input" value="TMDB_API_KEY" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbBearerToken" class="form-label">TMDb bearer token:</label>
+    <input id="tmdbBearerToken" name="tmdbBearerToken" class="form-input" type="password" placeholder="Leave blank to use env key" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbApiKey" class="form-label">TMDb API key:</label>
+    <input id="tmdbApiKey" name="tmdbApiKey" class="form-input" type="password" placeholder="Leave blank to use env key" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="cacheHours" class="form-label">Refresh cache every:</label>
+    <select id="cacheHours" name="cacheHours" class="form-input">
+        <option value="3">3 hours</option>
+        <option value="6" selected>6 hours</option>
+        <option value="12">12 hours</option>
+        <option value="24">24 hours</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="themeMode" class="form-label">Display theme:</label>
+    <select id="themeMode" name="themeMode" class="form-input">
+        <option value="auto" selected>Streaming dark</option>
+        <option value="paper">Light paper</option>
+    </select>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'tmdb_us_on_air';
+            document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
+            document.getElementById('activeWindowDays').value = pluginSettings.activeWindowDays || '45';
+            document.getElementById('tmdbLanguage').value = pluginSettings.tmdbLanguage || 'zh-CN';
+            document.getElementById('withOriginalLanguage').value = pluginSettings.withOriginalLanguage || 'en';
+            document.getElementById('tmdbBearerTokenEnv').value = pluginSettings.tmdbBearerTokenEnv || 'TMDB_BEARER_TOKEN';
+            document.getElementById('tmdbApiKeyEnv').value = pluginSettings.tmdbApiKeyEnv || 'TMDB_API_KEY';
+            document.getElementById('tmdbBearerToken').value = pluginSettings.tmdbBearerToken || '';
+            document.getElementById('tmdbApiKey').value = pluginSettings.tmdbApiKey || '';
+            document.getElementById('cacheHours').value = pluginSettings.cacheHours || '6';
+            document.getElementById('themeMode').value = pluginSettings.themeMode || 'auto';
+        }
+    });
+</script>
