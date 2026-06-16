@@ -71,6 +71,7 @@ IMAGE_CACHE_TTL = timedelta(hours=20)
 DAILY_LIBRARY_STATE_VERSION = "magazine-covers-daily-library-v1"
 DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=6)
 LEGACY_DAILY_LIBRARY_REFRESH_HOURS = 12
+RANDOM_COVER_POOL_TTL = timedelta(days=7)
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
@@ -551,6 +552,7 @@ class MagazineCovers(BasePlugin):
                         break
             state["random_queue"] = queue
             state["random_source_ids"] = list(source_by_id.keys())
+            state["random_pool_saved_at"] = self._now_utc().isoformat()
             self._write_state(state)
 
         ordered_ids = list(queue)
@@ -1205,12 +1207,15 @@ class MagazineCovers(BasePlugin):
         path = self._state_path()
         try:
             if path.is_file():
-                return json.loads(path.read_text(encoding="utf-8"))
+                state = json.loads(path.read_text(encoding="utf-8"))
+                legacy_saved_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+                return self._prune_stale_cover_pool_state(state, legacy_saved_at=legacy_saved_at)
         except Exception as exc:
             logger.warning("Could not read Magazine Covers state %s: %s", path, exc)
         return {}
 
     def _write_state(self, state):
+        state = self._prune_stale_cover_pool_state(state)
         path = self._state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(state, ensure_ascii=True, indent=2)
@@ -1224,6 +1229,43 @@ class MagazineCovers(BasePlugin):
                 tmp.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _prune_stale_cover_pool_state(self, state, legacy_saved_at=None):
+        if not isinstance(state, dict):
+            return {}
+
+        pruned = dict(state)
+        if self._pool_timestamp_is_stale(pruned.get("random_pool_saved_at") or legacy_saved_at):
+            for key in ("random_queue", "random_source_ids", "random_pool_saved_at"):
+                pruned.pop(key, None)
+
+        if self._pool_timestamp_is_stale(pruned.get("daily_library_refreshed_at") or legacy_saved_at):
+            for key in (
+                "daily_library_source_ids",
+                "daily_library_queue",
+                "daily_library_next_index",
+                "daily_library_refreshed_at",
+                "daily_library_day_key",
+                "daily_library_dimensions",
+                "daily_library_pool_key",
+                "daily_library_version",
+            ):
+                pruned.pop(key, None)
+
+        return pruned
+
+    def _pool_timestamp_is_stale(self, value):
+        if isinstance(value, datetime):
+            saved_at = value
+        else:
+            saved_at = self._parse_datetime(value)
+
+        if not saved_at:
+            return False
+        if saved_at.tzinfo is None:
+            saved_at = saved_at.replace(tzinfo=timezone.utc)
+
+        return self._now_utc() - saved_at.astimezone(timezone.utc) > RANDOM_COVER_POOL_TTL
 
     def _pool_key(self, sources):
         raw = "|".join([ROTATION_STATE_VERSION] + [self._source_id(source) for source in sources])

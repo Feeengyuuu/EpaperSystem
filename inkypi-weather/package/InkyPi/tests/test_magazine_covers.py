@@ -1,4 +1,5 @@
 import sys
+import json
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -216,6 +217,105 @@ def test_random_failure_removes_source_from_queue(monkeypatch):
     plugin._remember_failure({"name": "WIRED Japan", "url": "https://example.com/wired"})
 
     assert writes[-1]["random_queue"] == ["TIME|https://example.com/time"]
+
+
+def test_random_order_rebuilds_saved_pool_older_than_one_week(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(make_test_tmp_dir("stale-random-pool")))
+    now = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    monkeypatch.setattr(random, "shuffle", lambda values: None)
+    sources = [
+        {"name": "Alpha", "url": "https://example.com/alpha"},
+        {"name": "Beta", "url": "https://example.com/beta"},
+        {"name": "Gamma", "url": "https://example.com/gamma"},
+    ]
+
+    path = plugin._state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "random_queue": ["Beta|https://example.com/beta"],
+            "random_source_ids": ["Beta|https://example.com/beta"],
+            "random_pool_saved_at": (now - timedelta(days=8)).isoformat(),
+        }),
+        encoding="utf-8",
+    )
+
+    ordered = plugin._random_order(sources)
+    state = plugin._read_state()
+
+    assert [source["name"] for source in ordered] == ["Alpha", "Beta", "Gamma"]
+    assert state["random_queue"] == [
+        "Alpha|https://example.com/alpha",
+        "Beta|https://example.com/beta",
+        "Gamma|https://example.com/gamma",
+    ]
+    assert state["random_pool_saved_at"] == now.isoformat()
+
+
+def test_random_order_keeps_recent_saved_pool(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(make_test_tmp_dir("recent-random-pool")))
+    now = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    monkeypatch.setattr(random, "shuffle", lambda values: None)
+    sources = [
+        {"name": "Alpha", "url": "https://example.com/alpha"},
+        {"name": "Beta", "url": "https://example.com/beta"},
+        {"name": "Gamma", "url": "https://example.com/gamma"},
+    ]
+
+    path = plugin._state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "random_queue": ["Beta|https://example.com/beta"],
+            "random_source_ids": ["Beta|https://example.com/beta"],
+            "random_pool_saved_at": (now - timedelta(days=6, hours=23)).isoformat(),
+        }),
+        encoding="utf-8",
+    )
+
+    ordered = plugin._random_order(sources)
+
+    assert [source["name"] for source in ordered] == ["Beta", "Alpha", "Gamma"]
+
+
+def test_daily_library_pool_older_than_one_week_is_removed(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(make_test_tmp_dir("stale-daily-pool")))
+    now = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    sources = [
+        {"name": "Alpha", "url": "https://example.com/alpha"},
+        {"name": "Beta", "url": "https://example.com/beta"},
+    ]
+
+    path = plugin._state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "daily_library_version": "magazine-covers-daily-library-v1",
+            "daily_library_pool_key": plugin._pool_key(sources),
+            "daily_library_dimensions": "800x480",
+            "daily_library_day_key": "2026-06-10",
+            "daily_library_refreshed_at": (now - timedelta(days=8)).isoformat(),
+            "daily_library_source_ids": [
+                "Alpha|https://example.com/alpha",
+                "Beta|https://example.com/beta",
+            ],
+            "daily_library_queue": ["Beta|https://example.com/beta"],
+            "daily_library_next_index": 1,
+        }),
+        encoding="utf-8",
+    )
+
+    state = plugin._read_state()
+
+    assert "daily_library_source_ids" not in state
+    assert "daily_library_queue" not in state
+    assert plugin._daily_library_needs_refresh(sources, (800, 480), {}) is True
 
 
 def test_cover_crop_preserves_top_masthead_area():
