@@ -126,8 +126,10 @@ def test_weather_background_style_can_use_color_variant_pool():
     assert path.stem.startswith("rain")
     assert path.suffix == ".png"
     assert path.parent.name in {
+        "img2_original_heroes",
         "img2_original_heroes_weather",
         "img2_original_heroes_nyc_weather",
+        "img2_original_heroes_local_top_weather",
     }
     assert path.is_file()
 
