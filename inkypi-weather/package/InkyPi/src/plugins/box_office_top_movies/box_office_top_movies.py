@@ -789,8 +789,7 @@ class BoxOfficeTopMovies(BasePlugin):
         cjk_paths = [
             r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
             r"C:\Windows\Fonts\msyhbd.ttf" if bold else r"C:\Windows\Fonts\msyh.ttf",
-            str(Path(__file__).resolve().parents[1] / "steam_charts" / "fonts" / "NotoSansSC-VF.ttf"),
-            str(Path(__file__).resolve().parents[1] / "live_radar" / "fonts" / "NotoSansSC-VF.ttf"),
+            str(Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"),
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",

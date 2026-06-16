@@ -144,7 +144,7 @@ SANS_FONT_PATHS = {
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf"),
+        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
     ),
     "bold": (
         r"C:\Windows\Fonts\msyhbd.ttc",
@@ -154,7 +154,7 @@ SANS_FONT_PATHS = {
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf"),
+        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
     ),
 }
 

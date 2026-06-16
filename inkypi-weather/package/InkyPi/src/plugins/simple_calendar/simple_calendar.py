@@ -1835,8 +1835,7 @@ class SimpleCalendar(BasePlugin):
             src_dir / "static" / "fonts" / "MicrosoftYaHei.ttf",
             Path("/usr/share/fonts/truetype/microsoft/msyh.ttc"),
             Path("/usr/share/fonts/truetype/microsoft/msyh.ttf"),
-            src_dir / "plugins" / "live_radar" / "fonts" / "NotoSansSC-VF.ttf",
-            src_dir / "plugins" / "steam_charts" / "fonts" / "NotoSansSC-VF.ttf",
+            src_dir / "static" / "fonts" / "NotoSansSC-VF.ttf",
         ]
 
         for path in candidates:
