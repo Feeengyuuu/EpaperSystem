@@ -16205,7 +16205,7 @@ class SportsDashboard(BasePlugin):
             resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyhl.ttc")),
         ]
         bundled_fallback_fonts = [
-            resolve_path(os.path.join("plugins", "chinese_literature_clock", "fonts", "LXGWWenKai-Regular.ttf")),
+            resolve_path(os.path.join("static", "fonts", "LXGWWenKai-Regular.ttf")),
             resolve_path(os.path.join("plugins", "chinese_literature_clock", "fonts", "FandolKai-Regular.otf")),
             resolve_path(os.path.join("plugins", "chinese_literature_clock", "fonts", "I.Ming-8.10.ttf")),
         ]

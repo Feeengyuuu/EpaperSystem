@@ -687,7 +687,7 @@ class DotaProfileDashboard(BasePlugin):
             plugin_dir / "fonts" / "msyh.ttc",
             sports_fonts / "msyh.ttc",
             Path("C:/Windows/Fonts/msyh.ttc"),
-            plugin_dir.parent / "literature_clock" / "fonts" / "LXGWWenKai-Regular.ttf",
+            plugin_dir.parent.parent / "static" / "fonts" / "LXGWWenKai-Regular.ttf",
             Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
             Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
             Path("C:/Windows/Fonts/simhei.ttf"),

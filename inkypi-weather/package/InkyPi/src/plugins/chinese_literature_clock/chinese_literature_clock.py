@@ -376,13 +376,19 @@ class ChineseLiteratureClock(BasePlugin):
         fonts = []
         self._append_font(fonts, self._load_font(font_family, size, weight))
 
+        plugin_fonts = self.get_plugin_dir("fonts")
+        static_fonts = os.path.join(
+            os.path.dirname(os.path.dirname(self.get_plugin_dir())), "static", "fonts"
+        )
         for filename in FALLBACK_LOCAL_FONTS:
-            local_font = os.path.join(self.get_plugin_dir("fonts"), filename)
-            if os.path.isfile(local_font):
-                try:
-                    self._append_font(fonts, ImageFont.truetype(local_font, size))
-                except OSError as exc:
-                    logger.warning("Could not load bundled fallback font %s: %s", filename, exc)
+            for font_dir in (plugin_fonts, static_fonts):
+                local_font = os.path.join(font_dir, filename)
+                if os.path.isfile(local_font):
+                    try:
+                        self._append_font(fonts, ImageFont.truetype(local_font, size))
+                    except OSError as exc:
+                        logger.warning("Could not load bundled fallback font %s: %s", filename, exc)
+                    break
 
         self._append_font(fonts, ImageFont.load_default())
         return fonts

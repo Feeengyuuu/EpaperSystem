@@ -813,7 +813,7 @@ class DailyKnowledge(BasePlugin):
         plugin_root = Path(self.get_plugin_dir()).parent
         for relative in (
             "chinese_literature_clock/fonts/FandolKai-Regular.otf",
-            "chinese_literature_clock/fonts/LXGWWenKai-Regular.ttf",
+            "../static/fonts/LXGWWenKai-Regular.ttf",
             "chinese_literature_clock/fonts/I.Ming-8.10.ttf",
         ):
             path = plugin_root / relative

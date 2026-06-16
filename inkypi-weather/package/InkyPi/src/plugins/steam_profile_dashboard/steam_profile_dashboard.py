@@ -1325,7 +1325,6 @@ class SteamProfileDashboard(BasePlugin):
             os.path.join(yahei_dir, "msyh.ttc"),
             "C:/Windows/Fonts/msyh.ttc",
             os.path.join(src_dir, "static", "fonts", "LXGWWenKai-Regular.ttf"),
-            os.path.join(plugin_dir, "..", "literature_clock", "fonts", "LXGWWenKai-Regular.ttf"),
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "C:/Windows/Fonts/simhei.ttf",

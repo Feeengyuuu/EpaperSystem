@@ -25,7 +25,7 @@ FONT_FAMILIES = {
     }],
     "LXGW WenKai": [{
         "font-weight": "normal",
-        "file": os.path.join("plugins", "literature_clock", "fonts", "LXGWWenKai-Regular.ttf")
+        "file": "LXGWWenKai-Regular.ttf"
     }],
     "方正新楷近似": [{
         "font-weight": "normal",
@@ -58,7 +58,7 @@ FONTS = {
     "napoli": "Napoli.ttf",
     "jost": "Jost.ttf",
     "jost-semibold": "Jost-SemiBold.ttf",
-    "lxgw-wenkai": os.path.join("plugins", "literature_clock", "fonts", "LXGWWenKai-Regular.ttf"),
+    "lxgw-wenkai": "LXGWWenKai-Regular.ttf",
     "fangzheng-xinkai-near": os.path.join("plugins", "chinese_literature_clock", "fonts", "FandolKai-Regular.otf"),
     "fandol-kai": os.path.join("plugins", "chinese_literature_clock", "fonts", "FandolKai-Regular.otf"),
     "kangxi": os.path.join("plugins", "chinese_literature_clock", "fonts", "I.Ming-8.10.ttf"),

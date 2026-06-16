@@ -535,7 +535,6 @@ class Newspaper(BasePlugin):
         src_dir = Path(__file__).resolve().parents[2]
         for relative_path in [
             Path("static") / "fonts" / "LXGWWenKai-Regular.ttf",
-            Path("plugins") / "chinese_literature_clock" / "fonts" / "LXGWWenKai-Regular.ttf",
             Path("plugins") / "chinese_literature_clock" / "fonts" / "FandolKai-Regular.otf",
             Path("plugins") / "chinese_literature_clock" / "fonts" / "I.Ming-8.10.ttf",
         ]:
