@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -38,20 +39,54 @@ from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
+    LOCAL_F1_LOGO_PATH,
     LOCAL_LPL_LOGO_PATH,
     LOCAL_LPL_MARBLE_FILLER_PATH,
+    LOCAL_LPL_MSI_CARD_ACCENT_DIR,
+    LOCAL_LPL_MSI_CARD_ACCENT_PATH,
+    LOCAL_LPL_MSI_NEXT_FILLER_PATH,
+    LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH,
+    LPL_MSI_OFFSEASON_FILLER_ZOOM,
+    LOCAL_MLB_HEADER_CUTOUT_PATH,
+    LOCAL_MLB_LOGO_PATH,
+    LOCAL_MSI_LOGO_PATH,
+    LOCAL_NCAA_HEADER_CUTOUT_PATH,
+    LOCAL_NCAA_LOGO_PATH,
     LOCAL_NBA_COURT_STRIP_PATH,
     LOCAL_NBA_EMPTY_SLOT_FILLER_PATH,
     LOCAL_NBA_LOGO_PATH,
+    LOCAL_NBA_OFFSEASON_ACCENT_PATH,
+    LOCAL_NBA_OFFSEASON_FILLER_PATH,
+    LOCAL_NFL_HEADER_CUTOUT_PATH,
+    LOCAL_NFL_LOGO_PATH,
+    LOCAL_PGA_HEADER_CUTOUT_PATH,
+    LOCAL_PGA_FAIRWAY_STRIP_PATH,
+    LOCAL_PGA_LOGO_PATH,
+    LOCAL_WNBA_HEADER_CUTOUT_PATH,
+    LOCAL_WNBA_LOGO_PATH,
+    NBA_OFFSEASON_ACCENT_SIZE,
+    NBA_OFFSEASON_FILLER_ZOOM,
     LOCAL_WORLDCUP_HEADER_BANNER_PATH,
     LOCAL_WORLDCUP_PITCH_STRIP_PATH,
     LOCAL_WORLDCUP_LOGO_PATH,
+    MLB_TEAM_ZH_FULL_NAMES,
+    MLB_TEAM_ZH_NAMES,
+    NCAA_ESPN_LOGO_IDS,
+    NCAA_TEAM_ZH_FULL_NAMES,
+    NCAA_TEAM_ZH_NAMES,
+    NFL_TEAM_ZH_FULL_NAMES,
+    NFL_TEAM_ZH_NAMES,
     NBA_INLINE_LOGO_SIZE,
     NBA_INLINE_TEAM_FONT_SIZE,
     NBA_INLINE_TEAM_MIN_FONT_SIZE,
     NBA_MINI_LINEUP_LOGO_SIZE,
     NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE,
+    OFFSEASON_HUB_ROTATION_MINUTES,
     SportsDashboard,
+    TEAM_LOGO_CACHE,
+    TEAM_LOGO_FETCH_TIMEOUT_SECONDS,
+    WNBA_TEAM_ZH_FULL_NAMES,
+    WNBA_TEAM_ZH_NAMES,
     _ACTIVE_COLORS,
     _safe_exception_text,
 )
@@ -88,6 +123,32 @@ def test_league_accent_palettes_are_distinct():
         assert palette["nba_accent"] != palette["lpl_accent"]
         assert palette["worldcup_tag"] != palette["nba_tag"]
         assert palette["nba_tag"] != palette["lpl_tag"]
+
+
+def test_offseason_hub_sport_accents_are_distinct_comic_palette_colors():
+    sports = ["MLB", "WNBA", "PGA", "NFL", "NCAA"]
+    for palette in (DAY_COLORS, DEEP_NIGHT_COLORS):
+        token = _ACTIVE_COLORS.set(palette)
+        try:
+            allowed = {palette[key] for key in ("blue", "orange", "green", "amber", "cyan")}
+            accents = {sport: SportsDashboard._hub_sport_accent(sport) for sport in sports}
+
+            assert len(set(accents.values())) == len(sports)
+            assert set(accents.values()).issubset(allowed)
+            assert accents["NFL"] == palette["nfl_accent"]
+            assert accents["NCAA"] == palette["ncaa_accent"]
+            assert accents["NFL"] != accents["MLB"]
+            assert accents["NCAA"] != accents["NFL"]
+            assert palette["nfl_tag"] != palette["mlb_tag"]
+            assert palette["ncaa_tag"] != palette["mlb_tag"]
+            assert palette["pga_leader"] != palette["amber"]
+            assert palette["pga_leader"] != palette["pga_accent"]
+            assert palette["nfl_field_tint"] != palette["panel_blue"]
+            assert palette["ncaa_field_tint"] != palette["panel_blue"]
+            assert SportsDashboard._football_context_fill_key("NFL") == "nfl_field_tint"
+            assert SportsDashboard._football_context_fill_key("NCAA") == "ncaa_field_tint"
+        finally:
+            _ACTIVE_COLORS.reset(token)
 
 
 def test_section_header_uses_supplied_league_accent():
@@ -329,6 +390,396 @@ def _sample_nba_odds_api_io_event():
     }
 
 
+def _sample_mlb_scoreboard_payload():
+    return {
+        "dates": [
+            {
+                "date": "2026-06-14",
+                "games": [
+                    {
+                        "gamePk": 777001,
+                        "gameDate": "2026-06-14T20:10:00Z",
+                        "status": {"abstractGameState": "Live", "detailedState": "In Progress", "codedGameState": "I"},
+                        "venue": {"name": "Dodger Stadium"},
+                        "teams": {
+                            "away": {
+                                "score": 3,
+                                "leagueRecord": {"wins": 41, "losses": 28},
+                                "probablePitcher": {"fullName": "Logan Webb"},
+                                "team": {"name": "San Francisco Giants"},
+                            },
+                            "home": {
+                                "score": 5,
+                                "leagueRecord": {"wins": 45, "losses": 24},
+                                "probablePitcher": {"fullName": "Yoshinobu Yamamoto"},
+                                "team": {"name": "Los Angeles Dodgers"},
+                            },
+                        },
+                        "linescore": {
+                            "currentInning": 7,
+                            "currentInningOrdinal": "7th",
+                            "inningState": "Top",
+                            "balls": 2,
+                            "strikes": 1,
+                            "outs": 1,
+                            "offense": {
+                                "batter": {"fullName": "Matt Chapman"},
+                                "first": {"id": 1},
+                                "third": {"id": 3},
+                            },
+                            "defense": {"pitcher": {"fullName": "Yoshinobu Yamamoto"}},
+                            "teams": {
+                                "away": {"runs": 3, "hits": 7, "errors": 1},
+                                "home": {"runs": 5, "hits": 8, "errors": 0},
+                            },
+                        },
+                    },
+                    {
+                        "gamePk": 777002,
+                        "gameDate": "2026-06-15T02:10:00Z",
+                        "status": {"abstractGameState": "Preview", "detailedState": "Scheduled", "codedGameState": "S"},
+                        "venue": {"name": "T-Mobile Park"},
+                        "teams": {
+                            "away": {
+                                "team": {"name": "Texas Rangers"},
+                                "leagueRecord": {"wins": 35, "losses": 33},
+                                "probablePitcher": {"fullName": "Jacob deGrom"},
+                            },
+                            "home": {
+                                "team": {"name": "Seattle Mariners"},
+                                "leagueRecord": {"wins": 39, "losses": 29},
+                                "probablePitcher": {"fullName": "Luis Castillo"},
+                            },
+                        },
+                        "linescore": {},
+                    },
+                ],
+            }
+        ]
+    }
+
+
+def _sample_wnba_scoreboard_payload():
+    payload = _sample_nba_scoreboard_payload()
+    payload["events"] = [payload["events"][0]]
+    live = payload["events"][0]
+    live["id"] = "wnba-live"
+    live["date"] = "2026-06-14T23:00Z"
+    competition = live["competitions"][0]
+    competition["id"] = "wnba-live"
+    competition["date"] = "2026-06-14T23:00Z"
+    competition["venue"] = {
+        "fullName": "Michelob ULTRA Arena",
+        "address": {"city": "Las Vegas", "state": "NV"},
+    }
+    competition["broadcasts"] = [{"market": "national", "names": ["ION"]}]
+    competition["status"] = {
+        "period": 3,
+        "displayClock": "4:22",
+        "type": {"state": "in", "completed": False, "description": "In Progress", "shortDetail": "Q3 4:22"},
+    }
+    competition["competitors"][0]["team"]["abbreviation"] = "LV"
+    competition["competitors"][0]["team"]["shortDisplayName"] = "Aces"
+    competition["competitors"][0]["team"]["displayName"] = "Las Vegas Aces"
+    competition["competitors"][0]["team"]["logo"] = "https://example.com/wnba-lv.png"
+    competition["competitors"][0]["team"]["logos"] = [{"href": "https://example.com/wnba-lv.png"}]
+    competition["competitors"][0]["score"] = "78"
+    competition["competitors"][0]["records"] = [{"summary": "8-3"}]
+    competition["competitors"][1]["team"]["abbreviation"] = "SEA"
+    competition["competitors"][1]["team"]["shortDisplayName"] = "Storm"
+    competition["competitors"][1]["team"]["displayName"] = "Seattle Storm"
+    competition["competitors"][1]["team"]["logo"] = "https://example.com/wnba-sea.png"
+    competition["competitors"][1]["team"]["logos"] = [{"href": "https://example.com/wnba-sea.png"}]
+    competition["competitors"][1]["score"] = "72"
+    competition["competitors"][1]["records"] = [{"summary": "7-4"}]
+    return payload
+
+
+def _sample_pga_scoreboard_payload():
+    return {
+        "events": [
+            {
+                "id": "pga-1",
+                "name": "U.S. Open",
+                "shortName": "U.S. Open",
+                "date": "2026-06-12T14:00Z",
+                "endDate": "2026-06-15T23:00Z",
+                "competitions": [
+                    {
+                        "id": "pga-1",
+                        "date": "2026-06-12T14:00Z",
+                        "endDate": "2026-06-15T23:00Z",
+                        "venue": {"fullName": "Shinnecock Hills"},
+                        "competitors": [
+                            {
+                                "order": 1,
+                                "score": "-9",
+                                "athlete": {"shortName": "S. Scheffler"},
+                                "linescores": [{"period": 3, "displayValue": "-2", "value": 68}],
+                            },
+                            {
+                                "order": 2,
+                                "score": "-7",
+                                "athlete": {"shortName": "R. McIlroy"},
+                                "linescores": [{"period": 3, "displayValue": "E", "value": 70}],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _sample_nfl_scoreboard_payload():
+    return {
+        "season": {"year": 2026, "displayName": "2026 NFL Season"},
+        "week": {"number": 1, "text": "Week 1"},
+        "events": [
+            {
+                "id": "nfl-live",
+                "date": "2026-09-11T00:20Z",
+                "week": {"number": 1},
+                "season": {"slug": "regular-season"},
+                "shortName": "SEA @ NE",
+                "competitions": [
+                    {
+                        "id": "nfl-live",
+                        "date": "2026-09-11T00:20Z",
+                        "neutralSite": False,
+                        "venue": {
+                            "fullName": "Gillette Stadium",
+                            "address": {"city": "Foxborough", "state": "MA"},
+                        },
+                        "status": {
+                            "period": 2,
+                            "displayClock": "8:42",
+                            "type": {"state": "in", "completed": False, "description": "In Progress", "shortDetail": "Q2 8:42"},
+                        },
+                        "situation": {
+                            "possession": "26",
+                            "downDistanceText": "3rd & 4",
+                            "yardLineText": "SEA 42",
+                            "lastPlay": {"text": "Kenneth Walker run for 6 yards"},
+                        },
+                        "broadcasts": [{"market": "national", "names": ["NBC"]}],
+                        "odds": [{"details": "NE -2.5", "overUnder": 44.5}],
+                        "competitors": [
+                            {
+                                "homeAway": "away",
+                                "id": "26",
+                                "score": "17",
+                                "team": {"id": "26", "abbreviation": "SEA", "shortDisplayName": "Seahawks", "displayName": "Seattle Seahawks", "logos": [{"href": "https://example.com/nfl-sea.png"}]},
+                                "records": [{"summary": "0-0"}],
+                            },
+                            {
+                                "homeAway": "home",
+                                "id": "17",
+                                "score": "14",
+                                "team": {"id": "17", "abbreviation": "NE", "shortDisplayName": "Patriots", "displayName": "New England Patriots", "logos": [{"href": "https://example.com/nfl-ne.png"}]},
+                                "records": [{"summary": "0-0"}],
+                            },
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "nfl-next",
+                "date": "2026-09-14T20:25Z",
+                "week": {"number": 1},
+                "competitions": [
+                    {
+                        "id": "nfl-next",
+                        "date": "2026-09-14T20:25Z",
+                        "venue": {
+                            "fullName": "Soldier Field",
+                            "address": {"city": "Chicago", "state": "IL"},
+                        },
+                        "status": {"period": 0, "displayClock": "", "type": {"state": "pre", "completed": False, "description": "Scheduled"}},
+                        "broadcasts": [{"market": "national", "names": ["FOX"]}],
+                        "odds": [{"details": "CHI -1.5", "overUnder": 42.5}],
+                        "competitors": [
+                            {"homeAway": "away", "team": {"id": "13", "abbreviation": "GB", "shortDisplayName": "Packers", "logos": [{"href": "https://example.com/nfl-gb.png"}]}, "records": [{"summary": "0-0"}]},
+                            {"homeAway": "home", "team": {"id": "3", "abbreviation": "CHI", "shortDisplayName": "Bears", "logos": [{"href": "https://example.com/nfl-chi.png"}]}, "records": [{"summary": "0-0"}]},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def _sample_ncaa_scoreboard_payload():
+    return {
+        "season": {"year": 2026, "displayName": "2026 College Football"},
+        "week": {"number": 1, "text": "Week 1"},
+        "events": [
+            {
+                "id": "ncaa-live",
+                "date": "2026-08-29T23:30Z",
+                "week": {"number": 1},
+                "shortName": "TEX vs MICH",
+                "notes": [{"headline": "Kickoff Classic"}],
+                "competitions": [
+                    {
+                        "id": "ncaa-live",
+                        "date": "2026-08-29T23:30Z",
+                        "neutralSite": True,
+                        "venue": {
+                            "fullName": "AT&T Stadium",
+                            "address": {"city": "Arlington", "state": "TX"},
+                        },
+                        "status": {
+                            "period": 4,
+                            "displayClock": "1:18",
+                            "type": {"state": "in", "completed": False, "description": "In Progress", "shortDetail": "Q4 1:18"},
+                        },
+                        "situation": {
+                            "possession": "251",
+                            "downDistanceText": "2nd & 8",
+                            "yardLineText": "MICH 36",
+                        },
+                        "broadcasts": [{"market": "national", "names": ["ESPN"]}],
+                        "odds": [{"details": "TEX -6.5", "overUnder": 52.5}],
+                        "competitors": [
+                            {
+                                "homeAway": "away",
+                                "id": "251",
+                                "score": "31",
+                                "curatedRank": {"current": 12},
+                                "team": {"id": "251", "abbreviation": "TEX", "shortDisplayName": "Texas", "displayName": "Texas Longhorns", "logos": [{"href": "https://example.com/ncaa-tex.png"}]},
+                                "records": [{"summary": "0-0"}],
+                            },
+                            {
+                                "homeAway": "home",
+                                "id": "130",
+                                "score": "28",
+                                "curatedRank": {"current": 7},
+                                "team": {"id": "130", "abbreviation": "MICH", "shortDisplayName": "Michigan", "displayName": "Michigan Wolverines", "logos": [{"href": "https://example.com/ncaa-mich.png"}]},
+                                "records": [{"summary": "0-0"}],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _sample_f1_jolpica_bundle():
+    race = {
+        "season": "2026",
+        "round": "7",
+        "raceName": "Barcelona-Catalunya Grand Prix",
+        "Circuit": {
+            "circuitName": "Circuit de Barcelona-Catalunya",
+            "Location": {"locality": "Montmelo", "country": "Spain"},
+        },
+        "date": "2026-06-14",
+        "time": "13:00:00Z",
+        "FirstPractice": {"date": "2026-06-12", "time": "11:30:00Z"},
+        "SecondPractice": {"date": "2026-06-12", "time": "15:00:00Z"},
+        "ThirdPractice": {"date": "2026-06-13", "time": "10:30:00Z"},
+        "Qualifying": {"date": "2026-06-13", "time": "14:00:00Z"},
+    }
+    next_race = {
+        "season": "2026",
+        "round": "8",
+        "raceName": "Austrian Grand Prix",
+        "Circuit": {
+            "circuitName": "Red Bull Ring",
+            "Location": {"locality": "Spielberg", "country": "Austria"},
+        },
+        "date": "2026-06-28",
+        "time": "13:00:00Z",
+        "FirstPractice": {"date": "2026-06-26", "time": "11:30:00Z"},
+        "Qualifying": {"date": "2026-06-27", "time": "14:00:00Z"},
+    }
+    schedule = {
+        "MRData": {
+            "RaceTable": {
+                "season": "2026",
+                "Races": [race, next_race],
+            }
+        }
+    }
+    results_race = json.loads(json.dumps(race))
+    results_race["Results"] = [
+        {
+            "position": "1",
+            "Driver": {"code": "RUS", "givenName": "George", "familyName": "Russell"},
+            "Constructor": {"name": "Mercedes"},
+            "Time": {"time": "1:32:18.441"},
+            "status": "Finished",
+        },
+        {
+            "position": "2",
+            "Driver": {"code": "HAM", "givenName": "Lewis", "familyName": "Hamilton"},
+            "Constructor": {"name": "Ferrari"},
+            "Time": {"time": "+4.122"},
+            "status": "Finished",
+        },
+    ]
+    results = {"MRData": {"RaceTable": {"Races": [results_race]}}}
+    driver_standings = {
+        "MRData": {
+            "StandingsTable": {
+                "StandingsLists": [
+                    {
+                        "DriverStandings": [
+                            {"position": "1", "points": "142", "wins": "3", "Driver": {"code": "ANT"}},
+                            {"position": "2", "points": "130", "wins": "2", "Driver": {"code": "RUS"}},
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+    constructor_standings = {
+        "MRData": {
+            "StandingsTable": {
+                "StandingsLists": [
+                    {
+                        "ConstructorStandings": [
+                            {"position": "1", "points": "272", "wins": "5", "Constructor": {"name": "Mercedes"}}
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+    return {
+        "version": "sports-dashboard-f1-jolpica-v1",
+        "cache_key": "sample",
+        "fetched_at": "2026-06-14T12:00:00+00:00",
+        "schedule": schedule,
+        "results": results,
+        "driver_standings": driver_standings,
+        "constructor_standings": constructor_standings,
+    }
+
+
+def _sample_openf1_snapshot():
+    return {
+        "drivers": [
+            {"driver_number": 63, "name_acronym": "RUS", "team_name": "Mercedes", "team_colour": "27F4D2"},
+            {"driver_number": 44, "name_acronym": "HAM", "team_name": "Ferrari", "team_colour": "E80020"},
+        ],
+        "position": [
+            {"driver_number": 44, "position": 2, "date": "2026-06-14T13:02:00+00:00"},
+            {"driver_number": 63, "position": 1, "date": "2026-06-14T13:02:01+00:00"},
+        ],
+        "intervals": [
+            {"driver_number": 63, "gap_to_leader": None, "interval": None, "date": "2026-06-14T13:02:02+00:00"},
+            {"driver_number": 44, "gap_to_leader": 1.204, "interval": 1.204, "date": "2026-06-14T13:02:02+00:00"},
+        ],
+        "session_result": [],
+        "weather": [
+            {"date": "2026-06-14T13:02:02+00:00", "air_temperature": 26.5, "track_temperature": 39.2, "rainfall": 0}
+        ],
+    }
+
+
 def _sample_football_data_match():
     return {
         "utcDate": "2026-06-11T19:00:00Z",
@@ -348,6 +799,13 @@ def _sample_worldcup_espn_scoreboard_payload():
                 "id": "760415",
                 "date": "2026-06-11T19:00Z",
                 "season": {"slug": "fifa-world-cup"},
+                "links": [
+                    {
+                        "rel": ["summary"],
+                        "href": "https://www.espn.com/soccer/match/_/gameId/760415/mex-rsa",
+                        "text": "Summary",
+                    }
+                ],
                 "competitions": [
                     {
                         "id": "760415",
@@ -395,6 +853,13 @@ def _sample_worldcup_espn_scoreboard_payload():
                     {
                         "id": "760414",
                         "date": "2026-06-12T02:00Z",
+                        "links": [
+                            {
+                                "rel": ["gamecast"],
+                                "href": "https://www.espn.com/soccer/gamecast/_/gameId/760414/kor-cze",
+                                "text": "Gamecast",
+                            }
+                        ],
                         "status": {
                             "period": 1,
                             "type": {
@@ -640,12 +1105,125 @@ def test_lpl_focus_stage_label_uses_stage_without_series_score():
     assert "0-0" not in seen_texts
 
 
+def test_lpl_focus_stage_label_draws_above_vs():
+    plugin = _plugin()
+    image = Image.new("RGB", (320, 220), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    centered_labels = []
+    centered_points = []
+    fit_text_calls = []
+    original_centered_in_box = plugin._draw_centered_in_box
+    original_centered = plugin._draw_centered
+    original_fit_text = plugin._fit_text
+
+    def capture_centered_in_box(draw_obj, box, text, *args, **kwargs):
+        centered_labels.append((box, str(text)))
+        return original_centered_in_box(draw_obj, box, text, *args, **kwargs)
+
+    def capture_centered(draw_obj, center, text, *args, **kwargs):
+        centered_points.append((center, str(text)))
+        return original_centered(draw_obj, center, text, *args, **kwargs)
+
+    def capture_fit_text(draw_obj, text, max_width, size, bold=False, min_size=11):
+        fit_text_calls.append((str(text), max_width, size, bold, min_size))
+        return original_fit_text(draw_obj, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._draw_centered_in_box = capture_centered_in_box
+    plugin._draw_centered = capture_centered
+    plugin._fit_text = capture_fit_text
+    event = {
+        "start": datetime(2026, 6, 13, 9, 0, tzinfo=timezone.utc),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Final",
+        "stage_label": "Final",
+        "odds": {"team_a": "1.40", "team_b": "2.75"},
+    }
+
+    plugin._draw_lpl_focus_card(image, draw, 0, 220, 0, event, event["start"], False)
+
+    final_box = next(box for box, text in centered_labels if text == "Final")
+    final_fit = next(call for call in fit_text_calls if call[0] == "Final")
+    vs_center = next(center for center, text in centered_points if text == "VS")
+    assert final_fit[2] == 12
+    assert final_box[0] > 50
+    assert final_box[2] < 170
+    assert final_box[1] >= 76
+    assert final_box[3] <= 88
+    assert final_box[3] < vs_center[1]
+
+
+def test_lpl_display_team_names_prefer_chinese_short_names():
+    assert SportsDashboard._lpl_display_team_name("BLG") == "\u54d4\u54e9\u54d4\u54e9"
+    assert SportsDashboard._lpl_display_team_name("Bilibili Gaming") == "\u54d4\u54e9\u54d4\u54e9"
+    assert SportsDashboard._lpl_display_team_name("Top Esports") == "\u6ed4\u640f"
+    assert SportsDashboard._lpl_display_team_name("JD Gaming") == "\u4eac\u4e1c"
+    assert SportsDashboard._lpl_display_team_name("LNG Esports") == "\u674e\u5b81"
+    assert SportsDashboard._lpl_display_team_name("Weibo Gaming") == "\u5fae\u535a"
+    assert SportsDashboard._lpl_display_team_name("EDG") == "EDG"
+
+
+def test_lpl_cards_render_chinese_names_without_changing_logo_codes():
+    plugin = _plugin()
+    image = Image.new("RGB", (340, 420), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_fallbacks = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_logo(_image, _draw, _logo_url, _x, _y, _size, fallback_text):
+        logo_fallbacks.append(str(fallback_text))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_logo
+    event = {
+        "start": datetime(2026, 6, 13, 9, 0, tzinfo=timezone.utc),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": 3,
+        "wins_b": 2,
+        "block": "Final",
+        "stage_label": "Final",
+        "odds": {"team_a": "1.40", "team_b": "2.75"},
+    }
+
+    plugin._draw_lpl_focus_card(image, draw, 0, 220, 0, event, event["start"], False)
+    plugin._draw_lpl_next_row(image, draw, 0, 220, 166, event, event["start"])
+    plugin._draw_lpl_recent_result_row(image, draw, 0, 220, 224, event)
+    plugin._draw_lpl_main_card(draw, 0, 220, 280, event, event["start"], False)
+
+    assert "\u54d4\u54e9\u54d4\u54e9" in seen_texts
+    assert "\u6ed4\u640f" in seen_texts
+    assert "BLG" in logo_fallbacks
+    assert "TES" in logo_fallbacks
+
+
 def test_lpl_marble_filler_asset_is_exact_transparent_strip():
     with Image.open(LOCAL_LPL_MARBLE_FILLER_PATH) as source:
         filler = source.convert("RGBA")
 
     assert filler.size == (196, 46)
     assert filler.getchannel("A").getextrema()[0] == 0
+
+
+def test_lpl_msi_next_filler_asset_is_exact_strip():
+    with Image.open(LOCAL_LPL_MSI_NEXT_FILLER_PATH) as source:
+        filler = source.convert("RGB")
+
+    assert filler.size == (196, 48)
+    assert len(filler.getcolors(maxcolors=filler.width * filler.height + 1)) > 200
 
 
 def test_lpl_empty_upcoming_slot_draws_marble_filler(monkeypatch):
@@ -663,6 +1241,42 @@ def test_lpl_empty_upcoming_slot_draws_marble_filler(monkeypatch):
     assert image.getpixel((112, 345)) == (240, 10, 20)
 
 
+def test_lpl_empty_upcoming_slot_draws_msi_next_filler_when_active(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (224, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    marble = Image.new("RGBA", (196, 46), (240, 10, 20, 255))
+    msi_next = Image.new("RGB", (196, 48), (20, 120, 240))
+    event_start = datetime(2026, 6, 14, 2, 0, tzinfo=timezone.utc)
+    msi_start = datetime(2026, 6, 28, 0, 0, tzinfo=timezone.utc)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    monkeypatch.setattr(plugin, "_load_lpl_sidebar_filler", lambda size: marble.resize(size))
+    monkeypatch.setattr(plugin, "_load_lpl_msi_next_filler", lambda size: msi_next.resize(size))
+    plugin._fit_text = record_fit_text
+
+    plugin._draw_lpl_next_rows(
+        image,
+        draw,
+        0,
+        224,
+        244,
+        [],
+        event_start,
+        False,
+        msi_next_filler=True,
+        msi_next_start=msi_start,
+    )
+
+    assert image.getpixel((20, 345)) == (20, 120, 240)
+    assert "MSI NEXT 06/28" in seen_texts
+
+
 def test_lpl_empty_upcoming_slot_stays_clear_with_two_rows(monkeypatch):
     plugin = _plugin()
     image = Image.new("RGB", (224, 420), COLORS["panel"])
@@ -676,6 +1290,6237 @@ def test_lpl_empty_upcoming_slot_stays_clear_with_two_rows(monkeypatch):
     plugin._draw_lpl_next_rows(image, draw, 0, 224, 244, [event, event], event["start"], False)
 
     assert image.getpixel((112, 345)) != (240, 10, 20)
+
+
+def test_select_lpl_events_marks_msi_countdown_when_lpl_schedule_ends():
+    la = ZoneInfo("America/Los_Angeles")
+    final = {
+        "start": datetime(2026, 6, 13, 2, 0, tzinfo=la),
+        "state": "completed",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "wins_a": 3,
+        "wins_b": 2,
+        "best_of": 5,
+        "block": "Final",
+        "league_name": "LPL",
+    }
+
+    selected = SportsDashboard._select_lpl_events(
+        [final],
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert selected["offseason"] is True
+    assert selected["featured_event_page"] is True
+    assert selected["featured_event"]["key"] == "MSI"
+    assert selected["featured_event"]["countdown_days"] == 14
+    assert selected["featured_event"]["logo_path"] == LOCAL_MSI_LOGO_PATH
+
+
+def test_select_lpl_events_uses_msi_logo_for_msi_schedule_event_without_offseason():
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "start": datetime(2026, 6, 28, 2, 0, tzinfo=la),
+        "state": "unstarted",
+        "team_a": "TBD",
+        "team_b": "TBD",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 5,
+        "block": "Bracket Stage",
+        "league_name": "Mid-Season Invitational",
+        "league_slug": "msi",
+    }
+
+    selected = SportsDashboard._select_lpl_events(
+        [event],
+        datetime(2026, 6, 27, 9, 0, tzinfo=la),
+    )
+
+    assert selected["offseason"] is False
+    assert selected["featured_event_page"] is False
+    assert selected["featured_event"]["key"] == "MSI"
+    assert selected["featured_event"]["phase"] == "match_upcoming"
+
+
+def test_lpl_featured_event_countdown_days_are_date_based():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 13, 21, 30, tzinfo=la)
+    featured = SportsDashboard._lpl_msi_featured_event(now)
+
+    assert featured["phase"] == "countdown"
+    assert featured["countdown_days"] == 15
+    assert SportsDashboard._lpl_featured_event_pill_text(featured) == "D-15"
+
+
+def test_lpl_msi_next_filler_only_appears_near_msi_countdown():
+    la = ZoneInfo("America/Los_Angeles")
+
+    assert SportsDashboard._lpl_msi_next_filler_active(datetime(2026, 6, 14, 9, 0, tzinfo=la)) is True
+    assert SportsDashboard._lpl_msi_next_filler_active(datetime(2026, 6, 1, 9, 0, tzinfo=la)) is False
+    assert SportsDashboard._lpl_msi_next_filler_active(datetime(2026, 7, 1, 9, 0, tzinfo=la)) is False
+
+
+def test_lpl_msi_next_filler_prefers_fetched_msi_start_date():
+    la = ZoneInfo("America/Los_Angeles")
+    fetched = {
+        "key": "MSI",
+        "phase": "match_upcoming",
+        "start": datetime(2026, 6, 29, 2, 0, tzinfo=la),
+    }
+
+    event = SportsDashboard._lpl_msi_next_filler_event(datetime(2026, 6, 14, 9, 0, tzinfo=la), fetched)
+
+    assert event["start"].strftime("%m/%d") == "06/29"
+
+
+def test_lpl_msi_logo_and_offseason_filler_assets_are_available():
+    msi_logo = SportsDashboard._load_local_logo(LOCAL_MSI_LOGO_PATH, (74, 38), alpha_threshold=8)
+
+    assert msi_logo is not None
+    assert msi_logo.size[0] <= 74
+    assert msi_logo.size[1] <= 38
+    assert msi_logo.getchannel("A").getextrema()[0] == 0
+    with Image.open(LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH) as source:
+        filler = source.convert("RGB")
+    assert filler.size == (212, 80)
+    accent_paths = sorted(Path(LOCAL_LPL_MSI_CARD_ACCENT_DIR).glob("*.png"))
+    assert len(accent_paths) >= 8
+    for accent_path in accent_paths:
+        with Image.open(accent_path) as source:
+            accent = source.convert("RGBA")
+        assert accent.size == (128, 92)
+        assert accent.getchannel("A").getextrema()[0] == 0
+        assert accent.getbbox() is not None
+    with Image.open(LOCAL_LPL_MSI_CARD_ACCENT_PATH) as source:
+        fallback_accent = source.convert("RGBA")
+    assert fallback_accent.size == (128, 92)
+
+
+def test_lpl_msi_card_accent_pool_rotates_by_render_time():
+    paths = SportsDashboard._lpl_msi_card_accent_paths()
+
+    assert len(paths) >= 2
+    assert SportsDashboard._lpl_msi_card_accent_index(datetime(2026, 6, 15, 9, 0, 0, tzinfo=timezone.utc), len(paths)) != (
+        SportsDashboard._lpl_msi_card_accent_index(datetime(2026, 6, 15, 9, 0, 1, tzinfo=timezone.utc), len(paths))
+    )
+    first = SportsDashboard._load_lpl_msi_card_accent((94, 68), datetime(2026, 6, 15, 9, 0, 0, tzinfo=timezone.utc))
+    second = SportsDashboard._load_lpl_msi_card_accent((94, 68), datetime(2026, 6, 15, 9, 0, 1, tzinfo=timezone.utc))
+    assert first is not None
+    assert second is not None
+    assert first.size == (94, 68)
+    assert second.size == (94, 68)
+
+
+def test_lpl_sidebar_uses_featured_logo_only_for_featured_event(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    la = ZoneInfo("America/Los_Angeles")
+    logo_paths = []
+
+    def capture_logo(_image, _draw, _x, _y, _width, _height, logo_path=None):
+        logo_paths.append(logo_path)
+
+    monkeypatch.setattr(plugin, "_draw_lpl_logo", capture_logo)
+    monkeypatch.setattr(plugin, "_draw_lpl_featured_event_panel", lambda *_args, **_kwargs: None)
+    selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": datetime(2026, 6, 13, 2, 0, tzinfo=la),
+                "state": "completed",
+                "team_a": "BLG",
+                "team_b": "TES",
+                "wins_a": 3,
+                "wins_b": 2,
+                "best_of": 5,
+                "block": "Final",
+                "league_name": "LPL",
+            }
+        ],
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    plugin._draw_lpl_sidebar(image, 556, selected, "LIVE DATA", datetime(2026, 6, 14, 9, 0, tzinfo=la))
+
+    normal_selected = {
+        "live": [],
+        "upcoming": [{"start": datetime(2026, 8, 1, 2, 0, tzinfo=la), "team_a": "BLG", "team_b": "TES"}],
+        "recent": [],
+        "main": None,
+    }
+    monkeypatch.setattr(plugin, "_draw_lpl_focus_card", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_next_rows", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_recent_rows", lambda *_args, **_kwargs: None)
+    plugin._draw_lpl_sidebar(image, 556, normal_selected, "LIVE DATA", datetime(2026, 7, 30, 9, 0, tzinfo=la))
+
+    assert logo_paths[0] == LOCAL_MSI_LOGO_PATH
+    assert logo_paths[1] is None
+
+
+def test_lpl_featured_event_panel_draws_core_status_labels():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+    selected = {
+        "featured_event": SportsDashboard._lpl_msi_featured_event(datetime(2026, 6, 14, 9, 0, tzinfo=la)),
+        "featured_event_page": True,
+        "offseason": True,
+        "recent": [],
+    }
+
+    plugin._draw_lpl_featured_event_panel(
+        image,
+        draw,
+        0,
+        240,
+        78,
+        408,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert "\u4f11\u8d5b\u671f" in seen_texts
+    assert "\u4e0b\u4e00\u7ad9 MSI" in seen_texts
+    assert "D-14" in seen_texts
+    assert "MSI \u5f00\u8d5b" in seen_texts
+
+
+def test_lpl_featured_event_panel_draws_card_accent(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    selected = {
+        "featured_event": SportsDashboard._lpl_msi_featured_event(datetime(2026, 6, 14, 9, 0, tzinfo=la)),
+        "featured_event_page": True,
+        "offseason": True,
+        "recent": [],
+    }
+
+    monkeypatch.setattr(
+        plugin,
+        "_load_lpl_msi_card_accent",
+        lambda size, rotation_seed=None: Image.new("RGBA", size, (20, 180, 220, 255)),
+    )
+
+    plugin._draw_lpl_featured_event_panel(
+        image,
+        draw,
+        0,
+        240,
+        78,
+        408,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert image.getpixel((180, 136)) == (20, 180, 220)
+
+
+def test_lpl_featured_event_panel_omits_duplicate_card_logo(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    logo_paths = []
+    selected = {
+        "featured_event": SportsDashboard._lpl_msi_featured_event(datetime(2026, 6, 14, 9, 0, tzinfo=la)),
+        "featured_event_page": True,
+        "offseason": True,
+        "recent": [],
+    }
+
+    def record_logo(path, size, alpha_threshold=8):
+        logo_paths.append(path)
+        return Image.new("RGBA", size, (255, 0, 0, 255))
+
+    monkeypatch.setattr(plugin, "_load_local_logo", record_logo)
+    monkeypatch.setattr(plugin, "_load_lpl_msi_offseason_filler", lambda size: None)
+
+    plugin._draw_lpl_featured_event_panel(
+        image,
+        draw,
+        0,
+        240,
+        78,
+        408,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert logo_paths == []
+
+
+def test_lpl_featured_event_panel_bleeds_bottom_filler_to_sidebar_edges(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    calls = []
+    selected = {
+        "featured_event": SportsDashboard._lpl_msi_featured_event(datetime(2026, 6, 14, 9, 0, tzinfo=la)),
+        "featured_event_page": True,
+        "offseason": True,
+        "recent": [],
+    }
+
+    monkeypatch.setattr(plugin, "_draw_lpl_featured_event_filler", lambda *_args: calls.append(_args))
+
+    plugin._draw_lpl_featured_event_panel(
+        image,
+        draw,
+        0,
+        240,
+        78,
+        408,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert calls
+    assert calls[0][1:] == (0, 239, 388, 408)
+
+
+def test_lpl_featured_event_sidebar_allows_filler_to_reach_canvas_bottom(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    la = ZoneInfo("America/Los_Angeles")
+    calls = []
+    selected = {
+        "featured_event": SportsDashboard._lpl_msi_featured_event(datetime(2026, 6, 14, 9, 0, tzinfo=la)),
+        "featured_event_page": True,
+        "offseason": True,
+        "recent": [],
+    }
+
+    monkeypatch.setattr(plugin, "_draw_lpl_featured_event_panel", lambda *_args: calls.append(_args))
+
+    plugin._draw_lpl_sidebar(image, 552, selected, "fallback", datetime(2026, 6, 14, 9, 0, tzinfo=la))
+
+    assert calls
+    assert calls[0][5] == image.height - 1
+
+
+def test_lpl_featured_event_filler_uses_zoomed_bottom_crop(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (220, 100), COLORS["paper"])
+    requested_sizes = []
+
+    def load_filler(size):
+        requested_sizes.append(size)
+        filler = Image.new("RGB", size, (200, 10, 10))
+        filler_draw = ImageDraw.Draw(filler)
+        filler_draw.rectangle((0, size[1] - 80, size[0] - 1, size[1] - 1), fill=(12, 200, 40))
+        return filler
+
+    monkeypatch.setattr(plugin, "_load_lpl_msi_offseason_filler", load_filler)
+
+    plugin._draw_lpl_featured_event_filler(image, 10, 209, 20, 99)
+
+    assert requested_sizes == [
+        (
+            int(200 * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
+            int(80 * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
+        )
+    ]
+    assert image.getpixel((10, 20)) == (12, 200, 40)
+    assert image.getpixel((209, 99)) == (12, 200, 40)
+
+
+def test_f1_jolpica_parser_builds_race_sessions_and_standings():
+    la = ZoneInfo("America/Los_Angeles")
+    data = SportsDashboard._parse_f1_jolpica_bundle(_sample_f1_jolpica_bundle(), la)
+
+    assert data["races"][0]["race_name"] == "Barcelona-Catalunya Grand Prix"
+    assert data["races"][0]["sessions"][-1]["label"] == "RACE"
+    assert data["races"][0]["race_start"].strftime("%Y-%m-%d %H:%M") == "2026-06-14 06:00"
+    assert data["last_result"]["top"][0]["driver_code"] == "RUS"
+    assert data["driver_standings"][0]["driver_code"] == "ANT"
+
+
+def test_mlb_scoreboard_parser_extracts_live_base_and_rhe_state():
+    la = ZoneInfo("America/Los_Angeles")
+    data = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+
+    live = data["events"][0]
+    assert live["sport"] == "MLB"
+    assert live["state"] == "live"
+    assert live["team_a"] == "\u5de8\u4eba"
+    assert live["team_b"] == "\u9053\u5947"
+    assert live["team_a_code"] == "SF"
+    assert live["team_b_code"] == "LAD"
+    assert live["wins_a"] == 3
+    assert live["wins_b"] == 5
+    assert live["inning_label"] == "7th"
+    assert live["bases"] == "13"
+    assert live["away_line"] == {"runs": 3, "hits": 7, "errors": 1}
+    assert live["home_line"] == {"runs": 5, "hits": 8, "errors": 0}
+    assert live["probable_b"] == "Y. Yamamoto"
+    assert live["current_batter"] == "M. Chapman"
+    assert live["current_pitcher"] == "Y. Yamamoto"
+    assert live["team_a_logo"].endswith("/sf.png")
+    assert live["team_b_logo"].endswith("/lad.png")
+
+
+def test_mlb_short_team_aliases_stay_chinese_with_correct_logo_codes():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = {
+        "dates": [
+            {
+                "games": [
+                    {
+                        "gamePk": 777003,
+                        "gameDate": "2026-06-16T00:10:00Z",
+                        "status": {
+                            "abstractGameState": "Preview",
+                            "detailedState": "Scheduled",
+                            "codedGameState": "S",
+                        },
+                        "teams": {
+                            "away": {"team": {"name": "White Sox"}},
+                            "home": {"team": {"name": "D-backs"}},
+                        },
+                        "linescore": {},
+                    }
+                ]
+            }
+        ]
+    }
+
+    event = SportsDashboard._parse_mlb_scoreboard(payload, la)["events"][0]
+
+    assert event["team_a_code"] == "CWS"
+    assert event["team_a"] == "\u767d\u889c"
+    assert event["team_a_logo"].endswith("/chw.png")
+    assert event["team_b_code"] == "ARI"
+    assert event["team_b"] == "\u54cd\u5c3e\u86c7"
+    assert event["team_b_logo"].endswith("/ari.png")
+    assert SportsDashboard._mlb_team_code("LA Dodgers") == "LAD"
+    alias_cases = [
+        ("WAS", "WSH", "\u56fd\u6c11", "\u534e\u76db\u987f\u56fd\u6c11", "/wsh.png"),
+        ("AZ", "ARI", "\u54cd\u5c3e\u86c7", "\u4e9a\u5229\u6851\u90a3\u54cd\u5c3e\u86c7", "/ari.png"),
+        ("CHW", "CWS", "\u767d\u889c", "\u829d\u52a0\u54e5\u767d\u889c", "/chw.png"),
+        ("SDP", "SD", "\u6559\u58eb", "\u5723\u8fed\u6208\u6559\u58eb", "/sd.png"),
+        ("SFG", "SF", "\u5de8\u4eba", "\u65e7\u91d1\u5c71\u5de8\u4eba", "/sf.png"),
+        ("KCR", "KC", "\u7687\u5bb6", "\u582a\u8428\u65af\u57ce\u7687\u5bb6", "/kc.png"),
+    ]
+    for alias_code, canonical_code, short_name, full_name, logo_suffix in alias_cases:
+        assert SportsDashboard._mlb_display_team_name(alias_code) == short_name
+        assert SportsDashboard._mlb_display_team_name(alias_code, full=True) == full_name
+        assert SportsDashboard._mlb_team_code(alias_code) == canonical_code
+        assert SportsDashboard._mlb_team_logo_url({}, alias_code).endswith(logo_suffix)
+
+
+def test_mlb_info_rows_map_short_codes_to_chinese_team_names():
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+    event = {
+        "sport": "MLB",
+        "state": "final",
+        "start": now - timedelta(hours=2),
+        "team_a": "LAD",
+        "team_b": "SF",
+        "team_a_code": "LAD",
+        "team_b_code": "SF",
+        "wins_a": 5,
+        "wins_b": 3,
+        "record_a": "42-28",
+        "record_b": "34-35",
+        "away_line": {"runs": 5, "hits": 8, "errors": 0},
+        "home_line": {"runs": 3, "hits": 7, "errors": 1},
+        "venue": "Oracle Park",
+    }
+
+    assert SportsDashboard._mlb_display_team_from_event(event, "a") == "\u9053\u5947"
+    assert SportsDashboard._mlb_display_team_from_event(event, "b") == "\u5de8\u4eba"
+    assert SportsDashboard._mlb_matchup_label(event) == "\u9053\u5947 @ \u5de8\u4eba"
+    assert (
+        SportsDashboard._mlb_record_matchup_label(event)
+        == "\u9053\u5947 42-28 / \u5de8\u4eba 34-35"
+    )
+    assert SportsDashboard._mlb_final_meta_label(event) == "\u9053\u5947 \u80dc2\u5206 / Oracle Park"
+    assert (
+        SportsDashboard._mlb_compact_rhe_label(event)
+        == "\u9053\u5947 5/8/0  \u5de8\u4eba 3/7/1"
+    )
+    assert SportsDashboard._mlb_display_team_from_event(event, "a", full=True) == "洛杉矶道奇"
+    assert SportsDashboard._mlb_display_team_from_event(event, "b", full=True) == "旧金山巨人"
+
+
+def test_mlb_phillies_full_name_uses_compact_chinese_label():
+    event = {
+        "team_a": "Philadelphia Phillies",
+        "team_a_name": "Philadelphia Phillies",
+        "team_a_code": "PHI",
+    }
+
+    full_name = SportsDashboard._mlb_display_team_from_event(event, "a", full=True)
+
+    assert full_name == "\u8d39\u57ce\u4eba"
+    assert full_name != "\u8d39\u57ce\u8d39\u57ce\u4eba"
+
+
+def test_pga_event_name_aliases_use_chinese_tournament_names():
+    cases = {
+        "THE PLAYERS Championship": "\u7403\u5458\u9526\u6807\u8d5b",
+        "The Open Championship": "\u82f1\u56fd\u516c\u5f00\u8d5b",
+        "U.S. Open Championship": "\u7f8e\u56fd\u516c\u5f00\u8d5b",
+        "TOUR Championship": "\u5de1\u56de\u9526\u6807\u8d5b",
+        "WM Phoenix Open": "WM\u51e4\u51f0\u57ce\u516c\u5f00\u8d5b",
+        "AT&T Pebble Beach Pro-Am": "AT&T\u5706\u77f3\u6ee9\u804c\u4e1a\u4e1a\u4f59\u914d\u5bf9\u8d5b",
+        "RBC Canadian Open": "RBC\u52a0\u62ff\u5927\u516c\u5f00\u8d5b",
+        "John Deere Classic": "\u7ea6\u7ff0\u8fea\u5c14\u7cbe\u82f1\u8d5b",
+        "Genesis Scottish Open": "\u82cf\u683c\u5170\u516c\u5f00\u8d5b",
+        "Rocket Classic": "\u706b\u7bad\u7cbe\u82f1\u8d5b",
+        "The Sentry": "\u54e8\u5175\u51a0\u519b\u8d5b",
+        "Texas Children's Houston Open": "\u5fb7\u5dde\u513f\u7ae5\u4f11\u65af\u6566\u516c\u5f00\u8d5b",
+    }
+
+    for raw_name, expected_name in cases.items():
+        assert SportsDashboard._pga_display_event_name(raw_name) == expected_name
+
+
+def test_pga_leaderboard_parses_country_codes_into_detail_lines():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    competitors = payload["events"][0]["competitions"][0]["competitors"]
+    competitors[0]["athlete"]["country"] = {"abbreviation": "USA", "displayName": "United States"}
+    competitors[1]["athlete"]["country"] = "Northern Ireland"
+
+    event = SportsDashboard._parse_pga_scoreboard(payload, la, now)["events"][0]
+
+    assert event["leaderboard"][0]["country"] == "USA"
+    assert event["leaderboard"][1]["country"] == "NIR"
+    assert event["leader"]["country"] == "USA"
+    assert SportsDashboard._pga_country_code("US") == "USA"
+    assert SportsDashboard._pga_country_code("South Korea") == "KOR"
+    assert SportsDashboard._pga_row_detail_label(event["leaderboard"][0], leader_score="-9") == "\u7f8e\u56fd / R3 68 / -2"
+    assert (
+        SportsDashboard._pga_row_detail_label(event["leaderboard"][1], leader_score="-9")
+        == "\u5317\u7231\u5c14\u5170 / R3 70 / E / GAP +2"
+    )
+
+    image = Image.new("RGB", (320, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_pga_leader_summary(draw, 10, 10, 250, 52, event["leader"])
+    plugin._draw_pga_leaderboard_row(draw, 10, 250, 70, event["leaderboard"][1], 1, leader_score="-9")
+
+    assert "USA" in seen_texts
+    assert "S. Scheffler" in seen_texts
+    assert "-9" in seen_texts
+    assert "NAT" not in seen_texts
+    assert "\u7f8e\u56fd / R3 68 / -2" not in seen_texts
+    assert "NIR" in seen_texts
+    assert "\u5317\u7231\u5c14\u5170 / R3 70 / E / GAP +2" in seen_texts
+
+
+def test_pga_event_parser_preserves_available_course_names():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    event = payload["events"][0]
+    competition = event["competitions"][0]
+    event["venue"] = {"name": "Event Course"}
+    competition["venue"] = {"displayName": "Display Course"}
+
+    parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
+
+    assert parsed["events"][0]["venue"] == "Display Course"
+
+    competition["venue"] = {}
+    parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
+
+    assert parsed["events"][0]["venue"] == "Event Course"
+
+
+def test_offseason_hub_parses_wnba_and_pga_sources():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_offseason_hub_payload(
+        {
+            "payloads": {
+                "mlb": _sample_mlb_scoreboard_payload(),
+                "wnba": _sample_wnba_scoreboard_payload(),
+                "pga": _sample_pga_scoreboard_payload(),
+                "nfl": _sample_nfl_scoreboard_payload(),
+                "ncaa": _sample_ncaa_scoreboard_payload(),
+            }
+        },
+        la,
+        now,
+    )
+
+    wnba_live = next(event for event in parsed["wnba"]["events"] if SportsDashboard._hub_event_state(event) == "live")
+    assert wnba_live["sport"] == "WNBA"
+    assert wnba_live["status_text"] == "Q3 4:22"
+    assert wnba_live["team_a"] == "\u98ce\u66b4"
+    assert wnba_live["team_b"] == "\u738b\u724c"
+    assert wnba_live["team_a_name"] == "Storm"
+    assert wnba_live["team_b_name"] == "Aces"
+    assert wnba_live["team_a_logo"] == "https://example.com/wnba-sea.png"
+    assert wnba_live["team_b_logo"] == "https://example.com/wnba-lv.png"
+    assert wnba_live["record_a"] == "7-4"
+    assert wnba_live["record_b"] == "8-3"
+    assert wnba_live["winner_a"] is None
+    assert wnba_live["winner_b"] is None
+    assert wnba_live["broadcast"] == "ION"
+    assert wnba_live["venue"] == "Michelob ULTRA Arena"
+    assert wnba_live["city"] == "Las Vegas, NV"
+    assert parsed["pga"]["events"][0]["sport"] == "PGA"
+    assert parsed["pga"]["events"][0]["state"] == "live"
+    assert parsed["pga"]["events"][0]["name"] == "\u7f8e\u56fd\u516c\u5f00\u8d5b"
+    assert parsed["pga"]["events"][0]["name_en"] == "U.S. Open"
+    assert parsed["pga"]["events"][0]["leaderboard"][0]["name"] == "S. Scheffler"
+    assert parsed["pga"]["events"][0]["leader"] == {
+        "name": "S. Scheffler",
+        "score": "-9",
+        "round": 3,
+        "today": "-2",
+        "strokes": "68",
+    }
+    assert parsed["nfl"]["events"][0]["sport"] == "NFL"
+    assert parsed["nfl"]["events"][0]["team_a"] == "\u6d77\u9e70"
+    assert parsed["nfl"]["events"][0]["team_b"] == "\u7231\u56fd\u8005"
+    assert parsed["nfl"]["events"][0]["team_a_code"] == "SEA"
+    assert parsed["nfl"]["events"][0]["team_b_code"] == "NE"
+    assert parsed["nfl"]["events"][0]["down_distance"] == "3RD & 4"
+    assert parsed["nfl"]["events"][0]["possession"] == "SEA"
+    assert parsed["nfl"]["events"][0]["last_play"] == "Kenneth Walker run for 6 yards"
+    assert parsed["nfl"]["events"][0]["broadcast"] == "NBC"
+    assert parsed["nfl"]["events"][0]["team_a_logo"] == "https://example.com/nfl-sea.png"
+    assert parsed["nfl"]["events"][0]["team_b_logo"] == "https://example.com/nfl-ne.png"
+    assert parsed["ncaa"]["events"][0]["sport"] == "NCAA"
+    assert parsed["ncaa"]["events"][0]["team_a"] == "\u5fb7\u5dde"
+    assert parsed["ncaa"]["events"][0]["team_b"] == "\u5bc6\u6b47\u6839"
+    assert parsed["ncaa"]["events"][0]["team_a_rank"] == 12
+    assert parsed["ncaa"]["events"][0]["team_a_zh"] == "\u5fb7\u5dde"
+    assert parsed["ncaa"]["events"][0]["team_b_zh"] == "\u5bc6\u6b47\u6839"
+    assert parsed["ncaa"]["events"][0]["neutral_site"] is True
+    assert parsed["ncaa"]["events"][0]["note"] == "Kickoff Classic"
+    assert parsed["ncaa"]["events"][0]["team_a_logo"] == "https://example.com/ncaa-tex.png"
+    assert parsed["ncaa"]["events"][0]["team_b_logo"] == "https://example.com/ncaa-mich.png"
+
+
+def test_scoreboard_parsers_build_logo_fallback_urls_when_payload_logo_is_missing():
+    la = ZoneInfo("America/Los_Angeles")
+    wnba_payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    for competitor in wnba_payload["events"][0]["competitions"][0]["competitors"]:
+        competitor["team"].pop("logo", None)
+        competitor["team"].pop("logos", None)
+    wnba_event = SportsDashboard._parse_wnba_scoreboard(wnba_payload, la)["events"][0]
+
+    nfl_payload = json.loads(json.dumps(_sample_nfl_scoreboard_payload()))
+    for event in nfl_payload["events"]:
+        for competitor in event["competitions"][0]["competitors"]:
+            competitor["team"].pop("logo", None)
+            competitor["team"].pop("logos", None)
+    nfl_event = SportsDashboard._parse_football_scoreboard(nfl_payload, la, "NFL")["events"][0]
+
+    ncaa_payload = json.loads(json.dumps(_sample_ncaa_scoreboard_payload()))
+    for competitor in ncaa_payload["events"][0]["competitions"][0]["competitors"]:
+        competitor["team"].pop("logo", None)
+        competitor["team"].pop("logos", None)
+        competitor["team"].pop("id", None)
+    ncaa_event = SportsDashboard._parse_football_scoreboard(ncaa_payload, la, "NCAA")["events"][0]
+
+    assert wnba_event["team_a_logo"].endswith("/wnba/500/sea.png")
+    assert wnba_event["team_b_logo"].endswith("/wnba/500/lv.png")
+    assert nfl_event["team_a_logo"].endswith("/nfl/500/sea.png")
+    assert nfl_event["team_b_logo"].endswith("/nfl/500/ne.png")
+    assert ncaa_event["team_a_logo"].endswith("/ncaa/500/251.png")
+    assert ncaa_event["team_b_logo"].endswith("/ncaa/500/130.png")
+
+
+def test_wnba_parser_handles_2026_expansion_teams_without_payload_logos():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    home_competitor, away_competitor = competition["competitors"]
+    away_competitor["team"] = {
+        "abbreviation": "POR",
+        "shortDisplayName": "Fire",
+        "displayName": "Portland Fire",
+    }
+    home_competitor["team"] = {
+        "abbreviation": "TOR",
+        "shortDisplayName": "Tempo",
+        "displayName": "Toronto Tempo",
+    }
+
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+
+    assert event["team_a"] == "\u6ce2\u7279\u5170\u706b\u7130"
+    assert event["team_b"] == "\u591a\u4f26\u591a\u8282\u594f"
+    assert event["team_a_code"] == "POR"
+    assert event["team_b_code"] == "TOR"
+    assert event["team_a_logo"].endswith("/wnba/500/por.png")
+    assert event["team_b_logo"].endswith("/wnba/500/tor.png")
+
+
+def test_wnba_phoenix_alt_code_uses_mercury_chinese_name_and_logo():
+    assert SportsDashboard._wnba_display_team_name("PHO", "Mercury") == "\u6c34\u661f"
+    assert (
+        SportsDashboard._wnba_display_team_name("PHO", "Mercury", full=True)
+        == "\u83f2\u5c3c\u514b\u65af\u6c34\u661f"
+    )
+    assert SportsDashboard._espn_cdn_team_logo_url("wnba", "PHO").endswith("/wnba/500/phx.png")
+
+
+def test_wnba_parser_captures_espn_winner_flags_by_display_side():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    competition["competitors"][0]["winner"] = True
+    competition["competitors"][1]["winner"] = False
+
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+
+    assert event["winner_a"] is False
+    assert event["winner_b"] is True
+
+
+def test_wnba_parser_captures_espn_odds_lines():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    competition["odds"] = [{"details": "NY -4.5", "overUnder": 166.5}]
+
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+
+    assert event["spread"] == "NY -4.5"
+    assert event["over_under"] == "O/U 166.5"
+
+
+def test_nba_parser_captures_espn_spread_and_total_lines():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    competition = payload["events"][1]["competitions"][0]
+    competition["odds"] = [{"details": "NY -4.5", "overUnder": 221.5}]
+
+    event = SportsDashboard._parse_nba_espn_events(payload, la)[1]
+
+    assert event["spread"] == "NY -4.5"
+    assert event["over_under"] == "O/U 221.5"
+    assert SportsDashboard._nba_line_total_label(event) == "SPREAD NY -4.5  |  O/U 221.5"
+
+
+def test_wnba_connecticut_sun_uses_official_chinese_short_name():
+    assert SportsDashboard._wnba_display_team_name("CON", "Sun") == "\u592a\u9633"
+    assert SportsDashboard._wnba_display_team_name("CONN", "Sun") == "\u592a\u9633"
+    assert (
+        SportsDashboard._wnba_display_team_name("CON", "Connecticut Sun", full=True)
+        == "\u5eb7\u6d85\u72c4\u683c\u592a\u9633"
+    )
+
+
+def test_wnba_golden_state_uses_official_chinese_short_name():
+    assert SportsDashboard._wnba_display_team_name("GS", "Valkyries") == "\u5973\u6b66\u795e"
+    assert SportsDashboard._wnba_display_team_name("GS", "Valkyries", full=True) == "金州女武神"
+    assert (
+        SportsDashboard._wnba_display_team_name(
+            "",
+            "Golden State Valkyries",
+            ["Golden State Valkyries", "Valks"],
+        )
+        == "\u5973\u6b66\u795e"
+    )
+
+
+def test_wnba_2026_expansion_teams_use_chinese_names_and_logo_fallbacks():
+    assert SportsDashboard._wnba_display_team_name("POR", "Fire") == "\u6ce2\u7279\u5170\u706b\u7130"
+    assert SportsDashboard._wnba_display_team_name("TOR", "Tempo") == "\u591a\u4f26\u591a\u8282\u594f"
+    assert SportsDashboard._wnba_display_team_name("TOR", "Tempo", full=True) == "多伦多节奏"
+    assert SportsDashboard._wnba_display_team_name("", "Portland Fire", ["Fire"]) == "\u6ce2\u7279\u5170\u706b\u7130"
+    assert SportsDashboard._wnba_display_team_name("", "Toronto Tempo", ["Tempo"]) == "\u591a\u4f26\u591a\u8282\u594f"
+    assert SportsDashboard._espn_cdn_team_logo_url("wnba", "POR").endswith("/wnba/500/por.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("wnba", "TOR").endswith("/wnba/500/tor.png")
+
+
+def test_offseason_hub_team_chinese_name_maps_cover_known_logo_codes():
+    league_maps = [
+        (MLB_TEAM_ZH_NAMES, MLB_TEAM_ZH_FULL_NAMES),
+        (WNBA_TEAM_ZH_NAMES, WNBA_TEAM_ZH_FULL_NAMES),
+        (NFL_TEAM_ZH_NAMES, NFL_TEAM_ZH_FULL_NAMES),
+        (NCAA_TEAM_ZH_NAMES, NCAA_TEAM_ZH_FULL_NAMES),
+    ]
+
+    for short_names, full_names in league_maps:
+        assert set(short_names) <= set(full_names)
+        for code, short_name in short_names.items():
+            assert short_name
+            assert short_name.upper() != code
+            full_name = full_names[code]
+            assert full_name
+            assert full_name.upper() != code
+
+    assert set(NCAA_ESPN_LOGO_IDS) <= set(NCAA_TEAM_ZH_NAMES)
+    assert set(NCAA_ESPN_LOGO_IDS) <= set(NCAA_TEAM_ZH_FULL_NAMES)
+
+
+def test_ncaa_logo_fallback_uses_espn_numeric_ids_for_code_only_events():
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "TULN").endswith("/ncaa/500/2655.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "UNLV").endswith("/ncaa/500/2439.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "IU").endswith("/ncaa/500/84.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "NU").endswith("/ncaa/500/77.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "TEM").endswith("/ncaa/500/218.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "TLSA").endswith("/ncaa/500/202.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "VAN").endswith("/ncaa/500/238.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "BUFF").endswith("/ncaa/500/2084.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "BUF").endswith("/ncaa/500/2084.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "CHAR").endswith("/ncaa/500/2429.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "CLT").endswith("/ncaa/500/2429.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "NCSU").endswith("/ncaa/500/152.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "JXST").endswith("/ncaa/500/55.png")
+    assert SportsDashboard._ncaa_display_school_name("NCSU", "NCSU") == "\u5317\u5361\u5dde\u7acb"
+    assert SportsDashboard._ncaa_display_school_name("NCSU", "NCSU", full=True) == "\u5317\u5361\u5dde\u7acb\u72fc\u7fa4"
+    assert SportsDashboard._ncaa_display_school_name("CLT", "CLT") == "\u590f\u6d1b\u7279"
+    assert SportsDashboard._ncaa_display_school_name("CLT", "CLT", full=True) == "\u590f\u6d1b\u727949\u4eba"
+    assert SportsDashboard._ncaa_display_school_name("JXST", "JXST") == "\u6770\u514b\u900a\u7ef4\u5c14\u5dde\u7acb"
+    assert SportsDashboard._ncaa_display_school_name("JXST", "JXST", full=True) == "\u6770\u514b\u900a\u7ef4\u5c14\u5dde\u7acb\u6597\u9e21"
+    assert SportsDashboard._ncaa_display_school_name("BUF", "BUF") == "\u5e03\u6cd5\u7f57"
+    assert SportsDashboard._ncaa_display_school_name("BUF", "BUF", full=True) == "\u5e03\u6cd5\u7f57\u516c\u725b"
+    assert SportsDashboard._ncaa_display_school_name("IU", "IU") == "\u5370\u7b2c\u5b89\u7eb3"
+    assert SportsDashboard._ncaa_display_school_name("IU", "IU", full=True) == "\u5370\u7b2c\u5b89\u7eb3\u80e1\u5e0c\u5c14\u4eba"
+    assert SportsDashboard._ncaa_display_school_name("NU", "NU") == "\u897f\u5317"
+    assert SportsDashboard._ncaa_display_school_name("NU", "NU", full=True) == "\u897f\u5317\u91ce\u732b"
+    assert SportsDashboard._ncaa_display_school_name("TEM", "TEM") == "\u5929\u666e"
+    assert SportsDashboard._ncaa_display_school_name("TEM", "TEM", full=True) == "\u5929\u666e\u732b\u5934\u9e70"
+    assert SportsDashboard._ncaa_display_school_name("TLSA", "TLSA") == "\u5854\u5c14\u8428"
+    assert SportsDashboard._ncaa_display_school_name("TLSA", "TLSA", full=True) == "\u5854\u5c14\u8428\u91d1\u8272\u98d3\u98ce"
+    assert SportsDashboard._ncaa_display_school_name("VAN", "VAN") == "\u8303\u5fb7\u5821"
+    assert SportsDashboard._ncaa_display_school_name("VAN", "VAN", full=True) == "\u8303\u5fb7\u5821\u51c6\u5c06"
+
+
+def test_espn_cdn_team_logo_url_accepts_team_name_aliases():
+    assert SportsDashboard._espn_cdn_team_logo_url("ncaa", "Notre Dame Fighting Irish").endswith("/ncaa/500/87.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("nfl", "New England Patriots").endswith("/nfl/500/ne.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("wnba", "Las Vegas Aces").endswith("/wnba/500/lv.png")
+    assert SportsDashboard._espn_cdn_team_logo_url("mlb", "Los Angeles Dodgers").endswith("/mlb/500/lad.png")
+
+
+def test_small_row_logo_fallback_normalizes_team_name_aliases():
+    assert (
+        SportsDashboard._small_row_logo_fallback(
+            {"sport": "WNBA", "team_a": "\u98ce\u66b4", "team_a_name": "Seattle Storm"},
+            "a",
+        )
+        == "SEA"
+    )
+    assert (
+        SportsDashboard._small_row_logo_fallback(
+            {"sport": "NFL", "team_a": "Patriots", "team_a_name": "New England Patriots"},
+            "a",
+        )
+        == "NE"
+    )
+    assert (
+        SportsDashboard._small_row_logo_fallback(
+            {"sport": "NCAA", "team_b": "Notre Dame Fighting Irish", "team_b_name": "Notre Dame"},
+            "b",
+        )
+        == "ND"
+    )
+    assert (
+        SportsDashboard._small_row_logo_fallback(
+            {"sport": "MLB", "team_b": "Los Angeles Dodgers"},
+            "b",
+        )
+        == "LAD"
+    )
+
+
+def test_main_card_logo_fallbacks_normalize_team_name_aliases():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    logo_fallbacks = []
+
+    def capture_team_score(*_args, **kwargs):
+        logo_fallbacks.append(str(kwargs.get("logo_fallback") or ""))
+
+    plugin._draw_hub_team_score = capture_team_score
+
+    mlb_event = {
+        "sport": "MLB",
+        "state": "scheduled",
+        "start": now + timedelta(hours=3),
+        "team_a": "Los Angeles Dodgers",
+        "team_b": "San Francisco Giants",
+        "wins_a": None,
+        "wins_b": None,
+    }
+    plugin._draw_mlb_main_card(
+        image,
+        draw,
+        (0, 0, 300, 190),
+        {"sport": "MLB", "status": "NEXT", "main": mlb_event},
+        now,
+    )
+    assert logo_fallbacks[-2:] == ["LAD", "SF"]
+
+    nfl_event = {
+        "sport": "NFL",
+        "state": "scheduled",
+        "start": now + timedelta(days=2),
+        "team_a": "Patriots",
+        "team_a_name": "New England Patriots",
+        "team_b": "Seattle Seahawks",
+        "wins_a": None,
+        "wins_b": None,
+    }
+    plugin._draw_football_main_card(
+        image,
+        draw,
+        (0, 0, 320, 190),
+        {"sport": "NFL", "status": "NEXT", "main": nfl_event},
+        now,
+        "NFL",
+    )
+    assert logo_fallbacks[-2:] == ["NE", "SEA"]
+
+    ncaa_event = {
+        "sport": "NCAA",
+        "state": "scheduled",
+        "start": now + timedelta(days=4),
+        "team_a": "Notre Dame Fighting Irish",
+        "team_a_name": "Notre Dame",
+        "team_b": "Texas Longhorns",
+        "team_b_name": "Texas",
+        "wins_a": None,
+        "wins_b": None,
+    }
+    plugin._draw_football_main_card(
+        image,
+        draw,
+        (0, 0, 320, 190),
+        {"sport": "NCAA", "status": "NEXT", "main": ncaa_event},
+        now,
+        "NCAA",
+    )
+    assert logo_fallbacks[-2:] == ["ND", "TEX"]
+
+
+def test_ncaa_chinese_name_maps_cover_all_known_espn_codes():
+    missing_short_names = [code for code in NCAA_ESPN_LOGO_IDS if code not in NCAA_TEAM_ZH_NAMES]
+    missing_full_names = [code for code in NCAA_TEAM_ZH_NAMES if code not in NCAA_TEAM_ZH_FULL_NAMES]
+
+    assert missing_short_names == []
+    assert missing_full_names == []
+
+
+def test_nfl_alt_codes_use_chinese_names_and_canonical_logo_codes():
+    cases = [
+        ("JAC", "\u7f8e\u6d32\u864e", "\u6770\u514b\u900a\u7ef4\u5c14\u7f8e\u6d32\u864e", "/nfl/500/jax.png"),
+        ("ARZ", "\u7ea2\u96c0", "\u4e9a\u5229\u6851\u90a3\u7ea2\u96c0", "/nfl/500/ari.png"),
+    ]
+    for code, short_name, full_name, logo_suffix in cases:
+        assert SportsDashboard._football_display_team_name(code, code, "NFL") == short_name
+        assert SportsDashboard._football_display_team_name(code, code, "NFL", full=True) == full_name
+        assert SportsDashboard._espn_cdn_team_logo_url("nfl", code).endswith(logo_suffix)
+
+
+def test_football_week_label_prefers_named_stage_over_generic_number():
+    assert SportsDashboard._football_week_label({"week": {"number": 1, "text": "Week 1"}}) == "WEEK 1"
+    assert SportsDashboard._football_week_label({"week": {"number": 23, "text": "Super Bowl"}}) == "SUPER BOWL"
+    assert SportsDashboard._football_week_label({"week": {"text": "Bowl Season"}}) == "BOWL SEASON"
+    assert SportsDashboard._football_header_week_label({}, {"week": "01"}) == "WEEK 1"
+    assert SportsDashboard._football_header_week_label({"week_label": "SUPER BOWL"}, {"week": 23}) == "SUPER BOWL"
+
+
+def test_football_parser_preserves_event_level_named_stage_label():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nfl_scoreboard_payload()))
+    payload["events"][0]["week"] = {"number": 23, "text": "Super Bowl"}
+
+    event = SportsDashboard._parse_football_scoreboard(payload, la, "NFL")["events"][0]
+
+    assert event["week"] == 23
+    assert event["week_label"] == "SUPER BOWL"
+    assert SportsDashboard._football_header_week_label({}, event) == "SUPER BOWL"
+
+
+def test_football_parser_captures_espn_winner_flags_by_display_side():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nfl_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    competition["competitors"][0]["winner"] = True
+    competition["competitors"][1]["winner"] = False
+
+    event = SportsDashboard._parse_football_scoreboard(payload, la, "NFL")["events"][0]
+
+    assert event["winner_a"] is True
+    assert event["winner_b"] is False
+
+
+def test_football_live_drive_rows_do_not_let_empty_situation_hide_context():
+    event = {
+        "sport": "NFL",
+        "state": "in",
+        "status_text": "Q2 8:42",
+        "down_distance": "",
+        "yard_line": "",
+        "possession": "",
+        "last_play": "Timeout New England",
+        "broadcast": "NBC",
+        "spread": "NE -2.5",
+        "over_under": "O/U 44.5",
+        "venue": "Gillette Stadium",
+    }
+
+    rows = SportsDashboard._football_live_drive_rows(event, include_context=True, sport="NFL")
+
+    assert rows == [
+        ("QTR", "Q2 8:42"),
+        ("PLAY", "Timeout New England"),
+        ("TV", "NBC / NE -2.5 / O/U 44.5"),
+        ("VENUE", "Gillette Stadium"),
+    ]
+
+
+def test_nfl_info_rows_combine_line_with_tv_to_keep_venue_visible():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
+
+    game_rows = SportsDashboard._football_game_info_rows(next_event, "NFL", now)
+
+    assert game_rows[-3:] == [
+        ("TV", "FOX / CHI -1.5 / O/U 42.5"),
+        ("VENUE", "Soldier Field"),
+        ("RECORD", "\u5305\u88c5\u5de5 0-0 / \u718a 0-0"),
+    ]
+
+    final_event = dict(next_event)
+    final_event.update({"state": "post", "wins_a": 24, "wins_b": 21, "winner_a": True, "winner_b": False})
+
+    final_rows = SportsDashboard._football_final_snap_rows(final_event, "NFL")
+
+    assert final_rows[-2:] == [
+        ("TV", "FOX / CHI -1.5 / O/U 42.5"),
+        ("VENUE", "Soldier Field"),
+    ]
+
+
+def test_football_live_game_info_rows_prioritize_context_location_and_records():
+    la = ZoneInfo("America/Los_Angeles")
+    nfl_live = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
+    ncaa_live = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")["events"][0]
+
+    assert SportsDashboard._football_live_game_info_rows(nfl_live, "NFL") == [
+        ("TV", "NBC / NE -2.5 / O/U 44.5"),
+        ("VENUE", "Gillette Stadium"),
+        ("RECORD", "\u6d77\u9e70 0-0 / \u7231\u56fd\u8005 0-0"),
+    ]
+    assert SportsDashboard._football_live_game_info_rows(ncaa_live, "NCAA") == [
+        ("TV", "ESPN / TEX -6.5 / O/U 52.5"),
+        ("SITE", "NEUTRAL / Kickoff Classic / AT&T Stadium"),
+        ("RECORD", "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0"),
+    ]
+    assert SportsDashboard._ncaa_main_meta_label(ncaa_live) == "NEUTRAL / Kickoff Classic / AT&T Stadium"
+    assert "SPREAD" not in SportsDashboard._ncaa_main_meta_label(ncaa_live)
+
+
+def test_wnba_info_rows_map_short_codes_to_chinese_team_names():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    event = {
+        "state": "in",
+        "start": now - timedelta(minutes=30),
+        "status_text": "Q3 4:22",
+        "team_a": "PHX",
+        "team_b": "NY",
+        "wins_a": 72,
+        "wins_b": 78,
+        "record_a": "3-1",
+        "record_b": "2-2",
+    }
+
+    assert SportsDashboard._wnba_record_matchup_label(event) == "\u6c34\u661f 3-1 / \u81ea\u7531\u4eba 2-2"
+    assert SportsDashboard._wnba_lead_label(event) == "\u81ea\u7531\u4eba +6"
+    rows = SportsDashboard._wnba_live_pulse_rows(event)
+    assert ("SCORE", "\u6c34\u661f 72 / \u81ea\u7531\u4eba 78", False) in rows
+
+
+def test_wnba_result_snap_rows_split_media_line_and_venue():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    event = dict(event)
+    event.update({"state": "post", "status_text": "Final"})
+
+    rows = SportsDashboard._wnba_result_snap_rows(event)
+
+    assert ("TV", "ION / LV -4.5 / O/U 166.5", False) in rows
+    assert ("VENUE", "Michelob ULTRA Arena", False) in rows
+    assert not any(label == "INFO" for label, _value, _accent in rows)
+    compact_rows = SportsDashboard._wnba_result_snap_rows(event, include_quarter=False)
+    assert not any(label == "QTR" for label, _value, _accent in compact_rows)
+
+
+def test_offseason_hub_selects_one_primary_sport_card():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la),
+        "wnba": {"events": []},
+        "pga": {"events": []},
+    }
+
+    selected = SportsDashboard._select_offseason_hub(parsed, now)
+
+    assert selected["primary"]["sport"] == "MLB"
+    assert selected["primary"]["status"] == "LIVE"
+    assert selected["primary"]["main"]["team_b"] == "\u9053\u5947"
+    assert selected["primary"]["main"]["team_b_code"] == "LAD"
+    assert selected["rotation_pool"] == ["MLB"]
+
+
+def test_offseason_hub_rotates_between_multiple_live_sports():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": {
+            "events": [
+                {
+                    "sport": "MLB",
+                    "state": "in",
+                    "start": now - timedelta(hours=1),
+                    "team_a": "\u5de8\u4eba",
+                    "team_b": "\u9053\u5947",
+                    "wins_a": 2,
+                    "wins_b": 3,
+                }
+            ]
+        },
+        "wnba": {
+            "events": [
+                {
+                    "sport": "WNBA",
+                    "state": "in",
+                    "start": now - timedelta(minutes=40),
+                    "team_a": "\u98ce\u66b4",
+                    "team_b": "\u738b\u724c",
+                    "wins_a": 64,
+                    "wins_b": 61,
+                }
+            ]
+        },
+        "pga": {"events": []},
+        "nfl": {
+            "events": [
+                {
+                    "sport": "NFL",
+                    "state": "pre",
+                    "start": now + timedelta(days=1),
+                    "team_a": "\u914b\u957f",
+                    "team_b": "\u6bd4\u5c14",
+                }
+            ]
+        },
+    }
+
+    first = SportsDashboard._select_offseason_hub(parsed, now)
+    second = SportsDashboard._select_offseason_hub(parsed, now + timedelta(minutes=OFFSEASON_HUB_ROTATION_MINUTES))
+
+    assert first["rotation_pool"] == ["WNBA", "MLB"]
+    assert second["rotation_pool"] == ["WNBA", "MLB"]
+    assert {first["primary"]["sport"], second["primary"]["sport"]} == {"MLB", "WNBA"}
+    assert first["primary"]["sport"] != second["primary"]["sport"]
+
+
+def test_offseason_hub_rotates_standalone_sports_when_no_live_priority():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": {
+            "events": [
+                {
+                    "sport": "MLB",
+                    "state": "pre",
+                    "start": now + timedelta(hours=3),
+                    "team_a": "SF",
+                    "team_b": "LAD",
+                }
+            ]
+        },
+        "wnba": {
+            "events": [
+                {
+                    "sport": "WNBA",
+                    "state": "pre",
+                    "start": now + timedelta(hours=4),
+                    "team_a": "SEA",
+                    "team_b": "LV",
+                }
+            ]
+        },
+        "pga": {"events": []},
+    }
+
+    first = SportsDashboard._select_offseason_hub(parsed, now)
+    second = SportsDashboard._select_offseason_hub(parsed, now + timedelta(minutes=OFFSEASON_HUB_ROTATION_MINUTES))
+
+    assert first["rotation_pool"] == ["MLB", "WNBA"]
+    assert second["rotation_pool"] == ["MLB", "WNBA"]
+    assert {first["primary"]["sport"], second["primary"]["sport"]} == {"MLB", "WNBA"}
+    assert first["primary"]["sport"] != second["primary"]["sport"]
+
+
+def test_offseason_hub_rotates_every_active_standalone_sport_independently():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": {
+            "events": [
+                {"sport": "MLB", "state": "pre", "start": now + timedelta(hours=8), "team_a": "SF", "team_b": "LAD"}
+            ]
+        },
+        "wnba": {
+            "events": [
+                {"sport": "WNBA", "state": "pre", "start": now + timedelta(hours=9), "team_a": "SEA", "team_b": "LV"}
+            ]
+        },
+        "pga": {
+            "events": [
+                {
+                    "sport": "PGA",
+                    "state": "scheduled",
+                    "start": now + timedelta(hours=10),
+                    "end": now + timedelta(days=3),
+                    "name": "PGA TOUR",
+                }
+            ]
+        },
+        "nfl": {
+            "events": [
+                {"sport": "NFL", "state": "pre", "start": now + timedelta(hours=11), "team_a": "KC", "team_b": "BUF"}
+            ]
+        },
+        "ncaa": {
+            "events": [
+                {"sport": "NCAA", "state": "pre", "start": now + timedelta(hours=12), "team_a": "TEX", "team_b": "MICH"}
+            ]
+        },
+    }
+
+    selections = [
+        SportsDashboard._select_offseason_hub(
+            parsed,
+            now + timedelta(minutes=OFFSEASON_HUB_ROTATION_MINUTES * index),
+        )
+        for index in range(5)
+    ]
+
+    assert selections[0]["rotation_pool"] == ["MLB", "WNBA", "PGA", "NFL", "NCAA"]
+    assert {selection["primary"]["sport"] for selection in selections} == {"MLB", "WNBA", "PGA", "NFL", "NCAA"}
+    for selection in selections:
+        assert len(selection["cards"]) == 5
+        assert [card["sport"] for card in selection["cards"]] == ["MLB", "WNBA", "PGA", "NFL", "NCAA"]
+        assert selection["primary"] in selection["cards"]
+
+
+def test_offseason_hub_prioritizes_urgent_next_game_before_full_rotation():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": {
+            "events": [
+                {
+                    "sport": "MLB",
+                    "state": "pre",
+                    "start": now + timedelta(hours=4),
+                    "team_a": "SF",
+                    "team_b": "LAD",
+                }
+            ]
+        },
+        "wnba": {
+            "events": [
+                {
+                    "sport": "WNBA",
+                    "state": "pre",
+                    "start": now + timedelta(minutes=45),
+                    "team_a": "SEA",
+                    "team_b": "LV",
+                }
+            ]
+        },
+        "pga": {
+            "events": [
+                {
+                    "sport": "PGA",
+                    "state": "scheduled",
+                    "start": now + timedelta(hours=2),
+                    "end": now + timedelta(days=3),
+                    "name": "PGA TOUR",
+                }
+            ]
+        },
+    }
+
+    selected = SportsDashboard._select_offseason_hub(parsed, now)
+
+    assert selected["rotation_pool"] == ["WNBA"]
+    assert selected["primary"]["sport"] == "WNBA"
+
+
+def test_offseason_hub_pins_soonest_urgent_next_game():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = {
+        "mlb": {
+            "events": [
+                {
+                    "sport": "MLB",
+                    "state": "pre",
+                    "start": now + timedelta(minutes=85),
+                    "team_a": "SF",
+                    "team_b": "LAD",
+                }
+            ]
+        },
+        "wnba": {
+            "events": [
+                {
+                    "sport": "WNBA",
+                    "state": "pre",
+                    "start": now + timedelta(minutes=65),
+                    "team_a": "SEA",
+                    "team_b": "LV",
+                }
+            ]
+        },
+        "pga": {
+            "events": [
+                {
+                    "sport": "PGA",
+                    "state": "scheduled",
+                    "start": now + timedelta(hours=4),
+                    "end": now + timedelta(days=3),
+                    "name": "PGA TOUR",
+                }
+            ]
+        },
+    }
+
+    first = SportsDashboard._select_offseason_hub(parsed, now)
+    second = SportsDashboard._select_offseason_hub(
+        parsed,
+        now + timedelta(minutes=OFFSEASON_HUB_ROTATION_MINUTES),
+    )
+
+    assert first["rotation_pool"] == ["WNBA", "MLB"]
+    assert second["rotation_pool"] == ["WNBA", "MLB"]
+    assert first["primary"]["sport"] == "WNBA"
+    assert second["primary"]["sport"] == "WNBA"
+
+
+def test_offseason_hub_card_prioritizes_soonest_upcoming_event():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    later = {"sport": "WNBA", "event_id": "later", "state": "pre", "start": now + timedelta(hours=5)}
+    sooner = {"sport": "WNBA", "event_id": "sooner", "state": "pre", "start": now + timedelta(hours=1)}
+
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [later, sooner]}, now)
+
+    assert card["main"]["event_id"] == "sooner"
+    assert [event["event_id"] for event in card["upcoming"]] == ["sooner", "later"]
+
+
+def test_offseason_hub_card_prioritizes_most_recent_live_event():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    older = {"sport": "MLB", "event_id": "older-live", "state": "in", "start": now - timedelta(hours=3)}
+    newer = {"sport": "MLB", "event_id": "newer-live", "state": "in", "start": now - timedelta(minutes=40)}
+
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [older, newer]}, now)
+
+    assert card["main"]["event_id"] == "newer-live"
+    assert [event["event_id"] for event in card["live"]] == ["newer-live", "older-live"]
+
+
+def test_offseason_hub_fallback_preserves_all_standalone_sports():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    selected = SportsDashboard._select_offseason_hub(SportsDashboard._fallback_offseason_hub_data(la, now), now)
+
+    assert selected["rotation_pool"] == ["MLB", "WNBA", "NFL", "PGA", "NCAA"]
+    assert {card["sport"] for card in selected["cards"]} == {"MLB", "WNBA", "PGA", "NFL", "NCAA"}
+    cards = {card["sport"]: card for card in selected["cards"]}
+    assert cards["MLB"]["main"]["team_a"] == "\u9053\u5947"
+    assert cards["MLB"]["main"]["team_a_code"] == "LAD"
+    assert cards["WNBA"]["main"]["team_a"] == "\u81ea\u7531\u4eba"
+    assert cards["WNBA"]["main"]["team_a_code"] == "NY"
+    assert cards["NFL"]["main"]["team_a"] == "\u914b\u957f"
+    assert cards["NFL"]["main"]["team_a_code"] == "KC"
+    assert cards["NCAA"]["main"]["team_a"] == "\u5fb7\u5dde"
+    assert cards["NCAA"]["main"]["team_a_code"] == "TEX"
+    for card in selected["cards"]:
+        assert card["status"] == "NEXT"
+        assert card["main"]["start"] > now
+
+
+def test_offseason_hub_uses_fallback_when_live_payload_has_only_break_cards(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    empty_payload = {
+        "version": "sports-dashboard-offseason-hub-v1",
+        "payloads": {
+            "mlb": {"dates": []},
+            "wnba": {"events": []},
+            "pga": {"events": []},
+            "nfl": {"events": []},
+            "ncaa": {"events": []},
+        },
+    }
+
+    monkeypatch.setattr(plugin, "_load_offseason_hub_payload", lambda *_args, **_kwargs: (empty_payload, "HUB LIVE", now.isoformat()))
+
+    selected, source_state = plugin._load_offseason_hub({}, la, now)
+
+    assert source_state == "HUB FALLBACK"
+    assert selected["primary"]["status"] == "NEXT"
+    assert selected["rotation_pool"] == ["MLB", "WNBA", "NFL", "PGA", "NCAA"]
+    assert all(card["main"] for card in selected["cards"])
+
+
+def test_offseason_hub_draw_dispatches_only_primary_sport(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+
+    monkeypatch.setattr(plugin, "_draw_mlb_standalone_panel", lambda *_args: calls.append("MLB"))
+    monkeypatch.setattr(plugin, "_draw_wnba_standalone_panel", lambda *_args: calls.append("WNBA"))
+    monkeypatch.setattr(plugin, "_draw_pga_standalone_panel", lambda *_args: calls.append("PGA"))
+    monkeypatch.setattr(plugin, "_draw_nfl_standalone_panel", lambda *_args: calls.append("NFL"))
+    monkeypatch.setattr(plugin, "_draw_ncaa_standalone_panel", lambda *_args: calls.append("NCAA"))
+
+    plugin._draw_offseason_hub_compact_panel(
+        image,
+        draw,
+        (0, 0, 551, 267),
+        {
+            "primary": {"sport": "PGA", "status": "LIVE"},
+            "cards": [
+                {"sport": "MLB", "status": "LIVE"},
+                {"sport": "WNBA", "status": "LIVE"},
+                {"sport": "PGA", "status": "LIVE"},
+                {"sport": "NFL", "status": "LIVE"},
+                {"sport": "NCAA", "status": "LIVE"},
+            ],
+        },
+        "HUB LIVE",
+        datetime(2026, 6, 14, 13, 30, tzinfo=ZoneInfo("America/Los_Angeles")),
+    )
+
+    assert calls == ["PGA"]
+
+
+def test_standalone_sport_panels_draw_their_own_information():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    selected = SportsDashboard._select_offseason_hub(
+        {
+            "mlb": SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la),
+            "wnba": SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+            "pga": SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now),
+            "nfl": SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
+            "ncaa": SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA"),
+        },
+        now,
+    )
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+    for sport in ("MLB", "WNBA", "PGA", "NFL", "NCAA"):
+        card = next(card for card in selected["cards"] if card["sport"] == sport)
+        image = Image.new("RGB", (552, 268), COLORS["panel"])
+        draw = ImageDraw.Draw(image)
+        plugin._draw_offseason_hub_compact_panel(image, draw, (0, 0, 551, 267), {"primary": card}, "HUB LIVE", now)
+
+    assert "MLB LIVE" in seen_texts
+    assert "R/H/E 3/7/1" in seen_texts
+    assert "R/H/E 5/8/0" in seen_texts
+    assert "BAT" in seen_texts
+    assert "M. Chapman" in seen_texts
+    assert "P" in seen_texts
+    assert "Y. Yamamoto" in seen_texts
+    assert "B/P M. Chapman / Y. Yamamoto" not in seen_texts
+    assert "SP J. deGrom / L. Castillo" in seen_texts
+    assert "LIVE STATE" in seen_texts
+    assert "1B 3B" in seen_texts
+    assert "WNBA LIVE" in seen_texts
+    assert "QTR DATA PENDING" not in seen_texts
+    assert "LIVE GAME" in seen_texts
+    assert "QUARTER LOG" in seen_texts
+    assert "PGA LIVE" in seen_texts
+    assert "LEADER" in seen_texts
+    assert "S. Scheffler" in seen_texts
+    assert "RND" not in seen_texts
+    assert "DAY" not in seen_texts
+    assert "CARD" not in seen_texts
+    assert "R3 68 / -2" in seen_texts
+    assert "LEADERBOARD" in seen_texts
+    assert "NFL LIVE" in seen_texts
+    assert "西雅图海鹰" in seen_texts
+    assert "新英格兰爱国者" in seen_texts
+    assert "3RD & 4" in seen_texts
+    assert any("Kenneth Walker run for 6 yards" in text for text in seen_texts)
+    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
+    assert "NCAA LIVE" in seen_texts
+    assert "CFB" in seen_texts
+    assert "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b" in seen_texts
+    assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" not in seen_texts
+    assert "LIVE DRIVE" in seen_texts
+    assert "COLLEGE DRIVE" in seen_texts
+    assert ("https://a.espncdn.com/i/teamlogos/mlb/500/sf.png", 20, "SF") in logo_calls
+    assert any(call[0] == "https://example.com/wnba-sea.png" and call[1] == 20 for call in logo_calls)
+    assert ("https://example.com/nfl-sea.png", 20, "SEA") in logo_calls
+    assert ("https://example.com/ncaa-tex.png", 20, "TEX") in logo_calls
+    assert any(call == ("https://a.espncdn.com/i/teamlogos/mlb/500/tex.png", 11, "TEX") for call in logo_calls)
+
+
+def test_standalone_sport_header_uses_sport_local_status_label():
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_logo = lambda *_args, **_kwargs: None
+    plugin._draw_status_pill = lambda *_args, **_kwargs: None
+
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "MLB", {"sport": "MLB", "status": "NEXT"}, "HUB LIVE")
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "WNBA", {"sport": "WNBA", "status": "NEXT"}, "HUB LIVE")
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "NFL", {"sport": "NFL", "status": "LIVE"}, "HUB LIVE")
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "NFL", {"sport": "NFL", "status": "RECENT"}, "HUB LIVE")
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "NCAA", {"sport": "NCAA", "status": "NEXT"}, "HUB LIVE")
+    plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, "PGA", {"sport": "PGA", "status": "LIVE"}, "HUB LIVE")
+
+    assert "FIRST PITCH" in seen_texts
+    assert "TIPOFF" in seen_texts
+    assert "DRIVE CAST" in seen_texts
+    assert "FINAL SNAP" in seen_texts
+    assert "RANKED WATCH" in seen_texts
+    assert "LEADERBOARD" in seen_texts
+    assert "SCHEDULE" not in seen_texts
+    assert "HUB LIVE" not in seen_texts
+    assert SportsDashboard._standalone_sport_source_label("MLB", {"status": "NEXT"}, "ESPN LIVE") == "ESPN LIVE"
+
+
+def test_standalone_sport_header_draws_each_sport_cutout():
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    cutout_calls = []
+
+    def capture_cutout(_image, sport, x1, y1, x2, y2, accent):
+        cutout_calls.append((sport, x1, y1, x2, y2, accent))
+        return True
+
+    plugin._draw_sport_logo = lambda *_args, **_kwargs: None
+    plugin._draw_status_pill = lambda *_args, **_kwargs: None
+    plugin._draw_standalone_sport_header_cutout = capture_cutout
+
+    for sport in ("MLB", "WNBA", "PGA", "NFL", "NCAA"):
+        plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, sport, {"sport": sport, "status": "NEXT"}, "HUB LIVE")
+
+    assert [call[0] for call in cutout_calls] == ["MLB", "WNBA", "PGA", "NFL", "NCAA"]
+    assert all(call[3] - call[1] + 1 >= 200 for call in cutout_calls)
+    assert all(call[4] - call[2] + 1 == 39 for call in cutout_calls)
+
+
+def test_mlb_side_column_prioritizes_live_state_before_schedule():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "MLB",
+        SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "UPCOMING" in seen_texts
+    assert "LIVE STATE" in seen_texts
+    assert seen_texts.index("LIVE STATE") < seen_texts.index("UPCOMING")
+    assert "TOP 7th" in seen_texts
+    assert "B-S 2-1 OUT 1" in seen_texts
+    assert "1B 3B" in seen_texts
+    assert "M. Chapman / Y. Yamamoto" in seen_texts
+    assert "\u5de8\u4eba 3/7/1  \u9053\u5947 5/8/0" in seen_texts
+    assert "Dodger Stadium" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-6:] == ["INNING", "COUNT", "BASES", "B/P", "RHE", "VENUE"]
+
+
+def test_mlb_live_state_rows_keep_live_context_before_venue():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+
+    assert SportsDashboard._mlb_live_state_rows(event) == [
+        ("INNING", "TOP 7th"),
+        ("COUNT", "B-S 2-1 OUT 1"),
+        ("BASES", "1B 3B"),
+        ("B/P", "M. Chapman / Y. Yamamoto"),
+        ("RHE", "\u5de8\u4eba 3/7/1  \u9053\u5947 5/8/0"),
+        ("VENUE", "Dodger Stadium"),
+    ]
+
+
+def test_mlb_live_state_falls_back_to_rhe_without_current_matchup():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    event = dict(event)
+    event["current_batter"] = ""
+    event["current_pitcher"] = ""
+
+    rows = SportsDashboard._mlb_live_state_rows(event)
+
+    assert rows[-2] == ("RHE", "\u5de8\u4eba 3/7/1  \u9053\u5947 5/8/0")
+    assert rows[-1] == ("VENUE", "Dodger Stadium")
+
+
+def test_mlb_live_state_omits_empty_bases_to_preserve_denser_context():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    event = dict(event)
+    event["bases"] = ""
+
+    rows = SportsDashboard._mlb_live_state_rows(event)
+
+    assert ("BASES", "EMPTY") not in rows
+    assert rows == [
+        ("INNING", "TOP 7th"),
+        ("COUNT", "B-S 2-1 OUT 1"),
+        ("B/P", "M. Chapman / Y. Yamamoto"),
+        ("RHE", "\u5de8\u4eba 3/7/1  \u9053\u5947 5/8/0"),
+        ("VENUE", "Dodger Stadium"),
+    ]
+
+
+def test_mlb_rhe_rows_are_omitted_when_line_score_is_missing():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    event = dict(event)
+    event["away_line"] = {}
+    event["home_line"] = {}
+
+    live_rows = SportsDashboard._mlb_live_state_rows(event)
+    final_rows = SportsDashboard._mlb_final_snap_rows(event)
+
+    assert SportsDashboard._mlb_compact_rhe_label(event) == ""
+    assert not any(label == "RHE" for label, _value in live_rows)
+    assert ("VENUE", "Dodger Stadium") in live_rows
+    assert not any(label == "RHE" for label, _value in final_rows)
+
+
+def test_mlb_rhe_line_skips_placeholder_when_line_score_is_missing():
+    plugin = _plugin()
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    event = dict(event)
+    event["away_line"] = {}
+    event["home_line"] = {}
+    image = Image.new("RGB", (250, 50), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    centered_texts = []
+
+    plugin._draw_centered = lambda _draw, _xy, text, _font, _fill: centered_texts.append(str(text))
+
+    plugin._draw_mlb_rhe_line(draw, 10, 10, 230, event)
+
+    assert centered_texts == []
+
+
+def test_mlb_rhe_line_uses_two_readable_rows(monkeypatch):
+    plugin = _plugin()
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    image = Image.new("RGB", (250, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    text_boxes = []
+
+    def capture_text_in_box(_draw, box, text, _font, _fill, align="left"):
+        text_boxes.append((tuple(int(value) for value in box), str(text), align))
+
+    monkeypatch.setattr(plugin, "_draw_text_in_box", capture_text_in_box)
+
+    plugin._draw_mlb_rhe_line(draw, 10, 10, 230, event)
+
+    value_rows = [(box, text, align) for box, text, align in text_boxes if text.startswith("R/H/E")]
+    assert [(text, align) for _box, text, align in value_rows] == [
+        ("R/H/E 3/7/1", "right"),
+        ("R/H/E 5/8/0", "right"),
+    ]
+    assert value_rows[0][0][1:] == (12, 222, 25)
+    assert value_rows[1][0][1:] == (27, 222, 40)
+
+
+def test_mlb_live_matchup_strip_uses_single_cell_when_one_side_is_missing():
+    plugin = _plugin()
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][0]
+    event = dict(event)
+    event["current_pitcher"] = ""
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    cells = []
+
+    def capture_cell(_draw, box, label, value, accent):
+        cells.append((tuple(int(item) for item in box), str(label), str(value), accent))
+
+    plugin._draw_mlb_live_matchup_cell = capture_cell
+
+    plugin._draw_mlb_live_matchup_strip(draw, 10, 12, 230, event)
+
+    assert cells == [((10, 12, 230, 28), "BAT", "M. Chapman", COLORS["amber"])]
+    assert all("TBD" not in cell[2] for cell in cells)
+
+    cells.clear()
+    event["current_batter"] = ""
+    event["current_pitcher"] = "Y. Yamamoto"
+
+    plugin._draw_mlb_live_matchup_strip(draw, 10, 12, 230, event)
+
+    assert cells == [((10, 12, 230, 28), "P", "Y. Yamamoto", COLORS["mlb_accent"])]
+    assert all("TBD" not in cell[2] for cell in cells)
+
+
+def test_mlb_probable_pitching_label_omits_tbd_for_partial_starter_data():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][1]
+    event = dict(event)
+    event["probable_b"] = ""
+
+    label = SportsDashboard._mlb_probable_pitching_label(event)
+
+    assert label.endswith("J. deGrom")
+    assert "TBD" not in label
+
+
+def test_mlb_pitching_label_omits_tbd_for_partial_starter_data():
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), ZoneInfo("America/Los_Angeles"))["events"][1]
+    event = dict(event)
+    event["probable_b"] = ""
+
+    label = SportsDashboard._mlb_pitching_label(event)
+
+    assert label == "SP \u6e38\u9a91\u5175 J. deGrom"
+    assert "TBD" not in label
+    assert "pending" not in label.lower()
+
+
+def test_mlb_pitching_label_uses_neutral_fallback_when_event_is_empty():
+    assert SportsDashboard._mlb_pitching_label({}) == "MLB GAME INFO"
+    assert SportsDashboard._mlb_pitching_label(None) == "MLB GAME INFO"
+
+
+def test_mlb_batting_side_fill_key_marks_current_offense():
+    event = {"state": "live", "inning_state": "Top"}
+
+    assert SportsDashboard._mlb_batting_side_fill_key(event, "a") == "amber"
+    assert SportsDashboard._mlb_batting_side_fill_key(event, "b") == "text"
+
+    event["inning_state"] = "Bottom"
+    assert SportsDashboard._mlb_batting_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._mlb_batting_side_fill_key(event, "b") == "amber"
+
+    event["state"] = "final"
+    assert SportsDashboard._mlb_batting_side_fill_key(event, "b") == "text"
+
+
+def test_mlb_team_side_fill_key_marks_live_offense_or_final_winner():
+    event = {"state": "live", "inning_state": "Bottom", "wins_a": 5, "wins_b": 3}
+
+    assert SportsDashboard._mlb_team_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._mlb_team_side_fill_key(event, "b") == "amber"
+
+    event.update({"state": "final", "inning_state": "", "wins_a": 5, "wins_b": 3})
+    assert SportsDashboard._mlb_team_side_fill_key(event, "a") == "amber"
+    assert SportsDashboard._mlb_team_side_fill_key(event, "b") == "text"
+
+    event.update({"wins_a": 3, "wins_b": 3})
+    assert SportsDashboard._mlb_team_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._mlb_team_side_fill_key(event, "b") == "text"
+
+
+def test_mlb_main_card_highlights_current_batting_side():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    card = SportsDashboard._offseason_hub_card("MLB", parsed, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_score_calls = []
+
+    def capture_team_score(*args, **kwargs):
+        team_score_calls.append(
+            {
+                "team": args[4],
+                "score": args[5],
+                "team_fill": kwargs.get("team_fill"),
+                "score_fill": kwargs.get("score_fill"),
+            }
+        )
+
+    plugin._draw_hub_team_score = capture_team_score
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert team_score_calls[0]["team"] == "旧金山巨人"
+    assert team_score_calls[0]["score"] == 3
+    assert team_score_calls[0]["team_fill"] == COLORS["amber"]
+    assert team_score_calls[0]["score_fill"] == COLORS["amber"]
+    assert team_score_calls[1]["team"] == "洛杉矶道奇"
+    assert team_score_calls[1]["team_fill"] == COLORS["text"]
+
+
+def test_mlb_main_card_uses_field_tint_for_live_state_box():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    card = SportsDashboard._offseason_hub_card("MLB", parsed, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert COLORS["mlb_field_tint"] != COLORS["panel_blue"]
+    assert image.getpixel((22, 129)) == COLORS["mlb_field_tint"]
+
+
+def test_mlb_main_card_draws_bso_count_board_for_live_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    card = SportsDashboard._offseason_hub_card("MLB", parsed, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    bso_cells = []
+
+    def capture_bso_cell(_draw, box, label, value, accent, outs=None):
+        bso_cells.append((tuple(int(item) for item in box), str(label), str(value), accent, outs))
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_bso_cell = capture_bso_cell
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert [(label, value) for _box, label, value, _accent, _outs in bso_cells] == [
+        ("B", "2"),
+        ("S", "1"),
+        ("O", "1"),
+    ]
+    assert [accent for _box, _label, _value, accent, _outs in bso_cells] == [
+        COLORS["mlb_accent"],
+        COLORS["amber"],
+        COLORS["red"],
+    ]
+    assert bso_cells[-1][-1] == 1
+
+
+def test_mlb_main_card_highlights_final_winner():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 15, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    final_event = dict(parsed["events"][0])
+    final_event.update({"state": "final", "status_text": "Final", "inning_state": "", "bases": "", "current_batter": "", "current_pitcher": ""})
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [final_event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_score_calls = []
+
+    def capture_team_score(*args, **kwargs):
+        team_score_calls.append(
+            {
+                "team": args[4],
+                "score": args[5],
+                "team_fill": kwargs.get("team_fill"),
+                "score_fill": kwargs.get("score_fill"),
+            }
+        )
+
+    plugin._draw_hub_team_score = capture_team_score
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert team_score_calls[0]["team"] == "旧金山巨人"
+    assert team_score_calls[0]["team_fill"] == COLORS["text"]
+    assert team_score_calls[1]["team"] == "洛杉矶道奇"
+    assert team_score_calls[1]["score"] == 5
+    assert team_score_calls[1]["team_fill"] == COLORS["amber"]
+    assert team_score_calls[1]["score_fill"] == COLORS["amber"]
+
+
+def test_mlb_main_card_promotes_current_batter_pitcher_matchup():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    card = SportsDashboard._offseason_hub_card("MLB", parsed, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "BAT" in seen_texts
+    assert "M. Chapman" in seen_texts
+    assert "P" in seen_texts
+    assert "Y. Yamamoto" in seen_texts
+    assert icon_calls[-2:] == ["BAT", "P"]
+    assert "B/P M. Chapman / Y. Yamamoto" not in seen_texts
+    assert "SP L. Webb / Y. Yamamoto" not in seen_texts
+
+
+def test_mlb_main_card_falls_back_to_probable_pitchers_without_current_matchup():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    event = dict(parsed["events"][0])
+    event["current_batter"] = ""
+    event["current_pitcher"] = ""
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "SP L. Webb / Y. Yamamoto" in seen_texts
+    assert "BAT" not in icon_calls
+    assert "P" not in icon_calls
+
+
+def test_mlb_main_card_uses_pregame_context_for_scheduled_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "777002")
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [next_event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    live_only_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: live_only_calls.append("bases")
+    plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: live_only_calls.append("rhe")
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "FIRST PITCH" in seen_texts
+    assert "06/14 7:10 PM" in seen_texts
+    assert "SP" in seen_texts
+    assert "J. deGrom / L. Castillo" in seen_texts
+    assert "VENUE" in seen_texts
+    assert "T-Mobile Park" in seen_texts
+    assert "RECORD" in seen_texts
+    assert any("35-33" in text and "39-29" in text for text in seen_texts)
+    assert "R" not in seen_texts
+    assert "H" not in seen_texts
+    assert "E" not in seen_texts
+    assert icon_calls[-4:] == ["FIRST", "SP", "VENUE", "RECORD"]
+    assert live_only_calls == []
+
+
+def test_mlb_main_card_omits_pregame_placeholders_when_details_are_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    next_event = dict(next(event for event in parsed["events"] if event["event_id"] == "777002"))
+    next_event.update(
+        {
+            "probable_a": "",
+            "probable_b": "",
+            "venue": "",
+            "record_a": "",
+            "record_b": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [next_event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "FIRST PITCH" in seen_texts
+    assert "TBD / TBD" not in seen_texts
+    assert "Ballpark pending" not in seen_texts
+    assert "SP" not in icon_calls
+    assert "VENUE" not in icon_calls
+    assert "RECORD" not in icon_calls
+
+
+def test_mlb_main_card_uses_final_context_for_completed_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 15, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    final_event = dict(parsed["events"][0])
+    final_event.update({"state": "final", "status_text": "Final", "bases": "", "current_batter": "", "current_pitcher": ""})
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [final_event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    live_only_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_base_diamond = lambda *_args, **_kwargs: live_only_calls.append("bases")
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "MLB RECENT" in seen_texts
+    assert "FINAL RESULT" in seen_texts
+    assert "06/14" in seen_texts
+    assert "R/H/E 3/7/1" in seen_texts
+    assert "R/H/E 5/8/0" in seen_texts
+    assert "\u5de8\u4eba" in seen_texts
+    assert "\u9053\u5947" in seen_texts
+    assert "\u9053\u5947 \u80dc2\u5206 / Dodger Stadium" in seen_texts
+    assert "SP L. Webb / Y. Yamamoto" not in seen_texts
+    assert "1B 2B 3B" not in seen_texts
+    assert icon_calls[-1:] == ["SCORE"]
+    assert live_only_calls == []
+
+
+def test_mlb_side_column_replaces_empty_recent_with_game_info_for_next_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "777002")
+    card = SportsDashboard._offseason_hub_card("MLB", {"events": [next_event]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "UPCOMING" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "06/14 7:10 PM" in seen_texts
+    assert "\u6e38\u9a91\u5175 @ \u6c34\u624b" in seen_texts
+    assert "\u6e38\u9a91\u5175 35-33 / \u6c34\u624b 39-29" in seen_texts
+    assert "J. deGrom / L. Castillo" in seen_texts
+    assert "T-Mobile Park" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-5:] == ["FIRST", "MATCH", "SP", "VENUE", "RECORD"]
+
+
+def test_mlb_side_column_uses_final_snap_when_no_recent_or_upcoming():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 15, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "final",
+            "status_text": "Final",
+            "bases": "",
+            "current_batter": "",
+            "current_pitcher": "",
+        }
+    )
+    card = {"sport": "MLB", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    right_aligned = []
+    original_fit_text = plugin._fit_text
+    original_right_aligned = plugin._draw_right_aligned
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_right_aligned(draw_obj, pos, text, font, fill):
+        right_aligned.append((str(text), fill))
+        return original_right_aligned(draw_obj, pos, text, font, fill)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_right_aligned = capture_right_aligned
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "FINAL SNAP" in seen_texts
+    assert "\u9053\u5947 \u80dc2\u5206" in seen_texts
+    assert "\u5de8\u4eba 3 / \u9053\u5947 5" in seen_texts
+    assert "\u5de8\u4eba 3/7/1  \u9053\u5947 5/8/0" in seen_texts
+    assert "\u5de8\u4eba 41-28 / \u9053\u5947 45-24" in seen_texts
+    assert "Dodger Stadium" in seen_texts
+    assert "UPCOMING" not in seen_texts
+    assert "RECENT" not in seen_texts
+    assert "No MLB schedule" not in seen_texts
+    assert "No recent results" not in seen_texts
+    assert icon_calls[:5] == ["WIN", "SCORE", "RHE", "RECORD", "VENUE"]
+    assert ("\u9053\u5947 \u80dc2\u5206", COLORS["mlb_accent"]) in right_aligned
+
+
+def test_pga_leaderboard_row_draws_round_strokes_and_today():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    row = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]["leaderboard"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    right_aligned = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, accent: icon_calls.append((str(kind), accent))
+    plugin._draw_right_aligned = lambda _draw, _pos, text, _font, fill: right_aligned.append((str(text), fill))
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, row, 0)
+
+    assert "P1" in seen_texts
+    assert "S. Scheffler" in seen_texts
+    assert "-9" in seen_texts
+    assert "R3 68 / -2" in seen_texts
+    assert icon_calls == [("GOLF", COLORS["pga_leader"])]
+    assert ("-9", COLORS["pga_leader"]) in right_aligned
+
+
+def test_pga_leaderboard_row_draws_gap_to_leader_for_chasing_player():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    rows = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]["leaderboard"]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, rows[1], 1, leader_score=rows[0]["score"])
+
+    assert "P2" in seen_texts
+    assert "R. McIlroy" in seen_texts
+    assert "-7" in seen_texts
+    assert "R3 70 / E / GAP +2" in seen_texts
+
+
+def test_pga_leaderboard_row_draws_gap_chip_for_chasing_player():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    rows = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]["leaderboard"]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    chip_calls = []
+
+    def capture_gap_chip(_draw, x, y, label, accent):
+        chip_calls.append((int(x), int(y), str(label), accent))
+
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_gap_chip = capture_gap_chip
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, rows[0], 0, leader_score=rows[0]["score"])
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, rows[1], 1, leader_score=rows[0]["score"])
+
+    assert SportsDashboard._pga_gap_chip_label(rows[0], rows[0]["score"]) == ""
+    assert SportsDashboard._pga_gap_chip_label(rows[1], rows[0]["score"]) == "+2"
+    assert chip_calls == [(209, 19, "+2", COLORS["pga_accent"])]
+
+
+def test_pga_leaderboard_row_draws_round_chip_for_current_round():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    rows = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]["leaderboard"]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    chip_calls = []
+
+    def capture_round_chip(_draw, x, y, label, row, accent):
+        chip_calls.append((int(x), int(y), str(label), row.get("round"), accent))
+
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_round_chip = capture_round_chip
+    plugin._draw_pga_gap_chip = lambda *_args, **_kwargs: None
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, rows[0], 0, leader_score=rows[0]["score"])
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, rows[1], 1, leader_score=rows[0]["score"])
+
+    row_without_round = dict(rows[0])
+    row_without_round.pop("round", None)
+    assert SportsDashboard._pga_round_chip_label(rows[0]) == "R3"
+    assert SportsDashboard._pga_round_chip_label(row_without_round) == ""
+    assert chip_calls == [
+        (209, 19, "R3", 3, COLORS["pga_leader"]),
+        (174, 19, "R3", 3, COLORS["pga_accent"]),
+    ]
+
+
+def test_pga_country_display_label_uses_simplified_chinese_names():
+    assert SportsDashboard._pga_country_display_label("USA") == "\u7f8e\u56fd"
+    assert SportsDashboard._pga_country_display_label("Northern Ireland") == "\u5317\u7231\u5c14\u5170"
+    assert SportsDashboard._pga_country_display_label("South Africa") == "\u5357\u975e"
+    assert SportsDashboard._pga_country_display_label("XYZ") == "XYZ"
+
+
+def test_pga_leaderboard_row_draws_chinese_country_label_when_available():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["competitors"][0]["athlete"]["country"] = {
+        "abbreviation": "USA",
+        "displayName": "United States",
+    }
+    row = SportsDashboard._parse_pga_scoreboard(payload, la, now)["events"][0]["leaderboard"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, row, 0)
+
+    assert row["country"] == "USA"
+    assert "\u7f8e\u56fd / R3 68 / -2" in seen_texts
+    assert "USA / R3 68 / -2" not in seen_texts
+
+
+def test_pga_leaderboard_row_draws_country_badge_next_to_player_name():
+    plugin = _plugin()
+    row = {
+        "position": 2,
+        "position_label": "T2",
+        "name": "R. McIlroy",
+        "country": "NIR",
+        "score": "-7",
+        "round": 3,
+        "strokes": "70",
+        "today": "E",
+    }
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    badge_calls = []
+
+    def capture_badge(_draw, x, y, code, accent):
+        badge_calls.append((int(x), int(y), str(code), accent))
+
+    plugin._draw_pga_country_badge = capture_badge
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, row, 1, leader_score="-9")
+
+    assert badge_calls == [(43, 9, "NIR", COLORS["pga_accent"])]
+
+
+def test_pga_leaderboard_row_preserves_tied_position_label():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    competitor = payload["events"][0]["competitions"][0]["competitors"][1]
+    competitor["displayRank"] = "T2"
+    competitor["order"] = 4
+
+    rows = SportsDashboard._parse_pga_scoreboard(payload, la, now)["events"][0]["leaderboard"]
+    tied_row = next(row for row in rows if row["name"] == "R. McIlroy")
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_leaderboard_row(draw, 0, 240, 8, tied_row, 1, leader_score=rows[0]["score"])
+
+    assert tied_row["position"] == 2
+    assert tied_row["position_label"] == "T2"
+    assert "T2" in seen_texts
+    assert "P2" not in seen_texts
+
+
+def test_pga_leaderboard_rank_color_keys_mark_top_three():
+    assert SportsDashboard._pga_leaderboard_rank_color_key({"position": 1}, 0) == "pga_leader"
+    assert SportsDashboard._pga_leaderboard_rank_color_key({"position": 2}, 1) == "pga_accent"
+    assert SportsDashboard._pga_leaderboard_rank_color_key({"position": 3}, 2) == "orange"
+    assert SportsDashboard._pga_leaderboard_rank_color_key({"position": 4}, 3) == "pga_accent"
+
+
+def test_pga_leaderboard_column_prioritizes_board_before_event_snap():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["competitors"].extend(
+        [
+            {
+                "order": 3,
+                "score": "-6",
+                "athlete": {"shortName": "X. Schauffele"},
+                "linescores": [{"period": 3, "displayValue": "-1", "value": 69}],
+            },
+            {
+                "order": 4,
+                "score": "-5",
+                "athlete": {"shortName": "C. Morikawa"},
+                "linescores": [{"period": 3, "displayValue": "+1", "value": 72}],
+            },
+        ]
+    )
+    parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
+    card = SportsDashboard._offseason_hub_card("PGA", parsed, now)
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_pga_leaderboard_column(draw, (0, 0, 240, 180), card, now)
+
+    assert "LEADERBOARD" in seen_texts
+    assert "EVENT INFO" not in seen_texts
+    assert "S. Scheffler" in seen_texts
+    assert "R. McIlroy" in seen_texts
+    assert "X. Schauffele" in seen_texts
+    assert "C. Morikawa" in seen_texts
+    assert "R3 70 / E / GAP +2" in seen_texts
+    assert "SNAP" in seen_texts
+    assert seen_texts.index("LEADERBOARD") < seen_texts.index("SNAP")
+    assert "LEADER S. Scheffler -9 / THRU 06/15 / Shinnecock Hills" in seen_texts
+    assert icon_calls[-1] == "PGA"
+
+
+def test_pga_leaderboard_column_uses_event_info_when_leaderboard_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["competitors"] = []
+    parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
+    card = SportsDashboard._offseason_hub_card("PGA", parsed, now)
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_pga_leaderboard_column(draw, (0, 0, 240, 180), card, now)
+
+    assert "EVENT INFO" in seen_texts
+    assert "LEADERBOARD" not in seen_texts
+    assert "\u7f8e\u56fd\u516c\u5f00\u8d5b" in seen_texts
+    assert "THRU 06/15" in seen_texts
+    assert "Shinnecock Hills" in seen_texts
+    assert "06/12-15" in seen_texts
+    assert "Leaderboard pending" not in seen_texts
+    assert "PGA TOUR" not in seen_texts
+    assert icon_calls == ["GOLF", "CLOCK", "VENUE", "PERIOD"]
+
+
+def test_pga_event_info_rows_omit_generic_event_name_when_missing():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    event = {
+        "sport": "PGA",
+        "state": "pre",
+        "start": now + timedelta(days=1),
+        "name": "",
+        "status_text": "Scheduled",
+        "venue": "Shinnecock Hills",
+        "end": now + timedelta(days=4),
+    }
+
+    rows = SportsDashboard._pga_event_info_rows(event, now)
+    compact_rows = SportsDashboard._pga_compact_event_info_rows(event, now)
+
+    assert ("GOLF", "EVENT", "PGA TOUR") not in rows
+    assert ("GOLF", "EVENT", "PGA TOUR") not in compact_rows
+    assert rows[0] == ("CLOCK", "STATUS", "Scheduled")
+    assert ("VENUE", "COURSE", "Shinnecock Hills") in rows
+    assert not any(row[1] == "BOARD" for row in rows)
+
+
+def test_pga_event_info_rows_use_neutral_fallback_only_when_event_is_empty():
+    rows = SportsDashboard._pga_event_info_rows({}, datetime(2026, 6, 14, 13, 30, tzinfo=ZoneInfo("America/Los_Angeles")))
+
+    assert rows == [("PGA", "BOARD", "PGA TOUR")]
+    assert "Leaderboard pending" not in [value for _icon, _label, value in rows]
+
+
+def test_pga_event_snap_label_prioritizes_leader_when_available():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    event = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]
+    fallback = dict(event)
+    fallback["leader"] = {}
+
+    assert SportsDashboard._pga_event_snap_label(event, now) == "LEADER S. Scheffler -9 / THRU 06/15 / Shinnecock Hills"
+    assert SportsDashboard._pga_event_snap_label(fallback, now) == "THRU 06/15 / Shinnecock Hills / 06/12-15"
+
+
+def test_pga_next_label_includes_tournament_name_when_available():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+
+    assert (
+        SportsDashboard._pga_next_label(
+            {
+                "upcoming": [
+                    {
+                        "start": datetime(2026, 6, 19, 7, 0, tzinfo=la),
+                        "name": "\u65c5\u884c\u8005\u9526\u6807\u8d5b",
+                    }
+                ]
+            },
+            now,
+        )
+        == "NEXT TEE 06/19 / \u65c5\u884c\u8005\u9526\u6807\u8d5b"
+    )
+    assert (
+        SportsDashboard._pga_next_label(
+            {"recent": [{"name": "\u7f8e\u56fd\u516c\u5f00\u8d5b"}]},
+            now,
+        )
+        == "RECENT / \u7f8e\u56fd\u516c\u5f00\u8d5b"
+    )
+    assert SportsDashboard._pga_next_label({}, now) == "TOUR CALENDAR"
+
+
+def test_pga_main_card_uses_tee_window_for_scheduled_event_without_leaderboard():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)
+    event = dict(parsed["events"][0])
+    event["leaderboard"] = []
+    event["leader"] = {}
+    card = SportsDashboard._offseason_hub_card("PGA", {"events": [event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_pga_event_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "PGA NEXT" in seen_texts
+    assert "\u7f8e\u56fd\u516c\u5f00\u8d5b" in seen_texts
+    assert "TEE WINDOW" in seen_texts
+    assert "06/12 7:00 AM" in seen_texts
+    assert "06/12-15 / Shinnecock Hills" in seen_texts
+    assert "Leaderboard pending" not in seen_texts
+    assert icon_calls == ["TEE", "VENUE"]
+
+
+def test_pga_main_card_uses_event_status_when_live_leaderboard_is_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)
+    event = dict(parsed["events"][0])
+    event["leaderboard"] = []
+    event["leader"] = {}
+    card = SportsDashboard._offseason_hub_card("PGA", {"events": [event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_pga_event_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "PGA LIVE" in seen_texts
+    assert "EVENT STATUS" in seen_texts
+    assert "THRU 06/15" in seen_texts
+    assert "06/12-15 / Shinnecock Hills" in seen_texts
+    assert "Leaderboard pending" not in seen_texts
+    assert icon_calls == ["CLOCK", "VENUE"]
+
+
+def test_pga_main_card_omits_course_placeholder_when_venue_is_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)
+    event = dict(parsed["events"][0])
+    event["leaderboard"] = []
+    event["leader"] = {}
+    event["venue"] = ""
+    card = SportsDashboard._offseason_hub_card("PGA", {"events": [event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_pga_event_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "Course pending" not in seen_texts
+    assert "06/12-15" in seen_texts
+
+
+def test_pga_schedule_summary_omits_detail_placeholder_when_window_and_course_are_missing():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+    event = {"sport": "PGA", "state": "pre", "status_text": "Scheduled", "venue": ""}
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_pga_schedule_summary(draw, 0, 0, 220, 48, event, now)
+
+    assert "Scheduled" in seen_texts
+    assert "Schedule pending" not in seen_texts
+    assert icon_calls == ["TEE"]
+
+
+def test_pga_schedule_summary_uses_course_tint_not_generic_blue_panel():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=la)
+    event = SportsDashboard._parse_pga_scoreboard(_sample_pga_scoreboard_payload(), la, now)["events"][0]
+
+    plugin._draw_pga_schedule_summary(draw, 0, 0, 220, 48, event, now)
+
+    assert COLORS["pga_course_tint"] != COLORS["panel_blue"]
+    assert image.getpixel((5, 25)) == COLORS["pga_course_tint"]
+
+
+def test_pga_leader_summary_omits_bottom_scorecard_strip():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    leader = {
+        "name": "S. Scheffler",
+        "score": "-9",
+        "round": 3,
+        "today": "-2",
+        "strokes": "68",
+    }
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, leader)
+
+    assert "LEADER" in seen_texts
+    assert "S. Scheffler" in seen_texts
+    assert "-9" in seen_texts
+    assert "RND" not in seen_texts
+    assert "DAY" not in seen_texts
+    assert "CARD" not in seen_texts
+    assert "68" not in seen_texts
+    assert icon_calls == ["GOLF"]
+
+
+def test_pga_leader_summary_does_not_draw_scorecard_placeholder_when_round_details_missing():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    leader = {
+        "name": "S. Scheffler",
+        "score": "-9",
+    }
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, leader)
+
+    assert "SCORECARD" not in seen_texts
+    assert "ROUND DATA" not in seen_texts
+    assert icon_calls == ["GOLF"]
+
+
+def test_pga_leader_summary_uses_neutral_fallback_when_leader_missing():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, {})
+
+    assert "EVENT INFO" in seen_texts
+    assert "Leaderboard pending" not in seen_texts
+
+
+def test_pga_leader_summary_keeps_country_badge_without_detail_strip():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    leader = {
+        "name": "R. McIlroy",
+        "country": "NIR",
+        "score": "-7",
+        "round": 3,
+        "today": "E",
+        "strokes": "70",
+    }
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, leader)
+
+    assert "R. McIlroy" in seen_texts
+    assert "NIR" in seen_texts
+    assert "-7" in seen_texts
+    assert "NAT" not in seen_texts
+    assert "\u5317\u7231\u5c14\u5170" not in seen_texts
+    assert "RND" not in seen_texts
+    assert "DAY" not in seen_texts
+    assert "CARD" not in seen_texts
+    assert "NIR / R3 / E / 70" not in seen_texts
+
+
+def test_pga_leader_summary_draws_country_badge_next_to_leader_name():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    leader = {
+        "name": "R. McIlroy",
+        "country": "NIR",
+        "score": "-7",
+        "round": 3,
+        "today": "E",
+        "strokes": "70",
+    }
+    badge_calls = []
+
+    def capture_badge(_draw, x, y, code, accent):
+        badge_calls.append((int(x), int(y), str(code), accent))
+
+    plugin._draw_sport_info_icon = lambda *_args, **_kwargs: None
+    plugin._draw_pga_country_badge = capture_badge
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, leader)
+
+    assert badge_calls == [(8, 18, "NIR", COLORS["pga_accent"])]
+
+
+def test_pga_leader_summary_uses_course_tint_not_generic_blue_panel():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 70), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    leader = {
+        "name": "S. Scheffler",
+        "score": "-9",
+        "round": 3,
+        "today": "-2",
+        "strokes": "68",
+    }
+
+    plugin._draw_pga_leader_summary(draw, 0, 0, 220, 48, leader)
+
+    assert COLORS["pga_course_tint"] != COLORS["panel_blue"]
+    assert image.getpixel((5, 25)) == COLORS["pga_course_tint"]
+
+
+def test_pga_fairway_strip_asset_is_exact_transparent_size():
+    assert Path(LOCAL_PGA_FAIRWAY_STRIP_PATH).exists()
+    with Image.open(LOCAL_PGA_FAIRWAY_STRIP_PATH) as source:
+        strip = source.convert("RGBA")
+
+    assert strip.size == (215, 36)
+    assert strip.getchannel("A").getextrema()[0] == 0
+    assert strip.getbbox() is not None
+    assert [strip.getpixel(point)[3] for point in ((0, 0), (214, 0), (0, 35), (214, 35))] == [0, 0, 0, 0]
+
+
+def test_pga_fairway_uses_uploaded_strip(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (260, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    requested_sizes = []
+    strip_color = (12, 200, 40, 255)
+
+    def load_strip(size):
+        requested_sizes.append(size)
+        strip = Image.new("RGBA", size, (0, 0, 0, 0))
+        strip_draw = ImageDraw.Draw(strip)
+        strip_draw.rectangle((10, 8, size[0] - 12, size[1] - 8), fill=strip_color)
+        return strip
+
+    monkeypatch.setattr(plugin, "_load_pga_fairway_strip", load_strip)
+
+    plugin._draw_pga_fairway(image, draw, 10, 20, 224, 56)
+
+    assert requested_sizes == [(288, 48)]
+    assert image.getpixel((10, 20)) == COLORS["panel"]
+    assert image.getpixel((40, 38)) == strip_color[:3]
+
+
+def test_pga_fairway_falls_back_to_code_drawing(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (260, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    monkeypatch.setattr(plugin, "_load_pga_fairway_strip", lambda _size: None)
+
+    plugin._draw_pga_fairway(image, draw, 10, 20, 224, 56)
+
+    assert image.getpixel((10, 20)) == COLORS["panel"]
+    assert image.getpixel((202, 29)) == COLORS["red"]
+
+
+def test_wnba_live_side_column_uses_score_and_quarter_log_when_schedule_empty():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_wnba_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "LIVE GAME" in seen_texts
+    assert "QUARTER LOG" in seen_texts
+    assert "Q3 4:22" in seen_texts
+    assert "ION" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "\u98ce\u66b4" in seen_texts
+    assert "\u738b\u724c" in seen_texts
+    assert "72" in seen_texts
+    assert "78" in seen_texts
+    assert "\u738b\u724c +6" in seen_texts
+    assert "Q1" in seen_texts
+    assert "25-28" in seen_texts
+    assert "Q3" in seen_texts
+    assert "24-31" in seen_texts
+    assert ("https://example.com/wnba-sea.png", 11, "SEA") in logo_calls
+    assert ("https://example.com/wnba-lv.png", 11, "LV") in logo_calls
+    assert icon_calls[:4] == ["CLOCK", "LEAD", "TV", "VENUE"]
+    assert icon_calls.count("PERIOD") == 4
+
+
+def test_wnba_live_team_row_localizes_english_payload_names():
+    plugin = _plugin()
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    event = {
+        "team_a": "Seattle Storm",
+        "team_a_name": "Seattle Storm",
+        "team_a_code": "SEA",
+        "team_a_logo": "https://example.com/wnba-sea.png",
+        "wins_a": 72,
+    }
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+
+    plugin._draw_wnba_live_team_row(image, draw, 10, 230, 8, event, "a")
+
+    assert "\u98ce\u66b4" in seen_texts
+    assert "SEATTLE STORM" not in seen_texts
+    assert ("https://example.com/wnba-sea.png", 11, "SEA") in logo_calls
+
+
+def test_wnba_logo_fallback_prefers_stable_team_code():
+    assert (
+        SportsDashboard._wnba_logo_fallback(
+            {"team_a": "\u98ce\u66b4", "team_a_name": "Seattle Storm"},
+            "a",
+        )
+        == "SEA"
+    )
+    assert (
+        SportsDashboard._wnba_logo_fallback(
+            {"team_b": "\u738b\u724c", "team_b_code": "LV", "team_b_name": "Las Vegas Aces"},
+            "b",
+        )
+        == "LV"
+    )
+
+
+def test_wnba_score_side_fill_key_marks_only_current_leader():
+    event = {"wins_a": 72, "wins_b": 78}
+
+    assert SportsDashboard._wnba_score_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._wnba_score_side_fill_key(event, "b") == "wnba_accent"
+    assert SportsDashboard._wnba_score_side_fill_key({"wins_a": 78, "wins_b": 78}, "a") == "text"
+    assert SportsDashboard._wnba_score_side_fill_key({"wins_a": None, "wins_b": 78}, "b") == "text"
+
+
+def test_wnba_final_winner_uses_win_label_and_winner_flag():
+    event = {
+        "state": "post",
+        "team_a": "SEA",
+        "team_b": "LV",
+        "team_a_code": "SEA",
+        "team_b_code": "LV",
+        "wins_a": 72,
+        "wins_b": 78,
+        "winner_a": False,
+        "winner_b": True,
+    }
+
+    assert SportsDashboard._wnba_score_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._wnba_score_side_fill_key(event, "b") == "wnba_accent"
+    assert SportsDashboard._wnba_lead_label(event) == "\u62c9\u65af\u7ef4\u52a0\u65af\u738b\u724c \u80dc6\u5206"
+
+
+def test_wnba_lead_label_uses_full_name_only_for_final_winner():
+    event = {
+        "state": "in",
+        "team_a": "SEA",
+        "team_b": "LV",
+        "team_a_code": "SEA",
+        "team_b_code": "LV",
+        "wins_a": 72,
+        "wins_b": 78,
+        "winner_a": False,
+        "winner_b": True,
+    }
+
+    assert SportsDashboard._wnba_lead_label(event) == "\u738b\u724c +6"
+    event["state"] = "post"
+    assert SportsDashboard._wnba_lead_label(event) == "\u62c9\u65af\u7ef4\u52a0\u65af\u738b\u724c \u80dc6\u5206"
+
+
+def test_wnba_live_score_team_highlights_leading_side_score():
+    plugin = _plugin()
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    event = {
+        "team_a": "Seattle Storm",
+        "team_b": "Las Vegas Aces",
+        "team_a_code": "SEA",
+        "team_b_code": "LV",
+        "team_b_logo": "https://example.com/wnba-lv.png",
+        "wins_a": 72,
+        "wins_b": 78,
+    }
+    right_aligned = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_right_aligned = lambda _draw, _pos, text, _font, fill: right_aligned.append((str(text), fill))
+
+    plugin._draw_wnba_live_score_team(image, draw, 10, 118, 8, event, "b", "78")
+
+    assert ("78", COLORS["wnba_accent"]) in right_aligned
+
+
+def test_wnba_side_column_prioritizes_live_pulse_before_schedule():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    parsed["events"][0]["spread"] = "LV -4.5"
+    parsed["events"][0]["over_under"] = "O/U 166.5"
+    upcoming = dict(parsed["events"][0])
+    upcoming.update(
+        {
+            "event_id": "wnba-upcoming",
+            "state": "pre",
+            "status_text": "Preview",
+            "start": now + timedelta(hours=3),
+            "team_a": "PHX",
+            "team_b": "NY",
+            "team_a_logo": "https://example.com/wnba-phx.png",
+            "team_b_logo": "https://example.com/wnba-ny.png",
+            "wins_a": None,
+            "wins_b": None,
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    parsed["events"].append(upcoming)
+    card = SportsDashboard._offseason_hub_card("WNBA", parsed, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_wnba_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "UPCOMING" in seen_texts
+    assert "LIVE PULSE" in seen_texts
+    assert seen_texts.index("LIVE PULSE") < seen_texts.index("UPCOMING")
+    assert "Q3 4:22" in seen_texts
+    assert "\u738b\u724c +6" in seen_texts
+    assert "\u98ce\u66b4" in seen_texts
+    assert "72" in seen_texts
+    assert "\u738b\u724c" in seen_texts
+    assert "78" in seen_texts
+    assert "Q3 24-31" in seen_texts
+    assert "ION / LV -4.5 / O/U 166.5" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert ("https://example.com/wnba-sea.png", 11, "SEA") in logo_calls
+    assert ("https://example.com/wnba-lv.png", 11, "LV") in logo_calls
+    assert icon_calls[-6:] == ["CLOCK", "LEAD", "SCORE", "QTR", "TV", "VENUE"]
+    assert "LINE" not in icon_calls
+
+
+def test_wnba_side_column_replaces_empty_recent_with_game_info_for_next_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    upcoming = dict(parsed["events"][0])
+    upcoming.update(
+        {
+            "event_id": "wnba-next-only",
+            "state": "pre",
+            "status_text": "Preview",
+            "start": now + timedelta(hours=3),
+            "team_a": "PHX",
+            "team_b": "NY",
+            "team_a_logo": "https://example.com/wnba-phx.png",
+            "team_b_logo": "https://example.com/wnba-ny.png",
+            "wins_a": None,
+            "wins_b": None,
+            "record_a": "3-1",
+            "record_b": "2-2",
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [upcoming]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "UPCOMING" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "06/14 4:30 PM / Preview" in seen_texts
+    assert "\u6c34\u661f @ \u81ea\u7531\u4eba" in seen_texts
+    assert "\u6c34\u661f 3-1 / \u81ea\u7531\u4eba 2-2" in seen_texts
+    assert "ION" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-5:] == ["TIP", "MATCH", "TV", "VENUE", "RECORD"]
+
+
+def test_wnba_game_info_shows_odds_without_hiding_venue():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    upcoming = dict(parsed["events"][0])
+    upcoming.update(
+        {
+            "event_id": "wnba-next-odds",
+            "state": "pre",
+            "status_text": "Preview",
+            "start": now + timedelta(hours=3),
+            "team_a": "PHX",
+            "team_b": "NY",
+            "team_a_logo": "https://example.com/wnba-phx.png",
+            "team_b_logo": "https://example.com/wnba-ny.png",
+            "wins_a": None,
+            "wins_b": None,
+            "record_a": "3-1",
+            "record_b": "2-2",
+            "spread": "NY -4.5",
+            "over_under": "O/U 166.5",
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [upcoming]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "GAME INFO" in seen_texts
+    assert "06/14 4:30 PM / Preview" in seen_texts
+    assert "ION / NY -4.5 / O/U 166.5" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "SPREAD" not in icon_calls
+    assert "STATUS" not in icon_calls
+    assert icon_calls[-5:] == ["TIP", "MATCH", "TV", "VENUE", "RECORD"]
+
+
+def test_wnba_main_card_uses_pregame_context_for_scheduled_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    upcoming = dict(parsed["events"][0])
+    upcoming.update(
+        {
+            "event_id": "wnba-main-next",
+            "state": "pre",
+            "status_text": "Preview",
+            "start": now + timedelta(hours=3),
+            "team_a": "PHX",
+            "team_b": "NY",
+            "team_a_logo": "https://example.com/wnba-phx.png",
+            "team_b_logo": "https://example.com/wnba-ny.png",
+            "wins_a": None,
+            "wins_b": None,
+            "record_a": "3-1",
+            "record_b": "2-2",
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [upcoming]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "TIP OFF" in seen_texts
+    assert "06/14 4:30 PM" in seen_texts
+    assert "TV ION / Michelob ULTRA Arena / Preview" in seen_texts
+    assert "\u6c34\u661f 3-1 / \u81ea\u7531\u4eba 2-2 / Preview" not in seen_texts
+    assert "QTR DATA PENDING" not in seen_texts
+    assert icon_calls[-1] == "TIP"
+
+
+def test_wnba_pregame_meta_prioritizes_tv_and_odds_before_venue():
+    event = {
+        "team_a": "PHX",
+        "team_b": "NY",
+        "record_a": "3-1",
+        "record_b": "2-2",
+        "status_text": "Preview",
+        "broadcast": "ION",
+        "spread": "NY -4.5",
+        "over_under": "O/U 166.5",
+        "venue": "Michelob ULTRA Arena",
+        "city": "Las Vegas, NV",
+    }
+
+    assert (
+        SportsDashboard._wnba_pregame_meta_label(event)
+        == "TV ION | NY -4.5 | O/U 166.5 / Michelob ULTRA Arena / Preview"
+    )
+
+    event["broadcast"] = ""
+    assert SportsDashboard._wnba_pregame_meta_label(event) == "NY -4.5 / O/U 166.5 / Michelob ULTRA Arena / Preview"
+
+
+def test_wnba_pregame_meta_falls_back_to_records_when_broadcast_and_venue_missing():
+    event = {
+        "team_a": "PHX",
+        "team_b": "NY",
+        "record_a": "3-1",
+        "record_b": "2-2",
+        "status_text": "Preview",
+        "broadcast": "",
+        "venue": "",
+        "city": "",
+    }
+
+    assert SportsDashboard._wnba_pregame_meta_label(event) == "\u6c34\u661f 3-1 / \u81ea\u7531\u4eba 2-2 / Preview"
+
+
+def test_wnba_meta_uses_neutral_module_fallback_when_details_are_empty():
+    assert SportsDashboard._wnba_pregame_meta_label({}) == "WNBA GAME INFO"
+    assert SportsDashboard._wnba_result_meta_label({}) == "WNBA RESULT"
+
+
+def test_wnba_live_meta_keeps_score_context_and_adds_tv_line_info():
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0]
+    event["spread"] = "LV -3.5"
+    event["over_under"] = "O/U 166.5"
+
+    assert (
+        SportsDashboard._wnba_live_main_meta_label(event)
+        == "\u738b\u724c +6 / Q3 24-31 / TV ION  |  SPREAD LV -3.5  |  O/U 166.5"
+    )
+    pulse_rows = SportsDashboard._wnba_live_pulse_rows(event)
+    assert ("TV", "ION / LV -3.5 / O/U 166.5", False) in pulse_rows
+    assert not any(row[0] == "LINE" for row in pulse_rows)
+
+
+def test_wnba_live_pulse_rows_use_spread_label_without_broadcast():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    event = dict(event)
+    event["broadcast"] = ""
+
+    pulse_rows = SportsDashboard._wnba_live_pulse_rows(event)
+
+    assert ("SPREAD", "LV -4.5 / O/U 166.5", False) in pulse_rows
+    assert not any(row[0] == "LINE" for row in pulse_rows)
+
+
+def test_wnba_main_card_uses_live_pulse_context_for_live_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "WNBA LIVE" in seen_texts
+    assert "LIVE PULSE" in seen_texts
+    assert "Q3 4:22" in seen_texts
+    assert "LEAD" in seen_texts
+    assert "\u738b\u724c +6" in seen_texts
+    assert "QTR" in seen_texts
+    assert "TV" in seen_texts
+    assert "ION" in seen_texts
+    assert "Q1" in seen_texts
+    assert "25-28" in seen_texts
+    assert "Q2" in seen_texts
+    assert "Q3 24-31" in seen_texts
+    assert "\u738b\u724c +6 / Q3 24-31 / TV ION" not in seen_texts
+    assert "RESULT SNAP" not in seen_texts
+    assert icon_calls[-4:] == ["CLOCK", "LEAD", "QTR", "TV"]
+
+
+def test_wnba_main_card_live_summary_combines_tv_and_odds():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(payload, la),
+        now,
+    )
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "TV" in seen_texts
+    assert "ION / LV -4.5 / O/U 166.5" in seen_texts
+    assert "LINE" not in icon_calls
+    assert icon_calls[-4:] == ["CLOCK", "LEAD", "QTR", "TV"]
+
+
+def test_wnba_main_card_draws_current_quarter_score_strip():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    quarter_cells = []
+
+    def capture_quarter_cell(_draw, _box, quarter, score, active=False):
+        quarter_cells.append((str(quarter), str(score), bool(active)))
+
+    plugin._draw_wnba_quarter_score_cell = capture_quarter_cell
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert quarter_cells == [
+        ("Q1", "25-28", False),
+        ("Q2", "29-27", False),
+        ("Q3", "24-31", True),
+        ("Q4", "28-26", False),
+    ]
+
+
+def test_wnba_main_card_live_summary_falls_back_when_score_context_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    event = dict(parsed["events"][0])
+    event.update(
+        {
+            "wins_a": None,
+            "wins_b": None,
+            "period": None,
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "TV" in seen_texts
+    assert "ION" in seen_texts
+    assert "LEAD" not in icon_calls
+    assert "QTR" not in icon_calls
+    assert "TV" in icon_calls
+
+
+def test_wnba_main_card_uses_own_court_tint_not_generic_gold_panel():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert COLORS["wnba_court"] != COLORS["panel_gold"]
+    assert image.getpixel((30, 54)) == COLORS["wnba_court"]
+
+
+def test_wnba_main_card_highlights_score_leader():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "WNBA",
+        SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la),
+        now,
+    )
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_score_calls = []
+
+    def capture_team_score(*args, **kwargs):
+        team_score_calls.append(
+            {
+                "team": args[4],
+                "score": args[5],
+                "logo_fallback": kwargs.get("logo_fallback"),
+                "team_fill": kwargs.get("team_fill"),
+                "score_fill": kwargs.get("score_fill"),
+            }
+        )
+
+    plugin._draw_hub_team_score = capture_team_score
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert team_score_calls[0]["team"] == "西雅图风暴"
+    assert team_score_calls[0]["score"] == 72
+    assert team_score_calls[0]["team_fill"] == COLORS["text"]
+    assert team_score_calls[0]["score_fill"] == COLORS["text"]
+    assert team_score_calls[0]["logo_fallback"] == "SEA"
+    assert team_score_calls[1]["team"] == "拉斯维加斯王牌"
+    assert team_score_calls[1]["score"] == 78
+    assert team_score_calls[1]["team_fill"] == COLORS["wnba_accent"]
+    assert team_score_calls[1]["score_fill"] == COLORS["wnba_accent"]
+    assert team_score_calls[1]["logo_fallback"] == "LV"
+
+
+def test_wnba_main_card_uses_result_meta_when_final_quarter_scores_missing():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 15, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "event_id": "wnba-final-no-periods",
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 6, 14, 16, 0, tzinfo=la),
+            "wins_a": 72,
+            "wins_b": 78,
+            "record_a": "7-4",
+            "record_b": "8-3",
+            "period_scores_a": [],
+            "period_scores_b": [],
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [final_event]}, now)
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "WNBA RECENT" in seen_texts
+    assert "RESULT SNAP" in seen_texts
+    assert "Final" in seen_texts
+    assert "\u62c9\u65af\u7ef4\u52a0\u65af\u738b\u724c \u80dc6\u5206 / Final" in seen_texts
+    assert "QTR DATA PENDING" not in seen_texts
+    assert icon_calls[-1] == "SCORE"
+
+
+def test_wnba_side_column_uses_result_snap_when_only_recent_is_main_final():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 15, 13, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "event_id": "wnba-final-snap",
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 6, 14, 16, 0, tzinfo=la),
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("WNBA", {"events": [final_event]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "RESULT SNAP" in seen_texts
+    assert "QUARTER LOG" in seen_texts
+    assert "\u62c9\u65af\u7ef4\u52a0\u65af\u738b\u724c \u80dc6\u5206" in seen_texts
+    assert "\u98ce\u66b4 72 / \u738b\u724c 78" in seen_texts
+    assert "ION" in seen_texts
+    assert "VENUE" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "Q1" in seen_texts
+    assert "25-28" in seen_texts
+    assert "UPCOMING" not in seen_texts
+    assert "RECENT" not in seen_texts
+    assert "No WNBA schedule" not in seen_texts
+    assert icon_calls[:4] == ["WIN", "SCORE", "TV", "VENUE"]
+    assert icon_calls[-4:] == ["PERIOD", "PERIOD", "PERIOD", "PERIOD"]
+
+
+def test_football_live_side_column_uses_drive_and_game_info_when_schedule_empty():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 17, 0, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NCAA",
+        SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA"),
+        now,
+    )
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
+
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "LIVE DRIVE" not in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "Q4 1:18" in seen_texts
+    assert "2ND & 8" in seen_texts
+    assert "MICH 36 / POS \u5fb7\u5dde" in seen_texts
+    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
+    assert icon_calls[:3] == ["QTR", "DOWN", "FIELD"]
+    assert icon_calls[3:] == ["TV", "SITE", "RECORD"]
+
+
+def test_football_side_column_replaces_empty_recent_with_live_drive_after_upcoming():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NFL",
+        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
+        now,
+    )
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
+
+    assert "UPCOMING" in seen_texts
+    assert "LIVE DRIVE" in seen_texts
+    assert seen_texts.index("LIVE DRIVE") < seen_texts.index("UPCOMING")
+    assert "Q2 8:42" in seen_texts
+    assert "3RD & 4" in seen_texts
+    assert "SEA 42 / POS \u6d77\u9e70" in seen_texts
+    assert "Kenneth Walker run for 6 yards" in seen_texts
+    assert "NBC / NE -2.5 / O/U 44.5" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-5:] == ["QTR", "DOWN", "FIELD", "PLAY", "TV"]
+
+
+def test_football_side_column_replaces_empty_recent_with_game_info_for_next_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
+
+    assert "UPCOMING" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "09/14 1:25 PM" in seen_texts
+    assert "\u5305\u88c5\u5de5 @ \u718a" in seen_texts
+    assert "\u5305\u88c5\u5de5 0-0 / \u718a 0-0" in seen_texts
+    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
+    assert "Soldier Field" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-5:] == ["KICK", "MATCH", "TV", "VENUE", "RECORD"]
+
+
+def test_football_side_column_uses_final_snap_when_no_recent_or_upcoming():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
+            "wins_a": 24,
+            "wins_b": 21,
+            "winner_a": True,
+            "winner_b": False,
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = {"sport": "NFL", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    right_aligned = []
+    original_fit_text = plugin._fit_text
+    original_right_aligned = plugin._draw_right_aligned
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_right_aligned(draw_obj, pos, text, font, fill):
+        right_aligned.append((str(text), fill))
+        return original_right_aligned(draw_obj, pos, text, font, fill)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_right_aligned = capture_right_aligned
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
+
+    assert "FINAL SNAP" in seen_texts
+    assert "\u7eff\u6e7e\u5305\u88c5\u5de5 \u80dc3\u5206" in seen_texts
+    assert "\u5305\u88c5\u5de5 24 / \u718a 21" in seen_texts
+    assert "\u5305\u88c5\u5de5 0-0 / \u718a 0-0" in seen_texts
+    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
+    assert "Soldier Field" in seen_texts
+    assert "UPCOMING" not in seen_texts
+    assert "RECENT" not in seen_texts
+    assert "No recent results" not in seen_texts
+    assert icon_calls[:5] == ["WIN", "SCORE", "RECORD", "TV", "VENUE"]
+    assert ("\u7eff\u6e7e\u5305\u88c5\u5de5 \u80dc3\u5206", COLORS["nfl_accent"]) in right_aligned
+
+
+def test_ncaa_side_column_uses_final_snap_for_neutral_site_result_without_lists():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
+            "wins_a": 31,
+            "wins_b": 28,
+            "winner_a": True,
+            "winner_b": False,
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = {"sport": "NCAA", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
+
+    assert "FINAL SNAP" in seen_texts
+    assert "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b \u80dc3\u5206" in seen_texts
+    assert "#12 \u5fb7\u5dde 31 / #7 \u5bc6\u6b47\u6839 28" in seen_texts
+    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
+    assert "RANKED WATCH" not in seen_texts
+    assert "RECENT" not in seen_texts
+    assert "No recent results" not in seen_texts
+    assert icon_calls[:5] == ["WIN", "SCORE", "RECORD", "SITE", "TV"]
+
+
+def test_football_main_card_uses_pregame_context_for_scheduled_nfl_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
+
+    assert "KICKOFF" in seen_texts
+    assert "09/14 1:25 PM" in seen_texts
+    assert "TV FOX / CHI -1.5" in seen_texts
+    assert "Soldier Field  |  O/U 42.5" in seen_texts
+    assert "SCHEDULED" not in seen_texts
+    assert icon_calls[-1] == "KICK"
+
+
+def test_football_main_card_uses_final_context_for_completed_nfl_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
+            "wins_a": 24,
+            "wins_b": 21,
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
+
+    assert "NFL RECENT" in seen_texts
+    assert "FINAL" in seen_texts
+    assert "09/14" in seen_texts
+    assert "Soldier Field" in seen_texts
+    assert "TV FOX  |  SPREAD CHI -1.5  |  O/U 42.5" in seen_texts
+    assert "SCHEDULED" not in seen_texts
+    assert icon_calls[-1] == "SCORE"
+
+
+def test_nfl_main_card_uses_nfl_specific_pregame_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "NFL NEXT" in seen_texts
+    assert "NFL KICK" in seen_texts
+    assert "09/14 1:25 PM" in seen_texts
+    assert "TV FOX / CHI -1.5 / O/U 42.5" in seen_texts
+    assert "Soldier Field" in seen_texts
+    assert "KICKOFF" not in seen_texts
+    assert icon_calls[-1] == "KICK"
+
+
+def test_scheduled_football_main_cards_do_not_repeat_preview_center_label():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    fallback = SportsDashboard._fallback_offseason_hub_data(la, now)
+    nfl_card = SportsDashboard._offseason_hub_card("NFL", fallback["nfl"], now)
+    ncaa_card = SportsDashboard._offseason_hub_card("NCAA", fallback["ncaa"], now)
+    image = Image.new("RGB", (340, 420), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), nfl_card, now)
+    plugin._draw_ncaa_main_card(image, draw, (0, 210, 320, 400), ncaa_card, now)
+
+    assert "Preview" not in seen_texts
+    assert "PREVIEW" not in seen_texts
+    assert "NFL KICK" in seen_texts
+    assert "KICKOFF" in seen_texts
+    assert "NEUTRAL / Kickoff Watch" in seen_texts
+
+
+def test_nfl_main_card_uses_nfl_specific_final_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
+            "wins_a": 24,
+            "wins_b": 21,
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "NFL RECENT" in seen_texts
+    assert "FINAL SCORE" in seen_texts
+    assert "09/14" in seen_texts
+    assert "TV FOX / CHI -1.5 / O/U 42.5" in seen_texts
+    assert "Soldier Field" in seen_texts
+    assert "KICKOFF" not in seen_texts
+    assert icon_calls[-1] == "SCORE"
+
+
+def test_football_field_marker_fraction_maps_yard_line_to_screen_position():
+    event = {
+        "team_a_code": "SEA",
+        "team_b_code": "NE",
+        "possession": "SEA",
+        "yard_line": "SEA 42",
+    }
+
+    assert SportsDashboard._football_field_marker_fraction(event) == 0.42
+
+    event["yard_line"] = "NE 36"
+    assert SportsDashboard._football_field_marker_fraction(event) == 0.64
+
+    event.update({"possession": "NE", "yard_line": "NE 25"})
+    assert SportsDashboard._football_field_marker_fraction(event) == 0.75
+
+
+def test_football_possession_side_fill_key_marks_only_live_possession():
+    event = {
+        "state": "in",
+        "team_a_code": "SEA",
+        "team_b_code": "NE",
+        "possession": "SEA",
+    }
+
+    assert SportsDashboard._football_possession_side_fill_key(event, "a") == "amber"
+    assert SportsDashboard._football_possession_side_fill_key(event, "b") == "text"
+
+    event["state"] = "post"
+    assert SportsDashboard._football_possession_side_fill_key(event, "a") == "text"
+
+
+def test_football_team_side_fill_key_marks_live_possession_or_final_winner():
+    event = {
+        "state": "in",
+        "team_a_code": "SEA",
+        "team_b_code": "NE",
+        "possession": "NE",
+        "wins_a": 17,
+        "wins_b": 14,
+    }
+
+    assert SportsDashboard._football_team_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._football_team_side_fill_key(event, "b") == "amber"
+
+    event.update({"state": "post", "possession": "", "wins_a": 17, "wins_b": 24})
+    assert SportsDashboard._football_team_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._football_team_side_fill_key(event, "b") == "amber"
+
+    event.update({"wins_a": 24, "wins_b": 24})
+    assert SportsDashboard._football_team_side_fill_key(event, "a") == "text"
+    assert SportsDashboard._football_team_side_fill_key(event, "b") == "text"
+
+
+def test_football_possession_display_label_uses_chinese_team_names():
+    la = ZoneInfo("America/Los_Angeles")
+    nfl_event = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
+    ncaa_event = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")["events"][0]
+
+    assert nfl_event["possession"] == "SEA"
+    assert ncaa_event["possession"] == "TEX"
+    assert SportsDashboard._football_possession_display_label(nfl_event, "NFL") == "\u6d77\u9e70"
+    assert SportsDashboard._football_possession_display_label(ncaa_event, "NCAA") == "\u5fb7\u5dde"
+    assert SportsDashboard._football_display_team(nfl_event, "a", "NFL", full=True) == "西雅图海鹰"
+    assert SportsDashboard._football_display_team(nfl_event, "b", "NFL", full=True) == "新英格兰爱国者"
+
+
+def test_football_display_team_honors_full_ncaa_program_names_when_zh_short_exists():
+    event = {
+        "team_a": "Texas",
+        "team_a_name": "Texas Longhorns",
+        "team_a_code": "TEX",
+        "team_a_zh": "\u5fb7\u5dde",
+        "team_a_rank": 12,
+    }
+
+    assert SportsDashboard._football_display_team(event, "a", "NCAA") == "#12 \u5fb7\u5dde"
+    assert (
+        SportsDashboard._football_display_team(event, "a", "NCAA", full=True)
+        == "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b"
+    )
+
+
+def test_football_final_winner_label_uses_full_chinese_team_names():
+    nfl_event = {
+        "sport": "NFL",
+        "state": "post",
+        "team_a": "Green Bay Packers",
+        "team_a_code": "GB",
+        "team_a_zh": "\u5305\u88c5\u5de5",
+        "team_b": "Chicago Bears",
+        "team_b_code": "CHI",
+        "team_b_zh": "\u718a",
+        "wins_a": 24,
+        "wins_b": 21,
+        "winner_a": True,
+        "winner_b": False,
+    }
+    ncaa_event = {
+        "sport": "NCAA",
+        "state": "post",
+        "team_a": "Texas",
+        "team_a_name": "Texas Longhorns",
+        "team_a_code": "TEX",
+        "team_a_zh": "\u5fb7\u5dde",
+        "team_a_rank": 12,
+        "team_b": "Michigan",
+        "team_b_name": "Michigan Wolverines",
+        "team_b_code": "MICH",
+        "team_b_zh": "\u5bc6\u6b47\u6839",
+        "team_b_rank": 7,
+        "wins_a": 31,
+        "wins_b": 28,
+        "winner_a": True,
+        "winner_b": False,
+    }
+
+    assert SportsDashboard._football_final_winner_label(nfl_event, "NFL") == "\u7eff\u6e7e\u5305\u88c5\u5de5 \u80dc3\u5206"
+    assert (
+        SportsDashboard._football_final_winner_label(ncaa_event, "NCAA")
+        == "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b \u80dc3\u5206"
+    )
+
+
+def test_football_display_team_name_supports_ncaa_chinese_fallbacks():
+    assert SportsDashboard._football_display_team_name("TEX", "Texas", "NCAA") == "\u5fb7\u5dde"
+    assert (
+        SportsDashboard._football_display_team_name("TEX", "Texas", "NCAA", full=True)
+        == "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b"
+    )
+    assert (
+        SportsDashboard._football_display_team_name(
+            "TBD",
+            "Texas Longhorns",
+            "NCAA",
+            aliases=["Texas Longhorns", "Texas"],
+            full=True,
+        )
+        == "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b"
+    )
+
+
+def test_football_small_note_label_uses_venue_fallback():
+    assert (
+        SportsDashboard._football_small_note_label(
+            {
+                "sport": "NFL",
+                "state": "pre",
+                "venue": "Soldier Field",
+                "broadcast": "",
+                "spread": "",
+                "over_under": "",
+            }
+        )
+        == "Soldier Field"
+    )
+    assert (
+        SportsDashboard._football_small_note_label(
+            {
+                "sport": "NCAA",
+                "state": "pre",
+                "note": "Kickoff Classic",
+                "venue": "AT&T Stadium",
+            }
+        )
+        == "Kickoff Classic / AT&T Stadium"
+    )
+
+
+def test_ncaa_meta_label_preserves_neutral_site_venue_and_full_line_info():
+    assert (
+        SportsDashboard._ncaa_meta_label(
+            {
+                "neutral_site": True,
+                "venue": "AT&T Stadium",
+                "broadcast": "ESPN",
+                "spread": "TEX -6.5",
+                "over_under": "O/U 52.5",
+            }
+        )
+        == "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5"
+    )
+
+
+def test_ncaa_header_badge_prioritizes_ranked_games_before_neutral_site():
+    assert (
+        SportsDashboard._ncaa_header_badge_label(
+            {"team_a_rank": 12, "team_b_rank": 7, "neutral_site": True}
+        )
+        == "TOP 25"
+    )
+    assert (
+        SportsDashboard._ncaa_header_badge_label(
+            {"team_a_rank": 3, "team_b_rank": "", "neutral_site": True}
+        )
+        == "RANKED"
+    )
+    assert SportsDashboard._ncaa_header_badge_label({"neutral_site": True}) == "NEUTRAL"
+    assert SportsDashboard._ncaa_header_badge_label({}) == ""
+
+
+def test_football_small_note_label_prioritizes_final_status():
+    assert (
+        SportsDashboard._football_small_note_label(
+            {
+                "sport": "NFL",
+                "state": "post",
+                "status_text": "Final",
+                "venue": "Soldier Field",
+                "broadcast": "FOX",
+                "spread": "CHI -1.5",
+                "over_under": "O/U 42.5",
+            }
+        )
+        == "FINAL / Soldier Field"
+    )
+    assert (
+        SportsDashboard._football_small_note_label(
+            {
+                "sport": "NCAA",
+                "state": "post",
+                "status_text": "Final",
+                "note": "Kickoff Classic",
+                "venue": "AT&T Stadium",
+            }
+        )
+        == "FINAL / Kickoff Classic / AT&T Stadium"
+    )
+
+
+def test_nfl_main_card_keeps_live_team_scores_high_contrast():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NFL",
+        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
+        now,
+    )
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_score_calls = []
+
+    def capture_team_score(*args, **kwargs):
+        team_score_calls.append(
+            {
+                "team": args[4],
+                "score": args[5],
+                "team_fill": kwargs.get("team_fill"),
+                "score_fill": kwargs.get("score_fill"),
+            }
+        )
+
+    plugin._draw_hub_team_score = capture_team_score
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
+
+    assert team_score_calls[0]["team"] == "西雅图海鹰"
+    assert team_score_calls[0]["score"] == 17
+    assert team_score_calls[0]["team_fill"] == COLORS["text"]
+    assert team_score_calls[0]["score_fill"] == COLORS["text"]
+    assert team_score_calls[1]["team"] == "新英格兰爱国者"
+    assert team_score_calls[1]["team_fill"] == COLORS["text"]
+    assert team_score_calls[1]["score_fill"] == COLORS["text"]
+
+
+def test_nfl_main_card_highlights_final_winner():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
+            "wins_a": 21,
+            "wins_b": 24,
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_score_calls = []
+
+    def capture_team_score(*args, **kwargs):
+        team_score_calls.append(
+            {
+                "team": args[4],
+                "score": args[5],
+                "team_fill": kwargs.get("team_fill"),
+                "score_fill": kwargs.get("score_fill"),
+            }
+        )
+
+    plugin._draw_hub_team_score = capture_team_score
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert team_score_calls[0]["team_fill"] == COLORS["text"]
+    assert team_score_calls[0]["score_fill"] == COLORS["text"]
+    assert team_score_calls[1]["team"] == "芝加哥熊"
+    assert team_score_calls[1]["score"] == 24
+    assert team_score_calls[1]["team_fill"] == COLORS["amber"]
+    assert team_score_calls[1]["score_fill"] == COLORS["amber"]
+
+
+def test_nfl_main_card_uses_own_field_tint_for_live_context_box():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NFL",
+        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
+        now,
+    )
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert COLORS["nfl_field_tint"] != COLORS["panel_blue"]
+    assert image.getpixel((20, 140)) == COLORS["nfl_field_tint"]
+
+
+def test_nfl_main_card_live_meta_prioritizes_tv_and_line_before_last_play():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NFL",
+        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
+        now,
+    )
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "NFL DRIVE" in seen_texts
+    assert "DOWN" in seen_texts
+    assert "3RD & 4" in seen_texts
+    assert "FIELD" in seen_texts
+    assert "SEA 42" in seen_texts
+    assert "POS \u6d77\u9e70" in seen_texts
+    assert "PLAY" in seen_texts
+    assert "Kenneth Walker run for 6 yards" in seen_texts
+    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
+    assert "LAST Kenneth Walker run for 6 yards" not in seen_texts
+    assert icon_calls[-3:] == ["DOWN", "FIELD", "PLAY"]
+
+
+def test_nfl_main_card_live_drive_chips_fall_back_without_drive_position():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-live"))
+    event.update({"down_distance": "", "yard_line": "", "note": "", "last_play": ""})
+    card = SportsDashboard._offseason_hub_card("NFL", {"events": [event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "LIVE DRIVE" in seen_texts
+    assert "FIELD" not in icon_calls
+    assert icon_calls.count("DOWN") == 2
+
+
+def test_nfl_live_drive_chips_use_last_play_when_position_missing():
+    plugin = _plugin()
+    image = Image.new("RGB", (180, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    chips = []
+
+    def capture_chip(_draw, _box, label, value, accent):
+        chips.append((label, value, accent))
+
+    plugin._draw_nfl_live_drive_chip = capture_chip
+    plugin._draw_nfl_live_drive_chips(
+        draw,
+        0,
+        0,
+        160,
+        {"down_distance": "", "yard_line": "", "note": "", "last_play": "Timeout New England"},
+    )
+
+    assert chips == [("PLAY", "LAST PLAY", COLORS["amber"])]
+
+
+def test_ncaa_main_card_highlights_final_winner_team_block():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
+            "wins_a": 31,
+            "wins_b": 28,
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [final_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    team_blocks = []
+
+    def capture_team_block(_image, _draw, _x1, _y, _x2, _event, side, align="left", team_fill=None):
+        team_blocks.append({"side": side, "align": align, "team_fill": team_fill})
+
+    plugin._draw_ncaa_team_block = capture_team_block
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert team_blocks == [
+        {"side": "a", "align": "left", "team_fill": COLORS["amber"]},
+        {"side": "b", "align": "right", "team_fill": COLORS["text"]},
+    ]
+
+
+def test_ncaa_side_column_game_info_prioritizes_ranked_neutral_site_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    next_event = dict(parsed["events"][0])
+    next_event.update(
+        {
+            "state": "pre",
+            "status_text": "Preview",
+            "score_a": "",
+            "score_b": "",
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
+
+    assert "RANKED WATCH" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "08/29 4:30 PM" in seen_texts
+    assert "#12 \u5fb7\u5dde VS #7 \u5bc6\u6b47\u6839" in seen_texts
+    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
+    assert "RECENT" not in seen_texts
+    assert icon_calls[-5:] == ["KICK", "MATCH", "TV", "SITE", "RECORD"]
+
+
+def test_ncaa_matchup_label_maps_english_aliases_to_chinese_school_names():
+    event = {
+        "team_a": "Texas",
+        "team_b": "Michigan",
+        "team_a_rank": 12,
+        "team_b_rank": 7,
+        "record_a": "0-0",
+        "record_b": "0-0",
+        "neutral_site": True,
+    }
+
+    assert SportsDashboard._football_matchup_label(event, "NCAA") == "#12 \u5fb7\u5dde VS #7 \u5bc6\u6b47\u6839"
+    assert (
+        SportsDashboard._football_record_matchup_label(event, "NCAA")
+        == "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0"
+    )
+
+
+def test_ncaa_school_label_maps_full_english_alias_without_zh_field():
+    event = {
+        "team_a": "Texas Longhorns",
+        "team_b": "Michigan Wolverines",
+        "team_a_rank": 12,
+        "team_b_rank": 7,
+        "neutral_site": True,
+    }
+
+    assert SportsDashboard._ncaa_school_label(event, "a") == "\u5fb7\u5dde"
+    assert SportsDashboard._ncaa_school_label(event, "b") == "\u5bc6\u6b47\u6839"
+    assert SportsDashboard._ncaa_matchup_label(event) == "#12 \u5fb7\u5dde VS #7 \u5bc6\u6b47\u6839"
+
+
+def test_ncaa_school_label_supports_full_program_names_for_main_cards():
+    event = {
+        "team_a": "Texas Longhorns",
+        "team_b": "Michigan Wolverines",
+        "team_a_code": "TEX",
+        "team_b_code": "MICH",
+        "team_a_zh": "\u5fb7\u5dde",
+        "team_b_zh": "\u5bc6\u6b47\u6839",
+        "team_a_rank": 12,
+        "team_b_rank": 7,
+        "neutral_site": True,
+    }
+
+    assert SportsDashboard._ncaa_school_label(event, "a", full=True) == "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b"
+    assert SportsDashboard._ncaa_school_label(event, "b", full=True) == "\u5bc6\u6b47\u6839\u72fc\u737e"
+    assert (
+        SportsDashboard._ncaa_school_label(event, "a", include_rank=True, full=True)
+        == "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b"
+    )
+    assert SportsDashboard._ncaa_school_label({"team_a": "Georgia Bulldogs"}, "a", full=True) == "\u4f50\u6cbb\u4e9a\u6597\u725b\u72ac"
+    assert SportsDashboard._ncaa_school_label({"team_a": "Boise State Broncos"}, "a", full=True) == "\u535a\u4f0a\u897f\u5dde\u7acb\u91ce\u9a6c"
+
+
+def test_ncaa_school_label_supports_common_power_program_full_names():
+    cases = [
+        ("AUB", "\u5965\u672c\u8001\u864e"),
+        ("BAY", "\u8d1d\u52d2\u718a"),
+        ("DUKE", "\u675c\u514b\u84dd\u9b54"),
+        ("GT", "\u4f50\u6cbb\u4e9a\u7406\u5de5\u9ec4\u5939\u514b"),
+        ("ILL", "\u4f0a\u5229\u8bfa\u4f0a\u6218\u6597\u4f0a\u5229\u5c3c"),
+        ("IOWA", "\u7231\u8377\u534e\u9e70\u773c"),
+        ("ISU", "\u7231\u8377\u534e\u5dde\u7acb\u65cb\u98ce"),
+        ("KSU", "\u582a\u8428\u65af\u5dde\u7acb\u91ce\u732b"),
+        ("KU", "\u582a\u8428\u65af\u677e\u9e26\u9e70"),
+        ("UK", "\u80af\u5854\u57fa\u91ce\u732b"),
+        ("LOU", "\u8def\u6613\u7ef4\u5c14\u7ea2\u96c0"),
+        ("MSU", "\u5bc6\u6b47\u6839\u5dde\u7acb\u65af\u5df4\u8fbe\u4eba"),
+        ("OU", "\u4fc4\u514b\u62c9\u8377\u9a6c\u6377\u8db3\u8005"),
+        ("PITT", "\u5339\u5179\u5821\u9ed1\u8c79"),
+        ("PUR", "\u666e\u6e21\u9505\u7089\u5de5"),
+        ("RUTG", "\u7f57\u683c\u65af\u7ea2\u8863\u9a91\u58eb"),
+        ("SC", "\u5357\u5361\u6597\u9e21"),
+        ("TCU", "TCU\u89d2\u86d9"),
+        ("TTU", "\u5fb7\u5dde\u7406\u5de5\u7ea2\u8272\u7a81\u88ad\u8005"),
+        ("UCLA", "UCLA\u68d5\u718a"),
+        ("UNC", "\u5317\u5361\u7126\u6cb9\u8e35"),
+        ("VT", "\u5f17\u5409\u5c3c\u4e9a\u7406\u5de5\u970d\u57fa"),
+        ("WIS", "\u5a01\u65af\u5eb7\u661f\u737e"),
+        ("WSU", "\u534e\u76db\u987f\u5dde\u7acb\u7f8e\u6d32\u72ee"),
+        ("WVU", "\u897f\u5f17\u5409\u5c3c\u4e9a\u767b\u5c71\u8005"),
+    ]
+    for code, expected in cases:
+        assert SportsDashboard._ncaa_display_school_name(code, code, full=True) == expected
+
+
+def test_ncaa_school_label_supports_second_wave_program_full_names():
+    cases = [
+        ("AF", "\u7a7a\u519b\u730e\u9e70"),
+        ("APP", "\u963f\u5df4\u62c9\u5951\u4e9a\u5dde\u7acb\u767b\u5c71\u8005"),
+        ("ARK", "\u963f\u80af\u8272\u91ce\u732a"),
+        ("ARMY", "\u9646\u519b\u9ed1\u9a91\u58eb"),
+        ("BYU", "\u6768\u767e\u7ff0\u7f8e\u6d32\u72ee"),
+        ("CAL", "\u52a0\u5dde\u91d1\u718a"),
+        ("CIN", "\u8f9b\u8f9b\u90a3\u63d0\u718a\u72f8"),
+        ("COLO", "\u79d1\u7f57\u62c9\u591a\u6c34\u725b"),
+        ("ECU", "\u4e1c\u5361\u7f57\u6765\u7eb3\u6d77\u76d7"),
+        ("HAW", "\u590f\u5a01\u5937\u5f69\u8679\u52c7\u58eb"),
+        ("HOU", "\u4f11\u65af\u987f\u7f8e\u6d32\u72ee"),
+        ("NAVY", "\u6d77\u519b\u519b\u5b98\u751f"),
+        ("UCF", "\u4e2d\u4f5b\u7f57\u91cc\u8fbe\u9a91\u58eb"),
+        ("UCONN", "\u5eb7\u6d85\u72c4\u683c\u54c8\u58eb\u5947"),
+        ("UVA", "\u5f17\u5409\u5c3c\u4e9a\u9a91\u58eb"),
+        ("WAKE", "\u7ef4\u514b\u68ee\u6797\u9b54\u9b3c\u6267\u4e8b"),
+        ("WYO", "\u6000\u4fc4\u660e\u725b\u4ed4"),
+    ]
+    for code, expected in cases:
+        assert SportsDashboard._ncaa_display_school_name(code, code, full=True) == expected
+
+
+def test_ncaa_school_label_supports_remaining_program_full_names():
+    cases = [
+        ("AKR", "\u963f\u514b\u4f26\u9f50\u666e\u65af"),
+        ("CCU", "\u5361\u7f57\u6765\u7eb3\u6d77\u5cb8\u96c4\u9e21"),
+        ("CMU", "\u4e2d\u5bc6\u6b47\u6839\u5947\u73c0\u74e6\u4eba"),
+        ("CONN", "\u5eb7\u6d85\u72c4\u683c\u54c8\u58eb\u5947"),
+        ("ODU", "\u8001\u9053\u660e\u541b\u4e3b"),
+        ("OHIO", "\u4fc4\u4ea5\u4fc4\u5c71\u732b"),
+        ("SHSU", "\u8428\u59c6\u4f11\u65af\u987f\u718a\u72f8"),
+        ("UL", "\u8def\u6613\u65af\u5b89\u90a3\u72c2\u6012\u5361\u6d25\u4eba"),
+        ("ULL", "\u8def\u6613\u65af\u5b89\u90a3\u72c2\u6012\u5361\u6d25\u4eba"),
+    ]
+    for code, expected in cases:
+        assert SportsDashboard._ncaa_display_school_name(code, code, full=True) == expected
+
+
+def test_ncaa_school_label_maps_expanded_common_program_aliases():
+    cases = [
+        ("Georgia Bulldogs", "\u4f50\u6cbb\u4e9a"),
+        ("Boise State Broncos", "\u535a\u4f0a\u897f\u5dde\u7acb"),
+        ("Iowa State Cyclones", "\u7231\u8377\u534e\u5dde\u7acb"),
+        ("Texas Tech Red Raiders", "\u5fb7\u5dde\u7406\u5de5"),
+        ("UCF Knights", "\u4e2d\u4f5b\u7f57\u91cc\u8fbe"),
+        ("UConn Huskies", "\u5eb7\u6d85\u72c4\u683c"),
+        ("West Virginia Mountaineers", "\u897f\u5f17\u5409\u5c3c\u4e9a"),
+    ]
+    for raw_name, expected in cases:
+        assert SportsDashboard._ncaa_school_label({"team_a": raw_name}, "a") == expected
+
+
+def test_ncaa_school_label_maps_g5_and_service_academy_aliases():
+    cases = [
+        ("Army Black Knights", "\u9646\u519b"),
+        ("Navy Midshipmen", "\u6d77\u519b"),
+        ("Air Force Falcons", "\u7a7a\u519b"),
+        ("Tulane Green Wave", "\u675c\u5170"),
+        ("UNLV Rebels", "\u5185\u534e\u8fbe\u62c9\u65af\u7ef4\u52a0\u65af"),
+        ("James Madison Dukes", "\u8a79\u59c6\u65af\u9ea6\u8fea\u900a"),
+        ("Liberty Flames", "\u81ea\u7531"),
+        ("Louisiana Ragin' Cajuns", "\u8def\u6613\u65af\u5b89\u90a3"),
+        ("San Jose State Spartans", "\u5723\u4f55\u585e\u5dde\u7acb"),
+        ("Miami (OH) RedHawks", "\u8fc8\u963f\u5bc6\u4fc4\u4ea5\u4fc4"),
+        ("Hawai'i Rainbow Warriors", "\u590f\u5a01\u5937"),
+    ]
+
+    for raw_name, expected in cases:
+        assert SportsDashboard._ncaa_school_label({"team_a": raw_name}, "a") == expected
+
+
+def test_ncaa_matchup_label_uses_expanded_common_program_codes():
+    event = {
+        "team_a_code": "UGA",
+        "team_b_code": "BSU",
+        "team_a": "Georgia",
+        "team_b": "Boise State",
+        "team_a_rank": 3,
+        "team_b_rank": 18,
+        "neutral_site": True,
+    }
+
+    assert SportsDashboard._ncaa_matchup_label(event) == "#3 \u4f50\u6cbb\u4e9a VS #18 \u535a\u4f0a\u897f\u5dde\u7acb"
+
+
+def test_ncaa_matchup_label_uses_expanded_g5_program_codes():
+    event = {
+        "team_a_code": "TULN",
+        "team_b_code": "UNLV",
+        "team_a": "Tulane",
+        "team_b": "UNLV",
+        "team_a_rank": 24,
+        "team_b_rank": 21,
+        "neutral_site": True,
+    }
+
+    assert SportsDashboard._ncaa_matchup_label(event) == "#24 \u675c\u5170 VS #21 \u5185\u534e\u8fbe\u62c9\u65af\u7ef4\u52a0\u65af"
+
+
+def test_nfl_matchup_label_maps_english_aliases_to_chinese_team_names():
+    event = {
+        "team_a": "Seattle Seahawks",
+        "team_b": "New England Patriots",
+        "record_a": "2-0",
+        "record_b": "1-1",
+    }
+
+    assert SportsDashboard._football_matchup_label(event, "NFL") == "\u6d77\u9e70 @ \u7231\u56fd\u8005"
+    assert (
+        SportsDashboard._football_record_matchup_label(event, "NFL")
+        == "\u6d77\u9e70 2-0 / \u7231\u56fd\u8005 1-1"
+    )
+
+
+def test_nfl_standalone_panel_uses_own_comic_accent_not_mlb_blue():
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    now = datetime(2026, 9, 10, 17, 50, tzinfo=ZoneInfo("America/Los_Angeles"))
+    card = {"sport": "NFL", "status": "NEXT", "main": {"sport": "NFL", "state": "pre"}}
+    halftone_colors = []
+    shell_accents = []
+
+    def capture_halftone(_draw, _bounds, foreground, _background, _spacing, _radius):
+        halftone_colors.append(foreground)
+
+    def capture_shell(_draw, _x1, _y1, _x2, _y2, accent):
+        shell_accents.append(accent)
+
+    plugin._draw_halftone = capture_halftone
+    plugin._draw_hub_card_shell = capture_shell
+    plugin._draw_nfl_field = lambda *_args, **_kwargs: None
+    plugin._draw_hub_team_score = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_pregame_context = lambda *_args, **_kwargs: None
+    plugin._draw_football_side_column = lambda *_args, **_kwargs: None
+
+    plugin._draw_nfl_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
+
+    assert halftone_colors == [COLORS["nfl_accent"]]
+    assert shell_accents == [COLORS["nfl_accent"]]
+    assert COLORS["nfl_accent"] != COLORS["mlb_accent"]
+
+
+def test_ncaa_standalone_panel_uses_own_comic_accent_token():
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=ZoneInfo("America/Los_Angeles"))
+    card = {"sport": "NCAA", "status": "NEXT", "main": {"sport": "NCAA", "state": "pre"}}
+    halftone_colors = []
+    shell_accents = []
+
+    def capture_halftone(_draw, _bounds, foreground, _background, _spacing, _radius):
+        halftone_colors.append(foreground)
+
+    def capture_shell(_draw, _x1, _y1, _x2, _y2, accent):
+        shell_accents.append(accent)
+
+    plugin._draw_halftone = capture_halftone
+    plugin._draw_hub_card_shell = capture_shell
+    plugin._draw_ncaa_field_backdrop = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_team_block = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_pregame_context = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column = lambda *_args, **_kwargs: None
+
+    plugin._draw_ncaa_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
+
+    assert halftone_colors == [COLORS["ncaa_accent"]]
+    assert shell_accents == [COLORS["ncaa_accent"]]
+    assert COLORS["ncaa_accent"] != COLORS["nfl_accent"]
+
+
+def test_nfl_standalone_panel_uses_drive_first_layout():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 50, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    card = SportsDashboard._offseason_hub_card("NFL", parsed, now)
+    image = Image.new("RGB", (552, 268), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_nfl_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
+
+    assert "NFL LIVE" in seen_texts
+    assert "西雅图海鹰" in seen_texts
+    assert "新英格兰爱国者" in seen_texts
+    assert "NFL DRIVE" in seen_texts
+    assert "3RD & 4" in seen_texts
+    assert "SEA 42" in seen_texts
+    assert "POS \u6d77\u9e70" in seen_texts
+    assert any("Kenneth Walker run for 6 yards" in text for text in seen_texts)
+    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
+    assert ("https://example.com/nfl-sea.png", 20, "SEA") in logo_calls
+    assert ("https://example.com/nfl-ne.png", 20, "NE") in logo_calls
+
+
+def test_nfl_main_card_uses_named_stage_header_without_week_prefix():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 10, 17, 50, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_nfl_scoreboard_payload()))
+    payload["week"] = {"number": 23, "text": "Super Bowl"}
+    parsed = SportsDashboard._parse_football_scoreboard(payload, la, "NFL")
+    card = SportsDashboard._offseason_hub_card("NFL", parsed, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert card["week_label"] == "SUPER BOWL"
+    assert "SUPER BOWL" in seen_texts
+    assert "WEEK SUPER BOWL" not in seen_texts
+
+
+def test_ncaa_standalone_panel_uses_college_specific_layout():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    card = SportsDashboard._offseason_hub_card("NCAA", parsed, now)
+    image = Image.new("RGB", (552, 268), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_ncaa_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
+
+    assert "NCAA LIVE" in seen_texts
+    assert "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b" in seen_texts
+    assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "RANKED WATCH" not in seen_texts
+    assert "No NCAA schedule" not in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" not in seen_texts
+    assert ("https://example.com/ncaa-tex.png", 20, "TEX") in logo_calls
+    assert ("https://example.com/ncaa-mich.png", 20, "MICH") in logo_calls
+
+
+def test_ncaa_main_card_renders_full_program_names():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    card = SportsDashboard._offseason_hub_card("NCAA", parsed, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b" in seen_texts
+    assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
+    assert "POS \u5fb7\u5dde" in seen_texts
+
+
+def test_ncaa_main_card_live_context_uses_college_drive_label():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    card = SportsDashboard._offseason_hub_card("NCAA", parsed, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "2ND & 8" in seen_texts
+    assert "MICH 36" in seen_texts
+    assert "POS \u5fb7\u5dde" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" not in seen_texts
+    assert icon_calls[-3:] == ["DOWN", "DOWN", "FIELD"]
+
+
+def test_ncaa_side_column_uses_chinese_ranked_matchup_for_scheduled_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    next_event = dict(parsed["events"][0])
+    next_event.update(
+        {
+            "state": "pre",
+            "status_text": "Preview",
+            "wins_a": None,
+            "wins_b": None,
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "RANKED WATCH" in seen_texts
+    assert "#12 \u5fb7\u5dde VS #7 \u5bc6\u6b47\u6839" in seen_texts
+    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+
+
+def test_ncaa_side_column_prioritizes_ranked_watch_over_soonest_unranked_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    unranked_soon = {
+        "event_id": "unranked-soon",
+        "sport": "NCAA",
+        "state": "pre",
+        "start": now + timedelta(hours=1),
+        "team_a": "Tulane",
+        "team_b": "Rice",
+        "team_a_code": "TULN",
+        "team_b_code": "RICE",
+    }
+    ranked_late = {
+        "event_id": "ranked-late",
+        "sport": "NCAA",
+        "state": "pre",
+        "start": now + timedelta(hours=4),
+        "team_a": "Georgia",
+        "team_b": "Boise State",
+        "team_a_code": "UGA",
+        "team_b_code": "BSU",
+        "team_a_rank": 3,
+        "team_b_rank": 18,
+        "neutral_site": True,
+    }
+    card = {
+        "sport": "NCAA",
+        "status": "NEXT",
+        "main": unranked_soon,
+        "upcoming": [unranked_soon, ranked_late],
+        "recent": [],
+    }
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    row_order = []
+
+    def capture_small_row(_image, _draw, _x1, _x2, _y, event, _show_time):
+        row_order.append(event.get("event_id"))
+
+    plugin._draw_ncaa_small_row = capture_small_row
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert row_order[:2] == ["ranked-late", "unranked-soon"]
+
+
+def test_ncaa_live_side_column_prioritizes_drive_before_ranked_watch():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    live_event = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")["events"][0]
+    ranked_late = {
+        "event_id": "ranked-late",
+        "sport": "NCAA",
+        "state": "pre",
+        "start": now + timedelta(hours=4),
+        "team_a": "Georgia",
+        "team_b": "Boise State",
+        "team_a_code": "UGA",
+        "team_b_code": "BSU",
+        "team_a_rank": 3,
+        "team_b_rank": 18,
+        "neutral_site": True,
+    }
+    card = {"sport": "NCAA", "status": "LIVE", "main": live_event, "upcoming": [ranked_late], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    headers = []
+    row_order = []
+    original_header = plugin._draw_hub_section_header
+
+    def capture_header(draw_arg, x1, x2, y, title, accent):
+        headers.append((str(title), int(y)))
+        return original_header(draw_arg, x1, x2, y, title, accent)
+
+    def capture_small_row(_image, _draw, _x1, _x2, _y, event, _show_time):
+        row_order.append(event.get("event_id"))
+
+    plugin._draw_hub_section_header = capture_header
+    plugin._draw_ncaa_small_row = capture_small_row
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    drive_y = next(y for title, y in headers if title == "COLLEGE DRIVE")
+    ranked_y = next(y for title, y in headers if title == "RANKED WATCH")
+    assert drive_y < ranked_y
+    assert row_order == ["ranked-late"]
+
+
+def test_ncaa_live_side_fallback_keeps_drive_and_game_info_separate():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 17, 0, tzinfo=la)
+    card = SportsDashboard._offseason_hub_card(
+        "NCAA",
+        SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA"),
+        now,
+    )
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "GAME INFO" in seen_texts
+    assert "Q4 1:18" in seen_texts
+    assert "2ND & 8" in seen_texts
+    assert "MICH 36 / POS \u5fb7\u5dde" in seen_texts
+    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
+    assert "KICK" not in seen_texts
+    assert "MATCH" not in seen_texts
+    assert icon_calls == ["QTR", "DOWN", "FIELD", "TV", "SITE", "RECORD"]
+
+
+def test_ncaa_side_column_uses_final_snap_when_final_has_no_lists():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
+            "wins_a": 31,
+            "wins_b": 28,
+            "winner_a": True,
+            "winner_b": False,
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = {"sport": "NCAA", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    assert "FINAL SNAP" in seen_texts
+    assert "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b \u80dc3\u5206" in seen_texts
+    assert "#12 \u5fb7\u5dde 31 / #7 \u5bc6\u6b47\u6839 28" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "RANKED WATCH" not in seen_texts
+    assert "No NCAA schedule" not in seen_texts
+    assert "No recent results" not in seen_texts
+
+
+def test_ncaa_side_column_keeps_final_snap_below_ranked_watch_when_upcoming_exists():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
+            "wins_a": 31,
+            "wins_b": 28,
+            "winner_a": True,
+            "winner_b": False,
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    ranked_late = {
+        "event_id": "ranked-late",
+        "sport": "NCAA",
+        "state": "pre",
+        "start": now + timedelta(hours=4),
+        "team_a": "Georgia",
+        "team_b": "Boise State",
+        "team_a_code": "UGA",
+        "team_b_code": "BSU",
+        "team_a_rank": 3,
+        "team_b_rank": 18,
+        "neutral_site": True,
+    }
+    card = {"sport": "NCAA", "status": "RECENT", "main": final_event, "upcoming": [ranked_late], "recent": []}
+    image = Image.new("RGB", (240, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    headers = []
+    original_header = plugin._draw_hub_section_header
+
+    def capture_header(draw_arg, x1, x2, y, title, accent):
+        headers.append((str(title), int(y)))
+        return original_header(draw_arg, x1, x2, y, title, accent)
+
+    plugin._draw_hub_section_header = capture_header
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_side_column(image, draw, (0, 0, 220, 200), card, now)
+
+    ranked_y = next(y for title, y in headers if title == "RANKED WATCH")
+    final_y = next(y for title, y in headers if title == "FINAL SNAP")
+    assert final_y > ranked_y
+
+
+def test_ncaa_main_card_uses_neutral_site_pregame_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    next_event = dict(parsed["events"][0])
+    next_event.update(
+        {
+            "state": "pre",
+            "status_text": "Preview",
+            "score_a": "",
+            "score_b": "",
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+            "wins_a": None,
+            "wins_b": None,
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
+
+    assert "TOP 25" in seen_texts
+    assert "KICKOFF" in seen_texts
+    assert "08/29 4:30 PM" in seen_texts
+    assert "NEUTRAL / Kickoff Classic" in seen_texts
+    assert "AT&T Stadium  |  O/U 52.5" in seen_texts
+    assert "NEUTRAL SITE" not in seen_texts
+    assert icon_calls[-1] == "KICK"
+
+
+def test_ncaa_main_card_live_drive_uses_down_and_field_chips():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    card = SportsDashboard._offseason_hub_card("NCAA", parsed, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "NCAA LIVE" in seen_texts
+    assert "TOP 25" in seen_texts
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "DOWN" in seen_texts
+    assert "2ND & 8" in seen_texts
+    assert "FIELD" in seen_texts
+    assert "MICH 36" in seen_texts
+    assert "POS \u5fb7\u5dde" in seen_texts
+    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
+    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" not in seen_texts
+    assert icon_calls[-3:] == ["DOWN", "DOWN", "FIELD"]
+
+
+def test_ncaa_main_card_live_drive_draws_last_play_strip_when_available():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    event = dict(parsed["events"][0])
+    event["last_play"] = "Arch Manning pass complete to Ryan Wingo for 12 yards"
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "PLAY" in seen_texts
+    assert "Arch Manning pass complete to Ryan Wingo for 12 yards" in seen_texts
+    assert icon_calls[-4:] == ["DOWN", "DOWN", "FIELD", "PLAY"]
+
+
+def test_ncaa_main_card_live_drive_falls_back_without_field_position():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 16, 45, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    event = dict(parsed["events"][0])
+    event.update({"down_distance": "", "yard_line": "", "note": ""})
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert "COLLEGE DRIVE" in seen_texts
+    assert "LIVE DRIVE" in seen_texts
+    assert "FIELD" not in seen_texts
+    assert icon_calls[-2:] == ["DOWN", "DOWN"]
+
+
+def test_ncaa_live_drive_chips_use_last_play_when_position_missing():
+    plugin = _plugin()
+    image = Image.new("RGB", (180, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    chips = []
+
+    def capture_chip(_draw, _box, label, value, accent):
+        chips.append((label, value, accent))
+
+    plugin._draw_ncaa_live_drive_chip = capture_chip
+    plugin._draw_ncaa_live_drive_chips(
+        draw,
+        0,
+        0,
+        160,
+        {"down_distance": "", "yard_line": "", "note": "", "last_play": "Arch Manning pass complete"},
+    )
+
+    assert chips == [("PLAY", "LAST PLAY", COLORS["amber"])]
+
+
+def test_football_main_card_uses_ncaa_tag_token_for_ncaa_fallback():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    next_event = dict(parsed["events"][0])
+    next_event.update({"state": "pre", "score_a": "", "score_b": ""})
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
+
+    assert image.getpixel((20, 20)) == COLORS["ncaa_tag"]
+
+
+def test_ncaa_main_card_uses_own_field_tint_for_pregame_context_box():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    next_event = dict(parsed["events"][0])
+    next_event.update(
+        {
+            "state": "pre",
+            "status_text": "Preview",
+            "score_a": "",
+            "score_b": "",
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+            "wins_a": None,
+            "wins_b": None,
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_ncaa_main_card(image, draw, (0, 0, 320, 190), card, now)
+
+    assert COLORS["ncaa_field_tint"] != COLORS["panel_blue"]
+    assert image.getpixel((20, 145)) == COLORS["ncaa_field_tint"]
+
+
+def test_ncaa_main_card_uses_neutral_site_final_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
+    final_event = dict(parsed["events"][0])
+    final_event.update(
+        {
+            "state": "post",
+            "status_text": "Final",
+            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
+            "wins_a": 31,
+            "wins_b": 28,
+            "period": None,
+            "clock": "",
+            "down_distance": "",
+            "yard_line": "",
+            "possession": "",
+        }
+    )
+    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [final_event]}, now)
+    image = Image.new("RGB", (340, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
+
+    assert "NCAA RECENT" in seen_texts
+    assert "FINAL" in seen_texts
+    assert "NEUTRAL / Kickoff Classic" in seen_texts
+    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" in seen_texts
+    assert "SCHEDULED" not in seen_texts
+    assert icon_calls[-1] == "SCORE"
+
+
+def test_wnba_side_row_draws_live_status_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert "Q3 4:22 / \u738b\u724c +6" in seen_texts
+
+
+def test_wnba_side_row_draws_period_chips_for_live_quarter():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    chip_calls = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_period_chips = lambda _draw, x, y, period: chip_calls.append((x, y, period))
+
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert chip_calls == [(68, 24, 3)]
+
+    chip_calls.clear()
+    event.update({"state": "pre", "period": 0, "wins_a": None, "wins_b": None})
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert chip_calls == []
+
+
+def test_wnba_side_row_draws_lead_chip_for_live_margin():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    lead_chips = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_wnba_lead_chip = lambda _draw, x, y, label: lead_chips.append((x, y, label))
+
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert SportsDashboard._wnba_lead_chip_label(event) == "+6"
+    assert lead_chips == [(96, 24, "+6")]
+
+    lead_chips.clear()
+    event.update({"wins_a": 78, "wins_b": 78})
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert SportsDashboard._wnba_lead_chip_label(event) == ""
+    assert lead_chips == []
+
+
+def test_wnba_side_row_draws_scheduled_tv_and_venue_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0]
+    event = dict(event)
+    event.update(
+        {
+            "state": "pre",
+            "status_text": "Preview",
+            "wins_a": None,
+            "wins_b": None,
+            "period_scores_a": [],
+            "period_scores_b": [],
+            "spread": "",
+            "over_under": "",
+        }
+    )
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert "ION / Michelob ULTRA Arena" in seen_texts
+    assert "Preview" not in seen_texts
+
+
+def test_wnba_live_side_fallback_preserves_tv_line_and_venue_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_live_side_fallback(image, draw, 10, 8, 230, 188, event)
+
+    assert "TV" in seen_texts
+    assert "ION / LV -4.5 / O/U 166.5" in seen_texts
+    assert "LINE" not in seen_texts
+    assert "VENUE" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "QUARTER LOG" in seen_texts
+    assert icon_calls[:4] == ["CLOCK", "LEAD", "TV", "VENUE"]
+
+
+def test_wnba_live_side_fallback_uses_spread_icon_without_broadcast():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    event = dict(event)
+    event["broadcast"] = ""
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_live_side_fallback(image, draw, 10, 8, 230, 188, event)
+
+    assert "TV" not in seen_texts
+    assert "SPREAD" in seen_texts
+    assert "LV -4.5 / O/U 166.5" in seen_texts
+    assert "LINE" not in seen_texts
+    assert "VENUE" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert icon_calls[:4] == ["CLOCK", "LEAD", "SPREAD", "VENUE"]
+
+
+def test_wnba_live_side_fallback_omits_placeholder_lead_without_scores():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    event = dict(event)
+    event.update({"wins_a": None, "wins_b": None})
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_live_side_fallback(image, draw, 10, 8, 230, 188, event)
+
+    assert "LEAD" not in icon_calls
+    assert "TBD" not in seen_texts
+    assert "TV" in seen_texts
+    assert "ION / LV -4.5 / O/U 166.5" in seen_texts
+    assert "VENUE" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert icon_calls[:3] == ["CLOCK", "TV", "VENUE"]
+
+
+def test_wnba_result_side_fallback_preserves_tv_line_and_venue_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    payload["events"][0]["competitions"][0]["odds"] = [{"details": "LV -4.5", "overUnder": 166.5}]
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+    event = dict(event)
+    event.update({"state": "post", "status_text": "Final"})
+    image = Image.new("RGB", (250, 190), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    icon_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_wnba_result_side_fallback(draw, 10, 8, 230, 188, event)
+
+    assert "RESULT SNAP" in seen_texts
+    assert "INFO" not in seen_texts
+    assert "TV" in seen_texts
+    assert "ION / LV -4.5 / O/U 166.5" in seen_texts
+    assert "VENUE" in seen_texts
+    assert "Michelob ULTRA Arena" in seen_texts
+    assert "QUARTER LOG" in seen_texts
+    assert icon_calls[:4] == ["WIN", "SCORE", "TV", "VENUE"]
+
+
+def test_wnba_small_note_label_falls_back_to_status_without_score():
+    event = {
+        "state": "in",
+        "status_text": "Q2 8:10",
+        "team_a": "SEA",
+        "team_b": "LV",
+        "wins_a": None,
+        "wins_b": None,
+    }
+
+    assert SportsDashboard._wnba_small_note_label(event) == "Q2 8:10"
+
+
+def test_wnba_small_note_label_prioritizes_final_status_over_pregame_lines():
+    event = {
+        "state": "post",
+        "status_text": "Final",
+        "venue": "Barclays Center",
+        "broadcast": "ESPN",
+        "spread": "NY -4.5",
+        "over_under": "O/U 166.5",
+    }
+
+    assert SportsDashboard._wnba_small_note_label(event) == "Final / Barclays Center"
+
+
+def test_wnba_side_row_uses_team_code_logo_fallbacks_next_to_names():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), la)["events"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    logo_calls = []
+
+    def capture_team_logo(_image, _draw, logo_url, x, y, size, fallback_text):
+        logo_calls.append(
+            {
+                "url": str(logo_url or ""),
+                "x": int(x),
+                "size": int(size),
+                "fallback": str(fallback_text or ""),
+            }
+        )
+
+    plugin._draw_team_logo = capture_team_logo
+
+    plugin._draw_wnba_small_row(image, draw, 10, 230, 8, event, True)
+
+    assert [call["fallback"] for call in logo_calls] == ["SEA", "LV"]
+    assert logo_calls[0]["x"] >= 66
+    assert logo_calls[0]["x"] < logo_calls[1]["x"]
+
+
+def test_mlb_side_row_draws_live_inning_and_count_context():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)["events"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_mlb_small_row(
+        image,
+        draw,
+        10,
+        230,
+        8,
+        event,
+        datetime(2026, 6, 14, 13, 30, tzinfo=la),
+        True,
+    )
+
+    assert "TOP 7th / 1B 3B / 1 OUT" in seen_texts
+
+
+def test_mlb_side_row_draws_mini_base_diamond_for_live_runners():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    base_icons = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_mini_base_diamond = lambda _draw, x, y, bases: base_icons.append((x, y, bases))
+
+    plugin._draw_mlb_small_row(
+        image,
+        draw,
+        10,
+        230,
+        8,
+        event,
+        datetime(2026, 6, 14, 13, 30, tzinfo=la),
+        True,
+    )
+
+    assert base_icons == [(68, 17, "13")]
+
+    base_icons.clear()
+    event["bases"] = ""
+    plugin._draw_mlb_small_row(
+        image,
+        draw,
+        10,
+        230,
+        8,
+        event,
+        datetime(2026, 6, 14, 13, 30, tzinfo=la),
+        True,
+    )
+
+    assert base_icons == []
+
+
+def test_mlb_side_row_draws_count_chip_for_live_count_and_outs():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    count_chips = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_mini_base_diamond = lambda *_args, **_kwargs: None
+    plugin._draw_mlb_count_chip = lambda _draw, x, y, label, outs: count_chips.append((x, y, label, outs))
+
+    plugin._draw_mlb_small_row(
+        image,
+        draw,
+        10,
+        230,
+        8,
+        event,
+        datetime(2026, 6, 14, 13, 30, tzinfo=la),
+        True,
+    )
+
+    assert SportsDashboard._mlb_count_chip_label(event) == "2-1"
+    assert count_chips == [(94, 24, "2-1", 1)]
+
+    count_chips.clear()
+    event.update({"state": "pre", "balls": 2, "strikes": 1, "outs": 1})
+    plugin._draw_mlb_small_row(
+        image,
+        draw,
+        10,
+        230,
+        8,
+        event,
+        datetime(2026, 6, 14, 13, 30, tzinfo=la),
+        True,
+    )
+
+    assert SportsDashboard._mlb_count_chip_label(event) == ""
+    assert count_chips == []
+
+
+def test_mlb_small_note_falls_back_to_count_when_no_runners_are_on_base():
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la)["events"][0])
+    event["bases"] = ""
+
+    assert SportsDashboard._mlb_small_note_label(event) == "TOP 7th / 1 OUT / B-S 2-1"
+    assert SportsDashboard._mlb_count_label(event) == "B-S 2-1 OUT 1"
+    assert SportsDashboard._mlb_count_chip_label(event) == "2-1"
+
+
+def test_mlb_side_row_uses_chinese_names_with_code_logo_fallback():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    event = {
+        "sport": "MLB",
+        "state": "pre",
+        "start": now + timedelta(hours=2),
+        "team_a": "LAD",
+        "team_b": "SF",
+        "team_a_code": "LAD",
+        "team_b_code": "SF",
+        "team_a_logo": "https://example.com/mlb-lad.png",
+        "team_b_logo": "https://example.com/mlb-sf.png",
+    }
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+
+    plugin._draw_mlb_small_row(image, draw, 10, 230, 8, event, now, show_time=True)
+
+    assert "\u9053\u5947 VS \u5de8\u4eba" in seen_texts
+    assert ("https://example.com/mlb-lad.png", 11, "LAD") in logo_calls
+    assert ("https://example.com/mlb-sf.png", 11, "SF") in logo_calls
+
+
+def test_mlb_main_card_uses_chinese_names_with_code_logo_fallback():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    event = {
+        "sport": "MLB",
+        "state": "pre",
+        "start": now + timedelta(hours=2),
+        "status_text": "Scheduled",
+        "team_a": "LAD",
+        "team_b": "SF",
+        "team_a_code": "LAD",
+        "team_b_code": "SF",
+        "team_a_logo": "https://example.com/mlb-lad.png",
+        "team_b_logo": "https://example.com/mlb-sf.png",
+        "record_a": "42-28",
+        "record_b": "34-35",
+        "probable_a": "T. Glasnow",
+        "probable_b": "L. Webb",
+        "venue": "Oracle Park",
+    }
+    card = {"sport": "MLB", "status": "NEXT", "main": event, "upcoming": [event], "recent": []}
+    image = Image.new("RGB", (320, 210), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
+        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
+
+    assert "洛杉矶道奇" in seen_texts
+    assert "旧金山巨人" in seen_texts
+    assert ("https://example.com/mlb-lad.png", 20, "LAD") in logo_calls
+    assert ("https://example.com/mlb-sf.png", 20, "SF") in logo_calls
+
+
+def test_hub_team_score_right_logo_stays_before_team_name():
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 90), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    logo_calls = []
+    right_aligned_calls = []
+    original_right_aligned = plugin._draw_right_aligned
+
+    def capture_team_logo(_image, _draw, logo_url, x, y, size, fallback_text):
+        logo_calls.append(
+            {
+                "url": str(logo_url or ""),
+                "x": int(x),
+                "y": int(y),
+                "size": int(size),
+                "fallback": str(fallback_text or ""),
+            }
+        )
+
+    def capture_right_aligned(draw_obj, xy, text, font, color):
+        right_aligned_calls.append((xy, str(text), font))
+        return original_right_aligned(draw_obj, xy, text, font, color)
+
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_right_aligned = capture_right_aligned
+
+    plugin._draw_hub_team_score(
+        draw,
+        20,
+        12,
+        210,
+        "Liberty",
+        82,
+        "12-3",
+        align="right",
+        image=image,
+        logo_url="https://example.com/wnba-ny.png",
+        logo_size=20,
+        logo_fallback="NY",
+    )
+
+    team_xy, team_text, team_font = next(call for call in right_aligned_calls if call[1] == "Liberty")
+    team_left = int(team_xy[0] - SportsDashboard._text_width(draw, team_text, team_font))
+    logo = logo_calls[0]
+    logo_gap = team_left - (logo["x"] + logo["size"])
+
+    assert logo["fallback"] == "NY"
+    assert logo["x"] < team_left
+    assert 0 <= logo_gap <= 5
+
+
+def test_football_side_row_draws_live_drive_context_with_time():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert "Q2 8:42 / 3RD & 4 / SEA 42 / POS \u6d77\u9e70" in seen_texts
+
+
+def test_football_side_row_draws_mini_field_marker_for_live_drive():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    field_markers = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_mini_field_marker = lambda _draw, x, y, width, sport, row_event: field_markers.append(
+        (x, y, width, sport, row_event.get("yard_line"))
+    )
+
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert field_markers == [(68, 24, 24, "NFL", "SEA 42")]
+
+    field_markers.clear()
+    event.update({"state": "pre", "yard_line": "", "possession": "", "down_distance": ""})
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert field_markers == []
+
+
+def test_football_side_row_draws_down_chip_for_live_drive():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0])
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    down_chips = []
+
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    plugin._draw_football_mini_field_marker = lambda *_args, **_kwargs: None
+    plugin._draw_football_down_chip = lambda _draw, x, y, label, row_event, sport: down_chips.append(
+        (x, y, label, row_event.get("down_distance"), sport)
+    )
+
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert SportsDashboard._football_down_number(event) == 3
+    assert SportsDashboard._football_down_chip_label(event) == "3&4"
+    assert down_chips == [(96, 24, "3&4", "3RD & 4", "NFL")]
+
+    down_chips.clear()
+    event.update({"state": "pre", "yard_line": "SEA 42", "possession": "SEA", "down_distance": "3RD & 4"})
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert SportsDashboard._football_down_chip_label(event) == ""
+    assert down_chips == []
+
+
+def test_football_side_row_keeps_broadcast_context_for_scheduled_game():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
+    event = next(item for item in parsed["events"] if item["event_id"] == "nfl-next")
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
+
+
+def test_football_side_row_left_logo_stays_next_to_left_team_name():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
+    image = Image.new("RGB", (250, 40), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    logo_calls = []
+    right_aligned_calls = []
+    original_right_aligned = plugin._draw_right_aligned
+
+    def capture_team_logo(_image, _draw, logo_url, x, y, size, fallback_text):
+        logo_calls.append(
+            {
+                "url": str(logo_url or ""),
+                "x": int(x),
+                "y": int(y),
+                "size": int(size),
+                "fallback": str(fallback_text or ""),
+            }
+        )
+
+    def capture_right_aligned(draw_obj, xy, text, font, color):
+        right_aligned_calls.append((xy, str(text), font))
+        return original_right_aligned(draw_obj, xy, text, font, color)
+
+    plugin._draw_team_logo = capture_team_logo
+    plugin._draw_right_aligned = capture_right_aligned
+
+    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
+
+    matchup_xy, matchup_text, matchup_font = next(
+        call for call in right_aligned_calls if call[1] == "\u6d77\u9e70 17-14 \u7231\u56fd\u8005"
+    )
+    matchup_left = int(matchup_xy[0] - SportsDashboard._text_width(draw, matchup_text, matchup_font))
+    left_logo = next(call for call in logo_calls if call["fallback"] == "SEA")
+    logo_gap = matchup_left - (left_logo["x"] + left_logo["size"])
+
+    assert left_logo["x"] >= 66
+    assert 0 <= logo_gap <= 5
+
+
+def test_select_f1_events_tracks_live_race_weekend():
+    la = ZoneInfo("America/Los_Angeles")
+    data = SportsDashboard._parse_f1_jolpica_bundle(_sample_f1_jolpica_bundle(), la)
+
+    selected = SportsDashboard._select_f1_events(data, datetime(2026, 6, 14, 6, 45, tzinfo=la))
+
+    assert selected["status"] == "LIVE"
+    assert selected["live_session"]["label"] == "RACE"
+    assert selected["main_race"]["race_name"] == "Barcelona-Catalunya Grand Prix"
+    assert selected["next_race"]["race_name"] == "Austrian Grand Prix"
+
+
+def test_f1_openf1_snapshot_adds_live_leaderboard_and_weather():
+    parsed = SportsDashboard._parse_f1_openf1_snapshot(_sample_openf1_snapshot())
+
+    assert parsed["leaderboard"][0]["driver_code"] == "RUS"
+    assert parsed["leaderboard"][1]["gap"] == "1.204"
+    assert parsed["weather"]["track"] == 39.2
+
+
+def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    la = ZoneInfo("America/Los_Angeles")
+    calls = []
+    now = datetime(2026, 6, 14, 9, 0, tzinfo=la)
+    hub_selected = SportsDashboard._select_offseason_hub(
+        {
+            "mlb": SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), la),
+            "wnba": {"events": []},
+            "pga": {"events": []},
+        },
+        now,
+    )
+
+    monkeypatch.setattr(plugin, "_try_worldcup_football_data_panel", lambda *args, **kwargs: Image.new("RGB", args[2], COLORS["panel"]))
+    monkeypatch.setattr(plugin, "_try_worldcup_api_panel", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_try_worldcup_scoreboard_panel", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_prepare_worldcup_panel", lambda panel, dimensions, visible: (panel, (0, 0, dimensions[0], dimensions[1])))
+    monkeypatch.setattr(plugin, "_load_nba_events", lambda *_args, **_kwargs: (SportsDashboard._fallback_nba_events(la), "NBA FALLBACK"))
+    monkeypatch.setattr(plugin, "_attach_nba_odds", lambda events, *_args, **_kwargs: events)
+    monkeypatch.setattr(plugin, "_write_nba_live_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_load_offseason_hub", lambda *_args, **_kwargs: (hub_selected, "HUB LIVE"))
+    monkeypatch.setattr(plugin, "_write_offseason_hub_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_offseason_hub_compact_panel", lambda *_args, **_kwargs: calls.append("hub"))
+    monkeypatch.setattr(plugin, "_draw_nba_compact_panel", lambda *_args, **_kwargs: calls.append("nba"))
+    monkeypatch.setattr(plugin, "_load_lpl_events", lambda *_args, **_kwargs: ([], "CACHE DATA"))
+    monkeypatch.setattr(plugin, "_attach_lpl_odds", lambda events, *_args, **_kwargs: events)
+    monkeypatch.setattr(plugin, "_attach_lpl_realtime_info", lambda selected, settings: selected)
+    monkeypatch.setattr(plugin, "_write_lpl_live_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_sidebar", lambda *_args, **_kwargs: None)
+
+    result = plugin._generate_image_with_active_colors(
+        {},
+        FakeDeviceConfig(),
+        image.size,
+        la,
+        now,
+    )
+
+    assert result.size == image.size
+    assert calls == ["hub"]
+
+
+def test_f1_compact_panel_draws_core_labels():
+    plugin = _plugin()
+    image = Image.new("RGB", (560, 220), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    data = SportsDashboard._parse_f1_jolpica_bundle(_sample_f1_jolpica_bundle(), la)
+    selected = SportsDashboard._select_f1_events(data, datetime(2026, 6, 14, 6, 45, tzinfo=la))
+    selected["leaderboard"] = SportsDashboard._parse_f1_openf1_snapshot(_sample_openf1_snapshot())["leaderboard"]
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+
+    plugin._draw_f1_compact_panel(
+        image,
+        draw,
+        (0, 0, 559, 219),
+        selected,
+        "JOLPICA LIVE",
+        datetime(2026, 6, 14, 6, 45, tzinfo=la),
+    )
+
+    assert "FORMULA 1" in seen_texts
+    assert "Barcelona-Catalunya Grand Prix" in seen_texts
+    assert "\u6bd4\u8d5b\u4e2d" in seen_texts
+    assert "RACE LIVE" in seen_texts
+
+
+def test_f1_logo_draws_uploaded_asset_without_border():
+    plugin = _plugin()
+    background = (31, 47, 63)
+    image = Image.new("RGB", (120, 70), background)
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_f1_logo(image, draw, 10, 10, 74, 34)
+
+    assert image.getpixel((10, 10)) == background
+    assert image.getpixel((83, 43)) == background
+
+
+def test_f1_main_card_has_no_generated_track_art_method():
+    assert not hasattr(SportsDashboard, "_draw_f1_card_track_art")
+
+
+def test_f1_side_column_keeps_live_timing_below_session_rows(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (560, 220), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    data = SportsDashboard._parse_f1_jolpica_bundle(_sample_f1_jolpica_bundle(), la)
+    selected = SportsDashboard._select_f1_events(data, datetime(2026, 6, 14, 6, 45, tzinfo=la))
+    selected["leaderboard"] = SportsDashboard._parse_f1_openf1_snapshot(_sample_openf1_snapshot())["leaderboard"]
+    headers = []
+    session_rows = []
+    leaderboard_rows = []
+
+    monkeypatch.setattr(plugin, "_draw_f1_mini_section_header", lambda _draw, _x1, _x2, y, title: headers.append((title, y)))
+    monkeypatch.setattr(plugin, "_draw_f1_session_row", lambda _draw, _x1, _x2, y, session, _now: session_rows.append((session["label"], y)))
+    monkeypatch.setattr(plugin, "_draw_f1_leaderboard_row", lambda _draw, _x1, _x2, y, row: leaderboard_rows.append((row["driver_code"], y)))
+
+    plugin._draw_f1_side_column(draw, 306, 548, 58, 211, selected, datetime(2026, 6, 14, 6, 45, tzinfo=la))
+
+    assert len(session_rows) == 2
+    live_header_y = next(y for title, y in headers if title == "LIVE TIMING")
+    assert live_header_y >= max(y for _label, y in session_rows) + 38
+    assert leaderboard_rows
+    assert min(y for _code, y in leaderboard_rows) >= live_header_y + 25
 
 
 def test_nba_espn_parser_uses_chinese_team_names_and_period_scores():
@@ -693,6 +7538,138 @@ def test_nba_espn_parser_uses_chinese_team_names_and_period_scores():
     assert SportsDashboard._nba_period_label(events[0]) == "Q1 25-28  Q2 29-27  Q3 24-31  Q4 28-26"
 
 
+def test_nba_parser_captures_espn_winner_flags_by_display_side():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    competition["competitors"][0]["winner"] = True
+    competition["competitors"][1]["winner"] = False
+
+    event = SportsDashboard._parse_nba_espn_events(payload, la)[0]
+
+    assert event["team_a_code"] == "SA"
+    assert event["team_b_code"] == "NY"
+    assert event["winner_a"] is False
+    assert event["winner_b"] is True
+
+
+def test_nba_team_aliases_normalize_short_names_to_chinese_codes():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = {
+        "events": [
+            {
+                "id": "401000777",
+                "date": "2026-10-21T02:00Z",
+                "competitions": [
+                    {
+                        "id": "401000777",
+                        "date": "2026-10-21T02:00Z",
+                        "status": {
+                            "period": 0,
+                            "displayClock": "",
+                            "type": {"state": "pre", "completed": False, "description": "Scheduled"},
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "away",
+                                "team": {
+                                    "shortDisplayName": "Lakers",
+                                    "displayName": "Los Angeles Lakers",
+                                    "logo": "https://example.com/lal.png",
+                                },
+                            },
+                            {
+                                "homeAway": "home",
+                                "team": {
+                                    "shortDisplayName": "Knicks",
+                                    "displayName": "New York Knicks",
+                                    "logo": "https://example.com/nyk.png",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    event = SportsDashboard._parse_nba_espn_events(payload, la)[0]
+
+    assert event["team_a_code"] == "LAL"
+    assert event["team_a"] == "\u6e56\u4eba"
+    assert event["team_a_logo"] == "https://example.com/lal.png"
+    assert event["team_b_code"] == "NYK"
+    assert event["team_b"] == "\u5c3c\u514b\u65af"
+    assert "Los Angeles Lakers" in event["team_a_source_aliases"]
+
+
+def test_nba_full_team_names_for_main_cards():
+    assert SportsDashboard._nba_display_team_name("LAL", "Lakers", full=True) == "\u6d1b\u6749\u77f6\u6e56\u4eba"
+    assert (
+        SportsDashboard._nba_display_team_name(
+            "",
+            "Los Angeles Lakers",
+            ["Los Angeles Lakers", "Lakers"],
+            full=True,
+        )
+        == "\u6d1b\u6749\u77f6\u6e56\u4eba"
+    )
+    assert (
+        SportsDashboard._nba_display_team_from_event(
+            {
+                "team_a": "\u6e56\u4eba",
+                "team_a_code": "LAL",
+                "team_a_name": "Lakers",
+            },
+            "a",
+            full=True,
+        )
+        == "\u6d1b\u6749\u77f6\u6e56\u4eba"
+    )
+    assert (
+        SportsDashboard._nba_display_team_from_event(
+            {
+                "team_b": "PHX",
+                "team_b_code": "NYK",
+                "team_b_name": "Suns",
+            },
+            "b",
+            full=True,
+        )
+        == "\u83f2\u5c3c\u514b\u65af\u592a\u9633"
+    )
+
+
+def test_nba_winner_side_prefers_espn_flag_then_score():
+    flag_event = {
+        "state": "post",
+        "winner_a": False,
+        "winner_b": True,
+        "wins_a": 120,
+        "wins_b": 118,
+    }
+    score_event = {
+        "state": "completed",
+        "winner_a": None,
+        "winner_b": None,
+        "wins_a": 101,
+        "wins_b": 109,
+    }
+    live_event = {
+        "state": "in",
+        "winner_a": True,
+        "winner_b": False,
+        "wins_a": 88,
+        "wins_b": 80,
+    }
+
+    assert SportsDashboard._nba_winner_side(flag_event) == "b"
+    assert SportsDashboard._nba_team_side_fill_key(flag_event, "a") == "text"
+    assert SportsDashboard._nba_team_side_fill_key(flag_event, "b") == "nba_accent"
+    assert SportsDashboard._nba_winner_side(score_event) == "b"
+    assert SportsDashboard._nba_winner_side(live_event) == ""
+
+
 def test_select_nba_events_returns_next_upcoming_and_recent_result():
     la = ZoneInfo("America/Los_Angeles")
     events = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
@@ -704,6 +7681,95 @@ def test_select_nba_events_returns_next_upcoming_and_recent_result():
     assert selected["upcoming"][0]["team_a"] == "\u9a6c\u523a"
     assert selected["recent"][0]["team_b"] == "\u5c3c\u514b\u65af"
     assert SportsDashboard._nba_score_label(selected["recent"][0]) == "106-112"
+
+
+def test_select_nba_events_filters_decided_finals_placeholders_and_marks_offseason():
+    la = ZoneInfo("America/Los_Angeles")
+    final = {
+        "start": datetime(2026, 6, 13, 17, 30, tzinfo=la),
+        "state": "completed",
+        "team_a": "\u5c3c\u514b\u65af",
+        "team_b": "\u9a6c\u523a",
+        "wins_a": 94,
+        "wins_b": 90,
+        "series_wins_a": 4,
+        "series_wins_b": 1,
+        "block": "POSTSEASON",
+    }
+    if_necessary = {
+        "start": datetime(2026, 6, 16, 17, 30, tzinfo=la),
+        "state": "unstarted",
+        "team_a": "\u9a6c\u523a",
+        "team_b": "\u5c3c\u514b\u65af",
+        "series_wins_a": 1,
+        "series_wins_b": 4,
+        "block": "POSTSEASON",
+    }
+
+    selected = SportsDashboard._select_nba_events(
+        [final, if_necessary],
+        datetime(2026, 6, 13, 21, 0, tzinfo=la),
+    )
+
+    assert selected["upcoming"] == []
+    assert selected["main"] is final
+    assert selected["offseason"] is True
+    assert selected["next_season_event"] is None
+
+
+def test_select_nba_events_keeps_distant_next_season_opener_as_offseason_target():
+    la = ZoneInfo("America/Los_Angeles")
+    final = {
+        "start": datetime(2026, 6, 13, 17, 30, tzinfo=la),
+        "state": "completed",
+        "team_a": "\u5c3c\u514b\u65af",
+        "team_b": "\u9a6c\u523a",
+        "wins_a": 94,
+        "wins_b": 90,
+        "series_wins_a": 4,
+        "series_wins_b": 1,
+        "block": "POSTSEASON",
+    }
+    opener = {
+        "start": datetime(2026, 10, 20, 17, 0, tzinfo=la),
+        "state": "unstarted",
+        "team_a": "TBD",
+        "team_b": "TBD",
+        "series_wins_a": None,
+        "series_wins_b": None,
+        "block": "REGULAR SEASON",
+    }
+
+    selected = SportsDashboard._select_nba_events(
+        [final, opener],
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert selected["upcoming"] == [opener]
+    assert selected["next_season_event"] is opener
+    assert selected["offseason"] is True
+
+
+def test_select_nba_events_marks_late_summer_distant_opener_as_offseason_without_recent():
+    la = ZoneInfo("America/Los_Angeles")
+    opener = {
+        "start": datetime(2026, 10, 20, 17, 0, tzinfo=la),
+        "state": "unstarted",
+        "team_a": "TBD",
+        "team_b": "TBD",
+        "series_wins_a": None,
+        "series_wins_b": None,
+        "block": "REGULAR SEASON",
+    }
+
+    selected = SportsDashboard._select_nba_events(
+        [opener],
+        datetime(2026, 8, 15, 9, 0, tzinfo=la),
+    )
+
+    assert selected["upcoming"] == [opener]
+    assert selected["recent"] == []
+    assert selected["offseason"] is True
 
 
 def test_nba_parser_propagates_latest_series_score_to_upcoming_game():
@@ -724,6 +7790,18 @@ def test_nba_parser_propagates_latest_series_score_to_upcoming_game():
     assert selected["main"]["team_b_code"] == "NY"
     assert selected["main"]["series_wins_a"] == 1
     assert selected["main"]["series_wins_b"] == 3
+
+
+def test_nba_scoreboard_date_range_can_see_next_season_opener():
+    la = ZoneInfo("America/Los_Angeles")
+    start_date, end_date = SportsDashboard._nba_scoreboard_date_range(
+        {},
+        la,
+        datetime(2026, 6, 14, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert start_date.isoformat() == "2026-06-04"
+    assert end_date >= datetime(2026, 10, 20, tzinfo=la).date()
 
 
 def test_nba_scoreboard_live_cache_uses_short_refresh_window():
@@ -944,6 +8022,281 @@ def test_nba_focus_card_renders_larger_moneyline_odds():
     assert odds_sizes == [10, 10]
 
 
+def test_nba_main_cards_render_spread_total_footer_for_pregame():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    competition = payload["events"][1]["competitions"][0]
+    competition["odds"] = [{"details": "NY -4.5", "overUnder": 221.5}]
+    event = dict(SportsDashboard._parse_nba_espn_events(payload, la)[1])
+    event["team_a_logo"] = ""
+    event["team_b_logo"] = ""
+    compact_image = Image.new("RGB", (300, 190), COLORS["paper"])
+    compact_draw = ImageDraw.Draw(compact_image)
+    focus_image = Image.new("RGB", (380, 210), COLORS["paper"])
+    focus_draw = ImageDraw.Draw(focus_image)
+    seen_text = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_text.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nba_compact_main_card(compact_image, compact_draw, 4, 4, 276, 172, event, datetime.now(la), False)
+    plugin._draw_nba_focus_card(focus_image, focus_draw, 4, 4, 360, 194, event, datetime.now(la), False)
+
+    assert seen_text.count("SPREAD NY -4.5  |  O/U 221.5") == 2
+
+
+def test_nba_main_cards_prioritize_broadcast_before_venue_for_pregame():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_nba_scoreboard_payload()))
+    competition = payload["events"][1]["competitions"][0]
+    competition["broadcasts"] = [{"market": "national", "names": ["ESPN"]}]
+    competition["venue"] = {
+        "fullName": "Madison Square Garden",
+        "address": {"city": "New York", "state": "NY"},
+    }
+    competition["odds"] = [{"details": "NY -4.5", "overUnder": 221.5}]
+    event = dict(SportsDashboard._parse_nba_espn_events(payload, la)[1])
+    event["team_a_logo"] = ""
+    event["team_b_logo"] = ""
+    compact_image = Image.new("RGB", (300, 190), COLORS["paper"])
+    compact_draw = ImageDraw.Draw(compact_image)
+    focus_image = Image.new("RGB", (380, 210), COLORS["paper"])
+    focus_draw = ImageDraw.Draw(focus_image)
+    seen_text = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_text.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nba_compact_main_card(compact_image, compact_draw, 4, 4, 276, 172, event, datetime.now(la), False)
+    plugin._draw_nba_focus_card(focus_image, focus_draw, 4, 4, 360, 194, event, datetime.now(la), False)
+
+    assert event["broadcast"] == "ESPN"
+    assert event["venue"] == "Madison Square Garden"
+    assert seen_text.count("TV ESPN  |  SPREAD NY -4.5") == 2
+    assert "Madison Square Garden" not in seen_text
+
+
+def test_nba_main_footer_falls_back_to_venue_when_tv_and_odds_missing():
+    assert SportsDashboard._nba_main_footer_label({"venue": "Madison Square Garden"}) == "Madison Square Garden"
+
+
+def test_nba_main_cards_render_full_chinese_team_names():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)[0])
+    event["team_a_logo"] = ""
+    event["team_b_logo"] = ""
+    compact_image = Image.new("RGB", (300, 190), COLORS["paper"])
+    compact_draw = ImageDraw.Draw(compact_image)
+    focus_image = Image.new("RGB", (380, 210), COLORS["paper"])
+    focus_draw = ImageDraw.Draw(focus_image)
+    seen_text = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_text.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nba_compact_main_card(compact_image, compact_draw, 4, 4, 276, 172, event, datetime.now(la), False)
+    plugin._draw_nba_focus_card(focus_image, focus_draw, 4, 4, 360, 194, event, datetime.now(la), False)
+
+    assert "\u5723\u5b89\u4e1c\u5c3c\u5965\u9a6c\u523a" in seen_text
+    assert "\u7ebd\u7ea6\u5c3c\u514b\u65af" in seen_text
+
+
+def test_nba_main_cards_highlight_final_winner_with_nba_accent():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = dict(SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)[0])
+    event["team_a_logo"] = ""
+    event["team_b_logo"] = ""
+    event["winner_a"] = False
+    event["winner_b"] = True
+    compact_image = Image.new("RGB", (300, 190), COLORS["paper"])
+    compact_draw = ImageDraw.Draw(compact_image)
+    focus_image = Image.new("RGB", (380, 210), COLORS["paper"])
+    focus_draw = ImageDraw.Draw(focus_image)
+    centered_calls = []
+    original_draw_centered = plugin._draw_centered
+
+    def record_draw_centered(draw_arg, center, text, font, fill):
+        centered_calls.append((str(text), fill))
+        return original_draw_centered(draw_arg, center, text, font, fill)
+
+    plugin._draw_centered = record_draw_centered
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nba_compact_main_card(compact_image, compact_draw, 4, 4, 276, 172, event, datetime.now(la), False)
+    plugin._draw_nba_focus_card(focus_image, focus_draw, 4, 4, 360, 194, event, datetime.now(la), False)
+
+    assert [fill for text, fill in centered_calls if text == "\u7ebd\u7ea6\u5c3c\u514b\u65af"] == [
+        COLORS["nba_accent"],
+        COLORS["nba_accent"],
+    ]
+    assert [fill for text, fill in centered_calls if text == "\u5723\u5b89\u4e1c\u5c3c\u5965\u9a6c\u523a"] == [
+        COLORS["text"],
+        COLORS["text"],
+    ]
+
+
+def test_nba_offseason_panel_draws_core_status_labels():
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    la = ZoneInfo("America/Los_Angeles")
+    seen_texts = []
+    draw_text_calls = []
+    original_fit_text = plugin._fit_text
+    original_draw_text = draw.text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    def record_draw_text(xy, text, *args, **kwargs):
+        draw_text_calls.append((xy, str(text)))
+        return original_draw_text(xy, text, *args, **kwargs)
+
+    plugin._fit_text = record_fit_text
+    draw.text = record_draw_text
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [
+            {
+                "start": datetime(2026, 6, 13, 17, 30, tzinfo=la),
+                "state": "completed",
+                "team_a": "\u5c3c\u514b\u65af",
+                "team_b": "\u9a6c\u523a",
+                "wins_a": 94,
+                "wins_b": 90,
+                "block": "POSTSEASON",
+            }
+        ],
+        "main": None,
+        "next_season_event": None,
+        "offseason": True,
+    }
+
+    plugin._draw_nba_compact_offseason_panel(
+        image,
+        draw,
+        12,
+        58,
+        539,
+        260,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=la),
+    )
+
+    assert "\u4f11\u8d5b\u671f" in seen_texts
+    title_xy = next(xy for xy, text in draw_text_calls if text == "\u4f11\u8d5b\u671f")
+    assert title_xy == (30, 99)
+    assert "\u4e0b\u5b63\u9996\u6218" in seen_texts
+    assert "\u8d5b\u7a0b\u5f85\u516c\u5e03" in seen_texts
+    assert "\u9884\u8ba1 2026\u5e7410\u6708" in seen_texts
+
+
+def test_nba_offseason_accent_asset_is_transparent():
+    assert Path(LOCAL_NBA_OFFSEASON_ACCENT_PATH).exists()
+    with Image.open(LOCAL_NBA_OFFSEASON_ACCENT_PATH) as source:
+        accent = source.convert("RGBA")
+
+    assert accent.size == NBA_OFFSEASON_ACCENT_SIZE
+    alpha = accent.getchannel("A")
+    assert alpha.getextrema()[0] == 0
+    assert alpha.getbbox() is not None
+    assert accent.getpixel((0, 0))[3] == 0
+    assert accent.getpixel((accent.width - 1, accent.height - 1))[3] == 0
+
+
+def test_nba_offseason_panel_draws_accent_in_left_blank_area(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    accent_color = (12, 200, 40, 255)
+    requested_sizes = []
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "next_season_event": None,
+        "offseason": True,
+    }
+
+    def load_accent(size):
+        requested_sizes.append(size)
+        return Image.new("RGBA", size, accent_color)
+
+    monkeypatch.setattr(plugin, "_load_nba_offseason_accent", load_accent)
+
+    plugin._draw_nba_compact_offseason_panel(
+        image,
+        draw,
+        12,
+        58,
+        539,
+        260,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles")),
+    )
+
+    assert requested_sizes == [NBA_OFFSEASON_ACCENT_SIZE]
+    assert image.getpixel((200, 100)) == accent_color[:3]
+
+
+def test_nba_offseason_panel_bleeds_filler_past_inner_slot(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 268), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    filler_color = (12, 200, 40)
+    requested_sizes = []
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "next_season_event": None,
+        "offseason": True,
+    }
+
+    def load_filler(size):
+        requested_sizes.append(size)
+        return Image.new("RGB", size, filler_color)
+
+    monkeypatch.setattr(plugin, "_load_nba_offseason_filler", load_filler)
+
+    plugin._draw_nba_compact_offseason_panel(
+        image,
+        draw,
+        12,
+        58,
+        539,
+        260,
+        selected,
+        datetime(2026, 6, 14, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles")),
+    )
+
+    assert requested_sizes
+    assert image.getpixel((551, 267)) == filler_color
+
+
 def test_nba_inline_list_team_names_use_larger_font():
     plugin = _plugin()
     image = Image.new("RGB", (240, 44), COLORS["paper"])
@@ -978,6 +8331,36 @@ def test_nba_inline_list_team_names_use_larger_font():
         (event["team_b"], NBA_INLINE_TEAM_FONT_SIZE, NBA_INLINE_TEAM_MIN_FONT_SIZE),
     ]
     assert logo_sizes == [NBA_INLINE_LOGO_SIZE, NBA_INLINE_LOGO_SIZE]
+
+
+def test_nba_inline_rows_highlight_final_winner_with_nba_accent():
+    plugin = _plugin()
+    image = Image.new("RGB", (260, 48), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    event = {
+        "state": "post",
+        "team_a": "\u9a6c\u523a",
+        "team_b": "\u5c3c\u514b\u65af",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": 106,
+        "wins_b": 112,
+        "winner_a": False,
+        "winner_b": True,
+    }
+    text_calls = []
+
+    def record_text_in_box(_draw, _box, text, _font, fill, align="left"):
+        text_calls.append((str(text), fill, align))
+
+    plugin._draw_text_in_box = record_text_in_box
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    plugin._draw_nba_lineup_inline(image, draw, 4, 256, 8, event, "106-112")
+    plugin._draw_nba_teams_inline(image, draw, 4, 256, 28, event, "106-112")
+
+    assert ("\u9a6c\u523a", COLORS["text"], "left") in text_calls
+    assert ("\u5c3c\u514b\u65af", COLORS["nba_accent"], "right") in text_calls
 
 
 def test_nba_header_court_strip_asset_renders_in_empty_header_space():
@@ -1052,6 +8435,51 @@ def test_nba_empty_slot_filler_preserves_aspect_ratio_when_short():
 
     assert fitted.size == (257, 34)
     assert fitted.tobytes() != distorted.tobytes()
+
+
+def test_nba_offseason_filler_asset_is_exact_blank_slot_size():
+    assert Path(LOCAL_NBA_OFFSEASON_FILLER_PATH).exists()
+    with Image.open(LOCAL_NBA_OFFSEASON_FILLER_PATH) as source:
+        filler = source.convert("RGB")
+
+    assert filler.size == (214, 48)
+    assert filler.getbbox() is not None
+    assert len(filler.getcolors(maxcolors=214 * 48)) > 20
+
+
+def test_nba_offseason_watch_draws_filler_in_bottom_blank_slot(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (250, 230), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    requested_sizes = []
+
+    def load_filler(size):
+        requested_sizes.append(size)
+        filler = Image.new("RGB", size, (200, 10, 10))
+        filler_draw = ImageDraw.Draw(filler)
+        filler_draw.rectangle((0, size[1] - 48, size[0] - 1, size[1] - 1), fill=(12, 200, 40))
+        return filler
+
+    monkeypatch.setattr(plugin, "_load_nba_offseason_filler", load_filler)
+
+    plugin._draw_nba_offseason_watch(
+        image,
+        draw,
+        10,
+        10,
+        223,
+        212,
+        None,
+        datetime(2026, 6, 14, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles")),
+    )
+
+    assert requested_sizes == [
+        (
+            int(214 * NBA_OFFSEASON_FILLER_ZOOM + 0.999),
+            int(48 * NBA_OFFSEASON_FILLER_ZOOM + 0.999),
+        )
+    ]
+    assert image.getpixel((20, 170)) == (12, 200, 40)
 
 
 def test_nba_recent_empty_slot_draws_filler(monkeypatch):
@@ -1742,12 +9170,21 @@ def test_worldcup_espn_parser_reads_finished_and_live_scores():
     assert len(events) == 2
     assert events[0]["event_id"] == "760415"
     assert events[0]["state"] == "FT"
+    assert events[0]["team_a"] == "墨西哥"
+    assert events[0]["team_b"] == "南非"
     assert events[0]["team_a_tla"] == "MEX"
     assert events[0]["team_b_tla"] == "RSA"
     assert events[0]["wins_a"] == 2
     assert events[0]["wins_b"] == 0
     assert events[0]["score_source"] == "ESPN"
+    assert events[0]["provider"] == "ESPN"
+    assert events[0]["source_url"] == "https://www.espn.com/soccer/match/_/gameId/760415/mex-rsa"
+    assert events[0]["provider_status_confirmed"] is True
+    assert events[0]["score_confirmed"] is True
     assert events[1]["state"] == "1H"
+    assert events[1]["source_url"] == "https://www.espn.com/soccer/gamecast/_/gameId/760414/kor-cze"
+    assert events[1]["team_a"] == "韩国"
+    assert events[1]["team_b"] == "捷克"
     assert events[1]["elapsed"] == 9
     assert SportsDashboard._worldcup_event_status_label(events[1], datetime(2026, 6, 11, 19, 10, tzinfo=la)) == "9' 0-0"
 
@@ -1764,7 +9201,74 @@ def test_worldcup_scoreboard_overlay_updates_football_data_scores():
     assert merged[0]["wins_a"] == 2
     assert merged[0]["wins_b"] == 0
     assert merged[0]["score_source"] == "ESPN"
+    assert merged[0]["source_url"] == "https://www.espn.com/soccer/match/_/gameId/760415/mex-rsa"
+    assert merged[0]["provider_status_confirmed"] is True
+    assert merged[0]["score_confirmed"] is True
     assert SportsDashboard._worldcup_event_status_label(merged[0], datetime(2026, 6, 11, 14, 0, tzinfo=la)) == "2-0"
+
+
+def test_worldcup_main_status_label_marks_verified_score_source_only_when_confirmed():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 11, 14, 0, tzinfo=la)
+    final = {
+        "start": datetime(2026, 6, 11, 12, 0, tzinfo=la),
+        "state": "FT",
+        "status": "Final",
+        "wins_a": 2,
+        "wins_b": 0,
+        "score_source": "ESPN",
+        "provider_status_confirmed": True,
+        "score_confirmed": True,
+    }
+    scheduled = dict(final, state="TIMED", wins_a=None, wins_b=None, score_confirmed=False)
+    inferred_live = dict(
+        scheduled,
+        state="TIMED",
+        inferred_live=True,
+        provider_status_confirmed=False,
+        score_confirmed=False,
+    )
+
+    assert SportsDashboard._worldcup_main_status_label(final, now) == "ESPN 2-0"
+    assert SportsDashboard._worldcup_main_status_label(scheduled, now) == "12:00"
+    assert SportsDashboard._worldcup_main_status_label(inferred_live, now) == "LIVE"
+
+
+def test_worldcup_main_card_draws_verified_source_in_status_line():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "start": datetime(2026, 6, 11, 12, 0, tzinfo=la),
+        "state": "FT",
+        "status": "Final",
+        "team_a": "\u58a8\u897f\u54e5",
+        "team_b": "\u5357\u975e",
+        "team_a_tla": "MEX",
+        "team_b_tla": "RSA",
+        "team_a_flag": "",
+        "team_b_flag": "",
+        "wins_a": 2,
+        "wins_b": 0,
+        "block": "Group A",
+        "score_source": "ESPN",
+        "provider_status_confirmed": True,
+        "score_confirmed": True,
+    }
+    image = Image.new("RGB", (320, 180), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    plugin._fit_text = capture_fit_text
+    plugin._draw_worldcup_flag = lambda *_args, **_kwargs: None
+
+    plugin._draw_worldcup_main_card(image, draw, 0, 0, 300, 150, event, datetime(2026, 6, 11, 14, 0, tzinfo=la), "recent")
+
+    assert "ESPN 2-0" in seen_texts
 
 
 def test_worldcup_scoreboard_source_label_identifies_overlay():
@@ -1801,6 +9305,107 @@ def test_worldcup_completed_only_selection_uses_recent_mode_and_year():
     assert SportsDashboard._worldcup_title_year(selected) == "2022"
 
 
+def test_worldcup_started_timed_match_is_inferred_live_not_recent():
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "event_id": "ned-jpn",
+        "start": datetime(2026, 6, 14, 12, 0, tzinfo=la),
+        "state": "TIMED",
+        "status": "Timed",
+        "team_a": "荷兰",
+        "team_b": "日本",
+        "team_a_tla": "NED",
+        "team_b_tla": "JPN",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Group F",
+    }
+
+    selected = SportsDashboard._select_worldcup_event_sections(
+        [event],
+        datetime(2026, 6, 14, 13, 28, tzinfo=la),
+        4,
+    )
+
+    assert selected["live"] == [event]
+    assert selected["recent"] == []
+    assert selected["main"] is event
+    assert event["inferred_live"] is True
+    assert SportsDashboard._worldcup_main_mode(selected, event) == "live"
+    assert SportsDashboard._worldcup_event_status_label(event, datetime(2026, 6, 14, 13, 28, tzinfo=la)) == "LIVE"
+
+
+def test_worldcup_started_timed_match_moves_to_recent_after_live_window():
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "event_id": "ned-jpn",
+        "start": datetime(2026, 6, 14, 12, 0, tzinfo=la),
+        "state": "TIMED",
+        "status": "Timed",
+        "team_a": "荷兰",
+        "team_b": "日本",
+        "team_a_tla": "NED",
+        "team_b_tla": "JPN",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Group F",
+    }
+
+    selected = SportsDashboard._select_worldcup_event_sections(
+        [event],
+        datetime(2026, 6, 14, 15, 1, tzinfo=la),
+        4,
+    )
+
+    assert selected["live"] == []
+    assert selected["recent"] == [event]
+    assert event.get("inferred_live") is None
+
+
+def test_worldcup_expired_explicit_live_state_does_not_block_new_live_match():
+    la = ZoneInfo("America/Los_Angeles")
+    stale_live = {
+        "event_id": "ger-cuw",
+        "start": datetime(2026, 6, 14, 10, 0, tzinfo=la),
+        "state": "2H",
+        "status": "80'",
+        "team_a": "Germany",
+        "team_b": "Curacao",
+        "team_a_tla": "GER",
+        "team_b_tla": "CUW",
+        "wins_a": 6,
+        "wins_b": 1,
+        "block": "Group E",
+    }
+    current = {
+        "event_id": "ned-jpn",
+        "start": datetime(2026, 6, 14, 13, 0, tzinfo=la),
+        "state": "TIMED",
+        "status": "13:00",
+        "team_a": "Netherlands",
+        "team_b": "Japan",
+        "team_a_tla": "NED",
+        "team_b_tla": "JPN",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Group F",
+    }
+
+    selected = SportsDashboard._select_worldcup_event_sections(
+        [stale_live, current],
+        datetime(2026, 6, 14, 13, 50, tzinfo=la),
+        4,
+    )
+
+    assert selected["live"] == [current]
+    assert selected["recent"] == [stale_live]
+    assert selected["main"] is current
+    assert current["inferred_live"] is True
+    assert SportsDashboard._worldcup_main_mode(selected, current) == "live"
+    assert SportsDashboard._worldcup_event_status_label(current, datetime(2026, 6, 14, 13, 50, tzinfo=la)) == "LIVE"
+    assert SportsDashboard._worldcup_event_status_label(stale_live, datetime(2026, 6, 14, 13, 50, tzinfo=la)) == "10:00"
+
+
 def test_worldcup_group_points_are_inferred_from_completed_group_matches():
     now = datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc)
     completed = {
@@ -1834,6 +9439,59 @@ def test_worldcup_group_points_are_inferred_from_completed_group_matches():
     assert upcoming["team_b_group_points"] == 0
 
 
+def test_worldcup_scoreboard_uses_cached_football_data_groups_for_points(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    la = ZoneInfo("America/Los_Angeles")
+    plugin._write_json_file(
+        plugin._football_data_cache_path(),
+        {
+            "version": "sports-dashboard-football-data-v1",
+            "matches": [
+                {
+                    "utcDate": "2026-06-14T20:00:00Z",
+                    "status": "FINISHED",
+                    "stage": "GROUP_STAGE",
+                    "group": "GROUP_F",
+                    "homeTeam": {"name": "Netherlands", "shortName": "Netherlands", "tla": "NED"},
+                    "awayTeam": {"name": "Japan", "shortName": "Japan", "tla": "JPN"},
+                    "score": {"fullTime": {"home": 2, "away": 2}},
+                }
+            ],
+        },
+    )
+    events = [
+        {
+            "event_id": "ned-jpn",
+            "start": datetime(2026, 6, 14, 13, 0, tzinfo=la),
+            "state": "FT",
+            "status": "FT",
+            "team_a": "荷兰",
+            "team_b": "日本",
+            "team_a_tla": "NED",
+            "team_b_tla": "JPN",
+            "team_a_source_name": "Netherlands",
+            "team_b_source_name": "Japan",
+            "team_a_source_aliases": ["Netherlands", "NED"],
+            "team_b_source_aliases": ["Japan", "JPN"],
+            "wins_a": 2,
+            "wins_b": 2,
+            "block": "GROUP STAGE",
+        }
+    ]
+
+    enriched = plugin._attach_worldcup_group_blocks_from_cached_football_data(events, la)
+    selected = SportsDashboard._select_worldcup_event_sections(
+        enriched,
+        datetime(2026, 6, 14, 14, 0, tzinfo=la),
+        4,
+    )
+
+    assert enriched[0]["block"] == "Group F"
+    assert selected["recent"][0]["team_a_group_points"] == 1
+    assert selected["recent"][0]["team_b_group_points"] == 1
+
+
 def test_worldcup_live_state_file_tracks_active_match():
     plugin = _plugin()
     tmp_path = _sports_dashboard_tmp("worldcup_live_state")
@@ -1850,6 +9508,11 @@ def test_worldcup_live_state_file_tracks_active_match():
         "wins_a": 1,
         "wins_b": 0,
         "block": "Group A",
+        "provider": "ESPN",
+        "score_source": "ESPN",
+        "source_url": "https://www.espn.com/soccer/match/_/gameId/wc-mex-rsa",
+        "provider_status_confirmed": True,
+        "score_confirmed": True,
     }
     selected = SportsDashboard._select_worldcup_event_sections([event], now, 4)
 
@@ -1862,6 +9525,11 @@ def test_worldcup_live_state_file_tracks_active_match():
     assert state["team_b"] == "\u5357\u975e"
     assert state["score"] == "1-0"
     assert state["live_until"] == "2026-06-11T15:00:00+00:00"
+    assert state["provider"] == "ESPN"
+    assert state["score_source"] == "ESPN"
+    assert state["source_url"] == "https://www.espn.com/soccer/match/_/gameId/wc-mex-rsa"
+    assert state["provider_status_confirmed"] is True
+    assert state["score_confirmed"] is True
 
 
 def test_worldcup_fallback_renders_compact_four_match_list():
@@ -1928,11 +9596,84 @@ def test_worldcup_api_parser_converts_fixture_to_local_match_row():
     events = SportsDashboard._parse_worldcup_api_events([_sample_worldcup_fixture()], la)
 
     assert events[0]["start"].strftime("%Y-%m-%d %H:%M") == "2026-06-11 17:00"
-    assert events[0]["team_a"] == "USA"
-    assert events[0]["team_b"] == "MEX"
+    assert events[0]["team_a"] == "美国"
+    assert events[0]["team_b"] == "墨西哥"
     assert events[0]["state"] == "NS"
     assert events[0]["block"] == "Group Stage - 1"
     assert events[0]["fixture_id"] == "10101"
+
+
+def test_worldcup_country_name_aliases_stay_simplified_chinese():
+    la = ZoneInfo("America/Los_Angeles")
+    fixture = json.loads(json.dumps(_sample_worldcup_fixture()))
+    fixture["teams"]["home"] = {"name": "Germania"}
+    fixture["teams"]["away"] = {"name": "Cura\u00e7ao"}
+
+    events = SportsDashboard._parse_worldcup_api_events([fixture], la)
+
+    assert SportsDashboard._localized_country_name({"name": "Deutschland"}, "") == "德国"
+    assert "Germania" in SportsDashboard._country_aliases_for_value("德国")
+    assert SportsDashboard._localized_country_name({"name": "Curacao"}, "") == "库拉索"
+    assert "Curacao" in SportsDashboard._country_aliases_for_value("库拉索")
+    assert events[0]["team_a"] == "德国"
+    assert events[0]["team_b"] == "库拉索"
+    assert events[0]["team_a_tla"] == "GER"
+    assert events[0]["team_b_tla"] == "CUW"
+    assert "Germany" in events[0]["team_a_source_aliases"]
+    assert "Curacao" in events[0]["team_b_source_aliases"]
+    assert events[0]["team_a_flag"] == "https://flagsapi.com/DE/flat/64.png"
+    assert events[0]["team_b_flag"] == "https://flagsapi.com/CW/flat/64.png"
+    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "") == "佛得角"
+    assert SportsDashboard._localized_country_name({"name": "Cabo Verde"}, "") == "佛得角"
+    assert SportsDashboard._localized_country_name({"name": "Cabo-Verde"}, "") == "佛得角"
+    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "CVE") == "佛得角"
+    assert SportsDashboard._canonical_country_tla("CVE") == "CPV"
+    assert "Cabo Verde" in SportsDashboard._country_aliases_for_value("佛得角")
+    assert SportsDashboard._flag_url_for_tla("CVE") == "https://flagsapi.com/CV/flat/64.png"
+
+
+def test_worldcup_espn_parser_localizes_cape_verde():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = {
+        "events": [
+            {
+                "id": "esp-cpv",
+                "date": "2026-06-15T16:00Z",
+                "competitions": [
+                    {
+                        "id": "esp-cpv",
+                        "date": "2026-06-15T16:00Z",
+                        "status": {"type": {"state": "pre", "completed": False, "shortDetail": "12:00"}},
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "team": {
+                                    "abbreviation": "ESP",
+                                    "shortDisplayName": "Spain",
+                                    "displayName": "Spain",
+                                },
+                            },
+                            {
+                                "homeAway": "away",
+                                "team": {
+                                    "abbreviation": "CPV",
+                                    "shortDisplayName": "Cape Verde",
+                                    "displayName": "Cape Verde",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    events = SportsDashboard._parse_worldcup_espn_events(payload, la)
+
+    assert events[0]["team_a"] == "西班牙"
+    assert events[0]["team_b"] == "佛得角"
+    assert events[0]["team_b_tla"] == "CPV"
+    assert events[0]["team_b_flag"] == "https://flagsapi.com/CV/flat/64.png"
 
 
 def test_worldcup_lineups_attach_formation_summary_from_api_cache():
@@ -2300,6 +10041,37 @@ def test_worldcup_api_live_cache_uses_short_refresh_window():
     assert source_state == "API LIVE"
 
 
+def test_worldcup_scoreboard_default_daily_budget_supports_minute_refresh(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=timezone.utc)
+    state_path = plugin._worldcup_scoreboard_state_path()
+
+    assert plugin._worldcup_scoreboard_calls_left({}, now) == 720
+    assert plugin._worldcup_scoreboard_calls_left({"worldCupScoreboardDailyLimit": "1440"}, now) == 1440
+
+    plugin._write_json_file(
+        state_path,
+        {
+            "version": "sports-dashboard-worldcup-scoreboard-v1",
+            "date": now.date().isoformat(),
+            "count": 96,
+        },
+    )
+
+    assert plugin._worldcup_scoreboard_calls_left({}, now) == 624
+
+
+def test_worldcup_scoreboard_default_range_covers_group_history():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 25, 16, 0, tzinfo=timezone.utc)
+
+    start_date, end_date = SportsDashboard._worldcup_scoreboard_date_range({}, la, now)
+
+    assert start_date <= datetime(2026, 6, 11, tzinfo=la).date()
+    assert end_date >= now.astimezone(la).date()
+
+
 def test_worldcup_api_daily_limit_uses_stale_cache_without_network():
     plugin = _plugin()
     tmp_path = _sports_dashboard_tmp("daily_limit")
@@ -2508,6 +10280,49 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     assert image.getpixel((560, 230)) != (1, 2, 3)
 
 
+def test_generate_image_prefers_espn_scoreboard_for_worldcup_panel():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    calls = []
+
+    def scoreboard_panel(_settings, _device_config, dimensions, *_args):
+        calls.append("scoreboard")
+        return Image.new("RGB", dimensions, (9, 9, 9))
+
+    plugin._try_worldcup_scoreboard_panel = scoreboard_panel
+    plugin._try_worldcup_football_data_panel = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("football-data should not be called when ESPN scoreboard renders")
+    )
+    plugin._try_worldcup_api_panel = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("api-sports should not be called when ESPN scoreboard renders")
+    )
+    plugin._take_worldcup_screenshot = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("screenshot should not be called when ESPN scoreboard renders")
+    )
+    plugin._load_lpl_events = lambda settings, timezone_info: (
+        SportsDashboard._parse_lpl_events(_sample_payload(), la),
+        "LIVE DATA",
+    )
+    plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._load_nba_events = lambda settings, timezone_info: (
+        SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
+        "ESPN LIVE",
+    )
+    plugin._attach_nba_odds = lambda events, *_args: events
+    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._write_nba_live_state = lambda selected, now, source_state: None
+    plugin._write_lpl_live_state = lambda selected, now, source_state: None
+    plugin._load_team_logo = lambda logo_url, size: None
+
+    image = plugin.generate_image(
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        FakeDeviceConfig(),
+    )
+
+    assert calls == ["scoreboard"]
+    assert image.size == (800, 480)
+
+
 def test_worldcup_panel_preserves_screenshot_aspect_ratio():
     plugin = _plugin()
 
@@ -2668,6 +10483,12 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
     lpl_logo = SportsDashboard._load_local_logo(LOCAL_LPL_LOGO_PATH, (74, 38), alpha_threshold=8)
     nba_logo = SportsDashboard._load_local_logo(LOCAL_NBA_LOGO_PATH, (34, 38), alpha_threshold=8)
     worldcup_logo = SportsDashboard._load_local_logo(LOCAL_WORLDCUP_LOGO_PATH, (36, 36), alpha_threshold=16)
+    f1_logo = SportsDashboard._load_local_logo(LOCAL_F1_LOGO_PATH, (62, 24), alpha_threshold=12)
+    mlb_logo = SportsDashboard._load_local_logo(LOCAL_MLB_LOGO_PATH, (74, 34), alpha_threshold=8)
+    wnba_logo = SportsDashboard._load_local_logo(LOCAL_WNBA_LOGO_PATH, (78, 34), alpha_threshold=8)
+    pga_logo = SportsDashboard._load_local_logo(LOCAL_PGA_LOGO_PATH, (36, 48), alpha_threshold=8)
+    nfl_logo = SportsDashboard._load_local_logo(LOCAL_NFL_LOGO_PATH, (36, 36), alpha_threshold=8)
+    ncaa_logo = SportsDashboard._load_local_logo(LOCAL_NCAA_LOGO_PATH, (36, 36), alpha_threshold=8)
 
     assert lpl_logo is not None
     assert lpl_logo.size[0] <= 74
@@ -2681,6 +10502,126 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
     assert worldcup_logo.size[0] <= 36
     assert worldcup_logo.size[1] <= 36
     assert worldcup_logo.getchannel("A").getextrema()[0] == 0
+    assert f1_logo is not None
+    assert f1_logo.size[0] <= 62
+    assert f1_logo.size[1] <= 24
+    assert f1_logo.getchannel("A").getextrema()[0] == 0
+    for logo in (mlb_logo, wnba_logo, pga_logo, nfl_logo, ncaa_logo):
+        assert logo is not None
+        assert logo.getchannel("A").getextrema()[0] == 0
+
+
+def test_sports_dashboard_local_asset_constants_exist():
+    asset_paths = [
+        LOCAL_LPL_LOGO_PATH,
+        LOCAL_MSI_LOGO_PATH,
+        LOCAL_WORLDCUP_LOGO_PATH,
+        LOCAL_NBA_LOGO_PATH,
+        LOCAL_F1_LOGO_PATH,
+        LOCAL_MLB_LOGO_PATH,
+        LOCAL_WNBA_LOGO_PATH,
+        LOCAL_PGA_LOGO_PATH,
+        LOCAL_NFL_LOGO_PATH,
+        LOCAL_NCAA_LOGO_PATH,
+        LOCAL_WORLDCUP_PITCH_STRIP_PATH,
+        LOCAL_WORLDCUP_HEADER_BANNER_PATH,
+        LOCAL_NBA_COURT_STRIP_PATH,
+        LOCAL_MLB_HEADER_CUTOUT_PATH,
+        LOCAL_WNBA_HEADER_CUTOUT_PATH,
+        LOCAL_PGA_HEADER_CUTOUT_PATH,
+        LOCAL_NFL_HEADER_CUTOUT_PATH,
+        LOCAL_NCAA_HEADER_CUTOUT_PATH,
+        LOCAL_NBA_EMPTY_SLOT_FILLER_PATH,
+        LOCAL_NBA_OFFSEASON_FILLER_PATH,
+        LOCAL_NBA_OFFSEASON_ACCENT_PATH,
+        LOCAL_PGA_FAIRWAY_STRIP_PATH,
+        LOCAL_LPL_MARBLE_FILLER_PATH,
+        LOCAL_LPL_MSI_NEXT_FILLER_PATH,
+        LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH,
+    ]
+
+    for path in asset_paths:
+        asset = Path(path)
+        assert asset.is_file(), path
+        assert asset.stat().st_size > 0, path
+
+
+def test_standalone_sport_header_cutouts_load_as_transparent_strips():
+    TEAM_LOGO_CACHE.clear()
+    for sport in ("MLB", "WNBA", "PGA", "NFL", "NCAA"):
+        cutout = SportsDashboard._load_sport_header_cutout(sport, (220, 34))
+
+        assert cutout is not None
+        assert cutout.size[0] <= 220
+        assert cutout.size[1] <= 34
+        alpha_min, alpha_max = cutout.getchannel("A").getextrema()
+        assert alpha_min == 0
+        assert alpha_max > 0
+
+
+def test_remote_team_logo_loader_uses_short_timeout_and_failure_cache(monkeypatch):
+    logo_url = "https://example.com/offseason-hub-logo-timeout.png"
+    cache_key = (logo_url, 24)
+    TEAM_LOGO_CACHE.pop(cache_key, None)
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append((request.full_url, timeout))
+        raise OSError("offline")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    assert SportsDashboard._load_team_logo(logo_url, 24) is None
+    assert SportsDashboard._load_team_logo(logo_url, 24) is None
+
+    assert calls == [(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
+    assert TEAM_LOGO_CACHE[cache_key] is None
+    TEAM_LOGO_CACHE.pop(cache_key, None)
+
+
+def test_settings_exposes_offseason_hub_controls():
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+    fields = [
+        "offseasonHubCacheHours",
+        "offseasonHubLiveRefreshSeconds",
+        "offseasonHubDailyLimit",
+        "offseasonHubLookbackDays",
+        "offseasonHubLookaheadDays",
+        "mlbScoreboardUrl",
+        "wnbaScoreboardUrl",
+        "pgaScoreboardUrl",
+        "nflScoreboardUrl",
+        "ncaaScoreboardUrl",
+    ]
+
+    for field in fields:
+        assert f'id="{field}"' in html
+        assert f'name="{field}"' in html
+        assert f"pluginSettings.{field}" in html
+
+    assert 'id="worldCupScoreboardDailyLimit" name="worldCupScoreboardDailyLimit" min="1" max="1440" placeholder="720"' in html
+    assert 'id="worldCupScoreboardLookbackDays" name="worldCupScoreboardLookbackDays" min="0" max="30" placeholder="30"' in html
+    assert 'id="worldCupLiveRefreshSeconds" name="worldCupLiveRefreshSeconds" min="30" max="900" placeholder="60"' in html
+
+    f1_fields = [
+        "f1PanelMode",
+        "f1JolpicaBaseUrl",
+        "f1OpenF1BaseUrl",
+        "f1OpenF1Enabled",
+        "f1DailyLimit",
+        "f1OpenF1DailyLimit",
+    ]
+    for field in f1_fields:
+        assert f'id="{field}"' not in html
+        assert f'name="{field}"' not in html
+        assert f"pluginSettings.{field}" not in html
 
 
 def test_al_logo_draw_size_is_the_only_lpl_size_override():

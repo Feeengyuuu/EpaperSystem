@@ -1,0 +1,58 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+<input type="hidden" id="dailyPoolMode" name="dailyPoolMode" value="true">
+
+<div class="form-group">
+    <label for="rankingMode" class="form-label">Ranking:</label>
+    <select id="rankingMode" name="rankingMode" class="form-input">
+        <option value="day_r18" selected>Daily R-18</option>
+        <option value="day_male_r18">Daily male R-18</option>
+        <option value="day_female_r18">Daily female R-18</option>
+        <option value="week_r18">Weekly R-18</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="poolSize" class="form-label">Daily pool size:</label>
+    <input id="poolSize" name="poolSize" class="form-input" type="number" min="1" max="50" value="20">
+    <div style="color: var(--text-primary); font-size: 0.9em; margin-top: 0.35rem;">
+        The plugin fetches the ranking once per JST day, caches safe local images, then rotates from that cache.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="fitMode" class="form-label">Fit mode:</label>
+    <select id="fitMode" name="fitMode" class="form-input">
+        <option value="auto_blur" selected>Auto fit with blurred background</option>
+        <option value="contain">Contain on plain background</option>
+        <option value="cover">Fill screen crop</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="backgroundColor" class="form-label">Background color:</label>
+    <select id="backgroundColor" name="backgroundColor" class="form-input">
+        <option value="black" selected>Black</option>
+        <option value="white">White</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="showInfoOverlay" class="form-label">Info overlay:</label>
+    <select id="showInfoOverlay" name="showInfoOverlay" class="form-input">
+        <option value="false" selected>Hide</option>
+        <option value="true">Show title and artist</option>
+    </select>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('rankingMode').value = pluginSettings.rankingMode || 'day_r18';
+            document.getElementById('poolSize').value = pluginSettings.poolSize || '20';
+            document.getElementById('fitMode').value = pluginSettings.fitMode || 'auto_blur';
+            document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'black';
+            document.getElementById('showInfoOverlay').value = pluginSettings.showInfoOverlay || 'false';
+            document.getElementById('dailyPoolMode').value = pluginSettings.dailyPoolMode || 'true';
+        }
+    });
+</script>

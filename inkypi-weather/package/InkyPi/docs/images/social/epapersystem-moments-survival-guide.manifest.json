@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-06-16T03:09:23+00:00",
+  "output": "docs\\images\\social\\epapersystem-moments-survival-guide.png",
+  "img2_unified_output": "docs\\images\\social\\epapersystem-moments-survival-guide-img2-unified.png",
+  "format": "WeChat Moments vertical poster, 1080x1920",
+  "method": "img-2 generated the complete unified visual. The current DailyDoseOfDay playlist screenshots were used only as loose visual/content references, not as pasted source layers.",
+  "postprocess": "Resized from the img-2 native output to 1080x1920 with no cropping, local compositing, or text overlay.",
+  "playlist_reference": {
+    "device": "ColoredEpaperFrame",
+    "device_host": "192.168.1.193",
+    "playlist": "DailyDoseOfDay",
+    "source_count": 23
+  },
+  "privacy_rule": "Private or account-like plugins are represented as locked/blurred concept tiles; do not expose real portfolio values, printer details, usernames, account identifiers, or private profile data.",
+  "prompt_text": [
+    "朋友圈生存指南",
+    "少刷屏  少泄露  少折腾",
+    "EpaperSystem"
+  ],
+  "upstream_credit": "Built on InkyPi: https://github.com/fatihak/InkyPi"
+}

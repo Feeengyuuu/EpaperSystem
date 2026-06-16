@@ -18,6 +18,8 @@
 **/.context_cache/
 **/.codex_write_probe/
 **/.wow_profile_dashboard_cache/
+**/.pixiv_r18_ranking_cache/
+**/.lol_info_cache/
 inkypi-weather/package/InkyPi/src/plugins/*/cache/
 inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/fonts/
 **/.magazine_covers_cache/

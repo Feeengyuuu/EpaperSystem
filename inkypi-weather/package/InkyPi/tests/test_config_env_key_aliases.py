@@ -46,6 +46,19 @@ def test_load_env_key_does_not_alias_unrelated_keys(monkeypatch):
     assert config.load_env_key("OPENAI_API_KEY") == ""
 
 
+def test_load_env_key_accepts_pixiv_refresh_token_aliases(monkeypatch):
+    env_path = cache_dir_for("pixiv") / ".env"
+    env_path.write_text("PIXIV_TOKEN=pixiv-refresh-value\n", encoding="utf-8")
+    monkeypatch.delenv("PIXIV_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("PIXIV_TOKEN", raising=False)
+    monkeypatch.delenv("PIXIV_REFRESH", raising=False)
+
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
+
+    assert config.load_env_key("PIXIV_REFRESH_TOKEN") == "pixiv-refresh-value"
+
+
 def test_write_config_persists_device_json(tmp_path):
     config = Config.__new__(Config)
     config.config_file = str(tmp_path / "device.json")

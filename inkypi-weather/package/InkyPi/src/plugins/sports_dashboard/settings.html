@@ -56,12 +56,12 @@
 
 <div class="form-group">
     <label for="worldCupScoreboardDailyLimit" class="form-label">World Cup ESPN daily request limit:</label>
-    <input type="number" id="worldCupScoreboardDailyLimit" name="worldCupScoreboardDailyLimit" min="1" max="120" placeholder="96" class="form-input">
+    <input type="number" id="worldCupScoreboardDailyLimit" name="worldCupScoreboardDailyLimit" min="1" max="1440" placeholder="720" class="form-input">
 </div>
 
 <div class="form-group">
     <label for="worldCupScoreboardLookbackDays" class="form-label">World Cup ESPN recent lookback days:</label>
-    <input type="number" id="worldCupScoreboardLookbackDays" name="worldCupScoreboardLookbackDays" min="0" max="30" placeholder="3" class="form-input">
+    <input type="number" id="worldCupScoreboardLookbackDays" name="worldCupScoreboardLookbackDays" min="0" max="30" placeholder="30" class="form-input">
 </div>
 
 <div class="form-group">
@@ -165,7 +165,7 @@
 
 <div class="form-group">
     <label for="worldCupLiveRefreshSeconds" class="form-label">World Cup live data cache seconds:</label>
-    <input type="number" id="worldCupLiveRefreshSeconds" name="worldCupLiveRefreshSeconds" min="30" max="900" placeholder="180" class="form-input">
+    <input type="number" id="worldCupLiveRefreshSeconds" name="worldCupLiveRefreshSeconds" min="30" max="900" placeholder="60" class="form-input">
 </div>
 
 <div class="form-group">
@@ -217,7 +217,66 @@
 
 <div class="form-group">
     <label for="nbaLookaheadDays" class="form-label">NBA upcoming lookahead days:</label>
-    <input type="number" id="nbaLookaheadDays" name="nbaLookaheadDays" min="1" max="60" placeholder="21" class="form-input">
+    <input type="number" id="nbaLookaheadDays" name="nbaLookaheadDays" min="1" max="240" placeholder="180" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nbaOffseasonPanelMode" class="form-label">NBA offseason replacement mode:</label>
+    <select id="nbaOffseasonPanelMode" name="nbaOffseasonPanelMode" class="form-input">
+        <option value="">Auto</option>
+        <option value="always">Always show replacement sport</option>
+        <option value="off">Keep NBA</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="offseasonHubCacheHours" class="form-label">Offseason hub normal cache hours:</label>
+    <input type="number" id="offseasonHubCacheHours" name="offseasonHubCacheHours" min="1" max="12" placeholder="1" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="offseasonHubLiveRefreshSeconds" class="form-label">Offseason hub live cache seconds:</label>
+    <input type="number" id="offseasonHubLiveRefreshSeconds" name="offseasonHubLiveRefreshSeconds" min="30" max="900" placeholder="180" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="offseasonHubDailyLimit" class="form-label">Offseason hub daily request limit:</label>
+    <input type="number" id="offseasonHubDailyLimit" name="offseasonHubDailyLimit" min="1" max="240" placeholder="96" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="offseasonHubLookbackDays" class="form-label">Offseason hub recent lookback days:</label>
+    <input type="number" id="offseasonHubLookbackDays" name="offseasonHubLookbackDays" min="0" max="7" placeholder="1" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="offseasonHubLookaheadDays" class="form-label">Offseason hub upcoming lookahead days:</label>
+    <input type="number" id="offseasonHubLookaheadDays" name="offseasonHubLookaheadDays" min="1" max="14" placeholder="5" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="mlbScoreboardUrl" class="form-label">MLB scoreboard URL:</label>
+    <input type="text" id="mlbScoreboardUrl" name="mlbScoreboardUrl" placeholder="https://statsapi.mlb.com/api/v1/schedule" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="wnbaScoreboardUrl" class="form-label">WNBA scoreboard URL:</label>
+    <input type="text" id="wnbaScoreboardUrl" name="wnbaScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="pgaScoreboardUrl" class="form-label">PGA scoreboard URL:</label>
+    <input type="text" id="pgaScoreboardUrl" name="pgaScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="nflScoreboardUrl" class="form-label">NFL scoreboard URL:</label>
+    <input type="text" id="nflScoreboardUrl" name="nflScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="ncaaScoreboardUrl" class="form-label">NCAA football scoreboard URL:</label>
+    <input type="text" id="ncaaScoreboardUrl" name="ncaaScoreboardUrl" placeholder="https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard" class="form-input">
 </div>
 
 <div class="form-group">
@@ -353,6 +412,17 @@
             document.getElementById('nbaDailyLimit').value = pluginSettings.nbaDailyLimit || '';
             document.getElementById('nbaLookbackDays').value = pluginSettings.nbaLookbackDays || '';
             document.getElementById('nbaLookaheadDays').value = pluginSettings.nbaLookaheadDays || '';
+            document.getElementById('nbaOffseasonPanelMode').value = pluginSettings.nbaOffseasonPanelMode || '';
+            document.getElementById('offseasonHubCacheHours').value = pluginSettings.offseasonHubCacheHours || '';
+            document.getElementById('offseasonHubLiveRefreshSeconds').value = pluginSettings.offseasonHubLiveRefreshSeconds || '';
+            document.getElementById('offseasonHubDailyLimit').value = pluginSettings.offseasonHubDailyLimit || '';
+            document.getElementById('offseasonHubLookbackDays').value = pluginSettings.offseasonHubLookbackDays || '';
+            document.getElementById('offseasonHubLookaheadDays').value = pluginSettings.offseasonHubLookaheadDays || '';
+            document.getElementById('mlbScoreboardUrl').value = pluginSettings.mlbScoreboardUrl || '';
+            document.getElementById('wnbaScoreboardUrl').value = pluginSettings.wnbaScoreboardUrl || '';
+            document.getElementById('pgaScoreboardUrl').value = pluginSettings.pgaScoreboardUrl || '';
+            document.getElementById('nflScoreboardUrl').value = pluginSettings.nflScoreboardUrl || '';
+            document.getElementById('ncaaScoreboardUrl').value = pluginSettings.ncaaScoreboardUrl || '';
             document.getElementById('nbaOddsEnabled').checked = pluginSettings.nbaOddsEnabled !== 'false';
             document.getElementById('nbaOddsProvider').value = pluginSettings.nbaOddsProvider || '';
             document.getElementById('nbaOddsRegions').value = pluginSettings.nbaOddsRegions || '';
