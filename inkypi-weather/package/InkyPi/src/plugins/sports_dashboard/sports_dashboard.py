@@ -15,9 +15,21 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import resolve_dimensions, resolve_path
+from utils.app_utils import resolve_path
+
+try:
+    from utils.app_utils import resolve_dimensions as _resolve_dimensions
+except Exception:  # pragma: no cover - compatibility with older app_utils layout
+    _resolve_dimensions = None
 from utils.http_client import get_http_session
-from utils.image_utils import take_screenshot, text_width
+from utils.image_utils import take_screenshot
+
+try:
+    from utils.image_utils import text_width
+except Exception:  # pragma: no cover - compatibility with older image_utils layout
+    def text_width(draw, text, font):
+        left, top, right, bottom = draw.textbbox((0, 0), str(text), font=font)
+        return right - left
 
 try:
     from utils.theme_utils import get_theme_context
@@ -1558,6 +1570,7 @@ FIFA_TLA_TO_ZH_NAME = {
     "CHL": "智利",
     "CIV": "科特迪瓦",
     "CMR": "喀麦隆",
+    "COD": "刚果（金）",
     "COL": "哥伦比亚",
     "CRC": "哥斯达黎加",
     "CRO": "克罗地亚",
@@ -1643,6 +1656,7 @@ FIFA_TLA_TO_FLAGS_API_CODE = {
     "CHL": "CL",
     "CIV": "CI",
     "CMR": "CM",
+    "COD": "CD",
     "COL": "CO",
     "CRC": "CR",
     "CRO": "HR",
@@ -1728,6 +1742,14 @@ FIFA_TLA_TO_NAME_ALIASES = {
     "CHL": ("Chile",),
     "CIV": ("Cote d'Ivoire", "Côte d'Ivoire", "Ivory Coast"),
     "CMR": ("Cameroon",),
+    "COD": (
+        "Congo DR",
+        "DR Congo",
+        "Democratic Republic of the Congo",
+        "Congo (DR)",
+        "Congo DR.",
+        "DRC",
+    ),
     "COL": ("Colombia",),
     "CRC": ("Costa Rica",),
     "CRO": ("Croatia", "Hrvatska"),
@@ -2015,7 +2037,53 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _display_dimensions(device_config):
-        return resolve_dimensions(device_config)
+        if _resolve_dimensions is not None:
+            try:
+                return _resolve_dimensions(device_config)
+            except Exception:
+                logger.exception("resolve_dimensions from utils.app_utils is unavailable; using fallback path")
+        width = None
+        height = None
+        orientation = "horizontal"
+
+        if device_config is not None:
+            try:
+                if isinstance(device_config, Mapping):
+                    resolution = device_config.get("resolution")
+                else:
+                    resolution = device_config.get_config("resolution", None) if hasattr(device_config, "get_config") else None
+                if isinstance(resolution, Mapping):
+                    width = resolution.get("width")
+                    height = resolution.get("height")
+                elif isinstance(resolution, (list, tuple)) and len(resolution) >= 2:
+                    width, height = resolution[0], resolution[1]
+            except Exception:
+                width = None
+                height = None
+
+            if width is None and hasattr(device_config, "get_resolution"):
+                try:
+                    width, height = device_config.get_resolution()
+                except Exception:
+                    width = None
+                    height = None
+
+            if width is None and hasattr(device_config, "get_config"):
+                try:
+                    orientation = str(device_config.get_config("orientation", orientation)).strip().lower()
+                except Exception:
+                    orientation = orientation
+                if width is None:
+                    width = device_config.get_config("width", None)
+                if height is None:
+                    height = device_config.get_config("height", None)
+
+        width = int(width) if width else 800
+        height = int(height) if height else 480
+
+        if orientation == "vertical":
+            return (height, width)
+        return (width, height)
 
     @staticmethod
     def _timezone(settings, device_config):
@@ -9021,6 +9089,12 @@ class SportsDashboard(BasePlugin):
                 if isinstance(event, MutableMapping):
                     event["inferred_live"] = True
                 live.append(event)
+        if live:
+            live = sorted(
+                live,
+                key=lambda item: item["start"] if isinstance(item.get("start"), datetime) else datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
         SportsDashboard._annotate_worldcup_group_points(events)
         upcoming = [
             event for event in events
@@ -9064,7 +9138,16 @@ class SportsDashboard(BasePlugin):
         start = (event or {}).get("start")
         if not isinstance(start, datetime) or now is None:
             return False
-        return start <= now < start + WORLD_CUP_INFERRED_LIVE_WINDOW
+        if not (start <= now < start + WORLD_CUP_INFERRED_LIVE_WINDOW):
+            return False
+        elapsed = SportsDashboard._lpl_int_value((event or {}).get("elapsed"))
+        if elapsed is not None and elapsed > 0:
+            return True
+        wins_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
+        wins_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
+        if wins_a is not None and wins_b is not None:
+            return True
+        return bool((event or {}).get("provider_status_confirmed")) and bool((event or {}).get("score_source"))
 
     @staticmethod
     def _worldcup_is_display_live(event, now=None):

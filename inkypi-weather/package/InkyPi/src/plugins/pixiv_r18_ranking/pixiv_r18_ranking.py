@@ -332,16 +332,15 @@ class PixivR18Ranking(BasePlugin):
     def _fit_image(self, image, dimensions, settings, item=None):
         fit_mode = str(settings.get("fitMode") or "auto_blur").strip().lower()
         image = ImageOps.exif_transpose(image).convert("RGB")
-        if fit_mode == "cover":
-            canvas = ImageOps.fit(image, dimensions, method=Image.LANCZOS)
-        else:
-            if fit_mode in {"auto_blur", "auto", "rotate_full"}:
-                image = self._rotate_portrait_for_landscape_display(image, dimensions)
+        if fit_mode == "contain":
             fitted = ImageOps.contain(image, dimensions, method=Image.LANCZOS)
-            canvas = self._background(dimensions, settings, image if fit_mode in {"auto_blur", "auto"} else None)
+            canvas = self._background(dimensions, settings, None)
             x = (dimensions[0] - fitted.width) // 2
             y = (dimensions[1] - fitted.height) // 2
             canvas.paste(fitted, (x, y))
+        else:
+            image = self._rotate_portrait_for_landscape_display(image, dimensions)
+            canvas = ImageOps.fit(image, dimensions, method=Image.LANCZOS)
 
         if _setting_enabled(settings.get("showInfoOverlay", "false")):
             canvas = self._with_info_overlay(canvas, item or {})

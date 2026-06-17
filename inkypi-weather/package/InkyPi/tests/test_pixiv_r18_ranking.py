@@ -213,6 +213,23 @@ def test_fit_image_handles_landscape_and_portrait_sources():
     assert fitted_portrait.size == (800, 480)
     assert fitted_landscape.getpixel((400, 240))[0] > 200
     assert fitted_portrait.getpixel((400, 240))[1] > 100
+    assert fitted_landscape.getpixel((0, 240))[0] > 200
+    assert fitted_portrait.getpixel((0, 240))[1] > 100
+
+
+def test_contain_mode_still_preserves_full_image_with_letterbox():
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    square = Image.new("RGB", (640, 640), "blue")
+
+    fitted = plugin._fit_image(
+        square,
+        (800, 480),
+        {"fitMode": "contain", "backgroundColor": "black"},
+    )
+
+    assert fitted.size == (800, 480)
+    assert fitted.getpixel((400, 240))[2] > 200
+    assert fitted.getpixel((0, 240)) == (0, 0, 0)
 
 
 def test_missing_filtered_pool_renders_safe_placeholder(monkeypatch):
