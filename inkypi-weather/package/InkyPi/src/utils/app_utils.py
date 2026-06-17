@@ -136,6 +136,13 @@ def get_fonts():
 def get_font_path(font_name):
     return resolve_font_path(FONTS[font_name])
 
+def resolve_dimensions(device_config):
+    """Return the device resolution as (width, height), reversed for vertical orientation."""
+    dimensions = device_config.get_resolution()
+    if device_config.get_config("orientation") == "vertical":
+        dimensions = dimensions[::-1]
+    return dimensions
+
 def generate_startup_image(dimensions=(800,480)):
     bg_color = (255,255,255)
     text_color = (0,0,0)

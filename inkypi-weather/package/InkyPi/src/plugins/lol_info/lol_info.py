@@ -67,9 +67,7 @@ class LoLInfo(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         identity = self._identity(settings)
         now = time.time()

@@ -285,9 +285,7 @@ class BambuMonitor(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         if self._bool_setting(settings, "demoMode", False):
             status = self._demo_status()

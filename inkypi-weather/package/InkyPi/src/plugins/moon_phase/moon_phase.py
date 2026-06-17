@@ -9,7 +9,7 @@ import pytz
 from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import get_font
+from utils.app_utils import get_font, resolve_dimensions
 
 
 SYNODIC_MONTH_DAYS = 29.530588853
@@ -351,10 +351,7 @@ def _surface_tone(x, y):
 
 
 def _display_dimensions(device_config):
-    dimensions = device_config.get_resolution()
-    if device_config.get_config("orientation", default="horizontal") == "vertical":
-        return dimensions[::-1]
-    return dimensions
+    return resolve_dimensions(device_config)
 
 
 def _device_timezone(device_config):

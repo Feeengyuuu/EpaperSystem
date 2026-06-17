@@ -1,15 +1,15 @@
 import logging
 import requests
 
+from utils.app_utils import resolve_dimensions
+
 logger = logging.getLogger(__name__)
 
 def stars_generate_image(plugin_instance, settings, device_config):
     username = settings.get('githubUsername')
     repository = settings.get('githubRepository')
 
-    dimensions = device_config.get_resolution()
-    if device_config.get_config("orientation") == "vertical":
-        dimensions = dimensions[::-1]
+    dimensions = resolve_dimensions(device_config)
 
     github_repository = username + "/" + repository
     if not github_repository:

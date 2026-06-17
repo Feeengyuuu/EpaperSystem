@@ -199,9 +199,7 @@ class StockTracker(BasePlugin):
 	def generate_image(self, settings, device_config):
 
 		"""Generate stock portfolio dashboard"""
-		dimensions = device_config.get_resolution()
-		if device_config.get_config("orientation") == "vertical":
-			dimensions = dimensions[::-1]
+		dimensions = self.get_dimensions(device_config)
 
 		period, holdings = self._portfolio_holdings_from_settings(settings)
 		portfolio_meta = self._portfolio_meta_from_settings(settings)

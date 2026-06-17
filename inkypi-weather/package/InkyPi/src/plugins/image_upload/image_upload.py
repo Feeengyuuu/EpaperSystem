@@ -59,11 +59,7 @@ class ImageUpload(BasePlugin):
             img_index = 0
 
         # Get dimensions
-        dimensions = device_config.get_resolution()
-        orientation = device_config.get_config("orientation")
-        if orientation == "vertical":
-            dimensions = dimensions[::-1]
-            logger.debug(f"Vertical orientation detected, dimensions: {dimensions[0]}x{dimensions[1]}")
+        dimensions = self.get_dimensions(device_config)
 
         # The image upload display is automatic: portrait photos render as
         # three side-by-side columns, landscape photos render as one cover image.

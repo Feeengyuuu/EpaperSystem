@@ -12,10 +12,7 @@ class ImageURL(BasePlugin):
             logger.error("No URL provided in settings")
             raise RuntimeError("URL is required.")
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-            logger.debug(f"Vertical orientation detected, dimensions: {dimensions[0]}x{dimensions[1]}")
+        dimensions = self.get_dimensions(device_config)
 
         logger.info(f"Fetching image from URL: {url}")
         logger.debug(f"Target dimensions: {dimensions[0]}x{dimensions[1]}")

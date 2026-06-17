@@ -149,9 +149,7 @@ class SteamCharts(BasePlugin):
         updated_at_text = self._format_updated_at(device_config)
         self._write_charts_context(mode_config, games, updated_at_text)
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         template_params = {
             "title": "STEAM CHARTS",

@@ -75,10 +75,7 @@ class Apod(BasePlugin):
         logger.debug(f"Using {'HD URL' if data.get('hdurl') else 'standard URL'}")
 
         # Get target dimensions
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-            logger.debug(f"Vertical orientation detected, dimensions: {dimensions[0]}x{dimensions[1]}")
+        dimensions = self.get_dimensions(device_config)
 
         # Use adaptive image loader for memory-efficient processing
         image = self.image_loader.from_url(image_url, dimensions, timeout_ms=40000)

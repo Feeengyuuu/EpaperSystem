@@ -65,9 +65,7 @@ class DotaProfileDashboard(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         account_id = self._account_id(settings)
         if not account_id:

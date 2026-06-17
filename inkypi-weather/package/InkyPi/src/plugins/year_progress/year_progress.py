@@ -12,10 +12,8 @@ class YearProgress(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        
+        dimensions = self.get_dimensions(device_config)
+
         timezone = device_config.get_config("timezone", default="America/New_York")
         tz = pytz.timezone(timezone)
         current_time = datetime.now(tz)

@@ -45,9 +45,7 @@ class AIText(BasePlugin):
             logger.error(f"Failed to make Open AI request: {str(e)}")
             raise RuntimeError("Open AI request failure, please check logs.")
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         image_template_params = {
             "title": title,

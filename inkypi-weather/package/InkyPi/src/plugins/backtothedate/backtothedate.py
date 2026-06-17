@@ -237,10 +237,7 @@ class BacktotheDate(BasePlugin):
         }
 
     def _display_dimensions(self, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        return dimensions
+        return self.get_dimensions(device_config)
 
     def _select_random_poster(self, settings):
         state = self._read_state()

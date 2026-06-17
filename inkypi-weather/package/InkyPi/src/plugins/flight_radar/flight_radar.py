@@ -352,9 +352,7 @@ class FlightRadar(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         now = self._now(device_config)
         snapshot = self._get_snapshot(settings, device_config, now)

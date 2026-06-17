@@ -269,9 +269,7 @@ class Newspaper(BasePlugin):
         return self._fetch_newspaper_cover(source["value"], device_config)
 
     def _fetch_url_screenshot(self, url, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         logger.info("Taking news front page screenshot: %s", url)
         return take_screenshot(url, dimensions, timeout_ms=40000)
@@ -477,9 +475,7 @@ class Newspaper(BasePlugin):
         return converter
 
     def _render_headlines_page(self, source, headlines, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
         width, height = dimensions
         headlines = [self._to_simplified_chinese(self._repair_chinese_mojibake(headline)) for headline in headlines]
         has_chinese = self._has_cjk(source["name"] + " " + " ".join(headlines))

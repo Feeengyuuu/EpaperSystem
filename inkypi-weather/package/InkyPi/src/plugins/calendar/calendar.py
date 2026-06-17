@@ -36,10 +36,8 @@ class Calendar(BasePlugin):
             if not url.strip():
                 raise RuntimeError("Invalid calendar URL")
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        
+        dimensions = self.get_dimensions(device_config)
+
         timezone = device_config.get_config("timezone", default="America/New_York")
         time_format = device_config.get_config("time_format", default="12h")
         tz = pytz.timezone(timezone)

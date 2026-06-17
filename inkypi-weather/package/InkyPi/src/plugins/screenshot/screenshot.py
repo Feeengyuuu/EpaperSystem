@@ -12,9 +12,7 @@ class Screenshot(BasePlugin):
         if not url:
             raise RuntimeError("URL is required.")
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
         capture_dimensions = self._capture_dimensions(settings, dimensions)
         timezone_name = str(settings.get("timezone") or device_config.get_config("timezone", "") or "").strip()
 

@@ -897,10 +897,7 @@ class WowProfileDashboard(BasePlugin):
         return locale or REGION_CONFIG[region]["locale"] or DEFAULT_LOCALE
 
     def _display_dimensions(self, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            return dimensions[::-1]
-        return dimensions
+        return self.get_dimensions(device_config)
 
     def _cache_key(self, settings, dimensions):
         relevant = {

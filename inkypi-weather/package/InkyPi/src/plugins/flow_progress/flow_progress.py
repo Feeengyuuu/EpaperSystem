@@ -305,10 +305,8 @@ class FlowProgress(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        
+        dimensions = self.get_dimensions(device_config)
+
         width, height = dimensions
         
         # Safely extract and validate settings

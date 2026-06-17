@@ -237,9 +237,7 @@ class DailyArt(BasePlugin):
         return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
 
     def _display_dimensions(self, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
         return tuple(int(value) for value in dimensions)
 
     def _now_for_device(self, device_config):

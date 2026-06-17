@@ -320,9 +320,7 @@ class DailyKnowledge(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         tz_name = device_config.get_config("timezone") or DEFAULT_TIMEZONE
         now = self._now_for_timezone(tz_name)

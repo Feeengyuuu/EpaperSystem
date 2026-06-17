@@ -1,6 +1,6 @@
 import logging
 import os
-from utils.app_utils import resolve_path, get_fonts
+from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.image_utils import take_screenshot_html
 from utils.image_loader import AdaptiveImageLoader
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -53,6 +53,10 @@ class BasePlugin:
 
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
+
+    def get_dimensions(self, device_config):
+        """Return the display resolution as (width, height), swapped for vertical orientation."""
+        return resolve_dimensions(device_config)
 
     def cleanup(self, settings):
         """Optional cleanup method that plugins can override to delete associated resources.

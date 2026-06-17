@@ -211,10 +211,7 @@ class NatGeoPhotoOfTheDay(BasePlugin):
         )
 
     def _display_dimensions(self, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        return dimensions
+        return self.get_dimensions(device_config)
 
     def _photo_for_source(self, source, dimensions, settings):
         if source == "discovery":

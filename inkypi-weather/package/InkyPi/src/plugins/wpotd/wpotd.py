@@ -64,10 +64,7 @@ class Wpotd(BasePlugin):
         logger.debug(f"Image filename: {data.get('filename', 'Unknown')}")
 
         # Get dimensions
-        max_width, max_height = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            max_width, max_height = max_height, max_width
-            logger.debug(f"Vertical orientation detected, dimensions: {max_width}x{max_height}")
+        max_width, max_height = self.get_dimensions(device_config)
 
         dimensions = (max_width, max_height)
 

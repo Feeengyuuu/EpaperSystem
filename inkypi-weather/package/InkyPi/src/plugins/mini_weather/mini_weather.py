@@ -458,9 +458,7 @@ class MiniWeather(Weather):
         )
         self._write_weather_context(template_params, now)
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         image = self.render_image(dimensions, "mini_weather.html", "mini_weather.css", template_params)
         if not image:

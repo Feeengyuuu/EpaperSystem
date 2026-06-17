@@ -26,9 +26,7 @@ class SteamDailyArt(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         rotation_key = self._rotation_key(device_config, settings)
         cache_key = self._cache_key(settings, dimensions, rotation_key)

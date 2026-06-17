@@ -50,9 +50,7 @@ class SteamProfileDashboard(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
+        dimensions = self.get_dimensions(device_config)
 
         api_key = device_config.load_env_key("STEAM_API_KEY")
         if not api_key:

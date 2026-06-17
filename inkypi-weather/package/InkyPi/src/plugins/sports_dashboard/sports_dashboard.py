@@ -15,7 +15,7 @@ import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import resolve_path
+from utils.app_utils import resolve_dimensions, resolve_path
 from utils.http_client import get_http_session
 from utils.image_utils import take_screenshot
 
@@ -2015,10 +2015,7 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _display_dimensions(device_config):
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-        return tuple(dimensions)
+        return resolve_dimensions(device_config)
 
     @staticmethod
     def _timezone(settings, device_config):

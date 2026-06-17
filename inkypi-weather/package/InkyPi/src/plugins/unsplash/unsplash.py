@@ -87,10 +87,7 @@ class Unsplash(BasePlugin):
             raise RuntimeError("Failed to parse Unsplash API response, please check logs.")
 
 
-        dimensions = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            dimensions = dimensions[::-1]
-            logger.debug(f"Vertical orientation detected, dimensions: {dimensions[0]}x{dimensions[1]}")
+        dimensions = self.get_dimensions(device_config)
 
         logger.info(f"Fetching image (size: {image_size}): {image_url}")
 
