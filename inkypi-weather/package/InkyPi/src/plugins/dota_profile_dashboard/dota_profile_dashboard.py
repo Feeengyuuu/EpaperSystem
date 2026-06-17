@@ -15,6 +15,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import coerce_bool
+from utils.image_utils import text_width
 from utils.http_client import get_http_session
 from utils.theme_utils import get_theme_context
 
@@ -664,8 +666,7 @@ class DotaProfileDashboard(BasePlugin):
         return lines
 
     def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), str(text), font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, str(text), font)
 
     def _line_height(self, draw, font):
         bbox = draw.textbbox((0, 0), "Ag国", font=font)
@@ -801,11 +802,7 @@ class DotaProfileDashboard(BasePlugin):
             return ""
 
     def _enabled(self, value, default=False):
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return coerce_bool(value, default=default, truthy=tuple({"1", "true", "yes", "on"}))
 
     def _bounded_int(self, value, default, minimum, maximum):
         try:

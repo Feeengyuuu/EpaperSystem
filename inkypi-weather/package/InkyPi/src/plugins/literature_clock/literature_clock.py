@@ -4,7 +4,8 @@ from datetime import datetime
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
-from utils.app_utils import get_font, get_fonts
+from utils.app_utils import get_font, get_fonts, get_available_font_names
+from utils.image_utils import text_width
 from plugins.base_plugin.base_plugin import BasePlugin
 
 from .quote_picker import resolve_with_fallback, sanitize, pick_quote
@@ -40,11 +41,7 @@ class LiteratureClock(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = True
-        params["available_fonts"] = sorted({
-            f.get("name") or f.get("font_family")
-            for f in get_fonts()
-            if f.get("name") or f.get("font_family")
-        })
+        params["available_fonts"] = get_available_font_names()
         return params
 
     def generate_image(self, settings, device_config):
@@ -235,8 +232,7 @@ class LiteratureClock(BasePlugin):
         return int(self._text_height(draw, "Ag", font) * 1.32)
 
     def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, text, font)
 
     def _text_height(self, draw, text, font):
         bbox = draw.textbbox((0, 0), text, font=font)

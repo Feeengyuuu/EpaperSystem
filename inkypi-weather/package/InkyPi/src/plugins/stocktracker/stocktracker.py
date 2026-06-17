@@ -60,6 +60,7 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont
 from utils.app_utils import get_font
+from utils.image_utils import text_width
 from utils.massive_market_data import (
 	MassiveMarketData,
 	MassiveMarketDataError,
@@ -548,8 +549,7 @@ class StockTracker(BasePlugin):
 
 	@staticmethod
 	def _text_width(draw, text, font):
-		bbox = draw.textbbox((0, 0), str(text), font=font)
-		return bbox[2] - bbox[0]
+		return text_width(draw, str(text), font)
 
 	def _fit_font(self, draw, text, max_width, start_size, bold=False, min_size=10):
 		size = int(start_size)

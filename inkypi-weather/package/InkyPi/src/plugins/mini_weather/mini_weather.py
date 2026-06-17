@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.weather.weather import UNITS, Weather
 from utils.app_utils import get_font
+from utils.image_utils import text_width
 from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
@@ -822,8 +823,7 @@ class MiniWeather(Weather):
         self._draw_center(draw, text, x, y, width, current, fill)
 
     def _text_width(self, draw, text, font):
-        box = draw.textbbox((0, 0), str(text), font=font)
-        return box[2] - box[0]
+        return text_width(draw, str(text), font)
 
     def _localize_forecast_rows(self, forecast_rows, labels):
         localized_rows = []

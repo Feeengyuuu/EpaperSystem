@@ -17,7 +17,8 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font, get_fonts
+from utils.app_utils import get_available_font_names, get_font
+from utils.image_utils import text_width
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +125,7 @@ class DailyArt(BasePlugin):
         params = super().generate_settings_template()
         params["style_settings"] = False
         params["default_query_terms"] = ", ".join(DEFAULT_QUERY_TERMS)
-        params["available_fonts"] = sorted({
-            font.get("name") or font.get("font_family")
-            for font in get_fonts()
-            if font.get("name") or font.get("font_family")
-        })
-        if DEFAULT_FONT not in params["available_fonts"]:
-            params["available_fonts"].append(DEFAULT_FONT)
+        params["available_fonts"] = get_available_font_names(default=DEFAULT_FONT)
         return params
 
     def generate_image(self, settings, device_config):
@@ -1103,5 +1098,4 @@ def _source_tokens(value):
 
 
 def _text_width(draw, text, font):
-    bbox = draw.textbbox((0, 0), str(text), font=font)
-    return bbox[2] - bbox[0]
+    return text_width(draw, str(text), font)

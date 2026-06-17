@@ -16,7 +16,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font, get_fonts
+from utils.app_utils import get_available_font_names, get_font
+from utils.image_utils import text_width
 from utils.http_client import get_http_session
 from utils.theme_utils import get_theme_context, get_theme_palette
 
@@ -432,13 +433,7 @@ class DailyWordPoem(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = True
-        params["available_fonts"] = sorted({
-            f.get("name") or f.get("font_family")
-            for f in get_fonts()
-            if f.get("name") or f.get("font_family")
-        })
-        if DEFAULT_FONT not in params["available_fonts"]:
-            params["available_fonts"].append(DEFAULT_FONT)
+        params["available_fonts"] = get_available_font_names(default=DEFAULT_FONT)
         return params
 
     def generate_image(self, settings, device_config):
@@ -1063,8 +1058,7 @@ class DailyWordPoem(BasePlugin):
         return max(12, int(self._text_height(draw, "Ag", font) * 1.36))
 
     def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), str(text or ""), font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, str(text or ""), font)
 
     def _text_height(self, draw, text, font):
         bbox = draw.textbbox((0, 0), str(text or ""), font=font)

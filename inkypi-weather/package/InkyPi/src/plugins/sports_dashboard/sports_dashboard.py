@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.app_utils import resolve_dimensions, resolve_path
 from utils.http_client import get_http_session
-from utils.image_utils import take_screenshot
+from utils.image_utils import take_screenshot, text_width
 
 try:
     from utils.theme_utils import get_theme_context
@@ -16238,8 +16238,7 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _text_width(draw, text, font):
-        box = draw.textbbox((0, 0), str(text), font=font)
-        return box[2] - box[0]
+        return text_width(draw, str(text), font)
 
     @staticmethod
     def _fit_text(draw, text, max_width, size, bold=False, min_size=11):

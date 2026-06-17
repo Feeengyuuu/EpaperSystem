@@ -21,7 +21,8 @@ import requests
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font, get_fonts
+from utils.app_utils import bounded_int, get_available_font_names, get_font
+from utils.image_utils import text_width
 from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
 from utils.theme_utils import get_theme_context, get_theme_palette
 
@@ -666,11 +667,7 @@ def _clean_text(value: str, max_len: int = 260) -> str:
 
 
 def _parse_int(value: Any, default: int, low: int, high: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(low, min(high, parsed))
+    return bounded_int(value, default, low, high)
 
 
 def _safe_json_load(path: Path, default: Any) -> Any:
@@ -706,13 +703,7 @@ class DailyAINews(BasePlugin):
             "service": "OpenAI or Groq",
             "expected_key": "OPEN_AI_SECRET or GROQ_API_KEY",
         }
-        params["available_fonts"] = sorted({
-            f.get("name") or f.get("font_family")
-            for f in get_fonts()
-            if f.get("name") or f.get("font_family")
-        })
-        if DEFAULT_FONT not in params["available_fonts"]:
-            params["available_fonts"].append(DEFAULT_FONT)
+        params["available_fonts"] = get_available_font_names(default=DEFAULT_FONT)
         return params
 
     def generate_image(self, settings, device_config):
@@ -1971,5 +1962,4 @@ class DailyAINews(BasePlugin):
         return lines or [""]
 
     def _tw(self, draw, text: str, font) -> int:
-        box = draw.textbbox((0, 0), text, font=font)
-        return box[2] - box[0]
+        return text_width(draw, text, font)

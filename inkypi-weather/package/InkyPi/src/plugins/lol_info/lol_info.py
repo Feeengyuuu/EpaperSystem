@@ -16,7 +16,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import coerce_bool
 from utils.http_client import get_http_session
+from utils.image_utils import text_width
 from utils.theme_utils import get_theme_context
 
 logger = logging.getLogger(__name__)
@@ -1368,8 +1370,7 @@ class LoLInfo(BasePlugin):
         return self._font(min_size, bold=bold)
 
     def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), str(text), font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, str(text), font)
 
     def _rect(self, draw, box, fill, outline):
         draw.rectangle(box, fill=fill, outline=outline, width=2)
@@ -1490,11 +1491,7 @@ class LoLInfo(BasePlugin):
         return route if route in allowed else default
 
     def _enabled(self, value, default=False):
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+        return coerce_bool(value, default=default, truthy=tuple({"1", "true", "yes", "on"}))
 
     def _bounded_int(self, value, default, minimum, maximum):
         try:

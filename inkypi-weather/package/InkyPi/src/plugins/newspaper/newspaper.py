@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from urllib.parse import urlparse
 from utils.app_utils import get_font
-from utils.image_utils import get_image, take_screenshot
+from utils.image_utils import get_image, take_screenshot, text_width
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json
@@ -564,8 +564,7 @@ class Newspaper(BasePlugin):
         return any("\u4e00" <= char <= "\u9fff" for char in text)
 
     def _text_width(self, draw, text, font):
-        box = draw.textbbox((0, 0), text, font=font)
-        return box[2] - box[0]
+        return text_width(draw, text, font)
 
     def _text_height(self, draw, text, font):
         box = draw.textbbox((0, 0), text or "A", font=font)

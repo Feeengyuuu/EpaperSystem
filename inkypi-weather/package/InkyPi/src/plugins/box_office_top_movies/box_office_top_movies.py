@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import bounded_int
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -830,11 +831,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return font
 
     def _bounded_int(self, value, default, minimum, maximum):
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            number = default
-        return max(minimum, min(maximum, number))
+        return bounded_int(value, default, minimum, maximum)
 
     def _context_movie_name(self, movie):
         if movie.localized_title:

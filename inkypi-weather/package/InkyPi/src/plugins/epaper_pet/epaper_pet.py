@@ -14,7 +14,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
-from utils.app_utils import get_font
+from utils.app_utils import bounded_int, get_font
+from utils.image_utils import text_width
 from utils.theme_utils import get_theme_context
 
 try:
@@ -1069,11 +1070,7 @@ def _enabled(value: Any, default: bool = False) -> bool:
 
 
 def _parse_int(value: Any, default: int, low: int, high: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(low, min(high, parsed))
+    return bounded_int(value, default, low, high)
 
 
 def _slug(value: str, fallback: str = "pet") -> str:
@@ -3279,8 +3276,7 @@ class EpaperPet(BasePlugin):
         return text + suffix if suffix and text else text
 
     def _text_w(self, draw, text: str, font) -> int:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, text, font)
 
     def _text_h(self, draw, text: str, font) -> int:
         bbox = draw.textbbox((0, 0), text, font=font)

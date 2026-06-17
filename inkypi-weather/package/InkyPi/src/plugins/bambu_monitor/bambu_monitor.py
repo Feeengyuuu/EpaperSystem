@@ -3,6 +3,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from utils.app_utils import get_font
+from utils.image_utils import text_width
 from datetime import datetime
 import colorsys
 import json
@@ -832,8 +833,7 @@ class BambuMonitor(BasePlugin):
 
     @staticmethod
     def _text_width(draw, text, font):
-        bbox = draw.textbbox((0, 0), str(text), font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, str(text), font)
 
     def _fit_font(self, draw, text, max_width, start_size, bold=False, min_size=9):
         size = int(start_size)

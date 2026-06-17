@@ -89,6 +89,11 @@ def compute_image_hash(image):
     img_bytes = image.tobytes()
     return hashlib.sha256(img_bytes).hexdigest()
 
+def text_width(draw, text, font):
+    """Return the rendered pixel width of text drawn with the given font."""
+    bbox = draw.textbbox((0, 0), str(text), font=font)
+    return bbox[2] - bbox[0]
+
 def take_screenshot_html(html_str, dimensions, timeout_ms=None, timezone_name=None):
     image = None
     try:

@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.http_client import get_http_session
+from utils.image_utils import text_width
 
 logger = logging.getLogger(__name__)
 
@@ -855,8 +856,7 @@ class WowProfileDashboard(BasePlugin):
         return lines
 
     def _text_width(self, draw, text, font):
-        bbox = draw.textbbox((0, 0), str(text or ""), font=font)
-        return bbox[2] - bbox[0]
+        return text_width(draw, str(text or ""), font)
 
     def _line_height(self, draw, font):
         bbox = draw.textbbox((0, 0), "Ag", font=font)

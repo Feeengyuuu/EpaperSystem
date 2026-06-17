@@ -5,7 +5,7 @@ from pathlib import Path
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
-from utils.app_utils import get_font, get_fonts
+from utils.app_utils import get_font, bounded_int, get_available_font_names
 from plugins.base_plugin.base_plugin import BasePlugin
 
 from .quote_picker import resolve_with_fallback, sanitize, pick_quote
@@ -50,13 +50,7 @@ class ChineseLiteratureClock(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = True
-        params["available_fonts"] = sorted({
-            f.get("name") or f.get("font_family")
-            for f in get_fonts()
-            if f.get("name") or f.get("font_family")
-        })
-        if DEFAULT_FONT_FAMILY not in params["available_fonts"]:
-            params["available_fonts"].append(DEFAULT_FONT_FAMILY)
+        params["available_fonts"] = get_available_font_names(default=DEFAULT_FONT_FAMILY)
         return params
 
     def generate_image(self, settings, device_config):
@@ -325,11 +319,7 @@ class ChineseLiteratureClock(BasePlugin):
         return text[: max(1, max_len - 3)] + "..."
 
     def _int_setting(self, value, default, minimum, maximum):
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = default
-        return max(minimum, min(maximum, parsed))
+        return bounded_int(value, default, minimum, maximum)
 
     def _fit_quote(self, draw, quote, font_family, max_width, max_height):
         tier = _size_tier(len(quote))

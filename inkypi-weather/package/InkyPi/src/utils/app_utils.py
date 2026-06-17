@@ -143,6 +143,33 @@ def resolve_dimensions(device_config):
         dimensions = dimensions[::-1]
     return dimensions
 
+def coerce_bool(value, default=False, truthy=("1", "true", "yes", "on")):
+    """Coerce a setting value to bool: None -> default, bool passthrough, else membership in truthy."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in truthy
+
+def bounded_int(value, default, minimum, maximum):
+    """Parse value as int (falling back to default), then clamp to [minimum, maximum]."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+def get_available_font_names(default=None):
+    """Sorted unique font display names from get_fonts(), with an optional default appended if missing."""
+    names = sorted({
+        f.get("name") or f.get("font_family")
+        for f in get_fonts()
+        if f.get("name") or f.get("font_family")
+    })
+    if default and default not in names:
+        names.append(default)
+    return names
+
 def generate_startup_image(dimensions=(800,480)):
     bg_color = (255,255,255)
     text_color = (0,0,0)
