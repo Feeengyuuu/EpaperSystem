@@ -1799,9 +1799,7 @@ class SteamProfileDashboard(BasePlugin):
         return str(value).lower() in ("true", "1", "yes", "on")
 
     def _cache_dir(self):
-        path = os.path.join(self.get_plugin_dir(), ".steam_profile_dashboard_cache")
-        os.makedirs(path, exist_ok=True)
-        return path
+        return self.cache_dir(leaf=".steam_profile_dashboard_cache", create=True)
 
     def _cache_path(self, cache_key):
         return os.path.join(self._cache_dir(), f"{cache_key}.json")

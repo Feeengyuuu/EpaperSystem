@@ -567,9 +567,7 @@ class DailyWordPoem(BasePlugin):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _cache_dir(self) -> Path:
-        path = Path(self.get_plugin_dir("cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(leaf="cache", create=True)
 
     def _daily_word(self, settings, now: datetime) -> dict[str, str]:
         custom_words = self._custom_words(settings.get("word_list"))

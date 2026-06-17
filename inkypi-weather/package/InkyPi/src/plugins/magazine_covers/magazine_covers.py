@@ -1195,10 +1195,7 @@ class MagazineCovers(BasePlugin):
         return self._cache_dir() / "covers" / f"{safe_name}_{key}.json"
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_MAGAZINE_COVERS_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".magazine_covers_cache"))
+        return self.cache_dir(env_var="INKYPI_MAGAZINE_COVERS_CACHE", leaf=".magazine_covers_cache", create=False)
 
     def _read_state(self):
         path = self._state_path()

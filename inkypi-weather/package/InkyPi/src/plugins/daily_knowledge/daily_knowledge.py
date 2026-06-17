@@ -709,10 +709,7 @@ class DailyKnowledge(BasePlugin):
         return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
     def _cache_dir(self):
-        override = os.getenv("INKYPI_DAILY_KNOWLEDGE_CACHE", "").strip()
-        path = Path(override) if override else Path(self.get_plugin_dir("cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(env_var="INKYPI_DAILY_KNOWLEDGE_CACHE", leaf="cache", create=True, strip=True)
 
     def _read_json(self, path, default):
         try:

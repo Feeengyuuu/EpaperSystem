@@ -490,10 +490,4 @@ class UsTvHotShows(BoxOfficeTopMovies):
         return self._cache_dir() / "us_tv_hot_shows_cache.json"
 
     def _cache_dir(self):
-        override = os.getenv("INKYPI_US_TV_HOT_SHOWS_CACHE")
-        if override:
-            path = Path(override)
-        else:
-            path = Path(self.get_plugin_dir(".us_tv_hot_shows_cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(env_var="INKYPI_US_TV_HOT_SHOWS_CACHE", leaf=".us_tv_hot_shows_cache", create=True)

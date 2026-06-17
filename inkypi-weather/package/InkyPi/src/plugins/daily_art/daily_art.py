@@ -941,10 +941,7 @@ class DailyArt(BasePlugin):
                 pass
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_DAILY_ART_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".daily_art_cache"))
+        return self.cache_dir(env_var="INKYPI_DAILY_ART_CACHE", leaf=".daily_art_cache", create=False)
 
     def _daily_cache_path(self):
         return self._cache_dir() / "daily.json"

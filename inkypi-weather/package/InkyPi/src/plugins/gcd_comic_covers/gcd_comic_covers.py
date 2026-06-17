@@ -1575,10 +1575,7 @@ class GcdComicCovers(BasePlugin):
         return self._cache_dir() / "comicvine" / f"{today.isoformat()}-recent-{int(limit)}.json"
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_GCD_COMIC_COVERS_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".gcd_comic_covers_cache"))
+        return self.cache_dir(env_var="INKYPI_GCD_COMIC_COVERS_CACHE", leaf=".gcd_comic_covers_cache", create=False)
 
     def _dedupe_candidates(self, candidates):
         deduped = {}

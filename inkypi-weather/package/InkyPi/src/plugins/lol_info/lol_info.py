@@ -1429,10 +1429,7 @@ class LoLInfo(BasePlugin):
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_LOL_INFO_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".lol_info_cache"))
+        return self.cache_dir(env_var="INKYPI_LOL_INFO_CACHE", leaf=".lol_info_cache", create=False)
 
     def _cache_path(self, key):
         return self._cache_dir() / f"{key}.json"

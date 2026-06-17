@@ -825,9 +825,7 @@ class DailyAINews(BasePlugin):
         return payload
 
     def _cache_dir(self) -> Path:
-        path = Path(self.get_plugin_dir("cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(leaf="cache", create=True)
 
     def _cache_key(self, date_key: str, model: str, feeds_text: str, max_items: int, region_focus: Any) -> str:
         raw = "\n".join([SUMMARY_SCHEMA_VERSION, date_key, model, feeds_text, str(max_items), str(region_focus or "")])

@@ -708,13 +708,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return self._cache_dir() / "box_office_cache.json"
 
     def _cache_dir(self):
-        override = os.getenv("INKYPI_BOX_OFFICE_CACHE")
-        if override:
-            path = Path(override)
-        else:
-            path = Path(self.get_plugin_dir(".box_office_top_movies_cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(env_var="INKYPI_BOX_OFFICE_CACHE", leaf=".box_office_top_movies_cache", create=True)
 
     def _poster_cache_path(self, movie):
         key = hashlib.sha256((movie.poster_url or movie.title).encode("utf-8")).hexdigest()[:18]

@@ -583,7 +583,4 @@ class NatGeoPhotoOfTheDay(BasePlugin):
         return self._cache_dir() / f"{source}_{key}.json"
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_NATGEO_POTD_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".natgeo_potd_cache"))
+        return self.cache_dir(env_var="INKYPI_NATGEO_POTD_CACHE", leaf=".natgeo_potd_cache", create=False)

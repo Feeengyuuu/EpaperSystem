@@ -137,9 +137,7 @@ class SteamDailyArt(BasePlugin):
         return now.strftime("%Y-%m-%d")
 
     def _cache_dir(self):
-        path = os.path.join(self.get_plugin_dir(), ".steam_daily_art_cache")
-        os.makedirs(path, exist_ok=True)
-        return path
+        return self.cache_dir(leaf=".steam_daily_art_cache", create=True)
 
     def _cache_path(self):
         return os.path.join(self._cache_dir(), "cache.json")

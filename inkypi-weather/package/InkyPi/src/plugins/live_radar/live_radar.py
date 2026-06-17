@@ -1771,9 +1771,7 @@ class LiveRadar(BasePlugin):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
     def _cache_dir(self):
-        path = Path(self.get_plugin_dir("cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(leaf="cache", create=True)
 
     def _cache_path(self, cache_key):
         return self._cache_dir() / f"{cache_key}.json"

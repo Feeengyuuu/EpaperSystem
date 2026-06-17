@@ -78,6 +78,27 @@ class BasePlugin:
             plugin_dir = os.path.join(plugin_dir, path)
         return plugin_dir
 
+    def cache_dir(self, env_var=None, leaf=None, create=True, strip=False):
+        """Resolve a plugin cache directory, honoring an optional env-var override.
+
+        env_var: name of an override environment variable (or None to skip)
+        leaf:    subdirectory under the plugin dir used when no override is set
+        create:  mkdir(parents=True, exist_ok=True) before returning
+        strip:   strip() whitespace from the override value before using it
+        """
+        override = os.getenv(env_var) if env_var else None
+        if strip and override is not None:
+            override = override.strip()
+        if override:
+            path = Path(override)
+        elif leaf is not None:
+            path = Path(self.get_plugin_dir(leaf))
+        else:
+            path = Path(self.get_plugin_dir())
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def generate_settings_template(self):
         template_params = {"settings_template": "base_plugin/settings.html"}
 

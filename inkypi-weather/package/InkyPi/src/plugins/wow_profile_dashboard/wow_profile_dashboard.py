@@ -912,9 +912,7 @@ class WowProfileDashboard(BasePlugin):
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:18]
 
     def _cache_dir(self):
-        path = Path(self.get_plugin_dir()) / ".wow_profile_dashboard_cache"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(leaf=".wow_profile_dashboard_cache", create=True)
 
     def _cache_path(self, cache_key):
         return self._cache_dir() / f"{cache_key}.json"
