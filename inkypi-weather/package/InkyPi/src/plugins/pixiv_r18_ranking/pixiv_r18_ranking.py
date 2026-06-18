@@ -23,17 +23,47 @@ STATE_VERSION = "pixiv-r18-ranking-v1"
 DEFAULT_RANKING_MODE = "day_r18"
 DEFAULT_POOL_SIZE = 20
 MAX_POOL_SIZE = 50
+DEFAULT_FIT_MODE = "auto_layout"
+MAX_STRIP_CELLS = 3
+# Cap on ranking pages walked while filling the pool (~50 entries/page).
+MAX_RANKING_PAGES = 5
 JST = timezone(timedelta(hours=9))
 DOWNLOAD_CHUNK_SIZE = 8192
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
 
+# Public ranking endpoint. ``format=json`` needs no OAuth/API key; only the R-18
+# modes require a logged-in session (a ``PHPSESSID`` cookie). When no cookie is
+# configured we fall back to the matching safe-for-work ranking so the plugin
+# still produces an image.
+RANKING_URL = "https://www.pixiv.net/ranking.php"
+PIXIV_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+)
+
+# Maps the saved setting value to (R-18 ranking.php mode, SFW fallback mode).
+RANKING_MODE_MAP = {
+    "day_r18": ("daily_r18", "daily"),
+    "daily_r18": ("daily_r18", "daily"),
+    "day_male_r18": ("male_r18", "male"),
+    "male_r18": ("male_r18", "male"),
+    "day_female_r18": ("female_r18", "female"),
+    "female_r18": ("female_r18", "female"),
+    "week_r18": ("weekly_r18", "weekly"),
+    "weekly_r18": ("weekly_r18", "weekly"),
+}
+
+PIXIV_RANKING_HEADERS = {
+    "Referer": "https://www.pixiv.net/",
+    "User-Agent": PIXIV_BROWSER_UA,
+    "Accept": "application/json",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
 PIXIV_IMAGE_HEADERS = {
     "Referer": "https://www.pixiv.net/",
-    "User-Agent": (
-        "Mozilla/5.0 (compatible; InkyPi PixivR18Ranking/1.0; "
-        "+https://github.com/fatihak/InkyPi/)"
-    ),
+    "User-Agent": PIXIV_BROWSER_UA,
 }
 
 RISK_TAGS = {
@@ -73,22 +103,28 @@ class PixivR18Ranking(BasePlugin):
                 logger.warning("Pixiv R-18 ranking daily pool is empty after filtering.")
                 return self._fallback_image(dimensions, "Pixiv R-18", "No filtered image available")
 
-            item = self._select_daily_item(pool)
-            if not item:
+            group = self._select_display_group(pool, settings)
+            if not group:
                 return self._fallback_image(dimensions, "Pixiv R-18", "No cached image available")
 
-            image = self._load_cached_item_image(item, dimensions)
-            if not image:
-                logger.warning("Cached Pixiv ranking image missing for %s", item.get("illust_id"))
+            images = []
+            for item in group:
+                image = self._load_cached_item_image(item, dimensions)
+                if image:
+                    images.append(image)
+            if not images:
+                logger.warning("Cached Pixiv ranking image missing for %s", group[0].get("illust_id"))
                 return self._fallback_image(dimensions, "Pixiv R-18", "Cached image missing")
 
             logger.info(
-                "Selected Pixiv R-18 ranking image. | rank: %s | illust_id: %s | title: %s",
-                item.get("rank"),
-                item.get("illust_id"),
-                item.get("title"),
+                "Selected Pixiv R-18 ranking. | count: %s | illust_ids: %s",
+                len(images),
+                [item.get("illust_id") for item in group],
             )
-            return self._fit_image(image, dimensions, settings, item)
+            if len(images) >= 2:
+                # Two or three portraits side by side.
+                return self._compose_strip(images, dimensions, settings)
+            return self._fit_image(images[0], dimensions, settings, group[0])
         except Exception as exc:
             logger.exception("Pixiv R-18 ranking plugin failed: %s", exc)
             return self._fallback_image(dimensions, "Pixiv R-18", "Ranking unavailable")
@@ -128,65 +164,151 @@ class PixivR18Ranking(BasePlugin):
     def _refresh_daily_pool(self, settings, device_config, dimensions):
         ranking_mode = self._ranking_mode(settings)
         pool_size = self._pool_size(settings)
-        token = self._load_refresh_token(device_config)
-        if not token:
-            logger.warning("PIXIV_REFRESH_TOKEN is not configured; Pixiv R-18 ranking pool cannot refresh.")
-            self._write_current_day_pool([], settings)
-            return []
+        cookie = self._load_session_cookie(device_config)
 
-        ranking = self._fetch_ranking(token, ranking_mode)
         usable = []
         errors = []
-        for rank, illust in enumerate(ranking, start=1):
-            if len(usable) >= pool_size:
+        seen = set()
+        # Resolve the effective mode (R-18 with cookie, else SFW) and grab page 1.
+        mode, eff_cookie, page_items = self._resolve_ranking(ranking_mode, cookie)
+        page = 1
+        while page_items and len(usable) < pool_size:
+            for illust in page_items:
+                if len(usable) >= pool_size:
+                    break
+                illust_id = str(self._illust_id(illust) or "")
+                if not illust_id or illust_id in seen:
+                    continue
+                seen.add(illust_id)
+                if not self._is_safe_ranking_item(illust):
+                    continue
+                try:
+                    item = self._ranking_item_metadata(illust, _get_value(illust, "rank", len(usable) + 1))
+                    image_path = self._download_ranking_item_image(item, dimensions)
+                    if image_path:
+                        item["image_path"] = str(image_path)
+                        usable.append(item)
+                except Exception as exc:
+                    errors.append(f"{illust_id}: {exc}")
+                    logger.warning("Could not cache Pixiv ranking item %s: %s", illust_id, exc)
+            # Keep walking the ranking until the pool is full or pages run out.
+            if len(usable) >= pool_size or page >= MAX_RANKING_PAGES:
                 break
-            if not self._is_safe_ranking_item(illust):
-                continue
+            page += 1
             try:
-                item = self._ranking_item_metadata(illust, rank)
-                image_path = self._download_ranking_item_image(item, dimensions)
-                if image_path:
-                    item["image_path"] = str(image_path)
-                    usable.append(item)
+                page_items = self._fetch_ranking_page(mode, eff_cookie, page)
             except Exception as exc:
-                errors.append(f"{self._illust_id(illust)}: {exc}")
-                logger.warning("Could not cache Pixiv ranking item %s: %s", self._illust_id(illust), exc)
+                errors.append(f"page {page} ({mode}): {exc}")
+                logger.warning("Pixiv ranking page %s fetch failed: %s", page, exc)
+                break
 
         state = self._write_current_day_pool(usable, settings)
         state["last_refresh_errors"] = errors[-8:]
         self._write_state(state)
-        logger.info("Pixiv R-18 daily ranking pool refreshed. | count: %s", len(usable))
+        if len(usable) < pool_size:
+            logger.warning(
+                "Pixiv ranking pool under target. | mode: %s | got: %s | target: %s | pages: %s",
+                mode, len(usable), pool_size, page,
+            )
+        else:
+            logger.info(
+                "Pixiv R-18 daily ranking pool refreshed. | mode: %s | count: %s | pages: %s",
+                mode, len(usable), page,
+            )
         return usable
 
-    def _fetch_ranking(self, refresh_token, ranking_mode):
-        api = self._pixiv_api()
-        api.auth(refresh_token=refresh_token)
-        result = api.illust_ranking(ranking_mode)
-        return list(_get_value(result, "illusts", []) or [])
+    def _resolve_ranking(self, ranking_mode, cookie):
+        """Resolve the effective ranking and fetch page 1.
 
-    def _pixiv_api(self):
+        Returns (effective_mode, effective_cookie, first_page_items). R-18 modes
+        need a login cookie; when it is missing or rejected (the page comes back
+        as the HTML landing page, not JSON), fall back to the SFW ranking.
+        """
+        r18_mode, sfw_mode = self._mode_pair(ranking_mode)
+        if r18_mode:
+            if cookie:
+                try:
+                    return r18_mode, cookie, self._fetch_ranking_page(r18_mode, cookie, 1)
+                except Exception as exc:
+                    logger.warning(
+                        "Pixiv R-18 ranking '%s' fetch failed (cookie expired or invalid?); "
+                        "falling back to SFW '%s': %s",
+                        r18_mode, sfw_mode, exc,
+                    )
+            else:
+                logger.warning(
+                    "PIXIV_PHPSESSID is not configured; R-18 ranking requires a login cookie. "
+                    "Falling back to SFW ranking '%s'.",
+                    sfw_mode,
+                )
+            return sfw_mode, None, self._fetch_ranking_page(sfw_mode, None, 1)
+        eff_cookie = cookie or None
+        return sfw_mode, eff_cookie, self._fetch_ranking_page(sfw_mode, eff_cookie, 1)
+
+    def _fetch_ranking(self, ranking_mode, cookie):
+        """First ranking page for the mode (R-18 with cookie, else SFW fallback)."""
+        return self._resolve_ranking(ranking_mode, cookie)[2]
+
+    def _mode_pair(self, ranking_mode):
+        """Returns (r18_mode, sfw_fallback_mode); r18_mode is None for plain modes."""
+        return RANKING_MODE_MAP.get(ranking_mode, (None, ranking_mode))
+
+    def _fetch_ranking_page(self, mode, cookie, page=1):
+        params = {"mode": mode, "content": "illust", "format": "json", "p": int(page)}
+        cookies = {"PHPSESSID": cookie} if cookie else None
+        response = get_http_session().get(
+            RANKING_URL,
+            params=params,
+            headers=PIXIV_RANKING_HEADERS,
+            cookies=cookies,
+            timeout=40,
+        )
+        response.raise_for_status()
         try:
-            from pixivpy3 import AppPixivAPI
-        except ImportError as exc:
-            raise RuntimeError("pixivpy3 is not installed") from exc
-        return AppPixivAPI()
+            payload = response.json()
+        except ValueError as exc:
+            # R-18 without a valid cookie returns the HTML landing page, not JSON.
+            raise RuntimeError(f"pixiv ranking '{mode}' did not return JSON (auth/cookie issue)") from exc
+        if isinstance(payload, dict):
+            if payload.get("error"):
+                raise RuntimeError(f"pixiv ranking '{mode}' error: {payload.get('message') or 'unknown'}")
+            contents = payload.get("contents")
+            if isinstance(contents, list):
+                return contents
+        return []
 
     def _ranking_item_metadata(self, illust, rank):
         illust_id = str(self._illust_id(illust) or "")
         title = str(_get_value(illust, "title", "") or "").strip()
-        user = _get_value(illust, "user", {}) or {}
-        artist = str(_get_value(user, "name", "") or "").strip()
+        artist = str(_get_value(illust, "user_name", "") or "").strip()
+        if not artist:
+            user = _get_value(illust, "user", {}) or {}
+            artist = str(_get_value(user, "name", "") or "").strip()
         tags = self._tag_names(illust)
         image_url = self._image_url(illust)
         if not illust_id or not image_url:
             raise RuntimeError("ranking item missing id or image URL")
 
+        try:
+            rank_value = int(_get_value(illust, "rank", rank) or rank)
+        except (TypeError, ValueError):
+            rank_value = int(rank)
+
+        width, height = 0, 0
+        try:
+            width = int(_get_value(illust, "width", 0) or 0)
+            height = int(_get_value(illust, "height", 0) or 0)
+        except (TypeError, ValueError):
+            width, height = 0, 0
+
         return {
             "illust_id": illust_id,
-            "rank": int(rank),
+            "rank": rank_value,
             "title": title,
             "artist": artist,
             "tags": tags,
+            "width": width,
+            "height": height,
             "page_url": f"https://www.pixiv.net/artworks/{illust_id}",
             "image_url": image_url,
             "cached_at": self._now_utc().isoformat(),
@@ -292,12 +414,8 @@ class PixivR18Ranking(BasePlugin):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._atomic_write_json(path, payload)
 
-    def _select_daily_item(self, pool):
-        pool_by_id = {str(item.get("illust_id")): item for item in pool if item.get("illust_id")}
-        if not pool_by_id:
-            return None
-
-        state = self._read_state()
+    def _init_queue(self, pool_by_id, state):
+        """Build the rotation queue: reuse the saved one, else reshuffle the pool."""
         queue = [
             str(illust_id)
             for illust_id in state.get("queue", [])
@@ -312,6 +430,15 @@ class PixivR18Ranking(BasePlugin):
                     if illust_id != last_id:
                         queue[0], queue[index] = queue[index], queue[0]
                         break
+        return queue
+
+    def _select_daily_item(self, pool):
+        pool_by_id = {str(item.get("illust_id")): item for item in pool if item.get("illust_id")}
+        if not pool_by_id:
+            return None
+
+        state = self._read_state()
+        queue = self._init_queue(pool_by_id, state)
 
         selected_id = queue.pop(0)
         state["queue"] = queue
@@ -319,6 +446,57 @@ class PixivR18Ranking(BasePlugin):
         state["last_displayed_at"] = self._now_utc().isoformat()
         self._write_state(state)
         return pool_by_id.get(selected_id)
+
+    def _select_display_group(self, pool, settings):
+        """Pick the next 1-3 items to show, advancing the rotation queue.
+
+        In ``auto_layout`` mode a portrait at the queue head pulls the next
+        portraits (in queue order) to form a 2-3 wide strip; landscape heads and
+        every other fit mode display a single image.
+        """
+        pool_by_id = {str(item.get("illust_id")): item for item in pool if item.get("illust_id")}
+        if not pool_by_id:
+            return []
+
+        state = self._read_state()
+        queue = self._init_queue(pool_by_id, state)
+        if not queue:
+            return []
+
+        head_id = queue.pop(0)
+        group_ids = [head_id]
+
+        if self._fit_mode(settings) == "auto_layout" and self._is_portrait_item(pool_by_id[head_id]):
+            remaining = []
+            for illust_id in queue:
+                if len(group_ids) < MAX_STRIP_CELLS and self._is_portrait_item(pool_by_id[illust_id]):
+                    group_ids.append(illust_id)
+                else:
+                    remaining.append(illust_id)
+            queue = remaining
+
+        state["queue"] = queue
+        state["last_illust_id"] = group_ids[-1]
+        state["last_displayed_at"] = self._now_utc().isoformat()
+        self._write_state(state)
+        return [pool_by_id[illust_id] for illust_id in group_ids]
+
+    def _is_portrait_item(self, item):
+        try:
+            width = int(item.get("width") or 0)
+            height = int(item.get("height") or 0)
+        except (TypeError, ValueError):
+            width = height = 0
+        if width > 0 and height > 0:
+            return height > width
+        path = Path(item.get("image_path") or "")
+        if path.is_file():
+            try:
+                with Image.open(path) as image:
+                    return image.height > image.width
+            except Exception:
+                return False
+        return False
 
     def _load_cached_item_image(self, item, dimensions):
         path = Path(item.get("image_path") or "")
@@ -329,8 +507,28 @@ class PixivR18Ranking(BasePlugin):
             return None
         return image.convert("RGB")
 
+    def _fit_mode(self, settings):
+        return str(settings.get("fitMode") or DEFAULT_FIT_MODE).strip().lower()
+
+    def _compose_strip(self, images, dimensions, settings):
+        """Place 2-3 images side by side, each crop-filled into an equal column."""
+        width, height = dimensions
+        count = len(images)
+        canvas = self._solid_background(dimensions, settings)
+        # Column edges that sum exactly to the full width (no seams, no remainder).
+        edges = [round(width * index / count) for index in range(count + 1)]
+        for index, image in enumerate(images):
+            x0, x1 = edges[index], edges[index + 1]
+            cell = ImageOps.fit(
+                ImageOps.exif_transpose(image).convert("RGB"),
+                (max(1, x1 - x0), height),
+                method=Image.LANCZOS,
+            )
+            canvas.paste(cell, (x0, 0))
+        return canvas
+
     def _fit_image(self, image, dimensions, settings, item=None):
-        fit_mode = str(settings.get("fitMode") or "auto_blur").strip().lower()
+        fit_mode = self._fit_mode(settings)
         image = ImageOps.exif_transpose(image).convert("RGB")
         if fit_mode == "contain":
             fitted = ImageOps.contain(image, dimensions, method=Image.LANCZOS)
@@ -381,9 +579,24 @@ class PixivR18Ranking(BasePlugin):
         return image
 
     def _is_safe_ranking_item(self, illust):
+        # ranking.php marks animated works as illust_type "2"; the app-api used "ugoira".
+        if str(_get_value(illust, "illust_type", "") or "") == "2":
+            return False
         if str(_get_value(illust, "type", "") or "").lower() == "ugoira":
             return False
 
+        # Masked entries cannot be displayed in full; skip them.
+        if _get_value(illust, "is_masked", False):
+            return False
+
+        # ranking.php exposes per-illust content flags directly; reject minors/gore.
+        content_type = _get_value(illust, "illust_content_type", {}) or {}
+        if _get_value(content_type, "lo", False):
+            return False
+        if _get_value(content_type, "grotesque", False):
+            return False
+
+        # Defensive guard for the legacy app-api shape (x_restrict >= 2 == R-18G).
         try:
             x_restrict = int(_get_value(illust, "x_restrict", 0) or 0)
         except (TypeError, ValueError):
@@ -397,6 +610,9 @@ class PixivR18Ranking(BasePlugin):
     def _tag_names(self, illust):
         names = []
         for tag in _get_value(illust, "tags", []) or []:
+            if isinstance(tag, str):
+                names.append(tag)
+                continue
             for key in ("name", "translated_name"):
                 value = _get_value(tag, key, "")
                 if value:
@@ -404,39 +620,37 @@ class PixivR18Ranking(BasePlugin):
         return names
 
     def _image_url(self, illust):
+        # ranking.php gives a single sized master URL.
+        url = _get_value(illust, "url", "")
+        if url:
+            return str(url)
+
+        # Defensive fallbacks for the legacy app-api shape.
         meta_pages = _get_value(illust, "meta_pages", []) or []
         if meta_pages:
-            first_page = meta_pages[0]
-            image_urls = _get_value(first_page, "image_urls", {}) or {}
+            image_urls = _get_value(meta_pages[0], "image_urls", {}) or {}
             for key in ("original", "large", "medium", "square_medium"):
                 value = _get_value(image_urls, key, "")
                 if value:
                     return str(value)
 
         single_page = _get_value(illust, "meta_single_page", {}) or {}
-        for key in ("original_image_url",):
-            value = _get_value(single_page, key, "")
-            if value:
-                return str(value)
-
-        image_urls = _get_value(illust, "image_urls", {}) or {}
-        for key in ("original", "large", "medium", "square_medium"):
-            value = _get_value(image_urls, key, "")
-            if value:
-                return str(value)
+        value = _get_value(single_page, "original_image_url", "")
+        if value:
+            return str(value)
         return ""
 
     def _illust_id(self, illust):
-        return _get_value(illust, "id", "")
+        return _get_value(illust, "illust_id", "") or _get_value(illust, "id", "")
 
-    def _load_refresh_token(self, device_config):
+    def _load_session_cookie(self, device_config):
         value = ""
         if device_config is not None and hasattr(device_config, "load_env_key"):
             try:
-                value = device_config.load_env_key("PIXIV_REFRESH_TOKEN") or ""
+                value = device_config.load_env_key("PIXIV_PHPSESSID") or ""
             except Exception as exc:
-                logger.warning("Could not read PIXIV_REFRESH_TOKEN from device config: %s", exc)
-        return str(value or os.getenv("PIXIV_REFRESH_TOKEN", "") or "").strip()
+                logger.warning("Could not read PIXIV_PHPSESSID from device config: %s", exc)
+        return str(value or os.getenv("PIXIV_PHPSESSID", "") or "").strip()
 
     def _ranking_mode(self, settings):
         mode = str(settings.get("rankingMode") or DEFAULT_RANKING_MODE).strip()
@@ -450,6 +664,8 @@ class PixivR18Ranking(BasePlugin):
         return max(1, min(MAX_POOL_SIZE, size))
 
     def _display_dimensions(self, device_config):
+        # Self-contained on purpose: BasePlugin.get_dimensions() is not present on
+        # every deployed base_plugin version, so resolve the resolution here.
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
             dimensions = dimensions[::-1]

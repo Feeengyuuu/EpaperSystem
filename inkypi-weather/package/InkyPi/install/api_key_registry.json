@@ -244,14 +244,14 @@
       "notes": "Optional odds provider, including LPL odds mode."
     },
     {
-      "key": "PIXIV_REFRESH_TOKEN",
+      "key": "PIXIV_PHPSESSID",
       "service": "Pixiv",
       "features": ["Pixiv R-18 Ranking"],
       "required": false,
-      "aliases": ["PIXIV_TOKEN", "PIXIV_REFRESH"],
-      "signup_url": "https://www.pixiv.net/",
-      "docs_url": "https://github.com/upbit/pixivpy",
-      "notes": "Refresh token for the private local Pixiv ranking display. Keep this value secret."
+      "aliases": ["PIXIV_COOKIE", "PIXIV_SESSION"],
+      "signup_url": "https://www.pixiv.net/settings/viewing",
+      "docs_url": "https://www.pixiv.net/",
+      "notes": "Browser PHPSESSID cookie from a logged-in pixiv.net session with R-18 display enabled. Only needed for R-18 ranking modes; SFW rankings work without it. Keep this value secret."
     },
     {
       "key": "BLIZZARD_CLIENT_ID",

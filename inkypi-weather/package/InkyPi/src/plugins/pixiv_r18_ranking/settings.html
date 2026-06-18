@@ -16,13 +16,16 @@
     <input id="poolSize" name="poolSize" class="form-input" type="number" min="1" max="50" value="20">
     <div style="color: var(--text-primary); font-size: 0.9em; margin-top: 0.35rem;">
         The plugin fetches the ranking once per JST day, caches safe local images, then rotates from that cache.
+        R-18 modes need a <code>PIXIV_PHPSESSID</code> cookie (set it on the API Keys page) from a logged-in
+        pixiv.net session with R-18 display enabled; without it the plugin falls back to the matching SFW ranking.
     </div>
 </div>
 
 <div class="form-group">
     <label for="fitMode" class="form-label">Fit mode:</label>
     <select id="fitMode" name="fitMode" class="form-input">
-        <option value="auto_blur" selected>Fill screen, rotate portrait when useful</option>
+        <option value="auto_layout" selected>Portrait: 3 side by side, landscape: single</option>
+        <option value="auto_blur">Fill screen, rotate portrait when useful</option>
         <option value="contain">Contain on plain background</option>
         <option value="cover">Fill screen crop</option>
     </select>
@@ -49,7 +52,7 @@
         if (loadPluginSettings) {
             document.getElementById('rankingMode').value = pluginSettings.rankingMode || 'day_r18';
             document.getElementById('poolSize').value = pluginSettings.poolSize || '20';
-            document.getElementById('fitMode').value = pluginSettings.fitMode || 'auto_blur';
+            document.getElementById('fitMode').value = pluginSettings.fitMode || 'auto_layout';
             document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'black';
             document.getElementById('showInfoOverlay').value = pluginSettings.showInfoOverlay || 'false';
             document.getElementById('dailyPoolMode').value = pluginSettings.dailyPoolMode || 'true';
