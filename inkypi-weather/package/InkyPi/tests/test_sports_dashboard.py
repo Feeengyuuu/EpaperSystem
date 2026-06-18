@@ -9153,6 +9153,141 @@ def test_worldcup_group_points_labels_reserve_future_slots():
     assert SportsDashboard._worldcup_team_points_meta({"team_b_standing_points": 4}, "b") == "PTS 4"
 
 
+def test_worldcup_espn_event_block_reads_group_from_alt_game_note():
+    # ESPN's scoreboard only carries the group letter in competition.altGameNote;
+    # season.slug is just "group-stage", so the block must come from the note.
+    competition = {"altGameNote": "FIFA World Cup, Group A"}
+    block = SportsDashboard._worldcup_espn_event_block({"season": {"slug": "group-stage"}}, competition)
+    assert SportsDashboard._worldcup_explicit_group_key({"block": block}) == "Group A"
+
+
+def test_worldcup_explicit_group_key_supports_groups_through_l():
+    # The 2026 World Cup has 12 groups (A-L), not 8.
+    assert SportsDashboard._worldcup_explicit_group_key({"block": "Group L"}) == "Group L"
+    assert SportsDashboard._worldcup_explicit_group_key({"block": "Group I"}) == "Group I"
+    assert SportsDashboard._worldcup_explicit_group_key({"block": "GROUP STAGE"}) == ""
+
+
+def _wc_group_event(eid, date, note, home_tla, home_score, away_tla, away_score, finished=True):
+    if finished:
+        status = {"type": {"state": "post", "completed": True, "name": "STATUS_FULL_TIME", "detail": "FT"}}
+    else:
+        status = {"type": {"state": "pre", "completed": False, "name": "STATUS_SCHEDULED",
+                           "detail": "Sun, June 21st at 12:00 PM EDT"}}
+    return {
+        "id": eid,
+        "date": date,
+        "season": {"slug": "group-stage"},
+        "competitions": [{
+            "id": eid,
+            "date": date,
+            "altGameNote": note,
+            "status": status,
+            "competitors": [
+                {"homeAway": "home", "score": None if home_score is None else str(home_score),
+                 "team": {"abbreviation": home_tla, "displayName": home_tla}},
+                {"homeAway": "away", "score": None if away_score is None else str(away_score),
+                 "team": {"abbreviation": away_tla, "displayName": away_tla}},
+            ],
+        }],
+    }
+
+
+def test_worldcup_group_points_computed_end_to_end_from_espn_feed():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = {"events": [
+        _wc_group_event("1", "2026-06-11T19:00Z", "FIFA World Cup, Group A", "MEX", 2, "RSA", 0),
+        _wc_group_event("2", "2026-06-12T19:00Z", "FIFA World Cup, Group A", "KOR", 2, "CZE", 1),
+        _wc_group_event("3", "2026-06-17T19:00Z", "FIFA World Cup, Group A", "MEX", None, "KOR", None, finished=False),
+    ]}
+    events = SportsDashboard._parse_worldcup_espn_events(payload, la)
+    SportsDashboard._annotate_worldcup_group_points(events)
+    by_id = {e["event_id"]: e for e in events}
+
+    # Finished MEX 2-0 RSA -> winners get 3, losers 0.
+    assert SportsDashboard._worldcup_group_points_label(by_id["1"], "a") == "PTS 3"  # MEX
+    assert SportsDashboard._worldcup_group_points_label(by_id["1"], "b") == "PTS 0"  # RSA
+    # Upcoming MEX vs KOR shows each side's accumulated group points (both won once).
+    assert SportsDashboard._worldcup_group_points_label(by_id["3"], "a") == "PTS 3"  # MEX
+    assert SportsDashboard._worldcup_group_points_label(by_id["3"], "b") == "PTS 3"  # KOR
+
+
+def _sample_worldcup_standings_payload():
+    def entry(abbr, name, points):
+        return {
+            "team": {"abbreviation": abbr, "displayName": name},
+            "stats": [
+                {"name": "wins", "value": 2.0, "displayValue": "2"},
+                {"name": "points", "value": float(points), "displayValue": str(points)},
+            ],
+        }
+    return {
+        "children": [
+            {"name": "Group A", "standings": {"entries": [
+                entry("MEX", "Mexico", 6),
+                entry("KOR", "Korea Republic", 3),
+                entry("RSA", "South Africa", 1),
+                entry("CZE", "Czechia", 0),
+            ]}},
+            {"name": "Group L", "standings": {"entries": [
+                entry("BRA", "Brazil", 4),
+            ]}},
+        ]
+    }
+
+
+def test_parse_worldcup_standings_indexes_points_by_group_and_alias():
+    lookup = SportsDashboard._parse_worldcup_standings(_sample_worldcup_standings_payload())
+    assert lookup[("Group A", "MEX")] == 6
+    assert lookup[("Group A", "MEXICO")] == 6  # also keyed by display name
+    assert lookup[("Group A", "CZE")] == 0
+    assert lookup[("Group L", "BRA")] == 4  # 12-group (A-L) format
+
+
+def test_apply_worldcup_standings_populates_authoritative_pts():
+    events = [{
+        "block": "Group A", "state": "TIMED",
+        "team_a": "Mexico", "team_a_tla": "MEX",
+        "team_b": "Korea", "team_b_tla": "KOR",
+        "wins_a": None, "wins_b": None,
+    }]
+    lookup = SportsDashboard._parse_worldcup_standings(_sample_worldcup_standings_payload())
+    SportsDashboard._apply_worldcup_standings(events, lookup)
+    assert SportsDashboard._worldcup_group_points_label(events[0], "a") == "PTS 6"
+    assert SportsDashboard._worldcup_group_points_label(events[0], "b") == "PTS 3"
+
+
+def test_worldcup_standings_give_correct_pts_even_with_no_finished_matches_in_window():
+    # The whole point: an upcoming match whose group's earlier results have aged
+    # out of the scoreboard window still shows the true cumulative PTS.
+    events = [{
+        "block": "Group A", "state": "TIMED",
+        "team_a": "Mexico", "team_a_tla": "MEX",
+        "team_b": "South Africa", "team_b_tla": "RSA",
+        "wins_a": None, "wins_b": None,
+    }]
+    lookup = SportsDashboard._parse_worldcup_standings(_sample_worldcup_standings_payload())
+    SportsDashboard._apply_worldcup_standings(events, lookup)
+    SportsDashboard._annotate_worldcup_group_points(events)  # local tally finds nothing finished
+    assert SportsDashboard._worldcup_group_points_label(events[0], "a") == "PTS 6"  # from standings
+    assert SportsDashboard._worldcup_group_points_label(events[0], "b") == "PTS 1"
+
+
+def test_worldcup_standings_override_incomplete_local_tally():
+    # Window shows only one finished MEX match (local tally would say 3), but the
+    # authoritative standings say MEX already has 6 across the full group stage.
+    events = [{
+        "block": "Group A", "state": "FT",
+        "team_a": "Mexico", "team_a_tla": "MEX",
+        "team_b": "South Africa", "team_b_tla": "RSA",
+        "wins_a": 2, "wins_b": 0,
+    }]
+    lookup = SportsDashboard._parse_worldcup_standings(_sample_worldcup_standings_payload())
+    SportsDashboard._apply_worldcup_standings(events, lookup)
+    SportsDashboard._annotate_worldcup_group_points(events)
+    assert SportsDashboard._worldcup_group_points_label(events[0], "a") == "PTS 6"  # authoritative, not local 3
+
+
 def test_worldcup_api_season_can_follow_football_data_season_for_history():
     assert SportsDashboard._worldcup_api_season({"footballDataSeason": "2022"}) == "2022"
     assert (
@@ -9187,6 +9322,100 @@ def test_worldcup_espn_parser_reads_finished_and_live_scores():
     assert events[1]["team_b"] == "捷克"
     assert events[1]["elapsed"] == 9
     assert SportsDashboard._worldcup_event_status_label(events[1], datetime(2026, 6, 11, 19, 10, tzinfo=la)) == "9' 0-0"
+
+
+def _worldcup_espn_scheduled_competition(detail):
+    return {
+        "status": {
+            "period": 0,
+            "type": {
+                "state": "pre",
+                "completed": False,
+                "name": "STATUS_SCHEDULED",
+                "description": "Scheduled",
+                "detail": detail,
+                "shortDetail": detail,
+            },
+        }
+    }
+
+
+def test_worldcup_espn_state_does_not_read_date_ordinals_as_live_halves():
+    # ESPN reports a scheduled match's kickoff as a human date in ``detail``. Its ordinal day
+    # suffixes ("21st" -> "1ST", "22nd" -> "2ND") must never be interpreted as first/second
+    # half, otherwise upcoming fixtures masquerade as live games.
+    state = SportsDashboard._worldcup_espn_event_state
+    assert state({}, _worldcup_espn_scheduled_competition("Sun, June 21st at 12:00 PM EDT")) == "TIMED"
+    assert state({}, _worldcup_espn_scheduled_competition("Mon, June 22nd at 1:00 PM EDT")) == "TIMED"
+    assert state({}, _worldcup_espn_scheduled_competition("Wed, June 1st at 3:00 PM EDT")) == "TIMED"
+    assert state({}, _worldcup_espn_scheduled_competition("Thu, June 18th at 12:00 PM EDT")) == "TIMED"
+    # Genuinely in-progress matches must still resolve to their live sub-state.
+    live_2h = {"status": {"type": {"state": "in", "name": "STATUS_SECOND_HALF", "description": "Second Half", "detail": "62'"}}}
+    live_1h = {"status": {"type": {"state": "in", "name": "STATUS_FIRST_HALF", "description": "First Half", "detail": "9'"}}}
+    assert state({}, live_2h) == "2H"
+    assert state({}, live_1h) == "1H"
+
+
+def test_worldcup_future_scheduled_matches_do_not_hijack_the_live_main_card():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = {
+        "events": [
+            {
+                "id": "live-arg-alg",
+                "date": "2026-06-17T01:00Z",
+                "competitions": [
+                    {
+                        "id": "live-arg-alg",
+                        "date": "2026-06-17T01:00Z",
+                        "status": {"period": 2, "type": {"state": "in", "completed": False, "name": "STATUS_HALFTIME", "description": "Halftime", "detail": "HT", "shortDetail": "HT"}},
+                        "competitors": [
+                            {"homeAway": "home", "score": "1", "team": {"abbreviation": "ARG", "displayName": "Argentina"}},
+                            {"homeAway": "away", "score": "0", "team": {"abbreviation": "ALG", "displayName": "Algeria"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "sched-ksa-esp",
+                "date": "2026-06-21T16:00Z",
+                "competitions": [
+                    {
+                        "id": "sched-ksa-esp",
+                        "date": "2026-06-21T16:00Z",
+                        "status": {"period": 0, "type": {"state": "pre", "completed": False, "name": "STATUS_SCHEDULED", "description": "Scheduled", "detail": "Sun, June 21st at 12:00 PM EDT", "shortDetail": "6/21 - 12:00 PM EDT"}},
+                        "competitors": [
+                            {"homeAway": "home", "score": "0", "team": {"abbreviation": "ESP", "displayName": "Spain"}},
+                            {"homeAway": "away", "score": "0", "team": {"abbreviation": "KSA", "displayName": "Saudi Arabia"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "sched-aut-arg",
+                "date": "2026-06-22T17:00Z",
+                "competitions": [
+                    {
+                        "id": "sched-aut-arg",
+                        "date": "2026-06-22T17:00Z",
+                        "status": {"period": 0, "type": {"state": "pre", "completed": False, "name": "STATUS_SCHEDULED", "description": "Scheduled", "detail": "Mon, June 22nd at 1:00 PM EDT", "shortDetail": "6/22 - 1:00 PM EDT"}},
+                        "competitors": [
+                            {"homeAway": "home", "score": "0", "team": {"abbreviation": "ARG", "displayName": "Argentina"}},
+                            {"homeAway": "away", "score": "0", "team": {"abbreviation": "AUT", "displayName": "Austria"}},
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+    events = SportsDashboard._parse_worldcup_espn_events(payload, la)
+    now = datetime(2026, 6, 16, 18, 30, tzinfo=la)  # during the ARG vs ALG halftime
+
+    selected = SportsDashboard._select_worldcup_event_sections(events, now, 3)
+
+    assert [event["state"] for event in events if event["event_id"].startswith("sched")] == ["TIMED", "TIMED"]
+    assert [event["event_id"] for event in selected["live"]] == ["live-arg-alg"]
+    assert selected["main"]["event_id"] == "live-arg-alg"
+    assert all(not event["event_id"].startswith("sched") for event in selected["live"])
 
 
 def test_worldcup_scoreboard_overlay_updates_football_data_scores():

@@ -61,6 +61,7 @@ FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 SPORTS_DASHBOARD_STATE_VERSION = "sports-dashboard-api-v1"
 FOOTBALL_DATA_STATE_VERSION = "sports-dashboard-football-data-v1"
 WORLD_CUP_SCOREBOARD_STATE_VERSION = "sports-dashboard-worldcup-scoreboard-v1"
+WORLD_CUP_STANDINGS_STATE_VERSION = "sports-dashboard-worldcup-standings-v1"
 WORLD_CUP_ODDS_STATE_VERSION = "sports-dashboard-worldcup-odds-v1"
 WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
@@ -111,6 +112,11 @@ OFFSEASON_HUB_ROTATION_MINUTES = 30
 OFFSEASON_HUB_URGENT_NEXT_WINDOW = timedelta(minutes=90)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+# Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
+# correct on every matchday regardless of the scoreboard date window. Note: apis/v2
+# (the "apis/site/v2" variant returns an empty body for this standings resource).
+DEFAULT_WORLD_CUP_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
+DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS = 3
 DEFAULT_WORLD_CUP_SCOREBOARD_CACHE_HOURS = 1
 DEFAULT_WORLD_CUP_SCOREBOARD_DAILY_LIMIT = 720
 DEFAULT_WORLD_CUP_SCOREBOARD_LOOKBACK_DAYS = 30
@@ -6954,6 +6960,7 @@ class SportsDashboard(BasePlugin):
                 source_state = self._worldcup_combined_score_source_state(source_state, score_source_state)
                 fetched_at = score_fetched_at or fetched_at
             events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            events = self._attach_worldcup_standings_points(events, settings)
             selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
                 return None
@@ -7161,6 +7168,7 @@ class SportsDashboard(BasePlugin):
                 return None
             events = self._attach_worldcup_group_blocks_from_cached_football_data(events, timezone_info)
             events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            events = self._attach_worldcup_standings_points(events, settings)
             selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
                 return None
@@ -7393,6 +7401,7 @@ class SportsDashboard(BasePlugin):
                 source_state = self._worldcup_combined_score_source_state(source_state, score_source_state)
                 fetched_at = score_fetched_at or fetched_at
             events = self._attach_worldcup_odds(events, settings, device_config, timezone_info)
+            events = self._attach_worldcup_standings_points(events, settings)
             selected = self._select_worldcup_event_sections(events, now, visible_matches)
             if not selected:
                 return None
@@ -8871,6 +8880,28 @@ class SportsDashboard(BasePlugin):
             if "AET" in combined or "EXTRA" in combined:
                 return "AET"
             return "FT"
+        if "POSTPONED" in combined:
+            return "POSTPONED"
+        # Scheduled games expose their kickoff as a human-readable date in ``detail`` (e.g.
+        # "Sun, June 21st at 12:00 PM EDT"). The ordinal day suffixes ("1st"/"21st" -> "1ST",
+        # "2nd"/"22nd" -> "2ND") would otherwise be misread as first/second half below, marking
+        # upcoming fixtures as live. Only derive in-play sub-states once ESPN actually reports
+        # the match as in progress; anything else stays scheduled ("TIMED").
+        in_progress = (
+            state == "in"
+            or "IN_PROGRESS" in name
+            or "IN PROGRESS" in combined
+            or "STATUS_LIVE" in name
+            or "FIRST_HALF" in name
+            or "SECOND_HALF" in name
+            or "HALFTIME" in name
+            or "HALF_TIME" in name
+            or "EXTRA_TIME" in name
+            or "SHOOTOUT" in name
+            or "PENALT" in name
+        )
+        if not in_progress:
+            return "TIMED"
         if "HALF_TIME" in combined or "HALFTIME" in combined or combined == "HT":
             return "HT"
         if "SECOND_HALF" in combined or "2ND" in combined:
@@ -8881,11 +8912,7 @@ class SportsDashboard(BasePlugin):
             return "P"
         if "EXTRA" in combined:
             return "ET"
-        if state == "in" or "IN_PROGRESS" in combined or "LIVE" in combined:
-            return "LIVE"
-        if "POSTPONED" in combined:
-            return "POSTPONED"
-        return "TIMED"
+        return "LIVE"
 
     @staticmethod
     def _worldcup_espn_status_text(event, competition, start_time):
@@ -8914,6 +8941,15 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _worldcup_espn_event_block(event, competition):
+        # ESPN only carries the group/stage label in competition.altGameNote
+        # (e.g. "FIFA World Cup, Group A"); season.slug is just "group-stage",
+        # so the note is the only source of the group letter used for standings.
+        note = str((competition or {}).get("altGameNote") or "").strip()
+        if note:
+            cleaned = re.sub(r"^FIFA\s+World\s+Cup[\s,\-]+", "", note, flags=re.IGNORECASE).strip()
+            cleaned = re.sub(r"^World\s+Cup[\s,\-]+", "", cleaned, flags=re.IGNORECASE).strip()
+            if cleaned:
+                return cleaned
         competition_type = (competition or {}).get("type") or {}
         value = str(competition_type.get("abbreviation") or competition_type.get("text") or "").strip()
         if value:
@@ -9269,6 +9305,108 @@ class SportsDashboard(BasePlugin):
         else:
             self._draw_worldcup_tactics_strip(image, draw, right_x1, right_x2, upcoming_used_bottom + 2, content_bottom, main_event)
 
+    def _attach_worldcup_standings_points(self, events, settings):
+        """Overlay authoritative cumulative group PTS from ESPN's standings feed.
+
+        Writes the ``team_{side}_standing_points`` slot, which the points label
+        prefers over the locally-tallied points. Fails soft: on any error the
+        local 3/1/0 tally in ``_annotate_worldcup_group_points`` still applies.
+        """
+        if not events:
+            return events
+        try:
+            payload = self._load_worldcup_standings(settings)
+            lookup = self._parse_worldcup_standings(payload)
+            if lookup:
+                self._apply_worldcup_standings(events, lookup)
+        except Exception as exc:
+            logger.warning("World Cup standings overlay failed: %s", _safe_exception_text(exc))
+        return events
+
+    def _load_worldcup_standings(self, settings):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._sports_dashboard_cache_dir() / "worldcup_standings.json"
+        cache = self._read_json_file(cache_path)
+        url = str(settings.get("worldCupStandingsUrl") or DEFAULT_WORLD_CUP_STANDINGS_URL).strip() or DEFAULT_WORLD_CUP_STANDINGS_URL
+        cache_key = "|".join([WORLD_CUP_STANDINGS_STATE_VERSION, url])
+        has_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("standings"), Mapping)
+        cache_hours = self._int_setting(settings, "worldCupStandingsCacheHours", DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS, 1, 24)
+        if has_cache and not self._force_refresh_requested(settings) and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return cache["standings"]
+        try:
+            response = get_http_session().get(
+                url,
+                params={"season": DEFAULT_WORLD_CUP_SEASON},
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = {
+                "version": WORLD_CUP_STANDINGS_STATE_VERSION,
+                "cache_key": cache_key,
+                "fetched_at": now_utc.isoformat(),
+                "standings": response.json(),
+            }
+        except Exception as exc:
+            logger.warning("ESPN World Cup standings fetch failed: %s", _safe_exception_text(exc))
+            return cache["standings"] if has_cache else {}
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write ESPN World Cup standings cache: %s", exc)
+        return payload["standings"]
+
+    @staticmethod
+    def _parse_worldcup_standings(payload):
+        """Build {(group_key, team_alias_upper): points} from the ESPN standings feed."""
+        lookup = {}
+        if not isinstance(payload, Mapping):
+            return lookup
+        for group in payload.get("children") or []:
+            group_key = SportsDashboard._worldcup_explicit_group_key({"block": str((group or {}).get("name") or "")})
+            if not group_key:
+                continue
+            entries = ((group or {}).get("standings") or {}).get("entries") or []
+            for entry in entries:
+                team = (entry or {}).get("team") or {}
+                points = None
+                for stat in (entry or {}).get("stats") or []:
+                    if str((stat or {}).get("name") or "") == "points":
+                        points = stat.get("value")
+                        if points is None:
+                            points = stat.get("displayValue")
+                        break
+                if points is None:
+                    continue
+                try:
+                    points_int = int(round(float(points)))
+                except (TypeError, ValueError):
+                    continue
+                for alias in (team.get("abbreviation"), team.get("displayName"), team.get("shortDisplayName"), team.get("name")):
+                    alias = str(alias or "").strip().upper()
+                    if alias:
+                        lookup[(group_key, alias)] = points_int
+        return lookup
+
+    @staticmethod
+    def _apply_worldcup_standings(events, lookup):
+        """Write authoritative PTS onto the team_{side}_standing_points slot."""
+        if not lookup:
+            return
+        for event in events or []:
+            if not isinstance(event, MutableMapping):
+                continue
+            group_key = SportsDashboard._worldcup_explicit_group_key(event)
+            if not group_key:
+                continue
+            for side in ("a", "b"):
+                team_key = SportsDashboard._worldcup_group_team_key(event, side)
+                if not team_key:
+                    continue
+                points = lookup.get((group_key, team_key))
+                if points is not None:
+                    event[f"team_{side}_standing_points"] = points
+
     @staticmethod
     def _annotate_worldcup_group_points(events):
         group_points = {}
@@ -9325,7 +9463,7 @@ class SportsDashboard(BasePlugin):
     @staticmethod
     def _worldcup_explicit_group_key(event):
         stage = SportsDashboard._clean_worldcup_stage((event or {}).get("block"))
-        match = re.search(r"\bGroup\s+([A-H])\b", stage, re.IGNORECASE)
+        match = re.search(r"\bGroup\s+([A-L])\b", stage, re.IGNORECASE)
         if not match:
             return ""
         return f"Group {match.group(1).upper()}"
