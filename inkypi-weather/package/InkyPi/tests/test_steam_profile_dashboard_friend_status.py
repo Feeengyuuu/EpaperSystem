@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -190,3 +190,110 @@ def test_game_backdrop_draws_behind_top_dashboard_area():
     diff = ImageChops.difference(image, baseline)
     assert diff.crop((0, 16, 800, 248)).getbbox() is not None
     assert diff.crop((0, 0, 800, 12)).getbbox() is None
+
+
+def test_dashboard_background_uses_theme_specific_assets():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    fallback = (1, 2, 3)
+
+    day = plugin._dashboard_background((160, 96), fallback, theme_mode="day")
+    night = plugin._dashboard_background((160, 96), fallback, theme_mode="night")
+
+    assert day.size == (160, 96)
+    assert night.size == (160, 96)
+    assert ImageChops.difference(day, Image.new("RGB", day.size, fallback)).getbbox() is not None
+    assert ImageChops.difference(day, night).getbbox() is not None
+    assert sum(ImageStat.Stat(day.resize((1, 1))).mean) > sum(ImageStat.Stat(night.resize((1, 1))).mean)
+
+def test_dashboard_render_does_not_draw_dark_backdrop_behind_avatar():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    plugin._avatar_image = lambda _url, size: Image.new("RGBA", (size, size), (80, 90, 100, 255))
+    plugin._game_square_icon = lambda _data, _appid, size: Image.new("RGBA", (size, size), (0, 0, 0, 255))
+
+    def fail_if_backdrop_drawn(*_args, **_kwargs):
+        raise AssertionError("top game backdrop should not be drawn behind the avatar")
+
+    plugin._draw_game_backdrop = fail_if_backdrop_drawn
+    data = {
+        "profile": {"personaname": "Player", "personastate": 1, "avatarfull": ""},
+        "level": 1,
+        "friend_count": 0,
+        "online_friend_count": 0,
+        "recent_games": [],
+        "owned_games": [],
+        "friends": [],
+        "app_details": {},
+        "updated_at": "2026-06-18 20:30",
+        "api_calls": 0,
+        "refresh_mode": "cache",
+        "warnings": [],
+    }
+
+    image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
+
+    assert image.size == (800, 480)
+
+
+def test_dashboard_render_draws_simple_white_avatar_decoration_frame():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    plugin._avatar_image = lambda _url, size: Image.new("RGBA", (size, size), (80, 90, 100, 255))
+    plugin._game_square_icon = lambda _data, _appid, size: Image.new("RGBA", (size, size), (0, 0, 0, 255))
+    calls = []
+
+    def capture_frame(_draw, avatar_box, outline, muted, fonts):
+        calls.append((avatar_box, outline, muted, sorted(fonts.keys())))
+
+    plugin._draw_avatar_gamepad_frame = capture_frame
+    data = {
+        "profile": {"personaname": "Player", "personastate": 1, "avatarfull": ""},
+        "level": 1,
+        "friend_count": 0,
+        "online_friend_count": 0,
+        "recent_games": [],
+        "owned_games": [],
+        "friends": [],
+        "app_details": {},
+        "updated_at": "2026-06-18 20:35",
+        "api_calls": 0,
+        "refresh_mode": "cache",
+        "warnings": [],
+    }
+
+    image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert len(calls) == 1
+    avatar_box, outline, muted, font_keys = calls[0]
+    assert avatar_box == (36, 36, 199, 199)
+    assert outline == (255, 255, 255)
+    assert all(channel >= 232 for channel in muted)
+    assert "title" in font_keys
+
+
+def test_dashboard_render_does_not_draw_horizontal_game_strip():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    plugin._avatar_image = lambda _url, size: Image.new("RGBA", (size, size), (80, 90, 100, 255))
+    plugin._game_square_icon = lambda _data, _appid, size: Image.new("RGBA", (size, size), (0, 0, 0, 255))
+
+    def fail_if_strip_drawn(*_args, **_kwargs):
+        raise AssertionError("horizontal game strip should not be drawn in the dashboard render")
+
+    plugin._draw_game_strip = fail_if_strip_drawn
+    data = {
+        "profile": {"personaname": "Player", "personastate": 1, "avatarfull": ""},
+        "level": 1,
+        "friend_count": 0,
+        "online_friend_count": 0,
+        "recent_games": [],
+        "owned_games": [],
+        "friends": [],
+        "app_details": {},
+        "updated_at": "2026-06-18 20:45",
+        "api_calls": 0,
+        "refresh_mode": "cache",
+        "warnings": [],
+    }
+
+    image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
+
+    assert image.size == (800, 480)

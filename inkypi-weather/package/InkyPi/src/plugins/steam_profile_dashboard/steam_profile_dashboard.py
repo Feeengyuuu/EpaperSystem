@@ -20,8 +20,9 @@ STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/publ
 STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-gamepad-frame-yahei-allgameicons-v16"
-STEAM_BACKGROUND_IMAGE = "background.png"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-v24"
+STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
+STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
 STEAM_GAME_STRIP_IMAGE = "game_strip.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
@@ -590,7 +591,7 @@ class SteamProfileDashboard(BasePlugin):
         light = palette["rule"]
         accent = palette["accent"]
         accent_online = palette["green"]
-        image = self._dashboard_background((width, height), bg, use_image=(theme_context or {}).get("mode") == "night")
+        image = self._dashboard_background((width, height), bg, theme_mode=(theme_context or {}).get("mode", "day"))
         draw = ImageDraw.Draw(image)
 
         fonts = self._fonts(width, height)
@@ -615,17 +616,10 @@ class SteamProfileDashboard(BasePlugin):
         top_text_right = friend_panel_x - 22 if online_avatar_friends else panel_x + panel_w - 18
         lower_y = panel_y + panel_h + 38
 
-        backdrop_x = 0
-        backdrop_y = max(0, panel_y - 18)
-        backdrop_w = width
-        backdrop_h = max(1, lower_y - backdrop_y)
-        self._draw_game_backdrop(image, backdrop_x, backdrop_y, backdrop_w, backdrop_h)
-
         avatar_box = (margin + 10, panel_y + 2, margin + 10 + avatar_size, panel_y + 2 + avatar_size)
         avatar = self._avatar_image(data["profile"].get("avatarfull"), avatar_size)
         image.paste(avatar, (avatar_box[0], avatar_box[1]), avatar if avatar.mode == "RGBA" else None)
-        self._draw_avatar_gamepad_frame(draw, avatar_box, outline=ink, muted=gray, fonts=fonts)
-
+        self._draw_avatar_gamepad_frame(draw, avatar_box, (255, 255, 255), (232, 238, 246), fonts)
         self._rounded_rect(
             draw,
             (panel_x, panel_y, panel_x + panel_w, panel_y + panel_h),
@@ -694,11 +688,6 @@ class SteamProfileDashboard(BasePlugin):
                 ink,
             )
 
-        strip_x = margin + 8
-        strip_y = panel_y + panel_h
-        strip_w = max(1, width - margin - strip_x)
-        strip_h = max(1, lower_y - strip_y)
-        self._draw_game_strip(image, strip_x, strip_y, strip_w, strip_h)
 
         lower_h = height - lower_y - 28
         self._rounded_rect(
@@ -904,15 +893,15 @@ class SteamProfileDashboard(BasePlugin):
         text_h = bbox[3] - bbox[1]
         draw.text((cx - text_w / 2 - bbox[0], cy - text_h / 2 - bbox[1]), str(text), font=font, fill=fill)
 
-    def _dashboard_background(self, dimensions, fallback_color, use_image=True):
-        if not use_image:
-            return Image.new("RGB", dimensions, fallback_color)
-        path = self.get_plugin_dir(STEAM_BACKGROUND_IMAGE)
+    def _dashboard_background(self, dimensions, fallback_color, theme_mode="day"):
+        theme_mode = str(theme_mode or "day").lower()
+        image_name = STEAM_BACKGROUND_NIGHT_IMAGE if theme_mode == "night" else STEAM_BACKGROUND_DAY_IMAGE
+        path = self.get_plugin_dir(image_name)
         try:
             background = Image.open(path).convert("RGB")
             return ImageOps.fit(background, dimensions, method=Image.Resampling.LANCZOS)
         except Exception as e:
-            logger.warning(f"Steam dashboard background unavailable: {e}")
+            logger.warning(f"Steam dashboard background {image_name} unavailable: {e}")
             return Image.new("RGB", dimensions, fallback_color)
 
     def _draw_game_backdrop(self, image, x, y, width, height):
