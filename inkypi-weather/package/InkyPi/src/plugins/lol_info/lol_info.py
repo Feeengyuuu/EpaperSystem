@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -24,17 +25,29 @@ from utils.theme_utils import get_theme_context
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "lol_info"
-STYLE_VERSION = "lol-info-v12-full-champion-list-names"
+STYLE_VERSION = "lol-info-v17-pro-account-rotation"
 DEFAULT_GAME_NAME = "Hide on bush"
 DEFAULT_TAG_LINE = "KR1"
 DEFAULT_PLATFORM = "kr"
 DEFAULT_REGION = "asia"
+DEFAULT_PRO_ACCOUNTS = [
+    {"label": "Faker", "gameName": "Hide on bush", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
+    {"label": "Bin", "gameName": "BLG \uc628", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
+    {"label": "ShowMaker", "gameName": "DK ShowMaker", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
+    {"label": "Chovy", "gameName": "\ud5c8\uac70\ub369", "tagLine": "0303", "platformRoute": "kr", "regionalRoute": "asia"},
+]
+DEFAULT_PRO_ACCOUNTS_TEXT = "\n".join(
+    "|".join([item["label"], item["gameName"], item["tagLine"], item["platformRoute"], item["regionalRoute"]])
+    for item in DEFAULT_PRO_ACCOUNTS
+)
 DDRAGON_VERSION_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 DDRAGON_BASE = "https://ddragon.leagueoflegends.com/cdn"
 CDRAGON_RAW_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default"
 CDRAGON_SKINS_URL = f"{CDRAGON_RAW_BASE}/v1/skins.json"
+CDRAGON_SHARED_IMAGES = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/images"
 LOL_LOGO_FILE = "league-of-legends-logo.png"
 RIOT_LOGO_FILE = "riot-games-logo.png"
+RANK_EMBLEM_TIERS = {"iron", "bronze", "silver", "gold", "platinum", "emerald", "diamond", "master", "grandmaster", "challenger"}
 
 PLATFORM_ROUTES = {"br1", "eun1", "euw1", "jp1", "kr", "la1", "la2", "na1", "oc1", "tr1"}
 REGIONAL_ROUTES = {"americas", "asia", "europe", "sea"}
@@ -65,18 +78,20 @@ class LoLInfo(BasePlugin):
         params["style_settings"] = False
         params["defaultGameName"] = DEFAULT_GAME_NAME
         params["defaultTagLine"] = DEFAULT_TAG_LINE
+        params["defaultProAccounts"] = DEFAULT_PRO_ACCOUNTS_TEXT
         return params
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        effective_settings = self._settings_for_selected_pro_account(settings)
         dimensions = self.get_dimensions(device_config)
 
-        identity = self._identity(settings)
+        identity = self._identity(effective_settings)
         now = time.time()
-        refresh_minutes = self._bounded_int(settings.get("refreshMinutes"), 120, 15, 1440)
-        cache_key = self._cache_key(settings, dimensions, identity)
+        refresh_minutes = self._bounded_int(effective_settings.get("refreshMinutes"), 120, 15, 1440)
+        cache_key = self._cache_key(effective_settings, dimensions, identity)
         cache = self._read_json(self._cache_path(cache_key), {})
-        force_refresh = self._enabled(settings.get("forceRefresh"), default=False)
+        force_refresh = self._enabled(effective_settings.get("forceRefresh"), default=False)
 
         cache_valid = (
             not force_refresh
@@ -92,10 +107,11 @@ class LoLInfo(BasePlugin):
                 data = cache.get("data") or {}
                 data_updated_ts = float(cache.get("updated_ts", now) or now)
             else:
-                data = self._sample_payload() if self._enabled(settings.get("useMockData"), default=False) else self._fetch_dashboard_data(settings, device_config)
+                data = self._sample_payload() if self._enabled(effective_settings.get("useMockData"), default=False) else self._fetch_dashboard_data(effective_settings, device_config)
                 data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 data_updated_ts = now
-            image = self._render_dashboard(data, dimensions, settings, get_theme_context(device_config))
+            data = self._with_pro_account_context(data, effective_settings)
+            image = self._render_dashboard(data, dimensions, effective_settings, get_theme_context(device_config))
             image_path = self._cache_image_path(cache_key)
             image_path.parent.mkdir(parents=True, exist_ok=True)
             image.save(image_path)
@@ -271,9 +287,19 @@ class LoLInfo(BasePlugin):
         payload = self._local_match_history_payload(settings)
         if not isinstance(payload, dict):
             return []
+        if not self._local_match_history_matches_account(payload, account):
+            return []
         matches = payload.get("matches")
         if isinstance(matches, list):
-            return [row for row in (self._normalize_local_match(item, champions) for item in matches) if row]
+            return [
+                row
+                for row in (
+                    self._normalize_local_match(item, champions)
+                    for item in matches
+                    if self._local_match_row_matches_account(item, account)
+                )
+                if row
+            ]
         games = payload.get("games")
         if isinstance(games, dict):
             games = games.get("games")
@@ -281,17 +307,88 @@ class LoLInfo(BasePlugin):
             games = games.get("games")
         if not isinstance(games, list):
             return []
+        account_puuid = str((account or {}).get("puuid") or "").strip()
         puuid_candidates = {
-            str((account or {}).get("puuid") or "").strip(),
-            str(payload.get("puuid") or "").strip(),
-            str(payload.get("subject") or "").strip(),
+            account_puuid,
         }
+        if not account_puuid:
+            puuid_candidates.update([
+                str(payload.get("puuid") or "").strip(),
+                str(payload.get("subject") or "").strip(),
+            ])
         puuid_candidates = {value for value in puuid_candidates if value}
         return [
             summary
             for summary in (self._lcu_game_summary(game, puuid_candidates, champions) for game in games)
             if summary
         ]
+
+    def _local_match_history_matches_account(self, payload, account):
+        account = account or {}
+        account_puuid = str(account.get("puuid") or "").strip()
+        payload_puuids = self._local_payload_puuids(payload)
+        if account_puuid and payload_puuids and account_puuid not in payload_puuids:
+            return False
+
+        account_riot_id = self._normalized_riot_id(account.get("gameName"), account.get("tagLine"))
+        payload_riot_ids = self._local_payload_riot_ids(payload)
+        if account_riot_id and payload_riot_ids and account_riot_id not in payload_riot_ids:
+            return False
+        return True
+
+    def _local_match_row_matches_account(self, row, account):
+        if not isinstance(row, dict):
+            return False
+        account = account or {}
+        account_puuid = str(account.get("puuid") or "").strip()
+        row_puuids = {
+            str(row.get(key) or "").strip()
+            for key in ("puuid", "player_puuid", "playerPuuid", "participantPuuid", "subject")
+        }
+        row_puuids = {value for value in row_puuids if value}
+        if account_puuid and row_puuids and account_puuid not in row_puuids:
+            return False
+
+        account_riot_id = self._normalized_riot_id(account.get("gameName"), account.get("tagLine"))
+        row_riot_ids = {
+            self._normalized_riot_id(row.get("gameName"), row.get("tagLine")),
+            self._normalized_riot_id(row.get("riotGameName"), row.get("riotTagLine")),
+        }
+        row_riot_ids = {value for value in row_riot_ids if value}
+        if account_riot_id and row_riot_ids and account_riot_id not in row_riot_ids:
+            return False
+        return True
+
+    def _local_payload_puuids(self, payload):
+        candidates = set()
+        for source in self._local_payload_identity_sources(payload):
+            for key in ("puuid", "subject"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    candidates.add(value)
+        return candidates
+
+    def _local_payload_riot_ids(self, payload):
+        candidates = set()
+        for source in self._local_payload_identity_sources(payload):
+            candidates.add(self._normalized_riot_id(source.get("gameName"), source.get("tagLine")))
+            candidates.add(self._normalized_riot_id(source.get("riotGameName"), source.get("riotTagLine")))
+        return {value for value in candidates if value}
+
+    @staticmethod
+    def _local_payload_identity_sources(payload):
+        sources = [payload]
+        for key in ("summoner", "account", "player"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                sources.append(value)
+        return sources
+
+    @staticmethod
+    def _normalized_riot_id(game_name, tag_line):
+        game = str(game_name or "").strip().casefold()
+        tag = str(tag_line or "").strip().lstrip("#").casefold()
+        return f"{game}#{tag}" if game and tag else ""
 
     def _local_match_history_payload(self, settings):
         for path in self._local_match_history_paths(settings):
@@ -571,7 +668,7 @@ class LoLInfo(BasePlugin):
         include_latest = self._enabled(settings.get("includeLatestSkins"), default=bool(settings))
         latest_count = self._bounded_int(settings.get("latestSkinCount"), 8, 0, 24)
         catalog = []
-        if owned_refs or (include_latest and latest_count > 0):
+        if settings or owned_refs or include_latest:
             cache_hours = self._bounded_int(settings.get("latestSkinCacheHours"), 6, 1, 168)
             catalog = self._communitydragon_skins(
                 cache_hours=cache_hours,
@@ -579,7 +676,8 @@ class LoLInfo(BasePlugin):
             )
         owned_pool = self._owned_skin_art_pool(owned_refs, catalog, champions)
         latest_pool = self._latest_skin_art_pool(catalog, champions, latest_count) if include_latest and latest_count > 0 else []
-        return self._dedupe_skin_art_pool(owned_pool + latest_pool + featured_pool)
+        catalog_pool = self._all_skin_art_pool(catalog, champions)
+        return self._dedupe_skin_art_pool(owned_pool + latest_pool + featured_pool + catalog_pool)
 
     def _communitydragon_skins(self, cache_hours=6, force_refresh=False):
         cache_path = self._cache_dir() / "communitydragon_skins_latest.json"
@@ -640,6 +738,14 @@ class LoLInfo(BasePlugin):
                 pool.append(art)
         pool = sorted(pool, key=self._skin_art_release_key, reverse=True)
         return pool[: max(0, int(limit))]
+
+    def _all_skin_art_pool(self, records, champions):
+        pool = []
+        for record in records or []:
+            art = self._skin_art_from_cdragon(record, champions, "catalog")
+            if art:
+                pool.append(art)
+        return sorted(pool, key=self._skin_art_release_key, reverse=True)
 
     def _skin_art_from_cdragon(self, skin, champions, source):
         if not isinstance(skin, dict):
@@ -923,6 +1029,7 @@ class LoLInfo(BasePlugin):
             "section": self._font(20, bold=True),
             "body": self._font(15),
             "small": self._font(13),
+            "skin_label": self._font(14),
             "tiny": self._font(10),
             "micro": self._font(9),
         }
@@ -1032,13 +1139,25 @@ class LoLInfo(BasePlugin):
         wins = int(ranked.get("wins") or 0)
         losses = int(ranked.get("losses") or 0)
         rate = wins / max(1, wins + losses) * 100 if ranked else 0
-        self._single(draw, (x0 + 14, y0 + 48), rank_text or "暂无排位", fonts["title"], gold if ranked else muted, x1 - x0 - 28, 12)
-        self._text(draw, (x0 + 16, y0 + 80), f"{lp} LP · {wins}W/{losses}L", fonts["small"], ink if ranked else muted)
-        self._text(draw, (x0 + 16, y0 + 102), f"胜率 {rate:.1f}%", fonts["small"], green if rate >= 50 else muted)
-        self._text(draw, (x0 + 12, y0 + 128), "常用英雄", fonts["small"], cyan)
+        emblem = self._rank_emblem_image(ranked, 74) if ranked else None
+        if emblem:
+            emblem_x = x0 + 12
+            emblem_y = y0 + 41
+            image.paste(emblem, (emblem_x, emblem_y), emblem)
+            self._single(draw, (emblem_x, emblem_y + emblem.height + 3), rank_text, fonts["tiny"], gold, emblem.width, 7)
+            info_x = emblem_x + emblem.width + 6
+            info_w = max(42, x1 - info_x - 12)
+            self._single(draw, (info_x, y0 + 51), f"{lp} LP", fonts["body"], gold, info_w, 9)
+            self._single(draw, (info_x, y0 + 75), f"{wins}W/{losses}L", fonts["small"], ink, info_w, 8)
+            self._single(draw, (info_x, y0 + 97), f"{rate:.1f}%", fonts["tiny"], green if rate >= 50 else muted, info_w, 8)
+        else:
+            self._single(draw, (x0 + 14, y0 + 48), rank_text or "暂无排位", fonts["title"], gold if ranked else muted, x1 - x0 - 28, 12)
+            self._text(draw, (x0 + 16, y0 + 80), f"{lp} LP · {wins}W/{losses}L", fonts["small"], ink if ranked else muted)
+            self._text(draw, (x0 + 16, y0 + 102), f"胜率 {rate:.1f}%", fonts["small"], green if rate >= 50 else muted)
+        self._text(draw, (x0 + 12, y0 + 140), "常用英雄", fonts["small"], cyan)
         mastery = data.get("mastery") or []
         max_points = max([int(item.get("points") or 0) for item in mastery] + [1])
-        y = y0 + 148
+        y = y0 + 158
         row_step = 28
         for item in mastery[:3]:
             icon = self._icon_from_url(item.get("champion_icon"), 24, item.get("champion_name"))
@@ -1051,7 +1170,6 @@ class LoLInfo(BasePlugin):
             draw.rectangle((bar_x, y + 9, bar_x + bar_w, y + 15), fill=gold)
             self._text(draw, (x0 + 44, y + 12), f"L{item.get('level', 0)} · {self._compact(item.get('points'))}", fonts["micro"], muted)
             y += row_step
-
     def _draw_overview(self, image, draw, data, box, fonts, ink, muted, gold, green, cyan, red):
         x0, y0, x1, y1 = box
         summary = data.get("summary") or {}
@@ -1114,7 +1232,7 @@ class LoLInfo(BasePlugin):
         label_y0 = max(y1 + 17, label_y1 - 20)
         if label_x1 - label_x0 < 24 or label_y1 - label_y0 < 14:
             return
-        self._single(draw, (label_x0, label_y0 + 5), skin_name, fonts["tiny"], ink, label_x1 - label_x0, 7)
+        self._single(draw, (label_x0, label_y0 + 5), skin_name, fonts["skin_label"], ink, label_x1 - label_x0, 8)
 
     def _write_context(self, data, generated_at, refresh_minutes):
         account = data.get("account") or {}
@@ -1214,6 +1332,38 @@ class LoLInfo(BasePlugin):
                     pixels[x, y] = (int(tint[0] * shade), int(tint[1] * shade), int(tint[2] * shade), a)
         return image
 
+    def _rank_emblem_url(self, ranked):
+        tier = str((ranked or {}).get("tier") or "").strip().lower()
+        if tier not in RANK_EMBLEM_TIERS:
+            return ""
+        return f"{CDRAGON_SHARED_IMAGES}/{tier}.png"
+
+    def _rank_emblem_image(self, ranked, size):
+        url = self._rank_emblem_url(ranked)
+        if not url:
+            return None
+        cache_path = self._image_cache_path(url)
+        try:
+            if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60:
+                raw = Image.open(cache_path)
+            else:
+                response = get_http_session().get(url, timeout=20)
+                response.raise_for_status()
+                raw = Image.open(BytesIO(response.content))
+                raw = ImageOps.exif_transpose(raw)
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                raw.save(cache_path)
+            return self._contain_transparent(raw, size)
+        except Exception as exc:
+            logger.warning("LoL rank emblem unavailable for %s: %s", ranked.get("tier") if isinstance(ranked, dict) else "", exc)
+            return None
+
+    def _contain_transparent(self, raw, size):
+        icon = ImageOps.exif_transpose(raw).convert("RGBA")
+        icon.thumbnail((size, size), Image.Resampling.LANCZOS)
+        result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        result.alpha_composite(icon, ((size - icon.width) // 2, (size - icon.height) // 2))
+        return result
     def _icon_from_url(self, url, size, label=""):
         if url:
             cache_path = self._image_cache_path(url)
@@ -1261,8 +1411,10 @@ class LoLInfo(BasePlugin):
         state = self._read_json(state_path, {})
         pool_ids = [str(item.get("id")) for item in pool]
         last_id = str(state.get("last") or "")
+        previous_pool_ids = state.get("pool_ids")
+        pool_changed = isinstance(previous_pool_ids, list) and previous_pool_ids != pool_ids
         try:
-            last_index = pool_ids.index(last_id)
+            last_index = -1 if pool_changed else pool_ids.index(last_id)
         except ValueError:
             last_index = -1
 
@@ -1276,6 +1428,8 @@ class LoLInfo(BasePlugin):
             "last": selected_id,
             "index": next_index,
             "recent": recent[-keep:],
+            "pool_ids": pool_ids,
+            "pool_size": len(pool_ids),
             "updated_ts": time.time(),
         })
         return selected
@@ -1351,26 +1505,49 @@ class LoLInfo(BasePlugin):
         self._single(draw, (x + 50, y - 4), value, fonts["body"], ink, max_x - x - 52, 9)
 
     def _text(self, draw, position, text, font, fill):
-        draw.text(position, str(text), font=font, fill=fill)
+        text = str(text)
+        draw.text(position, text, font=self._font_for_text(font, text), fill=fill)
 
     def _single(self, draw, position, text, font, fill, max_width, min_size=8):
         text = str(text or "")
+        font = self._font_for_text(font, text)
         fitted = self._fit_font(draw, text, font, max_width, min_size)
         draw.text(position, text, font=fitted, fill=fill)
 
     def _fit_font(self, draw, text, font, max_width, min_size):
+        font = self._font_for_text(font, text)
         if self._text_width(draw, text, font) <= max_width:
             return font
         current = int(getattr(font, "size", 0) or 0)
-        bold = bool(getattr(font, "path", "") and "bd" in str(getattr(font, "path", "")).lower())
+        bold = self._is_bold_font(font)
+        prefer_hangul = self._contains_hangul(text)
         for size in range(current - 1, min_size - 1, -1):
-            candidate = self._font(size, bold=bold)
+            candidate = self._font(size, bold=bold, prefer_hangul=prefer_hangul)
             if self._text_width(draw, text, candidate) <= max_width:
                 return candidate
-        return self._font(min_size, bold=bold)
+        return self._font(min_size, bold=bold, prefer_hangul=prefer_hangul)
 
     def _text_width(self, draw, text, font):
-        return text_width(draw, str(text), font)
+        text = str(text)
+        return text_width(draw, text, self._font_for_text(font, text))
+
+    def _font_for_text(self, font, text):
+        if not self._contains_hangul(text):
+            return font
+        size = int(getattr(font, "size", 0) or 12)
+        return self._font(size, bold=self._is_bold_font(font), prefer_hangul=True)
+
+    def _contains_hangul(self, text):
+        return any(
+            0xAC00 <= ord(ch) <= 0xD7AF
+            or 0x1100 <= ord(ch) <= 0x11FF
+            or 0x3130 <= ord(ch) <= 0x318F
+            for ch in str(text or "")
+        )
+
+    def _is_bold_font(self, font):
+        path = str(getattr(font, "path", "") or "").lower()
+        return "bd" in path or "bold" in path
 
     def _rect(self, draw, box, fill, outline):
         draw.rectangle(box, fill=fill, outline=outline, width=2)
@@ -1379,16 +1556,23 @@ class LoLInfo(BasePlugin):
         for x in range(-40, width, 88):
             draw.line((x, 0, x + 80, height), fill=(18, 16, 20), width=8)
 
-    def _font(self, size, bold=False):
+    def _font(self, size, bold=False, prefer_hangul=False):
         plugin_dir = Path(self.get_plugin_dir())
         sports_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
+        static_fonts = plugin_dir.parent.parent / "static" / "fonts"
         candidates = []
+        if prefer_hangul:
+            candidates.extend([
+                static_fonts / "LXGWWenKai-Regular.ttf",
+                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+                Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+            ])
         if bold:
             candidates.extend([sports_fonts / "msyhbd.ttc", Path("C:/Windows/Fonts/msyhbd.ttc")])
         candidates.extend([
             sports_fonts / "msyh.ttc",
             Path("C:/Windows/Fonts/msyh.ttc"),
-            plugin_dir.parent.parent / "static" / "fonts" / "LXGWWenKai-Regular.ttf",
+            static_fonts / "LXGWWenKai-Regular.ttf",
             Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
             Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
             Path("C:/Windows/Fonts/simhei.ttf"),
@@ -1401,6 +1585,138 @@ class LoLInfo(BasePlugin):
                 except Exception:
                     continue
         return ImageFont.load_default()
+
+    def _settings_for_selected_pro_account(self, settings):
+        effective = dict(settings or {})
+        selected = self._select_pro_account(settings)
+        if not selected:
+            return effective
+        effective.update({
+            "gameName": selected["gameName"],
+            "tagLine": selected["tagLine"],
+            "platformRoute": selected["platformRoute"],
+            "regionalRoute": selected["regionalRoute"],
+            "_proAccountLabel": selected["label"],
+            "_proAccountId": selected["id"],
+            "_proAccountPoolSize": selected.get("pool_size", 0),
+            "_proAccountPoolSignature": selected.get("pool_signature", ""),
+        })
+        return effective
+
+    def _select_pro_account(self, settings):
+        accounts = self._pro_accounts(settings)
+        if not accounts:
+            return None
+        pool_ids = [item["id"] for item in accounts]
+        pool_signature = hashlib.sha256("\n".join(pool_ids).encode("utf-8")).hexdigest()[:16]
+        by_id = {item["id"]: item for item in accounts}
+        if len(accounts) == 1:
+            selected = dict(accounts[0])
+            selected["pool_signature"] = pool_signature
+            selected["pool_size"] = 1
+            return selected
+
+        state_path = self._pro_account_rotation_path(pool_signature)
+        state = self._read_json(state_path, {})
+        previous_pool_ids = state.get("pool_ids")
+        queue = [str(item_id) for item_id in (state.get("queue") or []) if str(item_id) in by_id]
+        if previous_pool_ids != pool_ids or not queue:
+            queue = pool_ids[:]
+            random.shuffle(queue)
+
+        selected_id = queue.pop(0)
+        selected = dict(by_id[selected_id])
+        selected["pool_signature"] = pool_signature
+        selected["pool_size"] = len(pool_ids)
+        recent = [str(item_id) for item_id in (state.get("recent") or []) if str(item_id) in by_id]
+        recent.append(selected_id)
+        self._write_json(state_path, {
+            "pool_ids": pool_ids,
+            "queue": queue,
+            "last": selected_id,
+            "recent": recent[-len(pool_ids):],
+            "pool_size": len(pool_ids),
+            "updated_ts": time.time(),
+        })
+        return selected
+
+    def _pro_accounts(self, settings):
+        raw = (settings or {}).get("proAccounts")
+        if raw is None:
+            return []
+        entries = raw if isinstance(raw, list) else str(raw).splitlines()
+        accounts = []
+        seen = set()
+        for entry in entries:
+            parsed = self._pro_account_from_entry(entry)
+            if not parsed or parsed["id"] in seen:
+                continue
+            seen.add(parsed["id"])
+            accounts.append(parsed)
+        return accounts
+
+    def _pro_account_from_entry(self, entry):
+        if isinstance(entry, dict):
+            label = str(entry.get("label") or entry.get("name") or "").strip()
+            game_name = str(entry.get("gameName") or entry.get("game_name") or "").strip()
+            tag_line = str(entry.get("tagLine") or entry.get("tag_line") or "").strip().lstrip("#")
+            platform = entry.get("platformRoute") or entry.get("platform") or DEFAULT_PLATFORM
+            region = entry.get("regionalRoute") or entry.get("region") or DEFAULT_REGION
+        else:
+            line = str(entry or "").strip()
+            if not line or line.startswith("#"):
+                return None
+            if "|" in line:
+                parts = [part.strip() for part in line.split("|")]
+                if len(parts) < 3:
+                    return None
+                label, game_name, tag_line = parts[:3]
+                platform = parts[3] if len(parts) > 3 and parts[3] else DEFAULT_PLATFORM
+                region = parts[4] if len(parts) > 4 and parts[4] else DEFAULT_REGION
+            else:
+                label = ""
+                riot_id = line
+                if "=" in line:
+                    label, riot_id = [part.strip() for part in line.split("=", 1)]
+                if "#" not in riot_id:
+                    return None
+                game_name, tag_line = [part.strip() for part in riot_id.rsplit("#", 1)]
+                platform = DEFAULT_PLATFORM
+                region = DEFAULT_REGION
+            tag_line = str(tag_line or "").strip().lstrip("#")
+        game_name = str(game_name or "").strip()
+        tag_line = str(tag_line or "").strip().lstrip("#")
+        if not game_name or not tag_line:
+            return None
+        platform = self._route(platform, DEFAULT_PLATFORM, PLATFORM_ROUTES)
+        region = self._route(region, DEFAULT_REGION, REGIONAL_ROUTES)
+        label = str(label or game_name).strip()
+        account_id = "|".join([label.casefold(), game_name.casefold(), tag_line.casefold(), platform, region])
+        return {
+            "id": account_id,
+            "label": label,
+            "gameName": game_name,
+            "tagLine": tag_line,
+            "platformRoute": platform,
+            "regionalRoute": region,
+        }
+
+    def _pro_account_rotation_path(self, pool_signature):
+        signature = str(pool_signature or "default").strip() or "default"
+        return self._cache_dir() / f"pro_account_rotation_{signature}.json"
+
+    def _with_pro_account_context(self, data, settings):
+        if not isinstance(data, dict):
+            return data
+        label = str(settings.get("_proAccountLabel") or "").strip()
+        if label:
+            data["pro_account"] = {
+                "label": label,
+                "id": str(settings.get("_proAccountId") or ""),
+                "pool_size": int(settings.get("_proAccountPoolSize") or 0),
+                "pool_signature": str(settings.get("_proAccountPoolSignature") or ""),
+            }
+        return data
 
     def _identity(self, settings):
         return "|".join([

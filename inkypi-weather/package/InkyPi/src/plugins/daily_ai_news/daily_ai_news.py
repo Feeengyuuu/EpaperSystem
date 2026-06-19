@@ -36,12 +36,24 @@ BACKGROUND_IMAGE = "background_world_news.png"
 PLUGIN_DIR = Path(__file__).resolve().parent
 TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
-SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v7"
-DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
+SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v9"
+DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
+DEFAULT_MAX_FEEDS = 16
+LEGACY_DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
 BBC World|https://feeds.bbci.co.uk/news/world/rss.xml
 NPR|https://feeds.npr.org/1001/rss.xml
 NYTimes World|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
 Guardian World|https://www.theguardian.com/world/rss"""
+DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
+BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+NPR新闻|https://feeds.npr.org/1001/rss.xml
+纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+卫报国际|https://www.theguardian.com/world/rss
+半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+法国24|https://www.france24.com/en/rss
+德国之声|https://rss.dw.com/rdf/rss-en-all
+PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
 MARKET_GROUPS = {
     "a_share": [
         ("000001.SS", "上证指数"),
@@ -78,6 +90,42 @@ TRADITIONAL_PHRASE_REPLACEMENTS = (
     ("證券", "证券"),
     ("颱風", "台风"),
 )
+
+ENGLISH_NEWS_TERM_REPLACEMENTS = (
+    (re.compile(r"\bUnited States\b", re.I), "美国"),
+    (re.compile(r"\bU\.S\.", re.I), "美国"),
+    (re.compile(r"\bUS\b"), "美国"),
+    (re.compile(r"\bUSA\b"), "美国"),
+    (re.compile(r"\bMoscow\b", re.I), "莫斯科"),
+    (re.compile(r"\bRussia\b", re.I), "俄罗斯"),
+    (re.compile(r"\bRussian\b", re.I), "俄罗斯"),
+    (re.compile(r"\bUkraine\b", re.I), "乌克兰"),
+    (re.compile(r"\bKyiv\b", re.I), "基辅"),
+    (re.compile(r"\bKiev\b", re.I), "基辅"),
+    (re.compile(r"\bIsrael\b", re.I), "以色列"),
+    (re.compile(r"\bIran\b", re.I), "伊朗"),
+    (re.compile(r"\bGaza\b", re.I), "加沙"),
+    (re.compile(r"\bHamas\b", re.I), "哈马斯"),
+    (re.compile(r"\bWashington\b", re.I), "华盛顿"),
+    (re.compile(r"\bBeijing\b", re.I), "北京"),
+    (re.compile(r"\bChina\b", re.I), "中国"),
+    (re.compile(r"\bTaiwan\b", re.I), "台湾"),
+    (re.compile(r"\bJapan\b", re.I), "日本"),
+    (re.compile(r"\bSouth Korea\b", re.I), "韩国"),
+    (re.compile(r"\bNorth Korea\b", re.I), "朝鲜"),
+    (re.compile(r"\bHong Kong\b", re.I), "香港"),
+    (re.compile(r"\bUnited Nations\b", re.I), "联合国"),
+    (re.compile(r"\bU\.N\.", re.I), "联合国"),
+    (re.compile(r"\bUN\b"), "联合国"),
+    (re.compile(r"\breconstruction\b", re.I), "重建"),
+    (re.compile(r"\bceasefire\b", re.I), "停火"),
+    (re.compile(r"\bcease-fire\b", re.I), "停火"),
+    (re.compile(r"\bsanctions\b", re.I), "制裁"),
+    (re.compile(r"\btariffs\b", re.I), "关税"),
+)
+
+VISIBLE_ENGLISH_ALLOWLIST = {"ABC", "AI", "API", "BBC", "G7", "G20", "NPR", "PBS", "RSS"}
+VISIBLE_ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z.\-]{1,}\b")
 
 TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "與": "与",
@@ -755,7 +803,7 @@ class DailyAINews(BasePlugin):
 
     def _get_brief(self, settings, device_config, now: datetime) -> dict[str, Any]:
         model = (settings.get("model") or DEFAULT_MODEL).strip()
-        feeds_text = settings.get("feed_urls") or DEFAULT_FEEDS
+        feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = _parse_int(settings.get("max_items"), 22, 6, 40)
         force_refresh = _enabled(settings.get("force_refresh"))
         date_key = now.strftime("%Y-%m-%d")
@@ -763,12 +811,13 @@ class DailyAINews(BasePlugin):
 
         cache_file = self._cache_dir() / "brief.json"
         cached = _safe_json_load(cache_file, {})
-        if cached.get("cache_key") == cache_key and not force_refresh:
+        cache_matches_current_settings = cached.get("cache_key") == cache_key
+        if cache_matches_current_settings and not force_refresh:
             cached["from_cache"] = True
             return cached
 
         items = self._fetch_items(feeds_text, max_items)
-        items = self._rank_news_items(items, now)[:max_items]
+        items = self._diversify_news_items(self._rank_news_items(items, now), max_items)
         if not items:
             stale = cached if cached.get("brief") else None
             if stale:
@@ -778,16 +827,18 @@ class DailyAINews(BasePlugin):
             raise RuntimeError("No RSS items could be fetched.")
 
         stale = cached if cached.get("brief") else None
+        stale_matches_current_settings = bool(stale and cache_matches_current_settings)
         market_snapshot = self._fetch_market_snapshot(now, device_config)
         openai_key = device_config.load_env_key("OPEN_AI_SECRET") or device_config.load_env_key("OPENAI_API_KEY")
         groq_key = device_config.load_env_key("GROQ_API_KEY")
         can_call_ai = self._allow_api_call(settings, date_key)
+        rss_needs_translation = self._rss_items_need_translation(items)
 
         if openai_key or groq_key:
             if not can_call_ai:
-                if stale:
+                if stale_matches_current_settings or (stale and rss_needs_translation):
                     stale["from_cache"] = True
-                    stale["warning"] = "已达到今日 API 调用上限，显示旧缓存。"
+                    stale["warning"] = "已达到今日 API 调用上限，显示旧中文缓存。"
                     return stale
                 brief = self._rss_only_brief(items, "已达到今日 API 调用上限，使用 RSS 兜底。")
             else:
@@ -795,12 +846,16 @@ class DailyAINews(BasePlugin):
                     brief = self._summarize_with_ai(openai_key, groq_key, model, settings, items, market_snapshot, now)
                 except Exception as exc:
                     logger.warning("AI summary failed; using RSS fallback: %s", exc)
-                    if stale:
+                    if stale_matches_current_settings or (stale and rss_needs_translation):
                         stale["from_cache"] = True
-                        stale["warning"] = f"AI 摘要失败，显示旧缓存：{str(exc)[:80]}"
+                        stale["warning"] = f"AI 摘要失败，显示旧中文缓存：{str(exc)[:80]}"
                         return stale
                     brief = self._rss_only_brief(items, f"AI 摘要失败，使用 RSS 兜底：{str(exc)[:60]}")
         else:
+            if stale and rss_needs_translation:
+                stale["from_cache"] = True
+                stale["warning"] = "未配置 AI 密钥，显示旧中文缓存。"
+                return stale
             brief = self._rss_only_brief(items, "未配置 AI 密钥，使用 RSS 兜底。")
 
         payload_model = brief.pop("_model", model)
@@ -830,6 +885,30 @@ class DailyAINews(BasePlugin):
     def _cache_key(self, date_key: str, model: str, feeds_text: str, max_items: int, region_focus: Any) -> str:
         raw = "\n".join([SUMMARY_SCHEMA_VERSION, date_key, model, feeds_text, str(max_items), str(region_focus or "")])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _effective_feeds_text(self, feeds_text: Any) -> str:
+        raw = str(feeds_text or "").strip()
+        if not raw:
+            return DEFAULT_FEEDS
+        feeds = self._parse_feeds(raw)
+        if self._should_expand_legacy_feeds(feeds):
+            return DEFAULT_FEEDS
+        return raw
+
+    def _should_expand_legacy_feeds(self, feeds: list[tuple[str, str]]) -> bool:
+        urls = {self._normalize_feed_url(url) for _name, url in feeds if self._normalize_feed_url(url)}
+        if not urls:
+            return True
+        legacy_urls = {self._normalize_feed_url(url) for _name, url in self._parse_feeds(LEGACY_DEFAULT_FEEDS)}
+        if urls == legacy_urls:
+            return True
+        if urls and all("bbci.co.uk" in url or "bbc.co.uk" in url or "bbc.com" in url for url in urls):
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_feed_url(url: str) -> str:
+        return str(url or "").strip().rstrip("/")
 
     def _allow_api_call(self, settings, date_key: str) -> bool:
         limit = _parse_int(settings.get("daily_api_limit"), 1, 1, 5)
@@ -864,11 +943,16 @@ class DailyAINews(BasePlugin):
     def _fetch_items(self, feeds_text: str, max_items: int) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         seen = set()
-        for source, url in self._parse_feeds(feeds_text):
+        feeds = self._parse_feeds(feeds_text)[:DEFAULT_MAX_FEEDS]
+        if not feeds:
+            return items
+        per_feed_limit = max(3, min(8, (max_items * 2 + len(feeds) - 1) // len(feeds)))
+        entry_scan_limit = max(12, per_feed_limit * 2)
+        for source, url in feeds:
             try:
                 resp = requests.get(
                     url,
-                    timeout=12,
+                    timeout=DEFAULT_FEED_FETCH_TIMEOUT_SECONDS,
                     headers={"User-Agent": "InkyPi Daily AI News/1.0"},
                 )
                 resp.raise_for_status()
@@ -878,7 +962,7 @@ class DailyAINews(BasePlugin):
                 continue
 
             per_feed = 0
-            for entry in feed.entries[:12]:
+            for entry in feed.entries[:entry_scan_limit]:
                 title = _clean_text(entry.get("title", ""), 150)
                 if not title:
                     continue
@@ -897,10 +981,8 @@ class DailyAINews(BasePlugin):
                     "link": _clean_text(entry.get("link", ""), 220),
                 })
                 per_feed += 1
-                if len(items) >= max_items or per_feed >= 5:
+                if per_feed >= per_feed_limit:
                     break
-            if len(items) >= max_items:
-                break
         return items
 
     def _rank_news_items(self, items: list[dict[str, str]], now: datetime) -> list[dict[str, str]]:
@@ -912,7 +994,10 @@ class DailyAINews(BasePlugin):
 
             published = self._parse_published(item.get("published", ""))
             if published:
-                age_hours = max(0.0, (now - published.astimezone(now.tzinfo)).total_seconds() / 3600)
+                age_now = now
+                if age_now.tzinfo is None:
+                    age_now = age_now.replace(tzinfo=pytz.UTC)
+                age_hours = max(0.0, (age_now - published.astimezone(age_now.tzinfo)).total_seconds() / 3600)
                 if age_hours <= 30:
                     value += 35
                 elif age_hours <= 72:
@@ -941,6 +1026,40 @@ class DailyAINews(BasePlugin):
             key=lambda pair: pair[0],
             reverse=True,
         )]
+
+    def _rss_items_need_translation(self, items: list[dict[str, str]]) -> bool:
+        titled_items = [item for item in items if str(item.get("title") or "").strip()]
+        if not titled_items:
+            return False
+        non_cjk_count = sum(1 for item in titled_items if not self._has_cjk(str(item.get("title") or "")))
+        return non_cjk_count > len(titled_items) / 2
+
+    @staticmethod
+    def _diversify_news_items(items: list[dict[str, str]], max_items: int) -> list[dict[str, str]]:
+        if not items or max_items <= 0:
+            return []
+        buckets: dict[str, list[dict[str, str]]] = {}
+        for item in items:
+            source = str(item.get("source") or "").strip() or "_unknown"
+            buckets.setdefault(source, []).append(item)
+        if len(buckets) <= 1:
+            return items[:max_items]
+
+        selected = []
+        sources = list(buckets)
+        while len(selected) < max_items:
+            made_progress = False
+            for source in sources:
+                bucket = buckets[source]
+                if not bucket:
+                    continue
+                selected.append(bucket.pop(0))
+                made_progress = True
+                if len(selected) >= max_items:
+                    break
+            if not made_progress:
+                break
+        return selected
 
     def _parse_published(self, value: str) -> datetime | None:
         if not value:
@@ -1115,6 +1234,7 @@ class DailyAINews(BasePlugin):
         system = (
             "你是中文新闻编辑。只根据用户提供的 RSS 条目写简体中文每日简报。"
             "所有中文必须使用简体中文，不得使用繁体中文或港澳台繁体词形。"
+            "所有用户可见文字必须是简体中文；常见英文地名、人名、组织名必须译成通用简体中文。"
             "top 新闻只能来自 RSS 条目，不能使用市场行情、常识或背景知识补充。"
             "新闻必须强调今天或最近一次更新的具体变化，标题要具体，避免宏观空话。"
             "输出必须是一个 JSON object，不要 Markdown。"
@@ -1129,6 +1249,9 @@ class DailyAINews(BasePlugin):
             },
             "rules": [
                 "所有输出字段只使用简体中文；如果素材是繁体中文，必须转换为简体中文再写入 JSON",
+                "不要留下英文单词或英文地名，例如 Moscow 必须写成莫斯科，United States 必须写成美国，Iran 必须写成伊朗",
+                "如果无法确定某个英文术语的标准中文译名，必须改写句子，不要把英文原词放进 title、why 或 lede",
+                "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
                 "top 给 7 条，每条 title 18到28字，why 16到26字",
                 "top 只选最近 24-48 小时内有明确新进展的硬新闻；优先冲突、政策、事故、市场、外交、法律、重大科技治理",
                 "top 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
@@ -1139,7 +1262,7 @@ class DailyAINews(BasePlugin):
                 "不要把人生、心理健康、生活方式、科普解释稿、旧背景稿放进 top，除非它们是当天重大政策或公共事件",
                 "lede 必须概括今天最重要的新变化，不要写“今日新闻简报已生成”",
                 "尽量保留素材里的数字、地点、人物、机构和动作",
-                "sources 只列实际用到的来源名，最多5个",
+                "sources 只能从 items 里已有的 source 字段原样选择，最多5个，不得自造来源名",
             ],
             "items": items,
         }
@@ -1179,6 +1302,8 @@ class DailyAINews(BasePlugin):
             raise RuntimeError("OpenAI returned an empty summary.")
         brief = self._parse_brief_json(content)
         brief["top"] = self._dedupe_top_items(brief.get("top") or [], items)
+        brief["sources"] = self._clean_brief_sources(brief.get("sources"), items)
+        brief = self._sanitize_brief_visible_text(brief)
         if not str(brief.get("lede") or "").strip():
             brief["lede"] = self._fallback_lede(brief["top"])
         return self._simplify_chinese_payload(brief)
@@ -1210,6 +1335,73 @@ class DailyAINews(BasePlugin):
         if value:
             return [value]
         return []
+
+    def _clean_brief_sources(self, sources: Any, items: list[dict[str, str]]) -> list[str]:
+        allowed = []
+        for item in items:
+            source = self._simplify_chinese_text(str(item.get("source") or "").strip())
+            if source and source not in allowed:
+                allowed.append(source)
+        if not allowed:
+            return [self._simplify_chinese_text(str(source).strip()) for source in self._as_list(sources, 5) if str(source).strip()]
+
+        normalized_allowed = {self._normalize_source_label(source): source for source in allowed}
+        cleaned = []
+        for source in self._as_list(sources, 5):
+            source_text = self._simplify_chinese_text(str(source or "").strip())
+            if not source_text:
+                continue
+            allowed_source = normalized_allowed.get(self._normalize_source_label(source_text))
+            if allowed_source and allowed_source not in cleaned:
+                cleaned.append(allowed_source)
+        return cleaned[:5] if cleaned else allowed[:5]
+
+    def _normalize_source_label(self, source: str) -> str:
+        return re.sub(r"[\W_]+", "", source, flags=re.UNICODE).casefold()
+
+    def _sanitize_brief_visible_text(self, brief: dict[str, Any]) -> dict[str, Any]:
+        sanitized = dict(brief)
+        sanitized["lede"] = self._strip_untranslated_english_terms(str(sanitized.get("lede") or ""))
+
+        top = []
+        for item in self._as_list(sanitized.get("top"), 7):
+            if isinstance(item, dict):
+                cleaned_item = dict(item)
+                cleaned_item["title"] = self._strip_untranslated_english_terms(str(cleaned_item.get("title") or ""))
+                cleaned_item["why"] = self._strip_untranslated_english_terms(str(cleaned_item.get("why") or ""))
+                top.append(cleaned_item)
+            else:
+                top.append(self._strip_untranslated_english_terms(str(item or "")))
+        sanitized["top"] = top
+
+        for block_name in ("a_share", "us_stock"):
+            block = sanitized.get(block_name)
+            if isinstance(block, dict):
+                cleaned_block = dict(block)
+                cleaned_block["summary"] = self._strip_untranslated_english_terms(str(cleaned_block.get("summary") or ""))
+                cleaned_block["analysis"] = self._strip_untranslated_english_terms(str(cleaned_block.get("analysis") or ""))
+                sanitized[block_name] = cleaned_block
+
+        return sanitized
+
+    def _strip_untranslated_english_terms(self, text: str) -> str:
+        cleaned = self._simplify_chinese_text(text)
+
+        def replace_match(match: re.Match[str]) -> str:
+            term = match.group(0)
+            canonical = term.replace(".", "").replace("-", "").upper()
+            if canonical in VISIBLE_ENGLISH_ALLOWLIST:
+                return term
+            return ""
+
+        cleaned = VISIBLE_ENGLISH_WORD_RE.sub(replace_match, cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        cleaned = re.sub(r"\b(ABC|AI|API|BBC|G7|G20|NPR|PBS|RSS)\s+(?=[\u4e00-\u9fff])", r"\1", cleaned)
+        cleaned = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", cleaned)
+        cleaned = re.sub(r"\s+([，。；：、])", r"\1", cleaned)
+        cleaned = re.sub(r"([（(])\s+", r"\1", cleaned)
+        cleaned = re.sub(r"\s+([）)])", r"\1", cleaned)
+        return cleaned.strip()
 
     def _as_text_list(self, value: Any, limit: int) -> list[str]:
         return [self._module_text(item) for item in self._as_list(value, limit) if self._module_text(item)]
@@ -1337,6 +1529,9 @@ class DailyAINews(BasePlugin):
             return simplified
         for traditional, replacement in TRADITIONAL_PHRASE_REPLACEMENTS:
             simplified = simplified.replace(traditional, replacement)
+        for pattern, replacement in ENGLISH_NEWS_TERM_REPLACEMENTS:
+            simplified = pattern.sub(replacement, simplified)
+        simplified = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", simplified)
         return simplified.translate(TRADITIONAL_TO_SIMPLIFIED)
 
     def _render(self, dimensions, settings, payload: dict[str, Any], now: datetime, theme_context=None) -> Image.Image:
@@ -1376,10 +1571,10 @@ class DailyAINews(BasePlugin):
         margin = 24
         draw.rectangle((0, 0, width, 74), fill=header_bg)
         date_label = self._date_label(payload, now)
-        meta = f"{date_label}  |  {payload.get('model', DEFAULT_MODEL)}"
+        meta = f"{date_label}  |  智能生成"
         if payload.get("from_cache"):
-            meta += "  |  cache"
-        theme_label = "MIDNIGHT BRIEF" if (theme_context or {}).get("mode") == "night" else "DAY BRIEF"
+            meta += "  |  缓存"
+        theme_label = self._theme_label(theme_context)
         meta_left = width - margin - max(self._tw(draw, meta, meta_font), self._tw(draw, theme_label, meta_font))
 
         draw.text((margin, 17), title, font=title_font, fill=ink)
@@ -1455,8 +1650,8 @@ class DailyAINews(BasePlugin):
         gap = 20
         col_w = (width - margin * 2 - gap) // 2
         modules = [
-            ("▣ " + SECTION_LABELS["a_share"], "a_share", red),
-            ("◎ " + SECTION_LABELS["us_stock"], "us_stock", green),
+            (SECTION_LABELS["a_share"], "a_share", red),
+            (SECTION_LABELS["us_stock"], "us_stock", green),
         ]
         for i, (label, key, color) in enumerate(modules):
             x = margin + i * (col_w + gap)
@@ -1591,12 +1786,15 @@ class DailyAINews(BasePlugin):
         except ValueError:
             return now.strftime("%Y.%m.%d")
 
+    def _theme_label(self, theme_context) -> str:
+        return "午夜简报" if (theme_context or {}).get("mode") == "night" else "日间简报"
+
     def _footer_text(self, payload: dict[str, Any], brief: dict[str, Any]) -> str:
         sources = brief.get("sources") or []
         if sources:
             source_text = " / ".join(str(s) for s in sources[:2])
         else:
-            source_text = "RSS + OpenAI"
+            source_text = "新闻源 + AI摘要"
         warning = payload.get("warning")
         if warning:
             return f"来源: {source_text}  |  {warning[:54]}"
@@ -1606,6 +1804,22 @@ class DailyAINews(BasePlugin):
     def _section_header(self, draw, label: str, x: int, y: int, width: int, font, accent, rule) -> None:
         draw.text((x, y), label, font=font, fill=accent)
         underline_w = min(width, max(48, self._tw(draw, label, font) + 8))
+        draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
+
+    def _market_section_header(self, draw, label: str, key: str, x: int, y: int, width: int, font, accent, rule) -> None:
+        icon_size = 12
+        icon_x = x + 1
+        icon_y = y + 5
+        if key == "a_share":
+            draw.rectangle((icon_x, icon_y, icon_x + icon_size, icon_y + icon_size), outline=accent, width=2)
+            draw.line((icon_x + 3, icon_y + 8, icon_x + 6, icon_y + 5, icon_x + 9, icon_y + 7), fill=accent, width=2)
+        else:
+            draw.ellipse((icon_x, icon_y, icon_x + icon_size, icon_y + icon_size), outline=accent, width=2)
+            center = icon_x + icon_size // 2
+            draw.ellipse((center - 2, icon_y + 4, center + 2, icon_y + 8), fill=accent)
+        text_x = x + icon_size + 9
+        draw.text((text_x, y), label, font=font, fill=accent)
+        underline_w = min(width, max(48, icon_size + 9 + self._tw(draw, label, font) + 8))
         draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
 
     def _market_rows(self, payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
@@ -1706,7 +1920,7 @@ class DailyAINews(BasePlugin):
         down_color,
         max_y=None,
     ) -> int:
-        self._section_header(draw, label, x, y, width, section_font, accent, rule)
+        self._market_section_header(draw, label, key, x, y, width, section_font, accent, rule)
         y += 31
         rows = self._market_rows(payload, key)
         prefix, parts = self._market_summary_parts(key, rows, str(payload.get("date") or "")) if rows else ("", [])

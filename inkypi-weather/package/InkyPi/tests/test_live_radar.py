@@ -909,6 +909,14 @@ def test_snapshot_mini_section_keeps_two_thumbnails_landscape():
     assert image.getpixel((18, 126)) == theme["bg"]
 
 
+def test_generated_slot_placeholder_asset_is_exact_size_and_nonblank():
+    path = Path(live_radar_module.PLUGIN_DIR) / live_radar_module.SLOT_PLACEHOLDER_FILE
+    image = Image.open(path).convert("RGB")
+
+    assert image.size == (184, 49)
+    assert len(set(image.getdata())) > 16
+
+
 def test_snapshot_mini_section_keeps_three_thumbnails_landscape():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
@@ -944,6 +952,38 @@ def test_snapshot_mini_section_keeps_three_thumbnails_landscape():
     assert image.getpixel((82, 50)) == (24, 180, 240)
     assert image.getpixel((274, 50)) == (220, 90, 50)
     assert image.getpixel((82, 106)) == (90, 160, 120)
+
+
+def test_snapshot_mini_section_draws_exact_size_placeholder_for_empty_fourth_slot():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    seen = {}
+    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    cards = [
+        {
+            "platform": "twitch",
+            "id": f"live-cover-{index}",
+            "owner": f"Live Cover {index}",
+            "label": "",
+            "title": "Live stream",
+            "status": "live",
+            "is_fav": False,
+            "heat": 0,
+            "start_time": None,
+            "cover": f"https://covers.test/{index}.jpg",
+            "avatar": "",
+        }
+        for index in range(3)
+    ]
+
+    visible = plugin._draw_snapshot_mini_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme)
+
+    assert visible == 3
+    assert seen["box"] == (202, 89, 184, 49)
 
 
 def test_snapshot_mini_section_keeps_four_thumbnails_landscape():

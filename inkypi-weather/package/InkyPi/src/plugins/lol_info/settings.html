@@ -12,6 +12,12 @@
   <small>For example: KR1. Do not include the # symbol.</small>
 </div>
 
+<div class="form-group">
+  <label class="form-label" for="proAccounts">Pro account rotation</label>
+  <textarea id="proAccounts" name="proAccounts" class="form-input" rows="5" spellcheck="false" placeholder="Faker|Hide on bush|KR1|kr|asia">{{ defaultProAccounts }}</textarea>
+  <small>One per line: Label|GameName|TagLine|Platform|Region. Leave empty to use the single Riot ID above.</small>
+</div>
+
 <div class="form-group nowrap">
   <label class="form-label" for="platformRoute">Platform route</label>
   <select id="platformRoute" name="platformRoute" class="form-input">
@@ -60,17 +66,17 @@
 </div>
 
 <div class="form-group">
-  <label><input type="checkbox" name="includeLatestSkins" id="includeLatestSkins" value="true" checked> Include latest game-data skins</label>
+  <label><input type="checkbox" name="includeLatestSkins" id="includeLatestSkins" value="true" checked> Prioritize latest game-data skins</label>
   <input type="hidden" name="includeLatestSkins" value="false">
 </div>
 
 <div class="form-group nowrap">
-  <label class="form-label" for="latestSkinCount">Latest skins in art pool</label>
+  <label class="form-label" for="latestSkinCount">Latest skins priority count</label>
   <input id="latestSkinCount" name="latestSkinCount" class="form-input" type="number" min="0" max="24" value="8">
 </div>
 
 <div class="form-group nowrap">
-  <label class="form-label" for="latestSkinCacheHours">Latest skin refresh hours</label>
+  <label class="form-label" for="latestSkinCacheHours">Skin catalog refresh hours</label>
   <input id="latestSkinCacheHours" name="latestSkinCacheHours" class="form-input" type="number" min="1" max="168" value="6">
 </div>
 
@@ -97,7 +103,7 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
-      ['gameName', 'tagLine', 'platformRoute', 'regionalRoute', 'refreshMinutes', 'recentLimit', 'masteryLimit', 'ownedSkinIds', 'latestSkinCount', 'latestSkinCacheHours'].forEach((id) => {
+      ['gameName', 'tagLine', 'proAccounts', 'platformRoute', 'regionalRoute', 'refreshMinutes', 'recentLimit', 'masteryLimit', 'ownedSkinIds', 'latestSkinCount', 'latestSkinCacheHours'].forEach((id) => {
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
       });

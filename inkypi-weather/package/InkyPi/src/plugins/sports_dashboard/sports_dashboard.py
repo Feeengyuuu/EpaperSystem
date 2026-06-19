@@ -110,6 +110,8 @@ DEFAULT_OFFSEASON_HUB_LOOKBACK_DAYS = 1
 DEFAULT_OFFSEASON_HUB_LOOKAHEAD_DAYS = 5
 OFFSEASON_HUB_ROTATION_MINUTES = 30
 OFFSEASON_HUB_URGENT_NEXT_WINDOW = timedelta(minutes=90)
+OFFSEASON_HUB_DEFAULT_LIVE_WINDOW = timedelta(hours=5)
+OFFSEASON_HUB_PGA_POST_EVENT_WINDOW = timedelta(hours=18)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
@@ -176,7 +178,7 @@ LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
 LPL_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
 LPL_LIVE_STATS_MAX_FRAME_AGE = timedelta(minutes=10)
-FLAGS_API_URL_TEMPLATE = "https://flagsapi.com/{country_code}/flat/64.png"
+FLAG_IMAGE_URL_TEMPLATE = "https://flagcdn.com/w80/{country_code_lower}.png"
 DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 ODDS_API_IO_LEAGUE_ALIASES = {
@@ -206,6 +208,9 @@ LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutou
 LOCAL_PGA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_header_cutout.png")
 LOCAL_NFL_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "nfl_header_cutout.png")
 LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutout.png")
+SPORT_HEADER_CUTOUT_SCALE = 1.24
+SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
+SPORT_HEADER_CUTOUT_TITLE_GAP = 104
 LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot_filler.png")
 LOCAL_NBA_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_filler.png")
 LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_accent.png")
@@ -1732,6 +1737,47 @@ FIFA_TLA_TO_FLAGS_API_CODE = {
     "WAL": "GB",
     "ZAM": "ZM",
 }
+
+DEFAULT_FLAG_ASPECT_RATIO = 3 / 2
+ISO_FLAG_ASPECT_RATIOS = {
+    "AL": 7 / 5,
+    "AR": 8 / 5,
+    "AU": 2 / 1,
+    "BE": 15 / 13,
+    "BA": 2 / 1,
+    "BO": 22 / 15,
+    "BR": 10 / 7,
+    "CA": 2 / 1,
+    "CD": 4 / 3,
+    "CR": 5 / 3,
+    "HR": 2 / 1,
+    "CV": 17 / 10,
+    "DK": 37 / 28,
+    "DE": 5 / 3,
+    "GA": 4 / 3,
+    "GB": 2 / 1,
+    "HT": 5 / 3,
+    "HN": 2 / 1,
+    "HU": 2 / 1,
+    "IE": 2 / 1,
+    "IR": 7 / 4,
+    "JM": 2 / 1,
+    "JO": 2 / 1,
+    "MX": 7 / 4,
+    "NG": 2 / 1,
+    "NO": 11 / 8,
+    "NZ": 2 / 1,
+    "PY": 5 / 3,
+    "PL": 8 / 5,
+    "QA": 28 / 11,
+    "SI": 2 / 1,
+    "SE": 8 / 5,
+    "CH": 1 / 1,
+    "AE": 2 / 1,
+    "US": 19 / 10,
+    "UZ": 2 / 1,
+}
+
 
 FIFA_TLA_TO_NAME_ALIASES = {
     "ALB": ("Albania",),
@@ -3694,11 +3740,17 @@ class SportsDashboard(BasePlugin):
 
     def _write_offseason_hub_state(self, selected, now, source_state):
         primary = (selected or {}).get("primary") or {}
+        main = primary.get("main") or {}
+        has_live = str(primary.get("status") or "").upper() == "LIVE"
+        live_until = self._offseason_hub_live_until(primary, now) if has_live else None
         payload = {
             "version": OFFSEASON_HUB_STATE_VERSION,
             "source_state": source_state,
             "status": primary.get("status"),
             "sport": primary.get("sport"),
+            "has_live": has_live,
+            "live_until": live_until.astimezone(timezone.utc).isoformat() if isinstance(live_until, datetime) else None,
+            "event_id": main.get("event_id") or "",
             "rotation_pool": (selected or {}).get("rotation_pool") or [],
             "updated_at": now.isoformat() if hasattr(now, "isoformat") else datetime.now(timezone.utc).isoformat(),
         }
@@ -3706,6 +3758,22 @@ class SportsDashboard(BasePlugin):
             self._write_json_file(self._offseason_hub_live_state_path(), payload)
         except OSError as exc:
             logger.warning("Failed to write offseason hub live state: %s", exc)
+
+    @staticmethod
+    def _offseason_hub_live_until(primary, now):
+        main = (primary or {}).get("main") or {}
+        sport = str((primary or {}).get("sport") or main.get("sport") or "").strip().upper()
+        start = main.get("start")
+        end = main.get("end")
+        if sport == "PGA":
+            if isinstance(end, datetime):
+                return end + OFFSEASON_HUB_PGA_POST_EVENT_WINDOW
+            if isinstance(start, datetime):
+                return start + timedelta(days=5)
+            return now + timedelta(days=1)
+        if isinstance(start, datetime):
+            return start + OFFSEASON_HUB_DEFAULT_LIVE_WINDOW
+        return now + OFFSEASON_HUB_DEFAULT_LIVE_WINDOW
 
     @staticmethod
     def _should_show_f1_panel(settings, nba_selected):
@@ -8645,7 +8713,7 @@ class SportsDashboard(BasePlugin):
         country_code = FIFA_TLA_TO_FLAGS_API_CODE.get(SportsDashboard._canonical_country_tla(tla))
         if not country_code:
             return ""
-        return FLAGS_API_URL_TEMPLATE.format(country_code=country_code)
+        return FLAG_IMAGE_URL_TEMPLATE.format(country_code=country_code, country_code_lower=country_code.lower())
 
     @staticmethod
     def _canonical_country_tla(value):
@@ -8845,7 +8913,7 @@ class SportsDashboard(BasePlugin):
             localized,
             source_name or tla,
             tla,
-            str(team.get("logo") or "").strip() or SportsDashboard._flag_url_for_tla(tla),
+            SportsDashboard._flag_url_for_tla(tla) or str(team.get("logo") or "").strip(),
             score,
             SportsDashboard._worldcup_espn_team_aliases(team, tla),
         )
@@ -9176,14 +9244,7 @@ class SportsDashboard(BasePlugin):
             return False
         if not (start <= now < start + WORLD_CUP_INFERRED_LIVE_WINDOW):
             return False
-        elapsed = SportsDashboard._lpl_int_value((event or {}).get("elapsed"))
-        if elapsed is not None and elapsed > 0:
-            return True
-        wins_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
-        wins_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
-        if wins_a is not None and wins_b is not None:
-            return True
-        return bool((event or {}).get("provider_status_confirmed")) and bool((event or {}).get("score_source"))
+        return True
 
     @staticmethod
     def _worldcup_is_display_live(event, now=None):
@@ -9243,7 +9304,7 @@ class SportsDashboard(BasePlugin):
         source = self._worldcup_api_source_label(source_state, fetched_at)
         source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
         draw.text((x1 + 52, header_y + 24), source_text, font=source_font, fill=COLORS["muted"])
-        self._draw_worldcup_header_banner(image, x1 + 229, header_y, x2 - 94, y1 + 47)
+        self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
 
         live = selected.get("live") or []
         upcoming = selected.get("upcoming") or []
@@ -9543,7 +9604,7 @@ class SportsDashboard(BasePlugin):
         self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
-        flag_w, flag_h = 44, 30
+        flag_w, flag_h = 45, 27
         left_area = (x1 + 18, center_x - 21)
         right_area = (center_x + 21, x2 - 18)
         flag_y = y1 + 58
@@ -9662,7 +9723,7 @@ class SportsDashboard(BasePlugin):
     def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
         left, right = [int(value) for value in area]
         area_w = max(1, right - left)
-        flag_w, flag_h = 20, 14
+        flag_w, flag_h = 24, 16
         gap = 5
         side_key = "a" if side == "a" else "b"
         label = event.get(f"team_{side_key}")
@@ -9712,7 +9773,7 @@ class SportsDashboard(BasePlugin):
 
     def _draw_worldcup_row_lineup(self, image, draw, x1, x2, y, event, center_text):
         center_x = (x1 + x2) / 2
-        flag_w, flag_h = 18, 12
+        flag_w, flag_h = 24, 16
         left_flag_x = x1 + 1
         right_flag_x = x2 - flag_w - 1
         has_odds = center_text == "VS" and self._worldcup_event_has_odds(event)
@@ -10474,7 +10535,7 @@ class SportsDashboard(BasePlugin):
         self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, fill)
 
     def _draw_worldcup_country(self, image, draw, flag_url, label, fallback_text, x, y, width, align, compact=False):
-        flag_w, flag_h = (22, 15) if compact else (26, 19)
+        flag_w, flag_h = (26, 18) if compact else (32, 22)
         text_gap = 4 if compact else 5
         label_max_size = 14 if compact else 17
         label_min_size = 7 if compact else 8
@@ -10502,20 +10563,64 @@ class SportsDashboard(BasePlugin):
         self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback_text)
 
     def _draw_worldcup_flag(self, image, draw, flag_url, x, y, width, height, fallback_text):
-        flag = self._load_flag_image(flag_url, (width, height))
+        display_w, display_h = self._worldcup_flag_display_size(flag_url, fallback_text, width, height)
+        flag = self._load_flag_image(flag_url, (display_w, display_h))
+        paste_x = int(x + (width - display_w) / 2)
+        paste_y = int(y + (height - display_h) / 2)
         if flag:
-            image.paste(flag, (x + (width - flag.width) // 2, y + (height - flag.height) // 2), flag)
+            image.paste(flag, (paste_x + (display_w - flag.width) // 2, paste_y + (display_h - flag.height) // 2), flag)
             return
-        draw.rectangle((x, y, x + width, y + height), fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((paste_x, paste_y, paste_x + display_w, paste_y + display_h), fill=COLORS["panel"], outline=COLORS["border"], width=1)
         fallback = str(fallback_text or "?").strip().upper()[:2] or "?"
-        fallback_text, fallback_font = self._fit_text(draw, fallback, width - 3, 9, bold=True, min_size=7)
-        self._draw_centered(draw, (x + width / 2, y + height / 2), fallback_text, fallback_font, COLORS["muted"])
+        fallback_text, fallback_font = self._fit_text(draw, fallback, max(4, display_w - 3), 9, bold=True, min_size=7)
+        self._draw_centered(draw, (paste_x + display_w / 2, paste_y + display_h / 2), fallback_text, fallback_font, COLORS["muted"])
+
+    @staticmethod
+    def _worldcup_flag_display_size(flag_url, fallback_text, width, height):
+        width = max(1, int(width))
+        height = max(1, int(height))
+        aspect_ratio = SportsDashboard._worldcup_flag_aspect_ratio(flag_url, fallback_text)
+        slot_ratio = width / height
+        if aspect_ratio >= slot_ratio:
+            display_w = width
+            display_h = max(1, min(height, int(round(width / aspect_ratio))))
+        else:
+            display_h = height
+            display_w = max(1, min(width, int(round(height * aspect_ratio))))
+        return display_w, display_h
+
+    @staticmethod
+    def _worldcup_flag_aspect_ratio(flag_url, fallback_text):
+        country_code = SportsDashboard._worldcup_flag_country_code(flag_url, fallback_text)
+        return ISO_FLAG_ASPECT_RATIOS.get(country_code, DEFAULT_FLAG_ASPECT_RATIO)
+
+    @staticmethod
+    def _worldcup_flag_country_code(flag_url, fallback_text):
+        for value in (fallback_text,):
+            text = str(value or "").strip().upper()
+            if not text:
+                continue
+            tla = SportsDashboard._canonical_country_tla(text)
+            country_code = FIFA_TLA_TO_FLAGS_API_CODE.get(tla)
+            if country_code:
+                return country_code
+            if re.fullmatch(r"[A-Z]{2}", text):
+                return text
+        url = str(flag_url or "")
+        match = re.search(r"flagcdn\.com/(?:[^/]+/)?([A-Z]{2})\.(?:png|svg|webp)", url, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        match = re.search(r"/([A-Z]{2})/flat/", url, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        return ""
 
     @staticmethod
     def _load_flag_image(flag_url, size):
         if not flag_url:
             return None
-        cache_key = (flag_url, size)
+        size = (max(1, int(size[0])), max(1, int(size[1])))
+        cache_key = (flag_url, size, "worldcup-flag-contain-v2")
         if cache_key in FLAG_IMAGE_CACHE:
             return FLAG_IMAGE_CACHE[cache_key]
         try:
@@ -10526,13 +10631,23 @@ class SportsDashboard(BasePlugin):
             with urllib.request.urlopen(request, timeout=4) as response:
                 data = response.read()
             with Image.open(BytesIO(data)) as source:
-                flag = ImageOps.contain(source.convert("RGBA"), size, Image.LANCZOS)
+                flag = SportsDashboard._trim_transparent_flag(source.convert("RGBA"))
+                flag = ImageOps.contain(flag, size, Image.LANCZOS)
             FLAG_IMAGE_CACHE[cache_key] = flag
             return flag
         except Exception as exc:
             logger.warning("Failed to load World Cup flag %s: %s", flag_url, exc)
             FLAG_IMAGE_CACHE[cache_key] = None
             return None
+
+    @staticmethod
+    def _trim_transparent_flag(flag):
+        if flag.mode != "RGBA":
+            flag = flag.convert("RGBA")
+        bbox = flag.getchannel("A").getbbox()
+        if bbox:
+            return flag.crop(bbox)
+        return flag
 
     @staticmethod
     def _worldcup_api_source_label(source_state, fetched_at):
@@ -11389,8 +11504,8 @@ class SportsDashboard(BasePlugin):
         strip_drawn = self._draw_standalone_sport_header_cutout(
             image,
             sport,
-            title_x + 140,
-            header_y + 2,
+            title_x + SPORT_HEADER_CUTOUT_TITLE_GAP,
+            header_y - 6,
             x2 - 92,
             y1 + 48,
             accent,
@@ -11409,17 +11524,17 @@ class SportsDashboard(BasePlugin):
         cutout = self._load_sport_header_cutout(sport)
         if cutout is None:
             return False
-        if cutout.width > width or cutout.height > height:
-            scale = min(width / cutout.width, height / cutout.height)
+        scale = min(SPORT_HEADER_CUTOUT_SCALE, width / cutout.width, height / cutout.height)
+        if abs(scale - 1.0) > 0.01:
             cutout = cutout.resize(
-                (max(1, int(cutout.width * scale)), max(1, int(cutout.height * scale))),
+                (max(1, int(round(cutout.width * scale))), max(1, int(round(cutout.height * scale)))),
                 Image.LANCZOS,
             )
         tint = self._blend(accent, COLORS["text"], 0.58)
         tinted = self._tint_alpha_art(cutout, tint)
         alpha = tinted.getchannel("A").point(lambda value: min(210, value))
         tinted.putalpha(alpha)
-        paste_x = x1 + max(0, (width - tinted.width) // 2)
+        paste_x = x1 + max(0, int((width - tinted.width) * SPORT_HEADER_CUTOUT_LEFT_BIAS))
         paste_y = y2 - tinted.height + 1
         image.paste(tinted, (paste_x, paste_y), tinted)
         return True

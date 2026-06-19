@@ -19,9 +19,11 @@ SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
 SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
 SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
+SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_STATE_VERSION = "sports-dashboard-offseason-hub-v1"
 DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS = 60
+DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS = 60
 REFRESH_ON_DISPLAY_PLUGIN_IDS = {"backtothedate", "lol_info"}
 
 
@@ -590,24 +592,31 @@ class RefreshTask:
             sources.append("lpl")
         if self._sports_dashboard_nba_live_state_active(current_dt):
             sources.append("nba")
+        if self._sports_dashboard_offseason_hub_live_state_active(current_dt):
+            sources.append("offseason_hub")
         return sources
 
     def _sports_dashboard_live_refresh_enabled(self, plugin_instance, source):
+        settings = getattr(plugin_instance, "settings", None) or {}
         if source == "nba":
-            settings = getattr(plugin_instance, "settings", None) or {}
             if "nbaLiveRefreshEnabled" not in settings:
                 return True
             return _setting_enabled(settings.get("nbaLiveRefreshEnabled"))
         if source == "worldcup":
-            settings = getattr(plugin_instance, "settings", None) or {}
             if "worldCupLiveRefreshEnabled" not in settings:
                 return True
             return _setting_enabled(settings.get("worldCupLiveRefreshEnabled"))
-        return self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance)
+        if source == "offseason_hub":
+            if "offseasonHubLiveRefreshEnabled" not in settings:
+                return True
+            return _setting_enabled(settings.get("offseasonHubLiveRefreshEnabled"))
+        if source == "lpl":
+            return self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance)
+        return False
 
     def _sports_dashboard_live_refresh_interval(self, plugin_instance, source):
+        settings = getattr(plugin_instance, "settings", None) or {}
         if source == "nba":
-            settings = getattr(plugin_instance, "settings", None) or {}
             try:
                 value = int(settings.get(
                     "nbaLiveRefreshIntervalSeconds",
@@ -617,7 +626,6 @@ class RefreshTask:
                 value = DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS
             return max(60, min(900, value))
         if source == "worldcup":
-            settings = getattr(plugin_instance, "settings", None) or {}
             try:
                 value = int(settings.get(
                     "worldCupLiveRefreshIntervalSeconds",
@@ -626,7 +634,18 @@ class RefreshTask:
             except (TypeError, ValueError):
                 value = DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
             return max(60, min(900, value))
-        return self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
+        if source == "offseason_hub":
+            try:
+                value = int(settings.get(
+                    "offseasonHubLiveRefreshIntervalSeconds",
+                    DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS,
+                ))
+            except (TypeError, ValueError):
+                value = DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS
+            return max(60, min(900, value))
+        if source == "lpl":
+            return self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
+        return DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
 
     def _sports_dashboard_lpl_live_refresh_enabled(self, plugin_instance):
         settings = getattr(plugin_instance, "settings", None) or {}
@@ -666,7 +685,15 @@ class RefreshTask:
             SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION,
         )
 
-    def _sports_dashboard_live_state_active(self, current_dt, path, version):
+    def _sports_dashboard_offseason_hub_live_state_active(self, current_dt):
+        return self._sports_dashboard_live_state_active(
+            current_dt,
+            self._sports_dashboard_offseason_hub_live_state_path(),
+            SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_STATE_VERSION,
+            live_status_fallback=True,
+        )
+
+    def _sports_dashboard_live_state_active(self, current_dt, path, version, live_status_fallback=False):
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 state = json.load(handle)
@@ -676,7 +703,10 @@ class RefreshTask:
             return False
         if state.get("version") != version:
             return False
-        if not state.get("has_live"):
+        has_live = state.get("has_live")
+        if has_live is None and live_status_fallback:
+            has_live = str(state.get("status") or "").strip().upper() == "LIVE"
+        if not has_live:
             return False
         live_until = self._parse_iso_datetime(state.get("live_until"))
         if not live_until:
@@ -708,6 +738,15 @@ class RefreshTask:
             SPORTS_DASHBOARD_PLUGIN_ID,
             "cache",
             "nba_live_state.json",
+        )
+
+    def _sports_dashboard_offseason_hub_live_state_path(self):
+        return os.path.join(
+            os.path.dirname(__file__),
+            "plugins",
+            SPORTS_DASHBOARD_PLUGIN_ID,
+            "cache",
+            "offseason_hub_live.json",
         )
 
     @staticmethod

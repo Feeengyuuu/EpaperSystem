@@ -3,6 +3,7 @@ import types
 import json
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -64,6 +65,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_PGA_LOGO_PATH,
     LOCAL_WNBA_HEADER_CUTOUT_PATH,
     LOCAL_WNBA_LOGO_PATH,
+    SPORT_HEADER_CUTOUT_SCALE,
     NBA_OFFSEASON_ACCENT_SIZE,
     NBA_OFFSEASON_FILLER_ZOOM,
     LOCAL_WORLDCUP_HEADER_BANNER_PATH,
@@ -83,6 +85,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE,
     OFFSEASON_HUB_ROTATION_MINUTES,
     SportsDashboard,
+    FLAG_IMAGE_CACHE,
     TEAM_LOGO_CACHE,
     TEAM_LOGO_FETCH_TIMEOUT_SECONDS,
     WNBA_TEAM_ZH_FULL_NAMES,
@@ -159,6 +162,55 @@ def test_section_header_uses_supplied_league_accent():
     plugin._draw_section_header(draw, 0, 120, 10, "UPCOMING", COLORS["lpl_accent"])
 
     assert image.getpixel((18, 20)) == COLORS["lpl_accent"]
+
+def test_worldcup_flag_display_size_uses_country_specific_aspect_ratios():
+    assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/ch.png", "SUI", 44, 30) == (30, 30)
+    assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/qa.png", "QAT", 44, 30) == (44, 17)
+    assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/be.png", "BEL", 44, 30) == (35, 30)
+    assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/us.png", "USA", 44, 30) == (44, 23)
+    assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/zz.png", "ZZZ", 44, 30) == (44, 29)
+
+
+def test_worldcup_flag_draw_loads_country_specific_display_size(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    image = Image.new("RGBA", (80, 50), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    requested_sizes = []
+
+    def fake_load_flag_image(flag_url, size):
+        requested_sizes.append(size)
+        return Image.new("RGBA", size, (255, 0, 0, 255))
+
+    monkeypatch.setattr(plugin, "_load_flag_image", fake_load_flag_image)
+
+    plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/ch.png", 10, 10, 44, 30, "SUI")
+    plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/qa.png", 10, 10, 44, 30, "QAT")
+    plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/be.png", 10, 10, 44, 30, "BEL")
+
+    assert requested_sizes == [(30, 30), (44, 17), (35, 30)]
+
+def test_worldcup_flag_loader_preserves_source_ratio(monkeypatch):
+    FLAG_IMAGE_CACHE.clear()
+    source = Image.new("RGBA", (40, 20), (0, 92, 185, 255))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+    data = buffer.getvalue()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return data
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    flag = SportsDashboard._load_flag_image("https://example.test/ratio-2x1.png", (20, 20))
+
+    assert flag.size == (20, 10)
 
 
 def test_worldcup_scheduled_rows_use_worldcup_accent():
@@ -2662,6 +2714,41 @@ def test_offseason_hub_card_prioritizes_most_recent_live_event():
     assert [event["event_id"] for event in card["live"]] == ["newer-live", "older-live"]
 
 
+def test_offseason_hub_state_marks_live_and_expiry(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
+    start = now - timedelta(minutes=40)
+    captured = {}
+
+    def capture_write(path, payload):
+        captured["path"] = path
+        captured["payload"] = payload
+
+    monkeypatch.setattr(plugin, "_write_json_file", capture_write)
+
+    plugin._write_offseason_hub_state(
+        {
+            "primary": {
+                "sport": "MLB",
+                "status": "LIVE",
+                "main": {"event_id": "mlb-live", "start": start},
+            },
+            "rotation_pool": ["MLB", "WNBA"],
+        },
+        now,
+        "HUB LIVE",
+    )
+
+    payload = captured["payload"]
+    assert payload["version"] == "sports-dashboard-offseason-hub-v1"
+    assert payload["has_live"] is True
+    assert payload["status"] == "LIVE"
+    assert payload["sport"] == "MLB"
+    assert payload["event_id"] == "mlb-live"
+    assert payload["live_until"] == (start + timedelta(hours=5)).astimezone(timezone.utc).isoformat()
+
+
 def test_offseason_hub_fallback_preserves_all_standalone_sports():
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 14, 13, 30, tzinfo=la)
@@ -2869,8 +2956,37 @@ def test_standalone_sport_header_draws_each_sport_cutout():
         plugin._draw_standalone_sport_header(image, draw, 0, 0, 551, sport, {"sport": sport, "status": "NEXT"}, "HUB LIVE")
 
     assert [call[0] for call in cutout_calls] == ["MLB", "WNBA", "PGA", "NFL", "NCAA"]
-    assert all(call[3] - call[1] + 1 >= 200 for call in cutout_calls)
-    assert all(call[4] - call[2] + 1 == 39 for call in cutout_calls)
+    assert [call[1] for call in cutout_calls] == [202, 202, 170, 170, 170]
+    assert all(call[3] - call[1] + 1 >= 258 for call in cutout_calls)
+    assert all(call[4] - call[2] + 1 == 47 for call in cutout_calls)
+
+
+def test_standalone_sport_header_cutout_scales_up_and_left_biases(monkeypatch):
+    plugin = _plugin()
+    source = Image.new("RGBA", (100, 20), (255, 255, 255, 255))
+    monkeypatch.setattr(plugin, "_load_sport_header_cutout", lambda _sport: source)
+    image = Image.new("RGB", (260, 80), (0, 0, 0))
+
+    drawn = plugin._draw_standalone_sport_header_cutout(
+        image,
+        "WNBA",
+        20,
+        10,
+        219,
+        49,
+        COLORS["wnba_accent"],
+    )
+
+    bbox = image.getbbox()
+    assert drawn is True
+    assert bbox is not None
+    drawn_width = bbox[2] - bbox[0]
+    drawn_height = bbox[3] - bbox[1]
+    assert drawn_width >= int(100 * SPORT_HEADER_CUTOUT_SCALE) - 1
+    assert drawn_height >= int(20 * SPORT_HEADER_CUTOUT_SCALE) - 1
+    centered_x = 20 + (200 - drawn_width) // 2
+    assert bbox[0] < centered_x
+    assert centered_x - bbox[0] <= 6
 
 
 def test_mlb_side_column_prioritizes_live_state_before_schedule():
@@ -8513,19 +8629,34 @@ def test_worldcup_header_banner_asset_renders_in_empty_header_space():
 
     image = Image.new("RGB", (556, 208), COLORS["paper"])
     draw = ImageDraw.Draw(image)
-    plugin._draw_worldcup_header_banner(image, 229, 8, 461, 47)
+    plugin._draw_worldcup_header_banner(image, 225, 0, 465, 47)
 
     pixels = image.load()
     changed_pixels = 0
     paper_pixels = 0
-    for y in range(8, 48):
-        for x in range(229, 462):
+    for y in range(0, 48):
+        for x in range(225, 466):
             if pixels[x, y] != COLORS["paper"]:
                 changed_pixels += 1
             else:
                 paper_pixels += 1
     assert changed_pixels > 900
     assert paper_pixels > 100
+
+
+def test_worldcup_compact_panel_places_header_banner_flush_to_top(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc)
+    image = Image.new("RGB", (556, 208), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    captured = []
+    selected = {"live": [], "upcoming": [], "recent": [], "main": None, "visible_matches": 4}
+
+    monkeypatch.setattr(plugin, "_draw_worldcup_header_banner", lambda _image, x1, y1, x2, y2: captured.append((x1, y1, x2, y2)))
+
+    plugin._draw_worldcup_compact_panel(image, draw, (0, 0, 555, 207), selected, "ESPN LIVE", None, now)
+
+    assert captured == [(225, 0, 465, 47)]
 
 
 def test_live_lpl_event_becomes_now_playing_without_duplicate_rows():
@@ -9463,6 +9594,36 @@ def test_worldcup_main_status_label_marks_verified_score_source_only_when_confir
     assert SportsDashboard._worldcup_main_status_label(inferred_live, now) == "LIVE"
 
 
+def test_worldcup_main_card_uses_30_percent_smaller_flag_slots():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "start": datetime(2026, 6, 18, 14, 0, tzinfo=la),
+        "state": "LIVE",
+        "status": "45'+6'",
+        "team_a": "加拿大",
+        "team_b": "卡塔尔",
+        "team_a_tla": "CAN",
+        "team_b_tla": "QAT",
+        "team_a_flag": "https://flagcdn.com/w80/ca.png",
+        "team_b_flag": "https://flagcdn.com/w80/qa.png",
+        "wins_a": 3,
+        "wins_b": 0,
+        "block": "Group B",
+    }
+    image = Image.new("RGB", (360, 170), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    flag_slots = []
+
+    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback):
+        flag_slots.append((width, height))
+
+    plugin._draw_worldcup_flag = record_flag
+
+    plugin._draw_worldcup_main_card(image, draw, 0, 0, 359, 169, event, datetime(2026, 6, 18, 14, 45, tzinfo=la), "live")
+
+    assert flag_slots == [(45, 27), (45, 27)]
+
 def test_worldcup_main_card_draws_verified_source_in_status_line():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -9850,15 +10011,15 @@ def test_worldcup_country_name_aliases_stay_simplified_chinese():
     assert events[0]["team_b_tla"] == "CUW"
     assert "Germany" in events[0]["team_a_source_aliases"]
     assert "Curacao" in events[0]["team_b_source_aliases"]
-    assert events[0]["team_a_flag"] == "https://flagsapi.com/DE/flat/64.png"
-    assert events[0]["team_b_flag"] == "https://flagsapi.com/CW/flat/64.png"
+    assert events[0]["team_a_flag"] == "https://flagcdn.com/w80/de.png"
+    assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/cw.png"
     assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "") == "佛得角"
     assert SportsDashboard._localized_country_name({"name": "Cabo Verde"}, "") == "佛得角"
     assert SportsDashboard._localized_country_name({"name": "Cabo-Verde"}, "") == "佛得角"
     assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "CVE") == "佛得角"
     assert SportsDashboard._canonical_country_tla("CVE") == "CPV"
     assert "Cabo Verde" in SportsDashboard._country_aliases_for_value("佛得角")
-    assert SportsDashboard._flag_url_for_tla("CVE") == "https://flagsapi.com/CV/flat/64.png"
+    assert SportsDashboard._flag_url_for_tla("CVE") == "https://flagcdn.com/w80/cv.png"
 
 
 def test_worldcup_espn_parser_localizes_cape_verde():
@@ -9902,7 +10063,7 @@ def test_worldcup_espn_parser_localizes_cape_verde():
     assert events[0]["team_a"] == "西班牙"
     assert events[0]["team_b"] == "佛得角"
     assert events[0]["team_b_tla"] == "CPV"
-    assert events[0]["team_b_flag"] == "https://flagsapi.com/CV/flat/64.png"
+    assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/cv.png"
 
 
 def test_worldcup_lineups_attach_formation_summary_from_api_cache():
@@ -10099,8 +10260,8 @@ def test_football_data_parser_uses_chinese_country_names_and_flat_flags():
     assert events[0]["start"].strftime("%Y-%m-%d %H:%M") == "2026-06-11 12:00"
     assert events[0]["team_a"] == "墨西哥"
     assert events[0]["team_b"] == "南非"
-    assert events[0]["team_a_flag"] == "https://flagsapi.com/MX/flat/64.png"
-    assert events[0]["team_b_flag"] == "https://flagsapi.com/ZA/flat/64.png"
+    assert events[0]["team_a_flag"] == "https://flagcdn.com/w80/mx.png"
+    assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/za.png"
     assert events[0]["block"] == "Group A"
     assert "Mexico" in events[0]["team_a_source_aliases"]
 
@@ -10673,7 +10834,7 @@ def test_worldcup_compact_row_uses_larger_flags():
 
     plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
 
-    assert flag_sizes == [(18, 12), (18, 12)]
+    assert flag_sizes == [(24, 16), (24, 16)]
 
 
 def test_forced_night_theme_uses_deep_night_palette_without_leaking():
@@ -10869,7 +11030,7 @@ def test_worldcup_flag_draws_loaded_flag_without_background():
     image = Image.new("RGB", (80, 40), COLORS["paper"])
     draw = ImageDraw.Draw(image)
 
-    plugin._draw_worldcup_flag(image, draw, "https://flagsapi.com/MX/flat/64.png", 10, 10, 30, 22, "MEX")
+    plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/mx.png", 10, 10, 30, 22, "MEX")
 
     assert image.getpixel((10, 10)) == COLORS["paper"]
     assert image.getpixel((20, 16)) == (0, 92, 185)

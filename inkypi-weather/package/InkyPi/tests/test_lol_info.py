@@ -26,6 +26,9 @@ def install_import_stubs():
             plugin_dir = SRC / "plugins" / self.get_plugin_id()
             return str(plugin_dir / path) if path else str(plugin_dir)
 
+        def get_dimensions(self, device_config):
+            return device_config.get_resolution()
+
         def generate_settings_template(self):
             return {"settings_template": "base_plugin/settings.html"}
 
@@ -111,6 +114,71 @@ def test_asset_logos_are_available(tmp_path):
     assert riot_logo is not None
     assert lol_logo.width <= 100 and lol_logo.height <= 42
     assert riot_logo.width <= 90 and riot_logo.height <= 28
+
+
+def test_hangul_riot_id_uses_font_with_korean_glyphs(tmp_path):
+    plugin = make_plugin(tmp_path)
+    base_font = plugin._font(15)
+    hangul_text = "BLG " + chr(0xC628)
+
+    hangul_font = plugin._font_for_text(base_font, hangul_text)
+
+    assert plugin._contains_hangul(hangul_text) is True
+    assert Path(getattr(hangul_font, "path", "")).name == "LXGWWenKai-Regular.ttf"
+
+
+def test_pro_accounts_parse_default_pool_with_korean_names(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    accounts = plugin._pro_accounts({"proAccounts": lol_info_module.DEFAULT_PRO_ACCOUNTS_TEXT})
+
+    assert [account["label"] for account in accounts] == ["Faker", "Bin", "ShowMaker", "Chovy"]
+    assert accounts[1]["gameName"] == "BLG " + chr(0xC628)
+    assert accounts[3]["gameName"] == chr(0xD5C8) + chr(0xAC70) + chr(0xB369)
+    assert all(account["platformRoute"] == "kr" for account in accounts)
+    assert all(account["regionalRoute"] == "asia" for account in accounts)
+
+
+def test_pro_account_rotation_random_queue_removes_displayed_accounts(tmp_path):
+    plugin = make_plugin(tmp_path)
+    settings = {
+        "proAccounts": "\n".join([
+            "A|Alpha|KR1|kr|asia",
+            "B|Beta|KR1|kr|asia",
+            "C|Gamma|KR1|kr|asia",
+        ])
+    }
+
+    selected = [plugin._select_pro_account(settings)["label"] for _ in range(3)]
+
+    assert set(selected) == {"A", "B", "C"}
+    assert len(selected) == len(set(selected))
+    state_path = next(tmp_path.glob("pro_account_rotation_*.json"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["queue"] == []
+    next_selected = plugin._select_pro_account(settings)
+    assert next_selected["label"] in {"A", "B", "C"}
+    refreshed_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(refreshed_state["queue"]) == 2
+
+
+def test_selected_pro_account_settings_override_single_riot_id(tmp_path):
+    plugin = make_plugin(tmp_path)
+    settings = {
+        "gameName": "Old",
+        "tagLine": "NA1",
+        "platformRoute": "na1",
+        "regionalRoute": "americas",
+        "proAccounts": "Chovy|" + chr(0xD5C8) + chr(0xAC70) + chr(0xB369) + "|0303|kr|asia",
+    }
+
+    effective = plugin._settings_for_selected_pro_account(settings)
+
+    assert effective["gameName"] == chr(0xD5C8) + chr(0xAC70) + chr(0xB369)
+    assert effective["tagLine"] == "0303"
+    assert effective["platformRoute"] == "kr"
+    assert effective["regionalRoute"] == "asia"
+    assert effective["_proAccountLabel"] == "Chovy"
 
 
 def test_recent_summary_calculates_metrics(tmp_path):
@@ -300,6 +368,88 @@ def test_lcu_raw_match_history_payload_normalizes_player_stats(tmp_path):
     assert matches[0]["timestamp"] == 1781132521000
 
 
+def test_local_match_history_ignores_payload_for_different_account(tmp_path):
+    plugin = make_plugin(tmp_path)
+    history_path = tmp_path / "league_client_matches.json"
+    history_path.write_text(json.dumps({
+        "puuid": "old-puuid",
+        "summoner": {"gameName": "Old Player", "tagLine": "NA1", "puuid": "old-puuid"},
+        "games": {
+            "games": {
+                "games": [
+                    {
+                        "gameId": 222,
+                        "queueId": 420,
+                        "gameCreation": 1781131619000,
+                        "gameDuration": 1800,
+                        "participants": [
+                            {
+                                "participantId": 1,
+                                "teamId": 100,
+                                "championId": 32,
+                                "stats": {"kills": 9, "deaths": 1, "assists": 3, "win": "Win"},
+                            }
+                        ],
+                        "participantIdentities": [
+                            {"participantId": 1, "player": {"puuid": "old-puuid"}},
+                        ],
+                    }
+                ]
+            }
+        },
+    }), encoding="utf-8")
+
+    matches = plugin._local_match_summaries(
+        {"localMatchHistoryPath": str(history_path)},
+        {"puuid": "current-puuid", "gameName": "Current Player", "tagLine": "KR1"},
+        {"by_key": {"32": {"id": "Amumu", "name": "Amumu", "icon_url": "amumu.png"}}},
+    )
+
+    assert matches == []
+
+
+def test_local_match_history_filters_flat_rows_for_current_account(tmp_path):
+    plugin = make_plugin(tmp_path)
+    history_path = tmp_path / "league_client_matches.json"
+    history_path.write_text(json.dumps({
+        "matches": [
+            {
+                "match_id": "OLD_1",
+                "puuid": "old-puuid",
+                "champion_id": 32,
+                "kills": 9,
+                "deaths": 1,
+                "assists": 3,
+                "win": True,
+                "timestamp": 1781131619000,
+                "duration": 1800,
+            },
+            {
+                "match_id": "KR_1",
+                "puuid": "current-puuid",
+                "champion_id": 81,
+                "kills": 2,
+                "deaths": 4,
+                "assists": 8,
+                "win": False,
+                "timestamp": 1781132529000,
+                "duration": 1200,
+            },
+        ]
+    }), encoding="utf-8")
+
+    matches = plugin._local_match_summaries(
+        {"localMatchHistoryPath": str(history_path)},
+        {"puuid": "current-puuid", "gameName": "Current Player", "tagLine": "KR1"},
+        {"by_key": {
+            "32": {"id": "Amumu", "name": "Amumu", "icon_url": "amumu.png"},
+            "81": {"id": "Ezreal", "name": "Ezreal", "icon_url": "ezreal.png"},
+        }},
+    )
+
+    assert [row["match_id"] for row in matches] == ["KR_1"]
+    assert matches[0]["champion_key"] == "Ezreal"
+
 def test_write_context_includes_local_match_metrics(tmp_path):
     plugin = make_plugin(tmp_path)
     captured = {}
@@ -427,8 +577,8 @@ def test_skin_art_pool_can_use_configured_owned_skin_ids(tmp_path):
         {"ownedSkinIds": "103001, Riven:2", "includeLatestSkins": "false"},
     )
 
-    assert [item["id"] for item in pool] == ["Ahri:1", "Riven:2"]
-    assert pool[0]["pool_source"] == "owned"
+    assert [item["id"] for item in pool] == ["Ahri:1", "Riven:2", "Yasuo:1"]
+    assert [item["pool_source"] for item in pool] == ["owned", "owned", "catalog"]
     assert pool[0]["splash_url"].endswith("/assets/characters/ahri/skins/skin01/images/ahri_splash_uncentered_1.jpg")
 
 
@@ -472,9 +622,33 @@ def test_skin_art_pool_adds_latest_skins_by_release_date(tmp_path):
         {"includeLatestSkins": "true", "latestSkinCount": "2"},
     )
 
-    assert [item["id"] for item in pool] == ["Yasuo:1", "Riven:2"]
-    assert all(item["pool_source"] == "latest" for item in pool)
+    assert [item["id"] for item in pool] == ["Yasuo:1", "Riven:2", "Ahri:1"]
+    assert [item["pool_source"] for item in pool] == ["latest", "latest", "catalog"]
 
+
+def test_skin_art_pool_includes_full_catalog_even_without_latest_priority(tmp_path):
+    plugin = make_plugin(tmp_path)
+    plugin._communitydragon_skins = lambda **_kwargs: [
+        {"id": 103001, "championId": 103, "name": "Old Ahri", "releaseDate": "2011-12-14"},
+        {"id": 92002, "championId": 92, "name": "New Riven", "releaseDate": "2026-06-01"},
+        {"id": 157001, "championId": 157, "name": "Newest Yasuo", "releaseDate": "2026-06-03"},
+    ]
+
+    pool = plugin._skin_art_pool(
+        [],
+        {
+            "version": "16.11.1",
+            "by_key": {
+                "103": {"id": "Ahri", "name": "Ahri"},
+                "92": {"id": "Riven", "name": "Riven"},
+                "157": {"id": "Yasuo", "name": "Yasuo"},
+            },
+        },
+        {"includeLatestSkins": "false"},
+    )
+
+    assert [item["id"] for item in pool] == ["Yasuo:1", "Riven:2", "Ahri:1"]
+    assert all(item["pool_source"] == "catalog" for item in pool)
 
 def test_skin_art_pool_dedupes_owned_and_latest_skins(tmp_path):
     plugin = make_plugin(tmp_path)
@@ -521,6 +695,7 @@ def test_overview_draws_selected_skin_name_text_below_riot_logo(tmp_path):
         "section": plugin._font(20, bold=True),
         "body": plugin._font(15),
         "small": plugin._font(13),
+        "skin_label": plugin._font(14),
         "tiny": plugin._font(10),
         "micro": plugin._font(9),
     }
@@ -537,7 +712,7 @@ def test_overview_draws_selected_skin_name_text_below_riot_logo(tmp_path):
 
     def record_single(draw_obj, position, text, font, fill, max_width, min_size=8):
         if text == "Arcade Ahri":
-            seen["skin_label"] = position
+            seen["skin_label"] = {"position": position, "font_size": getattr(font, "size", None), "min_size": min_size}
         return original_single(draw_obj, position, text, font, fill, max_width, min_size)
 
     plugin._single = record_single
@@ -558,8 +733,10 @@ def test_overview_draws_selected_skin_name_text_below_riot_logo(tmp_path):
         (255, 82, 74),
     )
 
-    assert seen["skin_label"][0] > logo_box[0]
-    assert seen["skin_label"][1] > logo_box[3]
+    assert seen["skin_label"]["font_size"] == 14
+    assert seen["skin_label"]["min_size"] == 8
+    assert seen["skin_label"]["position"][0] > logo_box[0]
+    assert seen["skin_label"]["position"][1] > logo_box[3]
     assert image.getpixel((logo_box[0] + 7, logo_box[3] + 22)) != (255, 82, 74)
 
 
@@ -595,6 +772,82 @@ def test_skin_art_choice_rotates_through_existing_pool_in_order(tmp_path):
     assert selected == ["Ahri:1", "Riven:2", "Yasuo:3", "Ahri:1"]
 
 
+def test_skin_art_choice_restarts_when_catalog_pool_changes(tmp_path):
+    plugin = make_plugin(tmp_path)
+    data = {
+        "account": {"puuid": "catalog-change-test"},
+        "skin_art_pool": [
+            {"id": "Ahri:1", "splash_url": "https://example.test/Ahri_1.jpg"},
+            {"id": "Riven:2", "splash_url": "https://example.test/Riven_2.jpg"},
+        ],
+    }
+
+    first = plugin._choose_skin_art(data)
+    data["skin_art_pool"] = [
+        {"id": "Mel:1", "splash_url": "https://example.test/Mel_1.jpg"},
+        {"id": "Ahri:1", "splash_url": "https://example.test/Ahri_1.jpg"},
+        {"id": "Riven:2", "splash_url": "https://example.test/Riven_2.jpg"},
+    ]
+    second = plugin._choose_skin_art(data)
+
+    assert first["id"] == "Ahri:1"
+    assert second["id"] == "Mel:1"
+
+
+def test_rank_emblem_url_uses_communitydragon_shared_image(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    url = plugin._rank_emblem_url({"tier": "GRANDMASTER"})
+
+    assert url == "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/images/grandmaster.png"
+    assert plugin._rank_emblem_url({"tier": "UNRANKED"}) == ""
+
+
+def test_rank_mastery_draws_rank_emblem_with_exact_rank_label_below_icon(tmp_path):
+    plugin = make_plugin(tmp_path)
+    image = Image.new("RGB", (800, 480), (5, 7, 12))
+    draw = ImageDraw.Draw(image)
+    fonts = {
+        "title": plugin._font(25, bold=True),
+        "section": plugin._font(20, bold=True),
+        "body": plugin._font(15),
+        "small": plugin._font(13),
+        "skin_label": plugin._font(14),
+        "tiny": plugin._font(10),
+        "micro": plugin._font(9),
+    }
+    ranked = {"tier": "GRANDMASTER", "rank": "I", "leaguePoints": 1684, "wins": 274, "losses": 227}
+    rank_label = plugin._rank_text(ranked)
+    seen = []
+    original_single = plugin._single
+
+    def record_single(draw_obj, position, text, font, fill, max_width, min_size=8):
+        seen.append({"text": str(text), "position": position, "font_size": getattr(font, "size", None), "max_width": max_width, "min_size": min_size})
+        return original_single(draw_obj, position, text, font, fill, max_width, min_size)
+
+    plugin._single = record_single
+    plugin._rank_emblem_image = lambda _ranked, size: Image.new("RGBA", (size, size), (14, 188, 214, 255))
+
+    plugin._draw_rank_mastery(
+        image,
+        draw,
+        {"ranked": ranked, "mastery": []},
+        (602, 22, 778, 264),
+        fonts,
+        (255, 250, 222),
+        (202, 190, 150),
+        (255, 205, 54),
+        (82, 202, 128),
+        (107, 204, 255),
+    )
+
+    rank_record = next(item for item in seen if item["text"] == rank_label)
+    assert rank_record["position"] == (614, 140)
+    assert rank_record["font_size"] == 10
+    assert rank_record["max_width"] == 74
+    assert rank_record["min_size"] == 7
+    assert any(item["text"] == "1684 LP" for item in seen)
+    assert image.getpixel((618, 68)) == (14, 188, 214)
 def test_valid_data_cache_still_rerenders_image_without_refetch(tmp_path):
     plugin = make_plugin(tmp_path)
     settings = {}

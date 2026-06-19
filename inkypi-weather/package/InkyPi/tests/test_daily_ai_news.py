@@ -14,6 +14,189 @@ def _plugin():
     return DailyAINews({"id": "daily_ai_news"})
 
 
+def test_effective_feeds_expands_legacy_bbc_only_settings():
+    plugin = _plugin()
+    feeds_text = "BBC World|https://feeds.bbci.co.uk/news/world/rss.xml"
+
+    effective = plugin._effective_feeds_text(feeds_text)
+    feeds = plugin._parse_feeds(effective)
+    urls = [url for _name, url in feeds]
+
+    assert urls.count("https://feeds.bbci.co.uk/news/world/rss.xml") == 1
+    assert "https://www.aljazeera.com/xml/rss/all.xml" in urls
+    assert "https://www.france24.com/en/rss" in urls
+    assert "https://rss.dw.com/rdf/rss-en-all" in urls
+    assert len(feeds) >= 10
+
+
+def test_effective_feeds_expands_previous_default_feed_set():
+    plugin = _plugin()
+
+    effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_DEFAULT_FEEDS)
+    urls = {url for _name, url in plugin._parse_feeds(effective)}
+
+    assert "https://www.pbs.org/newshour/feeds/rss/headlines" in urls
+    assert "https://abcnews.go.com/abcnews/internationalheadlines" in urls
+
+
+def test_effective_feeds_preserves_custom_non_legacy_settings():
+    plugin = _plugin()
+    custom = "Custom Source|https://example.com/custom.xml"
+
+    assert plugin._effective_feeds_text(custom) == custom
+
+
+def test_fetch_items_samples_all_configured_sources(monkeypatch):
+    plugin = _plugin()
+    urls = [f"https://example.com/feed{i}.xml" for i in range(5)]
+    feeds_text = "\n".join(f"Source {i}|{url}" for i, url in enumerate(urls))
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, url):
+            self.content = url.encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **_kwargs):
+        calls.append(url)
+        return FakeResponse(url)
+
+    def fake_parse(content):
+        url = content.decode("utf-8")
+        entries = [
+            {
+                "title": f"{url} story {index}",
+                "summary": "summary",
+                "published": "",
+                "link": url,
+            }
+            for index in range(4)
+        ]
+        return type("FakeFeed", (), {"entries": entries})()
+
+    monkeypatch.setattr(daily_ai_news_module.requests, "get", fake_get)
+    monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
+
+    items = plugin._fetch_items(feeds_text, 6)
+
+    assert calls == urls
+    assert {item["source"] for item in items} == {f"Source {index}" for index in range(5)}
+
+
+def test_diversify_news_items_limits_single_source_dominance():
+    items = [
+        *({"source": "BBC", "title": f"BBC story {index}"} for index in range(10)),
+        *({"source": "NPR", "title": f"NPR story {index}"} for index in range(2)),
+        *({"source": "DW", "title": f"DW story {index}"} for index in range(2)),
+    ]
+
+    selected = DailyAINews._diversify_news_items(items, 6)
+
+    assert len(selected) == 6
+    assert sum(1 for item in selected if item["source"] == "BBC") == 2
+    assert sum(1 for item in selected if item["source"] == "NPR") == 2
+    assert sum(1 for item in selected if item["source"] == "DW") == 2
+    assert {item["source"] for item in selected} >= {"NPR", "DW"}
+
+
+def test_rank_news_items_accepts_naive_now_with_timezone_published_date():
+    plugin = _plugin()
+    items = [
+        {
+            "source": "BBC",
+            "title": "Major world event",
+            "summary": "",
+            "published": "Wed, 17 Jun 2026 12:00:00 GMT",
+        }
+    ]
+
+    ranked = plugin._rank_news_items(items, datetime(2026, 6, 17, 13, 0, 0))
+
+    assert ranked == items
+
+
+def test_get_brief_uses_new_rss_when_api_limit_blocks_stale_cache(monkeypatch, tmp_path):
+    plugin = _plugin()
+    cache_file = tmp_path / "brief.json"
+    cache_file.write_text(
+        daily_ai_news_module.json.dumps(
+            {
+                "cache_key": "old-cache-key",
+                "brief": {"top": [{"title": "old", "why": "old"}], "sources": ["BBC"]},
+                "items": [{"source": "BBC", "title": "old"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDeviceConfig:
+        def load_env_key(self, key):
+            return "fake-key" if key == "OPENAI_API_KEY" else ""
+
+    fresh_items = [
+        {"source": "半岛电视台", "title": "新的中文新闻一", "summary": "摘要", "published": "", "link": ""},
+        {"source": "法国24", "title": "新的中文新闻二", "summary": "摘要", "published": "", "link": ""},
+    ]
+
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_fetch_items", lambda _feeds_text, _max_items: fresh_items)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda _now, _device_config: {})
+    monkeypatch.setattr(plugin, "_allow_api_call", lambda _settings, _date_key: False)
+
+    brief = plugin._get_brief(
+        {"model": "gpt-5-nano", "feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"},
+        FakeDeviceConfig(),
+        datetime(2026, 6, 17),
+    )
+
+    assert brief["from_cache"] is False
+    assert {item["source"] for item in brief["items"]} == {"半岛电视台", "法国24"}
+    assert brief["brief"]["sources"] == ["半岛电视台", "法国24"]
+    assert "RSS" in brief["warning"]
+
+
+def test_get_brief_keeps_stale_chinese_cache_instead_of_showing_english_rss(monkeypatch, tmp_path):
+    plugin = _plugin()
+    cache_file = tmp_path / "brief.json"
+    cache_file.write_text(
+        daily_ai_news_module.json.dumps(
+            {
+                "cache_key": "old-cache-key",
+                "brief": {"top": [{"title": "旧中文新闻", "why": "中文摘要"}], "sources": ["BBC中文"]},
+                "items": [{"source": "BBC中文", "title": "旧中文新闻"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDeviceConfig:
+        def load_env_key(self, key):
+            return "fake-key" if key == "OPENAI_API_KEY" else ""
+
+    english_items = [
+        {"source": "BBC世界", "title": "English headline one", "summary": "", "published": "", "link": ""},
+        {"source": "NPR新闻", "title": "English headline two", "summary": "", "published": "", "link": ""},
+    ]
+
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_fetch_items", lambda _feeds_text, _max_items: english_items)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda _now, _device_config: {})
+    monkeypatch.setattr(plugin, "_allow_api_call", lambda _settings, _date_key: False)
+
+    brief = plugin._get_brief(
+        {"model": "gpt-5-nano", "feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"},
+        FakeDeviceConfig(),
+        datetime(2026, 6, 17),
+    )
+
+    assert brief["from_cache"] is True
+    assert brief["brief"]["top"][0]["title"] == "旧中文新闻"
+    assert "中文缓存" in brief["warning"]
+
+
 def test_base_background_uses_plain_theme_color_in_night_mode():
     plugin = _plugin()
     bg = (7, 11, 13)
@@ -126,6 +309,66 @@ def test_simplifies_common_traditional_chinese_payload():
     assert simplified["items"][0]["summary"] == "企业应对"
 
 
+def test_simplifies_common_english_news_terms_and_chinese_spacing():
+    plugin = _plugin()
+
+    payload = {
+        "brief": {
+            "lede": "U.S. 与 Iran 谈判使 Moscow 承压",
+            "top": [{"title": "美 伊谈判影响 Moscow", "why": "UN 关注 Gaza 局势"}],
+            "sources": ["BBC World"],
+        }
+    }
+
+    simplified = plugin._simplify_chinese_payload(payload)
+
+    assert simplified["brief"]["lede"] == "美国与伊朗谈判使莫斯科承压"
+    assert simplified["brief"]["top"][0]["title"] == "美伊谈判影响莫斯科"
+    assert simplified["brief"]["top"][0]["why"] == "联合国关注加沙局势"
+
+
+def test_clean_brief_sources_only_keeps_actual_rss_labels():
+    plugin = _plugin()
+    items = [
+        {"source": "BBC中文"},
+        {"source": "法国24"},
+        {"source": "半岛电视台"},
+    ]
+
+    sources = plugin._clean_brief_sources(["BBC中文", "法方报道", "半岛电视台", "BBC中文"], items)
+
+    assert sources == ["BBC中文", "半岛电视台"]
+
+
+def test_sanitize_brief_visible_text_removes_untranslated_english_leaks():
+    plugin = _plugin()
+
+    brief = {
+        "lede": "BBC中文关注 U.S. 与 Iran reconstruction 方案",
+        "top": [
+            {"title": "美国拟对伊朗 unknownword 提案", "why": "NPR 关注 sanctions 与 Gaza"},
+        ],
+        "a_share": {"summary": "AI 摘要可用", "analysis": "RSS 条目已更新"},
+        "sources": ["BBC中文"],
+    }
+
+    sanitized = plugin._sanitize_brief_visible_text(brief)
+
+    assert sanitized["lede"] == "BBC中文关注美国与伊朗重建方案"
+    assert sanitized["top"][0]["title"] == "美国拟对伊朗提案"
+    assert sanitized["top"][0]["why"] == "NPR关注制裁与加沙"
+    assert sanitized["a_share"]["summary"] == "AI摘要可用"
+    assert sanitized["a_share"]["analysis"] == "RSS条目已更新"
+
+
+def test_static_render_labels_use_simplified_chinese():
+    plugin = _plugin()
+
+    assert plugin._theme_label({"mode": "night"}) == "午夜简报"
+    assert plugin._theme_label({"mode": "day"}) == "日间简报"
+    assert plugin._footer_text({"generated_at": "2026-06-17T21:12:00"}, {"sources": []}).startswith("来源: 新闻源 + AI摘要")
+
+
 def test_daily_ai_news_loads_microsoft_yahei_font():
     plugin = _plugin()
 
@@ -176,6 +419,35 @@ def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
     assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}
 
 
+def test_daily_ai_news_market_headers_use_plain_text_labels(monkeypatch):
+    plugin = _plugin()
+    seen_labels = []
+
+    def capture_market_module(draw, label, brief, payload, key, x, y, width, section_font, body_font, accent, ink, rule, up_color, down_color, max_y=None):
+        seen_labels.append(label)
+        return y
+
+    monkeypatch.setattr(plugin, "_draw_market_module", capture_market_module)
+    payload = {
+        "date": "2026-06-18",
+        "generated_at": "2026-06-18T05:53:00",
+        "model": "gpt-5-nano",
+        "brief": {
+            "lede": "多方新闻聚焦地区安全与能源流动。",
+            "top": [],
+            "a_share": {"summary": "A股上涨", "analysis": "主要指数同步走强。"},
+            "us_stock": {"summary": "美股走弱", "analysis": "主要指数同步走弱。"},
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 18), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert seen_labels == ["A股今日", "美股今日"]
+
+
 def test_title_background_asset_is_transparent_measured_strip():
     path = daily_ai_news_module.PLUGIN_DIR / TITLE_BACKGROUND_IMAGE
 
@@ -213,8 +485,9 @@ def test_render_positions_title_background_between_title_and_meta(monkeypatch):
 
     assert image.size == (800, 480)
     left, top, right, bottom = seen["box"]
-    assert (right - left, bottom - top) == TITLE_BACKGROUND_SIZE
+    assert right - left >= TITLE_BACKGROUND_SIZE[0]
+    assert bottom - top == TITLE_BACKGROUND_SIZE[1]
     assert 210 <= left <= 214
     assert top == 8
-    assert 535 <= right <= 539
+    assert 565 <= right <= 575
     assert bottom == 73

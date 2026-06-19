@@ -134,19 +134,26 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
 HEADER_ART_FILE = "liveradar_header_art.png"
+SLOT_PLACEHOLDER_FILE = "liveradar_slot_placeholder.png"
+INKYPI_SRC_DIR = os.path.dirname(os.path.dirname(os.path.dirname(PLUGIN_DIR)))
+LIVE_RADAR_FONT_FILE = os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf")
+STATIC_NOTO_SANS_SC_FILE = os.path.join(INKYPI_SRC_DIR, "static", "fonts", "NotoSansSC-VF.ttf")
 HEADER_ART_SIZE = (270, 64)
 TITLE_LOGO_SCALE = 1.4
 SANS_FONT_PATHS = {
     "normal": (
+        LIVE_RADAR_FONT_FILE,
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msyh.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        STATIC_NOTO_SANS_SC_FILE,
         os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
     ),
     "bold": (
+        LIVE_RADAR_FONT_FILE,
         r"C:\Windows\Fonts\msyhbd.ttc",
         r"C:\Windows\Fonts\msyhbd.ttf",
         r"C:\Windows\Fonts\msyh.ttc",
@@ -154,6 +161,7 @@ SANS_FONT_PATHS = {
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        STATIC_NOTO_SANS_SC_FILE,
         os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
     ),
 }
@@ -1066,7 +1074,70 @@ class LiveRadar(BasePlugin):
                 snapshot_cache_seconds,
                 avatar_cache_seconds,
             )
+        if columns == 2 and len(visible) < max_items and len(visible) % columns == 1:
+            placeholder_index = len(visible)
+            column = placeholder_index % columns
+            row = placeholder_index // columns
+            card_x = x + column * (card_w + col_gap)
+            card_y = content_y + row * (row_h + gap)
+            self._draw_snapshot_mini_placeholder(image, draw, (card_x, card_y, card_w, row_h), theme)
         return len(visible)
+
+    def _draw_snapshot_mini_placeholder(self, image, draw, box, theme):
+        x, y, w, h = [int(value) for value in box]
+        asset = self._load_slot_placeholder_asset()
+        if asset:
+            try:
+                fitted = ImageOps.fit(asset.convert("RGB"), (max(1, w), max(1, h)), method=self._resampling_filter(), centering=(0.5, 0.52))
+                image.paste(fitted, (x, y))
+                draw.rectangle((x, y, x + w, y + h), outline=theme["ink"], width=1)
+                return
+            except Exception as exc:
+                logger.warning("LiveRadar generated placeholder render failed: %s", exc)
+        fill = theme["panel"]
+        ink = theme["ink"]
+        muted = theme["muted"]
+        accent = STATUS_TOTAL_FILLS["live"]
+        replay = STATUS_TOTAL_FILLS["replay"]
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=muted, width=1)
+
+        pad = max(5, min(9, h // 6))
+        left = x + pad
+        top = y + pad
+        right = x + w - pad
+        cx = left + max(20, int((right - left) * 0.34))
+        cy = y + h // 2
+        radius = max(9, min(h // 3, (right - left) // 5))
+        for index, scale in enumerate((1.0, 1.55, 2.05)):
+            r = int(radius * scale)
+            outline = ink if index == 0 else muted
+            draw.arc((cx - r, cy - r, cx + r, cy + r), 205, 335, fill=outline, width=1)
+        draw.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=accent)
+        draw.line((cx, cy, min(right - 25, cx + radius + 13), max(top + 4, cy - radius)), fill=accent, width=1)
+
+        card_w = max(25, min(44, int(w * 0.25)))
+        card_h = max(16, min(25, h - 2 * pad))
+        stack_x = right - card_w - 1
+        stack_y = y + max(pad, int((h - card_h) / 2))
+        self._rounded_rectangle(draw, (stack_x - 8, stack_y + 5, stack_x - 8 + card_w, stack_y + 5 + card_h), radius=4, fill=fill, outline=muted, width=1)
+        self._rounded_rectangle(draw, (stack_x, stack_y, stack_x + card_w, stack_y + card_h), radius=4, fill=fill, outline=ink, width=1)
+        draw.line((stack_x + 5, stack_y + 6, stack_x + card_w - 5, stack_y + 6), fill=replay, width=2)
+        draw.line((stack_x + 5, stack_y + 12, stack_x + card_w - 7, stack_y + 12), fill=muted, width=1)
+        draw.line((stack_x + 5, stack_y + 17, stack_x + card_w - 13, stack_y + 17), fill=muted, width=1)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_slot_placeholder_asset():
+        path = os.path.join(PLUGIN_DIR, SLOT_PLACEHOLDER_FILE)
+        try:
+            if not os.path.exists(path):
+                return None
+            image = Image.open(path)
+            image.load()
+            return ImageOps.exif_transpose(image).convert("RGB")
+        except Exception as exc:
+            logger.warning("LiveRadar slot placeholder asset unavailable: %s", exc)
+            return None
 
     def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
