@@ -67,7 +67,7 @@ the new-board migration.
 ## Current Beta Device
 
 - Hostname: `EpaperPodBeta`
-- Current SSH target: `feeengyuuu@192.168.1.186`
+- Current SSH target: `feeengyuuu@ColoredEpaperFrame.local` (mDNS; the prior static `192.168.1.186` is stale — device hostname resolves as `MyBeast`)
 - Current package path on Pi: `~/inkypi-weather-pi-package-20260524-3`
 - Current config path on Pi:
   `/home/feeengyuuu/inkypi-weather-pi-package-20260524-3/InkyPi/src/config/device.json`

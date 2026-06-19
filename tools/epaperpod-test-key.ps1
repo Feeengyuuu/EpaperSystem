@@ -1,5 +1,5 @@
 param(
-  [string]$HostName = "192.168.1.186",
+  [string]$HostName = "ColoredEpaperFrame.local",
   [string]$UserName = "feeengyuuu"
 )
 

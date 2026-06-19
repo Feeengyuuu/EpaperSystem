@@ -1,6 +1,6 @@
 param(
   [string]$ZipName = "chinese-literature-clock-xinkai-near-migrate-20260525.zip",
-  [string]$HostName = "192.168.1.186",
+  [string]$HostName = "ColoredEpaperFrame.local",
   [string]$UserName = "feeengyuuu",
   [string]$ServerUrl = "http://192.168.1.90:8766",
   [string]$PackageDir = "~/inkypi-weather-pi-package-20260524-3"

@@ -9604,14 +9604,14 @@ class SportsDashboard(BasePlugin):
         self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
-        flag_w, flag_h = 45, 27
+        flag_h, flag_cap = 27, 54
         left_area = (x1 + 18, center_x - 21)
         right_area = (center_x + 21, x2 - 18)
         flag_y = y1 + 58
-        left_flag_x = int((left_area[0] + left_area[1] - flag_w) / 2)
-        right_flag_x = int((right_area[0] + right_area[1] - flag_w) / 2)
-        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_w, flag_h, event.get("team_a_tla"))
-        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_w, flag_h, event.get("team_b_tla"))
+        left_flag_x = int((left_area[0] + left_area[1] - flag_cap) / 2)
+        right_flag_x = int((right_area[0] + right_area[1] - flag_cap) / 2)
+        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_cap, flag_h, event.get("team_a_tla"), align="center")
+        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_cap, flag_h, event.get("team_b_tla"), align="center")
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
@@ -9723,12 +9723,13 @@ class SportsDashboard(BasePlugin):
     def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
         left, right = [int(value) for value in area]
         area_w = max(1, right - left)
-        flag_w, flag_h = 24, 16
+        flag_h, flag_cap = 13, 26
         gap = 5
         side_key = "a" if side == "a" else "b"
         label = event.get(f"team_{side_key}")
         fallback = event.get(f"team_{side_key}_tla")
         flag_url = event.get(f"team_{side_key}_flag")
+        flag_w = self._worldcup_flag_display_size(flag_url, fallback, flag_cap, flag_h)[0]
         max_text_w = max(24, area_w - flag_w - gap)
         label, font = self._fit_text(draw, label, max_text_w, 11, bold=True, min_size=7)
         text_w = min(max_text_w, self._text_width(draw, label, font))
@@ -9773,24 +9774,25 @@ class SportsDashboard(BasePlugin):
 
     def _draw_worldcup_row_lineup(self, image, draw, x1, x2, y, event, center_text):
         center_x = (x1 + x2) / 2
-        flag_w, flag_h = 24, 16
+        flag_h, flag_cap = 14, 28
         left_flag_x = x1 + 1
-        right_flag_x = x2 - flag_w - 1
         has_odds = center_text == "VS" and self._worldcup_event_has_odds(event)
         team_bottom = y + 11
         flag_y = y - 1
-        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_w, flag_h, event.get("team_a_tla"))
-        team_a, font_a = self._fit_text(draw, event.get("team_a"), max(24, center_x - left_flag_x - flag_w - 24), 10, bold=True, min_size=7)
-        self._draw_text_in_box(draw, (left_flag_x + flag_w + 4, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
+        left_w = self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_cap, flag_h, event.get("team_a_tla"), align="left")
+        left_text_x = left_flag_x + left_w + 4
+        team_a, font_a = self._fit_text(draw, event.get("team_a"), max(20, center_x - left_text_x - 4), 10, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (left_text_x, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
         center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
-        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_w, flag_h, event.get("team_b_tla"))
-        team_b, font_b = self._fit_text(draw, event.get("team_b"), max(24, right_flag_x - center_x - 31), 10, bold=True, min_size=7)
-        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_flag_x - 4, team_bottom), team_b, font_b, COLORS["text"], align="right")
+        right_w = self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), x2 - flag_cap - 1, flag_y, flag_cap, flag_h, event.get("team_b_tla"), align="right")
+        right_text_x = x2 - 1 - right_w - 4
+        team_b, font_b = self._fit_text(draw, event.get("team_b"), max(20, right_text_x - center_x - 28), 10, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
         left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
-        self._draw_worldcup_odds_text(draw, (left_flag_x + flag_w + 4, y + 11, center_x - 28, y + 20), left_meta, max_size=8)
-        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_flag_x - 4, y + 20), right_meta, max_size=8)
+        self._draw_worldcup_odds_text(draw, (left_text_x, y + 11, center_x - 28, y + 20), left_meta, max_size=8)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_text_x, y + 20), right_meta, max_size=8)
         if has_odds:
             odds = event.get("odds") or {}
             if odds.get("draw"):
@@ -10535,7 +10537,8 @@ class SportsDashboard(BasePlugin):
         self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, fill)
 
     def _draw_worldcup_country(self, image, draw, flag_url, label, fallback_text, x, y, width, align, compact=False):
-        flag_w, flag_h = (26, 18) if compact else (32, 22)
+        flag_h, flag_cap = (14, 28) if compact else (18, 36)
+        flag_w = self._worldcup_flag_display_size(flag_url, fallback_text, flag_cap, flag_h)[0]
         text_gap = 4 if compact else 5
         label_max_size = 14 if compact else 17
         label_min_size = 7 if compact else 8
@@ -10562,18 +10565,24 @@ class SportsDashboard(BasePlugin):
             self._draw_text_in_box(draw, (text_x, y, text_x + text_w, y + row_h), label_text, label_font, COLORS["text"])
         self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback_text)
 
-    def _draw_worldcup_flag(self, image, draw, flag_url, x, y, width, height, fallback_text):
-        display_w, display_h = self._worldcup_flag_display_size(flag_url, fallback_text, width, height)
+    def _draw_worldcup_flag(self, image, draw, flag_url, x, y, max_width, height, fallback_text, align="left"):
+        display_w, display_h = self._worldcup_flag_display_size(flag_url, fallback_text, max_width, height)
         flag = self._load_flag_image(flag_url, (display_w, display_h))
-        paste_x = int(x + (width - display_w) / 2)
+        if align == "right":
+            slot_x = int(x + max_width - display_w)
+        elif align == "center":
+            slot_x = int(x + (max_width - display_w) / 2)
+        else:
+            slot_x = int(x)
         paste_y = int(y + (height - display_h) / 2)
         if flag:
-            image.paste(flag, (paste_x + (display_w - flag.width) // 2, paste_y + (display_h - flag.height) // 2), flag)
-            return
-        draw.rectangle((paste_x, paste_y, paste_x + display_w, paste_y + display_h), fill=COLORS["panel"], outline=COLORS["border"], width=1)
+            image.paste(flag, (slot_x + (display_w - flag.width) // 2, paste_y + (display_h - flag.height) // 2), flag)
+            return display_w
+        draw.rectangle((slot_x, paste_y, slot_x + display_w, paste_y + display_h), fill=COLORS["panel"], outline=COLORS["border"], width=1)
         fallback = str(fallback_text or "?").strip().upper()[:2] or "?"
         fallback_text, fallback_font = self._fit_text(draw, fallback, max(4, display_w - 3), 9, bold=True, min_size=7)
-        self._draw_centered(draw, (paste_x + display_w / 2, paste_y + display_h / 2), fallback_text, fallback_font, COLORS["muted"])
+        self._draw_centered(draw, (slot_x + display_w / 2, paste_y + display_h / 2), fallback_text, fallback_font, COLORS["muted"])
+        return display_w
 
     @staticmethod
     def _worldcup_flag_display_size(flag_url, fallback_text, width, height):

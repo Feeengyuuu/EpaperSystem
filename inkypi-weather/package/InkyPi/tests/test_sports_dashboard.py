@@ -9594,7 +9594,7 @@ def test_worldcup_main_status_label_marks_verified_score_source_only_when_confir
     assert SportsDashboard._worldcup_main_status_label(inferred_live, now) == "LIVE"
 
 
-def test_worldcup_main_card_uses_30_percent_smaller_flag_slots():
+def test_worldcup_main_card_uses_uniform_height_flag_slots():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     event = {
@@ -9615,14 +9615,15 @@ def test_worldcup_main_card_uses_30_percent_smaller_flag_slots():
     draw = ImageDraw.Draw(image)
     flag_slots = []
 
-    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback):
+    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback, align="left"):
         flag_slots.append((width, height))
+        return width
 
     plugin._draw_worldcup_flag = record_flag
 
     plugin._draw_worldcup_main_card(image, draw, 0, 0, 359, 169, event, datetime(2026, 6, 18, 14, 45, tzinfo=la), "live")
 
-    assert flag_slots == [(45, 27), (45, 27)]
+    assert flag_slots == [(54, 27), (54, 27)]
 
 def test_worldcup_main_card_draws_verified_source_in_status_line():
     plugin = _plugin()
@@ -10814,7 +10815,7 @@ def test_worldcup_compact_api_odds_stay_inside_each_match_row():
         assert 57 <= box[1] < box[3] <= 208
 
 
-def test_worldcup_compact_row_uses_larger_flags():
+def test_worldcup_compact_row_flag_slot_budget():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     event = plugin._merge_worldcup_odds(
@@ -10827,14 +10828,108 @@ def test_worldcup_compact_row_uses_larger_flags():
     draw = ImageDraw.Draw(image)
     flag_sizes = []
 
-    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback):
+    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback, align="left"):
         flag_sizes.append((width, height))
+        return width
 
     plugin._draw_worldcup_flag = record_flag
 
     plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
 
-    assert flag_sizes == [(24, 16), (24, 16)]
+    assert flag_sizes == [(28, 14), (28, 14)]
+
+
+def test_worldcup_compact_row_preserves_country_flag_ratios(monkeypatch):
+    plugin = _plugin()
+    event = {
+        "team_a": "Canada",
+        "team_b": "Qatar",
+        "team_a_tla": "CAN",
+        "team_b_tla": "QAT",
+        "team_a_flag": "https://flagcdn.com/w80/ca.png",
+        "team_b_flag": "https://flagcdn.com/w80/qa.png",
+        "wins_a": 2,
+        "wins_b": 0,
+    }
+    image = Image.new("RGBA", (260, 40), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    requested_sizes = []
+
+    def fake_load_flag_image(_flag_url, size):
+        requested_sizes.append(size)
+        return Image.new("RGBA", size, (255, 0, 0, 255))
+
+    monkeypatch.setattr(plugin, "_load_flag_image", fake_load_flag_image)
+
+    plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
+
+    assert requested_sizes == [(28, 14), (28, 11)]
+
+
+def test_worldcup_flag_returns_rendered_width(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGBA", (120, 40), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    monkeypatch.setattr(
+        plugin, "_load_flag_image", lambda _url, size: Image.new("RGBA", size, (255, 0, 0, 255))
+    )
+
+    korea = plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/kr.png", 0, 0, 36, 18, "KOR")
+    qatar = plugin._draw_worldcup_flag(image, draw, "https://flagcdn.com/w80/qa.png", 0, 0, 36, 18, "QAT")
+
+    # 3:2 flag fills the full 18px height and stays narrower than the 36px budget.
+    assert korea == 27
+    # 2.55:1 flag is capped at the 36px budget width (and ends up slightly shorter).
+    assert qatar == 36
+
+
+def test_worldcup_flag_right_align_flushes_to_budget_right_edge(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGBA", (60, 30), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    monkeypatch.setattr(
+        plugin, "_load_flag_image", lambda _url, size: Image.new("RGBA", size, (0, 92, 185, 255))
+    )
+
+    width = plugin._draw_worldcup_flag(
+        image, draw, "https://flagcdn.com/w80/kr.png", 0, 5, 36, 18, "KOR", align="right"
+    )
+
+    assert width == 27
+    # Flag occupies x in [9, 36): flush to the right edge, transparent gap on the left.
+    assert image.getpixel((35, 13))[:3] == (0, 92, 185)
+    assert image.getpixel((2, 13))[3] == 0
+
+
+def test_worldcup_row_text_starts_after_actual_flag_width(monkeypatch):
+    plugin = _plugin()
+    event = {
+        "team_a": "Korea",
+        "team_b": "Qatar",
+        "team_a_tla": "KOR",
+        "team_b_tla": "QAT",
+        "team_a_flag": "https://flagcdn.com/w80/kr.png",
+        "team_b_flag": "https://flagcdn.com/w80/qa.png",
+    }
+    image = Image.new("RGBA", (260, 40), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    monkeypatch.setattr(
+        plugin, "_load_flag_image", lambda _url, size: Image.new("RGBA", size, (255, 0, 0, 255))
+    )
+    boxes = []
+    original_draw_text_in_box = plugin._draw_text_in_box
+
+    def capture_text_box(draw_obj, box, *args, **kwargs):
+        boxes.append(box)
+        return original_draw_text_in_box(draw_obj, box, *args, **kwargs)
+
+    plugin._draw_text_in_box = capture_text_box
+
+    plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
+
+    # Korea (3:2) renders 21px wide in the 28px budget; the team name must start
+    # right after the actual flag (x1 + 1 + 21 + 4), not after the full budget.
+    assert boxes[0][0] == 4 + 1 + 21 + 4
 
 
 def test_forced_night_theme_uses_deep_night_palette_without_leaking():
