@@ -36,11 +36,16 @@ except ModuleNotFoundError:
     jinja2_stub.select_autoescape = lambda *args, **kwargs: None
     sys.modules["jinja2"] = jinja2_stub
 
+import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
 from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
+    DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS,
+    DEFAULT_WORLD_CUP_STANDINGS_URL,
     LOCAL_F1_LOGO_PATH,
+    LOCAL_CS_MAJOR_LOGO_PATH,
+    LOCAL_TI_LOGO_PATH,
     LOCAL_LPL_LOGO_PATH,
     LOCAL_LPL_MARBLE_FILLER_PATH,
     LOCAL_LPL_MSI_CARD_ACCENT_DIR,
@@ -88,6 +93,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     FLAG_IMAGE_CACHE,
     TEAM_LOGO_CACHE,
     TEAM_LOGO_FETCH_TIMEOUT_SECONDS,
+    WORLD_CUP_STANDINGS_STATE_VERSION,
     WNBA_TEAM_ZH_FULL_NAMES,
     WNBA_TEAM_ZH_NAMES,
     _ACTIVE_COLORS,
@@ -170,6 +176,20 @@ def test_worldcup_flag_display_size_uses_country_specific_aspect_ratios():
     assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/us.png", "USA", 44, 30) == (44, 23)
     assert SportsDashboard._worldcup_flag_display_size("https://flagcdn.com/w80/zz.png", "ZZZ", 44, 30) == (44, 29)
 
+def test_worldcup_scotland_uses_local_saltire_flag():
+    FLAG_IMAGE_CACHE.clear()
+
+    flag_url = SportsDashboard._flag_url_for_tla("SCO")
+    assert flag_url == "local:worldcup:sco"
+    assert SportsDashboard._worldcup_flag_country_code(flag_url, "SCO") == "SCO"
+    assert SportsDashboard._worldcup_flag_display_size(flag_url, "SCO", 44, 30) == (44, 26)
+
+    flag = SportsDashboard._load_flag_image(flag_url, (50, 30))
+
+    assert flag.size == (50, 30)
+    assert flag.getpixel((25, 15))[:3] == (255, 255, 255)
+    assert flag.getpixel((25, 2))[:3] == (0, 94, 184)
+
 
 def test_worldcup_flag_draw_loads_country_specific_display_size(monkeypatch):
     plugin = SportsDashboard({"id": "sports_dashboard"})
@@ -195,23 +215,25 @@ def test_worldcup_flag_loader_preserves_source_ratio(monkeypatch):
     buffer = BytesIO()
     source.save(buffer, format="PNG")
     data = buffer.getvalue()
+    calls = []
 
     class FakeResponse:
-        def __enter__(self):
-            return self
+        content = data
 
-        def __exit__(self, *_args):
-            return False
+        def raise_for_status(self):
+            return None
 
-        def read(self):
-            return data
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, headers, timeout))
+            return FakeResponse()
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
 
     flag = SportsDashboard._load_flag_image("https://example.test/ratio-2x1.png", (20, 20))
 
     assert flag.size == (20, 10)
-
+    assert calls == [("https://example.test/ratio-2x1.png", {"User-Agent": "InkyPi/1.0"}, 4)]
 
 def test_worldcup_scheduled_rows_use_worldcup_accent():
     assert SportsDashboard._worldcup_status_color({"state": "SCHEDULED"}) == COLORS["worldcup_accent"]
@@ -9282,6 +9304,14 @@ def test_worldcup_group_points_labels_reserve_future_slots():
     assert SportsDashboard._worldcup_group_points_label({"team_a_group_points": 3}, "a") == "PTS 3"
     assert SportsDashboard._worldcup_group_points_label({"group_points_b": "0"}, "b") == "PTS 0"
     assert SportsDashboard._worldcup_team_points_meta({"team_b_standing_points": 4}, "b") == "PTS 4"
+    assert SportsDashboard._worldcup_group_record_label({"block": "Group A", "team_a_group_record": "1-0-0"}, "a") == "1-0-0"
+    assert SportsDashboard._worldcup_group_record_label({"block": "Group A", "team_a": "Mexico"}, "a") == "0-0-0"
+    assert SportsDashboard._worldcup_group_record_label({"block": "Group A"}, "a") == ""
+    assert SportsDashboard._worldcup_team_points_meta(
+        {"block": "Group A", "team_a_group_record": "1-0-0", "team_a_group_points": 3, "odds": {"team_a": "6.00"}},
+        "a",
+        include_odds=True,
+    ) == "PTS 3 / 1-0-0 / 6.00"
 
 
 def test_worldcup_espn_event_block_reads_group_from_alt_game_note():
@@ -9338,27 +9368,31 @@ def test_worldcup_group_points_computed_end_to_end_from_espn_feed():
     # Finished MEX 2-0 RSA -> winners get 3, losers 0.
     assert SportsDashboard._worldcup_group_points_label(by_id["1"], "a") == "PTS 3"  # MEX
     assert SportsDashboard._worldcup_group_points_label(by_id["1"], "b") == "PTS 0"  # RSA
-    # Upcoming MEX vs KOR shows each side's accumulated group points (both won once).
+    # Upcoming MEX vs KOR shows each side's accumulated group points and W-D-L (both won once).
     assert SportsDashboard._worldcup_group_points_label(by_id["3"], "a") == "PTS 3"  # MEX
     assert SportsDashboard._worldcup_group_points_label(by_id["3"], "b") == "PTS 3"  # KOR
+    assert SportsDashboard._worldcup_group_record_label(by_id["3"], "a") == "1-0-0"  # MEX
+    assert SportsDashboard._worldcup_group_record_label(by_id["3"], "b") == "1-0-0"  # KOR
 
 
 def _sample_worldcup_standings_payload():
-    def entry(abbr, name, points):
+    def entry(abbr, name, points, wins=2, draws=0, losses=0):
         return {
             "team": {"abbreviation": abbr, "displayName": name},
             "stats": [
-                {"name": "wins", "value": 2.0, "displayValue": "2"},
+                {"name": "wins", "value": float(wins), "displayValue": str(wins)},
+                {"name": "draws", "value": float(draws), "displayValue": str(draws)},
+                {"name": "losses", "value": float(losses), "displayValue": str(losses)},
                 {"name": "points", "value": float(points), "displayValue": str(points)},
             ],
         }
     return {
         "children": [
             {"name": "Group A", "standings": {"entries": [
-                entry("MEX", "Mexico", 6),
-                entry("KOR", "Korea Republic", 3),
-                entry("RSA", "South Africa", 1),
-                entry("CZE", "Czechia", 0),
+                entry("MEX", "Mexico", 6, wins=2, draws=0, losses=0),
+                entry("KOR", "Korea Republic", 3, wins=1, draws=0, losses=1),
+                entry("RSA", "South Africa", 1, wins=0, draws=1, losses=1),
+                entry("CZE", "Czechia", 0, wins=0, draws=0, losses=2),
             ]}},
             {"name": "Group L", "standings": {"entries": [
                 entry("BRA", "Brazil", 4),
@@ -9375,6 +9409,45 @@ def test_parse_worldcup_standings_indexes_points_by_group_and_alias():
     assert lookup[("Group L", "BRA")] == 4  # 12-group (A-L) format
 
 
+def test_parse_worldcup_standings_indexes_records_by_group_and_alias():
+    lookup = SportsDashboard._parse_worldcup_standings_records(_sample_worldcup_standings_payload())
+    assert lookup[("Group A", "MEX")] == "2-0-0"
+    assert lookup[("Group A", "MEXICO")] == "2-0-0"
+    assert lookup[("Group A", "RSA")] == "0-1-1"
+def test_worldcup_standings_default_cache_refreshes_after_one_hour(tmp_path, monkeypatch):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    assert DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS == 1
+    cache_key = "|".join([WORLD_CUP_STANDINGS_STATE_VERSION, DEFAULT_WORLD_CUP_STANDINGS_URL])
+    SportsDashboard._write_json_file(
+        tmp_path / "worldcup_standings.json",
+        {
+            "version": WORLD_CUP_STANDINGS_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat(),
+            "standings": {"children": []},
+        },
+    )
+    fresh_payload = _sample_worldcup_standings_payload()
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return fresh_payload
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    assert plugin._load_worldcup_standings({}) == fresh_payload
+    assert len(calls) == 1
+
 def test_apply_worldcup_standings_populates_authoritative_pts():
     events = [{
         "block": "Group A", "state": "TIMED",
@@ -9383,9 +9456,12 @@ def test_apply_worldcup_standings_populates_authoritative_pts():
         "wins_a": None, "wins_b": None,
     }]
     lookup = SportsDashboard._parse_worldcup_standings(_sample_worldcup_standings_payload())
-    SportsDashboard._apply_worldcup_standings(events, lookup)
+    record_lookup = SportsDashboard._parse_worldcup_standings_records(_sample_worldcup_standings_payload())
+    SportsDashboard._apply_worldcup_standings(events, lookup, record_lookup)
     assert SportsDashboard._worldcup_group_points_label(events[0], "a") == "PTS 6"
     assert SportsDashboard._worldcup_group_points_label(events[0], "b") == "PTS 3"
+    assert SportsDashboard._worldcup_group_record_label(events[0], "a") == "2-0-0"
+    assert SportsDashboard._worldcup_group_record_label(events[0], "b") == "1-0-1"
 
 
 def test_worldcup_standings_give_correct_pts_even_with_no_finished_matches_in_window():
@@ -9624,6 +9700,50 @@ def test_worldcup_main_card_uses_uniform_height_flag_slots():
     plugin._draw_worldcup_main_card(image, draw, 0, 0, 359, 169, event, datetime(2026, 6, 18, 14, 45, tzinfo=la), "live")
 
     assert flag_slots == [(54, 27), (54, 27)]
+
+
+def test_worldcup_main_card_meta_uses_mirrored_points_and_record():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    event = {
+        "start": datetime(2026, 6, 18, 14, 0, tzinfo=la),
+        "state": "LIVE",
+        "status": "45+6",
+        "team_a": "USA",
+        "team_b": "Australia",
+        "team_a_tla": "USA",
+        "team_b_tla": "AUS",
+        "team_a_flag": "https://flagcdn.com/w80/us.png",
+        "team_b_flag": "https://flagcdn.com/w80/au.png",
+        "team_a_group_record": "1-0-0",
+        "team_b_group_record": "0-1-0",
+        "team_a_group_points": 3,
+        "team_b_group_points": 1,
+        "wins_a": 2,
+        "wins_b": 0,
+        "block": "Group D",
+    }
+    image = Image.new("RGB", (360, 170), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+
+    plugin._draw_worldcup_flag = lambda *_args, **_kwargs: 54
+
+    def record_meta(_draw, box, text, max_size=11):
+        calls.append((tuple(int(value) for value in box), text, max_size))
+
+    plugin._draw_worldcup_odds_text = record_meta
+
+    plugin._draw_worldcup_main_card(image, draw, 0, 0, 359, 169, event, datetime(2026, 6, 18, 14, 45, tzinfo=la), "live")
+
+    left_box, left_text, left_max_size = calls[0]
+    right_box, right_text, right_max_size = calls[1]
+    assert left_box[2] - left_box[0] == right_box[2] - right_box[0]
+    assert left_box[0] + right_box[2] == left_box[2] + right_box[0]
+    assert left_text == "PTS 3 / 1-0-0"
+    assert right_text == "0-1-0 / PTS 1"
+    assert left_max_size == 8
+    assert right_max_size == 8
 
 def test_worldcup_main_card_draws_verified_source_in_status_line():
     plugin = _plugin()
@@ -10658,7 +10778,7 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     plugin._load_team_logo = lambda logo_url, size: None
 
     image = plugin.generate_image(
-        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false", "valveEsportsEnabled": "false"},
         FakeDeviceConfig(),
     )
 
@@ -10706,7 +10826,7 @@ def test_generate_image_prefers_espn_scoreboard_for_worldcup_panel():
     plugin._load_team_logo = lambda logo_url, size: None
 
     image = plugin.generate_image(
-        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false", "valveEsportsEnabled": "false"},
         FakeDeviceConfig(),
     )
 
@@ -10809,11 +10929,92 @@ def test_worldcup_compact_api_odds_stay_inside_each_match_row():
     )
 
     assert image.size == (552, 208)
-    assert len(odds_boxes) == 12
+    assert len(odds_boxes) == 14
     for box in odds_boxes:
         assert 0 <= box[0] < box[2] <= 552
         assert 57 <= box[1] < box[3] <= 208
 
+
+def test_worldcup_compact_row_meta_uses_symmetric_slots_and_slashes():
+    plugin = _plugin()
+    event = {
+        "team_a": "Canada",
+        "team_b": "Qatar",
+        "team_a_tla": "CAN",
+        "team_b_tla": "QAT",
+        "team_a_flag": "https://flagcdn.com/w80/ca.png",
+        "team_b_flag": "https://flagcdn.com/w80/qa.png",
+        "block": "Group A",
+        "team_a_group_record": "1-0-0",
+        "team_b_group_record": "0-1-0",
+        "team_a_group_points": 3,
+        "team_b_group_points": 1,
+        "odds": {"team_a": "2.20", "draw": "3.10", "team_b": "3.40"},
+    }
+    image = Image.new("RGB", (260, 40), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+
+    def record_flag(_image, _draw, _flag_url, _x, _y, width, height, _fallback, align="left"):
+        return 24 if align == "left" else 14
+
+    def record_meta(_draw, box, text, max_size=11):
+        calls.append((tuple(int(value) for value in box), text))
+
+    plugin._draw_worldcup_flag = record_flag
+    plugin._draw_worldcup_odds_text = record_meta
+
+    plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
+
+    left_box, left_text = calls[0]
+    right_box, right_text = calls[1]
+    draw_box, draw_text = calls[2]
+    assert left_box[2] - left_box[0] == right_box[2] - right_box[0]
+    assert left_box[0] + right_box[2] == left_box[2] + right_box[0]
+    assert left_text == "PTS 3 / 1-0-0 / 2.20"
+    assert right_text == "3.40 / 0-1-0 / PTS 1"
+    assert draw_text == "X / 3.10"
+    assert draw_box[0] < draw_box[2]
+
+
+def test_worldcup_recent_row_meta_uses_mirrored_points_and_record():
+    plugin = _plugin()
+    event = {
+        "start": datetime(2026, 6, 18, 20, 0, tzinfo=timezone.utc),
+        "team_a": "Mexico",
+        "team_b": "Korea",
+        "team_a_tla": "MEX",
+        "team_b_tla": "KOR",
+        "team_a_flag": "https://flagcdn.com/w80/mx.png",
+        "team_b_flag": "https://flagcdn.com/w80/kr.png",
+        "team_a_group_record": "2-0-0",
+        "team_b_group_record": "0-1-0",
+        "team_a_group_points": 6,
+        "team_b_group_points": 3,
+        "wins_a": 1,
+        "wins_b": 0,
+    }
+    image = Image.new("RGB", (260, 50), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+
+    plugin._draw_worldcup_recent_team_identity = lambda *_args, **_kwargs: None
+
+    def record_meta(_draw, box, text, max_size=11):
+        calls.append((tuple(int(value) for value in box), text, max_size))
+
+    plugin._draw_worldcup_odds_text = record_meta
+
+    plugin._draw_worldcup_recent_match_row(image, draw, 4, 256, 10, 32, event)
+
+    left_box, left_text, left_max_size = calls[0]
+    right_box, right_text, right_max_size = calls[1]
+    assert left_box[2] - left_box[0] == right_box[2] - right_box[0]
+    assert left_box[0] + right_box[2] == left_box[2] + right_box[0]
+    assert left_text == "PTS 6 / 2-0-0"
+    assert right_text == "0-1-0 / PTS 3"
+    assert left_max_size == 7
+    assert right_max_size == 7
 
 def test_worldcup_compact_row_flag_slot_budget():
     plugin = _plugin()
@@ -10954,7 +11155,7 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
     plugin._load_team_logo = lambda _logo_url, _size: None
 
     image = plugin.generate_image(
-        {"sportsDashboardTheme": "night", "localTimezone": "UTC", "worldCupTopHeight": "208"},
+        {"sportsDashboardTheme": "night", "localTimezone": "UTC", "worldCupTopHeight": "208", "valveEsportsEnabled": "false"},
         FakeDeviceConfig(timezone="UTC"),
     )
 
@@ -11003,6 +11204,8 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_WORLDCUP_LOGO_PATH,
         LOCAL_NBA_LOGO_PATH,
         LOCAL_F1_LOGO_PATH,
+        LOCAL_CS_MAJOR_LOGO_PATH,
+        LOCAL_TI_LOGO_PATH,
         LOCAL_MLB_LOGO_PATH,
         LOCAL_WNBA_LOGO_PATH,
         LOCAL_PGA_LOGO_PATH,
@@ -11050,11 +11253,12 @@ def test_remote_team_logo_loader_uses_short_timeout_and_failure_cache(monkeypatc
     TEAM_LOGO_CACHE.pop(cache_key, None)
     calls = []
 
-    def fake_urlopen(request, timeout=None):
-        calls.append((request.full_url, timeout))
-        raise OSError("offline")
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, timeout))
+            raise OSError("offline")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
 
     assert SportsDashboard._load_team_logo(logo_url, 24) is None
     assert SportsDashboard._load_team_logo(logo_url, 24) is None
@@ -11063,6 +11267,341 @@ def test_remote_team_logo_loader_uses_short_timeout_and_failure_cache(monkeypatc
     assert TEAM_LOGO_CACHE[cache_key] is None
     TEAM_LOGO_CACHE.pop(cache_key, None)
 
+def test_remote_team_logo_uses_shared_http_session(monkeypatch):
+    logo_url = "https://a.espncdn.com/i/teamlogos/mlb/500/lad.png"
+    cache_key = (logo_url, 24)
+    TEAM_LOGO_CACHE.pop(cache_key, None)
+    source = Image.new("RGBA", (12, 12), (0, 92, 185, 255))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+    data = buffer.getvalue()
+    calls = []
+
+    class FakeResponse:
+        content = data
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, headers, timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    logo = SportsDashboard._load_team_logo(logo_url, 24)
+
+    assert logo is not None
+    assert logo.size == (24, 24)
+    assert calls == [(logo_url, {"User-Agent": "InkyPi/1.0"}, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
+    TEAM_LOGO_CACHE.pop(cache_key, None)
+
+
+def _sample_valve_csapi_major_payload():
+    return [
+        {
+            "id": 1001,
+            "event": "IEM Cologne Major 2026",
+            "date": "2026-06-20",
+            "best_of": 3,
+            "team1": {"id": 7020, "name": "Spirit", "rank": 1, "score": 1},
+            "team2": {"id": 11283, "name": "Falcons", "rank": 2, "score": 2},
+            "maps": [
+                {"name": "Mirage", "team1_score": 13, "team2_score": 8},
+                {"name": "Anubis", "team1_score": 14, "team2_score": 16},
+                {"name": "Dust2", "team1_score": 12, "team2_score": 16},
+            ],
+        },
+        {
+            "id": 1002,
+            "event": "Austin Major Closed Qualifier 2026",
+            "date": "2026-06-20",
+            "team1": {"name": "Qualifier A", "score": 2},
+            "team2": {"name": "Qualifier B", "score": 0},
+        },
+        {
+            "id": 1003,
+            "event": "IEM Dallas 2026",
+            "date": "2026-06-20",
+            "team1": {"name": "Team A", "score": 2},
+            "team2": {"name": "Team B", "score": 1},
+        },
+    ]
+
+
+def _sample_valve_ti_payload():
+    return [
+        {
+            "match_id": 2001,
+            "league_name": "The International 2026 - Regional Qualifier Europe",
+            "start_time": 1781701200,
+            "radiant_team_id": 101,
+            "dire_team_id": 102,
+            "radiant_name": "Qualifier Team A",
+            "dire_name": "Qualifier Team B",
+            "radiant_score": 31,
+            "dire_score": 20,
+            "series_type": 1,
+            "duration": 2400,
+        },
+        {
+            "match_id": 2002,
+            "league_name": "The International 2026",
+            "start_time": 1782133200,
+            "radiant_team_id": 2163,
+            "dire_team_id": 8599101,
+            "radiant_name": "Team Liquid",
+            "dire_name": "Gaimin Gladiators",
+            "radiant_score": 42,
+            "dire_score": 37,
+            "series_type": 2,
+            "duration": 3180,
+        },
+    ]
+
+
+def test_valve_csapi_parser_selects_active_major_and_excludes_qualifiers():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
+
+    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_csapi_major_payload(), la, now, {})
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["series"] == "CS"
+    assert card["sport"] == "CS2 Major"
+    assert card["event_name"] == "IEM Cologne Major 2026"
+    assert card["window_active"] is True
+    assert card["logo_path"] == LOCAL_CS_MAJOR_LOGO_PATH
+    assert card["main"]["team_a"] == "Spirit"
+    assert card["main"]["team_b"] == "Falcons"
+    assert card["main"]["team_a_id"] == 7020
+    assert card["main"]["team_b_id"] == 11283
+    assert SportsDashboard._valve_score_label(card["main"]) == "1:2"
+    assert SportsDashboard._valve_match_detail_label(card["main"], compact=True) == "Mirage 13-8  |  Anubis 14-16  |  Dust2 12-16"
+
+
+def test_valve_ti_parser_excludes_regional_qualifiers():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 22, 12, 0, tzinfo=la)
+
+    cards = SportsDashboard._parse_valve_ti_cards(_sample_valve_ti_payload(), la, now, {})
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["series"] == "TI"
+    assert card["event_name"] == "The International 2026"
+    assert card["window_active"] is True
+    assert card["logo_path"] == LOCAL_TI_LOGO_PATH
+    assert card["main"]["team_a"] == "Team Liquid"
+    assert card["main"]["team_b"] == "Gaimin Gladiators"
+    assert card["main"]["team_a_id"] == 2163
+    assert card["main"]["team_b_id"] == 8599101
+    assert SportsDashboard._valve_score_label(card["main"]) == "42:37"
+
+
+
+def test_valve_dota2_preview_flag_short_circuits_live_sources(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 22, 12, 0, tzinfo=la)
+    monkeypatch.setattr(SportsDashboard, "_valve_dota2_preview_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr(plugin, "_load_valve_csapi_matches", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("CSAPI should not load")))
+    monkeypatch.setattr(plugin, "_load_valve_opendota_matches", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("OpenDota should not load")))
+
+    selected, source_state = plugin._load_valve_esports({}, la, now)
+
+    assert source_state == "DOTA2 PREVIEW"
+    assert selected["primary"]["series"] == "TI"
+    assert selected["rotation_pool"] == ["TI"]
+    assert selected["primary"]["main"]["team_a"] == "Team Liquid"
+
+def test_valve_ti_sidebar_header_uses_dota2_label(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 22, 12, 0, tzinfo=la)
+    cards = SportsDashboard._parse_valve_ti_cards(_sample_valve_ti_payload(), la, now, {})
+    selected = SportsDashboard._select_valve_esports(cards, now)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    seen_texts = []
+    original_draw_text_in_box = plugin._draw_text_in_box
+
+    def record_text(draw, box, text, font, color, align="left"):
+        seen_texts.append(str(text))
+        return original_draw_text_in_box(draw, box, text, font, color, align=align)
+
+    monkeypatch.setattr(plugin, "_draw_text_in_box", record_text)
+
+    plugin._draw_valve_esports_sidebar(image, 552, selected, "OPENDOTA CACHE", now)
+
+    assert "Dota 2" in seen_texts
+    assert "Counter-Strike 2" not in seen_texts
+
+def test_valve_ti_uses_red_theme_and_split_focus_header():
+    primary = {"series": "TI", "status": "ACTIVE"}
+    assert SportsDashboard._valve_series_accent(primary) == COLORS["valve_ti_accent"]
+    assert SportsDashboard._valve_series_accent(primary) != COLORS["amber"]
+
+    layout = SportsDashboard._valve_focus_header_layout(564, 788, 78)
+    assert layout["tag_box"][3] <= layout["date_box"][1]
+    assert layout["date_box"][3] <= layout["title_box"][1]
+
+def test_valve_ti_parser_attaches_opendota_team_logos_and_tags():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 22, 12, 0, tzinfo=la)
+    profiles = {
+        "2163": {"logo_url": "https://example.com/liquid.png", "tag": "TL"},
+        "8599101": {"logo_url": "https://example.com/gg.png", "tag": "GG"},
+    }
+
+    cards = SportsDashboard._parse_valve_ti_cards(_sample_valve_ti_payload(), la, now, {}, profiles)
+
+    assert SportsDashboard._valve_ti_team_ids(_sample_valve_ti_payload()) == {2163, 8599101}
+    event = cards[0]["main"]
+    assert event["team_a_logo"] == "https://example.com/liquid.png"
+    assert event["team_b_logo"] == "https://example.com/gg.png"
+    assert SportsDashboard._valve_team_display_name(event, "a") == "TL"
+    assert SportsDashboard._valve_team_display_name(event, "b") == "GG"
+
+
+def test_valve_generated_team_icon_is_stable_and_distinct(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (90, 48), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    event = {"team_a": "Spirit", "team_a_id": 7020, "team_b": "Falcons", "team_b_id": 11283}
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_load_valve_local_team_logo", lambda *_args, **_kwargs: None)
+
+    plugin._draw_valve_team_icon(image, draw, event, "a", 8, 7, 34)
+    plugin._draw_valve_team_icon(image, draw, event, "b", 48, 7, 34)
+
+    assert image.getpixel((11, 10)) != COLORS["paper"]
+    assert image.getpixel((51, 10)) != COLORS["paper"]
+    assert SportsDashboard._valve_team_icon_colors("Spirit", 7020) != SportsDashboard._valve_team_icon_colors("Falcons", 11283)
+
+
+def test_valve_team_icon_prefers_local_cs2_logo(tmp_path, monkeypatch):
+    plugin = _plugin()
+    logo_dir = tmp_path / "cs2"
+    logo_dir.mkdir()
+    Image.new("RGBA", (12, 12), (220, 20, 20, 255)).save(logo_dir / "7020.png")
+    monkeypatch.setattr(sports_dashboard_module, "LOCAL_CS2_TEAM_LOGO_DIR", str(logo_dir))
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args, **_kwargs: None)
+    image = Image.new("RGB", (52, 52), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    event = {"series": "CS", "team_a": "Spirit", "team_a_id": 7020}
+
+    plugin._draw_valve_team_icon(image, draw, event, "a", 8, 7, 34)
+
+    assert image.getpixel((25, 24)) != COLORS["paper"]
+    assert Path(SportsDashboard._valve_local_team_logo_candidates("Spirit", 7020, "CS")[0]).parent.name == "cs2"
+
+
+def test_valve_team_icon_prefers_local_dota2_logo(tmp_path, monkeypatch):
+    plugin = _plugin()
+    cs2_dir = tmp_path / "cs2"
+    dota2_dir = tmp_path / "dota2"
+    cs2_dir.mkdir()
+    dota2_dir.mkdir()
+    Image.new("RGBA", (12, 12), (220, 20, 20, 255)).save(cs2_dir / "2163.png")
+    Image.new("RGBA", (12, 12), (20, 220, 20, 255)).save(dota2_dir / "2163.png")
+    monkeypatch.setattr(sports_dashboard_module, "LOCAL_CS2_TEAM_LOGO_DIR", str(cs2_dir))
+    monkeypatch.setattr(sports_dashboard_module, "LOCAL_DOTA2_TEAM_LOGO_DIR", str(dota2_dir))
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args, **_kwargs: None)
+    image = Image.new("RGB", (52, 52), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    event = {"series": "TI", "team_a": "Team Liquid", "team_a_id": 2163}
+
+    plugin._draw_valve_team_icon(image, draw, event, "a", 8, 7, 34)
+
+    pixel = image.getpixel((25, 24))
+    assert pixel[1] > pixel[0]
+    assert Path(SportsDashboard._valve_local_team_logo_candidates("Team Liquid", 2163, "TI")[0]).parent.name == "dota2"
+
+def test_valve_fit_text_ellipsis_never_exceeds_box_width():
+    image = Image.new("RGB", (160, 60), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    text, font = SportsDashboard._fit_text_ellipsis(
+        draw,
+        "Natus Vincere International Counter-Strike 2 Roster",
+        54,
+        12,
+        bold=True,
+        min_size=7,
+    )
+
+    assert text.endswith("...")
+    assert SportsDashboard._text_width(draw, text, font) <= 54
+
+def test_valve_selector_rotates_active_cards_and_ignores_break_cards():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
+    active_cs = {"series": "CS", "event_name": "Major", "status": "ACTIVE", "window_active": True, "order": 0, "main": {"start": now}}
+    active_ti = {"series": "TI", "event_name": "TI", "status": "ACTIVE", "window_active": True, "order": 1, "main": {"start": now}}
+    break_card = {"series": "CS", "event_name": "Old Major", "status": "BREAK", "window_active": False, "order": 0, "main": {"start": now}}
+
+    selected = SportsDashboard._select_valve_esports([active_cs, active_ti, break_card], now)
+
+    assert selected["primary"] in (active_cs, active_ti)
+    assert selected["rotation_pool"] == ["CS", "TI"]
+    assert SportsDashboard._valve_esports_has_displayable_event(selected) is True
+
+
+def test_generate_image_draws_active_valve_sidebar_before_lpl():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
+    calls = []
+    active_card = {
+        "series": "CS",
+        "sport": "CS2 Major",
+        "event_name": "IEM Cologne Major 2026",
+        "status": "ACTIVE",
+        "window_active": True,
+        "logo_path": LOCAL_CS_MAJOR_LOGO_PATH,
+        "start": now,
+        "latest": now,
+        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "CSAPI"},
+        "recent": [],
+    }
+
+    plugin._try_worldcup_scoreboard_panel = lambda *args, **kwargs: Image.new("RGB", (552, 208), (9, 9, 9))
+    plugin._try_worldcup_football_data_panel = lambda *args, **kwargs: None
+    plugin._try_worldcup_api_panel = lambda *args, **kwargs: None
+    plugin._take_worldcup_screenshot = lambda *args, **kwargs: None
+    plugin._load_nba_events = lambda settings, timezone_info: (SportsDashboard._fallback_nba_events(timezone_info), "NBA FALLBACK")
+    plugin._attach_nba_odds = lambda events, *_args: events
+    plugin._write_nba_live_state = lambda selected, now_arg, source_state: None
+    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
+    plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("state")
+    plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
+    plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append("lpl")
+
+    image = plugin._generate_image_with_active_colors(
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        FakeDeviceConfig(),
+        (800, 480),
+        la,
+        now,
+    )
+
+    assert image.size == (800, 480)
+    assert calls == ["state", "valve"]
+
+
+def test_valve_esports_sidebar_render_smoke():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
+    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_csapi_major_payload(), la, now, {})
+    selected = SportsDashboard._select_valve_esports(cards, now)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+
+    plugin._draw_valve_esports_sidebar(image, 552, selected, "CSAPI CACHE", now)
+
+    assert image.getpixel((580, 24)) != COLORS["paper"]
+    assert image.getpixel((620, 100)) != COLORS["paper"]
 
 def test_settings_exposes_offseason_hub_controls():
     settings_path = (
@@ -11108,6 +11647,31 @@ def test_settings_exposes_offseason_hub_controls():
         assert f'name="{field}"' not in html
         assert f"pluginSettings.{field}" not in html
 
+
+
+def test_settings_exposes_valve_esports_controls():
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+    fields = [
+        "valveEsportsEnabled",
+        "valveEsportsCsapiEnabled",
+        "valveEsportsCsapiBaseUrl",
+        "valveEsportsOpenDotaEnabled",
+        "valveEsportsCacheHours",
+        "valveEsportsDailyLimit",
+        "valveEsportsWindowAfterDays",
+    ]
+
+    for field in fields:
+        assert f'id="{field}"' in html
+        assert f'name="{field}"' in html
+        assert f"pluginSettings.{field}" in html
 
 def test_al_logo_draw_size_is_the_only_lpl_size_override():
     assert SportsDashboard._team_logo_draw_size("AL", 19) == 25

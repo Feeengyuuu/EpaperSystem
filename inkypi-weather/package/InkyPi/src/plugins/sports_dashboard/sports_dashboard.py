@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import os
 from pathlib import Path
-import urllib.request
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -67,6 +66,8 @@ WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
 LPL_ODDS_STATE_VERSION = "sports-dashboard-lpl-odds-v1"
 LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
+VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
+VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
 NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
@@ -118,7 +119,7 @@ DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sport
 # correct on every matchday regardless of the scoreboard date window. Note: apis/v2
 # (the "apis/site/v2" variant returns an empty body for this standings resource).
 DEFAULT_WORLD_CUP_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
-DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS = 3
+DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS = 1
 DEFAULT_WORLD_CUP_SCOREBOARD_CACHE_HOURS = 1
 DEFAULT_WORLD_CUP_SCOREBOARD_DAILY_LIMIT = 720
 DEFAULT_WORLD_CUP_SCOREBOARD_LOOKBACK_DAYS = 30
@@ -174,6 +175,14 @@ DEFAULT_LPL_ODDS_CACHE_HOURS = 12
 DEFAULT_LPL_ODDS_DAILY_LIMIT = 8
 DEFAULT_LPL_ODDS_BOOKMAKERS = "Bet365"
 DEFAULT_LPL_LIVE_REFRESH_SECONDS = 180
+CSAPI_BASE_URL = "https://api.csapi.de"
+OPENDOTA_BASE_URL = "https://api.opendota.com/api"
+DEFAULT_VALVE_ESPORTS_CACHE_HOURS = 6
+DEFAULT_VALVE_ESPORTS_DAILY_LIMIT = 48
+DEFAULT_VALVE_ESPORTS_CS_LIMIT = 80
+DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
+DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
+DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
 LPL_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
@@ -189,12 +198,17 @@ ODDS_API_IO_LEAGUE_ALIASES = {
 LPL_SEPARATOR_WIDTH = 4
 MIN_LPL_SIDEBAR_WIDTH = 240
 LOCAL_TEAM_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos"))
+LOCAL_CS2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "cs2")
+LOCAL_DOTA2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "dota2")
 LOCAL_DECOR_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "decor"))
 LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
 LOCAL_F1_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1.png")
+LOCAL_CS_MAJOR_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "cs_major.png")
+LOCAL_DOTA2_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "dota2.png")
+LOCAL_TI_LOGO_PATH = LOCAL_DOTA2_LOGO_PATH
 LOCAL_MLB_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "mlb.png")
 LOCAL_WNBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "wnba.png")
 LOCAL_PGA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "pga.png")
@@ -1446,6 +1460,11 @@ DAY_COLORS = {
     "orange": (245, 122, 38),  # 100Y-50R PANTONE ORANGE 021 family
     "green": (0, 152, 82),  # 100Y-100B PANTONE 354 family
     "red": (222, 45, 38),  # 100Y-100R PANTONE RED 032 family
+    "valve_cs_accent": (0, 92, 185),
+    "valve_cs_tag": (222, 238, 255),
+    "valve_ti_accent": (222, 45, 38),
+    "valve_ti_tag": (255, 226, 220),
+    "valve_shadow": (222, 45, 38),
     "worldcup_accent": (0, 152, 82),
     "worldcup_live": (222, 45, 38),
     "worldcup_tag": (218, 244, 215),
@@ -1504,6 +1523,11 @@ DEEP_NIGHT_COLORS = {
     "orange": (255, 136, 47),
     "green": (82, 202, 128),
     "red": (255, 82, 74),
+    "valve_cs_accent": (93, 169, 232),
+    "valve_cs_tag": (21, 47, 82),
+    "valve_ti_accent": (255, 82, 74),
+    "valve_ti_tag": (82, 34, 29),
+    "valve_shadow": (126, 54, 76),
     "worldcup_accent": (82, 202, 128),
     "worldcup_live": (255, 82, 74),
     "worldcup_tag": (28, 70, 48),
@@ -1716,7 +1740,6 @@ FIFA_TLA_TO_FLAGS_API_CODE = {
     "ROU": "RO",
     "RSA": "ZA",
     "SAU": "SA",
-    "SCO": "GB",
     "SEN": "SN",
     "SRB": "RS",
     "CHE": "CH",
@@ -1737,6 +1760,9 @@ FIFA_TLA_TO_FLAGS_API_CODE = {
     "WAL": "GB",
     "ZAM": "ZM",
 }
+
+LOCAL_WORLDCUP_FLAG_URL_PREFIX = "local:worldcup:"
+LOCAL_WORLDCUP_FLAG_TLAS = {"SCO"}
 
 DEFAULT_FLAG_ASPECT_RATIO = 3 / 2
 ISO_FLAG_ASPECT_RATIOS = {
@@ -1772,6 +1798,7 @@ ISO_FLAG_ASPECT_RATIOS = {
     "QA": 28 / 11,
     "SI": 2 / 1,
     "SE": 8 / 5,
+    "SCO": 5 / 3,
     "CH": 1 / 1,
     "AE": 2 / 1,
     "US": 19 / 10,
@@ -2058,6 +2085,16 @@ class SportsDashboard(BasePlugin):
                 now,
             )
 
+        if self._bool_setting(settings, "valveEsportsEnabled", True):
+            try:
+                valve_selected, valve_source_state = self._load_valve_esports(settings, timezone_info, now)
+                if self._valve_esports_has_displayable_event(valve_selected):
+                    self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
+                    self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
+                    return image
+            except Exception as exc:
+                logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
+
         lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
         lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
         lpl_selected = self._select_lpl_events(lpl_events, now)
@@ -2282,6 +2319,622 @@ class SportsDashboard(BasePlugin):
         except Exception as exc:
             logger.warning("NBA scoreboard fetch failed: %s", exc)
         return self._fallback_nba_events(timezone_info), "NBA FALLBACK"
+
+    def _load_valve_esports(self, settings, timezone_info, now):
+        preview_card = self._valve_dota2_preview_card(settings, now)
+        if preview_card:
+            return {
+                "primary": preview_card,
+                "cards": [preview_card],
+                "rotation_pool": ["TI"],
+                "updated_at": now.isoformat() if hasattr(now, "isoformat") else "",
+                "source_states": ["DOTA2 PREVIEW"],
+            }, "DOTA2 PREVIEW"
+        cards = []
+        source_states = []
+        if self._bool_setting(settings, "valveEsportsCsapiEnabled", True):
+            try:
+                matches, source_state, _fetched_at = self._load_valve_csapi_matches(settings, timezone_info)
+                cards.extend(self._parse_valve_cs_major_cards(matches, timezone_info, now, settings))
+                source_states.append(source_state)
+            except Exception as exc:
+                logger.warning("CSAPI Major fetch failed: %s", _safe_exception_text(exc))
+        if self._bool_setting(settings, "valveEsportsOpenDotaEnabled", True):
+            try:
+                matches, source_state, _fetched_at = self._load_valve_opendota_matches(settings, timezone_info)
+                team_profiles = self._load_valve_opendota_team_profiles(settings, self._valve_ti_team_ids(matches))
+                cards.extend(self._parse_valve_ti_cards(matches, timezone_info, now, settings, team_profiles))
+                source_states.append(source_state)
+            except Exception as exc:
+                logger.warning("OpenDota TI fetch failed: %s", _safe_exception_text(exc))
+        selected = self._select_valve_esports(cards, now)
+        primary = (selected or {}).get("primary") or {}
+        source_state = primary.get("source_state") or ", ".join(source_states) or "VALVE DATA"
+        selected["source_states"] = source_states
+        return selected, source_state
+
+    def _valve_dota2_preview_card(self, settings, now):
+        if not self._valve_dota2_preview_enabled():
+            return None
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        events = [
+            {
+                "series": "TI",
+                "event_name": "The International 2026",
+                "match_id": "dota2-preview-1",
+                "start": now_value - timedelta(hours=1),
+                "state": "completed",
+                "team_a": "Team Liquid",
+                "team_b": "Gaimin Gladiators",
+                "team_a_tag": "TL",
+                "team_b_tag": "GG",
+                "team_a_id": 2163,
+                "team_b_id": 8599101,
+                "wins_a": 42,
+                "wins_b": 37,
+                "best_of": 3,
+                "duration": 3180,
+                "source": "OpenDota",
+                "score_kind": "KILLS",
+            },
+            {
+                "series": "TI",
+                "event_name": "The International 2026",
+                "match_id": "dota2-preview-2",
+                "start": now_value - timedelta(hours=5),
+                "state": "completed",
+                "team_a": "Tundra Esports",
+                "team_b": "LGD Gaming",
+                "team_a_tag": "Tundra",
+                "team_b_tag": "LGD",
+                "team_a_id": 8291895,
+                "team_b_id": 10150538,
+                "wins_a": 28,
+                "wins_b": 34,
+                "best_of": 5,
+                "duration": 2860,
+                "source": "OpenDota",
+                "score_kind": "KILLS",
+            },
+            {
+                "series": "TI",
+                "event_name": "The International 2026",
+                "match_id": "dota2-preview-3",
+                "start": now_value - timedelta(days=1),
+                "state": "completed",
+                "team_a": "BetBoom Team",
+                "team_b": "Team Spirit",
+                "team_a_tag": "BB",
+                "team_b_tag": "Spirit",
+                "team_a_id": 9131584,
+                "team_b_id": 7119388,
+                "wins_a": 19,
+                "wins_b": 31,
+                "best_of": 3,
+                "duration": 2510,
+                "source": "OpenDota",
+                "score_kind": "KILLS",
+            },
+            {
+                "series": "TI",
+                "event_name": "The International 2026",
+                "match_id": "dota2-preview-4",
+                "start": now_value - timedelta(days=2),
+                "state": "completed",
+                "team_a": "Xtreme Gaming",
+                "team_b": "Team Falcons",
+                "team_a_tag": "XG",
+                "team_b_tag": "Falcons",
+                "team_a_id": 8261500,
+                "team_b_id": 9247354,
+                "wins_a": 36,
+                "wins_b": 29,
+                "best_of": 3,
+                "duration": 3030,
+                "source": "OpenDota",
+                "score_kind": "KILLS",
+            },
+        ]
+        card = self._valve_esports_card_from_events("TI", "The International 2026", events, now_value, LOCAL_TI_LOGO_PATH, 1, settings, "OpenDota")
+        if card:
+            card["source_state"] = "DOTA2 PREVIEW"
+        return card
+
+    @staticmethod
+    def _valve_dota2_preview_enabled():
+        try:
+            return (Path(__file__).resolve().parent / "dota2_preview.flag").exists()
+        except OSError:
+            return False
+    def _load_valve_csapi_matches(self, settings, timezone_info):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._valve_csapi_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._valve_csapi_cache_key(settings, timezone_info)
+        force_refresh = self._force_refresh_requested(settings)
+        cache_hours = self._int_setting(settings, "valveEsportsCacheHours", DEFAULT_VALVE_ESPORTS_CACHE_HOURS, 1, 48)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("matches"), list)
+        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return cache["matches"], "CSAPI CACHE", cache.get("fetched_at")
+        if self._valve_esports_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                return cache["matches"], "CSAPI STALE", cache.get("fetched_at")
+            return [], "CSAPI LIMIT", None
+        try:
+            payload = self._fetch_valve_csapi_payload(settings, cache_key, now_utc)
+        except Exception:
+            if has_compatible_cache:
+                return cache["matches"], "CSAPI STALE", cache.get("fetched_at")
+            raise
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write CSAPI cache: %s", exc)
+        return payload["matches"], "CSAPI LIVE", payload.get("fetched_at")
+
+    def _fetch_valve_csapi_payload(self, settings, cache_key, now_utc):
+        base_url = str(settings.get("valveEsportsCsapiBaseUrl") or CSAPI_BASE_URL).strip().rstrip("/") or CSAPI_BASE_URL
+        limit = self._int_setting(settings, "valveEsportsCsLimit", DEFAULT_VALVE_ESPORTS_CS_LIMIT, 10, 500)
+        session = get_http_session()
+        try:
+            response = session.get(
+                f"{base_url}/matches/latest",
+                params={"limit": str(limit)},
+                headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
+                timeout=25,
+            )
+        finally:
+            self._record_valve_esports_call(settings, now_utc)
+        response.raise_for_status()
+        matches = response.json()
+        if not isinstance(matches, list):
+            matches = []
+        return {
+            "version": VALVE_ESPORTS_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "csapi",
+            "matches": matches,
+        }
+
+    def _load_valve_opendota_matches(self, settings, timezone_info):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._valve_opendota_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._valve_opendota_cache_key(settings, timezone_info)
+        force_refresh = self._force_refresh_requested(settings)
+        cache_hours = self._int_setting(settings, "valveEsportsCacheHours", DEFAULT_VALVE_ESPORTS_CACHE_HOURS, 1, 48)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("matches"), list)
+        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return cache["matches"], "OPENDOTA CACHE", cache.get("fetched_at")
+        if self._valve_esports_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                return cache["matches"], "OPENDOTA STALE", cache.get("fetched_at")
+            return [], "OPENDOTA LIMIT", None
+        try:
+            payload = self._fetch_valve_opendota_payload(settings, cache_key, now_utc)
+        except Exception:
+            if has_compatible_cache:
+                return cache["matches"], "OPENDOTA STALE", cache.get("fetched_at")
+            raise
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write OpenDota cache: %s", exc)
+        return payload["matches"], "OPENDOTA LIVE", payload.get("fetched_at")
+
+    def _fetch_valve_opendota_payload(self, settings, cache_key, now_utc):
+        base_url = str(settings.get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
+        limit = self._int_setting(settings, "valveEsportsOpenDotaLimit", DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT, 10, 500)
+        session = get_http_session()
+        try:
+            response = session.get(
+                f"{base_url}/proMatches",
+                headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
+                timeout=25,
+            )
+        finally:
+            self._record_valve_esports_call(settings, now_utc)
+        response.raise_for_status()
+        matches = response.json()
+        if not isinstance(matches, list):
+            matches = []
+        return {
+            "version": VALVE_ESPORTS_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "opendota",
+            "matches": matches[:limit],
+        }
+
+    @staticmethod
+    def _valve_ti_team_ids(matches):
+        team_ids = set()
+        for item in matches or []:
+            if not isinstance(item, Mapping):
+                continue
+            if not SportsDashboard._is_valve_ti_main_event_name(item.get("league_name")):
+                continue
+            for key in ("radiant_team_id", "dire_team_id"):
+                value = SportsDashboard._lpl_int_value(item.get(key))
+                if value:
+                    team_ids.add(value)
+        return team_ids
+
+    def _load_valve_opendota_team_profiles(self, settings, team_ids):
+        team_ids = sorted({self._lpl_int_value(value) for value in team_ids or [] if self._lpl_int_value(value)})
+        if not team_ids:
+            return {}
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._valve_opendota_team_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._valve_opendota_team_cache_key(settings)
+        cached_profiles = cache.get("profiles") if isinstance(cache.get("profiles"), Mapping) else {}
+        profiles = dict(cached_profiles or {})
+        cache_fresh = cache.get("cache_key") == cache_key and self._worldcup_cache_is_fresh(cache, DEFAULT_VALVE_ESPORTS_CACHE_HOURS, now_utc)
+        missing = [team_id for team_id in team_ids if str(team_id) not in profiles]
+        if cache_fresh and not missing:
+            return profiles
+        calls_left = self._valve_esports_calls_left(settings, now_utc)
+        if calls_left <= 0:
+            return profiles
+        for team_id in missing[:calls_left]:
+            try:
+                profiles[str(team_id)] = self._fetch_valve_opendota_team_profile(settings, team_id, now_utc)
+            except Exception as exc:
+                logger.warning("OpenDota team profile fetch failed for %s: %s", team_id, _safe_exception_text(exc))
+                profiles[str(team_id)] = {}
+        try:
+            self._write_json_file(
+                cache_path,
+                {
+                    "version": VALVE_ESPORTS_STATE_VERSION,
+                    "cache_key": cache_key,
+                    "fetched_at": now_utc.isoformat(),
+                    "provider": "opendota-teams",
+                    "profiles": profiles,
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to write OpenDota team profile cache: %s", exc)
+        return profiles
+
+    def _fetch_valve_opendota_team_profile(self, settings, team_id, now_utc):
+        base_url = str((settings or {}).get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
+        session = get_http_session()
+        try:
+            response = session.get(
+                f"{base_url}/teams/{int(team_id)}",
+                headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
+                timeout=15,
+            )
+        finally:
+            self._record_valve_esports_call(settings, now_utc)
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, Mapping) else {}
+
+    @staticmethod
+    def _parse_valve_cs_major_cards(matches, timezone_info, now, settings=None):
+        grouped = {}
+        for item in matches or []:
+            if not isinstance(item, Mapping):
+                continue
+            event_name = str(item.get("event") or "").strip()
+            if not SportsDashboard._is_valve_cs_major_name(event_name):
+                continue
+            start = SportsDashboard._parse_csapi_match_date(item.get("date"), timezone_info)
+            if not start:
+                continue
+            team1 = item.get("team1") or {}
+            team2 = item.get("team2") or {}
+            match = {
+                "series": "CS",
+                "event_name": event_name,
+                "match_id": str(item.get("id") or ""),
+                "start": start,
+                "state": "completed",
+                "team_a": str(team1.get("name") or "TBD").strip() or "TBD",
+                "team_b": str(team2.get("name") or "TBD").strip() or "TBD",
+                "team_a_id": SportsDashboard._lpl_int_value(team1.get("id")),
+                "team_b_id": SportsDashboard._lpl_int_value(team2.get("id")),
+                "team_a_logo": str(team1.get("logo_url") or team1.get("logo") or "").strip(),
+                "team_b_logo": str(team2.get("logo_url") or team2.get("logo") or "").strip(),
+                "wins_a": SportsDashboard._lpl_int_value(team1.get("score")),
+                "wins_b": SportsDashboard._lpl_int_value(team2.get("score")),
+                "rank_a": SportsDashboard._lpl_int_value(team1.get("rank")),
+                "rank_b": SportsDashboard._lpl_int_value(team2.get("rank")),
+                "best_of": SportsDashboard._lpl_int_value(item.get("best_of")),
+                "maps": SportsDashboard._parse_csapi_maps(item.get("maps")),
+                "source": "CSAPI",
+                "score_kind": "MAPS",
+            }
+            grouped.setdefault(event_name, []).append(match)
+        cards = []
+        for event_name, events in grouped.items():
+            cards.append(
+                SportsDashboard._valve_esports_card_from_events(
+                    "CS",
+                    event_name,
+                    events,
+                    now,
+                    LOCAL_CS_MAJOR_LOGO_PATH,
+                    0,
+                    settings,
+                    "CSAPI",
+                )
+            )
+        return [card for card in cards if card]
+
+    @staticmethod
+    def _parse_valve_ti_cards(matches, timezone_info, now, settings=None, team_profiles=None):
+        grouped = {}
+        for item in matches or []:
+            if not isinstance(item, Mapping):
+                continue
+            league_name = str(item.get("league_name") or "").strip()
+            if not SportsDashboard._is_valve_ti_main_event_name(league_name):
+                continue
+            start = SportsDashboard._parse_opendota_start_time(item.get("start_time"), timezone_info)
+            if not start:
+                continue
+            radiant_id = SportsDashboard._lpl_int_value(item.get("radiant_team_id"))
+            dire_id = SportsDashboard._lpl_int_value(item.get("dire_team_id"))
+            radiant_profile = (team_profiles or {}).get(str(radiant_id)) if radiant_id else {}
+            dire_profile = (team_profiles or {}).get(str(dire_id)) if dire_id else {}
+            match = {
+                "series": "TI",
+                "event_name": league_name,
+                "match_id": str(item.get("match_id") or ""),
+                "start": start,
+                "state": "completed",
+                "team_a": str(item.get("radiant_name") or (radiant_profile or {}).get("name") or "Radiant").strip() or "Radiant",
+                "team_b": str(item.get("dire_name") or (dire_profile or {}).get("name") or "Dire").strip() or "Dire",
+                "team_a_id": radiant_id,
+                "team_b_id": dire_id,
+                "team_a_logo": str((radiant_profile or {}).get("logo_url") or "").strip(),
+                "team_b_logo": str((dire_profile or {}).get("logo_url") or "").strip(),
+                "team_a_tag": str((radiant_profile or {}).get("tag") or "").strip(),
+                "team_b_tag": str((dire_profile or {}).get("tag") or "").strip(),
+                "wins_a": SportsDashboard._lpl_int_value(item.get("radiant_score")),
+                "wins_b": SportsDashboard._lpl_int_value(item.get("dire_score")),
+                "best_of": SportsDashboard._opendota_best_of(item.get("series_type")),
+                "duration": SportsDashboard._lpl_int_value(item.get("duration")),
+                "source": "OpenDota",
+                "score_kind": "KILLS",
+            }
+            grouped.setdefault(league_name, []).append(match)
+        cards = []
+        for event_name, events in grouped.items():
+            cards.append(
+                SportsDashboard._valve_esports_card_from_events(
+                    "TI",
+                    event_name,
+                    events,
+                    now,
+                    LOCAL_TI_LOGO_PATH,
+                    1,
+                    settings,
+                    "OpenDota",
+                )
+            )
+        return [card for card in cards if card]
+
+    @staticmethod
+    def _valve_esports_card_from_events(series, event_name, events, now, logo_path, order, settings=None, source=""):
+        events = sorted([event for event in events or [] if isinstance(event.get("start"), datetime)], key=lambda item: item["start"], reverse=True)
+        if not events:
+            return None
+        first_start = min(event["start"] for event in events)
+        latest_start = max(event["start"] for event in events)
+        window_after = SportsDashboard._int_setting(settings or {}, "valveEsportsWindowAfterDays", DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS, 0, 14)
+        active_until = latest_start + timedelta(days=window_after, hours=23, minutes=59)
+        now_value = now if isinstance(now, datetime) else datetime.now(first_start.tzinfo or timezone.utc)
+        window_active = first_start.date() <= now_value.date() <= active_until.date()
+        status = "ACTIVE" if window_active else "BREAK"
+        return {
+            "series": series,
+            "sport": "CS2 Major" if series == "CS" else "The International",
+            "event_name": event_name,
+            "status": status,
+            "window_active": window_active,
+            "main": events[0],
+            "live": [],
+            "upcoming": [],
+            "recent": events,
+            "events": events,
+            "start": first_start,
+            "end": active_until,
+            "latest": latest_start,
+            "logo_path": logo_path,
+            "source": source,
+            "source_state": f"{source.upper()} DATA" if source else "VALVE DATA",
+            "order": order,
+        }
+
+    @staticmethod
+    def _select_valve_esports(cards, now):
+        cards = [card for card in cards or [] if card and card.get("main")]
+        pool = sorted(
+            [card for card in cards if card.get("window_active")],
+            key=lambda card: (SportsDashboard._valve_esports_status_rank(card.get("status")), card.get("order", 99), str(card.get("event_name") or "")),
+        )
+        primary = None
+        if pool:
+            minute_key = int(now.timestamp() // max(1, OFFSEASON_HUB_ROTATION_MINUTES * 60)) if isinstance(now, datetime) else 0
+            primary = pool[minute_key % len(pool)]
+        return {
+            "primary": primary,
+            "cards": cards,
+            "rotation_pool": [card.get("series") for card in pool],
+            "updated_at": now.isoformat() if hasattr(now, "isoformat") else "",
+        }
+
+    @staticmethod
+    def _valve_esports_has_displayable_event(selected):
+        primary = (selected or {}).get("primary") or None
+        return bool(primary and primary.get("main") and primary.get("window_active"))
+
+    @staticmethod
+    def _valve_esports_status_rank(status):
+        return {"LIVE": 0, "ACTIVE": 1, "NEXT": 2, "RECENT": 3, "BREAK": 4}.get(str(status or "").upper(), 5)
+
+    @staticmethod
+    def _is_valve_cs_major_name(name):
+        text = str(name or "").strip().lower()
+        if "major" not in text:
+            return False
+        excluded = ("qualifier", "closed", "open", "rmr", "road to", "regional", "last chance")
+        return not any(value in text for value in excluded)
+
+    @staticmethod
+    def _is_valve_ti_main_event_name(name):
+        text = " ".join(str(name or "").strip().lower().split())
+        if not text.startswith("the international"):
+            return False
+        excluded = ("qualifier", "regional", "road to", "last chance", "closed", "open")
+        return not any(value in text for value in excluded)
+
+    @staticmethod
+    def _parse_csapi_match_date(value, timezone_info):
+        try:
+            parsed = datetime.fromisoformat(str(value or "")).date()
+        except ValueError:
+            return None
+        return datetime(parsed.year, parsed.month, parsed.day, 12, 0, tzinfo=timezone_info)
+
+    @staticmethod
+    def _parse_opendota_start_time(value, timezone_info):
+        try:
+            timestamp = int(value)
+        except (TypeError, ValueError):
+            return None
+        return datetime.fromtimestamp(timestamp, timezone.utc).astimezone(timezone_info)
+
+    @staticmethod
+    def _parse_csapi_maps(maps):
+        result = []
+        for item in maps or []:
+            if not isinstance(item, Mapping):
+                continue
+            result.append(
+                {
+                    "name": str(item.get("name") or "Map").strip() or "Map",
+                    "team_a_score": SportsDashboard._lpl_int_value(item.get("team1_score")),
+                    "team_b_score": SportsDashboard._lpl_int_value(item.get("team2_score")),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _opendota_best_of(series_type):
+        value = SportsDashboard._lpl_int_value(series_type)
+        return {0: 1, 1: 3, 2: 5}.get(value)
+
+    @staticmethod
+    def _valve_score_label(event):
+        wins_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
+        wins_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
+        if wins_a is None or wins_b is None:
+            return "VS"
+        return f"{wins_a}:{wins_b}"
+
+    def _valve_csapi_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_csapi_matches.json"
+
+    def _valve_opendota_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_opendota_matches.json"
+
+    def _valve_opendota_team_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_opendota_teams.json"
+
+    def _valve_esports_state_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_esports_state.json"
+
+    def _valve_esports_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_esports_live_state.json"
+
+    def _valve_csapi_cache_key(self, settings, timezone_info):
+        base_url = str((settings or {}).get("valveEsportsCsapiBaseUrl") or CSAPI_BASE_URL).strip().rstrip("/") or CSAPI_BASE_URL
+        limit = self._int_setting(settings or {}, "valveEsportsCsLimit", DEFAULT_VALVE_ESPORTS_CS_LIMIT, 10, 500)
+        return "|".join([VALVE_ESPORTS_STATE_VERSION, "csapi", base_url, str(limit), self._timezone_key(timezone_info)])
+
+    def _valve_opendota_cache_key(self, settings, timezone_info):
+        base_url = str((settings or {}).get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
+        limit = self._int_setting(settings or {}, "valveEsportsOpenDotaLimit", DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT, 10, 500)
+        return "|".join([VALVE_ESPORTS_STATE_VERSION, "opendota", base_url, str(limit), self._timezone_key(timezone_info)])
+
+    def _valve_opendota_team_cache_key(self, settings):
+        base_url = str((settings or {}).get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
+        return "|".join([VALVE_ESPORTS_STATE_VERSION, "opendota-teams", base_url])
+
+    def _valve_esports_calls_left(self, settings, now_utc):
+        limit = self._int_setting(settings or {}, "valveEsportsDailyLimit", DEFAULT_VALVE_ESPORTS_DAILY_LIMIT, 1, 240)
+        state = self._read_json_file(self._valve_esports_state_path())
+        today = now_utc.date().isoformat()
+        if state.get("date") != today:
+            return limit
+        try:
+            count = int(state.get("count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return max(0, limit - count)
+
+    def _record_valve_esports_call(self, settings, now_utc):
+        path = self._valve_esports_state_path()
+        state = self._read_json_file(path)
+        today = now_utc.date().isoformat()
+        count = 0
+        if state.get("date") == today:
+            try:
+                count = int(state.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+        try:
+            self._write_json_file(
+                path,
+                {
+                    "version": VALVE_ESPORTS_STATE_VERSION,
+                    "date": today,
+                    "count": count + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to write Valve esports request counter: %s", exc)
+
+    def _write_valve_esports_live_state(self, selected, now, source_state):
+        primary = (selected or {}).get("primary") or {}
+        main = primary.get("main") or {}
+        payload = {
+            "version": VALVE_ESPORTS_LIVE_STATE_VERSION,
+            "updated_at": now.astimezone(timezone.utc).isoformat() if isinstance(now, datetime) else "",
+            "source_state": source_state,
+            "has_live": str(primary.get("status") or "").upper() == "LIVE",
+            "displaying_valve_event": bool(primary),
+            "rotation_pool": (selected or {}).get("rotation_pool") or [],
+        }
+        if primary:
+            start = main.get("start")
+            end = primary.get("end")
+            payload.update(
+                {
+                    "series": primary.get("series") or "",
+                    "event_name": primary.get("event_name") or "",
+                    "status": primary.get("status") or "",
+                    "team_a": main.get("team_a") or "",
+                    "team_b": main.get("team_b") or "",
+                    "score": self._valve_score_label(main),
+                    "match_id": main.get("match_id") or "",
+                    "started_at": start.astimezone(timezone.utc).isoformat() if isinstance(start, datetime) else None,
+                    "active_until": end.astimezone(timezone.utc).isoformat() if isinstance(end, datetime) else None,
+                    "source": primary.get("source") or "",
+                }
+            )
+        try:
+            self._write_json_file(self._valve_esports_live_state_path(), payload)
+        except OSError as exc:
+            logger.warning("Failed to write Valve esports live state: %s", exc)
 
     @staticmethod
     def _should_show_offseason_hub_panel(settings, nba_selected):
@@ -8710,7 +9363,10 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _flag_url_for_tla(tla):
-        country_code = FIFA_TLA_TO_FLAGS_API_CODE.get(SportsDashboard._canonical_country_tla(tla))
+        canonical_tla = SportsDashboard._canonical_country_tla(tla)
+        if canonical_tla in LOCAL_WORLDCUP_FLAG_TLAS:
+            return f"{LOCAL_WORLDCUP_FLAG_URL_PREFIX}{canonical_tla.lower()}"
+        country_code = FIFA_TLA_TO_FLAGS_API_CODE.get(canonical_tla)
         if not country_code:
             return ""
         return FLAG_IMAGE_URL_TEMPLATE.format(country_code=country_code, country_code_lower=country_code.lower())
@@ -9378,8 +10034,9 @@ class SportsDashboard(BasePlugin):
         try:
             payload = self._load_worldcup_standings(settings)
             lookup = self._parse_worldcup_standings(payload)
-            if lookup:
-                self._apply_worldcup_standings(events, lookup)
+            record_lookup = self._parse_worldcup_standings_records(payload)
+            if lookup or record_lookup:
+                self._apply_worldcup_standings(events, lookup, record_lookup)
         except Exception as exc:
             logger.warning("World Cup standings overlay failed: %s", _safe_exception_text(exc))
         return events
@@ -9449,10 +10106,62 @@ class SportsDashboard(BasePlugin):
                         lookup[(group_key, alias)] = points_int
         return lookup
 
+
     @staticmethod
-    def _apply_worldcup_standings(events, lookup):
-        """Write authoritative PTS onto the team_{side}_standing_points slot."""
-        if not lookup:
+    def _worldcup_standings_stat_int(stats, names):
+        wanted = {str(name).strip().lower() for name in names}
+        for stat in stats or []:
+            stat = stat or {}
+            candidates = {
+                str(stat.get("name") or "").strip().lower(),
+                str(stat.get("abbreviation") or "").strip().lower(),
+                str(stat.get("displayName") or "").strip().lower(),
+                str(stat.get("shortDisplayName") or "").strip().lower(),
+            }
+            if not candidates.intersection(wanted):
+                continue
+            for key in ("value", "displayValue"):
+                value = stat.get(key)
+                if value is None:
+                    continue
+                try:
+                    return int(round(float(str(value).strip())))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @staticmethod
+    def _parse_worldcup_standings_records(payload):
+        """Build {(group_key, team_alias_upper): "W-D-L"} from ESPN standings."""
+        lookup = {}
+        if not isinstance(payload, Mapping):
+            return lookup
+        for group in payload.get("children") or []:
+            group_key = SportsDashboard._worldcup_explicit_group_key({"block": str((group or {}).get("name") or "")})
+            if not group_key:
+                continue
+            entries = ((group or {}).get("standings") or {}).get("entries") or []
+            for entry in entries:
+                team = (entry or {}).get("team") or {}
+                stats = (entry or {}).get("stats") or []
+                wins = SportsDashboard._worldcup_standings_stat_int(stats, ("wins", "win", "w"))
+                draws = SportsDashboard._worldcup_standings_stat_int(stats, ("draws", "draw", "ties", "tie", "d", "t"))
+                losses = SportsDashboard._worldcup_standings_stat_int(stats, ("losses", "loss", "l"))
+                if wins is None or draws is None or losses is None:
+                    continue
+                record = f"{wins}-{draws}-{losses}"
+                for alias in (team.get("abbreviation"), team.get("displayName"), team.get("shortDisplayName"), team.get("name")):
+                    alias = str(alias or "").strip().upper()
+                    if alias:
+                        lookup[(group_key, alias)] = record
+        return lookup
+
+    @staticmethod
+    def _apply_worldcup_standings(events, lookup, record_lookup=None):
+        """Write authoritative PTS and W-D-L onto team standing slots."""
+        lookup = lookup or {}
+        record_lookup = record_lookup or {}
+        if not lookup and not record_lookup:
             return
         for event in events or []:
             if not isinstance(event, MutableMapping):
@@ -9467,10 +10176,14 @@ class SportsDashboard(BasePlugin):
                 points = lookup.get((group_key, team_key))
                 if points is not None:
                     event[f"team_{side}_standing_points"] = points
+                record = record_lookup.get((group_key, team_key))
+                if record:
+                    event[f"team_{side}_standing_record"] = record
 
     @staticmethod
     def _annotate_worldcup_group_points(events):
         group_points = {}
+        group_records = {}
         for event in events or []:
             group_key = SportsDashboard._worldcup_explicit_group_key(event)
             if not group_key:
@@ -9479,6 +10192,7 @@ class SportsDashboard(BasePlugin):
                 team_key = SportsDashboard._worldcup_group_team_key(event, side)
                 if team_key:
                     group_points.setdefault((group_key, team_key), 0)
+                    group_records.setdefault((group_key, team_key), [0, 0, 0])
 
         for event in events or []:
             group_key = SportsDashboard._worldcup_explicit_group_key(event)
@@ -9499,27 +10213,38 @@ class SportsDashboard(BasePlugin):
             team_b_key = SportsDashboard._worldcup_group_team_key(event, "b")
             if not team_a_key or not team_b_key:
                 continue
+            record_a = group_records.setdefault((group_key, team_a_key), [0, 0, 0])
+            record_b = group_records.setdefault((group_key, team_b_key), [0, 0, 0])
             if wins_a > wins_b:
                 group_points[(group_key, team_a_key)] = group_points.get((group_key, team_a_key), 0) + 3
+                record_a[0] += 1
+                record_b[2] += 1
             elif wins_b > wins_a:
                 group_points[(group_key, team_b_key)] = group_points.get((group_key, team_b_key), 0) + 3
+                record_b[0] += 1
+                record_a[2] += 1
             else:
                 group_points[(group_key, team_a_key)] = group_points.get((group_key, team_a_key), 0) + 1
                 group_points[(group_key, team_b_key)] = group_points.get((group_key, team_b_key), 0) + 1
+                record_a[1] += 1
+                record_b[1] += 1
 
         for event in events or []:
             group_key = SportsDashboard._worldcup_explicit_group_key(event)
             if not group_key:
                 continue
             for side in ("a", "b"):
-                if SportsDashboard._worldcup_group_points_value(event, side) is not None:
-                    continue
                 team_key = SportsDashboard._worldcup_group_team_key(event, side)
                 if not team_key:
                     continue
-                points = group_points.get((group_key, team_key))
-                if points is not None:
-                    event[f"team_{side}_group_points"] = points
+                if SportsDashboard._worldcup_group_points_value(event, side) is None:
+                    points = group_points.get((group_key, team_key))
+                    if points is not None:
+                        event[f"team_{side}_group_points"] = points
+                if not SportsDashboard._worldcup_group_record_value(event, side):
+                    record = group_records.get((group_key, team_key))
+                    if record is not None:
+                        event[f"team_{side}_group_record"] = f"{record[0]}-{record[1]}-{record[2]}"
 
     @staticmethod
     def _worldcup_explicit_group_key(event):
@@ -9601,7 +10326,7 @@ class SportsDashboard(BasePlugin):
 
         status_text = self._worldcup_main_status_label(event, now)
         status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
-        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), status_text, status_font, COLORS["text"])
+        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
         flag_h, flag_cap = 27, 54
@@ -9623,8 +10348,13 @@ class SportsDashboard(BasePlugin):
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, team_b_font, COLORS["text"])
 
         points_y = team_y + 13
-        self._draw_worldcup_points_text(draw, (left_area[0], points_y, left_area[1], points_y + 11), event, "a", max_size=8)
-        self._draw_worldcup_points_text(draw, (right_area[0], points_y, right_area[1], points_y + 11), event, "b", max_size=8)
+        left_meta = self._worldcup_team_points_meta(event, "a")
+        right_meta = self._worldcup_team_points_meta(event, "b")
+        left_meta_left, left_meta_right = int(left_area[0]), int(left_area[1])
+        right_meta_left, right_meta_right = int(right_area[0]), int(right_area[1])
+        meta_width = max(1, min(left_meta_right - left_meta_left, right_meta_right - right_meta_left))
+        self._draw_worldcup_odds_text(draw, (left_meta_left, points_y, left_meta_left + meta_width, points_y + 11), left_meta, max_size=8)
+        self._draw_worldcup_odds_text(draw, (right_meta_right - meta_width, points_y, right_meta_right, points_y + 11), right_meta, max_size=8)
 
         if self._worldcup_event_has_odds(event):
             odds_y = points_y + 11
@@ -9711,14 +10441,10 @@ class SportsDashboard(BasePlugin):
         points_y = y + row_h - 10
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), score_w - 4, 7, bold=True, min_size=6)
         self._draw_centered_in_box(draw, (center_x - score_w / 2, points_y, center_x + score_w / 2, y + row_h - 1), date_text, date_font, COLORS["muted"])
-        points_a = self._worldcup_group_points_label(event, "a")
-        points_b = self._worldcup_group_points_label(event, "b")
-        points_fill_a = COLORS["green"] if self._worldcup_group_points_value(event, "a") is not None else COLORS["muted"]
-        points_fill_b = COLORS["green"] if self._worldcup_group_points_value(event, "b") is not None else COLORS["muted"]
-        points_a, points_a_font = self._fit_text(draw, points_a, 42, 7, bold=True, min_size=6)
-        points_b, points_b_font = self._fit_text(draw, points_b, 42, 7, bold=True, min_size=6)
-        self._draw_centered_in_box(draw, (left_area[0], points_y, left_area[1], y + row_h - 1), points_a, points_a_font, points_fill_a)
-        self._draw_centered_in_box(draw, (right_area[0], points_y, right_area[1], y + row_h - 1), points_b, points_b_font, points_fill_b)
+        left_meta = self._worldcup_team_points_meta(event, "a")
+        right_meta = self._worldcup_team_points_meta(event, "b")
+        self._draw_worldcup_odds_text(draw, (left_area[0], points_y, left_area[1], y + row_h - 1), left_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1], y + row_h - 1), right_meta, max_size=7)
 
     def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
         left, right = [int(value) for value in area]
@@ -9791,12 +10517,13 @@ class SportsDashboard(BasePlugin):
         self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
         left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
-        self._draw_worldcup_odds_text(draw, (left_text_x, y + 11, center_x - 28, y + 20), left_meta, max_size=8)
-        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, right_text_x, y + 20), right_meta, max_size=8)
+        meta_margin = flag_cap + 5
+        self._draw_worldcup_odds_text(draw, (x1 + meta_margin, y + 11, center_x - 28, y + 20), left_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, x2 - meta_margin, y + 20), right_meta, max_size=7)
         if has_odds:
             odds = event.get("odds") or {}
             if odds.get("draw"):
-                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X {odds.get('draw')}", max_size=7)
+                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X / {odds.get('draw')}", max_size=7)
 
     def _draw_worldcup_tactics_strip(self, image, draw, x1, x2, y1, y2, event):
         x1 = int(x1)
@@ -10336,16 +11063,57 @@ class SportsDashboard(BasePlugin):
         return f"PTS {value}" if value is not None else "PTS -"
 
     @staticmethod
+    def _worldcup_group_record_value(event, side):
+        if not isinstance(event, Mapping):
+            return ""
+        side = "a" if side == "a" else "b"
+        team_key = f"team_{side}"
+        keys = (
+            f"{team_key}_group_record",
+            f"{team_key}_standing_record",
+            f"group_record_{side}",
+            f"standing_record_{side}",
+            f"record_{side}",
+        )
+        for key in keys:
+            value = str(event.get(key) or "").strip()
+            if not value:
+                continue
+            match = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*", value)
+            if match:
+                return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+        return ""
+
+    @staticmethod
+    def _worldcup_group_record_label(event, side):
+        value = SportsDashboard._worldcup_group_record_value(event, side)
+        if value:
+            return value
+        if SportsDashboard._worldcup_explicit_group_key(event) and SportsDashboard._worldcup_group_team_key(event, side):
+            return "0-0-0"
+        return ""
+
+    @staticmethod
     def _worldcup_team_points_meta(event, side, include_odds=False):
         points = SportsDashboard._worldcup_group_points_label(event, side)
-        if not include_odds:
-            return points
+        record = SportsDashboard._worldcup_group_record_label(event, side)
         odds_key = "team_a" if side == "a" else "team_b"
         event_data = event if isinstance(event, Mapping) else {}
-        odds_value = (event_data.get("odds") or {}).get(odds_key)
-        if not odds_value:
-            return points
-        return f"{points}  {odds_value}"
+        odds_value = (event_data.get("odds") or {}).get(odds_key) if include_odds else None
+        if side == "a":
+            parts = [points]
+            if record:
+                parts.append(record)
+            if odds_value:
+                parts.append(str(odds_value))
+        else:
+            parts = []
+            if odds_value:
+                parts.append(str(odds_value))
+            if record:
+                parts.append(record)
+            parts.append(points)
+        return " / ".join(part for part in parts if part)
 
     def _draw_worldcup_logo(self, image, draw, x, y, size):
         x = int(x)
@@ -10526,7 +11294,7 @@ class SportsDashboard(BasePlugin):
         if not text:
             return
         left, top, right, bottom = [int(value) for value in box]
-        fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=7)
+        fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=5)
         self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, COLORS["text"])
 
     def _draw_worldcup_points_text(self, draw, box, event, side, max_size=8):
@@ -10610,12 +11378,19 @@ class SportsDashboard(BasePlugin):
             if not text:
                 continue
             tla = SportsDashboard._canonical_country_tla(text)
+            if tla in LOCAL_WORLDCUP_FLAG_TLAS:
+                return tla
             country_code = FIFA_TLA_TO_FLAGS_API_CODE.get(tla)
             if country_code:
                 return country_code
             if re.fullmatch(r"[A-Z]{2}", text):
                 return text
         url = str(flag_url or "")
+        local_match = re.fullmatch(rf"{re.escape(LOCAL_WORLDCUP_FLAG_URL_PREFIX)}([a-z]{{3}})", url, re.IGNORECASE)
+        if local_match:
+            local_tla = local_match.group(1).upper()
+            if local_tla in LOCAL_WORLDCUP_FLAG_TLAS:
+                return local_tla
         match = re.search(r"flagcdn\.com/(?:[^/]+/)?([A-Z]{2})\.(?:png|svg|webp)", url, re.IGNORECASE)
         if match:
             return match.group(1).upper()
@@ -10629,16 +11404,15 @@ class SportsDashboard(BasePlugin):
         if not flag_url:
             return None
         size = (max(1, int(size[0])), max(1, int(size[1])))
-        cache_key = (flag_url, size, "worldcup-flag-contain-v2")
+        cache_key = (flag_url, size, "worldcup-flag-contain-v3")
         if cache_key in FLAG_IMAGE_CACHE:
             return FLAG_IMAGE_CACHE[cache_key]
+        local_flag = SportsDashboard._render_local_worldcup_flag(flag_url, size)
+        if local_flag is not None:
+            FLAG_IMAGE_CACHE[cache_key] = local_flag
+            return local_flag
         try:
-            request = urllib.request.Request(
-                flag_url,
-                headers={"User-Agent": "InkyPi/1.0"},
-            )
-            with urllib.request.urlopen(request, timeout=4) as response:
-                data = response.read()
+            data = SportsDashboard._fetch_remote_image_bytes(flag_url, 4)
             with Image.open(BytesIO(data)) as source:
                 flag = SportsDashboard._trim_transparent_flag(source.convert("RGBA"))
                 flag = ImageOps.contain(flag, size, Image.LANCZOS)
@@ -10648,6 +11422,19 @@ class SportsDashboard(BasePlugin):
             logger.warning("Failed to load World Cup flag %s: %s", flag_url, exc)
             FLAG_IMAGE_CACHE[cache_key] = None
             return None
+
+    @staticmethod
+    def _render_local_worldcup_flag(flag_url, size):
+        url = str(flag_url or "").strip().lower()
+        if url != f"{LOCAL_WORLDCUP_FLAG_URL_PREFIX}sco":
+            return None
+        width, height = size
+        flag = Image.new("RGBA", (width, height), (0, 94, 184, 255))
+        local_draw = ImageDraw.Draw(flag)
+        band_width = max(2, int(round(min(width, height) * 0.22)))
+        local_draw.line((0, 0, width - 1, height - 1), fill=(255, 255, 255, 255), width=band_width)
+        local_draw.line((0, height - 1, width - 1, 0), fill=(255, 255, 255, 255), width=band_width)
+        return flag
 
     @staticmethod
     def _trim_transparent_flag(flag):
@@ -15774,6 +16561,376 @@ class SportsDashboard(BasePlugin):
             parts.append(f"{label} {scores_a[index]}-{scores_b[index]}")
         return "  ".join(parts)
 
+    def _draw_valve_esports_sidebar(self, image, left_width, selected, source_state, now):
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        right_x = left_width + LPL_SEPARATOR_WIDTH
+        right_w = width - right_x
+        primary = (selected or {}).get("primary") or {}
+        main_event = primary.get("main") or {}
+        recent = primary.get("recent") or []
+        status = str(primary.get("status") or "ACTIVE").upper()
+        accent = self._valve_series_accent(primary, status)
+
+        draw.rectangle((left_width, 0, right_x - 1, height), fill=COLORS["paper"])
+        draw.line((left_width, 0, left_width, height), fill=COLORS["border"], width=1)
+        if LPL_SEPARATOR_WIDTH > 2:
+            draw.line((left_width + 2, 0, left_width + 2, height), fill=COLORS["line"], width=1)
+        draw.rectangle((right_x, 0, width - 1, height - 1), fill=COLORS["panel"])
+        self._draw_halftone(draw, (right_x, 0, width - 1, height - 1), self._valve_series_shadow(primary), COLORS["panel"], 20, 1)
+        draw.line((right_x, 0, right_x, height), fill=COLORS["border"], width=1)
+
+        header_y = 10
+        panel_left = right_x + 12
+        panel_right = right_x + right_w - 12
+        series = str(primary.get("series") or "").upper()
+        header_title = {"CS": "Counter-Strike 2", "TI": "Dota 2"}.get(series, "")
+        status_text = self._valve_status_pill_text(primary)
+        if header_title:
+            logo_size = 40
+            logo_x = panel_left + 2
+            logo_y = header_y + 3
+            title_left = logo_x + logo_size + 9
+            badge_width = 58
+            badge_x = panel_right - badge_width
+            self._draw_valve_esports_logo(image, draw, logo_x, logo_y, logo_size, logo_size, primary)
+            title_text, title_font = self._fit_text_ellipsis(
+                draw,
+                header_title,
+                max(1, panel_right - title_left),
+                15,
+                bold=True,
+                min_size=10,
+            )
+            self._draw_text_in_box(
+                draw,
+                (title_left, header_y + 4, panel_right, header_y + 25),
+                title_text,
+                title_font,
+                COLORS["text"],
+                align="left",
+            )
+            source_label = self._source_label(source_state)
+            source_label, source_font = self._fit_text_ellipsis(
+                draw,
+                source_label,
+                max(1, badge_x - title_left - 6),
+                8,
+                bold=True,
+                min_size=6,
+            )
+            self._draw_text_in_box(
+                draw,
+                (title_left, header_y + 30, badge_x - 6, header_y + 46),
+                source_label,
+                source_font,
+                COLORS["muted"],
+                align="left",
+            )
+            self._draw_valve_status_badge(draw, badge_x, header_y + 29, badge_width, 18, status_text, status == "LIVE")
+        else:
+            self._draw_valve_esports_logo(image, draw, panel_left + 1, header_y + 4, 70, 40, primary)
+            source_label = self._source_label(source_state)
+            source_label, source_font = self._fit_text_ellipsis(draw, source_label, 68, 9, bold=True, min_size=7)
+            self._draw_text_in_box(
+                draw,
+                (right_x + 88, header_y + 9, panel_right - 68, header_y + 31),
+                source_label,
+                source_font,
+                COLORS["muted"],
+                align="center",
+            )
+            self._draw_valve_status_badge(draw, panel_right - 58, header_y + 14, 58, 18, status_text, status == "LIVE")
+        draw.line((panel_left + 2, 66, panel_right - 2, 66), fill=COLORS["border"], width=1)
+
+        self._draw_valve_esports_focus_card(image, draw, right_x, right_w, 78, primary, main_event, now, accent)
+        rows = [event for event in recent if event is not main_event][:3]
+        self._draw_valve_esports_recent_rows(image, draw, right_x, right_w, 282, rows, primary, accent)
+
+    @staticmethod
+    def _valve_series_key(primary):
+        series = str((primary or {}).get("series") or "").strip().upper()
+        return "ti" if series == "TI" else "cs"
+
+    @staticmethod
+    def _valve_series_accent(primary, status=None):
+        if str(status or (primary or {}).get("status") or "").strip().upper() == "LIVE":
+            return COLORS["red"]
+        return COLORS["valve_ti_accent"] if SportsDashboard._valve_series_key(primary) == "ti" else COLORS["valve_cs_accent"]
+
+    @staticmethod
+    def _valve_series_tag_fill(primary):
+        return COLORS["valve_ti_tag"] if SportsDashboard._valve_series_key(primary) == "ti" else COLORS["valve_cs_tag"]
+
+    @staticmethod
+    def _valve_series_shadow(primary):
+        if SportsDashboard._valve_series_key(primary) == "ti":
+            return COLORS["valve_shadow"]
+        return COLORS["valve_cs_accent"]
+
+    @staticmethod
+    def _valve_focus_header_layout(card_x1, card_x2, y):
+        return {
+            "tag_box": (card_x1 + 16, y + 12, card_x2 - 16, y + 30),
+            "date_box": (card_x2 - 92, y + 32, card_x2 - 16, y + 42),
+            "title_box": (card_x1 + 18, y + 46, card_x2 - 20, y + 64),
+            "subtitle_box": (card_x1 + 19, y + 70, card_x2 - 20, y + 81),
+        }
+
+    def _draw_valve_esports_logo(self, image, draw, x, y, width, height, primary):
+        logo_path = (primary or {}).get("logo_path") or ""
+        logo = self._load_local_logo(logo_path, (int(width), int(height)), alpha_threshold=8)
+        if logo:
+            image.paste(logo, (int(x) + (int(width) - logo.width) // 2, int(y) + (int(height) - logo.height) // 2), logo)
+            return
+        fallback_text = "CS" if str((primary or {}).get("series") or "").upper() == "CS" else "D2"
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=5, fill=self._valve_series_tag_fill(primary), outline=COLORS["border"], width=2)
+        draw.rectangle((x + 5, y + 5, x + 13, y + height - 5), fill=self._valve_series_accent(primary), outline=COLORS["border"], width=1)
+        text, font = self._fit_text_ellipsis(draw, fallback_text, width - 28, max(16, int(height * 0.62)), bold=True, min_size=13)
+        self._draw_centered(draw, (x + width / 2 + 4, y + height / 2), text, font, COLORS["text"])
+
+    def _draw_valve_status_badge(self, draw, x, y, width, height, text, is_live):
+        color = COLORS["red"] if is_live else COLORS["green"]
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=4, outline=COLORS["border"], fill=COLORS["panel"], width=1)
+        dot_size = max(6, min(9, int(height * 0.46)))
+        dot_y = y + (height - dot_size) // 2
+        draw.rectangle((x + 5, dot_y, x + 5 + dot_size, dot_y + dot_size), fill=color, outline=COLORS["border"], width=1)
+        value, value_font = self._fit_text_ellipsis(draw, text, width - dot_size - 14, 9, bold=True, min_size=7)
+        self._draw_text_in_box(draw, (x + dot_size + 10, y + 1, x + width - 4, y + height - 1), value, value_font, COLORS["text"])
+    @staticmethod
+    def _valve_status_pill_text(primary):
+        status = str((primary or {}).get("status") or "ACTIVE").strip().upper()
+        if status == "LIVE":
+            return "LIVE"
+        if status == "NEXT":
+            return "NEXT"
+        if status == "RECENT":
+            return "RECENT"
+        return "ACTIVE"
+
+    def _draw_valve_esports_focus_card(self, image, draw, right_x, right_w, y, primary, event, now, accent):
+        card_x1 = right_x + 12
+        card_x2 = right_x + right_w - 12
+        card_y2 = y + 188
+        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["lpl_shadow"])
+        draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+
+        if not event:
+            draw.text((card_x1 + 20, y + 58), "No Valve event", font=self._font(19, True), fill=COLORS["text"])
+            return
+
+        header = self._valve_focus_header_layout(card_x1, card_x2, y)
+        tag_box = header["tag_box"]
+        tag = str((primary or {}).get("sport") or "VALVE").upper()
+        tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_box[2] - tag_box[0] - 12, 11, bold=True, min_size=7)
+        draw.rectangle(tag_box, fill=self._valve_series_tag_fill(primary), outline=COLORS["border"], width=1)
+        self._draw_text_in_box(draw, (tag_box[0] + 6, tag_box[1], tag_box[2] - 6, tag_box[3]), tag_text, tag_font, COLORS["text"])
+
+        date_label = self._valve_event_date_label(primary, event)
+        date_box = header["date_box"]
+        date_label, date_font = self._fit_text_ellipsis(draw, date_label, date_box[2] - date_box[0], 9, bold=True, min_size=7)
+        self._draw_text_in_box(draw, date_box, date_label, date_font, COLORS["muted"], align="right")
+
+        title = str((primary or {}).get("event_name") or "Valve Event").strip() or "Valve Event"
+        title_box = header["title_box"]
+        title, title_font = self._fit_text_ellipsis(draw, title, title_box[2] - title_box[0], 18, bold=True, min_size=11)
+        self._draw_text_in_box(draw, title_box, title, title_font, COLORS["text"])
+        subtitle = f"{event.get('source') or primary.get('source') or 'Valve'} TRACK"
+        subtitle_box = header["subtitle_box"]
+        subtitle, subtitle_font = self._fit_text_ellipsis(draw, subtitle, subtitle_box[2] - subtitle_box[0], 9, bold=True, min_size=7)
+        self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+
+        center_x = (card_x1 + card_x2) / 2
+        board_y1 = y + 88
+        board_y2 = y + 153
+        draw.rounded_rectangle((card_x1 + 16, board_y1, card_x2 - 16, board_y2), radius=5, fill=COLORS["panel_blue"], outline=COLORS["border"], width=1)
+        logo_size = 30
+        left_area = (card_x1 + 24, center_x - 35)
+        right_area = (center_x + 35, card_x2 - 24)
+        left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
+        right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
+        logo_y = int(board_y1 + 7)
+        self._draw_valve_team_icon(image, draw, event, "a", left_logo_x, logo_y, logo_size)
+        self._draw_valve_team_icon(image, draw, event, "b", right_logo_x, logo_y, logo_size)
+
+        score = self._valve_score_label(event)
+        score, score_font = self._fit_text_ellipsis(draw, score, 68, 25, bold=True, min_size=16)
+        self._draw_centered_in_box(draw, (center_x - 34, board_y1 + 6, center_x + 34, board_y1 + 35), score, score_font, COLORS["text"])
+        score_kind = str(event.get("score_kind") or "").strip().upper()
+        if score_kind:
+            kind_text, kind_font = self._fit_text_ellipsis(draw, score_kind, 62, 8, bold=True, min_size=6)
+            self._draw_centered_in_box(draw, (center_x - 31, board_y1 + 36, center_x + 31, board_y1 + 49), kind_text, kind_font, COLORS["muted"])
+
+        team_a_label = self._valve_team_display_name(event, "a")
+        team_b_label = self._valve_team_display_name(event, "b")
+        team_a, font_a = self._fit_text_ellipsis(draw, team_a_label, left_area[1] - left_area[0], 13, bold=True, min_size=8)
+        team_b, font_b = self._fit_text_ellipsis(draw, team_b_label, right_area[1] - right_area[0], 13, bold=True, min_size=8)
+        self._draw_centered_in_box(draw, (left_area[0], board_y2 - 17, left_area[1], board_y2 - 3), team_a, font_a, COLORS["text"])
+        self._draw_centered_in_box(draw, (right_area[0], board_y2 - 17, right_area[1], board_y2 - 3), team_b, font_b, COLORS["text"])
+
+        detail = self._valve_match_detail_label(event)
+        detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 44, 10, bold=True, min_size=7)
+        self._draw_centered_in_box(draw, (card_x1 + 20, y + 160, card_x2 - 20, y + 176), detail, detail_font, COLORS["muted"])
+    @staticmethod
+    def _valve_team_display_name(event, side):
+        event = event or {}
+        if side == "a":
+            return str(event.get("team_a_tag") or event.get("team_a") or "TBD").strip() or "TBD"
+        return str(event.get("team_b_tag") or event.get("team_b") or "TBD").strip() or "TBD"
+
+    def _draw_valve_team_icon(self, image, draw, event, side, x, y, size):
+        logo_url = str((event or {}).get("team_a_logo" if side == "a" else "team_b_logo") or "").strip()
+        name = str((event or {}).get("team_a" if side == "a" else "team_b") or "TBD").strip() or "TBD"
+        team_id = (event or {}).get("team_a_id" if side == "a" else "team_b_id")
+        series = str((event or {}).get("series") or "").strip().upper()
+        logo = self._load_team_logo(logo_url, int(size)) if logo_url else None
+        if not logo:
+            logo = self._load_valve_local_team_logo(name, team_id, int(size), series)
+        if logo:
+            image.paste(logo, (int(x) + (int(size) - logo.width) // 2, int(y) + (int(size) - logo.height) // 2), logo)
+            return
+        fill, stripe = self._valve_team_icon_colors(name, team_id)
+        draw.rounded_rectangle((x, y, x + size, y + size), radius=5, fill=fill, outline=COLORS["border"], width=1)
+        draw.rectangle((x + 3, y + 3, x + 7, y + size - 3), fill=stripe)
+        initials = self._valve_team_initials(name)
+        initials, font = self._fit_text(draw, initials, max(12, size - 13), max(12, int(size * 0.42)), bold=True, min_size=8)
+        self._draw_centered(draw, (x + size / 2 + 3, y + size / 2), initials, font, COLORS["text"])
+
+    @staticmethod
+    def _load_valve_local_team_logo(name, team_id, size, series=None):
+        for path in SportsDashboard._valve_local_team_logo_candidates(name, team_id, series):
+            logo = SportsDashboard._load_local_logo(path, (size, size))
+            if logo:
+                return logo
+        return None
+
+    @staticmethod
+    def _valve_local_team_logo_dirs(series):
+        series = str(series or "").strip().upper()
+        if series == "TI":
+            return [LOCAL_DOTA2_TEAM_LOGO_DIR]
+        if series == "CS":
+            return [LOCAL_CS2_TEAM_LOGO_DIR]
+        return [LOCAL_CS2_TEAM_LOGO_DIR, LOCAL_DOTA2_TEAM_LOGO_DIR]
+
+    @staticmethod
+    def _valve_local_team_logo_candidates(name, team_id, series=None):
+        candidates = []
+        logo_dirs = SportsDashboard._valve_local_team_logo_dirs(series)
+        team_id_value = SportsDashboard._lpl_int_value(team_id)
+        if team_id_value:
+            for logo_dir in logo_dirs:
+                candidates.extend(
+                    os.path.join(logo_dir, f"{team_id_value}{extension}")
+                    for extension in (".png", ".webp", ".jpg", ".jpeg")
+                )
+        slug = SportsDashboard._valve_team_logo_slug(name)
+        if slug:
+            for logo_dir in logo_dirs:
+                candidates.extend(
+                    os.path.join(logo_dir, f"{slug}{extension}")
+                    for extension in (".png", ".webp", ".jpg", ".jpeg")
+                )
+        return candidates
+
+    @staticmethod
+    def _valve_team_logo_slug(name):
+        normalized = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
+        return "".join(ch for ch in normalized.lower() if ch.isalnum())
+
+    @staticmethod
+    def _valve_team_initials(name):
+        words = [part for part in str(name or "").replace("_", " ").replace("-", " ").split() if part]
+        if not words:
+            return "?"
+        if len(words) >= 2:
+            return "".join(part[0] for part in words[:3]).upper()
+        letters = "".join(ch for ch in words[0].upper() if ch.isalnum())
+        return (letters[:3] or "?")
+
+    @staticmethod
+    def _valve_team_icon_colors(name, team_id=None):
+        palette = [
+            ((34, 73, 128), COLORS["amber"]),
+            ((92, 38, 116), COLORS["cyan"]),
+            ((34, 104, 89), COLORS["orange"]),
+            ((126, 48, 54), COLORS["amber"]),
+            ((72, 79, 96), COLORS["green"]),
+            ((44, 92, 147), COLORS["red"]),
+        ]
+        seed_text = f"{name or ''}:{team_id or ''}"
+        seed = sum((index + 1) * ord(ch) for index, ch in enumerate(seed_text))
+        return palette[seed % len(palette)]
+
+    def _draw_valve_esports_recent_rows(self, image, draw, right_x, right_w, y, events, primary, accent):
+        self._draw_section_header(draw, right_x, right_w, y, "RECENT", accent)
+        if not events:
+            draw.text((right_x + 18, y + 36), "No more Valve results", font=self._font(14, True), fill=COLORS["muted"])
+            return
+        row_y = y + 29
+        for index, event in enumerate(events[:3]):
+            top = row_y + index * 55
+            self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
+
+    def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        row_h = 50
+        draw.rounded_rectangle((row_x1, y, row_x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + row_h - 1), fill=accent)
+        date_label = event["start"].strftime("%m/%d") if isinstance(event.get("start"), datetime) else "--/--"
+        date_label, date_font = self._fit_text_ellipsis(draw, date_label, 40, 8, bold=True, min_size=6)
+        draw.text((row_x1 + 10, y + 4), date_label, font=date_font, fill=COLORS["muted"])
+        score = self._valve_score_label(event)
+        score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
+        self._draw_centered_in_box(draw, (row_x1 + 91, y + 4, row_x2 - 91, y + 20), score, score_font, COLORS["text"])
+        icon_size = 17
+        team_y1 = y + 21
+        icon_y = y + 21
+        center_x = (row_x1 + row_x2) / 2
+        self._draw_valve_team_icon(image, draw, event, "a", row_x1 + 12, icon_y, icon_size)
+        self._draw_valve_team_icon(image, draw, event, "b", row_x2 - 29, icon_y, icon_size)
+        left_name_box = (row_x1 + 33, team_y1 - 1, center_x - 24, team_y1 + 18)
+        right_name_box = (center_x + 24, team_y1 - 1, row_x2 - 33, team_y1 + 18)
+        team_a, team_a_font = self._fit_text_ellipsis(draw, self._valve_team_display_name(event, "a"), left_name_box[2] - left_name_box[0], 10, bold=True, min_size=7)
+        team_b, team_b_font = self._fit_text_ellipsis(draw, self._valve_team_display_name(event, "b"), right_name_box[2] - right_name_box[0], 10, bold=True, min_size=7)
+        self._draw_text_in_box(draw, left_name_box, team_a, team_a_font, COLORS["text"])
+        self._draw_text_in_box(draw, right_name_box, team_b, team_b_font, COLORS["text"], align="right")
+        detail = self._valve_match_detail_label(event, compact=True)
+        detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - row_x1 - 22, 7, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
+    @staticmethod
+    def _valve_event_date_label(primary, event):
+        start = (primary or {}).get("start") or (event or {}).get("start")
+        end = (primary or {}).get("latest")
+        if isinstance(start, datetime) and isinstance(end, datetime) and start.date() != end.date():
+            return f"{start.strftime('%m/%d')}-{end.strftime('%m/%d')}"
+        if isinstance(start, datetime):
+            return start.strftime("%m/%d")
+        return "--/--"
+
+    @staticmethod
+    def _valve_match_detail_label(event, compact=False):
+        event = event or {}
+        maps = event.get("maps") or []
+        if maps:
+            parts = []
+            for item in maps[:3 if compact else 4]:
+                left = SportsDashboard._lpl_int_value(item.get("team_a_score"))
+                right = SportsDashboard._lpl_int_value(item.get("team_b_score"))
+                score = f" {left}-{right}" if left is not None and right is not None else ""
+                parts.append(f"{item.get('name') or 'Map'}{score}")
+            return "  |  ".join(parts)
+        duration = SportsDashboard._lpl_int_value(event.get("duration"))
+        best_of = SportsDashboard._lpl_int_value(event.get("best_of"))
+        bits = []
+        if best_of:
+            bits.append(f"BO{best_of}")
+        if duration:
+            bits.append(f"{max(1, duration // 60)}m")
+        return "  |  ".join(bits) or str(event.get("source") or "Valve")
+
     def _draw_lpl_sidebar(self, image, left_width, selected, source_state, now):
         draw = ImageDraw.Draw(image)
         width, height = image.size
@@ -16435,6 +17592,16 @@ class SportsDashboard(BasePlugin):
             return None
 
     @staticmethod
+    def _fetch_remote_image_bytes(url, timeout):
+        response = get_http_session().get(
+            url,
+            headers={"User-Agent": "InkyPi/1.0"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.content
+
+    @staticmethod
     def _load_team_logo(logo_url, size):
         if not logo_url:
             return None
@@ -16442,12 +17609,7 @@ class SportsDashboard(BasePlugin):
         if cache_key in TEAM_LOGO_CACHE:
             return TEAM_LOGO_CACHE[cache_key]
         try:
-            request = urllib.request.Request(
-                logo_url,
-                headers={"User-Agent": "InkyPi/1.0"},
-            )
-            with urllib.request.urlopen(request, timeout=TEAM_LOGO_FETCH_TIMEOUT_SECONDS) as response:
-                data = response.read()
+            data = SportsDashboard._fetch_remote_image_bytes(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)
             with Image.open(BytesIO(data)) as source:
                 logo = SportsDashboard._logo_with_transparent_background(source)
                 bbox = logo.getbbox()
@@ -16594,6 +17756,29 @@ class SportsDashboard(BasePlugin):
                 return text, font
         return text, SportsDashboard._font(min_size, bold)
 
+
+    @staticmethod
+    def _fit_text_ellipsis(draw, text, max_width, size, bold=False, min_size=11):
+        text = str(text or "")
+        max_width = max(1, int(max_width))
+        fitted, font = SportsDashboard._fit_text(draw, text, max_width, size, bold=bold, min_size=min_size)
+        if SportsDashboard._text_width(draw, fitted, font) <= max_width:
+            return fitted, font
+        ellipsis = "..."
+        if SportsDashboard._text_width(draw, ellipsis, font) > max_width:
+            return "", font
+        low = 0
+        high = len(text)
+        best = ellipsis
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = text[:mid].rstrip() + ellipsis
+            if SportsDashboard._text_width(draw, candidate, font) <= max_width:
+                best = candidate
+                low = mid + 1
+            else:
+                high = mid - 1
+        return best, font
     @staticmethod
     def _draw_right_aligned(draw, xy, text, font, color):
         x, y = xy

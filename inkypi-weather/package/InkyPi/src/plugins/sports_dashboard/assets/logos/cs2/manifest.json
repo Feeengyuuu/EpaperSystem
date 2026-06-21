@@ -1,0 +1,115 @@
+{
+  "source": "https://github.com/lootmarket/esport-team-logos",
+  "teams": {
+    "7020": {
+      "name": "Spirit",
+      "rank": 1,
+      "file": "7020.png",
+      "slug_file": "spirit.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/team-spirit/team-spirit-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/team-spirit/team-spirit-logo.png"
+    },
+    "11283": {
+      "name": "Falcons",
+      "rank": 2,
+      "file": "11283.png",
+      "slug_file": "falcons.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/falcons/falcons-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/falcons/falcons-logo.png"
+    },
+    "9565": {
+      "name": "Vitality",
+      "rank": 3,
+      "file": "9565.png",
+      "slug_file": "vitality.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/team-vitality/team-vitality-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/team-vitality/team-vitality-logo.png"
+    },
+    "4608": {
+      "name": "Natus Vincere",
+      "rank": 4,
+      "file": "4608.png",
+      "slug_file": "natusvincere.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/natus-vincere/natus-vincere-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/natus-vincere/natus-vincere-logo.png"
+    },
+    "8297": {
+      "name": "FURIA",
+      "rank": 5,
+      "file": "8297.png",
+      "slug_file": "furia.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/furia/furia-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/furia/furia-logo.png"
+    },
+    "4494": {
+      "name": "MOUZ",
+      "rank": 6,
+      "file": "4494.png",
+      "slug_file": "mouz.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/mouz/mouz-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/mouz/mouz-logo.png"
+    },
+    "12468": {
+      "name": "Legacy",
+      "rank": 7,
+      "file": "12468.png",
+      "slug_file": "legacy.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/legacy/legacy-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/legacy/legacy-logo.png"
+    },
+    "11861": {
+      "name": "Aurora",
+      "rank": 8,
+      "file": "11861.png",
+      "slug_file": "aurora.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/aurora/aurora-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/aurora/aurora-logo.png"
+    },
+    "5995": {
+      "name": "G2",
+      "rank": 9,
+      "file": "5995.png",
+      "slug_file": "g2.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/g2-esports/g2-esports-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/g2-esports/g2-esports-logo.png"
+    },
+    "13286": {
+      "name": "FUT",
+      "rank": 10,
+      "file": "13286.png",
+      "slug_file": "fut.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "valorant/fut/fut-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/valorant/fut/fut-logo.png"
+    },
+    "12394": {
+      "name": "BetBoom",
+      "rank": 11,
+      "file": "12394.png",
+      "slug_file": "betboom.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/betboom/betboom-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/betboom/betboom-logo.png"
+    },
+    "9996": {
+      "name": "9z",
+      "rank": 12,
+      "file": "9996.png",
+      "slug_file": "9z.png",
+      "source_repo": "https://github.com/lootmarket/esport-team-logos",
+      "source_path": "csgo/9z/9z-logo.png",
+      "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/9z/9z-logo.png"
+    }
+  },
+  "updated_at": "2026-06-21T20:10:44Z",
+  "license_note": "Downloaded from lootmarket/esport-team-logos; team logos may be trademarks of their owners."
+}

@@ -329,6 +329,46 @@
 </div>
 
 <div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="valveEsportsEnabled" name="valveEsportsEnabled" value="true">
+        Replace LPL sidebar with active Valve CS Major / TI events
+    </label>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="valveEsportsCsapiEnabled" name="valveEsportsCsapiEnabled" value="true">
+        Use CSAPI for CS Major results
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsCsapiBaseUrl" class="form-label">CSAPI base URL:</label>
+    <input type="text" id="valveEsportsCsapiBaseUrl" name="valveEsportsCsapiBaseUrl" placeholder="https://api.csapi.de" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="valveEsportsOpenDotaEnabled" name="valveEsportsOpenDotaEnabled" value="true">
+        Use OpenDota for The International results
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsCacheHours" class="form-label">Valve esports cache hours:</label>
+    <input type="number" id="valveEsportsCacheHours" name="valveEsportsCacheHours" min="1" max="48" placeholder="6" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsDailyLimit" class="form-label">Valve esports daily request limit:</label>
+    <input type="number" id="valveEsportsDailyLimit" name="valveEsportsDailyLimit" min="1" max="240" placeholder="48" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsWindowAfterDays" class="form-label">Valve event active window after latest result:</label>
+    <input type="number" id="valveEsportsWindowAfterDays" name="valveEsportsWindowAfterDays" min="0" max="14" placeholder="2" class="form-input">
+</div>
+<div class="form-group">
     <label for="lplLeagueId" class="form-label">LPL league ID:</label>
     <input type="text" id="lplLeagueId" name="lplLeagueId" placeholder="98767991314006698" class="form-input">
 </div>
@@ -444,6 +484,13 @@
             document.getElementById('nbaOddsApiIoLeague').value = pluginSettings.nbaOddsApiIoLeague || '';
             document.getElementById('nbaOddsCacheHours').value = pluginSettings.nbaOddsCacheHours || '';
             document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
+            document.getElementById('valveEsportsEnabled').checked = pluginSettings.valveEsportsEnabled !== 'false';
+            document.getElementById('valveEsportsCsapiEnabled').checked = pluginSettings.valveEsportsCsapiEnabled !== 'false';
+            document.getElementById('valveEsportsCsapiBaseUrl').value = pluginSettings.valveEsportsCsapiBaseUrl || '';
+            document.getElementById('valveEsportsOpenDotaEnabled').checked = pluginSettings.valveEsportsOpenDotaEnabled !== 'false';
+            document.getElementById('valveEsportsCacheHours').value = pluginSettings.valveEsportsCacheHours || '';
+            document.getElementById('valveEsportsDailyLimit').value = pluginSettings.valveEsportsDailyLimit || '';
+            document.getElementById('valveEsportsWindowAfterDays').value = pluginSettings.valveEsportsWindowAfterDays || '';
             document.getElementById('lplLeagueId').value = pluginSettings.lplLeagueId || '';
             document.getElementById('lplLiveRefreshEnabled').checked = pluginSettings.lplLiveRefreshEnabled !== 'false';
             document.getElementById('lplLiveRefreshIntervalSeconds').value = pluginSettings.lplLiveRefreshIntervalSeconds || '';
