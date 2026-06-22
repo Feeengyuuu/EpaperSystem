@@ -1,3 +1,5 @@
+<input type="hidden" id="header_brand" name="header_brand" value="robinhood">
+
 <div class="form-group">
     <label for="portfolio_csv_file">Robinhood / Portfolio CSV</label>
     <input type="file" clear-on-submit id="portfolio_csv_file" name="portfolio_csv_file" accept=".csv,text/csv">
@@ -256,6 +258,9 @@
             }
             if (pluginSettings.account_value) {
                 document.getElementById('account_value').value = pluginSettings.account_value;
+            }
+            if (pluginSettings.header_brand) {
+                document.getElementById('header_brand').value = pluginSettings.header_brand;
             }
             if (pluginSettings.portfolio_csv_file) {
                 document.getElementById('portfolio_csv_existing').value = pluginSettings.portfolio_csv_file;

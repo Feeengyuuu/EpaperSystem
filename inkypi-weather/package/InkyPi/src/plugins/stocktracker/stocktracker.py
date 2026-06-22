@@ -96,6 +96,43 @@ ROW_COLORS = [
 	PANEL,
 	(240, 247, 255),
 ]
+TICKER_PALETTES = {
+	"day": {
+		"fill": PANEL_GOLD,
+		"border": ACCENT_GOLD,
+		"top_line": ACCENT_ORANGE,
+		"separator": GRID,
+		"symbol": INK,
+		"price": ACCENT_BLUE,
+		"value": MUTED,
+	},
+	"night": {
+		"fill": INK,
+		"border": ACCENT_GOLD,
+		"top_line": ACCENT_ORANGE,
+		"separator": ACCENT_GOLD,
+		"symbol": WHITE,
+		"price": ACCENT_GOLD,
+		"value": WHITE,
+	},
+}
+LOGO_ASSET_BY_SYMBOL = {
+	"AAPL": "aapl.png",
+	"AMZN": "amzn.png",
+	"CASH": "cash.png",
+	"GOOG": "goog.png",
+	"GOOGL": "googl.png",
+	"MSFT": "msft.png",
+	"NTDOY": "ntdoy.png",
+	"NVDA": "nvda.png",
+	"SPCX": "spcx.png",
+	"SPY": "spy.png",
+	"TSLA": "tsla.png",
+	"TTWO": "ttwo.png",
+	"VGIT": "vgit.png",
+	"VTI": "vti.png",
+	"VXUS": "vxus.png",
+}
 CSV_SYMBOL_FIELDS = ("symbol", "ticker", "tickersymbol", "instrument", "securitysymbol")
 CSV_SHARE_FIELDS = ("shares", "share", "quantity", "qty", "currentquantity", "position")
 CSV_ACTION_FIELDS = ("action", "type", "activitytype", "transactiontype", "transcode", "description")
@@ -196,6 +233,8 @@ class StockTracker(BasePlugin):
 	CARD_WIDTH_RATIO = 0.42
 	CHART_MARGIN_RATIO = 0.15
 	DEFAULT_TICKER_NAME_MAX_LENGTH = 25
+	_holding_logo_cache = {}
+	_header_logo_cache = {}
 
 	def generate_image(self, settings, device_config):
 
@@ -239,6 +278,8 @@ class StockTracker(BasePlugin):
 			holdings_pin_symbols=self._symbols_setting(settings.get("holdings_pin_symbols")),
 			holdings_sink_symbols=self._symbols_setting(settings.get("holdings_sink_symbols")),
 			account_value_override=account_value_override,
+			header_brand=self._header_brand_from_settings(settings, portfolio_meta),
+			ticker_theme=settings.get("ticker_theme", "auto"),
 		)
 
 	def _portfolio_holdings_from_settings(self, settings):
@@ -551,6 +592,11 @@ class StockTracker(BasePlugin):
 	def _text_width(draw, text, font):
 		return text_width(draw, str(text), font)
 
+	@staticmethod
+	def _centered_text_y(draw, text, font, center_y):
+		bbox = draw.textbbox((0, 0), str(text), font=font)
+		return int(round(center_y - (bbox[3] - bbox[1]) / 2 - bbox[1]))
+
 	def _fit_font(self, draw, text, max_width, start_size, bold=False, min_size=10):
 		size = int(start_size)
 		while size > min_size:
@@ -617,6 +663,22 @@ class StockTracker(BasePlugin):
 			number = self._parse_csv_number(settings.get(key))
 			if number is not None and math.isfinite(number):
 				return number
+		return None
+
+	def _header_brand_from_settings(self, settings, portfolio_meta=None):
+		settings = settings or {}
+		portfolio_meta = portfolio_meta or {}
+		explicit = str(settings.get("header_brand") or settings.get("brokerage_brand") or "").strip().lower()
+		if explicit in ("robinhood", "rh"):
+			return "robinhood"
+		if explicit in ("none", "off", "stocktracker"):
+			return None
+
+		csv_path = str(settings.get("portfolio_csv_file") or settings.get("portfolio_csv_path") or "").lower()
+		if "robinhood" in csv_path:
+			return "robinhood"
+		if portfolio_meta.get("buying_power") is not None or portfolio_meta.get("pending_deposits") is not None:
+			return "robinhood"
 		return None
 
 	def _portfolio_meta_rows(self, portfolio_meta, stock_data):
@@ -1040,14 +1102,163 @@ class StockTracker(BasePlugin):
 		symbol = str(item.get("symbol") or "").strip().lower()
 		return bool(item.get("is_cash")) or symbol in CASH_SYMBOLS
 
+	@staticmethod
+	def _holding_logo_asset(symbol):
+		return LOGO_ASSET_BY_SYMBOL.get(str(symbol or "").strip().upper())
+
+	@staticmethod
+	def _trim_transparent_border(image):
+		bbox = image.getchannel("A").getbbox()
+		if bbox:
+			return image.crop(bbox)
+		return image
+
+	def _holding_logo_image(self, symbol, size):
+		asset_name = self._holding_logo_asset(symbol)
+		if not asset_name:
+			return None
+		cache_key = (asset_name, int(size))
+		if cache_key in self._holding_logo_cache:
+			return self._holding_logo_cache[cache_key]
+
+		path = os.path.join(os.path.dirname(__file__), "assets", "logos", asset_name)
+		if not os.path.exists(path):
+			return None
+		try:
+			logo = self._trim_transparent_border(Image.open(path).convert("RGBA"))
+			try:
+				resample = Image.Resampling.LANCZOS
+			except AttributeError:
+				resample = Image.LANCZOS
+			logo.thumbnail((size, size), resample)
+			canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+			canvas.alpha_composite(logo, ((size - logo.width) // 2, (size - logo.height) // 2))
+		except Exception as e:
+			logging.warning(f"Could not load holding logo for {symbol}: {type(e).__name__}: {e}")
+			return None
+
+		self._holding_logo_cache[cache_key] = canvas
+		return canvas
+
+	def _header_logo_image(self, brand, max_width, max_height):
+		if brand != "robinhood":
+			return None
+		cache_key = (brand, int(max_width), int(max_height))
+		if cache_key in self._header_logo_cache:
+			return self._header_logo_cache[cache_key]
+
+		path = os.path.join(os.path.dirname(__file__), "assets", "robinhood_logo.png")
+		if not os.path.exists(path):
+			return None
+		try:
+			logo = Image.open(path).convert("RGBA")
+			try:
+				resample = Image.Resampling.LANCZOS
+			except AttributeError:
+				resample = Image.LANCZOS
+			logo.thumbnail((max_width, max_height), resample)
+		except Exception as e:
+			logging.warning(f"Could not load Robinhood header logo: {type(e).__name__}: {e}")
+			return None
+
+		self._header_logo_cache[cache_key] = logo
+		return logo
+
+	def _draw_header(self, img, draw, width, stock_data, header_brand=None):
+		draw.rectangle((0, 0, width, 54), fill=PAPER)
+		header_logo = self._header_logo_image(header_brand, 214, 34)
+		if header_logo:
+			img.paste(header_logo, (24, 9), header_logo)
+		else:
+			draw.text((24, 12), "STOCK TRACKER", fill=INK, font=self._font(24, True))
+
+		source_label = self._source_label(stock_data)
+		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
+		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
+
+	@staticmethod
+	def _ticker_theme_key(theme=None, now=None):
+		requested = str(theme or "auto").strip().lower()
+		if requested in ("day", "light"):
+			return "day"
+		if requested in ("night", "dark"):
+			return "night"
+		now = now or datetime.now()
+		hour = getattr(now, "hour", 12)
+		return "night" if hour >= 18 or hour < 6 else "day"
+
+	def _ticker_palette(self, theme=None, now=None):
+		return TICKER_PALETTES[self._ticker_theme_key(theme, now)]
+
+	def _draw_hidden_holdings_ticker(self, img, draw, box, hidden_rows, ticker_theme=None):
+		if not hidden_rows:
+			return
+
+		left, top, right, bottom = box
+		palette = self._ticker_palette(ticker_theme)
+		ticker_top = max(top, bottom - 36)
+		ticker_bottom = bottom - 7
+		if ticker_bottom - ticker_top < 24:
+			return
+
+		visible_rows = list(hidden_rows[:6])
+		strip = (left + 12, ticker_top, right - 12, ticker_bottom)
+		draw.rounded_rectangle(strip, radius=4, fill=palette["fill"], outline=palette["border"], width=2)
+		draw.line((strip[0] + 2, strip[1] + 3, strip[2] - 2, strip[1] + 3), fill=palette["top_line"], width=1)
+
+		segment_count = len(visible_rows)
+		segment_width = max(1, (strip[2] - strip[0]) // segment_count)
+		meta_font = self._font(7)
+		price_font = self._font(8, True)
+		logo_size = 16
+
+		for idx, data in enumerate(visible_rows):
+			seg_left = strip[0] + idx * segment_width
+			seg_right = strip[2] if idx == segment_count - 1 else seg_left + segment_width
+			if idx:
+				draw.line((seg_left, strip[1] + 4, seg_left, strip[3] - 4), fill=palette["separator"], width=1)
+
+			logo_x = seg_left + 5
+			logo = self._holding_logo_image(data.get("symbol"), logo_size)
+			if logo:
+				logo_y = int(round((strip[1] + strip[3] - logo.height) / 2))
+				img.paste(logo, (logo_x, logo_y), logo)
+
+			text_left = seg_left + 25
+			text_right = seg_right - 5
+			if text_right <= text_left:
+				continue
+			symbol = str(data.get("symbol") or "")[:5]
+			price = data.get("price_text", self._money(float(data.get("price") or 0)))
+			change = data.get("change_text", f"{float(data.get('change_percent') or 0):+.2f}%")
+			change_color = data.get("change_text_color", self._change_color(float(data.get("change_percent") or 0)))
+			value = float(data.get("total_value") or 0)
+			abs_value = abs(value)
+			if abs_value >= 1000000:
+				value_text = f"${value / 1000000:.1f}M"
+			elif abs_value >= 1000:
+				value_text = f"${value / 1000:.1f}K"
+			else:
+				value_text = f"${value:.0f}"
+			price_width = self._text_width(draw, price, price_font)
+			max_symbol_width = max(22, text_right - text_left - price_width - 3)
+			symbol_font = self._fit_font(draw, symbol, max_symbol_width, 10, True, min_size=8)
+			draw.text((text_left, strip[1] + 6), symbol, fill=palette["symbol"], font=symbol_font)
+			draw.text((text_right, strip[1] + 6), price, fill=palette["price"], font=price_font, anchor="ra")
+			draw.text((text_left, strip[1] + 18), change, fill=change_color, font=meta_font)
+			if self._text_width(draw, change, meta_font) + self._text_width(draw, value_text, meta_font) + 6 < text_right - text_left:
+				draw.text((text_right, strip[1] + 18), value_text, fill=palette["value"], font=meta_font, anchor="ra")
+
 	def _draw_holdings(
 		self,
+		img,
 		draw,
 		box,
 		stock_data,
 		tracking_window_label=None,
 		holdings_pin_symbols=None,
 		holdings_sink_symbols=None,
+		ticker_theme=None,
 	):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL)
@@ -1057,30 +1268,40 @@ class StockTracker(BasePlugin):
 		row_font = self._font(13)
 		symbol_font = self._font(15, True)
 		y = top + 40
+		row_slot_height = 20
+		logo_size = 18
+		logo_x = left + 20
 		cols = {
-			"symbol": left + 28,
-			"price": left + 150,
-			"shares": left + 280,
-			"value": left + 400,
-			"change": left + 600,
+			"symbol": left + 56,
+			"price": left + 166,
+			"shares": left + 292,
+			"value": left + 412,
+			"change": left + 604,
 		}
 		for label, x in [("SYMBOL", cols["symbol"]), ("PRICE", cols["price"]), ("SHARES", cols["shares"]), ("VALUE", cols["value"]), ("CHANGE", cols["change"])]:
 			draw.text((x, y), label, fill=MUTED, font=header_font)
 		y += 22
 		draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
-		y += 8
+		y += 6
 
 		max_rows = min(len(stock_data), 6)
 		displayed_rows = 0
 		display_rows = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
 		for idx, data in enumerate(display_rows[:max_rows]):
-			if y + 18 > bottom - 26:
+			if y + row_slot_height > bottom - 38:
 				break
 			row_bg = ROW_COLORS[idx % len(ROW_COLORS)]
-			draw.rounded_rectangle((left + 10, y - 4, right - 10, y + 18), radius=5, fill=row_bg)
+			row_top = y - 2
+			row_bottom = row_top + row_slot_height
+			row_center_y = row_top + row_slot_height / 2
+			draw.rounded_rectangle((left + 10, row_top - 1, right - 10, row_bottom), radius=5, fill=row_bg)
 			change_color = data.get("change_text_color", self._change_color(data["change_percent"]))
 			indicator_color = data.get("indicator_color", change_color)
-			draw.rounded_rectangle((left + 5, y - 3, left + 10, y + 17), radius=3, fill=indicator_color)
+			draw.rounded_rectangle((left + 5, row_top, left + 10, row_bottom - 1), radius=3, fill=indicator_color)
+			logo = self._holding_logo_image(data.get("symbol"), logo_size)
+			if logo:
+				logo_y = int(round(row_center_y - logo.height / 2))
+				img.paste(logo, (logo_x, logo_y), logo)
 			row_items = [
 				(cols["symbol"], data["symbol"], symbol_font, INK),
 				(cols["price"], data.get("price_text", self._money(data["price"])), row_font, INK),
@@ -1089,15 +1310,15 @@ class StockTracker(BasePlugin):
 				(cols["change"], data.get("change_text", f"{data['change_percent']:+.2f}%"), row_font, change_color),
 			]
 			for x, text, font, fill in row_items:
-				draw.text((x, y), text, fill=fill, font=font)
-			y += 20
+				text_y = self._centered_text_y(draw, text, font, row_center_y)
+				draw.text((x, text_y), text, fill=fill, font=font)
+			y += row_slot_height
 			draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
-			y += 2
 			displayed_rows += 1
 
-		if len(stock_data) > displayed_rows:
-			remaining = len(stock_data) - displayed_rows
-			draw.text((left + 14, bottom - 26), f"+{remaining} more holdings", fill=MUTED, font=self._font(13, True))
+		hidden_rows = display_rows[displayed_rows:]
+		if hidden_rows:
+			self._draw_hidden_holdings_ticker(img, draw, box, hidden_rows, ticker_theme=ticker_theme)
 
 	def _create_dashboard(
 		self,
@@ -1108,17 +1329,15 @@ class StockTracker(BasePlugin):
 		holdings_pin_symbols=None,
 		holdings_sink_symbols=None,
 		account_value_override=None,
+		header_brand=None,
+		ticker_theme=None,
 	):
 		"""Create a color dashboard that preserves the original stock layout."""
 		width, height = dimensions
 		img = Image.new("RGB", (width, height), PAPER)
 		draw = ImageDraw.Draw(img)
 
-		draw.rectangle((0, 0, width, 54), fill=PAPER)
-		draw.text((24, 12), "STOCK TRACKER", fill=INK, font=self._font(24, True))
-		source_label = self._source_label(stock_data)
-		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
-		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
+		self._draw_header(img, draw, width, stock_data, header_brand=header_brand)
 
 		self._draw_summary(draw, (24, 60, 284, 204), stock_data, account_value_override=account_value_override)
 		self._draw_sparkline(
@@ -1128,12 +1347,14 @@ class StockTracker(BasePlugin):
 			history_points,
 		)
 		self._draw_holdings(
+			img,
 			draw,
 			(24, 224, width - 24, height - 24),
 			stock_data,
 			tracking_window_label,
 			holdings_pin_symbols,
 			holdings_sink_symbols,
+			ticker_theme,
 		)
 
 		return img

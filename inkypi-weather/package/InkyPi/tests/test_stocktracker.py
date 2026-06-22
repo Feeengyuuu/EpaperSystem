@@ -4,7 +4,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.stocktracker.stocktracker import ACCENT_ORANGE, CINNABAR, MALACHITE, PAPER, StockTracker  # noqa: E402
+from plugins.stocktracker.stocktracker import (  # noqa: E402
+    ACCENT_BLUE,
+    ACCENT_GOLD,
+    ACCENT_ORANGE,
+    CINNABAR,
+    INK,
+    MALACHITE,
+    PANEL,
+    PANEL_GOLD,
+    PAPER,
+    WHITE,
+    StockTracker,
+)
 from utils.massive_market_data import MassiveBar  # noqa: E402
 
 
@@ -124,6 +136,36 @@ def test_stock_tracker_sinks_cash_below_equity_holdings_by_default():
     assert [row["symbol"] for row in plugin._ordered_holdings(stock_data, "CASH")] == ["AAPL", "NVDA", "CASH"]
 
 
+def test_stock_tracker_uses_robinhood_header_brand_for_money_settings():
+    plugin = StockTracker({"id": "stocktracker"})
+
+    assert plugin._header_brand_from_settings({"portfolio_csv_path": "/config/money_robinhood_holdings.csv"}) == "robinhood"
+    assert plugin._header_brand_from_settings({"header_brand": "off"}) is None
+
+    portfolio_meta = plugin._portfolio_meta_from_settings({"buying_power": "20.25"})
+    assert plugin._header_brand_from_settings({}, portfolio_meta) == "robinhood"
+
+    logo = plugin._header_logo_image("robinhood", 214, 34)
+    assert logo is not None
+    assert logo.mode == "RGBA"
+    assert logo.width <= 214
+    assert logo.height <= 34
+    assert logo.getchannel("A").getbbox() is not None
+
+
+def test_stock_tracker_loads_img2_holding_logo_assets():
+    plugin = StockTracker({"id": "stocktracker"})
+
+    for symbol in ["AAPL", "NVDA", "TSLA", "GOOGL", "NTDOY", "VTI", "VXUS", "VGIT", "SPY", "TTWO", "SPCX", "CASH"]:
+        logo = plugin._holding_logo_image(symbol, 20)
+        assert logo is not None, symbol
+        assert logo.mode == "RGBA"
+        assert logo.size == (20, 20)
+        bbox = logo.getchannel("A").getbbox()
+        assert bbox is not None
+        assert abs(((bbox[1] + bbox[3]) / 2) - 10) <= 2.5
+
+
 def test_stock_tracker_adds_robinhood_cash_to_portfolio_rows_and_total():
     plugin = StockTracker({"id": "stocktracker"})
     stock_data = [_stock("AAPL", [100, 110], 2)]
@@ -154,6 +196,73 @@ def _near_color_count(image, target, tolerance=8):
         for pixel in (image.getpixel((x, y)),)
         if max(abs(pixel[index] - target[index]) for index in range(3)) <= tolerance
     )
+
+
+def _region_near_color_count(image, target, region, tolerance=8):
+    left, top, right, bottom = region
+    return sum(
+        1
+        for y in range(top, bottom)
+        for x in range(left, right)
+        for pixel in (image.getpixel((x, y)),)
+        if max(abs(pixel[index] - target[index]) for index in range(3)) <= tolerance
+    )
+
+def _hidden_ticker_stock_data():
+    symbols = ["SPCX", "AAPL", "NVDA", "TSLA", "VTI", "NTDOY", "VXUS", "VGIT", "TTWO", "GOOGL", "SPY", "CASH"]
+    stock_data = []
+    for index, symbol in enumerate(symbols):
+        start = 100 + index
+        end = start + (6 if index % 2 == 0 else -5)
+        stock = _stock(symbol, [start, end], 120 - index * 7)
+        if symbol == "CASH":
+            stock.update({"is_cash": True, "price_text": "USD", "change_text": "BP $42.00", "change_text_color": WHITE})
+        stock_data.append(stock)
+    return stock_data
+
+
+def test_stock_tracker_selects_day_and_night_ticker_palettes():
+    assert StockTracker._ticker_theme_key("day") == "day"
+    assert StockTracker._ticker_theme_key("night") == "night"
+    assert StockTracker._ticker_theme_key("auto", datetime(2026, 6, 22, 12)) == "day"
+    assert StockTracker._ticker_theme_key("auto", datetime(2026, 6, 22, 23)) == "night"
+
+
+def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = _hidden_ticker_stock_data()
+
+    image = plugin._create_dashboard(
+        stock_data,
+        (800, 480),
+        tracking_window_label="WINDOW: LAST MONTH",
+        ticker_theme="night",
+    )
+    ticker_region = (36, 420, 764, 449)
+
+    assert _region_near_color_count(image, INK, ticker_region, tolerance=5) > 10000
+    assert _region_near_color_count(image, ACCENT_GOLD, ticker_region, tolerance=12) > 600
+    assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) > 250
+    assert _region_near_color_count(image, MALACHITE, ticker_region, tolerance=35) > 40
+    assert _region_near_color_count(image, CINNABAR, ticker_region, tolerance=35) > 30
+    assert _region_near_color_count(image, PANEL, ticker_region, tolerance=2) < 500
+
+
+def test_stock_dashboard_draws_hidden_holdings_as_horizontal_day_ticker():
+    plugin = StockTracker({"id": "stocktracker"})
+    image = plugin._create_dashboard(
+        _hidden_ticker_stock_data(),
+        (800, 480),
+        tracking_window_label="WINDOW: LAST MONTH",
+        ticker_theme="day",
+    )
+    ticker_region = (36, 420, 764, 449)
+
+    assert _region_near_color_count(image, PANEL_GOLD, ticker_region, tolerance=8) > 10000
+    assert _region_near_color_count(image, ACCENT_GOLD, ticker_region, tolerance=12) > 600
+    assert _region_near_color_count(image, ACCENT_BLUE, ticker_region, tolerance=35) > 80
+    assert _region_near_color_count(image, INK, ticker_region, tolerance=10) > 200
+    assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) < 150
 
 
 def test_stock_tracker_chart_bounds_and_smoothing_keep_endpoints():
