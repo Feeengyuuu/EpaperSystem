@@ -11566,6 +11566,34 @@ def test_valve_csapi_parser_selects_active_major_and_excludes_qualifiers():
     assert SportsDashboard._valve_match_detail_label(card["main"], compact=True) == "Mirage 13-8  |  Anubis 14-16  |  Dust2 12-16"
 
 
+def test_valve_csapi_parser_marks_major_break_after_bo5_final_result():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 20, 0, tzinfo=la)
+    payload = [
+        {
+            "id": 2395002,
+            "event": "IEM Cologne Major 2026",
+            "date": "2026-06-21",
+            "best_of": 5,
+            "team1": {"id": 11283, "name": "Falcons", "rank": 2, "score": 3},
+            "team2": {"id": 8297, "name": "FURIA", "rank": 5, "score": 0},
+            "maps": [
+                {"name": "Inferno", "team1_score": 13, "team2_score": 8},
+                {"name": "Anubis", "team1_score": 13, "team2_score": 8},
+                {"name": "Mirage", "team1_score": 13, "team2_score": 8},
+            ],
+        }
+    ]
+
+    cards = SportsDashboard._parse_valve_cs_major_cards(payload, la, now, {})
+
+    assert len(cards) == 1
+    assert cards[0]["status"] == "BREAK"
+    assert cards[0]["window_active"] is False
+    selected = SportsDashboard._select_valve_esports(cards, now)
+    assert selected["primary"] is None
+    assert SportsDashboard._valve_esports_has_displayable_event(selected) is False
+
 def test_valve_ti_parser_excludes_regional_qualifiers():
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 22, 12, 0, tzinfo=la)

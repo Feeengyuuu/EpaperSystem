@@ -2979,7 +2979,12 @@ class SportsDashboard(BasePlugin):
         window_after = SportsDashboard._int_setting(settings or {}, "valveEsportsWindowAfterDays", DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS, 0, 14)
         active_until = latest_start + timedelta(days=window_after, hours=23, minutes=59)
         now_value = now if isinstance(now, datetime) else datetime.now(first_start.tzinfo or timezone.utc)
-        window_active = first_start.date() <= now_value.date() <= active_until.date()
+        final_reported = any(
+            SportsDashboard._valve_esports_grand_final_reported(series, event)
+            for event in events
+            if event["start"].date() == latest_start.date()
+        )
+        window_active = first_start.date() <= now_value.date() <= active_until.date() and not final_reported
         status = "ACTIVE" if window_active else "BREAK"
         return {
             "series": series,
@@ -3000,6 +3005,19 @@ class SportsDashboard(BasePlugin):
             "source_state": f"{source.upper()} DATA" if source else "VALVE DATA",
             "order": order,
         }
+
+    @staticmethod
+    def _valve_esports_grand_final_reported(series, event):
+        if str(series or "").strip().upper() != "CS":
+            return False
+        best_of = SportsDashboard._lpl_int_value((event or {}).get("best_of"))
+        if not best_of or best_of < 5:
+            return False
+        wins_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
+        wins_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
+        if wins_a is None or wins_b is None:
+            return False
+        return max(wins_a, wins_b) >= (best_of // 2 + 1)
 
     @staticmethod
     def _select_valve_esports(cards, now):
