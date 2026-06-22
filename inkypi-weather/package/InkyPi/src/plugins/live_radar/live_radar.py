@@ -135,6 +135,8 @@ PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
 HEADER_ART_FILE = "liveradar_header_art.png"
 SLOT_PLACEHOLDER_FILE = "liveradar_slot_placeholder.png"
+COMPACT_PLACEHOLDER_FILE = "liveradar_compact_placeholder.png"
+COMPACT_PLACEHOLDER_SIZE = (150, 24)
 INKYPI_SRC_DIR = os.path.dirname(os.path.dirname(os.path.dirname(PLUGIN_DIR)))
 LIVE_RADAR_FONT_FILE = os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf")
 STATIC_NOTO_SANS_SC_FILE = os.path.join(INKYPI_SRC_DIR, "static", "fonts", "NotoSansSC-VF.ttf")
@@ -249,18 +251,26 @@ class LiveRadar(BasePlugin):
                     ]
                     warning = "FETCH ERROR"
 
-        cards = self._merge_results(rooms, results)
         generated_at = datetime.now(timezone.utc)
-        self._write_context(cards, generated_at, cache_seconds, from_cache, warning)
-        theme = self._theme(settings, device_config)
-        layout = {
-            "max_live_cards": self._int_setting(settings, "maxLiveCards", 3, 1, 3),
-            "max_offline_cards": self._int_setting(settings, "maxOfflineCards", 3, 1, 5),
-            "show_snapshots": show_snapshots,
-            "snapshot_cache_seconds": snapshot_cache_seconds,
-            "avatar_cache_seconds": avatar_cache_seconds,
-        }
-        return self._render_dashboard(cards, dimensions, theme, generated_at, from_cache, warning, layout)
+        try:
+            cards = self._merge_results(rooms, results)
+            self._write_context(cards, generated_at, cache_seconds, from_cache, warning)
+            theme = self._theme(settings, device_config)
+            layout = {
+                "max_live_cards": self._int_setting(settings, "maxLiveCards", 3, 1, 3),
+                "max_offline_cards": self._int_setting(settings, "maxOfflineCards", 3, 1, 5),
+                "show_snapshots": show_snapshots,
+                "snapshot_cache_seconds": snapshot_cache_seconds,
+                "avatar_cache_seconds": avatar_cache_seconds,
+            }
+            return self._render_dashboard(cards, dimensions, theme, generated_at, from_cache, warning, layout)
+        except Exception as exc:
+            logger.exception("LiveRadar dashboard render failed: %s", exc)
+            try:
+                theme = self._theme(settings, device_config)
+            except Exception:
+                theme = self._fallback_theme()
+            return self._render_failure_dashboard(dimensions, theme, generated_at, exc)
 
     def _fetch_statuses(self, rooms, api_url, timeout, fetch_avatars):
         session = get_http_session()
@@ -666,6 +676,37 @@ class LiveRadar(BasePlugin):
         self._draw_text_right(draw, footer, width - margin, footer_y, small_font, theme["muted"])
         return image
 
+    def _render_failure_dashboard(self, dimensions, theme, generated_at, exc):
+        width, height = dimensions
+        image = Image.new("RGB", dimensions, theme["bg"])
+        draw = ImageDraw.Draw(image)
+        margin = max(16, int(width * 0.035))
+        title_font = self._font(max(28, int(height * 0.07)), "bold")
+        label_font = self._font(max(16, int(height * 0.04)), "bold")
+        body_font = self._font(max(12, int(height * 0.03)))
+        small_font = self._font(max(10, int(height * 0.024)), "bold")
+
+        draw.text((margin, margin), "LiveRadar", fill=theme["ink"], font=title_font)
+        draw.line((margin, margin + 54, width - margin, margin + 54), fill=theme["line"], width=2)
+        draw.text((margin, margin + 84), "RENDER ERROR", fill=theme["ink"], font=label_font)
+        message = self._fit_text(draw, str(exc) or exc.__class__.__name__, body_font, width - 2 * margin)
+        draw.text((margin, margin + 122), message, fill=theme["muted"], font=body_font)
+        footer = generated_at.astimezone().strftime("%H:%M")
+        draw.line((margin, height - 34, width - margin, height - 34), fill=theme["line"], width=1)
+        draw.text((margin, height - 26), "PLUGIN DID NOT CRASH", fill=theme["muted"], font=small_font)
+        self._draw_text_right(draw, footer, width - margin, height - 26, small_font, theme["muted"])
+        return image
+
+    @staticmethod
+    def _fallback_theme():
+        return {
+            "mode": "dark",
+            "bg": (0, 0, 0),
+            "ink": (255, 255, 255),
+            "muted": (255, 255, 255),
+            "line": (255, 255, 255),
+        }
+
     def _draw_card(
         self,
         image,
@@ -986,6 +1027,15 @@ class LiveRadar(BasePlugin):
             row_y = content_y + row * (row_h + gap)
             self._draw_live_mini_row(image, draw, (row_x, row_y, col_w, row_h), card, theme, avatar_cache_seconds)
 
+        grid_capacity = rows_used * columns
+        if columns > 1 and visible_count < grid_capacity and visible_count < max_items:
+            for index in range(visible_count, min(grid_capacity, max_items)):
+                column = index // rows_used
+                row = index % rows_used
+                row_x = x + column * (col_w + col_gap)
+                row_y = content_y + row * (row_h + gap)
+                self._draw_snapshot_mini_placeholder(image, draw, (row_x, row_y, col_w, row_h), theme)
+
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
         return len(visible)
@@ -1137,6 +1187,20 @@ class LiveRadar(BasePlugin):
             return ImageOps.exif_transpose(image).convert("RGB")
         except Exception as exc:
             logger.warning("LiveRadar slot placeholder asset unavailable: %s", exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_compact_placeholder_asset():
+        path = os.path.join(PLUGIN_DIR, COMPACT_PLACEHOLDER_FILE)
+        try:
+            if not os.path.exists(path):
+                return None
+            image = Image.open(path)
+            image.load()
+            return ImageOps.exif_transpose(image).convert("RGBA")
+        except Exception as exc:
+            logger.warning("LiveRadar compact placeholder asset unavailable: %s", exc)
             return None
 
     def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
@@ -1346,9 +1410,52 @@ class LiveRadar(BasePlugin):
 
         name_y = y + max(5, int((h - self._line_height(name_font) - self._line_height(detail_font) - 2) / 2))
         detail_y = name_y + self._line_height(name_font) + 2
-        draw.text((text_x, name_y), self._fit_text(draw, owner_text, name_font, text_w), fill=ink, font=name_font)
+        owner = self._fit_text(draw, owner_text, name_font, text_w)
+        detail = self._fit_text(draw, detail_text, detail_font, text_w)
+        draw.text((text_x, name_y), owner, fill=ink, font=name_font)
+        visible_text_w = draw.textlength(owner, font=name_font)
         if detail_y + self._line_height(detail_font) <= y + h - 4:
-            draw.text((text_x, detail_y), self._fit_text(draw, detail_text, detail_font, text_w), fill=muted, font=detail_font)
+            draw.text((text_x, detail_y), detail, fill=muted, font=detail_font)
+            visible_text_w = max(visible_text_w, draw.textlength(detail, font=detail_font))
+        self._draw_compact_internal_placeholder(
+            image,
+            draw,
+            text_x + visible_text_w,
+            text_right,
+            y,
+            h,
+            theme,
+        )
+
+    def _draw_compact_internal_placeholder(self, image, draw, text_end_x, right_x, y, h, theme):
+        asset = self._load_compact_placeholder_asset()
+        if not asset:
+            return None
+        target_w, target_h = COMPACT_PLACEHOLDER_SIZE
+        available_left = int(text_end_x + 12)
+        available_right = int(right_x - 8)
+        available_w = available_right - available_left
+        if available_w < 44:
+            return None
+        draw_w = min(target_w, available_w)
+        draw_h = min(target_h, max(10, int(h - 14)))
+        x = available_left + max(0, int((available_w - draw_w) / 2))
+        y0 = int(y + (h - draw_h) / 2)
+        self._draw_compact_placeholder_asset(image, draw, (x, y0, draw_w, draw_h), theme)
+        return (x, y0, draw_w, draw_h)
+
+    def _draw_compact_placeholder_asset(self, image, draw, box, theme):
+        x, y, w, h = [int(value) for value in box]
+        if w <= 0 or h <= 0:
+            return
+        asset = self._load_compact_placeholder_asset()
+        if not asset:
+            return
+        try:
+            fitted = ImageOps.fit(asset, (w, h), method=self._resampling_filter(), centering=(0.5, 0.5)).convert("RGBA")
+            image.paste(fitted.convert("RGB"), (x, y), fitted.getchannel("A"))
+        except Exception as exc:
+            logger.warning("LiveRadar compact placeholder render failed: %s", exc)
 
     def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds, show_fav_badge=True):
         avatar_x, avatar_y, avatar_size = avatar_box

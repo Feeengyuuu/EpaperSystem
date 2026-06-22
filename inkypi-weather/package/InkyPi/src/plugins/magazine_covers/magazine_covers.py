@@ -63,11 +63,24 @@ Food & Recipes|https://magazineshop.us/collections/food-and-recipes
 Football|https://magazineshop.us/collections/football
 Politics|https://magazineshop.us/collections/politics"""
 
-DEFAULT_SOURCES = f"{CORE_DEFAULT_SOURCES}\n{ADDITIONAL_DEFAULT_SOURCES}"
+PRE_ART_DEFAULT_SOURCES = f"{CORE_DEFAULT_SOURCES}\n{ADDITIONAL_DEFAULT_SOURCES}"
+
+ART_DEFAULT_SOURCES = """Art in America|https://magazineshop.us/collections/art-in-america
+Artforum|https://magazineshop.us/collections/artforum
+Aspire Design and Home|https://magazineshop.us/collections/aspire-design-and-home
+Decorator|https://magazineshop.us/collections/decorator
+Home Design|https://magazineshop.us/collections/home-design"""
+
+PRE_MATURE_DEFAULT_SOURCES = f"{PRE_ART_DEFAULT_SOURCES}\n{ART_DEFAULT_SOURCES}"
+
+MATURE_DEFAULT_SOURCES = """Playboy|https://magazineshop.us/collections/playboy"""
+
+DEFAULT_SOURCES = f"{PRE_MATURE_DEFAULT_SOURCES}\n{MATURE_DEFAULT_SOURCES}"
 
 ROTATION_STATE_VERSION = "magazine-covers-rotation-v1"
 COVER_CACHE_VERSION = "magazine-covers-cache-v2-title-crop"
 IMAGE_CACHE_TTL = timedelta(hours=20)
+COVER_CACHE_FILE_RETENTION = timedelta(days=7)
 DAILY_LIBRARY_STATE_VERSION = "magazine-covers-daily-library-v1"
 DAILY_LIBRARY_REFRESH_INTERVAL = timedelta(hours=6)
 LEGACY_DAILY_LIBRARY_REFRESH_HOURS = 12
@@ -495,9 +508,13 @@ class MagazineCovers(BasePlugin):
         if not configured:
             return defaults
 
-        legacy_default_ids = {self._source_id(source) for source in self._parse_sources(CORE_DEFAULT_SOURCES)}
+        legacy_default_id_sets = [
+            {self._source_id(source) for source in self._parse_sources(CORE_DEFAULT_SOURCES)},
+            {self._source_id(source) for source in self._parse_sources(PRE_ART_DEFAULT_SOURCES)},
+            {self._source_id(source) for source in self._parse_sources(PRE_MATURE_DEFAULT_SOURCES)},
+        ]
         configured_ids = {self._source_id(source) for source in configured}
-        if configured_ids == legacy_default_ids:
+        if any(configured_ids == legacy_ids for legacy_ids in legacy_default_id_sets):
             merged = list(configured)
             merged_ids = set(configured_ids)
             for source in defaults:
@@ -683,6 +700,13 @@ class MagazineCovers(BasePlugin):
             ("food", 14),
             ("football", 14),
             ("politics", 14),
+            ("artforum", 16),
+            ("art", 14),
+            ("design", 14),
+            ("decorator", 14),
+            ("aspire", 14),
+            ("home-design", 14),
+            ("playboy", 16),
         ]:
             if token in haystack:
                 score += weight
@@ -1197,7 +1221,45 @@ class MagazineCovers(BasePlugin):
     def _cache_dir(self):
         return self.cache_dir(env_var="INKYPI_MAGAZINE_COVERS_CACHE", leaf=".magazine_covers_cache", create=False)
 
+    def _prune_stale_cover_cache_files(self):
+        covers_dir = self._cache_dir() / "covers"
+        if not covers_dir.is_dir():
+            return 0
+
+        cutoff = self._now_utc() - COVER_CACHE_FILE_RETENTION
+        removed = 0
+        try:
+            resolved_covers_dir = covers_dir.resolve()
+        except Exception:
+            resolved_covers_dir = covers_dir
+
+        for meta_path in covers_dir.glob("*.json"):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                fetched_at = self._parse_datetime(meta.get("fetched_at"))
+                if not fetched_at:
+                    fetched_at = datetime.fromtimestamp(meta_path.stat().st_mtime, timezone.utc)
+                if fetched_at >= cutoff:
+                    continue
+
+                image_path = Path(meta.get("image_path") or meta_path.with_suffix(".jpg"))
+                try:
+                    image_parent = image_path.resolve().parent
+                except Exception:
+                    image_parent = image_path.parent
+                if image_parent != resolved_covers_dir:
+                    image_path = meta_path.with_suffix(".jpg")
+
+                for cache_path in (meta_path, image_path):
+                    if cache_path.is_file():
+                        cache_path.unlink()
+                        removed += 1
+            except Exception as exc:
+                logger.warning("Could not prune stale magazine cover cache %s: %s", meta_path, exc)
+        return removed
+
     def _read_state(self):
+        self._prune_stale_cover_cache_files()
         path = self._state_path()
         try:
             if path.is_file():

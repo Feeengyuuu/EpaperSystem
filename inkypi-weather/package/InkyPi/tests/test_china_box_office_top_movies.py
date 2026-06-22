@@ -5,7 +5,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.box_office_top_movies.box_office_top_movies import BoxOfficeMovie  # noqa: E402
+from plugins.box_office_top_movies.box_office_top_movies import BoxOfficeMovie, BoxOfficeTopMovies  # noqa: E402
+import plugins.china_box_office_top_movies.china_box_office_top_movies as china_box_office_module  # noqa: E402
 from plugins.china_box_office_top_movies.china_box_office_top_movies import (  # noqa: E402
     ChinaBoxOfficeTopMovies,
 )
@@ -83,6 +84,54 @@ def test_movies_from_tmdb_results():
     assert movies[0].poster_url.endswith("/poster.jpg")
 
 
+def test_default_source_is_north_america_weekly_box_office(monkeypatch):
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    captured = {}
+
+    def fake_load_movies(self, settings, items_count):
+        captured["settings"] = settings
+        captured["items_count"] = items_count
+        return [BoxOfficeMovie(rank=1, title="Disclosure Day", weekend_gross="$44,530,925")], "The Numbers"
+
+    monkeypatch.setattr(BoxOfficeTopMovies, "_load_movies", fake_load_movies)
+
+    movies, label = plugin._load_movies({"sourceMode": "tmdb_cn_now_playing"}, 5)
+
+    assert label == "The Numbers"
+    assert captured["settings"]["sourceMode"] == "the_numbers"
+    assert captured["items_count"] == 5
+    assert movies[0].extra["metric_label"] == "本周票房"
+    assert movies[0].extra["total_label"] == "累计票房"
+
+
+def test_north_america_weekly_copy():
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+
+    assert plugin._title_for_source("The Numbers") == "北美本周票房榜"
+    assert plugin._subtitle_for_source("The Numbers", 5) == "北美本周票房 TOP 5"
+    assert plugin._footer_for_source("The Numbers", []) == "Data: The Numbers | Posters pending TMDb"
+
+
+def test_north_america_enrichment_forces_us_english_poster_settings(monkeypatch):
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    captured = {}
+
+    def fake_enrich(self, movies, settings, device_config=None):
+        captured.update(settings)
+
+    monkeypatch.setattr(BoxOfficeTopMovies, "_enrich_with_tmdb", fake_enrich)
+
+    plugin._enrich_with_tmdb(
+        [BoxOfficeMovie(rank=1, title="Disclosure Day")],
+        {"sourceMode": "tmdb_cn_now_playing", "tmdbLanguage": "zh-CN", "tmdbRegion": "CN"},
+        DummyDeviceConfig(),
+    )
+
+    assert captured["tmdbLanguage"] == "en-US"
+    assert captured["tmdbRegion"] == "US"
+    assert captured["localizedLanguage"] == "zh-CN"
+
+
 def test_render_chart_smoke(monkeypatch):
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
     smoke_dir = Path(__file__).resolve().parents[4] / "tmp" / "china_box_office_render_smoke"
@@ -103,3 +152,30 @@ def test_render_chart_smoke(monkeypatch):
 
     assert image.size == (800, 480)
     assert image.getbbox() is not None
+
+
+def test_mainland_placeholder_asset_is_transparent_project_png():
+    path = Path(china_box_office_module.CHINA_PLUGIN_DIR) / china_box_office_module.MAINLAND_PLACEHOLDER_FILE
+
+    with Image.open(path) as image:
+        image = image.convert("RGBA")
+        alpha = image.getchannel("A")
+
+    assert image.size == china_box_office_module.MAINLAND_PLACEHOLDER_SIZE
+    assert alpha.getextrema() == (0, 255)
+    assert [image.getpixel(point)[3] for point in [(0, 0), (319, 0), (0, 83), (319, 83)]] == [0, 0, 0, 0]
+
+
+def test_mainland_placeholder_is_drawn_into_the_right_header_slot():
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    image = Image.new("RGB", (800, 480), (18, 20, 22))
+    box = plugin._mainland_placeholder_box(800, 480, 18, 78)
+
+    assert box == (434, 86, 320, 84)
+    plugin._load_mainland_placeholder_asset.cache_clear()
+    plugin._draw_mainland_placeholder(image, box)
+
+    crop = image.crop((box[0], box[1], box[0] + box[2], box[1] + box[3]))
+    colors = crop.getcolors(maxcolors=box[2] * box[3] + 1) or []
+    changed_pixels = sum(count for count, color in colors if color != (18, 20, 22))
+    assert changed_pixels > 1000

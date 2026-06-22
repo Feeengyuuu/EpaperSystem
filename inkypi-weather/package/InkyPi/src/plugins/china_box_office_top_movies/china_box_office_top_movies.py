@@ -7,15 +7,17 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from plugins.box_office_top_movies.box_office_top_movies import (
     BoxOfficeMovie,
     BoxOfficeTopMovies,
+    DEFAULT_CHART_URL,
     TMDB_IMAGE_BASE,
     _TableParser,
     _clean_text,
@@ -29,8 +31,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_REPORTS_URL = "https://www.zgdypw.cn/sc/sjbg/"
 TMDB_NOW_PLAYING_URL = "https://api.themoviedb.org/3/movie/now_playing"
 TMDB_DISCOVER_MOVIE_URL = "https://api.themoviedb.org/3/discover/movie"
-STATE_VERSION = "china-box-office-top-movies-v1"
+STATE_VERSION = "north-america-weekly-box-office-v2"
 MAX_ITEMS = 5
+CHINA_PLUGIN_DIR = Path(__file__).resolve().parent
+MAINLAND_PLACEHOLDER_FILE = "china_boxoffice_mainland_placeholder.png"
+MAINLAND_PLACEHOLDER_SIZE = (320, 84)
+LEGACY_CHINA_SOURCE_MAP = {
+    "legacy_auto": "auto",
+    "legacy_zgdypw_weekly": "zgdypw_weekly",
+    "legacy_tmdb_cn_now_playing": "tmdb_cn_now_playing",
+    "legacy_tmdb_cn_popular": "tmdb_cn_popular",
+}
 
 CHINA_HEADERS = {
     "User-Agent": (
@@ -81,8 +92,25 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             self._device_config_for_source = None
 
     def _load_movies(self, settings, items_count):
-        source_mode = (settings.get("sourceMode") or "tmdb_cn_now_playing").lower()
+        settings = settings or {}
+        source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
         errors = []
+        legacy_source_mode = LEGACY_CHINA_SOURCE_MAP.get(source_mode)
+
+        if legacy_source_mode is None:
+            try:
+                north_america_settings = dict(settings)
+                north_america_settings["sourceMode"] = "the_numbers"
+                movies, label = super()._load_movies(north_america_settings, items_count)
+                if movies:
+                    self._normalize_north_america_movies(movies)
+                    return movies[:items_count], label
+            except Exception as exc:
+                errors.append(f"North America weekly box office: {exc}")
+                logger.warning("North America weekly box office refresh failed: %s", exc)
+            raise RuntimeError("; ".join(errors) or "No North America weekly box office data.")
+
+        source_mode = legacy_source_mode
 
         if source_mode in {"auto", "zgdypw_weekly"}:
             try:
@@ -120,6 +148,22 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         if source_mode == "auto":
             return self._sample_movies()[:items_count], "Demo Fallback"
         raise RuntimeError("; ".join(errors) or "No Mainland China movie chart source produced movies.")
+
+    def _normalize_north_america_movies(self, movies):
+        for movie in movies:
+            movie.extra.setdefault("metric_label", "本周票房")
+            movie.extra.setdefault("total_label", "累计票房")
+
+    def _enrich_with_tmdb(self, movies, settings, device_config=None):
+        settings = settings or {}
+        source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
+        if LEGACY_CHINA_SOURCE_MAP.get(source_mode) is None:
+            north_america_settings = dict(settings)
+            north_america_settings["tmdbLanguage"] = "en-US"
+            north_america_settings["tmdbRegion"] = "US"
+            north_america_settings.setdefault("localizedLanguage", "zh-CN")
+            return super()._enrich_with_tmdb(movies, north_america_settings, device_config)
+        return super()._enrich_with_tmdb(movies, settings, device_config)
 
     def _load_zgdypw_weekly(self, settings, items_count):
         reports_url = settings.get("reportsUrl") or DEFAULT_REPORTS_URL
@@ -468,6 +512,10 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             draw.text((list_x, metric_y + 34), f"{total_label} {hero.total_gross}", fill=colors["muted"], font=small_font)
 
         row_top = top + max(112, height // 4)
+        self._draw_mainland_placeholder(
+            image,
+            self._mainland_placeholder_box(width, height, margin, top),
+        )
         remaining = movies[1:]
         row_count = max(1, len(remaining))
         row_h = max(58, int((bottom - row_top) / row_count))
@@ -505,7 +553,46 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         draw.text((margin, height - margin - footer_h + 8), footer, fill=colors["muted"], font=small_font)
         return image
 
+    def _mainland_placeholder_box(self, width, height, margin, top):
+        target_w, target_h = MAINLAND_PLACEHOLDER_SIZE
+        draw_w = min(target_w, max(220, int(width * 0.4)))
+        draw_h = min(target_h, max(54, int(height * 0.175)))
+        x = width - margin - draw_w - max(24, width // 28)
+        y = top + max(8, height // 60)
+        return (int(x), int(y), int(draw_w), int(draw_h))
+
+    def _draw_mainland_placeholder(self, image, box):
+        asset = self._load_mainland_placeholder_asset()
+        if asset is None:
+            return
+        x, y, w, h = [int(value) for value in box]
+        if w <= 0 or h <= 0:
+            return
+        try:
+            fitted = ImageOps.contain(asset, (w, h), method=Image.Resampling.LANCZOS)
+            paste_x = x + (w - fitted.width) // 2
+            paste_y = y + (h - fitted.height) // 2
+            image.paste(fitted.convert("RGB"), (paste_x, paste_y), fitted.getchannel("A"))
+        except Exception as exc:
+            logger.warning("Mainland cinema placeholder asset unavailable: %s", exc)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_mainland_placeholder_asset():
+        path = CHINA_PLUGIN_DIR / MAINLAND_PLACEHOLDER_FILE
+        if not path.is_file():
+            return None
+        try:
+            with Image.open(path) as image:
+                image.load()
+                return ImageOps.exif_transpose(image).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load mainland cinema placeholder asset %s: %s", path, exc)
+            return None
+
     def _subtitle_for_source(self, source_label, count):
+        if source_label == "The Numbers":
+            return f"北美本周票房 TOP {count}"
         if source_label.startswith("中国电影数据信息网"):
             return f"官方周报 TOP {count}"
         if source_label == "Demo Fallback":
@@ -513,6 +600,8 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         return f"中国区热映 TOP {count}"
 
     def _title_for_source(self, source_label):
+        if source_label == "The Numbers":
+            return "北美本周票房榜"
         if source_label.startswith("中国电影数据信息网"):
             return "中国内地票房榜"
         if source_label == "TMDb Mainland Popular":
@@ -524,6 +613,10 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
     def _footer_for_source(self, source_label, movies):
         if source_label == "Demo Fallback":
             return "Demo fallback: upstream data unavailable"
+        if source_label == "The Numbers":
+            if any(movie.poster_url for movie in movies):
+                return "Data: The Numbers | Posters: TMDb"
+            return "Data: The Numbers | Posters pending TMDb"
         if any(movie.poster_url for movie in movies):
             return "Data: official/TMDb | Posters: TMDb"
         return "Data: official/TMDb | Posters pending TMDb"
@@ -555,12 +648,18 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         }
 
     def _write_box_office_context(self, movies, source_label, generated_at, stale):
+        if source_label == "The Numbers":
+            kind = "north_america_weekly_box_office"
+            summary = "North America weekly box office: " + ", ".join(self._context_movie_name(movie) for movie in movies[:3])
+        else:
+            kind = "mainland_china_movie_chart"
+            summary = "Mainland China movie chart: " + ", ".join(self._context_movie_name(movie) for movie in movies[:3])
         write_context(
             "china_box_office_top_movies",
             {
-                "kind": "mainland_china_movie_chart",
+                "kind": kind,
                 "source": source_label,
-                "summary": "Mainland China movie chart: " + ", ".join(self._context_movie_name(movie) for movie in movies[:3]),
+                "summary": summary,
                 "facts": [
                     {"label": "source", "value": source_label},
                     {"label": "stale", "value": str(bool(stale)).lower()},
@@ -576,9 +675,11 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             STATE_VERSION,
             str(dimensions),
             str(items_count),
-            settings.get("sourceMode") or "auto",
+            settings.get("sourceMode") or "the_numbers",
+            settings.get("chartUrl") or DEFAULT_CHART_URL,
             settings.get("reportsUrl") or DEFAULT_REPORTS_URL,
-            settings.get("tmdbLanguage") or "zh-CN",
+            settings.get("tmdbLanguage") or "en-US",
+            settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
             settings.get("themeMode") or "auto",
         ])

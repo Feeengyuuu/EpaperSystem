@@ -10,9 +10,13 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.magazine_covers.magazine_covers import (  # noqa: E402
+    ART_DEFAULT_SOURCES,
     CORE_DEFAULT_SOURCES,
     DAILY_LIBRARY_REFRESH_INTERVAL,
     DEFAULT_SOURCES,
+    PRE_ART_DEFAULT_SOURCES,
+    PRE_MATURE_DEFAULT_SOURCES,
+    MATURE_DEFAULT_SOURCES,
     MAX_PI_SAFE_SOURCE_PIXELS,
     MagazineCovers,
     _ImageCandidateParser,
@@ -72,10 +76,16 @@ def test_default_source_pool_has_fresh_collection_sources():
     sources = plugin._parse_sources(DEFAULT_SOURCES)
     source_ids = {plugin._source_id(source) for source in sources}
 
-    assert len(sources) >= 30
+    assert len(sources) >= 36
     assert "Newest Releases Page 2|https://magazineshop.us/collections/new-releases?page=2" in source_ids
     assert "Newsweek|https://magazineshop.us/collections/newsweek" in source_ids
     assert "Athlon Sports|https://magazineshop.us/collections/athlon-sports" in source_ids
+    assert "Art in America|https://magazineshop.us/collections/art-in-america" in source_ids
+    assert "Artforum|https://magazineshop.us/collections/artforum" in source_ids
+    assert "Aspire Design and Home|https://magazineshop.us/collections/aspire-design-and-home" in source_ids
+    assert "Decorator|https://magazineshop.us/collections/decorator" in source_ids
+    assert "Home Design|https://magazineshop.us/collections/home-design" in source_ids
+    assert "Playboy|https://magazineshop.us/collections/playboy" in source_ids
 
 
 def test_legacy_saved_default_sources_are_expanded_with_new_pool():
@@ -85,7 +95,70 @@ def test_legacy_saved_default_sources_are_expanded_with_new_pool():
 
     assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
     assert sources[0]["name"] == "TIME"
-    assert sources[-1]["name"] == "Politics"
+    assert sources[-1]["name"] == "Playboy"
+
+
+def test_pre_art_default_sources_are_expanded_with_art_pool():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    sources = plugin._sources_from_settings({"sources": PRE_ART_DEFAULT_SOURCES})
+    source_ids = {plugin._source_id(source) for source in sources}
+    art_source_ids = {
+        plugin._source_id(source)
+        for source in plugin._parse_sources(ART_DEFAULT_SOURCES)
+    }
+
+    assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
+    assert art_source_ids.issubset(source_ids)
+
+
+def test_pre_mature_default_sources_are_expanded_with_mature_pool():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    sources = plugin._sources_from_settings({"sources": PRE_MATURE_DEFAULT_SOURCES})
+    source_ids = {plugin._source_id(source) for source in sources}
+    mature_source_ids = {
+        plugin._source_id(source)
+        for source in plugin._parse_sources(MATURE_DEFAULT_SOURCES)
+    }
+
+    assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
+    assert mature_source_ids.issubset(source_ids)
+
+def test_art_sources_boost_candidate_score():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    score = plugin._candidate_score(
+        {"name": "Artforum", "url": "https://magazineshop.us/collections/artforum"},
+        {
+            "url": "https://magazineshop.us/cdn/shop/files/artforum-cover.jpg",
+            "alt": "latest cover",
+            "class": "product-card",
+            "id": "",
+            "width": "500",
+            "height": "700",
+        },
+    )
+
+    assert score >= 160
+
+
+def test_mature_sources_boost_candidate_score():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    score = plugin._candidate_score(
+        {"name": "Playboy", "url": "https://magazineshop.us/collections/playboy"},
+        {
+            "url": "https://magazineshop.us/cdn/shop/files/playboy-cover.jpg",
+            "alt": "latest cover",
+            "class": "product-card",
+            "id": "",
+            "width": "500",
+            "height": "700",
+        },
+    )
+
+    assert score >= 150
 
 
 def test_custom_saved_sources_are_not_expanded_with_defaults():
@@ -281,6 +354,49 @@ def test_random_order_keeps_recent_saved_pool(monkeypatch):
 
     assert [source["name"] for source in ordered] == ["Beta", "Alpha", "Gamma"]
 
+
+def test_cover_cache_files_older_than_one_week_are_removed(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(make_test_tmp_dir("stale-cover-files")))
+    now = datetime(2026, 6, 10, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    covers_dir = plugin._cache_dir() / "covers"
+    covers_dir.mkdir(parents=True, exist_ok=True)
+
+    old_meta = covers_dir / "old.json"
+    old_image = covers_dir / "old.jpg"
+    new_meta = covers_dir / "new.json"
+    new_image = covers_dir / "new.jpg"
+    old_image.write_bytes(b"old")
+    new_image.write_bytes(b"new")
+    old_meta.write_text(
+        json.dumps({
+            "image_path": str(old_image),
+            "fetched_at": (now - timedelta(days=8)).isoformat(),
+        }),
+        encoding="utf-8",
+    )
+    new_meta.write_text(
+        json.dumps({
+            "image_path": str(new_image),
+            "fetched_at": (now - timedelta(days=6)).isoformat(),
+        }),
+        encoding="utf-8",
+    )
+
+    unlink_calls = []
+
+    def fake_unlink(path, missing_ok=False):
+        unlink_calls.append(Path(path).name)
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+
+    removed = plugin._prune_stale_cover_cache_files()
+
+    assert removed == 2
+    assert unlink_calls == ["old.json", "old.jpg"]
+    assert new_meta.exists()
+    assert new_image.exists()
 
 def test_daily_library_pool_older_than_one_week_is_removed(monkeypatch):
     plugin = MagazineCovers({"id": "magazine_covers"})

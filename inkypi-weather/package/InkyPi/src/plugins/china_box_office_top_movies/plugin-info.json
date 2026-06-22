@@ -1,5 +1,5 @@
 {
-    "display_name": "Mainland China Movie Chart",
+    "display_name": "North America Weekly Box Office",
     "id": "china_box_office_top_movies",
     "class": "ChinaBoxOfficeTopMovies",
     "repository": "local"

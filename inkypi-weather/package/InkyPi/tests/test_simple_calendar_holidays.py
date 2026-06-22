@@ -4,7 +4,7 @@ from pathlib import Path
 
 import icalendar
 import pytz
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -292,8 +292,8 @@ END:VCALENDAR
     )
 
     monkeypatch.setattr(
-        "plugins.simple_calendar.simple_calendar.requests.get",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network called")),
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: (_ for _ in ()).throw(AssertionError("network called")),
     )
     events = plugin._fetch_holiday_events(
         {
@@ -317,7 +317,43 @@ END:VCALENDAR
     }]
 
 
+def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    calls = []
+
+    class FakeResponse:
+        content = b"BEGIN:VCALENDAR\nEND:VCALENDAR\n"
+
+        def raise_for_status(self):
+            calls.append(("raise_for_status",))
+
+    class FakeSession:
+        def get(self, url, timeout, headers):
+            calls.append((url, timeout, headers.get("User-Agent")))
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: FakeSession(),
+    )
+
+    content = plugin._read_calendar_source(
+        "https://calendar.google.com/calendar/ical/private/basic.ics"
+    )
+
+    assert content == b"BEGIN:VCALENDAR\nEND:VCALENDAR\n"
+    assert calls == [
+        (
+            "https://calendar.google.com/calendar/ical/private/basic.ics",
+            20,
+            "InkyPi SimpleCalendar/1.0",
+        ),
+        ("raise_for_status",),
+    ]
+
+
 def test_extract_personal_monthly_rrule_expands_current_month():
+
     plugin = SimpleCalendar({"id": "simple_calendar"})
     tz = pytz.timezone("America/Los_Angeles")
     cal = icalendar.Calendar.from_ical(
@@ -497,3 +533,81 @@ def test_current_month_event_rows_drop_elapsed_events_without_next_month_backfil
         date(2026, 6, 21),
     ]
     assert "Independence Day" not in [event["title"] for event in rows]
+
+
+def test_focus_holiday_card_uses_spacious_illustrated_banner_style():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    image = Image.new("RGB", (220, 120), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    events = [{
+        "date": date(2026, 6, 19),
+        "title": "Dragon Boat / Juneteenth",
+        "label": "CN/US",
+        "color": (198, 40, 40),
+    }]
+
+    plugin._draw_focus_holiday(draw, events, 110, 55, 200, (0, 0, 0), (132, 132, 132))
+
+    assert image.getpixel((21, 22)) == (166, 31, 36)
+    assert image.getpixel((110, 26)) == (238, 218, 158)
+    assert image.getpixel((194, 37)) == (238, 218, 158)
+    assert image.getpixel((198, 17)) == (217, 177, 90)
+    assert image.getpixel((210, 93)) == (25, 38, 45)
+
+    label_pixels = [image.getpixel((px, py)) for py in range(22, 40) for px in range(34, 90)]
+    assert any(r > 180 and g < 120 and b < 100 for r, g, b in label_pixels)
+    assert any(b > 120 and r < 120 and g < 160 for r, g, b in label_pixels)
+
+
+def test_focus_holiday_card_uses_bold_title_font(monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    image = Image.new("RGB", (220, 120), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    events = [{
+        "date": date(2026, 6, 20),
+        "title": "端午节",
+        "label": "CN",
+        "color": (198, 40, 40),
+    }]
+    calls = []
+    original_get_holiday_title_font = plugin._get_holiday_title_font
+
+    def track_holiday_title_font(font_size, bold=False):
+        calls.append((font_size, bold))
+        return original_get_holiday_title_font(font_size, bold=bold)
+
+    monkeypatch.setattr(plugin, "_get_holiday_title_font", track_holiday_title_font)
+
+    plugin._draw_focus_holiday(draw, events, 110, 55, 200, (0, 0, 0), (132, 132, 132))
+
+    assert calls == [(14, True)]
+
+
+def test_holiday_list_source_labels_color_cn_and_us_independently():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    image = Image.new("RGB", (320, 120), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    event = {
+        "date": date(2026, 6, 19),
+        "title": "Dragon Boat / Juneteenth",
+        "label": "CN/US",
+        "color": (198, 40, 40),
+    }
+
+    plugin._draw_holiday_list(
+        draw,
+        [],
+        date(2026, 6, 19),
+        [event],
+        0,
+        0,
+        320,
+        120,
+        (0, 0, 0),
+        (132, 132, 132),
+        (220, 220, 220),
+    )
+
+    label_pixels = [image.getpixel((px, py)) for py in range(12, 45) for px in range(50, 130)]
+    assert any(r > 180 and g < 120 and b < 100 for r, g, b in label_pixels)
+    assert any(b > 120 and r < 120 and g < 160 for r, g, b in label_pixels)

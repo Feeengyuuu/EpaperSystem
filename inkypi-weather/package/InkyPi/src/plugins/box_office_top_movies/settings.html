@@ -1,6 +1,6 @@
 <div style="margin-bottom:14px;">
     <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
-        Displays the top North American box office movies with posters and weekend gross.
+        Displays North American weekend box office or the China mainland realtime movie chart with posters when TMDb is configured.
     </div>
 </div>
 
@@ -8,6 +8,7 @@
     <label for="sourceMode" class="form-label">Chart source:</label>
     <select id="sourceMode" name="sourceMode" class="form-input">
         <option value="the_numbers" selected>The Numbers weekend chart</option>
+        <option value="maoyan_china">Maoyan China mainland realtime chart</option>
         <option value="auto">Auto with fallback</option>
     </select>
 </div>
@@ -24,6 +25,11 @@
 <div class="form-group">
     <label for="chartUrl" class="form-label">Weekend chart URL:</label>
     <input id="chartUrl" name="chartUrl" class="form-input" value="https://www.the-numbers.com/weekend-box-office-chart" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="maoyanUrl" class="form-label">China mainland chart URL:</label>
+    <input id="maoyanUrl" name="maoyanUrl" class="form-input" value="https://piaofang.maoyan.com/dashboard-ajax" spellcheck="false">
 </div>
 
 <div class="form-group">
@@ -93,6 +99,7 @@
             document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'the_numbers';
             document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
             document.getElementById('chartUrl').value = pluginSettings.chartUrl || 'https://www.the-numbers.com/weekend-box-office-chart';
+            document.getElementById('maoyanUrl').value = pluginSettings.maoyanUrl || 'https://piaofang.maoyan.com/dashboard-ajax';
             document.getElementById('tmdbLanguage').value = pluginSettings.tmdbLanguage || 'en-US';
             document.getElementById('showLocalizedTitles').value = pluginSettings.showLocalizedTitles || 'true';
             document.getElementById('localizedLanguage').value = pluginSettings.localizedLanguage || 'zh-CN';

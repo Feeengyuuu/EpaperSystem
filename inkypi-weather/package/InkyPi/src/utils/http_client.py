@@ -15,14 +15,68 @@ Usage:
     response = session.get(url)
 """
 
-import requests
 import logging
+import os
 from typing import Optional
+from urllib.parse import urlparse
+
+import requests
 
 logger = logging.getLogger(__name__)
 
 # Global session instance (singleton)
 _HTTP_SESSION: Optional[requests.Session] = None
+_PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+_DEAD_LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_DEAD_LOCAL_PROXY_PORTS = {0, 9}
+
+
+def _is_dead_local_proxy(value: str) -> bool:
+    proxy = str(value or "").strip()
+    if not proxy:
+        return False
+    candidate = proxy if "://" in proxy else f"http://{proxy}"
+    try:
+        parsed = urlparse(candidate)
+        port = parsed.port
+    except ValueError:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    return host in _DEAD_LOCAL_PROXY_HOSTS and port in _DEAD_LOCAL_PROXY_PORTS
+
+
+def sanitize_dead_local_proxy_environment() -> dict[str, str]:
+    """Remove known-dead local proxy variables from the process environment."""
+    removed = {}
+    for name in _PROXY_ENV_NAMES:
+        value = os.environ.get(name)
+        if _is_dead_local_proxy(value):
+            removed[name] = value
+            os.environ.pop(name, None)
+    if removed:
+        logger.warning(
+            "Removed dead local proxy environment variables: %s",
+            ", ".join(sorted(removed)),
+        )
+    return removed
+
+
+def _dead_local_proxy_configured() -> bool:
+    return any(_is_dead_local_proxy(os.environ.get(name)) for name in _PROXY_ENV_NAMES)
+
+
+def _disable_dead_local_proxy(session: requests.Session) -> None:
+    removed = sanitize_dead_local_proxy_environment()
+    if removed and session.trust_env:
+        logger.warning("Ignoring dead local proxy environment for shared HTTP session")
+        session.trust_env = False
 
 
 def get_http_session() -> requests.Session:
@@ -38,6 +92,7 @@ def get_http_session() -> requests.Session:
     if _HTTP_SESSION is None:
         logger.debug("Initializing shared HTTP session with connection pooling")
         _HTTP_SESSION = requests.Session()
+        _disable_dead_local_proxy(_HTTP_SESSION)
 
         # Set common headers for all InkyPi requests
         _HTTP_SESSION.headers.update({
@@ -57,6 +112,7 @@ def get_http_session() -> requests.Session:
 
         logger.debug("HTTP session initialized successfully")
 
+    _disable_dead_local_proxy(_HTTP_SESSION)
     return _HTTP_SESSION
 
 

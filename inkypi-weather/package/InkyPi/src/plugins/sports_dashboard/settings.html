@@ -375,6 +375,18 @@
 
 <div class="form-group">
     <label class="form-label">
+        <input type="checkbox" id="lckEnabled" name="lckEnabled" value="true">
+        Include LCK in the LoL sidebar rotation
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="lckLeagueId" class="form-label">LCK league ID:</label>
+    <input type="text" id="lckLeagueId" name="lckLeagueId" placeholder="98767991310872058" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
         <input type="checkbox" id="lplLiveRefreshEnabled" name="lplLiveRefreshEnabled" value="true">
         Quasi realtime LPL refresh during live matches
     </label>
@@ -492,6 +504,8 @@
             document.getElementById('valveEsportsDailyLimit').value = pluginSettings.valveEsportsDailyLimit || '';
             document.getElementById('valveEsportsWindowAfterDays').value = pluginSettings.valveEsportsWindowAfterDays || '';
             document.getElementById('lplLeagueId').value = pluginSettings.lplLeagueId || '';
+            document.getElementById('lckEnabled').checked = pluginSettings.lckEnabled !== 'false';
+            document.getElementById('lckLeagueId').value = pluginSettings.lckLeagueId || '';
             document.getElementById('lplLiveRefreshEnabled').checked = pluginSettings.lplLiveRefreshEnabled !== 'false';
             document.getElementById('lplLiveRefreshIntervalSeconds').value = pluginSettings.lplLiveRefreshIntervalSeconds || '';
             document.getElementById('lplOddsEnabled').checked = pluginSettings.lplOddsEnabled !== 'false';

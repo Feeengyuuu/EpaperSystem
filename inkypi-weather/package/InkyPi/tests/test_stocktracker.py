@@ -156,6 +156,18 @@ def _near_color_count(image, target, tolerance=8):
     )
 
 
+def test_stock_tracker_chart_bounds_and_smoothing_keep_endpoints():
+    low, high = StockTracker._chart_value_bounds([100.0, 110.0])
+    flat_low, flat_high = StockTracker._chart_value_bounds([100.0, 100.0])
+    curve = StockTracker._smooth_curve_points([(0, 10), (10, 0), (20, 10)])
+
+    assert low < 100.0
+    assert high > 110.0
+    assert flat_low < 100.0 < flat_high
+    assert curve[0] == (0, 10)
+    assert curve[-1] == (20, 10)
+    assert len(curve) > 3
+
 def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     plugin = StockTracker({"id": "stocktracker"})
     stock_data = [
@@ -178,9 +190,11 @@ def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     assert _near_color_count(image, PAPER, tolerance=5) > 10_000
     assert _near_color_count(image, MALACHITE, tolerance=12) > 500
     assert _near_color_count(image, CINNABAR, tolerance=12) > 500
-    assert image.getpixel((318, 102)) == ACCENT_ORANGE
-    assert image.getpixel((540, 185)) == MALACHITE
-    assert image.getpixel((762, 188)) == CINNABAR
+    values = plugin._portfolio_values(stock_data)
+    vmin, vmax = plugin._chart_value_bounds(values)
+    curve_points = plugin._plot_series_points((318, 102, 762, 188), values, vmin, vmax)
+    marker_points = plugin._history_marker_points(curve_points, history_points)
+    assert [image.getpixel(marker["point"]) for marker in marker_points] == [ACCENT_ORANGE, MALACHITE, CINNABAR]
 
 
 def test_stock_tracker_history_markers_decorate_portfolio_curve_coordinates():

@@ -8,6 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -23,9 +24,13 @@ from utils.http_client import get_http_session
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHART_URL = "https://www.the-numbers.com/weekend-box-office-chart"
+MAOYAN_DASHBOARD_URL = "https://piaofang.maoyan.com/dashboard-ajax"
+MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
+CHINA_SOURCE_MODES = {"maoyan", "maoyan_china", "china", "china_mainland", "mainland_china"}
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 TMDB_MOVIE_URL = "https://api.themoviedb.org/3/movie/{movie_id}"
 TMDB_ALT_TITLES_URL = "https://api.themoviedb.org/3/movie/{movie_id}/alternative_titles"
+TMDB_MOVIE_IMAGES_URL = "https://api.themoviedb.org/3/movie/{movie_id}/images"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342"
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -38,8 +43,27 @@ IMAGE_HEADERS = {
     "User-Agent": REQUEST_HEADERS["User-Agent"],
     "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5",
 }
-STATE_VERSION = "box-office-top-movies-v2"
+MAOYAN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Referer": "https://piaofang.maoyan.com/dashboard",
+}
+STATE_VERSION = "box-office-top-movies-v5"
 MAX_ITEMS = 5
+PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_FONT_DIR = PLUGIN_DIR / "fonts"
+SRC_DIR = PLUGIN_DIR.parent.parent
+STATIC_FONT_DIR = SRC_DIR / "static" / "fonts"
+SPORTS_DASHBOARD_FONT_DIR = PLUGIN_DIR.parent / "sports_dashboard" / "fonts"
+YAHEI_REGULAR_FILE = "msyh.ttc"
+YAHEI_BOLD_FILE = "msyhbd.ttc"
+CINEMA_PLACEHOLDER_FILE = "boxoffice_cinema_placeholder.png"
+CINEMA_PLACEHOLDER_SIZE = (300, 90)
+CJK_FONT_SAMPLE = "\u6d4b\u8bd5\u7535\u5f71\u63ed\u79d8\u65e5"
 
 
 @dataclass
@@ -183,13 +207,28 @@ class BoxOfficeTopMovies(BasePlugin):
         return self._render_chart(dimensions, movies, settings, source_label, generated_at, stale)
 
     def _load_movies(self, settings, items_count):
-        source_mode = (settings.get("sourceMode") or "the_numbers").lower()
+        source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
         chart_url = settings.get("chartUrl") or DEFAULT_CHART_URL
+
+        if source_mode in CHINA_SOURCE_MODES:
+            data = self._fetch_json(settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL, MAOYAN_HEADERS)
+            movies = self._parse_maoyan_dashboard(data)
+            if movies:
+                return movies[:items_count], MAOYAN_SOURCE_LABEL
+            raise RuntimeError("Maoyan mainland China chart did not produce movies.")
+
         if source_mode in {"the_numbers", "auto"}:
             html_text = self._fetch_text(chart_url)
             movies = self._parse_the_numbers_chart(html_text, chart_url)
             if movies:
                 return movies[:items_count], "The Numbers"
+
+        if source_mode == "auto":
+            data = self._fetch_json(settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL, MAOYAN_HEADERS)
+            movies = self._parse_maoyan_dashboard(data)
+            if movies:
+                return movies[:items_count], MAOYAN_SOURCE_LABEL
+
         raise RuntimeError("No box office chart source produced movies.")
 
     def _fetch_text(self, url):
@@ -198,6 +237,60 @@ class BoxOfficeTopMovies(BasePlugin):
         if not response.encoding:
             response.encoding = "utf-8"
         return response.text
+
+    def _fetch_json(self, url, headers=None):
+        response = get_http_session().get(url, timeout=16, headers=headers or REQUEST_HEADERS)
+        response.raise_for_status()
+        if not response.encoding:
+            response.encoding = "utf-8"
+        return response.json()
+
+    def _parse_maoyan_dashboard(self, data):
+        if isinstance(data, str):
+            data = json.loads(data)
+        rows = (((data or {}).get("movieList") or {}).get("data") or {}).get("list") or []
+        movies = []
+        seen_titles = set()
+
+        for row in rows:
+            info = (row or {}).get("movieInfo") or {}
+            title = _clean_text(info.get("movieName"))
+            if not title:
+                continue
+            normalized_title = _normalize_title(title)
+            if normalized_title in seen_titles:
+                continue
+            seen_titles.add(normalized_title)
+
+            release_info = _clean_text(info.get("releaseInfo"))
+            box_rate = _clean_text(row.get("boxRate"))
+            total_box = _clean_text(row.get("sumBoxDesc"))
+            show_count = str(row.get("showCount") or "")
+            show_count_rate = _clean_text(row.get("showCountRate"))
+
+            movies.append(BoxOfficeMovie(
+                rank=len(movies) + 1,
+                title=title,
+                weekend_gross=box_rate,
+                total_gross=total_box,
+                theaters=show_count,
+                weeks=self._days_from_release_info(release_info),
+                chart_url=MAOYAN_DASHBOARD_URL,
+                localized_language="zh-CN",
+                extra={
+                    "source": "maoyan",
+                    "official_chinese_title": title,
+                    "release_info": release_info,
+                    "box_rate": box_rate,
+                    "show_count_rate": show_count_rate,
+                },
+            ))
+
+        return movies
+
+    def _days_from_release_info(self, value):
+        match = re.search(r"\d+", str(value or ""))
+        return match.group(0) if match else ""
 
     def _parse_the_numbers_chart(self, html_text, chart_url=DEFAULT_CHART_URL):
         parser = _TableParser(chart_url)
@@ -306,10 +399,13 @@ class BoxOfficeTopMovies(BasePlugin):
             logger.info("TMDb credentials not configured; rendering poster placeholders.")
             return
 
-        language = (settings.get("tmdbLanguage") or "en-US").strip() or "en-US"
+        has_china_movies = any(self._is_maoyan_movie(movie) for movie in movies)
+        default_language = "zh-CN" if has_china_movies else "en-US"
+        default_region = "CN" if has_china_movies else "US"
+        language = (settings.get("tmdbLanguage") or default_language).strip() or default_language
         localized_language = (settings.get("localizedLanguage") or "zh-CN").strip() or "zh-CN"
         show_localized = self._truthy(settings.get("showLocalizedTitles"), True)
-        region = (settings.get("tmdbRegion") or "US").strip().upper()[:2] or "US"
+        region = (settings.get("tmdbRegion") or default_region).strip().upper()[:2] or default_region
         session = get_http_session()
         for movie in movies:
             try:
@@ -324,15 +420,135 @@ class BoxOfficeTopMovies(BasePlugin):
                     continue
                 item = results[0]
                 movie.tmdb_id = item.get("id")
-                movie.poster_path = item.get("poster_path") or ""
+                poster_path, poster_language = self._best_tmdb_poster(item, session, auth, language)
+                movie.poster_path = poster_path
                 movie.release_year = str(item.get("release_date") or "")[:4]
                 movie.overview = item.get("overview") or ""
                 if movie.poster_path:
                     movie.poster_url = TMDB_IMAGE_BASE + movie.poster_path
-                if show_localized and movie.tmdb_id:
+                    if poster_language:
+                        movie.extra["poster_language"] = poster_language
+                    movie.extra["poster_market"] = region
+                if self._is_maoyan_movie(movie):
+                    english_title = self._tmdb_english_title(movie, item, session, auth)
+                    if english_title:
+                        movie.extra["english_title"] = english_title
+                    movie.localized_title = ""
+                elif show_localized and movie.tmdb_id:
                     self._enrich_localized_title(movie, session, auth, localized_language)
             except Exception as exc:
                 logger.warning("TMDb lookup failed for %s: %s", movie.title, exc)
+
+    def _best_tmdb_poster(self, item, session, auth, language):
+        fallback_path = item.get("poster_path") or ""
+        movie_id = item.get("id")
+        poster_language = self._tmdb_poster_language(language)
+        if not movie_id or not poster_language:
+            return fallback_path, ""
+        try:
+            data = self._tmdb_get_json(
+                session,
+                TMDB_MOVIE_IMAGES_URL.format(movie_id=movie_id),
+                auth,
+                {"include_image_language": f"{poster_language},null"},
+            )
+            selected_path, selected_language = self._select_tmdb_poster(data.get("posters") or [], poster_language)
+            if selected_path:
+                return selected_path, selected_language
+        except Exception as exc:
+            title = item.get("title") or item.get("name") or movie_id
+            logger.warning("TMDb poster image lookup failed for %s: %s", title, exc)
+        return fallback_path, ""
+
+    def _tmdb_poster_language(self, language):
+        raw = str(language or "en-US").strip().lower()
+        if not raw:
+            return "en"
+        return raw.replace("_", "-").split("-", 1)[0] or "en"
+
+    def _select_tmdb_poster(self, posters, poster_language):
+        desired = str(poster_language or "").lower()
+        candidates = []
+        for poster in posters:
+            path = poster.get("file_path") or ""
+            if not path:
+                continue
+            language = str(poster.get("iso_639_1") or "").lower()
+            if language == desired:
+                language_rank = 0
+                selected_language = language
+            elif not language:
+                language_rank = 1
+                selected_language = "und"
+            else:
+                language_rank = 2
+                selected_language = language
+            try:
+                aspect_delta = abs(float(poster.get("aspect_ratio") or 0) - (2 / 3))
+            except (TypeError, ValueError):
+                aspect_delta = 9
+            try:
+                vote_average = float(poster.get("vote_average") or 0)
+            except (TypeError, ValueError):
+                vote_average = 0
+            try:
+                vote_count = int(poster.get("vote_count") or 0)
+            except (TypeError, ValueError):
+                vote_count = 0
+            try:
+                width = int(poster.get("width") or 0)
+            except (TypeError, ValueError):
+                width = 0
+            candidates.append((language_rank, aspect_delta, -vote_average, -vote_count, -width, path, selected_language))
+        if not candidates:
+            return "", ""
+        candidates.sort()
+        return candidates[0][5], candidates[0][6]
+
+    def _tmdb_english_title(self, movie, item, session, auth):
+        candidates = []
+        try:
+            detail = self._tmdb_get_json(
+                session,
+                TMDB_MOVIE_URL.format(movie_id=movie.tmdb_id),
+                auth,
+                {"language": "en-US"},
+            )
+            candidates.extend([detail.get("title"), detail.get("original_title")])
+        except Exception as exc:
+            logger.warning("TMDb English title lookup failed for %s: %s", movie.title, exc)
+        candidates.extend([item.get("title"), item.get("original_title"), item.get("name"), item.get("original_name")])
+        for candidate in candidates:
+            english = self._usable_english_title(candidate, movie.title)
+            if english:
+                return english
+        return self._english_title_from_alternatives(movie, session, auth)
+
+    def _english_title_from_alternatives(self, movie, session, auth):
+        for country in ("US", "GB", "CA", "AU", "WW"):
+            try:
+                data = self._tmdb_get_json(
+                    session,
+                    TMDB_ALT_TITLES_URL.format(movie_id=movie.tmdb_id),
+                    auth,
+                    {"country": country},
+                )
+            except Exception as exc:
+                logger.warning("TMDb English alternative title lookup failed for %s/%s: %s", movie.title, country, exc)
+                continue
+            for item in data.get("titles") or []:
+                english = self._usable_english_title(item.get("title"), movie.title)
+                if english:
+                    return english
+        return ""
+
+    def _usable_english_title(self, value, chinese_title):
+        title = _clean_text(value)
+        if not title or _contains_cjk(title):
+            return ""
+        if title.casefold() == str(chinese_title or "").strip().casefold():
+            return ""
+        return title
 
     def _enrich_localized_title(self, movie, session, auth, language):
         try:
@@ -480,10 +696,10 @@ class BoxOfficeTopMovies(BasePlugin):
         row_secondary_latin_font = self._font(max(12, height // 38), bold=True)
         small_font = self._font(max(11, height // 42))
         metric_font = self._font(max(16, height // 27), bold=True)
+        copy = self._chart_copy(settings, source_label, len(movies))
 
-        draw.text((margin, margin - 2), "NORTH AMERICA BOX OFFICE", fill=colors["ink"], font=title_font)
-        subtitle = f"Weekend Top {len(movies)}"
-        draw.text((margin, margin + int(header_h * 0.58)), subtitle.upper(), fill=accent, font=subtitle_font)
+        draw.text((margin, margin - 2), copy["title"], fill=colors["ink"], font=title_font)
+        draw.text((margin, margin + int(header_h * 0.58)), copy["subtitle"], fill=accent, font=subtitle_font)
 
         meta = self._updated_text(generated_at, source_label, stale)
         meta_w = draw.textlength(meta, font=small_font)
@@ -517,12 +733,18 @@ class BoxOfficeTopMovies(BasePlugin):
             hero_secondary = self._fit_text(draw, hero_secondary, secondary_latin_font, list_w)
             draw.text((list_x, top + 35), hero_secondary, fill=colors["localized"], font=secondary_latin_font)
             metric_y = top + 62
-        draw.text((list_x, metric_y + 5), "WEEKEND", fill=colors["muted"], font=small_font)
-        draw.text((list_x + 88, metric_y), hero.weekend_gross or "--", fill=accent, font=metric_font)
+        metric_label = copy["primary_metric_label"]
+        metric_label_w = int(draw.textlength(metric_label, font=small_font))
+        draw.text((list_x, metric_y + 5), metric_label, fill=colors["muted"], font=small_font)
+        draw.text((list_x + metric_label_w + 16, metric_y), hero.weekend_gross or "--", fill=accent, font=metric_font)
         if hero.total_gross:
-            draw.text((list_x, metric_y + 33), f"TOTAL {hero.total_gross}", fill=colors["muted"], font=small_font)
+            draw.text((list_x, metric_y + 33), f"{copy['total_prefix']} {hero.total_gross}", fill=colors["muted"], font=small_font)
 
         row_top = top + max(112, height // 4)
+        self._draw_cinema_placeholder(
+            image,
+            self._cinema_placeholder_box(width, height, margin, top, row_top),
+        )
         remaining = movies[1:]
         row_count = max(1, len(remaining))
         row_h = max(58, int((bottom - row_top) / row_count))
@@ -548,11 +770,11 @@ class BoxOfficeTopMovies(BasePlugin):
                 detail_y = y + 43
             draw.text((title_x, detail_y), movie.weekend_gross or "--", fill=colors["muted"], font=small_font)
             if movie.total_gross:
-                total = f"Total {movie.total_gross}"
+                total = f"{copy['total_prefix']} {movie.total_gross}"
                 total_w = draw.textlength(total, font=small_font)
                 draw.text((width - margin - total_w, detail_y), total, fill=colors["muted"], font=small_font)
 
-        footer = "Posters: TMDb" if any(movie.poster_url for movie in movies) else "Posters: local placeholders until TMDb is configured"
+        footer = copy["footer_tmdb"] if any(movie.poster_url for movie in movies) else copy["footer_placeholder"]
         draw.text((margin, height - margin - footer_h + 8), footer, fill=colors["muted"], font=small_font)
         return image
 
@@ -611,6 +833,66 @@ class BoxOfficeTopMovies(BasePlugin):
         for x in range(0, width, max(18, width // 36)):
             draw.rectangle((x, 0, x + 3, height), fill=colors["shadow"])
 
+    def _cinema_placeholder_box(self, width, height, margin, top, row_top):
+        target_w, target_h = CINEMA_PLACEHOLDER_SIZE
+        draw_w = min(target_w, max(180, int(width * 0.375)))
+        draw_h = min(target_h, max(58, int(height * 0.1875)))
+        x = width - margin - draw_w
+        y = max(top + 24, row_top - draw_h)
+        return (int(x), int(y), int(draw_w), int(draw_h))
+
+    def _draw_cinema_placeholder(self, image, box):
+        asset = self._load_cinema_placeholder_asset()
+        if asset is None:
+            return
+        x, y, w, h = [int(value) for value in box]
+        if w <= 0 or h <= 0:
+            return
+        try:
+            fitted = ImageOps.contain(asset, (w, h), method=Image.Resampling.LANCZOS)
+            paste_x = x + (w - fitted.width) // 2
+            paste_y = y + (h - fitted.height) // 2
+            image.paste(fitted.convert("RGB"), (paste_x, paste_y), fitted.getchannel("A"))
+        except Exception as exc:
+            logger.warning("Cinema placeholder asset unavailable: %s", exc)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_cinema_placeholder_asset():
+        path = PLUGIN_DIR / CINEMA_PLACEHOLDER_FILE
+        if not path.is_file():
+            return None
+        try:
+            with Image.open(path) as image:
+                image.load()
+                return ImageOps.exif_transpose(image).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load cinema placeholder asset %s: %s", path, exc)
+            return None
+
+    def _chart_copy(self, settings, source_label, count):
+        if self._is_china_chart(settings, source_label):
+            return {
+                "title": "\u4e2d\u56fd\u5927\u9646\u7535\u5f71\u7968\u623f",
+                "subtitle": f"\u5b9e\u65f6\u699c TOP {count}",
+                "primary_metric_label": "\u4eca\u65e5\u5360\u6bd4",
+                "total_prefix": "\u7d2f\u8ba1",
+                "footer_tmdb": "\u6d77\u62a5: TMDb",
+                "footer_placeholder": "\u6d77\u62a5: \u672c\u5730\u5360\u4f4d\u56fe / TMDb \u672a\u914d\u7f6e",
+            }
+        return {
+            "title": "NORTH AMERICA BOX OFFICE",
+            "subtitle": f"WEEKEND TOP {count}",
+            "primary_metric_label": "WEEKEND",
+            "total_prefix": "Total",
+            "footer_tmdb": "Posters: TMDb",
+            "footer_placeholder": "Posters: local placeholders until TMDb is configured",
+        }
+
+    def _is_china_chart(self, settings, source_label):
+        source_mode = str((settings or {}).get("sourceMode") or "").strip().lower()
+        return source_mode in CHINA_SOURCE_MODES or str(source_label or "") == MAOYAN_SOURCE_LABEL
+
     def _palette(self, settings):
         mode = (settings.get("themeMode") or "auto").lower()
         if mode == "paper":
@@ -643,7 +925,7 @@ class BoxOfficeTopMovies(BasePlugin):
             {
                 "kind": "box_office_chart",
                 "source": source_label,
-                "summary": "North America box office: " + ", ".join(self._context_movie_name(movie) for movie in movies[:3]),
+                "summary": self._context_summary(source_label, movies),
                 "facts": [
                     {"label": "source", "value": source_label},
                     {"label": "stale", "value": str(bool(stale)).lower()},
@@ -664,7 +946,9 @@ class BoxOfficeTopMovies(BasePlugin):
             str(items_count),
             settings.get("sourceMode") or "the_numbers",
             settings.get("chartUrl") or DEFAULT_CHART_URL,
+            settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL,
             settings.get("tmdbLanguage") or "en-US",
+            settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
             str(self._truthy(settings.get("showLocalizedTitles"), True)),
             settings.get("themeMode") or "auto",
@@ -716,8 +1000,12 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _updated_text(self, generated_at, source_label, stale):
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
-        prefix = "STALE " if stale else ""
+        prefix = "\u65e7\u6570\u636e " if stale and self._is_china_chart({}, source_label) else ("STALE " if stale else "")
         return f"{prefix}{source_label} {when}".strip()
+
+    def _context_summary(self, source_label, movies):
+        prefix = "\u4e2d\u56fd\u5927\u9646\u7535\u5f71\u7968\u623f: " if self._is_china_chart({}, source_label) else "North America box office: "
+        return prefix + ", ".join(self._context_movie_name(movie) for movie in movies[:3])
 
     def _parse_datetime(self, value):
         if not value:
@@ -778,29 +1066,60 @@ class BoxOfficeTopMovies(BasePlugin):
         return lines or [""]
 
     def _font(self, size, bold=False, cjk=False):
-        cjk_paths = [
-            r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
-            r"C:\Windows\Fonts\msyhbd.ttf" if bold else r"C:\Windows\Fonts\msyh.ttf",
-            str(Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"),
+        yahei_paths = self._microsoft_yahei_paths(bold)
+        cjk_paths = yahei_paths + [
+            PLUGIN_FONT_DIR / "NotoSansSC-VF.ttf",
+            STATIC_FONT_DIR / "NotoSansSC-VF.ttf",
+            STATIC_FONT_DIR / "LXGWWenKai-Regular.ttf",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         ]
-        latin_paths = [
+        latin_paths = yahei_paths + [
             r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
             r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         ]
-        paths = cjk_paths + latin_paths if cjk else latin_paths + cjk_paths
-        for path in paths:
-            try:
-                if Path(path).is_file():
-                    return self._load_font(path, size, bold)
-            except Exception:
-                pass
+        if cjk:
+            for path in cjk_paths:
+                font = self._font_from_path(path, size, bold)
+                if font is not None and self._font_has_cjk_glyphs(font):
+                    return font
+            logger.warning("No CJK-capable Microsoft YaHei font found for BoxOfficeTopMovies; trying last-resort fallback.")
+            return self._default_yahei_font(size, bold)
+
+        for path in latin_paths:
+            font = self._font_from_path(path, size, bold)
+            if font is not None:
+                return font
+        return self._default_yahei_font(size, bold)
+
+    def _microsoft_yahei_paths(self, bold=False):
+        filename = YAHEI_BOLD_FILE if bold else YAHEI_REGULAR_FILE
+        return [
+            PLUGIN_FONT_DIR / filename,
+            SPORTS_DASHBOARD_FONT_DIR / filename,
+            r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\msyhbd.ttf" if bold else r"C:\Windows\Fonts\msyh.ttf",
+        ]
+
+    def _default_yahei_font(self, size, bold=False):
+        for path in self._microsoft_yahei_paths(bold):
+            font = self._font_from_path(path, size, bold)
+            if font is not None:
+                return font
         return ImageFont.load_default()
+
+    def _font_from_path(self, path, size, bold=False):
+        try:
+            path = Path(path)
+            if path.is_file():
+                return self._load_font(str(path), size, bold)
+        except Exception:
+            return None
+        return None
 
     def _load_font(self, path, size, bold=False):
         font = ImageFont.truetype(path, size)
@@ -824,18 +1143,47 @@ class BoxOfficeTopMovies(BasePlugin):
                 pass
         return font
 
+    @staticmethod
+    def _font_has_cjk_glyphs(font):
+        signatures = set()
+        for char in CJK_FONT_SAMPLE:
+            try:
+                bbox = font.getbbox(char)
+            except Exception:
+                return False
+            if not bbox:
+                return False
+            width = max(1, bbox[2] - bbox[0] + 8)
+            height = max(1, bbox[3] - bbox[1] + 8)
+            glyph = Image.new("L", (width, height), 0)
+            glyph_draw = ImageDraw.Draw(glyph)
+            glyph_draw.text((4 - bbox[0], 4 - bbox[1]), char, font=font, fill=255)
+            if glyph.getbbox() is None:
+                return False
+            signatures.add(hashlib.sha1(glyph.tobytes()).hexdigest())
+        return len(signatures) >= min(3, len(CJK_FONT_SAMPLE))
+
     def _bounded_int(self, value, default, minimum, maximum):
         return bounded_int(value, default, minimum, maximum)
 
     def _context_movie_name(self, movie):
+        if self._is_maoyan_movie(movie):
+            chinese_title = movie.extra.get("official_chinese_title") or movie.title
+            english_title = movie.extra.get("english_title") or ""
+            return f"{chinese_title} ({english_title})" if english_title else chinese_title
         if movie.localized_title:
             return f"{movie.localized_title} ({movie.title})"
         return movie.title
 
     def _display_titles(self, movie):
+        if self._is_maoyan_movie(movie):
+            return movie.extra.get("official_chinese_title") or movie.title, movie.extra.get("english_title") or ""
         if movie.localized_title:
             return movie.localized_title, movie.title
         return movie.title, ""
+
+    def _is_maoyan_movie(self, movie):
+        return str((movie.extra or {}).get("source") or "").lower() == "maoyan"
 
 
 def _clean_text(value):
@@ -845,7 +1193,7 @@ def _clean_text(value):
 
 
 def _normalize_title(value):
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    return "".join(char.casefold() for char in str(value or "") if char.isalnum())
 
 
 def _contains_cjk(value):

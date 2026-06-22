@@ -1,6 +1,7 @@
 import sys
 import time
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -373,6 +374,45 @@ def test_fetch_statuses_repairs_bilibili_batch_failures_with_direct_api(monkeypa
     assert len(calls) == 2
 
 
+def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    source = Image.new("RGB", (32, 18), (24, 180, 240))
+    buffer = BytesIO()
+    source.save(buffer, "JPEG")
+    calls = []
+
+    class FakeResponse:
+        content = buffer.getvalue()
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        trust_env = False
+
+        def get(self, url, timeout, headers):
+            calls.append({"url": url, "timeout": timeout, "headers": headers})
+            return FakeResponse()
+
+    session = FakeSession()
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: session)
+
+    cover = plugin._load_cover_source("https://i0.hdslb.com/bfs/live/test.jpg", 30)
+
+    assert cover is not None
+    assert cover.size == (32, 18)
+    assert calls == [
+        {
+            "url": "https://i0.hdslb.com/bfs/live/test.jpg",
+            "timeout": 12,
+            "headers": plugin._cover_headers("https://i0.hdslb.com/bfs/live/test.jpg"),
+        }
+    ]
+    assert calls[0]["headers"]["Referer"] == "https://live.bilibili.com/"
+    assert list(tmp_path.glob("cover_*.png"))
+
+
 def test_generate_image_renders_card_wall_without_network():
     plugin = _plugin()
     _memory_cache(plugin)
@@ -506,7 +546,30 @@ def test_status_total_badges_use_semantic_backgrounds_in_both_themes():
     )
 
 
+def test_generate_image_returns_error_panel_when_render_crashes():
+    plugin = _plugin()
+    _memory_cache(plugin)
+    plugin._fetch_statuses = lambda rooms, api_url, timeout, fetch_avatars: [
+        {
+            "ok": True,
+            "platform": "twitch",
+            "id": "xqc",
+            "status": {"isLive": True, "owner": "xQc", "title": "Stream", "platform": "twitch", "id": "xqc"},
+        }
+    ]
+    plugin._render_dashboard = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("layout exploded"))
+
+    image = plugin.generate_image(
+        {"roomsText": "twitch|xqc|xQc", "forceRefresh": "true", "themeMode": "dark"},
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert len(set(image.crop((20, 20, 780, 180)).getdata())) > 2
+
+
 def test_generate_image_requests_avatars_by_default():
+
     plugin = _plugin()
     _memory_cache(plugin)
     seen = {}
@@ -727,6 +790,47 @@ def test_compact_card_draws_avatar_image():
     avatar_area = image.crop((24, 18, 58, 52))
     assert len(set(avatar_area.getdata())) > 2
     assert any(r != g or g != b for r, g, b in avatar_area.getdata())
+
+
+def test_compact_internal_placeholder_asset_is_exact_size_and_transparent():
+    path = Path(live_radar_module.PLUGIN_DIR) / live_radar_module.COMPACT_PLACEHOLDER_FILE
+    image = Image.open(path).convert("RGBA")
+    alpha = image.getchannel("A")
+
+    assert image.size == live_radar_module.COMPACT_PLACEHOLDER_SIZE
+    assert alpha.getextrema()[0] == 0
+    assert alpha.getextrema()[1] > 0
+    assert len(set(image.getdata())) > 8
+
+
+def test_compact_card_draws_internal_placeholder_at_native_size():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (430, 80), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    seen = {}
+    plugin._draw_compact_placeholder_asset = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    card = {
+        "platform": "twitch",
+        "id": "zard1991",
+        "label": "",
+        "is_fav": False,
+        "owner": "zard1991",
+        "title": "",
+        "heat": 0,
+        "start_time": None,
+        "cover": "",
+        "avatar": "",
+        "is_error": False,
+        "favorite_rank": None,
+        "status": "offline",
+    }
+
+    plugin._draw_compact_card(image, draw, (10, 10, 377, 48), card, theme)
+
+    assert seen["box"][2:] == live_radar_module.COMPACT_PLACEHOLDER_SIZE
+    assert seen["box"][0] > 10 + 10 + 32 + 10
+    assert seen["box"][0] + seen["box"][2] < 10 + 377 - 30
 
 
 def test_live_queue_section_fits_two_columns_of_remaining_live_rows():
@@ -984,6 +1088,22 @@ def test_snapshot_mini_section_draws_exact_size_placeholder_for_empty_fourth_slo
 
     assert visible == 3
     assert seen["box"] == (202, 89, 184, 49)
+
+
+def test_live_queue_section_draws_placeholder_for_empty_second_column_slot():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    seen = {}
+    plugin._draw_live_mini_row = lambda *_args, **_kwargs: None
+    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    cards = [{"platform": "twitch", "id": f"live-{index}", "status": "live"} for index in range(5)]
+
+    visible = plugin._draw_live_queue_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8)
+
+    assert visible == 5
+    assert seen["box"] == (202, 106, 184, 32)
 
 
 def test_snapshot_mini_section_keeps_four_thumbnails_landscape():

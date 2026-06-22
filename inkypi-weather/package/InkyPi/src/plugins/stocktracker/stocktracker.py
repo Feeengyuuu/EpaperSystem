@@ -860,10 +860,14 @@ class StockTracker(BasePlugin):
 		left, top, right, bottom = box
 		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE)
 		plot = (left + 14, top + 42, right - 14, bottom - 16)
-		draw.rectangle(plot, fill=(244, 250, 255), outline=GRID, width=1)
-		for i in range(1, 4):
-			y = plot[1] + (plot[3] - plot[1]) * i / 4
-			draw.line((plot[0] + 1, y, plot[2] - 1, y), fill=self._blend(GRID, PANEL_BLUE, 0.55), width=1)
+		chart_bg = (247, 251, 252)
+		draw.rounded_rectangle(plot, radius=4, fill=chart_bg, outline=self._blend(GRID, PANEL_BLUE, 0.65), width=1)
+		for i in range(1, 5):
+			y = plot[1] + (plot[3] - plot[1]) * i / 5
+			draw.line((plot[0] + 8, y, plot[2] - 8, y), fill=self._blend(GRID, chart_bg, 0.38), width=1)
+		for i in range(1, 5):
+			x = plot[0] + (plot[2] - plot[0]) * i / 5
+			draw.line((x, plot[1] + 4, x, plot[3] - 4), fill=self._blend(GRID, chart_bg, 0.18), width=1)
 		history_points = [
 			point
 			for point in (self._normalize_portfolio_history_entry(item) for item in (history_points or []))
@@ -873,28 +877,86 @@ class StockTracker(BasePlugin):
 		if len(values) < 2:
 			return
 
-		vmin = min(values)
-		vmax = max(values)
-		if abs(vmax - vmin) < 0.0001:
-			vmax = vmin + 1
+		raw_vmin = min(values)
+		raw_vmax = max(values)
+		vmin, vmax = self._chart_value_bounds(values)
+		line_color = self._change_color(values[-1] - values[0])
+		if line_color == MUTED:
+			line_color = ACCENT_BLUE
 
 		points = self._plot_series_points(plot, values, vmin, vmax)
+		curve_points = self._smooth_curve_points(points)
 
-		area = [(plot[0], plot[3])] + points + [(plot[2], plot[3])]
+		area = [(plot[0], plot[3])] + curve_points + [(plot[2], plot[3])]
+		if len(curve_points) >= 2:
+			draw.polygon(area, fill=self._blend(line_color, chart_bg, 0.11))
+			draw.line(curve_points, fill=self._blend(line_color, chart_bg, 0.30), width=5)
+			draw.line(curve_points, fill=line_color, width=3)
+			draw.ellipse((points[0][0] - 3, points[0][1] - 3, points[0][0] + 3, points[0][1] + 3), fill=chart_bg, outline=line_color, width=2)
 		if len(points) >= 2:
-			draw.polygon(area, fill=self._blend(ACCENT_BLUE, (244, 250, 255), 0.16))
-			draw.line(points, fill=ACCENT_BLUE, width=3)
-		if len(points) >= 2:
-			self._draw_latest_value_marker(draw, points[-1])
+			self._draw_latest_value_marker(draw, points[-1], line_color)
 		self._draw_history_markers(draw, history_points, points)
 
-		label_font = self._font(12)
-		draw.text((plot[0] + 4, plot[1] + 4), self._money(vmax, 0), fill=INK, font=label_font)
-		draw.text((plot[0] + 4, plot[3] - 16), self._money(vmin, 0), fill=MUTED, font=label_font)
+		self._draw_chart_label(draw, (plot[0] + 6, plot[1] + 6), self._money(raw_vmax, 0), INK, chart_bg)
+		self._draw_chart_label(draw, (plot[0] + 6, plot[3] - 20), self._money(raw_vmin, 0), MUTED, chart_bg)
 
-	def _draw_latest_value_marker(self, draw, point):
-		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=INK)
-		draw.ellipse((point[0] - 2, point[1] - 2, point[0] + 2, point[1] + 2), fill=ACCENT_BLUE)
+	@staticmethod
+	def _chart_value_bounds(values):
+		vmin = min(values)
+		vmax = max(values)
+		span = vmax - vmin
+		if abs(span) < 0.0001:
+			padding = max(abs(vmax) * 0.01, 1.0)
+		else:
+			padding = span * 0.12
+		return vmin - padding, vmax + padding
+
+	@staticmethod
+	def _smooth_curve_points(points, subdivisions=8):
+		if len(points) < 3:
+			return points
+		curve = [points[0]]
+		last_index = len(points) - 1
+		for idx in range(last_index):
+			p0 = points[max(idx - 1, 0)]
+			p1 = points[idx]
+			p2 = points[idx + 1]
+			p3 = points[min(idx + 2, last_index)]
+			for step in range(1, subdivisions + 1):
+				t = step / subdivisions
+				t2 = t * t
+				t3 = t2 * t
+				x = 0.5 * (
+					(2 * p1[0])
+					+ (-p0[0] + p2[0]) * t
+					+ (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+					+ (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+				)
+				y = 0.5 * (
+					(2 * p1[1])
+					+ (-p0[1] + p2[1]) * t
+					+ (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+					+ (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+				)
+				curve.append((int(round(x)), int(round(y))))
+		return curve
+
+	def _draw_chart_label(self, draw, position, text, fill, chart_bg):
+		x, y = [int(v) for v in position]
+		font = self._font(11, True)
+		width = self._text_width(draw, text, font)
+		draw.rounded_rectangle(
+			(x - 2, y - 1, x + width + 6, y + 14),
+			radius=3,
+			fill=self._blend(chart_bg, WHITE, 0.72),
+			outline=self._blend(GRID, chart_bg, 0.45),
+			width=1,
+		)
+		draw.text((x + 2, y), text, fill=fill, font=font)
+
+	def _draw_latest_value_marker(self, draw, point, color=ACCENT_BLUE):
+		draw.ellipse((point[0] - 5, point[1] - 5, point[0] + 5, point[1] + 5), fill=WHITE, outline=INK, width=1)
+		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
 
 	@staticmethod
 	def _plot_series_points(plot, values, vmin, vmax):

@@ -5,6 +5,10 @@
 *.env.backup
 
 # Local/runtime state
+output/
+__*_smoke.py
+tmp_scp_test.txt
+.tmp_github_credential_query.txt
 .learnings/
 .tmp/
 **/.tmp/

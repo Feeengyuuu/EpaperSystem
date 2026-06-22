@@ -66,6 +66,7 @@ WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
 LPL_ODDS_STATE_VERSION = "sports-dashboard-lpl-odds-v1"
 LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
+LCK_LIVE_STATE_VERSION = "sports-dashboard-lck-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
@@ -183,12 +184,14 @@ DEFAULT_VALVE_ESPORTS_CS_LIMIT = 80
 DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
 DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
+LOL_ESPORTS_ROTATION_MINUTES = 30
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
 LPL_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
 LPL_LIVE_STATS_MAX_FRAME_AGE = timedelta(minutes=10)
 FLAG_IMAGE_URL_TEMPLATE = "https://flagcdn.com/w80/{country_code_lower}.png"
 DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
+DEFAULT_LCK_LEAGUE_ID = "98767991310872058"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 ODDS_API_IO_LEAGUE_ALIASES = {
     "international-world-cup": DEFAULT_WORLD_CUP_ODDS_API_IO_LEAGUE,
@@ -200,8 +203,10 @@ MIN_LPL_SIDEBAR_WIDTH = 240
 LOCAL_TEAM_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos"))
 LOCAL_CS2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "cs2")
 LOCAL_DOTA2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "dota2")
+LOCAL_LCK_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck")
 LOCAL_DECOR_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "decor"))
 LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
+LOCAL_LCK_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck.png")
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
@@ -1504,6 +1509,10 @@ DAY_COLORS = {
     "lpl_live": (222, 45, 38),
     "lpl_tag": (255, 226, 220),
     "lpl_shadow": (255, 196, 30),
+    "lck_accent": (0, 163, 173),
+    "lck_live": (222, 45, 38),
+    "lck_tag": (218, 244, 244),
+    "lck_shadow": (0, 92, 185),
 }
 
 DEEP_NIGHT_COLORS = {
@@ -1567,6 +1576,10 @@ DEEP_NIGHT_COLORS = {
     "lpl_live": (255, 82, 74),
     "lpl_tag": (82, 34, 29),
     "lpl_shadow": (130, 76, 26),
+    "lck_accent": (107, 204, 255),
+    "lck_live": (255, 82, 74),
+    "lck_tag": (18, 64, 74),
+    "lck_shadow": (34, 84, 130),
 }
 
 _ACTIVE_COLORS = ContextVar("sports_dashboard_active_colors", default=DAY_COLORS)
@@ -2085,22 +2098,37 @@ class SportsDashboard(BasePlugin):
                 now,
             )
 
-        if self._bool_setting(settings, "valveEsportsEnabled", True):
-            try:
-                valve_selected, valve_source_state = self._load_valve_esports(settings, timezone_info, now)
-                if self._valve_esports_has_displayable_event(valve_selected):
-                    self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
-                    self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
-                    return image
-            except Exception as exc:
-                logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
+        lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
+        lol_sidebar_override = self._lol_esports_sidebar_override(settings)
+        if lol_sidebar_override:
+            esports_choice = {
+                "kind": "lol",
+                "choice": self._select_lol_esports_sidebar(lol_cards, now, league_override=lol_sidebar_override),
+            }
+        else:
+            valve_selected = None
+            valve_source_state = ""
+            if self._bool_setting(settings, "valveEsportsEnabled", True):
+                try:
+                    valve_selected, valve_source_state = self._load_valve_esports(settings, timezone_info, now)
+                except Exception as exc:
+                    logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
+            esports_choice = self._select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now)
 
-        lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
-        lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
-        lpl_selected = self._select_lpl_events(lpl_events, now)
-        self._attach_lpl_realtime_info(lpl_selected, settings)
-        self._write_lpl_live_state(lpl_selected, now, lpl_source_state)
-        self._draw_lpl_sidebar(image, left_width, lpl_selected, lpl_source_state, now)
+        if esports_choice.get("kind") == "valve":
+            valve_selected = esports_choice["selected"]
+            valve_source_state = esports_choice["source_state"]
+            self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
+            self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
+            return image
+
+        lol_choice = esports_choice["choice"]
+        lol_selected = lol_choice["selected"]
+        lol_source_state = lol_choice["source_state"]
+        lol_league_key = lol_choice["league_key"]
+        self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
+        self._write_lol_live_state(lol_selected, now, lol_source_state, league_key=lol_league_key)
+        self._draw_lpl_sidebar(image, left_width, lol_selected, lol_source_state, now, league_key=lol_league_key)
         return image
 
     @staticmethod
@@ -2309,6 +2337,227 @@ class SportsDashboard(BasePlugin):
         except Exception as exc:
             logger.warning("LPL schedule fetch failed: %s", exc)
         return self._fallback_lpl_events(timezone_info), "CACHE DATA"
+
+    def _load_lck_events(self, settings, timezone_info):
+        try:
+            events = self._fetch_lck_events(settings, timezone_info)
+            if events:
+                return events, "LCK LIVE DATA"
+        except Exception as exc:
+            logger.warning("LCK schedule fetch failed: %s", exc)
+        return [], "LCK NO DATA"
+
+    def _load_lol_esports_sidebar_cards(self, settings, device_config, timezone_info, now):
+        lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
+        lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
+        lpl_selected = self._select_lpl_events(lpl_events, now)
+        cards = [
+            {
+                "league_key": "LPL",
+                "selected": lpl_selected,
+                "source_state": lpl_source_state,
+                "priority": 0,
+            }
+        ]
+        if self._bool_setting(settings, "lckEnabled", True):
+            lck_events, lck_source_state = self._load_lck_events(settings, timezone_info)
+            lck_selected = self._select_lck_events(lck_events, now)
+            cards.append(
+                {
+                    "league_key": "LCK",
+                    "selected": lck_selected,
+                    "source_state": lck_source_state,
+                    "priority": 1,
+                }
+            )
+        return cards
+
+    def _load_lol_esports_sidebar(self, settings, device_config, timezone_info, now):
+        league_override = self._lol_esports_sidebar_override(settings)
+        cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
+        return self._select_lol_esports_sidebar(cards, now, league_override=league_override)
+
+    @staticmethod
+    def _lol_esports_sidebar_override(settings=None):
+        settings = settings or {}
+        configured = str(
+            settings.get("lolEsportsSidebarOverride")
+            or settings.get("lolSidebarLeagueOverride")
+            or ""
+        ).strip().upper()
+        if configured in {"LPL", "LCK"}:
+            return configured
+        if SportsDashboard._bool_setting(settings, "lckPreviewEnabled", False):
+            return "LCK"
+        if (Path(__file__).resolve().parent / "lck_preview.flag").exists():
+            return "LCK"
+        return ""
+
+    @staticmethod
+    def _select_lol_esports_sidebar(cards, now, league_override=None):
+        cards = [dict(card) for card in (cards or []) if card and card.get("selected") is not None]
+        if not cards:
+            return SportsDashboard._right_sidebar_default_lpl_choice(cards, now)
+
+        override = str(league_override or "").strip().upper()
+        if override:
+            for card in cards:
+                if str(card.get("league_key") or "").strip().upper() == override:
+                    return card
+
+        displayable = [card for card in cards if SportsDashboard._lol_selected_has_displayable_event(card.get("selected"))]
+        if not displayable:
+            return SportsDashboard._right_sidebar_default_lpl_choice(cards, now)
+
+        live_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 0]
+        if live_cards:
+            return sorted(live_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
+
+        upcoming_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 1]
+        if upcoming_cards:
+            return sorted(upcoming_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
+
+        return SportsDashboard._right_sidebar_default_lpl_choice(displayable, now)
+
+    @staticmethod
+    def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now):
+        lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
+        candidates = []
+        for card in lol_cards:
+            phase = SportsDashboard._lol_sidebar_candidate_phase(card)
+            if phase is None:
+                continue
+            candidates.append(
+                {
+                    "kind": "lol",
+                    "choice": card,
+                    "phase": phase,
+                    "priority": SportsDashboard._right_sidebar_lol_priority(card),
+                    "tie": SportsDashboard._right_sidebar_lol_tie_value(card),
+                }
+            )
+
+        for card in SportsDashboard._valve_esports_active_cards(valve_selected):
+            candidates.append(
+                {
+                    "kind": "valve",
+                    "selected": SportsDashboard._valve_esports_selected_for_card(valve_selected, card),
+                    "source_state": card.get("source_state") or valve_source_state or "VALVE DATA",
+                    "phase": 0,
+                    "priority": SportsDashboard._right_sidebar_valve_priority(card),
+                    "tie": str(card.get("event_name") or ""),
+                }
+            )
+
+        if candidates:
+            return sorted(candidates, key=lambda item: (item["phase"], item["priority"], item.get("tie") or ""))[0]
+        return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
+
+    @staticmethod
+    def _lol_sidebar_candidate_phase(card):
+        selected = (card or {}).get("selected") or {}
+        if selected.get("live"):
+            return 0
+        if selected.get("upcoming"):
+            return 1
+        if str((card or {}).get("league_key") or "").strip().upper() == "LPL":
+            return 2
+        return None
+
+    @staticmethod
+    def _right_sidebar_lol_sort_key(card):
+        return (SportsDashboard._right_sidebar_lol_priority(card), SportsDashboard._right_sidebar_lol_tie_value(card))
+
+    @staticmethod
+    def _right_sidebar_lol_priority(card):
+        league_key = str((card or {}).get("league_key") or "").strip().upper()
+        if league_key == "LPL":
+            return 0
+        if league_key == "LCK":
+            return 1
+        try:
+            return int((card or {}).get("priority") or 99)
+        except (TypeError, ValueError):
+            return 99
+
+    @staticmethod
+    def _right_sidebar_lol_tie_value(card):
+        value = SportsDashboard._lol_sidebar_main_timestamp(card, float("inf"))
+        return value if value is not None else float("inf")
+
+    @staticmethod
+    def _right_sidebar_valve_priority(card):
+        series = str((card or {}).get("series") or "").strip().upper()
+        if series == "CS":
+            return 2
+        if series == "TI":
+            return 3
+        try:
+            return 4 + int((card or {}).get("order") or 0)
+        except (TypeError, ValueError):
+            return 99
+
+    @staticmethod
+    def _right_sidebar_default_lpl_choice(cards, now):
+        for card in cards or []:
+            if str((card or {}).get("league_key") or "").strip().upper() == "LPL":
+                return card
+        return {"league_key": "LPL", "selected": SportsDashboard._select_lpl_events([], now), "source_state": "CACHE DATA", "priority": 0}
+
+    @staticmethod
+    def _valve_esports_active_cards(selected):
+        cards = (selected or {}).get("cards") or []
+        return sorted(
+            [card for card in cards if card and card.get("main") and card.get("window_active")],
+            key=lambda card: (
+                SportsDashboard._valve_esports_status_rank(card.get("status")),
+                SportsDashboard._right_sidebar_valve_priority(card),
+                str(card.get("event_name") or ""),
+            ),
+        )
+
+    @staticmethod
+    def _valve_esports_selected_for_card(selected, card):
+        selected_copy = dict(selected or {})
+        selected_copy["primary"] = card
+        selected_copy["rotation_pool"] = [item.get("series") for item in SportsDashboard._valve_esports_active_cards(selected_copy)]
+        return selected_copy
+
+    @staticmethod
+    def _lol_selected_has_displayable_event(selected):
+        selected = selected or {}
+        return bool(
+            selected.get("live")
+            or selected.get("upcoming")
+            or selected.get("recent")
+            or selected.get("main")
+            or selected.get("featured_event")
+        )
+
+    @staticmethod
+    def _rotate_lol_sidebar_cards(cards, now):
+        cards = sorted(cards or [], key=lambda card: int(card.get("priority") or 0))
+        if not cards:
+            return None
+        if len(cards) == 1:
+            return cards[0]
+        try:
+            timestamp = int(now.timestamp()) if isinstance(now, datetime) else 0
+        except (OverflowError, OSError, ValueError):
+            timestamp = 0
+        bucket = timestamp // max(60, LOL_ESPORTS_ROTATION_MINUTES * 60)
+        return cards[bucket % len(cards)]
+
+    @staticmethod
+    def _lol_sidebar_main_timestamp(card, default):
+        selected = (card or {}).get("selected") or {}
+        event = selected.get("main")
+        if not event and selected.get("upcoming"):
+            event = selected["upcoming"][0]
+        start = (event or {}).get("start")
+        if isinstance(start, datetime):
+            return start.timestamp()
+        return default
 
     def _load_nba_events(self, settings, timezone_info):
         try:
@@ -6310,7 +6559,25 @@ class SportsDashboard(BasePlugin):
         return any(len(alias) >= 4 and (alias in normalized or normalized in alias) for alias in aliases)
 
     def _fetch_lpl_events(self, settings, timezone_info):
-        league_id = str(settings.get("lplLeagueId") or DEFAULT_LPL_LEAGUE_ID).strip()
+        return self._fetch_lol_esports_events(
+            settings,
+            timezone_info,
+            "lplLeagueId",
+            DEFAULT_LPL_LEAGUE_ID,
+            "LPL",
+        )
+
+    def _fetch_lck_events(self, settings, timezone_info):
+        return self._fetch_lol_esports_events(
+            settings,
+            timezone_info,
+            "lckLeagueId",
+            DEFAULT_LCK_LEAGUE_ID,
+            "LCK",
+        )
+
+    def _fetch_lol_esports_events(self, settings, timezone_info, league_setting_key, default_league_id, league_key):
+        league_id = str(settings.get(league_setting_key) or default_league_id).strip()
         url = LOLESPORTS_SCHEDULE_URL.format(league_id=league_id)
         session = get_http_session()
         response = session.get(
@@ -6321,12 +6588,20 @@ class SportsDashboard(BasePlugin):
         response.raise_for_status()
         events = self._parse_lpl_events(response.json(), timezone_info)
         now = datetime.now(timezone_info)
-        if self._bool_setting(settings, "lplLiveEndpointEnabled", True) and self._should_poll_lpl_live_endpoint(events, now):
+        live_endpoint_key = "lplLiveEndpointEnabled" if str(league_key).upper() == "LPL" else "lckLiveEndpointEnabled"
+        if self._bool_setting(settings, live_endpoint_key, True) and self._should_poll_lpl_live_endpoint(events, now):
             try:
                 live_events = self._fetch_lpl_live_events(settings, timezone_info)
                 events = self._merge_lpl_live_events(events, live_events, league_id)
             except Exception as exc:
-                logger.warning("LPL live endpoint fetch failed: %s", exc)
+                logger.warning("%s live endpoint fetch failed: %s", league_key, exc)
+        return self._annotate_lol_league_key(events, league_key)
+
+    @staticmethod
+    def _annotate_lol_league_key(events, league_key):
+        key = str(league_key or "").strip().upper()
+        for event in events or []:
+            event["league_key"] = key
         return events
 
     def _fetch_lpl_live_events(self, settings, timezone_info):
@@ -6667,6 +6942,14 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _select_lpl_events(events, now):
+        return SportsDashboard._select_lol_events(events, now, include_lpl_featured=True)
+
+    @staticmethod
+    def _select_lck_events(events, now):
+        return SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
+
+    @staticmethod
+    def _select_lol_events(events, now, include_lpl_featured=True):
         live = [event for event in events if SportsDashboard._is_lpl_live_event(event, now)]
         upcoming = [
             event for event in events
@@ -6686,9 +6969,11 @@ class SportsDashboard(BasePlugin):
             reverse=True,
         )
         main = live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None))
-        featured_event = SportsDashboard._lpl_featured_event_for_selection(live, upcoming, now)
-        if not featured_event and not live and not upcoming:
-            featured_event = SportsDashboard._lpl_msi_featured_event(now)
+        featured_event = None
+        if include_lpl_featured:
+            featured_event = SportsDashboard._lpl_featured_event_for_selection(live, upcoming, now)
+            if not featured_event and not live and not upcoming:
+                featured_event = SportsDashboard._lpl_msi_featured_event(now)
         featured_event_page = bool(featured_event and not live and not upcoming)
         return {
             "live": live,
@@ -6905,10 +7190,18 @@ class SportsDashboard(BasePlugin):
             logger.warning("Failed to write F1 live refresh state: %s", exc)
 
     def _write_lpl_live_state(self, selected, now, source_state):
+        self._write_lol_live_state(selected, now, source_state, league_key="LPL")
+
+    def _write_lck_live_state(self, selected, now, source_state):
+        self._write_lol_live_state(selected, now, source_state, league_key="LCK")
+
+    def _write_lol_live_state(self, selected, now, source_state, league_key="LPL"):
+        key = str(league_key or "LPL").strip().upper()
         live_events = (selected or {}).get("live") or []
         event = live_events[0] if live_events else None
         payload = {
-            "version": LPL_LIVE_STATE_VERSION,
+            "version": LCK_LIVE_STATE_VERSION if key == "LCK" else LPL_LIVE_STATE_VERSION,
+            "league_key": key,
             "updated_at": now.astimezone(timezone.utc).isoformat(),
             "source_state": source_state,
             "has_live": bool(event),
@@ -6931,9 +7224,10 @@ class SportsDashboard(BasePlugin):
                 }
             )
         try:
-            self._write_json_file(self._lpl_live_state_path(), payload)
+            path = self._lck_live_state_path() if key == "LCK" else self._lpl_live_state_path()
+            self._write_json_file(path, payload)
         except OSError as exc:
-            logger.warning("Failed to write LPL live refresh state: %s", exc)
+            logger.warning("Failed to write %s live refresh state: %s", key, exc)
 
     def _write_worldcup_live_state(self, selected, now, source_state):
         live_events = (selected or {}).get("live") or []
@@ -6978,7 +7272,7 @@ class SportsDashboard(BasePlugin):
         except OSError as exc:
             logger.warning("Failed to write World Cup live refresh state: %s", exc)
 
-    def _attach_lpl_realtime_info(self, selected, settings):
+    def _attach_lpl_realtime_info(self, selected, settings, league_key="LPL"):
         if not self._bool_setting(settings, "lplLiveStatsEnabled", True):
             return selected
         live_events = (selected or {}).get("live") or []
@@ -6986,7 +7280,7 @@ class SportsDashboard(BasePlugin):
         if not event:
             return selected
         try:
-            little_round = self._fetch_lpl_realtime_info(event, settings)
+            little_round = self._fetch_lpl_realtime_info(event, settings, league_key=league_key)
         except Exception as exc:
             logger.warning("LPL live stats fetch failed: %s", exc)
             return selected
@@ -6994,7 +7288,7 @@ class SportsDashboard(BasePlugin):
             event["little_round"] = little_round
         return selected
 
-    def _fetch_lpl_realtime_info(self, event, settings=None):
+    def _fetch_lpl_realtime_info(self, event, settings=None, league_key="LPL"):
         settings = settings or {}
         try:
             little_round = self._fetch_lpl_riot_realtime_info(event)
@@ -7003,7 +7297,7 @@ class SportsDashboard(BasePlugin):
             little_round = None
         if little_round:
             return little_round
-        if self._bool_setting(settings, "lplBo3LiveApiEnabled", True):
+        if str(league_key or "LPL").strip().upper() == "LPL" and self._bool_setting(settings, "lplBo3LiveApiEnabled", True):
             try:
                 return self._fetch_lpl_bo3_little_round(event)
             except Exception as exc:
@@ -7521,6 +7815,9 @@ class SportsDashboard(BasePlugin):
 
     def _lpl_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "lpl_live_state.json"
+
+    def _lck_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "lck_live_state.json"
 
     def _nba_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "nba_live_state.json"
@@ -16712,7 +17009,7 @@ class SportsDashboard(BasePlugin):
         card_x1 = right_x + 12
         card_x2 = right_x + right_w - 12
         card_y2 = y + 188
-        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["lpl_shadow"])
+        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["valve_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
 
@@ -16931,7 +17228,40 @@ class SportsDashboard(BasePlugin):
             bits.append(f"{max(1, duration // 60)}m")
         return "  |  ".join(bits) or str(event.get("source") or "Valve")
 
-    def _draw_lpl_sidebar(self, image, left_width, selected, source_state, now):
+    @staticmethod
+    def _lol_sidebar_config(league_key):
+        key = str(league_key or "LPL").strip().upper()
+        if key == "LCK":
+            return {
+                "key": "LCK",
+                "name": "LCK",
+                "logo_path": LOCAL_LCK_LOGO_PATH,
+                "accent": "lck_accent",
+                "live": "lck_live",
+                "tag": "lck_tag",
+                "shadow": "lck_shadow",
+                "empty_schedule": "No LCK schedule",
+                "empty_upcoming": "No more LCK schedule",
+            }
+        return {
+            "key": "LPL",
+            "name": "LPL",
+            "logo_path": LOCAL_LPL_LOGO_PATH,
+            "accent": "lpl_accent",
+            "live": "lpl_live",
+            "tag": "lpl_tag",
+            "shadow": "lpl_shadow",
+            "empty_schedule": "No LPL schedule",
+            "empty_upcoming": "No more LPL schedule",
+        }
+
+    @staticmethod
+    def _lol_sidebar_color(league_key, role):
+        config = SportsDashboard._lol_sidebar_config(league_key)
+        return COLORS[config.get(role, "lpl_accent")]
+
+    def _draw_lpl_sidebar(self, image, left_width, selected, source_state, now, league_key="LPL"):
+        config = self._lol_sidebar_config(league_key)
         draw = ImageDraw.Draw(image)
         width, height = image.size
         right_x = left_width + LPL_SEPARATOR_WIDTH
@@ -16941,7 +17271,7 @@ class SportsDashboard(BasePlugin):
         if LPL_SEPARATOR_WIDTH > 2:
             draw.line((left_width + 2, 0, left_width + 2, height), fill=COLORS["line"], width=1)
         draw.rectangle((right_x, 0, width - 1, height - 1), fill=COLORS["panel"])
-        self._draw_halftone(draw, (right_x, 0, width - 1, height - 1), COLORS["lpl_shadow"], COLORS["panel"], 20, 1)
+        self._draw_halftone(draw, (right_x, 0, width - 1, height - 1), COLORS[config["shadow"]], COLORS["panel"], 20, 1)
         draw.line((right_x, 0, right_x, height), fill=COLORS["border"], width=1)
 
         live = selected.get("live") or []
@@ -16951,12 +17281,12 @@ class SportsDashboard(BasePlugin):
         featured_event_page = bool(selected.get("featured_event_page"))
         main_event = live[0] if live else (upcoming[0] if upcoming else selected.get("main"))
         remaining_upcoming = [event for event in upcoming if event is not main_event][:2]
-        logo_path = featured_event.get("logo_path") if (featured_event and (featured_event_page or live or upcoming)) else None
+        logo_path = featured_event.get("logo_path") if (featured_event and (featured_event_page or live or upcoming)) else (None if config["key"] == "LPL" else config["logo_path"])
 
         header_y = 12
 
-        self._draw_lpl_logo(image, draw, right_x + 13, header_y + 5, 74, 38, logo_path=logo_path)
-        source_label = "MSI WATCH" if featured_event_page else self._source_label(source_state)
+        self._draw_lpl_logo(image, draw, right_x + 13, header_y + 5, 74, 38, logo_path=logo_path, fallback_text=config["key"])
+        source_label = "MSI WATCH" if featured_event_page and config["key"] == "LPL" else self._source_label(source_state)
         source_label, source_font = self._fit_text(draw, source_label, 62, 10, bold=True, min_size=8)
         self._draw_text_in_box(
             draw,
@@ -16980,7 +17310,7 @@ class SportsDashboard(BasePlugin):
             return
 
         msi_next_filler_event = self._lpl_msi_next_filler_event(now, featured_event)
-        self._draw_lpl_focus_card(image, draw, right_x, right_w, 78, main_event, now, bool(live))
+        self._draw_lpl_focus_card(image, draw, right_x, right_w, 78, main_event, now, bool(live), league_key=league_key)
         self._draw_lpl_next_rows(
             image,
             draw,
@@ -16992,10 +17322,11 @@ class SportsDashboard(BasePlugin):
             bool(live),
             msi_next_filler=bool(msi_next_filler_event),
             msi_next_start=(msi_next_filler_event or {}).get("start"),
+            league_key=league_key,
         )
-        self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2])
+        self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
 
-    def _draw_lpl_logo(self, image, draw, x, y, width, height, logo_path=None):
+    def _draw_lpl_logo(self, image, draw, x, y, width, height, logo_path=None, fallback_text=None):
         x = int(x)
         y = int(y)
         width = int(width)
@@ -17005,7 +17336,7 @@ class SportsDashboard(BasePlugin):
         if logo:
             image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
             return
-        fallback_text = "MSI" if logo_path == LOCAL_MSI_LOGO_PATH else "LPL"
+        fallback_text = fallback_text or ("MSI" if logo_path == LOCAL_MSI_LOGO_PATH else "LPL")
         draw.rounded_rectangle(
             (x, y, x + width, y + height),
             radius=5,
@@ -17171,23 +17502,24 @@ class SportsDashboard(BasePlugin):
         else:
             self._draw_text_in_box(draw, (left, top, right, bottom), fitted, font, COLORS["text"], align=align)
 
-    def _draw_lpl_focus_card(self, image, draw, right_x, right_w, y, event, now, is_live):
+    def _draw_lpl_focus_card(self, image, draw, right_x, right_w, y, event, now, is_live, league_key="LPL"):
         card_x1 = right_x + 12
         card_x2 = right_x + right_w - 12
         card_y2 = y + 154
-        accent = COLORS["lpl_live"] if is_live else COLORS["lpl_accent"]
-        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["lpl_shadow"])
+        config = self._lol_sidebar_config(league_key)
+        accent = COLORS[config["live"]] if is_live else COLORS[config["accent"]]
+        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS[config["shadow"]])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
 
         if not event:
-            draw.text((card_x1 + 20, y + 58), "No LPL schedule", font=self._font(19, True), fill=COLORS["text"])
+            draw.text((card_x1 + 20, y + 58), config["empty_schedule"], font=self._font(19, True), fill=COLORS["text"])
             return
 
         tag = self._lpl_focus_tag(is_live)
         tag_w = 112 if is_live else 86
         tag_text, tag_font = self._fit_text(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
-        tag_fill = COLORS["lpl_live"] if is_live else COLORS["lpl_tag"]
+        tag_fill = COLORS[config["live"]] if is_live else COLORS[config["tag"]]
         draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=tag_fill, outline=COLORS["border"], width=1)
         draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
         date_text = event["start"].strftime("%m/%d")
@@ -17209,10 +17541,10 @@ class SportsDashboard(BasePlugin):
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
         score_text = self._score_label(event).upper()
         center_score = score_text if is_live and score_text != "VS" else "VS"
-        team_a_label = self._lpl_display_team_from_event(event, "a")
-        team_b_label = self._lpl_display_team_from_event(event, "b")
+        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
+        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
 
-        stage = self._lpl_stage_label(event)
+        stage = self._lpl_stage_label(event, league_key=league_key)
         if not is_live:
             stage_text, stage_font = self._fit_text(draw, stage, 88, 12, bold=True, min_size=7)
             self._draw_centered_in_box(
@@ -17220,7 +17552,7 @@ class SportsDashboard(BasePlugin):
                 (center_x - 44, y + 76, center_x + 44, y + 88),
                 stage_text,
                 stage_font,
-                COLORS["lpl_accent"],
+                COLORS[config["accent"]],
             )
         self._draw_centered(draw, (center_x, y + (98 if not is_live else 86)), center_score, self._font(13, True), COLORS["text"])
         if is_live:
@@ -17239,7 +17571,7 @@ class SportsDashboard(BasePlugin):
             self._draw_lpl_odds_text(draw, (right_area[0], y + 132, right_area[1], y + 144), odds.get("team_b"), max_size=11)
         elif is_live:
             block_text, block_font = self._fit_text(draw, stage, card_x2 - card_x1 - 34, 12, bold=True, min_size=8)
-            draw.text((card_x1 + 17, y + 136), block_text, font=block_font, fill=COLORS["lpl_accent"])
+            draw.text((card_x1 + 17, y + 136), block_text, font=block_font, fill=COLORS[config["accent"]])
 
     def _draw_lpl_little_round(self, draw, center_x, y, event):
         little_round = (event or {}).get("little_round") or {}
@@ -17257,10 +17589,11 @@ class SportsDashboard(BasePlugin):
     def _lpl_focus_tag(is_live):
         return "NOW PLAYING" if is_live else "NEXT MATCH"
 
-    def _draw_lpl_next_rows(self, image, draw, right_x, right_w, y, events, now, is_live, msi_next_filler=False, msi_next_start=None):
-        self._draw_section_header(draw, right_x, right_w, y, "UPCOMING", COLORS["lpl_accent"])
+    def _draw_lpl_next_rows(self, image, draw, right_x, right_w, y, events, now, is_live, msi_next_filler=False, msi_next_start=None, league_key="LPL"):
+        config = self._lol_sidebar_config(league_key)
+        self._draw_section_header(draw, right_x, right_w, y, "UPCOMING", COLORS[config["accent"]])
         if not events:
-            draw.text((right_x + 18, y + 38), "No more LPL schedule", font=self._font(14, True), fill=COLORS["muted"])
+            draw.text((right_x + 18, y + 38), config["empty_upcoming"], font=self._font(14, True), fill=COLORS["muted"])
             self._draw_lpl_empty_upcoming_filler(
                 image,
                 right_x,
@@ -17274,7 +17607,7 @@ class SportsDashboard(BasePlugin):
         row_y = y + 30
         visible_events = events[:2]
         for index, event in enumerate(visible_events):
-            self._draw_lpl_next_row(image, draw, right_x, right_w, row_y + index * 48, event, now)
+            self._draw_lpl_next_row(image, draw, right_x, right_w, row_y + index * 48, event, now, league_key=league_key)
         self._draw_lpl_empty_upcoming_filler(
             image,
             right_x,
@@ -17322,7 +17655,7 @@ class SportsDashboard(BasePlugin):
         fitted, font = self._fit_text(draw, label, right - left - 8, 11, bold=True, min_size=8)
         self._draw_centered_in_box(draw, (left + 2, top, right - 2, bottom), fitted, font, (255, 239, 181))
 
-    def _draw_lpl_next_row(self, image, draw, right_x, right_w, y, event, now):
+    def _draw_lpl_next_row(self, image, draw, right_x, right_w, y, event, now, league_key="LPL"):
         row_x1 = right_x + 14
         row_x2 = right_x + right_w - 14
         draw.rounded_rectangle(
@@ -17332,7 +17665,7 @@ class SportsDashboard(BasePlugin):
             outline=COLORS["border"],
             width=1,
         )
-        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + 43), fill=COLORS["lpl_accent"])
+        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + 43), fill=self._lol_sidebar_color(league_key, "accent"))
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), 44, 11, bold=True, min_size=8)
         draw.text((row_x1 + 12, y + 1), date_text, font=date_font, fill=COLORS["muted"])
         time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 76, 12, bold=True, min_size=9)
@@ -17345,13 +17678,13 @@ class SportsDashboard(BasePlugin):
         logo_y = int(team_top + (team_bottom - team_top - logo_size) / 2)
         left_logo_x = row_x1 + 12
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
-        team_a_label = self._lpl_display_team_from_event(event, "a")
+        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
         team_a, font_a = self._fit_text(draw, team_a_label, 45, 13, bold=True, min_size=8)
         self._draw_text_in_box(draw, (row_x1 + 36, team_top, center_x - 16, team_bottom), team_a, font_a, COLORS["text"])
         self._draw_centered_in_box(draw, (center_x - 13, team_top, center_x + 13, team_bottom), "VS", self._font(10, True), COLORS["muted"])
         logo_x = row_x2 - 12 - logo_size
         self._draw_team_logo(image, draw, event.get("team_b_logo"), logo_x, logo_y, logo_size, event["team_b"])
-        team_b_label = self._lpl_display_team_from_event(event, "b")
+        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
         team_b, font_b = self._fit_text(draw, team_b_label, 45, 13, bold=True, min_size=8)
         self._draw_text_in_box(draw, (center_x + 16, team_top, logo_x - 5, team_bottom), team_b, font_b, COLORS["text"], align="right")
         odds = event.get("odds") or {}
@@ -17359,16 +17692,16 @@ class SportsDashboard(BasePlugin):
             self._draw_lpl_odds_text(draw, (row_x1 + 36, y + 31, center_x - 16, y + 43), odds.get("team_a"), max_size=9, align="left")
             self._draw_lpl_odds_text(draw, (center_x + 16, y + 31, logo_x - 5, y + 43), odds.get("team_b"), max_size=9, align="right")
 
-    def _draw_lpl_recent_rows(self, image, draw, right_x, right_w, y, events):
-        self._draw_section_header(draw, right_x, right_w, y, "RECENT", COLORS["lpl_accent"])
+    def _draw_lpl_recent_rows(self, image, draw, right_x, right_w, y, events, league_key="LPL"):
+        self._draw_section_header(draw, right_x, right_w, y, "RECENT", self._lol_sidebar_color(league_key, "accent"))
         if not events:
             draw.text((right_x + 18, y + 42), "No recent results", font=self._font(16, True), fill=COLORS["text"])
             return
         row_y = y + 28
         for index, event in enumerate(events[:2]):
-            self._draw_lpl_recent_result_row(image, draw, right_x, right_w, row_y + index * 40, event)
+            self._draw_lpl_recent_result_row(image, draw, right_x, right_w, row_y + index * 40, event, league_key=league_key)
 
-    def _draw_lpl_recent_result_row(self, image, draw, right_x, right_w, y, event):
+    def _draw_lpl_recent_result_row(self, image, draw, right_x, right_w, y, event, league_key="LPL"):
         row_x1 = right_x + 14
         row_x2 = right_x + right_w - 14
         draw.line((row_x1, y - 6, row_x2, y - 6), fill=COLORS["line"], width=1)
@@ -17382,7 +17715,7 @@ class SportsDashboard(BasePlugin):
         left_text_x = left_logo_x + logo_size + 5
         left_text_w = max(22, score_x - left_text_x - 6)
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y + 7, logo_size, event["team_a"])
-        team_a_label = self._lpl_display_team_from_event(event, "a")
+        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
         team_a, font_a = self._fit_text(draw, team_a_label, left_text_w, 12, bold=True, min_size=8)
         self._draw_text_in_box(draw, (left_text_x, y, score_x - 6, y + row_h), team_a, font_a, COLORS["text"])
         score = self._score_label(event)
@@ -17393,7 +17726,7 @@ class SportsDashboard(BasePlugin):
         right_text_x1 = score_x + score_w + 6
         right_text_w = max(22, right_text_x2 - right_text_x1)
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y + 7, logo_size, event["team_b"])
-        team_b_label = self._lpl_display_team_from_event(event, "b")
+        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
         team_b, font_b = self._fit_text(draw, team_b_label, right_text_w, 12, bold=True, min_size=8)
         self._draw_text_in_box(draw, (right_text_x1, y, right_text_x2, y + row_h), team_b, font_b, COLORS["text"], align="right")
 
@@ -17417,12 +17750,16 @@ class SportsDashboard(BasePlugin):
         return text
 
     @staticmethod
-    def _lpl_display_team_from_event(event, side):
+    def _lpl_display_team_from_event(event, side, league_key="LPL"):
         key = "team_a" if side == "a" else "team_b"
-        return SportsDashboard._lpl_display_team_name((event or {}).get(key))
+        value = (event or {}).get(key)
+        if str(league_key or "LPL").strip().upper() == "LPL":
+            return SportsDashboard._lpl_display_team_name(value)
+        text = str(value or "").strip()
+        return text or "TBD"
 
     @staticmethod
-    def _lpl_stage_label(event):
+    def _lpl_stage_label(event, league_key="LPL"):
         event = event or {}
         for key in ("stage_label", "round_label", "stage", "round", "phase", "block"):
             value = event.get(key)
@@ -17433,7 +17770,7 @@ class SportsDashboard(BasePlugin):
             value = event.get(key)
             if value:
                 return SportsDashboard._format_lpl_stage_label(value)
-        return "LPL"
+        return SportsDashboard._lol_sidebar_config(league_key)["key"]
 
     @staticmethod
     def _score_label(event):
@@ -17441,7 +17778,7 @@ class SportsDashboard(BasePlugin):
             return "vs"
         return f"{event['wins_a']}-{event['wins_b']}"
 
-    def _draw_lpl_main_card(self, draw, right_x, right_w, y, event, now, is_live):
+    def _draw_lpl_main_card(self, draw, right_x, right_w, y, event, now, is_live, league_key="LPL"):
         draw.rounded_rectangle(
             (right_x + 12, y, right_x + right_w - 12, y + 130),
             radius=6,
@@ -17469,8 +17806,8 @@ class SportsDashboard(BasePlugin):
         else:
             center = "vs"
         team_col_w = max(64, int((right_w - 78) / 2))
-        team_a_label = self._lpl_display_team_from_event(event, "a")
-        team_b_label = self._lpl_display_team_from_event(event, "b")
+        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
+        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
         team_a, font_a = self._fit_text(draw, team_a_label, team_col_w, 31, bold=True, min_size=18)
         team_b, font_b = self._fit_text(draw, team_b_label, team_col_w, 31, bold=True, min_size=18)
         center_x = right_x + right_w / 2
@@ -17487,8 +17824,8 @@ class SportsDashboard(BasePlugin):
             row_y = y + 34 + index * 42
             self._draw_schedule_row(draw, right_x, right_w, row_y, event)
 
-    def _draw_lpl_recent(self, draw, right_x, right_w, y, events):
-        self._draw_section_header(draw, right_x, right_w, y, "RECENT", COLORS["lpl_accent"])
+    def _draw_lpl_recent(self, draw, right_x, right_w, y, events, league_key="LPL"):
+        self._draw_section_header(draw, right_x, right_w, y, "RECENT", self._lol_sidebar_color(league_key, "accent"))
         for index, event in enumerate(events):
             row_y = y + 32 + index * 32
             draw.line((right_x + 14, row_y - 7, right_x + right_w - 14, row_y - 7), fill=COLORS["line"], width=1)
@@ -17535,10 +17872,13 @@ class SportsDashboard(BasePlugin):
         code = "".join(ch for ch in str(team_code or "").strip().lower() if ch.isalnum() or ch in {"_", "-"})
         if not code:
             return []
-        return [
-            os.path.join(LOCAL_TEAM_LOGO_DIR, f"{code}{extension}")
-            for extension in (".png", ".webp", ".jpg", ".jpeg")
-        ]
+        candidates = []
+        for directory in (LOCAL_TEAM_LOGO_DIR, LOCAL_LCK_TEAM_LOGO_DIR):
+            candidates.extend(
+                os.path.join(directory, f"{code}{extension}")
+                for extension in (".png", ".webp", ".jpg", ".jpeg")
+            )
+        return candidates
 
     @staticmethod
     def _load_local_team_logo(team_code, size):

@@ -1,17 +1,19 @@
 <div style="margin-bottom:14px;">
     <div style="font-family: 'Helvetica Neue', Arial, sans-serif; font-size:1em; color:var(--text-primary); font-weight:500; background:var(--bg-secondary); padding:12px 14px; border-left:3px solid var(--border-color); border-radius:2px; line-height:1.4; max-width:100%;">
-        Displays a Mainland China movie chart using official weekly reports when available, with TMDb China data as a fallback for posters and live ranking.
+        Displays the North America weekly box office chart using The Numbers, with TMDb only used for poster/title enrichment.
     </div>
 </div>
 
 <div class="form-group">
     <label for="sourceMode" class="form-label">Chart source:</label>
     <select id="sourceMode" name="sourceMode" class="form-input">
-        <option value="auto">Auto: official weekly report, then TMDb China</option>
-        <option value="zgdypw_weekly">China Film Data weekly report</option>
-        <option value="tmdb_cn_now_playing" selected>TMDb China now playing</option>
-        <option value="tmdb_cn_popular">TMDb Mainland China popular movies</option>
+        <option value="the_numbers" selected>The Numbers: North America weekly box office</option>
     </select>
+</div>
+
+<div class="form-group">
+    <label for="chartUrl" class="form-label">The Numbers chart URL:</label>
+    <input id="chartUrl" name="chartUrl" class="form-input" value="https://www.the-numbers.com/weekend-box-office-chart" spellcheck="false">
 </div>
 
 <div class="form-group">
@@ -23,14 +25,16 @@
     </select>
 </div>
 
-<div class="form-group">
-    <label for="reportsUrl" class="form-label">Official reports URL:</label>
-    <input id="reportsUrl" name="reportsUrl" class="form-input" value="https://www.zgdypw.cn/sc/sjbg/" spellcheck="false">
-</div>
 
 <div class="form-group">
     <label for="tmdbLanguage" class="form-label">TMDb language:</label>
-    <input id="tmdbLanguage" name="tmdbLanguage" class="form-input" value="zh-CN" spellcheck="false">
+    <input id="tmdbLanguage" name="tmdbLanguage" class="form-input" value="en-US" spellcheck="false">
+</div>
+
+<div class="form-group">
+    <label for="tmdbRegion" class="form-label">TMDb poster/search region:</label>
+    <input id="tmdbRegion" name="tmdbRegion" class="form-input" value="US" spellcheck="false">
+    <small>North America posters prefer US/English TMDb artwork while Chinese localized titles can still be shown.</small>
 </div>
 
 <div class="form-group">
@@ -82,10 +86,12 @@
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
-            document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'tmdb_cn_now_playing';
+            document.getElementById('sourceMode').value = 'the_numbers';
+            document.getElementById('chartUrl').value = pluginSettings.chartUrl || 'https://www.the-numbers.com/weekend-box-office-chart';
             document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
-            document.getElementById('reportsUrl').value = pluginSettings.reportsUrl || 'https://www.zgdypw.cn/sc/sjbg/';
-            document.getElementById('tmdbLanguage').value = pluginSettings.tmdbLanguage || 'zh-CN';
+
+            document.getElementById('tmdbLanguage').value = 'en-US';
+            document.getElementById('tmdbRegion').value = 'US';
             document.getElementById('localizedLanguage').value = pluginSettings.localizedLanguage || 'zh-CN';
             document.getElementById('tmdbBearerTokenEnv').value = pluginSettings.tmdbBearerTokenEnv || 'TMDB_BEARER_TOKEN';
             document.getElementById('tmdbApiKeyEnv').value = pluginSettings.tmdbApiKeyEnv || 'TMDB_API_KEY';

@@ -21,6 +21,7 @@ import threading
 import argparse
 from utils.app_utils import generate_startup_image
 from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
+from utils.http_client import sanitize_dead_local_proxy_environment
 from flask import Flask, request, send_from_directory
 from werkzeug.serving import is_running_from_reloader
 from config import Config
@@ -37,6 +38,7 @@ from waitress import serve
 
 
 logger = logging.getLogger(__name__)
+sanitize_dead_local_proxy_environment()
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='InkyPi Display Server')

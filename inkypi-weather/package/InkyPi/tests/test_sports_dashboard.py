@@ -47,6 +47,8 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_CS_MAJOR_LOGO_PATH,
     LOCAL_TI_LOGO_PATH,
     LOCAL_LPL_LOGO_PATH,
+    LOCAL_LCK_LOGO_PATH,
+    LOCAL_LCK_TEAM_LOGO_DIR,
     LOCAL_LPL_MARBLE_FILLER_PATH,
     LOCAL_LPL_MSI_CARD_ACCENT_DIR,
     LOCAL_LPL_MSI_CARD_ACCENT_PATH,
@@ -130,8 +132,11 @@ def test_league_accent_palettes_are_distinct():
         assert palette["worldcup_accent"] != palette["nba_accent"]
         assert palette["worldcup_accent"] != palette["lpl_accent"]
         assert palette["nba_accent"] != palette["lpl_accent"]
+        assert palette["lck_accent"] != palette["lpl_accent"]
+        assert palette["lck_accent"] != palette["nba_accent"]
         assert palette["worldcup_tag"] != palette["nba_tag"]
         assert palette["nba_tag"] != palette["lpl_tag"]
+        assert palette["lck_tag"] != palette["lpl_tag"]
 
 
 def test_offseason_hub_sport_accents_are_distinct_comic_palette_colors():
@@ -1086,6 +1091,157 @@ def test_select_lpl_events_returns_next_match_and_recent_result():
     assert SportsDashboard._result_label(selected["recent"][0]) == "TT 2-3 LGD"
 
 
+def test_select_lck_events_does_not_inject_lpl_msi_featured_page():
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+
+    selected = SportsDashboard._select_lck_events([], now)
+
+    assert selected["main"] is None
+    assert selected["featured_event"] is None
+    assert selected["featured_event_page"] is False
+
+
+def test_lol_sidebar_prefers_lck_upcoming_over_lpl_offseason_feature():
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    lpl_selected = SportsDashboard._select_lpl_events([], now)
+    lck_event = {
+        "start": now + timedelta(hours=2),
+        "state": "unstarted",
+        "team_a": "GEN",
+        "team_b": "T1",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 3,
+        "block": "Regular Season",
+    }
+    lck_selected = SportsDashboard._select_lck_events([lck_event], now)
+
+    choice = SportsDashboard._select_lol_esports_sidebar(
+        [
+            {"league_key": "LPL", "selected": lpl_selected, "source_state": "CACHE DATA", "priority": 0},
+            {"league_key": "LCK", "selected": lck_selected, "source_state": "LCK LIVE DATA", "priority": 1},
+        ],
+        now,
+    )
+
+    assert choice["league_key"] == "LCK"
+
+
+def test_lol_sidebar_override_forces_lck(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    lpl_event = {
+        "start": now + timedelta(hours=3),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 3,
+        "block": "Split 2",
+    }
+    lck_event = {
+        "start": now - timedelta(days=1),
+        "state": "completed",
+        "team_a": "GEN",
+        "team_b": "T1",
+        "wins_a": 2,
+        "wins_b": 1,
+        "best_of": 3,
+        "block": "Week 2",
+    }
+    plugin._load_lpl_events = lambda _settings, _timezone_info: ([lpl_event], "LIVE DATA")
+    plugin._load_lck_events = lambda _settings, _timezone_info: ([lck_event], "LCK LIVE DATA")
+    plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
+
+    choice = plugin._load_lol_esports_sidebar(
+        {"lolEsportsSidebarOverride": "LCK"},
+        FakeDeviceConfig(timezone="UTC"),
+        timezone.utc,
+        now,
+    )
+
+    assert choice["league_key"] == "LCK"
+    assert choice["selected"]["main"]["team_a"] == "GEN"
+
+def test_lol_sidebar_defaults_to_lpl_when_lck_has_no_schedule():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 2, 12, 0, tzinfo=la)
+    lpl_selected = SportsDashboard._select_lpl_events(SportsDashboard._parse_lpl_events(_sample_payload(), la), now)
+    lck_selected = SportsDashboard._select_lck_events([], now)
+
+    choice = SportsDashboard._select_lol_esports_sidebar(
+        [
+            {"league_key": "LPL", "selected": lpl_selected, "source_state": "LIVE DATA", "priority": 0},
+            {"league_key": "LCK", "selected": lck_selected, "source_state": "LCK NO DATA", "priority": 1},
+        ],
+        now,
+    )
+
+    assert choice["league_key"] == "LPL"
+
+
+def test_lck_sidebar_uses_lck_logo_and_plain_team_names(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    event = {
+        "start": now + timedelta(hours=1),
+        "state": "unstarted",
+        "team_a": "Gen.G",
+        "team_b": "T1",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 3,
+        "block": "Regular Season",
+    }
+    selected = SportsDashboard._select_lck_events([event], now)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    seen_texts = []
+    logo_calls = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    def record_lol_logo(_image, _draw, _x, _y, _width, _height, logo_path=None, fallback_text=None):
+        logo_calls.append((logo_path, fallback_text))
+
+    monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+    monkeypatch.setattr(plugin, "_draw_lpl_logo", record_lol_logo)
+
+    plugin._draw_lpl_sidebar(image, 552, selected, "LCK LIVE DATA", now, league_key="LCK")
+
+    assert logo_calls[0] == (LOCAL_LCK_LOGO_PATH, "LCK")
+    assert "Gen.G" in seen_texts
+    assert "T1" in seen_texts
+
+
+def test_fetch_lck_events_uses_official_lck_league_id(monkeypatch):
+    plugin = _plugin()
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": {"schedule": {"events": []}}}
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, headers, timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    assert plugin._fetch_lck_events({}, timezone.utc) == []
+    assert "leagueId=98767991310872058" in calls[0][0]
+
 def test_lpl_generic_playoff_stages_are_inferred_from_schedule_order():
     tz = timezone.utc
     events = [
@@ -1493,7 +1649,7 @@ def test_lpl_sidebar_uses_featured_logo_only_for_featured_event(monkeypatch):
     la = ZoneInfo("America/Los_Angeles")
     logo_paths = []
 
-    def capture_logo(_image, _draw, _x, _y, _width, _height, logo_path=None):
+    def capture_logo(_image, _draw, _x, _y, _width, _height, logo_path=None, fallback_text=None):
         logo_paths.append(logo_path)
 
     monkeypatch.setattr(plugin, "_draw_lpl_logo", capture_logo)
@@ -10768,11 +10924,12 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
         "LIVE DATA",
     )
     plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
     plugin._load_nba_events = lambda settings, timezone_info: (
         SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
         "ESPN LIVE",
     )
-    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._attach_lpl_realtime_info = lambda selected, settings, **_kwargs: selected
     plugin._write_nba_live_state = lambda selected, now, source_state: None
     plugin._write_lpl_live_state = lambda selected, now, source_state: None
     plugin._load_team_logo = lambda logo_url, size: None
@@ -10815,12 +10972,13 @@ def test_generate_image_prefers_espn_scoreboard_for_worldcup_panel():
         "LIVE DATA",
     )
     plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
     plugin._load_nba_events = lambda settings, timezone_info: (
         SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
         "ESPN LIVE",
     )
     plugin._attach_nba_odds = lambda events, *_args: events
-    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._attach_lpl_realtime_info = lambda selected, settings, **_kwargs: selected
     plugin._write_nba_live_state = lambda selected, now, source_state: None
     plugin._write_lpl_live_state = lambda selected, now, source_state: None
     plugin._load_team_logo = lambda logo_url, size: None
@@ -11145,7 +11303,8 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
         "LIVE DATA",
     )
     plugin._attach_lpl_odds = lambda events, *_args: events
-    plugin._attach_lpl_realtime_info = lambda selected, settings: selected
+    plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
+    plugin._attach_lpl_realtime_info = lambda selected, settings, **_kwargs: selected
     plugin._write_nba_live_state = lambda selected, now, source_state: None
     plugin._write_lpl_live_state = lambda selected, now, source_state: None
     plugin._load_nba_events = lambda _settings, timezone_info: (
@@ -11167,6 +11326,7 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
 
 def test_uploaded_brand_logos_are_loaded_from_local_assets():
     lpl_logo = SportsDashboard._load_local_logo(LOCAL_LPL_LOGO_PATH, (74, 38), alpha_threshold=8)
+    lck_logo = SportsDashboard._load_local_logo(LOCAL_LCK_LOGO_PATH, (74, 38), alpha_threshold=8)
     nba_logo = SportsDashboard._load_local_logo(LOCAL_NBA_LOGO_PATH, (34, 38), alpha_threshold=8)
     worldcup_logo = SportsDashboard._load_local_logo(LOCAL_WORLDCUP_LOGO_PATH, (36, 36), alpha_threshold=16)
     f1_logo = SportsDashboard._load_local_logo(LOCAL_F1_LOGO_PATH, (62, 24), alpha_threshold=12)
@@ -11180,6 +11340,10 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
     assert lpl_logo.size[0] <= 74
     assert lpl_logo.size[1] <= 38
     assert lpl_logo.getchannel("A").getextrema()[0] == 0
+    assert lck_logo is not None
+    assert lck_logo.size[0] <= 74
+    assert lck_logo.size[1] <= 38
+    assert lck_logo.getchannel("A").getextrema()[0] == 0
     assert nba_logo is not None
     assert nba_logo.size[0] <= 34
     assert nba_logo.size[1] <= 38
@@ -11197,9 +11361,29 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
         assert logo.getchannel("A").getextrema()[0] == 0
 
 
+def test_lck_team_logos_are_synced_and_loadable():
+    expected_codes = {"BFX", "BRO", "DK", "DNS", "GEN", "HLE", "KRX", "KT", "NS", "T1"}
+    logo_dir = Path(LOCAL_LCK_TEAM_LOGO_DIR)
+    manifest_path = logo_dir / "manifest.json"
+
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert {team["code"] for team in manifest["teams"]} == expected_codes
+
+    for code in expected_codes:
+        path = logo_dir / f"{code.lower()}.png"
+        assert path.exists(), code
+        logo = SportsDashboard._load_local_team_logo(code, 34)
+        assert logo is not None, code
+        assert logo.size[0] <= 34
+        assert logo.size[1] <= 34
+        assert logo.getchannel("A").getextrema()[1] > 0
+
+
 def test_sports_dashboard_local_asset_constants_exist():
     asset_paths = [
         LOCAL_LPL_LOGO_PATH,
+        LOCAL_LCK_LOGO_PATH,
         LOCAL_MSI_LOGO_PATH,
         LOCAL_WORLDCUP_LOGO_PATH,
         LOCAL_NBA_LOGO_PATH,
@@ -11548,7 +11732,102 @@ def test_valve_selector_rotates_active_cards_and_ignores_break_cards():
     assert SportsDashboard._valve_esports_has_displayable_event(selected) is True
 
 
-def test_generate_image_draws_active_valve_sidebar_before_lpl():
+def test_right_esports_sidebar_priority_order_lpl_lck_cs_ti():
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    lpl_live = {
+        "league_key": "LPL",
+        "selected": {"live": [{"start": now}], "upcoming": [], "recent": [], "main": {"start": now}},
+        "source_state": "LIVE DATA",
+        "priority": 0,
+    }
+    lpl_default = {
+        "league_key": "LPL",
+        "selected": SportsDashboard._select_lpl_events([], now),
+        "source_state": "CACHE DATA",
+        "priority": 0,
+    }
+    lck_live = {
+        "league_key": "LCK",
+        "selected": {"live": [{"start": now}], "upcoming": [], "recent": [], "main": {"start": now}},
+        "source_state": "LCK LIVE DATA",
+        "priority": 1,
+    }
+    cs_card = {"series": "CS", "event_name": "CS Major", "status": "ACTIVE", "window_active": True, "order": 0, "main": {"start": now}}
+    ti_card = {"series": "TI", "event_name": "The International", "status": "ACTIVE", "window_active": True, "order": 1, "main": {"start": now}}
+    valve_selected = {"primary": ti_card, "cards": [ti_card, cs_card], "rotation_pool": ["TI", "CS"]}
+
+    choice = SportsDashboard._select_right_esports_sidebar([lpl_live, lck_live], valve_selected, "VALVE DATA", now)
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
+
+    choice = SportsDashboard._select_right_esports_sidebar([lpl_default, lck_live], valve_selected, "VALVE DATA", now)
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LCK"
+
+    choice = SportsDashboard._select_right_esports_sidebar([lpl_default], valve_selected, "VALVE DATA", now)
+    assert choice["kind"] == "valve"
+    assert choice["selected"]["primary"]["series"] == "CS"
+
+
+def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
+    calls = []
+    lpl_event = {
+        "start": now - timedelta(minutes=5),
+        "state": "live",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "wins_a": 1,
+        "wins_b": 0,
+        "best_of": 3,
+        "block": "Split 2",
+    }
+    active_card = {
+        "series": "CS",
+        "sport": "CS2 Major",
+        "event_name": "IEM Cologne Major 2026",
+        "status": "ACTIVE",
+        "window_active": True,
+        "logo_path": LOCAL_CS_MAJOR_LOGO_PATH,
+        "start": now,
+        "latest": now,
+        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "CSAPI"},
+        "recent": [],
+    }
+
+    plugin._try_worldcup_scoreboard_panel = lambda *args, **kwargs: Image.new("RGB", (552, 208), (9, 9, 9))
+    plugin._try_worldcup_football_data_panel = lambda *args, **kwargs: None
+    plugin._try_worldcup_api_panel = lambda *args, **kwargs: None
+    plugin._take_worldcup_screenshot = lambda *args, **kwargs: None
+    plugin._load_nba_events = lambda settings, timezone_info: (SportsDashboard._fallback_nba_events(timezone_info), "NBA FALLBACK")
+    plugin._attach_nba_odds = lambda events, *_args: events
+    plugin._write_nba_live_state = lambda selected, now_arg, source_state: None
+    plugin._lol_esports_sidebar_override = lambda settings=None: ""
+    plugin._load_lpl_events = lambda settings, timezone_info: ([lpl_event], "LIVE DATA")
+    plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
+    plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
+    plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
+    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
+    plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("valve_state")
+    plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
+    plugin._write_lol_live_state = lambda selected, now_arg, source_state, league_key="LPL": calls.append(f"lol_state:{league_key}")
+    plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append(f"lol:{kwargs.get('league_key', 'LPL')}")
+
+    image = plugin._generate_image_with_active_colors(
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        FakeDeviceConfig(),
+        (800, 480),
+        la,
+        now,
+    )
+
+    assert image.size == (800, 480)
+    assert calls == ["lol_state:LPL", "lol:LPL"]
+
+
+def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
@@ -11573,6 +11852,11 @@ def test_generate_image_draws_active_valve_sidebar_before_lpl():
     plugin._load_nba_events = lambda settings, timezone_info: (SportsDashboard._fallback_nba_events(timezone_info), "NBA FALLBACK")
     plugin._attach_nba_odds = lambda events, *_args: events
     plugin._write_nba_live_state = lambda selected, now_arg, source_state: None
+    plugin._lol_esports_sidebar_override = lambda settings=None: ""
+    plugin._load_lpl_events = lambda settings, timezone_info: ([], "CACHE DATA")
+    plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
+    plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
+    plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
     plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
     plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("state")
     plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
@@ -11588,7 +11872,6 @@ def test_generate_image_draws_active_valve_sidebar_before_lpl():
 
     assert image.size == (800, 480)
     assert calls == ["state", "valve"]
-
 
 def test_valve_esports_sidebar_render_smoke():
     plugin = _plugin()
@@ -11669,6 +11952,21 @@ def test_settings_exposes_valve_esports_controls():
     ]
 
     for field in fields:
+        assert f'id="{field}"' in html
+        assert f'name="{field}"' in html
+        assert f"pluginSettings.{field}" in html
+
+def test_settings_exposes_lck_sidebar_controls():
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+
+    for field in ("lckEnabled", "lckLeagueId"):
         assert f'id="{field}"' in html
         assert f'name="{field}"' in html
         assert f"pluginSettings.{field}" in html

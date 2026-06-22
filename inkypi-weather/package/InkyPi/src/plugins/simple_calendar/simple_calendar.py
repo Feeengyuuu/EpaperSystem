@@ -9,12 +9,12 @@ from urllib.parse import unquote, urlparse
 
 import icalendar
 import pytz
-import requests
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import read_contexts
 from utils.app_utils import get_font
+from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ DEFAULT_HOLIDAY_CALENDARS = [
         "color": "#c62828",
     },
 ]
+
+HOLIDAY_LABEL_COUNTRY_COLORS = {
+    "CN": (222, 41, 16),
+    "US": (0, 74, 173),
+}
 
 WEATHER_PANEL_BACKGROUND_DEFAULT = "cloudy"
 WEATHER_PANEL_BACKGROUND_BLEND = 0.72
@@ -997,7 +1002,7 @@ class SimpleCalendar(BasePlugin):
 
         url = OPEN_METEO_CURRENT_URL.format(lat=latitude, long=longitude)
         try:
-            response = requests.get(
+            response = get_http_session().get(
                 url,
                 timeout=12,
                 headers={"User-Agent": "InkyPi SimpleCalendar/1.0"},
@@ -1264,7 +1269,7 @@ class SimpleCalendar(BasePlugin):
             return Path(path_text).read_bytes()
         if not parsed.scheme and url.startswith("/"):
             return Path(url).read_bytes()
-        response = requests.get(
+        response = get_http_session().get(
             url,
             timeout=20,
             headers={"User-Agent": "InkyPi SimpleCalendar/1.0"},
@@ -1744,42 +1749,73 @@ class SimpleCalendar(BasePlugin):
         if not events:
             return
 
-        label_font = self._get_holiday_title_font(11)
-        text_font = self._get_holiday_title_font(14)
+        label_font = get_font("Jost", 10, "bold")
+        text_font = self._get_holiday_title_font(14, bold=True)
         event = (self._merge_same_day_events(events) or events)[0]
-        label = self._fit_text(draw, event.get("label") or "", label_font, max_width * 0.36)
-        title_lines = self._wrap_text_lines(draw, event.get("title") or "", text_font, max_width - 20, max_lines=2)
-        card_w = int(max_width)
-        card_h = 46 + max(len(title_lines), 1) * 15
+        card_w = int(max_width * 0.98)
+        content_left_pad = 31
+        content_right_pad = 24
+        label = self._fit_text(draw, event.get("label") or "", label_font, card_w * 0.30)
+        title_lines = self._wrap_text_lines(
+            draw,
+            event.get("title") or "",
+            text_font,
+            card_w - content_left_pad - content_right_pad,
+            max_lines=2,
+        )
+        card_h = 52 + max(len(title_lines), 1) * 16
         left = int(x - card_w / 2)
         top = int(y - card_h / 2)
         right = left + card_w
         bottom = top + card_h
-        event_color = event.get("color") or muted_text
 
-        draw.rounded_rectangle(
-            [left, top, right, bottom],
-            radius=9,
-            fill=(255, 249, 229),
-            outline=(210, 198, 160),
-            width=1,
-        )
+        shadow = (25, 38, 45)
+        paper = (238, 218, 158)
+        paper_light = (255, 239, 183)
+        border = (43, 37, 30)
+        ink = (39, 31, 22)
+        rail = (156, 92, 43)
+        red = (166, 31, 36)
+        red_dark = (101, 26, 31)
+        gold = (239, 195, 95)
+
+        draw.rounded_rectangle([left + 5, top + 5, right + 5, bottom + 5], radius=8, fill=shadow)
+        draw.rounded_rectangle([left, top, right, bottom], radius=8, fill=paper, outline=border, width=2)
+        draw.rounded_rectangle([left + 4, top + 4, right - 4, bottom - 4], radius=6, outline=paper_light, width=1)
+        draw.rectangle([left + 8, top + 8, left + 14, bottom - 8], fill=red)
+        draw.line([(left + 20, top + 30), (right - 22, top + 30)], fill=rail, width=1)
+        draw.line([(left + 20, bottom - 11), (right - 22, bottom - 11)], fill=(111, 74, 39), width=1)
+        draw.polygon([(right - 18, top), (right, top), (right, top + 18)], fill=(217, 177, 90), outline=border)
+        for dot_y in (top + 18, bottom - 18):
+            draw.ellipse([right - 17, dot_y - 2, right - 13, dot_y + 2], fill=gold, outline=border)
+
         if label:
             label_bbox = draw.textbbox((0, 0), label, font=label_font)
-            label_w = min(label_bbox[2] - label_bbox[0] + 14, int(card_w * 0.42))
-            chip_left = int(x - label_w / 2)
-            chip_top = top + 6
+            label_w = min(max(label_bbox[2] - label_bbox[0] + 16, 42), int(card_w * 0.34))
+            chip_left = left + 24
+            chip_top = top + 9
             draw.rounded_rectangle(
                 [chip_left, chip_top, chip_left + label_w, chip_top + 16],
-                radius=5,
-                fill=(247, 244, 226),
-                outline=event_color,
+                radius=4,
+                fill=paper_light,
+                outline=red_dark,
                 width=1,
             )
-            draw.text((x, chip_top + 8), label, fill=event_color, font=label_font, anchor="mm")
-        first_title_y = top + 34
+            self._draw_source_label(
+                draw,
+                label,
+                chip_left + label_w / 2,
+                chip_top + 8,
+                label_font,
+                ink,
+                separator_color=ink,
+                anchor="mm",
+            )
+
+        title_cx = left + content_left_pad + (card_w - content_left_pad - content_right_pad) / 2
+        first_title_y = top + (47 if label else 34)
         for line_index, title_line in enumerate(title_lines or [""]):
-            draw.text((x, first_title_y + line_index * 15), title_line, fill=text_color, font=text_font, anchor="mm")
+            draw.text((title_cx, first_title_y + line_index * 16), title_line, fill=ink, font=text_font, anchor="mm")
 
     def _draw_holiday_markers(self, draw, events, x, y, cell_size, selected=False):
         radius = max(int(cell_size * 0.055), 3)
@@ -1814,7 +1850,16 @@ class SimpleCalendar(BasePlugin):
             date_text = f"{event['date'].month}/{event['date'].day}"
             draw.text((x0, row_y), date_text, fill=text_color, font=date_font, anchor="lm")
             label_x = x0 + int(width * 0.145)
-            draw.text((label_x, row_y), event["label"], fill=event["color"], font=label_font, anchor="lm")
+            self._draw_source_label(
+                draw,
+                event["label"],
+                label_x,
+                row_y,
+                label_font,
+                event.get("color", muted_text),
+                separator_color=muted_text,
+                anchor="lm",
+            )
             title_x = label_x + int(width * 0.105)
             title = self._fit_text(draw, event["title"], title_font, right - title_x - int(width * 0.05))
             draw.text(
@@ -1825,9 +1870,62 @@ class SimpleCalendar(BasePlugin):
                 anchor="lm",
             )
 
-    def _get_holiday_title_font(self, font_size):
+    def _draw_source_label(self, draw, label, x, y, font, default_color, separator_color=None, anchor="lm"):
+        parts = self._source_label_parts(label)
+        if not parts:
+            return 0
+
+        widths = [self._text_width(draw, part, font) for part in parts]
+        total_width = sum(widths)
+        cursor_x = x - total_width / 2 if anchor == "mm" else x
+        separator_color = separator_color or default_color
+        draw_anchor = "mm" if anchor == "mm" else "lm"
+        for part, width in zip(parts, widths):
+            fill = separator_color if part == "/" else self._source_label_color(part, default_color)
+            draw_x = cursor_x + width / 2 if anchor == "mm" else cursor_x
+            draw.text((draw_x, y), part, fill=fill, font=font, anchor=draw_anchor)
+            if part != "/" and fill != default_color:
+                draw.text((draw_x, y), part, fill=fill, font=font, anchor=draw_anchor)
+            cursor_x += width
+        return total_width
+
+    def _source_label_parts(self, label):
+        text = str(label or "").strip()
+        if not text:
+            return []
+        parts = []
+        token = ""
+        for char in text:
+            if char == "/":
+                if token:
+                    parts.append(token)
+                    token = ""
+                parts.append(char)
+            else:
+                token += char
+        if token:
+            parts.append(token)
+        return parts
+
+    def _source_label_color(self, label_part, default_color):
+        key = str(label_part or "").strip().upper()
+        return HOLIDAY_LABEL_COUNTRY_COLORS.get(key, default_color)
+
+    def _text_width(self, draw, text, font):
+        bbox = draw.textbbox((0, 0), str(text), font=font)
+        return bbox[2] - bbox[0]
+
+    def _get_holiday_title_font(self, font_size, bold=False):
         src_dir = Path(__file__).resolve().parents[2]
-        candidates = [
+        bold_candidates = [
+            src_dir / "static" / "fonts" / "msyhbd.ttc",
+            src_dir / "static" / "fonts" / "msyhbd.ttf",
+            src_dir / "static" / "fonts" / "MicrosoftYaHeiBold.ttf",
+            src_dir / "plugins" / "sports_dashboard" / "fonts" / "msyhbd.ttc",
+            Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttc"),
+            Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttf"),
+        ]
+        regular_candidates = [
             src_dir / "static" / "fonts" / "msyh.ttc",
             src_dir / "static" / "fonts" / "msyh.ttf",
             src_dir / "static" / "fonts" / "MicrosoftYaHei.ttf",
@@ -1835,6 +1933,7 @@ class SimpleCalendar(BasePlugin):
             Path("/usr/share/fonts/truetype/microsoft/msyh.ttf"),
             src_dir / "static" / "fonts" / "NotoSansSC-VF.ttf",
         ]
+        candidates = (bold_candidates if bold else []) + regular_candidates
 
         for path in candidates:
             if not path.exists():

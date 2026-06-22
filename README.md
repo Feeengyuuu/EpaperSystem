@@ -2,11 +2,12 @@
 
 ![EpaperSystem hero](inkypi-weather/package/InkyPi/docs/images/readme/epaper-system-hero.png)
 
-Free open-source Raspberry Pi e-paper dashboard based on InkyPi, packaged with
-a beginner installer, plugin bundle, API key helper, Chinese install flow, and
-health checks.
+EpaperSystem is an open-source e-paper dashboard for Raspberry Pi. The public
+GitHub experience is installer-first: clone the repo, run one minimal installer,
+follow the prompts, and see working dashboard pages immediately.
 
-简体中文：这是一个可开源发布的树莓派墨水屏信息台项目，内置插件系统、一键安装脚本、API Key 配置助手、中文安装流程和健康检查。
+简体中文：EpaperSystem 是一个面向树莓派墨水屏的信息台项目。GitHub
+上的公开版本应该优先提供极简安装体验：克隆项目、运行一个安装程序、跟随引导填写必要信息，然后马上看到可展示的页面。
 
 ## Built On InkyPi
 
@@ -31,7 +32,30 @@ img-2 was used only for the desk/device scene and empty display frames.
 
 ![Actual captures](inkypi-weather/package/InkyPi/docs/images/readme/epaper-system-real-screens.png)
 
-## Quick Install
+## What GitHub Provides
+
+The GitHub release should feel like a small installable product, not a toolkit
+that requires users to understand the whole runtime first.
+
+- A single beginner-facing installer entrypoint: `install/bootstrap.sh`.
+- Guided setup for display type, language, optional API keys, service start,
+  and health checks.
+- API registration hints during setup, so users know where each key comes from.
+- A safe skip path: every API prompt can be skipped during installation.
+- Demo-ready pages when keys are skipped: key-dependent plugins should show
+  placeholder, cached, or sample content instead of failing with a blank page.
+- A later configuration path through the web UI or command line.
+
+简体中文：GitHub 上应该呈现为一个可以直接安装的软件项目，而不是需要用户先理解所有脚本和插件的工具箱。
+
+- 入口只保留给新手看的安装程序：`install/bootstrap.sh`。
+- 安装过程中引导选择屏幕型号、语言、可选 API Key、服务启动和健康检查。
+- API Key 引导里提供注册/获取地址。
+- 每个 API Key 都允许跳过。
+- 如果用户跳过 API Key，对应页面仍应使用占位、缓存或样例数据展示，而不是空白或报错。
+- 用户之后仍可在 Web UI 或命令行中补充 API Key。
+
+## Minimal Installer
 
 On a fresh Raspberry Pi:
 
@@ -63,21 +87,37 @@ sudo bash install/bootstrap.sh -W epd7in5_V2
 sudo bash install/bootstrap.sh --pimoroni
 ```
 
+The installer creates a starter `.env`, offers API key prompts, starts the
+service, and runs a health check. Users who want the fastest preview can skip
+all API prompts and add keys later.
+
 Full guides:
 
 - English: [Install From Zero](inkypi-weather/package/InkyPi/docs/install_from_zero.md)
 - 简体中文：[从零安装](inkypi-weather/package/InkyPi/docs/install_from_zero.zh-CN.md)
 
-## API Keys
+## API Keys And Demo Mode
 
-API keys are optional. You can add them during install, in the web UI, or later
-from the command line.
+API keys are optional at install time. During setup, users can choose common
+keys, all known keys, or skip key entry entirely. Skipping keys should not block
+installation.
+
+When a provider key is missing, the expected product behavior is:
+
+- start the app normally;
+- keep the plugin visible in the playlist;
+- render placeholder, cached, or sample content for that page;
+- explain missing configuration in the plugin or API key UI when useful;
+- let the user add the key later without reinstalling.
+
+Command-line helpers:
 
 ```bash
 cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --list
 python3 install/configure_api_keys.py --list --lang zh-CN
 python3 install/configure_api_keys.py --env-file .env
+python3 install/configure_api_keys.py --check
 ```
 
 Web UI after install:
@@ -90,6 +130,17 @@ Key guides:
 
 - English: [API Keys](inkypi-weather/package/InkyPi/docs/api_keys.md)
 - 简体中文：[API Key 获取地址](inkypi-weather/package/InkyPi/docs/api_keys.zh-CN.md)
+
+## Plugin Author Rule
+
+Plugins that depend on third-party services should be public-demo safe:
+
+- register required or optional keys in `install/api_key_registry.json`;
+- never require a real key just to render the page shell;
+- provide placeholder or sample state when credentials are missing;
+- keep real secrets in `.env` only;
+- make the health check warning actionable instead of fatal when a key is
+  optional.
 
 ## Health Check
 
@@ -104,6 +155,10 @@ bash install/healthcheck.sh --lang zh-CN
 Do not publish local secrets or runtime state. This repo ignores `.env`,
 `.ssh/`, `.secrets-backup/`, `.tmp/`, `tmp/`, caches, and Python bytecode, but
 you should still verify Git history before making a public repository.
+
+Before a public GitHub release, confirm that the README, installer, API key
+registry, placeholder behavior, screenshots, and health check all describe the
+same beginner path.
 
 Checklist: [Open Source Release Checklist](docs/open_source_release_checklist.md)
 
