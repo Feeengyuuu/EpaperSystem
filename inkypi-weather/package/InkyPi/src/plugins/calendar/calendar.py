@@ -43,7 +43,7 @@ class Calendar(BasePlugin):
         tz = pytz.timezone(timezone)
 
         current_dt = datetime.now(tz)
-        start, end = self.get_view_range(view, current_dt, settings)
+        start, end, visible_end = self.get_view_range(view, current_dt, settings)
         logger.debug(f"Fetching events for {start} --> [{current_dt}] --> {end}")
         events = self.fetch_ics_events(calendar_urls, calendar_colors, tz, start, end)
         if not events:
@@ -59,7 +59,9 @@ class Calendar(BasePlugin):
             "timezone": timezone,
             "plugin_settings": settings,
             "time_format": time_format,
-            "font_scale": FONT_SIZES.get(settings.get("fontSize", "normal"))
+            "font_scale": FONT_SIZES.get(settings.get("fontSize", "normal")),
+            "visible_range_start": start.isoformat() if visible_end else None,
+            "visible_range_end": visible_end.isoformat() if visible_end else None
         }
 
         image = self.render_image(dimensions, "calendar.html", "calendar.css", template_params)
@@ -94,6 +96,7 @@ class Calendar(BasePlugin):
     
     def get_view_range(self, view, current_dt, settings):
         start = datetime(current_dt.year, current_dt.month, current_dt.day)
+        visible_end = None
         if view == "timeGridDay":
             end = start + timedelta(days=1)
         elif view == "timeGridWeek":
@@ -111,8 +114,19 @@ class Calendar(BasePlugin):
             start = datetime(current_dt.year, current_dt.month, 1) - timedelta(weeks=1)
             end = datetime(current_dt.year, current_dt.month, 1) + timedelta(weeks=6)
         elif view == "listMonth":
-            end = start + timedelta(weeks=5)
-        return start, end
+            end = self.get_month_after_next_start(current_dt)
+            visible_end = end
+        return start, end, visible_end
+
+    def get_month_after_next_start(self, current_dt):
+        if current_dt.month == 12:
+            next_month = datetime(current_dt.year + 1, 1, 1)
+        else:
+            next_month = datetime(current_dt.year, current_dt.month + 1, 1)
+
+        if next_month.month == 12:
+            return datetime(next_month.year + 1, 1, 1)
+        return datetime(next_month.year, next_month.month + 1, 1)
         
     def parse_data_points(self, event, tz):
         all_day = False

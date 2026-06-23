@@ -12,7 +12,7 @@ body {
 
 .steam-container {
     --image-width: 14.5vw;
-    --image-gap: 1.2vw;
+    --image-gap: 4.8vw;
     --logo-size: min(8.7dvh, 5.5vw);
     --ink: #000000;
     --paper: #ffffff;
@@ -58,17 +58,32 @@ body {
     width: min(11.5vw, 5.2rem);
     height: min(13dvh, 3.9rem);
     pointer-events: none;
-    background-image:
-        radial-gradient(circle at 86% 12%, var(--ink) 0 3px, transparent 3.4px),
-        radial-gradient(circle at 74% 22%, var(--ink) 0 2.8px, transparent 3.2px),
-        radial-gradient(circle at 94% 26%, var(--ink) 0 3.4px, transparent 3.8px),
-        radial-gradient(circle at 63% 39%, var(--ink) 0 2.6px, transparent 3px),
-        radial-gradient(circle at 80% 48%, var(--ink) 0 3px, transparent 3.4px),
-        radial-gradient(circle at 96% 54%, var(--ink) 0 3.4px, transparent 3.8px),
-        radial-gradient(circle at 70% 68%, var(--ink) 0 2.6px, transparent 3px),
-        repeating-linear-gradient(90deg, transparent 0 9px, var(--ink) 9px 15px, transparent 15px 25px);
-    mask-image: linear-gradient(135deg, transparent 0 28%, #000 70% 100%);
+    background-image: var(--header-bar-uri);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    mask-image: none;
     opacity: 1;
+    image-rendering: pixelated;
+}
+
+.theme-night .header::after {
+    filter: invert(1);
+}
+
+
+.header-scene-strip {
+    position: absolute;
+    z-index: 0;
+    left: min(40vw, 20rem);
+    right: min(24vw, 12rem);
+    top: 0;
+    bottom: -0.55dvh;
+    pointer-events: none;
+    background-image: var(--header-scene-uri);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 100%;
     image-rendering: pixelated;
 }
 
@@ -195,7 +210,7 @@ body {
 
 .game-name {
     position: relative;
-    font-size: min(4.25dvh, 3.2vw);
+    font-size: clamp(17px, calc(20px * var(--name-font-scale, 1)), 27px);
     font-weight: 800;
     padding-right: 0.4vw;
     color: var(--ink);
@@ -277,10 +292,11 @@ body {
 .players,
 .peak,
 .record-time {
-    font-size: min(3.5dvh, 2.65vw);
-    font-weight: 700;
+    font-size: clamp(14px, calc(17px * var(--metric-font-scale, 1)), 24px);
+    font-weight: 800;
     color: var(--ink);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .change.positive,
@@ -311,4 +327,197 @@ body {
     font-size: min(2.2dvh, 1.7vw);
     font-weight: 700;
     color: var(--ink);
+}
+.layout-combined {
+    --logo-size: min(6.8dvh, 3.1rem);
+    padding: 0.25dvh 0.5vw 0;
+}
+
+.layout-combined .header {
+    padding-bottom: 0.35dvh;
+    padding-right: min(10vw, 4.8rem);
+}
+
+.layout-combined .header::after {
+    width: min(9.5vw, 4.2rem);
+    height: min(10dvh, 3.1rem);
+}
+
+
+.layout-combined .header-scene-strip {
+    left: min(40vw, 20rem);
+    right: min(24vw, 12rem);
+    top: 0;
+    bottom: -0.55dvh;
+}
+
+.layout-combined .title {
+    font-size: clamp(24px, 5.1dvh, 32px);
+}
+
+.layout-combined .subtitle {
+    font-size: clamp(12px, 2.6dvh, 15px);
+}
+
+.layout-combined .updated-at {
+    font-size: clamp(10px, 2.25dvh, 13px);
+    padding: 0.16dvh 0.35vw 0.12dvh;
+}
+
+.combined-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.05vw;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: 0.55dvh;
+    overflow: hidden;
+}
+
+.chart-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-top: max(1px, 0.22dvh) solid var(--ink);
+}
+
+.panel-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.7vw;
+    flex: 0 0 auto;
+    padding: 0.45dvh 0 0.35dvh;
+    min-width: 0;
+}
+
+.panel-title,
+.panel-subtitle {
+    color: var(--ink);
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.panel-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: clamp(15px, 3.35dvh, 20px);
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.panel-subtitle {
+    flex: 0 1 auto;
+    max-width: 38%;
+    font-size: clamp(10px, 2.15dvh, 12px);
+    font-weight: 700;
+    text-align: right;
+}
+
+.compact-list {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0.24dvh;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.compact-row {
+    display: grid;
+    grid-template-columns: minmax(1.2rem, 1.55rem) minmax(0, 1fr) minmax(4.45rem, 5.85rem);
+    align-items: center;
+    gap: 0.32vw;
+    flex: 1 1 0;
+    min-height: 0;
+    border-bottom: max(1px, 0.16dvh) solid var(--ink);
+}
+
+.compact-row:last-child {
+    border-bottom: 0;
+}
+
+.compact-rank {
+    color: var(--ink);
+    font-size: clamp(13px, 2.9dvh, 17px);
+    font-weight: 800;
+    line-height: 1;
+}
+
+.compact-name {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.compact-name.has-image {
+    display: grid;
+    grid-template-columns: minmax(87px, 14.3vw) minmax(0, 1fr);
+    gap: 1.28vw;
+}
+
+.compact-image {
+    width: 100%;
+    aspect-ratio: 8 / 3;
+    object-fit: cover;
+    display: block;
+}
+
+.compact-copy {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.12dvh;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.compact-title,
+.compact-secondary,
+.compact-primary,
+.compact-metric-secondary {
+    color: var(--ink);
+    overflow: hidden;
+    line-height: 1.03;
+}
+
+.compact-title {
+    font-size: clamp(10px, calc(15.4px * var(--name-font-scale, 1)), 20px);
+    font-weight: 800;
+    max-height: 2.08em;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+}
+
+.compact-secondary {
+    font-size: clamp(8px, calc(9.5px * var(--name-font-scale, 1)), 12px);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.compact-metrics {
+    min-width: 0;
+    text-align: right;
+    overflow: hidden;
+}
+
+.compact-primary {
+    font-size: clamp(12px, calc(15.2px * var(--metric-font-scale, 1)), 20px);
+    font-weight: 800;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.compact-metric-secondary {
+    margin-top: 0.12dvh;
+    font-size: clamp(8px, calc(9.6px * var(--metric-font-scale, 1)), 12px);
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }

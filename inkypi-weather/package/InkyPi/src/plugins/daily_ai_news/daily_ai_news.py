@@ -36,7 +36,7 @@ BACKGROUND_IMAGE = "background_world_news.png"
 PLUGIN_DIR = Path(__file__).resolve().parent
 TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
-SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v9"
+SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v10"
 DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
 DEFAULT_MAX_FEEDS = 16
 LEGACY_DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
@@ -65,6 +65,11 @@ MARKET_GROUPS = {
         ("^IXIC", "纳斯达克"),
         ("^DJI", "道琼斯"),
     ],
+}
+MASSIVE_INDEX_TICKERS = {
+    "^GSPC": {"I:SPX"},
+    "^IXIC": {"I:COMP", "I:NDX"},
+    "^DJI": {"I:DJI"},
 }
 
 SECTION_LABELS = {
@@ -150,6 +155,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "書": "书",
     "買": "买",
     "亂": "乱",
+    "萬": "万",
     "爭": "争",
     "於": "于",
     "雲": "云",
@@ -397,6 +403,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "殼": "壳",
     "氣": "气",
     "沒": "没",
+    "滿": "满",
     "沖": "冲",
     "澤": "泽",
     "潔": "洁",
@@ -433,6 +440,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "著": "着",
     "矚": "瞩",
     "礎": "础",
+    "礦": "矿",
     "禮": "礼",
     "禍": "祸",
     "種": "种",
@@ -454,6 +462,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "純": "纯",
     "紙": "纸",
     "級": "级",
+    "劇": "剧",
     "紛": "纷",
     "組": "组",
     "結": "结",
@@ -497,6 +506,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "脅": "胁",
     "脈": "脉",
     "腦": "脑",
+    "腎": "肾",
     "臟": "脏",
     "臨": "临",
     "與": "与",
@@ -586,9 +596,11 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "賺": "赚",
     "購": "购",
     "賽": "赛",
+    "贏": "赢",
     "贊": "赞",
     "趙": "赵",
     "趕": "赶",
+    "這": "这",
     "趨": "趋",
     "跡": "迹",
     "踐": "践",
@@ -624,6 +636,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "釐": "厘",
     "重": "重",
     "鈴": "铃",
+    "鉢": "钵",
     "銀": "银",
     "銷": "销",
     "銳": "锐",
@@ -649,6 +662,7 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "閉": "闭",
     "開": "开",
     "閒": "闲",
+    "闆": "板",
     "間": "间",
     "閣": "阁",
     "隊": "队",
@@ -1086,6 +1100,13 @@ class DailyAINews(BasePlugin):
             rows = []
             for symbol, name in symbols:
                 row = self._fetch_massive_quote(massive_client, symbol, name)
+                if self._is_massive_index_proxy_quote(symbol, row):
+                    logger.warning(
+                        "Discarding Massive ETF proxy %s for index %s; using Yahoo fallback",
+                        row.get("massive_symbol"),
+                        symbol,
+                    )
+                    row = None
                 if not row:
                     row = self._fetch_yahoo_quote(symbol, name)
                 if row:
@@ -1101,6 +1122,14 @@ class DailyAINews(BasePlugin):
         except MassiveMarketDataError as exc:
             logger.warning("Massive market quote failed for %s: %s", symbol, exc)
             return None
+
+    @staticmethod
+    def _is_massive_index_proxy_quote(symbol: str, row: dict[str, Any] | None) -> bool:
+        accepted_tickers = MASSIVE_INDEX_TICKERS.get(symbol)
+        if not accepted_tickers or not row or row.get("source") != "massive":
+            return False
+        massive_symbol = str(row.get("massive_symbol") or "").upper()
+        return massive_symbol not in accepted_tickers
 
     def _fetch_massive_macro(self, massive_client) -> dict[str, Any]:
         try:
@@ -1309,14 +1338,7 @@ class DailyAINews(BasePlugin):
         return self._simplify_chinese_payload(brief)
 
     def _parse_brief_json(self, content: str) -> dict[str, Any]:
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", content, re.S)
-            if not match:
-                raise
-            data = json.loads(match.group(0))
-
+        data = self._load_brief_json_object(content)
         top = self._as_list(data.get("top"), 7)
         lede = str(data.get("lede") or "").strip()
         if not lede or lede == "今日新闻简报已生成。":
@@ -1328,6 +1350,63 @@ class DailyAINews(BasePlugin):
             "us_stock": self._as_market_block(data.get("us_stock")),
             "sources": self._as_list(data.get("sources"), 5),
         })
+
+    def _load_brief_json_object(self, content: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for candidate in self._json_object_candidates(content):
+            repaired = self._strip_trailing_json_commas(candidate)
+            for payload in (candidate, repaired):
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    last_error = exc
+                    continue
+                if isinstance(data, dict):
+                    return data
+                last_error = ValueError("AI summary JSON was not an object.")
+        if last_error:
+            raise last_error
+        raise ValueError("AI summary JSON was empty.")
+
+    @staticmethod
+    def _json_object_candidates(content: str) -> list[str]:
+        text = str(content or "").strip()
+        candidates = [text] if text else []
+        match = re.search(r"\{.*\}", text, re.S)
+        if match:
+            extracted = match.group(0).strip()
+            if extracted and extracted not in candidates:
+                candidates.append(extracted)
+        return candidates
+
+    @staticmethod
+    def _strip_trailing_json_commas(text: str) -> str:
+        output = []
+        in_string = False
+        escaped = False
+        length = len(text)
+        for index, char in enumerate(text):
+            if in_string:
+                output.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                output.append(char)
+                continue
+            if char == ",":
+                next_index = index + 1
+                while next_index < length and text[next_index] in " \t\r\n":
+                    next_index += 1
+                if next_index < length and text[next_index] in "}]":
+                    continue
+            output.append(char)
+        return "".join(output)
 
     def _as_list(self, value: Any, limit: int) -> list[Any]:
         if isinstance(value, list):

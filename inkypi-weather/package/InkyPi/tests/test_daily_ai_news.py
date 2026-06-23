@@ -287,6 +287,67 @@ def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
     assert "000001.SS" in yahoo_calls
 
 
+def test_market_snapshot_rejects_massive_etf_proxy_for_index(monkeypatch):
+    plugin = _plugin()
+
+    class FakeMassiveClient:
+        def __init__(self, api_key):
+            assert api_key == "massive-key"
+
+        def fetch_treasury_yields(self, limit=1):
+            return []
+
+        def fetch_quote(self, symbol, name):
+            if symbol == "^GSPC":
+                return {"symbol": symbol, "name": name, "price": 746.74, "change_pct": 0.8, "as_of": "2026-06-18", "source": "massive", "massive_symbol": "SPY"}
+            if symbol == "^IXIC":
+                return {"symbol": symbol, "name": name, "price": 19944.2, "change_pct": 0.6, "as_of": "2026-06-18", "source": "massive", "massive_symbol": "I:COMP"}
+            if symbol == "^DJI":
+                return {"symbol": symbol, "name": name, "price": 515.52, "change_pct": -0.1, "as_of": "2026-06-18", "source": "massive", "massive_symbol": "DIA"}
+            return None
+
+    def fake_yahoo(symbol, name):
+        prices = {"^GSPC": 6200.0, "^DJI": 43000.0}
+        return {"symbol": symbol, "name": name, "price": prices.get(symbol, 100.0), "change_pct": 1.0, "as_of": "2026-06-19", "source": "yahoo"}
+
+    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
+    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
+    monkeypatch.setattr(plugin, "_fetch_yahoo_quote", fake_yahoo)
+
+    snapshot = plugin._fetch_market_snapshot(datetime(2026, 6, 19), object())
+    rows = snapshot["groups"]["us_stock"]
+
+    assert rows[0]["symbol"] == "^GSPC"
+    assert rows[0]["source"] == "yahoo"
+    assert rows[0]["price"] == 6200.0
+    assert rows[1]["source"] == "massive"
+    assert rows[1]["massive_symbol"] == "I:COMP"
+    assert rows[2]["symbol"] == "^DJI"
+    assert rows[2]["source"] == "yahoo"
+    assert rows[2]["price"] == 43000.0
+
+
+def test_parse_brief_json_repairs_model_trailing_commas():
+    plugin = _plugin()
+    content = """
+    ```json
+    {
+      "lede": "今日硬新闻更新",
+      "top": [
+        {"title": "欧洲议会通过新法案", "why": "监管压力继续上升",}
+      ],
+      "sources": ["BBC中文",],
+    }
+    ```
+    """
+
+    brief = plugin._parse_brief_json(content)
+
+    assert brief["lede"] == "今日硬新闻更新"
+    assert brief["top"] == [{"title": "欧洲议会通过新法案", "why": "监管压力继续上升"}]
+    assert brief["sources"] == ["BBC中文"]
+
+
 def test_simplifies_common_traditional_chinese_payload():
     plugin = _plugin()
 
@@ -307,6 +368,14 @@ def test_simplifies_common_traditional_chinese_payload():
     assert simplified["brief"]["sources"] == ["BBC简体中文"]
     assert simplified["items"][0]["title"] == "欧盟发布新规"
     assert simplified["items"][0]["summary"] == "企业应对"
+
+
+def test_simplifies_traditional_characters_seen_in_live_ai_output():
+    plugin = _plugin()
+
+    simplified = plugin._simplify_chinese_text("礦物質傷腎，這批短劇從業者稱人贏不了AI，老闆賺得滿鉢滿")
+
+    assert simplified == "矿物质伤肾，这批短剧从业者称人赢不了AI，老板赚得满钵满"
 
 
 def test_simplifies_common_english_news_terms_and_chinese_spacing():

@@ -6,10 +6,13 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from io import BytesIO
 from datetime import datetime, timezone
 import hashlib
+import html
 import json
 import logging
 import math
 import os
+import random
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -18,15 +21,18 @@ STEAM_API_BASE = "https://api.steampowered.com"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
 STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
+STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/badges/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-v24"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-badgerice-v25"
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
 STEAM_GAME_STRIP_IMAGE = "game_strip.png"
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
+STEAM_RECENT_GAME_LIMIT = 6
+STEAM_BADGE_ICON_LIMIT = 48
 
 PERSONA_STATES = {
     0: "离线",
@@ -126,7 +132,7 @@ class SteamProfileDashboard(BasePlugin):
             current_game = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
 
         recent = []
-        for game in (data.get("recent_games") or [])[:5]:
+        for game in (data.get("recent_games") or [])[:STEAM_RECENT_GAME_LIMIT]:
             name = self._display_game_name(data, game.get("appid"), game.get("name"))
             if name:
                 recent.append({
@@ -223,7 +229,7 @@ class SteamProfileDashboard(BasePlugin):
             and new_game_id
             and new_game_id != old_game_id
         ):
-            recent_limit = self._int_setting(settings, "recentLimit", 5, 0, 10)
+            recent_limit = self._int_setting(settings, "recentLimit", STEAM_RECENT_GAME_LIMIT, 0, 10)
             if recent_limit:
                 try:
                     recent_data = self._steam_api(
@@ -330,7 +336,7 @@ class SteamProfileDashboard(BasePlugin):
                 "include_played_free_games": 1,
             },
         )
-        recent_limit = self._int_setting(settings, "recentLimit", 5, 0, 10)
+        recent_limit = self._int_setting(settings, "recentLimit", STEAM_RECENT_GAME_LIMIT, 0, 10)
         recent_data = {}
         if recent_limit:
             recent_data = call(
@@ -366,6 +372,7 @@ class SteamProfileDashboard(BasePlugin):
         owned_games = owned_data.get("response", {}).get("games", [])
         recent_games = recent_data.get("response", {}).get("games", [])
         badges = badges_data.get("response", {})
+        badge_icons = self._fetch_badge_icon_records(steam_id, badges) if badges else []
         bans = self._first(bans_data.get("players", []), {})
 
         spotlight_game = self._spotlight_game(profile, recent_games, owned_games)
@@ -382,6 +389,7 @@ class SteamProfileDashboard(BasePlugin):
             "owned_games": owned_games,
             "recent_games": recent_games,
             "badges": badges,
+            "badge_icons": badge_icons,
             "bans": bans,
             "friends": friends,
             "friend_count": friend_count,
@@ -511,7 +519,7 @@ class SteamProfileDashboard(BasePlugin):
         profile = data.get("profile") or {}
         add(profile.get("gameid"))
 
-        for game in (data.get("recent_games") or [])[:5]:
+        for game in (data.get("recent_games") or [])[:STEAM_RECENT_GAME_LIMIT]:
             add(game.get("appid"))
 
         spotlight = data.get("spotlight_game") or {}
@@ -592,6 +600,7 @@ class SteamProfileDashboard(BasePlugin):
         accent = palette["accent"]
         accent_online = palette["green"]
         image = self._dashboard_background((width, height), bg, theme_mode=(theme_context or {}).get("mode", "day"))
+        self._draw_badge_icon_scatter(image, data)
         draw = ImageDraw.Draw(image)
 
         fonts = self._fonts(width, height)
@@ -904,6 +913,179 @@ class SteamProfileDashboard(BasePlugin):
             logger.warning(f"Steam dashboard background {image_name} unavailable: {e}")
             return Image.new("RGB", dimensions, fallback_color)
 
+    def _fetch_badge_icon_records(self, steam_id, badges):
+        badge_rows = (badges or {}).get("badges", []) if isinstance(badges, dict) else []
+        if not steam_id or not badge_rows:
+            return []
+
+        try:
+            session = get_http_session()
+            response = session.get(
+                STEAM_COMMUNITY_BADGES_URL.format(steam_id=steam_id),
+                params={"l": "schinese"},
+                timeout=25,
+            )
+            response.raise_for_status()
+            return self._extract_badge_icon_records(response.text, badges)
+        except Exception as e:
+            logger.warning(f"Steam badge icons unavailable: {e}")
+            return []
+
+    def _extract_badge_icon_records(self, page_html, badges):
+        page_html = str(page_html or "")
+        if not page_html:
+            return []
+
+        owned_appids = {
+            str(badge.get("appid"))
+            for badge in ((badges or {}).get("badges", []) if isinstance(badges, dict) else [])
+            if badge.get("appid")
+        }
+        records = []
+        seen_urls = set()
+        row_pattern = re.compile(
+            r'(<div[^>]+class=["\'][^"\']*\bbadge_row\b[^"\']*["\'][\s\S]*?)(?=<div[^>]+class=["\'][^"\']*\bbadge_row\b[^"\']*["\']|\Z)',
+            re.IGNORECASE,
+        )
+
+        for match in row_pattern.finditer(page_html):
+            fragment = match.group(1)
+            appid = self._badge_row_appid(fragment)
+            if appid and owned_appids and appid not in owned_appids:
+                continue
+            icon_url = self._badge_row_icon_url(fragment)
+            if not icon_url or icon_url in seen_urls:
+                continue
+            seen_urls.add(icon_url)
+            records.append({"appid": appid, "icon_url": icon_url})
+            if len(records) >= STEAM_BADGE_ICON_LIMIT:
+                break
+
+        return records
+
+    def _badge_row_appid(self, fragment):
+        for pattern in (r"/gamecards/(\d+)", r"[?&]appid=(\d+)"):
+            match = re.search(pattern, fragment or "", re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+
+    def _badge_row_icon_url(self, fragment):
+        icon_blocks = re.findall(
+            r'<div[^>]+class=["\'][^"\']*\bbadge_icon\b[^"\']*["\'][^>]*>[\s\S]*?</div>',
+            fragment or "",
+            flags=re.IGNORECASE,
+        )
+        candidates = []
+        for block in icon_blocks:
+            candidates.extend(self._html_image_sources(block))
+        if not candidates:
+            candidates = self._html_image_sources(fragment)
+
+        for url in candidates:
+            normalized = self._normalize_steam_image_url(url)
+            if self._looks_like_badge_icon_url(normalized):
+                return normalized
+        return ""
+
+    def _html_image_sources(self, fragment):
+        return re.findall(r'<img\b[^>]*\bsrc=["\']([^"\']+)["\']', fragment or "", flags=re.IGNORECASE)
+
+    def _normalize_steam_image_url(self, url):
+        url = html.unescape(str(url or "").strip())
+        if url.startswith("//"):
+            url = f"https:{url}"
+        return url if url.startswith(("http://", "https://")) else ""
+
+    def _looks_like_badge_icon_url(self, url):
+        lower = str(url or "").lower()
+        if not lower.startswith(("http://", "https://")):
+            return False
+        if "avatar" in lower:
+            return False
+        return any(token in lower for token in (
+            "/badges/",
+            "/economy/image/",
+            "/public/images/items/",
+            "steamstatic.com/steamcommunity/public/images/",
+        ))
+
+    def _draw_badge_icon_scatter(self, image, data):
+        badge_icons = [
+            str(record.get("icon_url") or "").strip()
+            for record in (data.get("badge_icons") or [])
+            if isinstance(record, dict) and record.get("icon_url")
+        ]
+        if not badge_icons:
+            return
+
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return
+
+        rng = random.Random(self._badge_scatter_seed(data, (width, height)))
+        min_size = max(16, min(width, height) // 28)
+        max_size = max(min_size + 4, min(width, height) // 13)
+        icon_count = min(44, max(18, int((width * height) / 13500)), len(badge_icons) * 3)
+
+        for _ in range(icon_count):
+            size = rng.randint(min_size, max_size)
+            icon = self._badge_icon_image(rng.choice(badge_icons), size)
+            if icon is None:
+                continue
+
+            if rng.random() < 0.78:
+                icon = icon.rotate(rng.uniform(-34, 34), resample=Image.Resampling.BICUBIC, expand=True)
+
+            opacity = rng.uniform(0.38, 0.72)
+            if icon.mode != "RGBA":
+                icon = icon.convert("RGBA")
+            alpha = icon.getchannel("A").point(lambda value: int(value * opacity))
+            icon.putalpha(alpha)
+
+            x = rng.randint(-icon.width // 3, max(0, width - (icon.width * 2) // 3))
+            y = rng.randint(-icon.height // 3, max(0, height - (icon.height * 2) // 3))
+            image.paste(icon, (x, y), icon)
+
+    def _badge_scatter_seed(self, data, dimensions):
+        profile = data.get("profile") or {}
+        icon_urls = [
+            str(record.get("icon_url") or "")
+            for record in (data.get("badge_icons") or [])
+            if isinstance(record, dict)
+        ]
+        seed_material = "|".join([
+            str(profile.get("steamid") or DEFAULT_STEAM_ID),
+            str(dimensions),
+            STEAM_DASHBOARD_STYLE_VERSION,
+            *sorted(icon_urls),
+        ])
+        return int(hashlib.sha256(seed_material.encode("utf-8")).hexdigest()[:16], 16)
+
+    def _badge_icon_image(self, url, size):
+        url = self._normalize_steam_image_url(url)
+        if not url or size <= 0:
+            return None
+
+        icon = None
+        icon_cache_path = self._badge_icon_cache_path(url)
+        try:
+            if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 30 * 24 * 60 * 60:
+                icon = Image.open(icon_cache_path).convert("RGBA")
+            else:
+                session = get_http_session()
+                response = session.get(url, timeout=25)
+                response.raise_for_status()
+                icon = Image.open(BytesIO(response.content)).convert("RGBA")
+                icon = ImageOps.exif_transpose(icon)
+                os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
+                icon.save(icon_cache_path)
+        except Exception as e:
+            logger.warning(f"Steam badge icon unavailable: {e}")
+            return None
+
+        return ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+
     def _draw_game_backdrop(self, image, x, y, width, height):
         if width <= 0 or height <= 0:
             return
@@ -951,7 +1133,7 @@ class SteamProfileDashboard(BasePlugin):
             name = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
             items.append({"prefix": "正在玩：", "name": name, "appid": profile.get("gameid")})
 
-        for game in data.get("recent_games", [])[:5]:
+        for game in data.get("recent_games", [])[:STEAM_RECENT_GAME_LIMIT]:
             name = self._display_game_name(data, game.get("appid"), game.get("name"))
             two_weeks = self._minutes_to_hours(game.get("playtime_2weeks", 0))
             forever = self._minutes_to_hours(game.get("playtime_forever", 0))
@@ -1804,6 +1986,10 @@ class SteamProfileDashboard(BasePlugin):
         digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
         return os.path.join(self._cache_dir(), f"gameicon_{digest}.png")
 
+    def _badge_icon_cache_path(self, url):
+        digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
+        return os.path.join(self._cache_dir(), f"badgeicon_{digest}.png")
+
     def _cache_key(self, settings, dimensions, steam_id):
         parts = [
             STEAM_DASHBOARD_STYLE_VERSION,
@@ -1813,7 +1999,7 @@ class SteamProfileDashboard(BasePlugin):
             str(settings.get("statusCacheSeconds", 60)),
             str(settings.get("fullCacheMinutes", settings.get("cacheMinutes", 30))),
             str(settings.get("friendLimit", 100)),
-            str(settings.get("recentLimit", 5)),
+            str(settings.get("recentLimit", STEAM_RECENT_GAME_LIMIT)),
             str(settings.get("includeFriends", "true")),
             str(settings.get("refreshRecentOnGameChange", "true")),
             str(settings.get("includeAppDetails", "true")),

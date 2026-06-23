@@ -132,10 +132,107 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     assert calls["template_params"]["theme_ink"] == "#000000"
     assert calls["template_params"]["theme_paper"] == "#ffffff"
     assert calls["template_params"]["steam_logo_uri"].startswith("data:image/png;base64,")
+    assert calls["template_params"]["header_bar_uri"].startswith("data:image/png;base64,")
+    assert calls["template_params"]["header_scene_uri"].startswith("data:image/png;base64,")
     assert calls["template_params"]["updated_at_text"].startswith("刷新时间 ")
     assert calls["template_params"]["plugin_settings"]["backgroundColor"] == "#ffffff"
     assert calls["template_params"]["plugin_settings"]["textColor"] == "#000000"
     assert calls["images"] is False
+
+
+def test_generate_image_combined_mode_renders_two_top_five_live_groups():
+    plugin = _plugin()
+    calls = {"sources": [], "metadata_batches": []}
+
+    def fake_fetch(source, count):
+        calls["sources"].append((source, count))
+        if source == "steamcharts_trending":
+            return [
+                {
+                    "rank": 1,
+                    "app_id": 730,
+                    "name": "Counter-Strike 2",
+                    "image": "",
+                    "change_24h_fmt": "+12.5%",
+                    "current_players_fmt": "1,234,567",
+                }
+            ]
+        return [
+            {
+                "rank": 1,
+                "app_id": 570,
+                "name": "Dota 2",
+                "image": "",
+                "current_players_fmt": "555,555",
+                "peak_players_fmt": "777,777",
+            }
+        ]
+
+    def fake_apply(games, include_images):
+        calls["metadata_batches"].append(([game["app_id"] for game in games], include_images))
+
+    def fake_render(dimensions, html_file, css_file, template_params):
+        calls["template_params"] = template_params
+        return "combined-rendered"
+
+    plugin._fetch_games = fake_fetch
+    plugin._apply_store_metadata = fake_apply
+    plugin.render_image = fake_render
+
+    result = plugin.generate_image(
+        {"mode": "live_overview", "itemsCount": "4", "showImages": "false", "themeMode": "day"},
+        FakeDeviceConfig(),
+    )
+
+    assert result == "combined-rendered"
+    assert calls["sources"] == [
+        ("steamcharts_trending", 5),
+        ("steamcharts_top_games", 5),
+    ]
+    assert calls["metadata_batches"] == [([730], False), ([570], False)]
+    params = calls["template_params"]
+    assert params["layout_variant"] == "combined"
+    assert params["table_variant"] == "combined"
+    assert params["subtitle"] == "Live Overview"
+    assert [group["key"] for group in params["chart_groups"]] == [
+        "trending",
+        "player_count",
+    ]
+    assert params["chart_groups"][0]["games"][0]["primary_metric"] == "1,234,567"
+    assert params["chart_groups"][0]["games"][0]["secondary_metric"] == "24h +12.5%"
+    assert params["chart_groups"][1]["games"][0]["primary_metric"] == "555,555"
+    assert params["chart_groups"][1]["games"][0]["secondary_metric"] == "Peak 777,777"
+    assert params["chart_groups"][0]["games"][0]["name_font_scale"]
+    assert params["chart_groups"][0]["games"][0]["metric_font_scale"]
+
+
+def test_compact_font_scales_expand_short_text_and_shrink_long_text():
+    short_game, long_game = SteamCharts._prepare_compact_games(
+        "top_games",
+        [
+            {
+                "rank": 1,
+                "app_id": 570,
+                "name": "Dota 2",
+                "image": "",
+                "current_players_fmt": "123",
+                "peak_players_fmt": "777",
+            },
+            {
+                "rank": 2,
+                "app_id": 306130,
+                "name": "The Elder Scrolls Online: Tamriel Unlimited",
+                "image": "",
+                "current_players_fmt": "1,234,567,890",
+                "peak_players_fmt": "9,876,543,210",
+            },
+        ],
+    )
+
+    assert float(short_game["name_font_scale"]) > float(long_game["name_font_scale"])
+    assert float(short_game["metric_font_scale"]) > float(long_game["metric_font_scale"])
+    assert float(short_game["name_font_scale"]) > 1
+    assert float(long_game["name_font_scale"]) < 1
 
 
 def test_generate_image_uses_pil_fallback_when_html_render_fails():
@@ -246,3 +343,37 @@ def test_apply_store_metadata_prefers_schinese_name_and_cover_image():
     assert games[0]["secondary_name"] == "Counter-Strike 2"
     assert games[0]["image"] == "data:image/jpeg;base64,https://example.test/capsule.jpg"
     assert calls == [(730, "schinese"), (730, "english")]
+
+def test_header_bar_asset_is_exact_transparent_slot():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "assets"
+        / "steam_header_pixel_bar.png"
+    )
+
+    image = Image.open(path).convert("RGBA")
+
+    assert image.size == (67, 48)
+    assert image.getpixel((0, 0))[3] == 0
+    assert image.getpixel((66, 47))[3] == 0
+    assert image.getchannel("A").getbbox() is not None
+
+def test_header_scene_asset_is_exact_transparent_pixel_level_strip():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "assets"
+        / "steam_header_pixel_level.png"
+    )
+
+    image = Image.open(path).convert("RGBA")
+    alpha = image.getchannel("A")
+
+    assert image.size == (320, 44)
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)

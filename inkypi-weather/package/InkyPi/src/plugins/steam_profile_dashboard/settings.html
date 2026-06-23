@@ -33,7 +33,7 @@
 
 <div class="form-group">
     <label for="recentLimit" class="form-label">近期游戏数量：</label>
-    <input type="number" id="recentLimit" name="recentLimit" value="5" min="0" max="10" step="1" class="form-input">
+    <input type="number" id="recentLimit" name="recentLimit" value="6" min="0" max="10" step="1" class="form-input">
 </div>
 
 <div class="form-group">
@@ -98,7 +98,7 @@
         document.getElementById('statusCacheSeconds').value = pluginSettings.statusCacheSeconds || '60';
         document.getElementById('fullCacheMinutes').value = pluginSettings.fullCacheMinutes || pluginSettings.cacheMinutes || '30';
         document.getElementById('friendLimit').value = pluginSettings.friendLimit || '100';
-        document.getElementById('recentLimit').value = pluginSettings.recentLimit || '5';
+        document.getElementById('recentLimit').value = pluginSettings.recentLimit || '6';
         document.getElementById('includeFriends').value = pluginSettings.includeFriends || 'true';
         document.getElementById('refreshRecentOnGameChange').value = pluginSettings.refreshRecentOnGameChange || 'true';
         document.getElementById('includeAppDetails').value = pluginSettings.includeAppDetails || 'true';

@@ -1,7 +1,7 @@
 {% extends "plugin.html" %}
 
 {% block content %}
-<div class="steam-container theme-{{ theme_mode or 'day' }}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }};">
+<div class="steam-container theme-{{ theme_mode or 'day' }}{% if layout_variant == 'combined' %} layout-combined{% endif %}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }}; {% if header_bar_uri %}--header-bar-uri: url('{{ header_bar_uri }}');{% endif %} {% if header_scene_uri %}--header-scene-uri: url('{{ header_scene_uri }}');{% endif %}">
     <div class="header">
         <div class="title-wrap">
             {% if steam_logo_uri %}
@@ -12,10 +12,46 @@
                 {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
             </div>
         </div>
+        {% if header_scene_uri %}
+        <div class="header-scene-strip" aria-hidden="true"></div>
+        {% endif %}
         {% if updated_at_text %}
         <div class="updated-at">{{ updated_at_text }}</div>
         {% endif %}
     </div>
+
+    {% if layout_variant == "combined" %}
+    <div class="combined-grid{% if show_images %} has-images{% endif %}">
+        {% for group in chart_groups %}
+        <section class="chart-panel variant-{{ group.table_variant | replace('_', '-') }}">
+            <div class="panel-header">
+                <div class="panel-title">{{ group.title }}</div>
+                {% if group.subtitle %}<div class="panel-subtitle">{{ group.subtitle }}</div>{% endif %}
+            </div>
+            <div class="compact-list">
+                {% for game in group.games %}
+                <div class="compact-row" style="--name-font-scale: {{ game.name_font_scale | default(1) }}; --metric-font-scale: {{ game.metric_font_scale | default(1) }};">
+                    <div class="compact-rank">{{ game.rank }}</div>
+                    <div class="compact-name{% if show_images and game.image %} has-image{% endif %}">
+                        {% if show_images and game.image %}
+                        <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none'" />
+                        {% endif %}
+                        <div class="compact-copy">
+                            <div class="compact-title">{{ game.name }}</div>
+                            {% if game.secondary_name %}<div class="compact-secondary">{{ game.secondary_name }}</div>{% endif %}
+                        </div>
+                    </div>
+                    <div class="compact-metrics">
+                        <div class="compact-primary">{{ game.primary_metric }}</div>
+                        {% if game.secondary_metric %}<div class="compact-metric-secondary">{{ game.secondary_metric }}</div>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endfor %}
+    </div>
+    {% else %}
 
     <table class="charts-table variant-{{ table_variant | replace('_', '-') }}{% if show_images %} has-images{% endif %}">
         <thead>
@@ -39,7 +75,7 @@
         </thead>
         <tbody>
             {% for game in games %}
-            <tr class="game-row">
+            <tr class="game-row" style="--name-font-scale: {{ game.name_font_scale | default(1) }}; --metric-font-scale: {{ game.metric_font_scale | default(1) }};">
                 <td class="col-rank rank">{{ game.rank }}</td>
                 <td class="col-name game-name">
                     <div class="game-name-content{% if show_images %} has-image{% endif %}">
@@ -98,5 +134,6 @@
             {% endfor %}
         </tbody>
     </table>
+    {% endif %}
 </div>
 {% endblock %}

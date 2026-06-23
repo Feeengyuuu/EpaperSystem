@@ -297,3 +297,78 @@ def test_dashboard_render_does_not_draw_horizontal_game_strip():
     image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
 
     assert image.size == (800, 480)
+
+
+def test_recent_items_show_six_recent_games_in_left_column():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    data = {
+        "profile": {},
+        "recent_games": [
+            {
+                "appid": index,
+                "name": f"Game {index}",
+                "playtime_2weeks": index * 60,
+                "playtime_forever": index * 600,
+            }
+            for index in range(1, 8)
+        ],
+    }
+
+    items = plugin._recent_items(data)
+    visible_appids = plugin._visible_game_appids(data)
+
+    assert [item["appid"] for item in items[:6]] == [1, 2, 3, 4, 5, 6]
+    assert 7 not in [item.get("appid") for item in items]
+    assert "6" in visible_appids
+    assert "7" not in visible_appids
+
+
+def test_extract_badge_icon_records_from_community_badge_rows():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    page_html = """
+        <div class="badge_row is_link" onclick="location.href='https://steamcommunity.com/profiles/1/gamecards/730/'">
+            <div class="badge_icon">
+                <img src="//community.fastly.steamstatic.com/economy/image/abc123/96fx96f">
+            </div>
+        </div>
+        <div class="badge_row is_link" onclick="location.href='https://steamcommunity.com/profiles/1/gamecards/570/'">
+            <div class="badge_icon">
+                <img src="https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/badges/foo.png">
+            </div>
+        </div>
+        <div class="badge_row is_link" onclick="location.href='https://steamcommunity.com/profiles/1/gamecards/999/'">
+            <div class="badge_icon">
+                <img src="https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/badges/skip.png">
+            </div>
+        </div>
+    """
+
+    records = plugin._extract_badge_icon_records(
+        page_html,
+        {"badges": [{"appid": 730}, {"appid": "570"}]},
+    )
+
+    assert records == [
+        {
+            "appid": "730",
+            "icon_url": "https://community.fastly.steamstatic.com/economy/image/abc123/96fx96f",
+        },
+        {
+            "appid": "570",
+            "icon_url": "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/badges/foo.png",
+        },
+    ]
+
+
+def test_badge_icon_scatter_draws_background_icons():
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    image = Image.new("RGB", (220, 140), (10, 12, 16))
+    baseline = image.copy()
+    plugin._badge_icon_image = lambda _url, size: Image.new("RGBA", (size, size), (240, 220, 80, 255))
+
+    plugin._draw_badge_icon_scatter(
+        image,
+        {"profile": {"steamid": "1"}, "badge_icons": [{"icon_url": "https://example.com/icon.png"}]},
+    )
+
+    assert ImageChops.difference(image, baseline).getbbox() is not None

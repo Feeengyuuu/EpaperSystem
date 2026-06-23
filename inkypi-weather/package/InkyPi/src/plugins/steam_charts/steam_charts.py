@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 STEAM_LOGO_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_logo.png")
+STEAM_HEADER_BAR_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_bar.png")
+STEAM_HEADER_SCENE_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_level.png")
 STEAMCHARTS_HOME_URL = "https://steamcharts.com"
 STEAMCHARTS_CHART_URL = "https://steamcharts.com/app/{appid}/chart-data.json"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
@@ -98,7 +100,29 @@ CHART_MODES = {
         "source": "steamcharts_top_records",
         "table_variant": "top_records",
     },
+    "live_overview": {
+        "label": "Live Overview",
+        "source": "combined_live_overview",
+        "table_variant": "combined",
+    },
 }
+
+COMBINED_CHART_GROUPS = (
+    {
+        "key": "trending",
+        "title": "Trending Top 5",
+        "subtitle": "24h movers",
+        "source": "steamcharts_trending",
+        "table_variant": "trending",
+    },
+    {
+        "key": "player_count",
+        "title": "Player Count Top 5",
+        "subtitle": "live now",
+        "source": "steamcharts_top_games",
+        "table_variant": "top_games",
+    },
+)
 
 MAX_ITEMS = 5
 
@@ -141,26 +165,40 @@ class SteamCharts(BasePlugin):
         mode_config = CHART_MODES.get(mode)
         if not mode_config:
             raise RuntimeError(f"Unknown chart mode: {mode}")
+        if mode_config.get("table_variant") == "combined":
+            items_count = MAX_ITEMS
 
         theme_context = self._resolve_theme_context(settings, device_config)
         theme_colors = self._theme_colors(theme_context)
-        games = self._fetch_games(mode_config["source"], items_count)
-        self._apply_store_metadata(games, include_images=show_images)
         updated_at_text = self._format_updated_at(device_config)
-        self._write_charts_context(mode_config, games, updated_at_text)
-
         dimensions = self.get_dimensions(device_config)
+        table_variant = mode_config["table_variant"]
+        games = []
+        chart_groups = []
+
+        if table_variant == "combined":
+            chart_groups = self._fetch_combined_chart_groups(items_count, show_images)
+            self._write_combined_context(mode_config, chart_groups, updated_at_text)
+        else:
+            games = self._fetch_games(mode_config["source"], items_count)
+            self._apply_store_metadata(games, include_images=show_images)
+            games = self._prepare_table_games(table_variant, games)
+            self._write_charts_context(mode_config, games, updated_at_text)
 
         template_params = {
             "title": "STEAM CHARTS",
             "subtitle": mode_config["label"],
-            "table_variant": mode_config["table_variant"],
+            "layout_variant": "combined" if table_variant == "combined" else "single",
+            "table_variant": table_variant,
             "games": games,
+            "chart_groups": chart_groups,
             "show_images": show_images,
             "theme_mode": theme_context.get("mode", "day"),
             "theme_ink": rgb_to_hex(theme_colors["ink"]),
             "theme_paper": rgb_to_hex(theme_colors["paper"]),
             "steam_logo_uri": self._steam_logo_data_uri(theme_colors),
+            "header_bar_uri": self._header_bar_data_uri(),
+            "header_scene_uri": self._header_scene_data_uri(),
             "updated_at_text": updated_at_text,
             "plugin_settings": settings,
         }
@@ -178,14 +216,179 @@ class SteamCharts(BasePlugin):
             return image
 
         logger.warning("Steam Charts HTML render failed; using PIL fallback renderer.")
+        if table_variant == "combined":
+            return self._render_combined_fallback_image(
+                dimensions,
+                mode_config["label"],
+                chart_groups,
+                theme_context,
+                updated_at_text,
+            )
         return self._render_fallback_image(
             dimensions,
             mode_config["label"],
-            mode_config["table_variant"],
+            table_variant,
             games,
             show_images,
             theme_context,
             updated_at_text,
+        )
+
+    def _fetch_combined_chart_groups(self, items_count, show_images=True):
+        groups = []
+        for group_config in COMBINED_CHART_GROUPS:
+            games = self._fetch_games(group_config["source"], items_count)
+            self._apply_store_metadata(games, include_images=show_images)
+            groups.append({
+                "key": group_config["key"],
+                "title": group_config["title"],
+                "subtitle": group_config["subtitle"],
+                "source": group_config["source"],
+                "table_variant": group_config["table_variant"],
+                "games": self._prepare_compact_games(group_config["table_variant"], games),
+            })
+        return groups
+
+    @staticmethod
+    def _prepare_compact_games(table_variant, games):
+        compact_games = []
+        for index, game in enumerate(games[:MAX_ITEMS], start=1):
+            compact = dict(game)
+            compact["rank"] = game.get("rank") or index
+            compact["primary_metric"] = SteamCharts._primary_metric(table_variant, game)
+            compact["secondary_metric"] = SteamCharts._secondary_text(table_variant, game)
+            SteamCharts._apply_layout_font_scales(compact)
+            compact_games.append(compact)
+        return compact_games
+
+    @staticmethod
+    def _prepare_table_games(table_variant, games):
+        prepared = []
+        for game in games:
+            row = dict(game)
+            row["primary_metric"] = SteamCharts._primary_metric(table_variant, game)
+            row["secondary_metric"] = SteamCharts._secondary_text(table_variant, game)
+            SteamCharts._apply_layout_font_scales(row)
+            prepared.append(row)
+        return prepared
+
+    @staticmethod
+    def _apply_layout_font_scales(game):
+        game["name_font_scale"] = SteamCharts._css_scale(
+            SteamCharts._name_font_scale(
+                game.get("name", ""),
+                game.get("secondary_name", ""),
+            )
+        )
+        game["metric_font_scale"] = SteamCharts._css_scale(
+            SteamCharts._metric_font_scale(
+                game.get("primary_metric", "")
+            )
+        )
+        return game
+
+    @staticmethod
+    def _name_font_scale(name, secondary_name=""):
+        primary_units = SteamCharts._text_visual_units(name)
+        secondary_units = SteamCharts._text_visual_units(secondary_name) * 0.65
+        units = max(primary_units, secondary_units)
+        return SteamCharts._linear_font_scale(
+            units,
+            full_size_units=8.0,
+            min_size_units=30.0,
+            floor=0.72,
+            ceiling=1.30,
+        )
+
+    @staticmethod
+    def _metric_font_scale(metric):
+        units = SteamCharts._text_visual_units(metric)
+        return SteamCharts._linear_font_scale(
+            units,
+            full_size_units=4.0,
+            min_size_units=12.0,
+            floor=0.92,
+            ceiling=1.24,
+        )
+
+    @staticmethod
+    def _linear_font_scale(units, full_size_units, min_size_units, floor, ceiling):
+        if units <= full_size_units:
+            return ceiling
+        if units >= min_size_units:
+            return floor
+        progress = (units - full_size_units) / (min_size_units - full_size_units)
+        return ceiling - progress * (ceiling - floor)
+
+    @staticmethod
+    def _text_visual_units(value):
+        units = 0.0
+        for char in str(value or ""):
+            codepoint = ord(char)
+            if char.isspace():
+                units += 0.35
+            elif char.isdigit():
+                units += 0.55
+            elif codepoint < 128:
+                units += 0.65 if char.isupper() else 0.58
+            elif 0x4E00 <= codepoint <= 0x9FFF:
+                units += 1.0
+            else:
+                units += 0.8
+        return units
+
+    @staticmethod
+    def _css_scale(value):
+        return f"{value:.3f}"
+
+    def _write_combined_context(self, mode_config, chart_groups, updated_at_text):
+        label = str(mode_config.get("label") or "Steam Charts").strip()
+        context_groups = []
+        leaders = []
+        for group in chart_groups:
+            items = []
+            for index, game in enumerate(group.get("games", [])[:MAX_ITEMS], start=1):
+                name = game.get("name")
+                if len(leaders) < 4 and name:
+                    leaders.append(str(name))
+                items.append({
+                    "rank": game.get("rank") or index,
+                    "name": name,
+                    "secondary_name": game.get("secondary_name"),
+                    "appid": game.get("app_id"),
+                    "current_players": game.get("current_players_fmt"),
+                    "peak_players": game.get("peak_players_fmt"),
+                    "change_24h": game.get("change_24h_fmt"),
+                    "primary_metric": game.get("primary_metric"),
+                    "secondary_metric": game.get("secondary_metric"),
+                })
+            context_groups.append({
+                "key": group.get("key"),
+                "title": group.get("title"),
+                "source": group.get("source"),
+                "table_variant": group.get("table_variant"),
+                "items": items,
+            })
+
+        summary = f"Steam Charts {label}"
+        if leaders:
+            summary += f": {', '.join(leaders)}"
+
+        write_context(
+            "steam_charts",
+            {
+                "kind": "game_chart_overview",
+                "source": "Steam Charts",
+                "summary": summary[:180],
+                "facts": [
+                    {"label": "mode", "value": label},
+                    {"label": "updated", "value": updated_at_text},
+                ],
+                "groups": context_groups,
+                "table_variant": "combined",
+            },
+            generated_at=datetime.now(),
+            ttl_seconds=2 * 60 * 60,
         )
 
     def _write_charts_context(self, mode_config, games, updated_at_text):
@@ -296,7 +499,7 @@ class SteamCharts(BasePlugin):
         metric_x = width - margin
         cover_width = int(width * 0.145) if show_images else 0
         cover_height = max(28, int(cover_width * 3 / 8)) if show_images else 0
-        cover_gap = max(10, int(width * 0.014)) if show_images else 0
+        cover_gap = max(40, int(width * 0.056)) if show_images else 0
         title_x = name_x + cover_width + cover_gap
         name_max_width = max(120, width - title_x - int(width * 0.27))
         separator_width = max(70, int(width * 0.14))
@@ -356,8 +559,135 @@ class SteamCharts(BasePlugin):
 
         return image
 
+    def _render_combined_fallback_image(self, dimensions, subtitle, chart_groups, theme_context=None, updated_at_text=""):
+        width, height = dimensions
+        theme_colors = self._theme_colors(theme_context)
+        ink = theme_colors["ink"]
+        paper = theme_colors["paper"]
+        image = Image.new("RGB", dimensions, paper)
+        draw = ImageDraw.Draw(image)
+
+        margin = max(14, int(width * 0.026))
+        title_font = self._font(max(24, int(height * 0.072)), "bold")
+        subtitle_font = self._font(max(13, int(height * 0.032)), "normal")
+        meta_font = self._font(max(11, int(height * 0.028)), "normal")
+        panel_font = self._font(max(17, int(height * 0.041)), "bold")
+        panel_sub_font = self._font(max(11, int(height * 0.027)), "normal")
+        rank_font = self._font(max(16, int(height * 0.039)), "bold")
+        name_font_size = max(15, int(height * 0.037))
+        secondary_font_size = max(9, int(height * 0.023))
+        metric_font_size = max(15, int(height * 0.037))
+        small_font_size = max(9, int(height * 0.023))
+
+        title_y = margin
+        logo_size = max(28, int(height * 0.068))
+        logo_y = title_y + max(1, int(height * 0.004))
+        header_text_x = margin + logo_size + max(8, int(width * 0.012))
+        subtitle_y = title_y + int(height * 0.066)
+        header_art_width = max(66, int(width * 0.095))
+
+        self._draw_header_pixel_gradient(
+            image,
+            margin,
+            subtitle_y,
+            theme_colors,
+            area_width=header_art_width,
+        )
+        self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
+        draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
+        draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
+        if updated_at_text:
+            updated_bbox = draw.textbbox((0, 0), updated_at_text, font=meta_font)
+            updated_width = updated_bbox[2] - updated_bbox[0]
+            updated_x = width - margin - updated_width
+            draw.rectangle(
+                (updated_x - 4, subtitle_y - 2, width - margin + 4, subtitle_y + updated_bbox[3] - updated_bbox[1] + 2),
+                fill=paper,
+            )
+            draw.text((updated_x, subtitle_y), updated_at_text, fill=ink, font=meta_font)
+
+        top = subtitle_y + max(22, int(height * 0.055))
+        group_count = max(1, len(chart_groups))
+        col_gap = max(14, int(width * 0.018))
+        col_width = int((width - margin * 2 - col_gap * (group_count - 1)) / group_count)
+        line_width = max(1, int(height * 0.003))
+        panel_header_height = max(36, int(height * 0.078))
+        bottom = height - margin
+
+        for group_index, group in enumerate(chart_groups):
+            left = margin + group_index * (col_width + col_gap)
+            right = left + col_width
+            draw.line((left, top, right, top), fill=ink, width=line_width)
+            title = str(group.get("title") or "Chart").upper()
+            subtitle_text = str(group.get("subtitle") or "")
+            draw.text((left, top + max(5, int(height * 0.01))), title, fill=ink, font=panel_font)
+            if subtitle_text:
+                sub_width = draw.textlength(subtitle_text, font=panel_sub_font)
+                draw.text((right - sub_width, top + max(9, int(height * 0.014))), subtitle_text, fill=ink, font=panel_sub_font)
+
+            games = group.get("games") or []
+            rows_top = top + panel_header_height
+            row_height = max(38, int((bottom - rows_top) / max(1, len(games))))
+            rank_x = left
+            cover_width = max(87, int(col_width * 0.315))
+            cover_height = max(31, int(cover_width * 3 / 8))
+            cover_gap = max(16, int(width * 0.02))
+            metric_x = right
+            title_x = left + max(22, int(col_width * 0.06))
+            if any(game.get("image") for game in games):
+                title_x += cover_width + cover_gap
+            name_max_width = max(70, metric_x - title_x - int(col_width * 0.2))
+            metric_max_width = max(54, int(col_width * 0.2))
+
+            for row_index, game in enumerate(games):
+                y = rows_top + row_index * row_height
+                draw.text((rank_x, y + int(row_height * 0.2)), str(game.get("rank") or row_index + 1), fill=ink, font=rank_font)
+
+                cover = self._decode_data_image(game.get("image"))
+                if cover:
+                    cover_x = left + max(24, int(col_width * 0.075))
+                    cover_y = y + max(4, int((row_height - cover_height) / 2))
+                    cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
+                    image.paste(cover, (cover_x, cover_y))
+
+                try:
+                    name_scale = float(game.get("name_font_scale", 1))
+                except (TypeError, ValueError):
+                    name_scale = 1.0
+                try:
+                    metric_scale = float(game.get("metric_font_scale", 1))
+                except (TypeError, ValueError):
+                    metric_scale = 1.0
+                row_name_font = self._font(max(10, int(name_font_size * name_scale)), "bold")
+                row_secondary_font = self._font(max(8, int(secondary_font_size * name_scale)), "normal")
+                row_metric_font = self._font(max(11, int(metric_font_size * metric_scale)), "bold")
+                row_small_font = self._font(max(8, int(small_font_size * metric_scale)), "normal")
+
+                name = self._fit_text(draw, str(game.get("name") or "Unknown"), row_name_font, name_max_width)
+                draw.text((title_x, y + int(row_height * 0.06)), name, fill=ink, font=row_name_font)
+                secondary = self._fit_text(draw, str(game.get("secondary_name") or ""), row_secondary_font, name_max_width)
+                if secondary:
+                    draw.text((title_x, y + int(row_height * 0.5)), secondary, fill=ink, font=row_secondary_font)
+
+                metric = self._fit_text(draw, str(game.get("primary_metric") or "--"), row_metric_font, metric_max_width)
+                metric_width = draw.textlength(metric, font=row_metric_font)
+                draw.text((metric_x - metric_width, y + int(row_height * 0.08)), metric, fill=ink, font=row_metric_font)
+                secondary_metric = self._fit_text(draw, str(game.get("secondary_metric") or ""), row_small_font, metric_max_width)
+                if secondary_metric:
+                    secondary_width = draw.textlength(secondary_metric, font=row_small_font)
+                    draw.text((metric_x - secondary_width, y + int(row_height * 0.52)), secondary_metric, fill=ink, font=row_small_font)
+
+                if row_index < len(games) - 1:
+                    separator_y = y + row_height - max(4, int(height * 0.008))
+                    draw.line((title_x, separator_y, min(title_x + int(col_width * 0.34), metric_x - int(col_width * 0.22)), separator_y), fill=ink, width=line_width)
+
+        return image
+
     @staticmethod
     def _draw_header_pixel_gradient(target, margin, bottom_y, theme_colors, area_width=None):
+        if SteamCharts._paste_header_bar(target, margin, bottom_y, theme_colors, area_width):
+            return
+
         width, height = target.size
         draw = ImageDraw.Draw(target)
         ink = theme_colors["ink"]
@@ -396,6 +726,34 @@ class SteamCharts(BasePlugin):
                     (x, y, min(x + pixel + elongate, right), min(y + pixel + height_boost, bottom)),
                     fill=ink,
                 )
+
+    @staticmethod
+    def _paste_header_bar(target, margin, bottom_y, theme_colors, area_width=None):
+        source = SteamCharts._load_header_bar_source()
+        if source is None:
+            return False
+
+        width, height = target.size
+        if area_width is None:
+            area_width = max(126, int(width * 0.2))
+        else:
+            area_width = max(1, int(area_width))
+        area_height = max(40, min(int(height * 0.13), max(1, int(bottom_y - margin))))
+
+        bar = ImageOps.contain(
+            source.convert("RGBA"),
+            (area_width, area_height),
+            method=Image.Resampling.LANCZOS,
+        )
+        alpha = bar.getchannel("A")
+        ink = theme_colors["ink"]
+        themed = Image.new("RGBA", bar.size, (ink[0], ink[1], ink[2], 0))
+        themed.putalpha(alpha)
+
+        x = width - margin - area_width + (area_width - bar.width) // 2
+        y = max(0, margin - max(2, int(height * 0.006))) + (area_height - bar.height) // 2
+        target.paste(themed, (x, y), themed)
+        return True
 
     @staticmethod
     def _stable_pixel_value(row, col, salt=0):
@@ -449,6 +807,24 @@ class SteamCharts(BasePlugin):
         return f"data:image/png;base64,{encoded}"
 
     @staticmethod
+    def _header_bar_data_uri():
+        try:
+            with open(STEAM_HEADER_BAR_PATH, "rb") as fh:
+                encoded = base64.b64encode(fh.read()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _header_scene_data_uri():
+        try:
+            with open(STEAM_HEADER_SCENE_PATH, "rb") as fh:
+                encoded = base64.b64encode(fh.read()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except OSError:
+            return ""
+
+    @staticmethod
     def _theme_steam_logo(size, theme_colors):
         source = SteamCharts._load_steam_logo_source()
         if source is None:
@@ -469,6 +845,18 @@ class SteamCharts(BasePlugin):
                 color = paper if luma >= 170 else ink
                 target_pixels[x, y] = (color[0], color[1], color[2], a)
         return themed
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_header_bar_source():
+        if not os.path.exists(STEAM_HEADER_BAR_PATH):
+            return None
+        try:
+            with Image.open(STEAM_HEADER_BAR_PATH) as bar:
+                return bar.convert("RGBA")
+        except Exception:
+            logger.warning("Could not load Steam header bar asset: %s", STEAM_HEADER_BAR_PATH)
+            return None
 
     @staticmethod
     @lru_cache(maxsize=1)

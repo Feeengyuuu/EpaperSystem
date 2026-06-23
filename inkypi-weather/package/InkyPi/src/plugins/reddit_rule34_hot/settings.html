@@ -1,0 +1,56 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
+<input type="hidden" id="dailyPoolMode" name="dailyPoolMode" value="true">
+
+<div class="form-group">
+    <label for="subreddits" class="form-label">Subreddits:</label>
+    <textarea id="subreddits" name="subreddits" class="form-input" rows="4" placeholder="one subreddit per line or comma-separated"></textarea>
+    <div style="color: var(--text-primary); font-size: 0.9em; margin-top: 0.35rem;">
+        Fetches hot image posts from the configured adult subreddits once per local day. Configure
+        <code>REDDIT_CLIENT_ID</code>, <code>REDDIT_CLIENT_SECRET</code>, and
+        <code>REDDIT_REFRESH_TOKEN</code> on the API Keys page.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="poolSize" class="form-label">Daily pool size:</label>
+    <input id="poolSize" name="poolSize" class="form-input" type="number" min="1" max="50" value="20">
+</div>
+
+<div class="form-group">
+    <label for="fitMode" class="form-label">Fit mode:</label>
+    <select id="fitMode" name="fitMode" class="form-input">
+        <option value="auto_layout" selected>Portrait: 3 side by side, landscape: single</option>
+        <option value="auto_blur">Fill screen, rotate portrait when useful</option>
+        <option value="contain">Contain on plain background</option>
+        <option value="cover">Fill screen crop</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="backgroundColor" class="form-label">Background color:</label>
+    <select id="backgroundColor" name="backgroundColor" class="form-input">
+        <option value="black" selected>Black</option>
+        <option value="white">White</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="showInfoOverlay" class="form-label">Info overlay:</label>
+    <select id="showInfoOverlay" name="showInfoOverlay" class="form-input">
+        <option value="false" selected>Hide</option>
+        <option value="true">Show title and subreddit</option>
+    </select>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        if (loadPluginSettings) {
+            document.getElementById('subreddits').value = pluginSettings.subreddits || '';
+            document.getElementById('poolSize').value = pluginSettings.poolSize || '20';
+            document.getElementById('fitMode').value = pluginSettings.fitMode || 'auto_layout';
+            document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || 'black';
+            document.getElementById('showInfoOverlay').value = pluginSettings.showInfoOverlay || 'false';
+            document.getElementById('dailyPoolMode').value = pluginSettings.dailyPoolMode || 'true';
+        }
+    });
+</script>
