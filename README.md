@@ -25,8 +25,10 @@ The runnable app lives here:
 inkypi-weather/package/InkyPi
 ```
 
-README screen content is captured from the real `ColoredEpaperFrame` device.
-img-2 was used only for the desk/device scene and empty display frames.
+README screen content now starts with a public sample render from the real
+SportsDashboard plugin, then mixes in saved device captures from the
+`ColoredEpaperFrame` workflow. img-2 was used only for the desk/device scene
+and empty display frames.
 
 ![Plugin wall](inkypi-weather/package/InkyPi/docs/images/readme/epaper-system-plugin-wall.png)
 
@@ -37,7 +39,7 @@ img-2 was used only for the desk/device scene and empty display frames.
 The GitHub release should feel like a small installable product, not a toolkit
 that requires users to understand the whole runtime first.
 
-- A single beginner-facing installer entrypoint: `install/bootstrap.sh`.
+- A single beginner-facing root installer entrypoint: `install.sh`.
 - Guided setup for display type, language, optional API keys, service start,
   and health checks.
 - API registration hints during setup, so users know where each key comes from.
@@ -48,7 +50,7 @@ that requires users to understand the whole runtime first.
 
 简体中文：GitHub 上应该呈现为一个可以直接安装的软件项目，而不是需要用户先理解所有脚本和插件的工具箱。
 
-- 入口只保留给新手看的安装程序：`install/bootstrap.sh`。
+- 入口只保留给新手看的根目录安装程序：`install.sh`。
 - 安装过程中引导选择屏幕型号、语言、可选 API Key、服务启动和健康检查。
 - API Key 引导里提供注册/获取地址。
 - 每个 API Key 都允许跳过。
@@ -57,24 +59,26 @@ that requires users to understand the whole runtime first.
 
 ## Minimal Installer
 
-On a fresh Raspberry Pi:
+On a fresh Raspberry Pi, the shortest path is one command:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git
-git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem/inkypi-weather/package/InkyPi
-sudo bash install/bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash
 ```
 
-简体中文安装流程：
+Simplified Chinese one-line install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --lang zh-CN
+```
+
+If you prefer cloning first:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y git
 git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem/inkypi-weather/package/InkyPi
-sudo bash install/bootstrap.sh --lang zh-CN
+cd EpaperSystem
+sudo bash install.sh
 ```
 
 The default installer targets a Waveshare 7.3 inch color e-paper display using
@@ -83,13 +87,15 @@ driver `epd7in3e`.
 Other display examples:
 
 ```bash
-sudo bash install/bootstrap.sh -W epd7in5_V2
-sudo bash install/bootstrap.sh --pimoroni
+sudo bash install.sh -W epd7in5_V2
+sudo bash install.sh --pimoroni
 ```
 
-The installer creates a starter `.env`, offers API key prompts, starts the
-service, and runs a health check. Users who want the fastest preview can skip
-all API prompts and add keys later.
+The root installer clones or updates the project when used through `curl`,
+delegates to `inkypi-weather/package/InkyPi/install/bootstrap.sh`, creates a
+starter `.env`, offers API key prompts, starts the service, and runs a health
+check. Users who want the fastest preview can skip all API prompts and add keys
+later.
 
 Full guides:
 

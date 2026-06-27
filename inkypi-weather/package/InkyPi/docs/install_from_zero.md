@@ -58,7 +58,7 @@ sudo apt-get install -y git
 
 ```bash
 git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem/inkypi-weather/package/InkyPi
+cd EpaperSystem
 ```
 
 If this project is published with `InkyPi` as the repository root, use:
@@ -72,25 +72,25 @@ cd <your-repo>
 For the default Waveshare 7.3 inch color panel:
 
 ```bash
-sudo bash install/bootstrap.sh
+sudo bash install.sh
 ```
 
 For Simplified Chinese prompts:
 
 ```bash
-sudo bash install/bootstrap.sh --lang zh-CN
+sudo bash install.sh --lang zh-CN
 ```
 
 For a different Waveshare model:
 
 ```bash
-sudo bash install/bootstrap.sh -W epd7in5_V2
+sudo bash install.sh -W epd7in5_V2
 ```
 
 For Pimoroni Inky displays:
 
 ```bash
-sudo bash install/bootstrap.sh --pimoroni
+sudo bash install.sh --pimoroni
 ```
 
 The installer will:
@@ -119,13 +119,13 @@ Wait 1-2 minutes, then SSH back in:
 
 ```bash
 ssh <username>@inkypi.local
-cd EpaperSystem/inkypi-weather/package/InkyPi
+cd EpaperSystem
 ```
 
 ## 7. Verify
 
 ```bash
-bash install/healthcheck.sh
+bash inkypi-weather/package/InkyPi/install/healthcheck.sh
 ```
 
 If the health check passes, open one of these in your browser:
@@ -146,18 +146,21 @@ http://<pi-ip-address>/api-keys
 Command line:
 
 ```bash
+cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --env-file .env
 ```
 
 Simplified Chinese prompts:
 
 ```bash
+cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --env-file .env --lang zh-CN
 ```
 
 List registration URLs:
 
 ```bash
+cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --list
 python3 install/configure_api_keys.py --list --lang zh-CN
 ```
@@ -176,14 +179,14 @@ Full API key details are in [api_keys.md](./api_keys.md) and
 Run these and copy the output into a GitHub issue:
 
 ```bash
-bash install/healthcheck.sh
+bash inkypi-weather/package/InkyPi/install/healthcheck.sh
 sudo systemctl status inkypi --no-pager
 sudo journalctl -u inkypi -n 120 --no-pager
 ```
 
 Common fixes:
 
-- Web UI does not open: run `sudo systemctl restart inkypi`, then `bash install/healthcheck.sh`.
+- Web UI does not open: run `sudo systemctl restart inkypi`, then `bash inkypi-weather/package/InkyPi/install/healthcheck.sh`.
 - Display stays blank after first install: run `sudo reboot now`.
-- API plugin says missing key: open `/api-keys` or run `python3 install/configure_api_keys.py --list`.
-- Wrong Waveshare model: rerun `sudo bash install/bootstrap.sh -W <model>`.
+- API plugin says missing key: open `/api-keys` or run `cd inkypi-weather/package/InkyPi && python3 install/configure_api_keys.py --list`.
+- Wrong Waveshare model: rerun `sudo bash install.sh -W <model>`.

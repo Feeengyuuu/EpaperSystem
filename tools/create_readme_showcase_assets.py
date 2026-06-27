@@ -30,6 +30,7 @@ class Screen:
 
 
 ACTUAL_SCREENS = [
+    Screen("sports-dashboard", "SportsDashboard", SCREENS / "actual-sports-dashboard-800x480.png", "offline public sample render"),
     Screen("lol-info", "LoLInfo", SCREENS / "actual-lol-info-800x480.png", "/api/current_image after Display Now"),
     Screen("comic-covers", "ComicCovers", SCREENS / "actual-comic-covers-800x480.png", "/plugin_instance_image"),
     Screen("daily-ai-news", "Daily AI News", SCREENS / "actual-daily-ai-news-800x480.png", "/plugin_instance_image"),
@@ -180,19 +181,22 @@ def compose_img2_plugin_wall(screens: list[Screen]) -> Path:
 
 
 def screenshot_grid(screens: list[Screen]) -> Path:
-    width, height = 1920, 1000
+    width = 1920
+    cols = 3
+    rows = (len(screens) + cols - 1) // cols
+    height = 215 + rows * 355 + 45
     canvas = Image.new("RGB", (width, height), (246, 247, 244))
     d = ImageDraw.Draw(canvas)
-    d.text((70, 58), "Actual captures from ColoredEpaperFrame", font=font(50, True), fill=(18, 18, 18))
+    d.text((70, 58), "Public sample render and device captures", font=font(50, True), fill=(18, 18, 18))
     d.text(
         (72, 122),
-        "以下画面来自真实运行设备的 current_image / plugin_instance_image，不是离线渲染或手工模拟。",
+        "首页体育画面为公开样例数据离线渲染；其余画面来自已保存的 current_image / plugin_instance_image。",
         font=font(30),
         fill=(78, 78, 78),
     )
 
     thumb_w, thumb_h = 400, 240
-    for idx, screen in enumerate(screens[:6]):
+    for idx, screen in enumerate(screens):
         col = idx % 3
         row = idx // 3
         x = 82 + col * 610
@@ -218,7 +222,7 @@ def write_manifest(screens: list[Screen], outputs: list[Path]) -> None:
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "device": "ColoredEpaperFrame",
-        "device_host": "192.168.1.188",
+        "device_host": "offline readme render; no live device contacted",
         "screens": [
             {
                 "slug": item.slug,
@@ -229,7 +233,7 @@ def write_manifest(screens: list[Screen], outputs: list[Path]) -> None:
             for item in screens
         ],
         "outputs": [str(path.relative_to(INKYPI)) for path in outputs],
-        "rule": "img-2 bases contain only device/environment; screen content is captured from the live device.",
+        "rule": "img-2 bases contain only device/environment; SportsDashboard is an offline public sample render; other saved screens are existing device captures.",
     }
     (OUT / "manifest.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

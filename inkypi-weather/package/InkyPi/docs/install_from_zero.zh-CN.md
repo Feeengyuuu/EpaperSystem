@@ -61,7 +61,7 @@ sudo apt-get install -y git
 
 ```bash
 git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem/inkypi-weather/package/InkyPi
+cd EpaperSystem
 ```
 
 ## 5. 运行中文新手安装脚本
@@ -69,19 +69,19 @@ cd EpaperSystem/inkypi-weather/package/InkyPi
 默认 Waveshare 7.3 英寸彩色屏：
 
 ```bash
-sudo bash install/bootstrap.sh --lang zh-CN
+sudo bash install.sh --lang zh-CN
 ```
 
 其他 Waveshare 型号示例：
 
 ```bash
-sudo bash install/bootstrap.sh --lang zh-CN -W epd7in5_V2
+sudo bash install.sh --lang zh-CN -W epd7in5_V2
 ```
 
 Pimoroni Inky 屏幕：
 
 ```bash
-sudo bash install/bootstrap.sh --lang zh-CN --pimoroni
+sudo bash install.sh --lang zh-CN --pimoroni
 ```
 
 脚本会自动做这些事：
@@ -109,13 +109,13 @@ sudo reboot now
 
 ```bash
 ssh <用户名>@inkypi.local
-cd EpaperSystem/inkypi-weather/package/InkyPi
+cd EpaperSystem
 ```
 
 ## 7. 验证是否正常
 
 ```bash
-bash install/healthcheck.sh --lang zh-CN
+bash inkypi-weather/package/InkyPi/install/healthcheck.sh --lang zh-CN
 ```
 
 如果健康检查通过，在浏览器打开：
@@ -136,12 +136,14 @@ http://<树莓派IP>/api-keys
 命令行方式：
 
 ```bash
+cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --env-file .env --lang zh-CN
 ```
 
 查看所有 Key 的注册地址：
 
 ```bash
+cd inkypi-weather/package/InkyPi
 python3 install/configure_api_keys.py --list --lang zh-CN
 ```
 
@@ -156,14 +158,14 @@ sudo systemctl restart inkypi
 ## 9. 出问题时复制这些输出
 
 ```bash
-bash install/healthcheck.sh --lang zh-CN
+bash inkypi-weather/package/InkyPi/install/healthcheck.sh --lang zh-CN
 sudo systemctl status inkypi --no-pager
 sudo journalctl -u inkypi -n 120 --no-pager
 ```
 
 常见处理：
 
-- Web UI 打不开：运行 `sudo systemctl restart inkypi`，再运行 `bash install/healthcheck.sh --lang zh-CN`。
+- Web UI 打不开：运行 `sudo systemctl restart inkypi`，再运行 `bash inkypi-weather/package/InkyPi/install/healthcheck.sh --lang zh-CN`。
 - 屏幕一直空白：运行 `sudo reboot now`。
-- 插件提示缺少 Key：打开 `/api-keys`，或运行 `python3 install/configure_api_keys.py --list --lang zh-CN`。
-- Waveshare 型号选错：重新运行 `sudo bash install/bootstrap.sh --lang zh-CN -W <型号>`。
+- 插件提示缺少 Key：打开 `/api-keys`，或运行 `cd inkypi-weather/package/InkyPi && python3 install/configure_api_keys.py --list --lang zh-CN`。
+- Waveshare 型号选错：重新运行 `sudo bash install.sh --lang zh-CN -W <型号>`。

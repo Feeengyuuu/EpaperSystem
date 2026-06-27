@@ -1,8 +1,14 @@
 {
-  "generated_at": "2026-06-05T22:57:09.230603+00:00",
+  "generated_at": "2026-06-27T22:17:04.284753+00:00",
   "device": "ColoredEpaperFrame",
-  "device_host": "192.168.1.188",
+  "device_host": "offline readme render; no live device contacted",
   "screens": [
+    {
+      "slug": "sports-dashboard",
+      "label": "SportsDashboard",
+      "path": "docs\\images\\readme\\screens\\actual-sports-dashboard-800x480.png",
+      "source": "offline public sample render"
+    },
     {
       "slug": "lol-info",
       "label": "LoLInfo",
@@ -45,5 +51,5 @@
     "docs\\images\\readme\\epaper-system-plugin-wall.png",
     "docs\\images\\readme\\epaper-system-real-screens.png"
   ],
-  "rule": "img-2 bases contain only device/environment; screen content is captured from the live device."
+  "rule": "img-2 bases contain only device/environment; SportsDashboard is an offline public sample render; other saved screens are existing device captures."
 }

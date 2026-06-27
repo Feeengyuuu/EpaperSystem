@@ -69,29 +69,29 @@ For a fresh Raspberry Pi, use the beginner installer:
 
 ```bash
 git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem/inkypi-weather/package/InkyPi
-sudo bash install/bootstrap.sh
+cd EpaperSystem
+sudo bash install.sh
 ```
 
 简体中文安装：
 
 ```bash
-sudo bash install/bootstrap.sh --lang zh-CN
+sudo bash install.sh --lang zh-CN
 ```
 
-The beginner installer runs the base install, creates `.env`, offers optional
-API key setup with registration URLs, starts the service, and runs a health
-check. It defaults to the Waveshare `epd7in3e` 7.3 inch color display. For a
-different Waveshare display:
+The root installer delegates to this package's `install/bootstrap.sh`, runs the
+base install, creates `.env`, offers optional API key setup with registration
+URLs, starts the service, and runs a health check. It defaults to the Waveshare
+`epd7in3e` 7.3 inch color display. For a different Waveshare display:
 
 ```bash
-sudo bash install/bootstrap.sh -W epd7in5_V2
+sudo bash install.sh -W epd7in5_V2
 ```
 
 For Pimoroni Inky displays:
 
 ```bash
-sudo bash install/bootstrap.sh --pimoroni
+sudo bash install.sh --pimoroni
 ```
 
 Full zero-to-working guide:
@@ -106,11 +106,11 @@ Advanced/manual install:
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/fatihak/InkyPi.git
+    git clone https://github.com/Feeengyuuu/EpaperSystem.git
     ```
 2. Navigate to the project directory:
     ```bash
-    cd InkyPi
+    cd EpaperSystem/inkypi-weather/package/InkyPi
     ```
 3. Run the installation script with sudo:
     ```bash
@@ -140,18 +140,18 @@ Note:
 For more details, including instructions on how to image your microSD with Raspberry Pi OS, refer to [installation.md](./docs/installation.md). You can also checkout [this YouTube tutorial](https://youtu.be/L5PvQj1vfC4).
 
 ## Update
-To update your InkyPi with the latest code changes, follow these steps:
-1. Navigate to the project directory:
+To update your EpaperSystem install with the latest code changes, follow these steps:
+1. Navigate to the root checkout:
     ```bash
-    cd InkyPi
+    cd EpaperSystem
     ```
 2. Fetch the latest changes from the repository:
     ```bash
     git pull
     ```
-3. Run the update script with sudo:
+3. Run the package update script with sudo:
     ```bash
-    sudo bash install/update.sh
+    sudo bash inkypi-weather/package/InkyPi/install/update.sh
     ```
 This process ensures that any new updates, including code changes and additional dependencies, are properly applied without requiring a full reinstallation.
 
