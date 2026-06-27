@@ -56,6 +56,18 @@ JPEG_START = b"\xff\xd8\xff"
 JPEG_END = b"\xff\xd9"
 CAMERA_WAITING_FAILURES = 3
 CAMERA_FRAME_CENTERING = (0.5, 0.0)
+SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
+TITLE_WORDMARK_IMAGE = "title_wordmark.png"
+TITLE_WORDMARK_SIZE = (292, 52)
+BAMBU_LAB_LOGO_IMAGE = "bambulab_logo.png"
+BAMBU_LAB_LOGO_SIZE = (116, 34)
+BAMBU_LAB_LOGO_GAP = 8
+SECTION_WORDMARK_IMAGES = {
+    "PRINT": ("subtitle_print.png", (106, 24)),
+    "LIVE VIEW": ("subtitle_live_view.png", (150, 24)),
+    "THERMALS": ("subtitle_thermals.png", (146, 24)),
+    "AMS": ("subtitle_ams.png", (72, 24)),
+}
 
 class MqttProtocolError(RuntimeError):
     pass
@@ -327,12 +339,15 @@ class BambuMonitor(BasePlugin):
             self._write_cache(cache_file, {"fetched_at": now, "status": status})
             return self._render_status(status, dimensions)
         except Exception as exc:
-            logger.error(f"Bambu Monitor failed: {exc}", exc_info=True)
+            if self._is_expected_connection_failure(exc):
+                logger.warning(f"Bambu printer unavailable; preserving previous cache: {exc}")
+            else:
+                logger.error(f"Bambu Monitor failed: {exc}", exc_info=True)
             if cached and cached.get("status"):
-                status = cached["status"]
+                status = dict(cached["status"])
                 status["source"] = "stale"
                 status["warning"] = str(exc)
-                return self._render_status(status, dimensions)
+                return self._non_cacheable_image(self._render_status(status, dimensions))
             return self._render_error(dimensions, str(exc))
 
     def _fetch_report(self, host, port, serial, access_code, timeout, settings):
@@ -454,11 +469,15 @@ class BambuMonitor(BasePlugin):
         margin = 22
         self._draw_halftone(draw, (width - 190, 8, width - 28, 50), ACCENT_BLUE, PAPER, 9, 1)
         self._draw_halftone(draw, (22, height - 46, 178, height - 12), CINNABAR, PAPER, 10, 1)
-        title_box = (margin, 12, margin + 234, 44)
-        draw.rectangle((title_box[0] + 3, title_box[1] + 3, title_box[2] + 3, title_box[3] + 3), fill=ACCENT_ORANGE)
-        draw.rectangle(title_box, fill=ACCENT_GOLD)
-        draw.rectangle(title_box, outline=INK, width=2)
-        draw.text((margin + 10, 16), "BAMBU MONITOR", fill=INK, font=self._font(23, True))
+        title_x = margin
+        if self._draw_bambulab_logo(img, margin, 14, BAMBU_LAB_LOGO_SIZE):
+            title_x = margin + BAMBU_LAB_LOGO_SIZE[0] + BAMBU_LAB_LOGO_GAP
+        if not self._draw_title_wordmark(img, title_x, 13, TITLE_WORDMARK_SIZE):
+            title_box = (title_x, 12, title_x + 234, 44)
+            draw.rectangle((title_box[0] + 3, title_box[1] + 3, title_box[2] + 3, title_box[3] + 3), fill=ACCENT_ORANGE)
+            draw.rectangle(title_box, fill=ACCENT_GOLD)
+            draw.rectangle(title_box, outline=INK, width=2)
+            draw.text((title_x + 10, 16), "BAMBU MONITOR", fill=INK, font=self._font(23, True))
         draw.text((width - margin, 18), status.get("updated_at", ""), fill=MUTED, font=self._font(13, True), anchor="ra")
         draw.line((margin, 52, width - margin, 52), fill=INK, width=2)
         draw.line((margin, 56, width - margin, 56), fill=ACCENT_BLUE, width=2)
@@ -467,10 +486,10 @@ class BambuMonitor(BasePlugin):
         camera = (310, 64, width - margin, 326)
         thermals = (margin, 344, 370, height - margin)
         ams = (388, 344, width - margin, height - margin)
-        self._draw_box(draw, left, "PRINT", ACCENT_GOLD, PANEL_GOLD)
-        self._draw_box(draw, camera, "LIVE VIEW", ACCENT_BLUE, PANEL_BLUE)
-        self._draw_box(draw, thermals, "THERMALS", CINNABAR, PANEL_ORANGE)
-        self._draw_box(draw, ams, "AMS", MALACHITE, PANEL_GREEN)
+        self._draw_box(img, draw, left, "PRINT", ACCENT_GOLD, PANEL_GOLD)
+        self._draw_box(img, draw, camera, "LIVE VIEW", ACCENT_BLUE, PANEL_BLUE)
+        self._draw_box(img, draw, thermals, "THERMALS", CINNABAR, PANEL_ORANGE)
+        self._draw_box(img, draw, ams, "AMS", MALACHITE, PANEL_GREEN)
 
         self._draw_print_panel(draw, left, status)
         self._draw_camera_panel(img, draw, camera, status)
@@ -685,7 +704,16 @@ class BambuMonitor(BasePlugin):
             "error": 1,
             "ams": [],
         }
-        return self._render_status(status, dimensions)
+        return self._non_cacheable_image(self._render_status(status, dimensions))
+
+    @staticmethod
+    def _non_cacheable_image(image):
+        image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
+        return image
+
+    @staticmethod
+    def _is_expected_connection_failure(exc):
+        return isinstance(exc, (OSError, socket.timeout, TimeoutError, MqttProtocolError, ssl.SSLError))
 
     def _cache_file(self, host, serial):
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in f"{host}_{serial}")
@@ -715,14 +743,121 @@ class BambuMonitor(BasePlugin):
         except Exception as exc:
             logger.warning(f"Failed to write Bambu cache: {exc}")
 
-    def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
+    def _draw_box(self, canvas, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
         left, top, right, bottom = [int(value) for value in box]
         draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=ACCENT_ORANGE)
         draw.rectangle((left, top, right, bottom), fill=fill)
         draw.rectangle((left, top, right, bottom), outline=INK, width=2)
         draw.rectangle((left, top, right, top + 7), fill=accent)
-        if title:
+        if title and not self._draw_section_wordmark(canvas, title, left + 10, top + 8):
             draw.text((left + 12, top + 12), title, fill=INK, font=self._font(15, True))
+
+    def _draw_section_wordmark(self, canvas, title, x, y):
+        config = SECTION_WORDMARK_IMAGES.get(title)
+        if not config:
+            return False
+        source = self._load_section_wordmark(title)
+        if source is None:
+            return False
+
+        try:
+            _, size = config
+            target_w, target_h = [int(value) for value in size]
+            source = self._trim_transparent(source)
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
+            canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning(f"Bambu section wordmark unavailable: {title}: {exc}")
+            return False
+
+    def _section_wordmark_file(self, title):
+        config = SECTION_WORDMARK_IMAGES.get(title)
+        if not config:
+            return None
+        filename, _ = config
+        return os.path.join(os.path.dirname(__file__), filename)
+
+    def _load_section_wordmark(self, title):
+        path = self._section_wordmark_file(title)
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning(f"Failed to load Bambu section wordmark {title}: {exc}")
+            return None
+
+    @staticmethod
+    def _trim_transparent(image):
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        bbox = image.getchannel("A").getbbox()
+        return image.crop(bbox) if bbox else image
+
+    def _draw_bambulab_logo(self, canvas, x, y, size):
+        source = self._load_bambulab_logo()
+        if source is None:
+            return False
+
+        try:
+            target_w, target_h = [int(value) for value in size]
+            source = self._trim_transparent(source)
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
+            canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning(f"Bambu Lab logo unavailable: {exc}")
+            return False
+
+    def _bambulab_logo_file(self):
+        return os.path.join(os.path.dirname(__file__), BAMBU_LAB_LOGO_IMAGE)
+
+    def _load_bambulab_logo(self):
+        path = self._bambulab_logo_file()
+        if not os.path.exists(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning(f"Failed to load Bambu Lab logo: {exc}")
+            return None
+
+    def _draw_title_wordmark(self, canvas, x, y, size):
+        source = self._load_title_wordmark()
+        if source is None:
+            return False
+
+        try:
+            target_w, target_h = [int(value) for value in size]
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
+            canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning(f"Bambu title wordmark unavailable: {exc}")
+            return False
+
+    def _title_wordmark_file(self):
+        return os.path.join(os.path.dirname(__file__), TITLE_WORDMARK_IMAGE)
+
+    def _load_title_wordmark(self):
+        path = self._title_wordmark_file()
+        if not os.path.exists(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning(f"Failed to load Bambu title wordmark: {exc}")
+            return None
 
     def _draw_halftone(self, draw, bounds, color, paper, spacing, radius):
         left, top, right, bottom = [int(value) for value in bounds]

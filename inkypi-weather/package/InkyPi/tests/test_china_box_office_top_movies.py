@@ -166,6 +166,40 @@ def test_mainland_placeholder_asset_is_transparent_project_png():
     assert [image.getpixel(point)[3] for point in [(0, 0), (319, 0), (0, 83), (319, 83)]] == [0, 0, 0, 0]
 
 
+def test_north_america_title_wordmark_asset_is_transparent_project_png():
+    path = Path(china_box_office_module.CHINA_PLUGIN_DIR) / china_box_office_module.NORTH_AMERICA_TITLE_WORDMARK_FILE
+
+    with Image.open(path) as image:
+        image = image.convert("RGBA")
+        alpha = image.getchannel("A")
+
+    assert image.size == china_box_office_module.NORTH_AMERICA_TITLE_WORDMARK_SIZE
+    assert alpha.getextrema() == (0, 255)
+    w, h = image.size
+    assert [image.getpixel(point)[3] for point in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]] == [0, 0, 0, 0]
+
+
+def test_north_america_title_wordmark_is_drawn_into_header():
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    image = Image.new("RGB", (800, 480), (18, 20, 22))
+    box = plugin._north_america_title_wordmark_box(800, 480, 18)
+
+    assert box == (18, 10, 323, 72)
+    plugin._load_north_america_title_wordmark_asset.cache_clear()
+    assert plugin._draw_north_america_title_wordmark(image, box) is True
+
+    crop = image.crop((box[0], box[1], box[0] + box[2], box[1] + box[3]))
+    colors = crop.getcolors(maxcolors=box[2] * box[3] + 1) or []
+    changed_pixels = sum(count for count, color in colors if color != (18, 20, 22))
+    changed_x = [
+        x
+        for x in range(image.width)
+        for y in range(image.height)
+        if image.getpixel((x, y)) != (18, 20, 22)
+    ]
+    assert changed_pixels > 1000
+    assert min(changed_x) == 18
+
 def test_mainland_placeholder_is_drawn_into_the_right_header_slot():
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
     image = Image.new("RGB", (800, 480), (18, 20, 22))

@@ -1,0 +1,257 @@
+{
+  "source_page": "https://esportsworldcup.com/en/competitions/2026",
+  "generated_at": "2026-06-24T18:23:59.798734+00:00",
+  "count": 25,
+  "games": {
+    "apex-legends": {
+      "slug": "apex-legends",
+      "title": "Apex Legends",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/apex-legends",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/ALGS_Split_1_Playoff_Logo_Black_b705b1f3d8.png",
+      "filename": "apex-legends.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "apex-legends.png"
+    },
+    "dota2": {
+      "slug": "dota2",
+      "title": "Dota 2",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/dota2",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Game_dota2_Variant_Dark_82f230e51b.svg",
+      "filename": "dota2.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "dota2.png"
+    },
+    "fatal-fury": {
+      "slug": "fatal-fury",
+      "title": "Fatal Fury",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/fatal-fury",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/fatalfury_cotw_Logo_Black_f768ff3bae.png",
+      "filename": "fatal-fury.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "fatal-fury.png"
+    },
+    "valorant": {
+      "slug": "valorant",
+      "title": "VALORANT",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/valorant",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Valorant_Logo_Black_c849e41882.svg",
+      "filename": "valorant.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "valorant.png"
+    },
+    "mlbb-women": {
+      "slug": "mlbb-women",
+      "title": "MLBB Women",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/mlbb-women",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/MWI_LOGO_SECONDARY_FULL_NAME_RESIZED_BLACK_6dca6f9553.png",
+      "filename": "mlbb-women.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "mlbb-women.png"
+    },
+    "league-of-legends": {
+      "slug": "league-of-legends",
+      "title": "League of Legends",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/league-of-legends",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Logo_League_of_Legends_debae84876.png",
+      "filename": "league-of-legends.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "league-of-legends.png"
+    },
+    "free-fire": {
+      "slug": "free-fire",
+      "title": "Free Fire",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/free-fire",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/FF_Logo_Black_05118535e6.svg",
+      "filename": "free-fire.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "free-fire.png"
+    },
+    "teamfight-tactics": {
+      "slug": "teamfight-tactics",
+      "title": "Teamfight Tactics",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/teamfight-tactics",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/TFT_Logo_Black_c117699175.svg",
+      "filename": "teamfight-tactics.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "teamfight-tactics.png"
+    },
+    "pubg-battlegrounds": {
+      "slug": "pubg-battlegrounds",
+      "title": "PUBG",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/pubg-battlegrounds",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/PUBG_BG_Full_Flat_Black_2048_b8d4567746.png",
+      "filename": "pubg-battlegrounds.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "pubg-battlegrounds.png"
+    },
+    "eafc": {
+      "slug": "eafc",
+      "title": "EA Sports FC 26",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/eafc",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/EA_FC_PRO_Horizontal_Lockup_Pitch_Black_RGB_545c0e3207.png",
+      "filename": "eafc.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "eafc.png"
+    },
+    "mlbb": {
+      "slug": "mlbb",
+      "title": "Mobile Legends: Bang Bang",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/mlbb",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/MSC_LOGO_SECONDARY_FULL_NAME_BLACK_RESIZED_03c08dadf8.png",
+      "filename": "mlbb.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "mlbb.png"
+    },
+    "overwatch": {
+      "slug": "overwatch",
+      "title": "Overwatch 2",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/overwatch",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/OVERWATCH_CHAMPIONS_Logo_BLACK_HORIZONTAL_beb9deaf1d.svg",
+      "filename": "overwatch.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "overwatch.png"
+    },
+    "street-fighter6": {
+      "slug": "street-fighter6",
+      "title": "Street Fighter 6",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/street-fighter6",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/SF_6_Logo_Black_24545f66e4.svg",
+      "filename": "street-fighter6.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "street-fighter6.png"
+    },
+    "honor-of-kings": {
+      "slug": "honor-of-kings",
+      "title": "Honor of Kings",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/honor-of-kings",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/KWC_38dffebcbf.png",
+      "filename": "honor-of-kings.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "honor-of-kings.png"
+    },
+    "cod-warzone": {
+      "slug": "cod-warzone",
+      "title": "Call of Duty: Warzone",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/cod-warzone",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/CODWRS_Black_Launch_1_13f0a133a0.png",
+      "filename": "cod-warzone.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "cod-warzone.png"
+    },
+    "rainbow-six-siege": {
+      "slug": "rainbow-six-siege",
+      "title": "Rainbow Six Siege X",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/rainbow-six-siege",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/R6_Siege_R6_Lockup_Horizontal_Black_f05af03efd.png",
+      "filename": "rainbow-six-siege.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "rainbow-six-siege.png"
+    },
+    "tekken8": {
+      "slug": "tekken8",
+      "title": "TEKKEN 8",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/tekken8",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/T8_Logo_Black_a48fb5abec.svg",
+      "filename": "tekken8.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "tekken8.png"
+    },
+    "cod-blackops": {
+      "slug": "cod-blackops",
+      "title": "Call of Duty: Black Ops 7",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/cod-blackops",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/COD_BO_7_Logo_Black_6b63bf75bc.svg",
+      "filename": "cod-blackops.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "cod-blackops.png"
+    },
+    "pmwc": {
+      "slug": "pmwc",
+      "title": "PUBG Mobile World Cup",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/pmwc",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/PMWC_upscale_137a127272.png",
+      "filename": "pmwc.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "pmwc.png"
+    },
+    "chess": {
+      "slug": "chess",
+      "title": "Chess",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/chess",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Chess_Black_Final_a1c10fc918.png",
+      "filename": "chess.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "chess.png"
+    },
+    "rocket-league": {
+      "slug": "rocket-league",
+      "title": "Rocket League",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/rocket-league",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Rocket_League_dark_no_feature_0629c6b8eb.png",
+      "filename": "rocket-league.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "rocket-league.png"
+    },
+    "crossfire": {
+      "slug": "crossfire",
+      "title": "Crossfire",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/crossfire",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/cf_mfc_Logo_Black_f2c8fb7605.svg",
+      "filename": "crossfire.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "crossfire.png"
+    },
+    "cs2": {
+      "slug": "cs2",
+      "title": "Counter-Strike 2",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/cs2",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/CS_2_Logo_Black_807905760f.svg",
+      "filename": "cs2.png",
+      "content_type": "image/svg+xml",
+      "source_format": "svg",
+      "path": "cs2.png"
+    },
+    "fortnite": {
+      "slug": "fortnite",
+      "title": "Fortnite",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/fortnite",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/Fortnite_dark_2_6c9812a8c1.png",
+      "filename": "fortnite.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "fortnite.png"
+    },
+    "trackmania": {
+      "slug": "trackmania",
+      "title": "Trackmania",
+      "page_url": "https://esportsworldcup.com/en/competitions/2026/trackmania",
+      "source_url": "https://d3h9qea4qy4169.cloudfront.net/TM_Logo_BLACK_Text_HD_A_Ubisoft_Original_d4bc566fac.png",
+      "filename": "trackmania.png",
+      "content_type": "image/png",
+      "source_format": "image/png",
+      "path": "trackmania.png"
+    }
+  }
+}

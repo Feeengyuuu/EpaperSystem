@@ -18,6 +18,7 @@ DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
 SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
+SPORTS_DASHBOARD_MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_STATE_VERSION = "sports-dashboard-offseason-hub-v1"
 DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS = 60
@@ -25,6 +26,7 @@ DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS = 60
 REFRESH_ON_DISPLAY_PLUGIN_IDS = {"backtothedate", "lol_info"}
+SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 
 
 def _setting_enabled(value):
@@ -74,6 +76,10 @@ def _load_image_copy(path):
     with open(path, "rb") as handle:
         with Image.open(handle) as image:
             return image.copy()
+
+
+def _image_allows_cache(image):
+    return not getattr(image, "info", {}).get(SKIP_CACHE_IMAGE_INFO_KEY)
 
 
 class RefreshTask:
@@ -512,9 +518,15 @@ class RefreshTask:
 
                 plugin = get_plugin_instance(plugin_config)
                 image = plugin.generate_image(_settings_with_force_refresh(plugin_instance.settings, force), self.device_config)
-                _save_image_atomic(image, plugin_image_path)
-                plugin_instance.latest_refresh_time = current_dt.isoformat()
-                updated = True
+                if _image_allows_cache(image):
+                    _save_image_atomic(image, plugin_image_path)
+                    plugin_instance.latest_refresh_time = current_dt.isoformat()
+                    updated = True
+                else:
+                    logger.warning(
+                        "Plugin instance generated a non-cacheable image; leaving previous cache in place. | "
+                        f"plugin_instance: '{plugin_instance.name}'"
+                    )
             except Exception:
                 logger.exception(
                     "Exception during due plugin instance cache refresh. | "
@@ -590,6 +602,8 @@ class RefreshTask:
             sources.append("worldcup")
         if self._sports_dashboard_lpl_live_state_active(current_dt):
             sources.append("lpl")
+        if self._sports_dashboard_msi_live_state_active(current_dt):
+            sources.append("msi")
         if self._sports_dashboard_nba_live_state_active(current_dt):
             sources.append("nba")
         if self._sports_dashboard_offseason_hub_live_state_active(current_dt):
@@ -610,7 +624,7 @@ class RefreshTask:
             if "offseasonHubLiveRefreshEnabled" not in settings:
                 return True
             return _setting_enabled(settings.get("offseasonHubLiveRefreshEnabled"))
-        if source == "lpl":
+        if source in {"lpl", "msi"}:
             return self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance)
         return False
 
@@ -643,7 +657,7 @@ class RefreshTask:
             except (TypeError, ValueError):
                 value = DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS
             return max(60, min(900, value))
-        if source == "lpl":
+        if source in {"lpl", "msi"}:
             return self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
         return DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
 
@@ -669,6 +683,13 @@ class RefreshTask:
             current_dt,
             self._sports_dashboard_lpl_live_state_path(),
             SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION,
+        )
+
+    def _sports_dashboard_msi_live_state_active(self, current_dt):
+        return self._sports_dashboard_live_state_active(
+            current_dt,
+            self._sports_dashboard_msi_live_state_path(),
+            SPORTS_DASHBOARD_MSI_LIVE_STATE_VERSION,
         )
 
     def _sports_dashboard_worldcup_live_state_active(self, current_dt):
@@ -720,6 +741,15 @@ class RefreshTask:
             SPORTS_DASHBOARD_PLUGIN_ID,
             "cache",
             "lpl_live_state.json",
+        )
+
+    def _sports_dashboard_msi_live_state_path(self):
+        return os.path.join(
+            os.path.dirname(__file__),
+            "plugins",
+            SPORTS_DASHBOARD_PLUGIN_ID,
+            "cache",
+            "msi_live_state.json",
         )
 
     def _sports_dashboard_worldcup_live_state_path(self):
@@ -896,9 +926,15 @@ class PlaylistRefresh(RefreshAction):
                     f"plugin_instance: '{self.plugin_instance.name}'"
                 )
                 image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
-                _save_image_atomic(image, plugin_image_path)
-                self.plugin_instance.latest_refresh_time = current_dt.isoformat()
-                return image
+                if _image_allows_cache(image):
+                    _save_image_atomic(image, plugin_image_path)
+                    self.plugin_instance.latest_refresh_time = current_dt.isoformat()
+                    return image
+                logger.warning(
+                    "Plugin instance generated a non-cacheable image for scheduled display; using placeholder. | "
+                    f"plugin_instance: '{self.plugin_instance.name}'"
+                )
+                return self._placeholder_image(device_config)
             except Exception:
                 logger.exception(
                     "Plugin instance could not refresh for scheduled display; using placeholder. | "
@@ -916,8 +952,14 @@ class PlaylistRefresh(RefreshAction):
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
             image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
-            _save_image_atomic(image, plugin_image_path)
-            self.plugin_instance.latest_refresh_time = current_dt.isoformat()
+            if _image_allows_cache(image):
+                _save_image_atomic(image, plugin_image_path)
+                self.plugin_instance.latest_refresh_time = current_dt.isoformat()
+            else:
+                logger.warning(
+                    "Plugin instance generated a non-cacheable image; leaving previous cache in place. | "
+                    f"plugin_instance: '{self.plugin_instance.name}'"
+                )
         else:
             logger.info(f"Not time to refresh plugin instance, using latest image. | plugin_instance: {self.plugin_instance.name}.")
             # Load the existing image from disk

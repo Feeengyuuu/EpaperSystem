@@ -24,14 +24,27 @@ STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appi
 STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/badges/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-badgerice-v25"
+STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-badgerice-v35"
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
 STEAM_GAME_STRIP_IMAGE = "game_strip.png"
+STEAM_SECTION_WORDMARK_IMAGES = {
+    "recent_live": "section_recent_live_wordmark.png",
+    "library_friends": "section_library_friends_wordmark.png",
+}
+STEAM_SECTION_WORDMARK_SIZES = {
+    "recent_live": (160, 29),
+    "library_friends": (190, 29),
+}
+STEAM_SECTION_WORDMARK_Y_OFFSET = -3
+STEAM_SECTION_WORDMARK_DARK_TINT = (72, 224, 202)
+STEAM_SECTION_WORDMARK_LIGHT_TINT = (232, 255, 248)
+STEAM_SECTION_WORDMARK_WARM_TINT = (255, 222, 78)
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
 STEAM_RECENT_GAME_LIMIT = 6
+STEAM_LEFT_GAME_ITEM_TARGET = 4
 STEAM_BADGE_ICON_LIMIT = 48
 
 PERSONA_STATES = {
@@ -527,7 +540,7 @@ class SteamProfileDashboard(BasePlugin):
 
         owned_games = data.get("owned_games") or []
         sorted_games = sorted(owned_games, key=lambda game: game.get("playtime_forever", 0), reverse=True)
-        for game in sorted_games[:3]:
+        for game in sorted_games[:STEAM_LEFT_GAME_ITEM_TARGET]:
             add(game.get("appid"))
 
         online_friends = [friend for friend in data.get("friends", []) if int(friend.get("personastate", 0)) != 0]
@@ -600,7 +613,6 @@ class SteamProfileDashboard(BasePlugin):
         accent = palette["accent"]
         accent_online = palette["green"]
         image = self._dashboard_background((width, height), bg, theme_mode=(theme_context or {}).get("mode", "day"))
-        self._draw_badge_icon_scatter(image, data)
         draw = ImageDraw.Draw(image)
 
         fonts = self._fonts(width, height)
@@ -637,6 +649,15 @@ class SteamProfileDashboard(BasePlugin):
             width=3,
             fill=panel,
         )
+        self._draw_badge_icon_scatter(
+            image,
+            data,
+            anchor_box=avatar_box,
+            avoid_boxes=[
+                (avatar_box[0] - 3, avatar_box[1] - 3, avatar_box[2] + 3, avatar_box[3] + 3),
+                (panel_x, panel_y, panel_x + panel_w, panel_y + panel_h),
+            ],
+        )
 
         profile = data["profile"]
         status_text, status_color = self._persona_text(profile)
@@ -664,6 +685,7 @@ class SteamProfileDashboard(BasePlugin):
                 ink,
                 top_line_width,
                 data,
+                label_fill=accent_online,
             )
         else:
             y, _ = self._draw_status_line(draw, (panel_x + 18, y), "状态：", status_text, fonts["body"], ink, status_color, top_line_width)
@@ -716,33 +738,32 @@ class SteamProfileDashboard(BasePlugin):
 
         draw.line((left_x + col_w, lower_y + 14, left_x + col_w, lower_y + lower_h - 14), fill=light, width=2)
 
-        self._text(draw, (left_x, content_y), "最近 / 实时", fonts["section"], ink)
-        y = content_y + 31
-        left_line_width = col_w - 34
-        for item in self._recent_items(data):
-            next_y, fits = self._draw_recent_item(
-                image,
-                draw,
-                item,
-                left_x,
-                y,
-                fonts["small"],
-                ink,
-                accent_online,
-                left_line_width,
-                lower_y + lower_h - 18,
-                data,
-            )
-            if not fits:
-                break
-            y = next_y + 5
-
-        self._text(draw, (right_x, content_y), "游戏库 / 好友", fonts["section"], ink)
+        if self._draw_section_wordmark(image, "recent_live", left_x, content_y) is None:
+            self._text(draw, (left_x, content_y), "最近 / 实时", fonts["section"], ink)
+        y = content_y + 29
+        left_line_width = col_w - 22
+        self._draw_recent_grid(
+            image,
+            draw,
+            self._recent_items(data)[:STEAM_LEFT_GAME_ITEM_TARGET],
+            left_x,
+            y,
+            left_line_width,
+            lower_y + lower_h - 14,
+            fonts["recent"],
+            ink,
+            accent_online,
+            light,
+            data,
+            gray,
+        )
+        if self._draw_section_wordmark(image, "library_friends", right_x, content_y) is None:
+            self._text(draw, (right_x, content_y), "游戏库 / 好友", fonts["section"], ink)
         y = content_y + 31
         right_line_width = width - margin - (right_x + 18) - 12
         top_game_items = self._top_game_items(data)
         if top_game_items:
-            self._text(draw, (right_x + 18, y), "常玩 TOP 3", fonts["tiny"], gray)
+            self._text(draw, (right_x + 18, y), "\u5e38\u73a9 TOP 3", fonts["tiny"], gray)
             y += 21
             for item in top_game_items:
                 next_y, fits = self._draw_top_game_item(
@@ -759,7 +780,7 @@ class SteamProfileDashboard(BasePlugin):
                 )
                 if not fits:
                     break
-                y = next_y + 4
+                y = next_y + 5
 
             if y <= lower_y + lower_h - 44:
                 draw.line((right_x + 18, y - 3, width - margin - 18, y - 3), fill=light, width=1)
@@ -989,7 +1010,22 @@ class SteamProfileDashboard(BasePlugin):
         return ""
 
     def _html_image_sources(self, fragment):
-        return re.findall(r'<img\b[^>]*\bsrc=["\']([^"\']+)["\']', fragment or "", flags=re.IGNORECASE)
+        fragment = fragment or ""
+        sources = []
+        for attr in ("src", "data-delayed-image", "data-src", "data-original"):
+            sources.extend(
+                re.findall(
+                    rf'<img\b[^>]*\b{attr}=["\']([^"\']+)["\']',
+                    fragment,
+                    flags=re.IGNORECASE,
+                )
+            )
+        for srcset in re.findall(r'<img\b[^>]*\bsrcset=["\']([^"\']+)["\']', fragment, flags=re.IGNORECASE):
+            for candidate in srcset.split(","):
+                url = candidate.strip().split(" ", 1)[0]
+                if url:
+                    sources.append(url)
+        return sources
 
     def _normalize_steam_image_url(self, url):
         url = html.unescape(str(url or "").strip())
@@ -1007,10 +1043,13 @@ class SteamProfileDashboard(BasePlugin):
             "/badges/",
             "/economy/image/",
             "/public/images/items/",
+            "/community_assets/images/items/",
+            "community_assets/images/items/",
+            "/public/images/badges/",
             "steamstatic.com/steamcommunity/public/images/",
         ))
 
-    def _draw_badge_icon_scatter(self, image, data):
+    def _draw_badge_icon_scatter(self, image, data, anchor_box=None, avoid_boxes=None):
         badge_icons = [
             str(record.get("icon_url") or "").strip()
             for record in (data.get("badge_icons") or [])
@@ -1024,9 +1063,19 @@ class SteamProfileDashboard(BasePlugin):
             return
 
         rng = random.Random(self._badge_scatter_seed(data, (width, height)))
-        min_size = max(16, min(width, height) // 28)
-        max_size = max(min_size + 4, min(width, height) // 13)
-        icon_count = min(44, max(18, int((width * height) / 13500)), len(badge_icons) * 3)
+        focused = anchor_box is not None
+        if focused:
+            min_size = max(20, min(width, height) // 24)
+            max_size = max(min_size + 8, min(width, height) // 10)
+            icon_count = min(34, max(22, len(badge_icons) * 2))
+            zones = self._badge_scatter_focus_zones(anchor_box, (width, height), max_size)
+            avoid_boxes = [tuple(int(value) for value in box) for box in (avoid_boxes or [])]
+        else:
+            min_size = max(16, min(width, height) // 28)
+            max_size = max(min_size + 4, min(width, height) // 13)
+            icon_count = min(44, max(18, int((width * height) / 13500)), len(badge_icons) * 3)
+            zones = [(0, 0, width, height)]
+            avoid_boxes = []
 
         for _ in range(icon_count):
             size = rng.randint(min_size, max_size)
@@ -1034,18 +1083,59 @@ class SteamProfileDashboard(BasePlugin):
             if icon is None:
                 continue
 
-            if rng.random() < 0.78:
+            if rng.random() < (0.88 if focused else 0.78):
                 icon = icon.rotate(rng.uniform(-34, 34), resample=Image.Resampling.BICUBIC, expand=True)
 
-            opacity = rng.uniform(0.38, 0.72)
+            opacity = rng.uniform(0.70, 0.95) if focused else rng.uniform(0.38, 0.72)
             if icon.mode != "RGBA":
                 icon = icon.convert("RGBA")
             alpha = icon.getchannel("A").point(lambda value: int(value * opacity))
             icon.putalpha(alpha)
 
-            x = rng.randint(-icon.width // 3, max(0, width - (icon.width * 2) // 3))
-            y = rng.randint(-icon.height // 3, max(0, height - (icon.height * 2) // 3))
-            image.paste(icon, (x, y), icon)
+            placed = False
+            for _attempt in range(14):
+                zone = rng.choice(zones)
+                x_min, y_min, x_max, y_max = zone
+                if x_max <= x_min or y_max <= y_min:
+                    continue
+                x = rng.randint(x_min - icon.width // 4, max(x_min, x_max - (icon.width * 3) // 4))
+                y = rng.randint(y_min - icon.height // 4, max(y_min, y_max - (icon.height * 3) // 4))
+                bbox = (x, y, x + icon.width, y + icon.height)
+                if any(self._rects_overlap(bbox, box) for box in avoid_boxes):
+                    continue
+                image.paste(icon, (x, y), icon)
+                placed = True
+                break
+            if not placed and not focused:
+                x = rng.randint(-icon.width // 3, max(0, width - (icon.width * 2) // 3))
+                y = rng.randint(-icon.height // 3, max(0, height - (icon.height * 2) // 3))
+                image.paste(icon, (x, y), icon)
+
+    def _badge_scatter_focus_zones(self, anchor_box, dimensions, max_size):
+        width, height = dimensions
+        left, top, right, bottom = [int(value) for value in anchor_box]
+        pad = max(18, int(max_size))
+        raw_zones = [
+            (left - pad // 2, top - pad, right + pad, top + pad // 2),
+            (left - pad, top + pad // 3, left + pad // 2, bottom + pad // 3),
+            (right - pad // 3, top + pad // 2, right + pad, bottom - pad // 4),
+            (left - pad // 3, bottom - pad // 4, right + pad, bottom + pad),
+        ]
+        zones = []
+        for x1, y1, x2, y2 in raw_zones:
+            zone = (
+                max(0, min(width, x1)),
+                max(0, min(height, y1)),
+                max(0, min(width, x2)),
+                max(0, min(height, y2)),
+            )
+            if zone[2] - zone[0] >= max(18, pad // 2) and zone[3] - zone[1] >= max(18, pad // 2):
+                zones.append(zone)
+        return zones or [(0, 0, width, height)]
+
+    @staticmethod
+    def _rects_overlap(a, b):
+        return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
 
     def _badge_scatter_seed(self, data, dimensions):
         profile = data.get("profile") or {}
@@ -1126,37 +1216,126 @@ class SteamProfileDashboard(BasePlugin):
             logger.warning(f"Steam dashboard game strip unavailable: {e}")
             return None
 
+    def _draw_section_wordmark(self, image, key, x, y):
+        wordmark = self._section_wordmark_image(key)
+        if wordmark is None:
+            return None
+        target_size = STEAM_SECTION_WORDMARK_SIZES.get(key, wordmark.size)
+        target_w, target_h = int(target_size[0]), int(target_size[1])
+        if wordmark.size != (target_w, target_h):
+            fitted = ImageOps.contain(wordmark, (target_w, target_h), method=Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", (target_w, target_h), (255, 255, 255, 0))
+            canvas.alpha_composite(
+                fitted,
+                ((target_w - fitted.width) // 2, (target_h - fitted.height) // 2),
+            )
+            wordmark = canvas
+        px = int(x)
+        py = int(y + STEAM_SECTION_WORDMARK_Y_OFFSET)
+        image.paste(wordmark, (px, py), wordmark)
+        return (px, py, px + wordmark.width, py + wordmark.height)
+
+    def _section_wordmark_image(self, key):
+        image_name = STEAM_SECTION_WORDMARK_IMAGES.get(key)
+        if not image_name:
+            return None
+        path = self.get_plugin_dir(image_name)
+        try:
+            with Image.open(path) as source:
+                return self._readable_section_wordmark(source.convert("RGBA"))
+        except Exception as e:
+            logger.warning(f"Steam dashboard section wordmark unavailable: {image_name}: {e}")
+            return None
+
+    def _readable_section_wordmark(self, wordmark):
+        if wordmark.mode != "RGBA":
+            wordmark = wordmark.convert("RGBA")
+        result = Image.new("RGBA", wordmark.size, (255, 255, 255, 0))
+        source = wordmark.load()
+        target = result.load()
+        for py in range(wordmark.height):
+            for px in range(wordmark.width):
+                r, g, b, a = source[px, py]
+                if a == 0:
+                    continue
+                luminance = (r * 299 + g * 587 + b * 114) // 1000
+                if r >= 150 and g >= 105 and b <= 150:
+                    target[px, py] = (*STEAM_SECTION_WORDMARK_WARM_TINT, a)
+                elif luminance < 118:
+                    target[px, py] = (*STEAM_SECTION_WORDMARK_DARK_TINT, a)
+                else:
+                    target[px, py] = (*STEAM_SECTION_WORDMARK_LIGHT_TINT, a)
+        return result
+
     def _recent_items(self, data):
         items = []
+        listed_appids = set()
+
+        def add_game_item(item):
+            appid = self._normalize_appid(item.get("appid"))
+            if appid:
+                listed_appids.add(appid)
+            items.append(item)
+
+        def game_item_count():
+            return sum(1 for item in items if item.get("appid") and item.get("name"))
+
         profile = data.get("profile", {})
         if profile.get("gameid") or profile.get("gameextrainfo"):
             name = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
-            items.append({"prefix": "正在玩：", "name": name, "appid": profile.get("gameid")})
+            add_game_item({"prefix": "\u6b63\u5728\u73a9\uff1a", "name": name, "appid": profile.get("gameid")})
 
         for game in data.get("recent_games", [])[:STEAM_RECENT_GAME_LIMIT]:
+            if game_item_count() >= STEAM_LEFT_GAME_ITEM_TARGET:
+                break
             name = self._display_game_name(data, game.get("appid"), game.get("name"))
             two_weeks = self._minutes_to_hours(game.get("playtime_2weeks", 0))
             forever = self._minutes_to_hours(game.get("playtime_forever", 0))
-            items.append({
+            add_game_item({
                 "name": name,
-                "suffix": f"：近2周 {two_weeks}h / 总计 {forever}h",
+                "suffix": f"\uff1a\u8fd12\u5468 {two_weeks}h / \u603b\u8ba1 {forever}h",
+                "compact_suffix": f" - {two_weeks}h" if two_weeks else f" - {forever}h",
+                "detail": f"\u8fd12\u5468 {two_weeks}h | \u603b\u8ba1 {forever}h",
                 "appid": game.get("appid"),
             })
+
+        if game_item_count() < STEAM_LEFT_GAME_ITEM_TARGET:
+            owned_games = sorted(
+                data.get("owned_games", []) or [],
+                key=lambda game: game.get("playtime_forever", 0),
+                reverse=True,
+            )
+            for game in owned_games:
+                appid = self._normalize_appid(game.get("appid"))
+                if not appid or appid in listed_appids:
+                    continue
+                name = self._display_game_name(data, game.get("appid"), game.get("name"))
+                forever = self._minutes_to_hours(game.get("playtime_forever", 0))
+                add_game_item({
+                    "prefix": "\u5e38\u73a9\uff1a",
+                    "name": name,
+                    "suffix": f"\uff1a\u603b\u8ba1 {forever}h",
+                    "compact_suffix": f" - {forever}h",
+                    "detail": f"\u603b\u8ba1 {forever}h",
+                    "appid": game.get("appid"),
+                })
+                if game_item_count() >= STEAM_LEFT_GAME_ITEM_TARGET:
+                    break
 
         spotlight = data.get("spotlight_game") or {}
         details = data.get("app_details") or {}
         if details:
             genres = ", ".join(genre.get("description", "") for genre in details.get("genres", [])[:2])
             if genres:
-                items.append({"text": f"类型：{genres}"})
+                items.append({"text": f"\u7c7b\u578b\uff1a{genres}"})
             if details.get("metacritic", {}).get("score"):
-                items.append({"text": f"媒体评分：{details['metacritic']['score']}"})
+                items.append({"text": f"\u5a92\u4f53\u8bc4\u5206\uff1a{details['metacritic']['score']}"})
         elif spotlight and (spotlight.get("appid") or spotlight.get("name")):
             name = self._display_game_name(data, spotlight.get("appid"), spotlight.get("name"))
-            items.append({"prefix": "重点游戏：", "name": name, "appid": spotlight.get("appid")})
+            items.append({"prefix": "\u91cd\u70b9\u6e38\u620f\uff1a", "name": name, "appid": spotlight.get("appid")})
 
         if not items:
-            items.append({"text": "没有公开的近期游戏数据"})
+            items.append({"text": "\u6ca1\u6709\u516c\u5f00\u7684\u8fd1\u671f\u6e38\u620f\u6570\u636e"})
         return items
 
     def _recent_lines(self, data):
@@ -1475,6 +1654,7 @@ class SteamProfileDashboard(BasePlugin):
             "section": self._font(base + 4, bold=True),
             "body": self._font(base + 3, bold=True),
             "small": self._font(max(13, base - 1)),
+            "recent": self._font(max(14, base - 3), bold=True),
             "tiny": self._font(max(11, base - 4)),
         }
 
@@ -1519,9 +1699,50 @@ class SteamProfileDashboard(BasePlugin):
         line_height = self._line_height(draw, font)
         return max(min_size, min(max_size, max(1, line_height - 2)))
 
-    def _draw_current_game_line(self, image, draw, position, game_name, appid, font, fill, max_width, data, max_bottom=None):
+    def _draw_playing_title_text(self, draw, position, text, font, fill, label_fill, max_width, max_bottom=None, min_size=9):
+        label = "\u6b63\u5728\u73a9\uff1a"
+        text = str(text or "")
+        if not text.startswith(label):
+            return self._draw_single_line_clipped_text(
+                draw,
+                position,
+                text,
+                font,
+                fill,
+                max_width,
+                max_bottom=max_bottom,
+                min_size=min_size,
+            )
+
+        max_width = int(max_width or 0)
+        if max_width <= 0:
+            return position[1], False
+
+        x, y = position
+        fitted_font = self._fit_single_line_font(draw, text, font, max_width, min_size=min_size)
+        line_height = self._line_height(draw, fitted_font)
+        if max_bottom is not None and y + line_height > max_bottom:
+            return y, False
+
+        label_width = self._text_width(draw, label, fitted_font)
+        if label_width >= max_width:
+            self._draw_clipped_text(draw, (x, y), label, fitted_font, label_fill, max_width, line_height)
+            return y + line_height, True
+
+        self._text(draw, (x, y), label, fitted_font, label_fill)
+        rest = text[len(label):]
+        rest_width = max(1, max_width - label_width)
+        rest_x = x + label_width
+        if self._text_width(draw, rest, fitted_font) <= rest_width:
+            self._text(draw, (rest_x, y), rest, fitted_font, fill)
+        else:
+            self._draw_clipped_text(draw, (rest_x, y), rest, fitted_font, fill, rest_width, line_height)
+        return y + line_height, True
+
+    def _draw_current_game_line(self, image, draw, position, game_name, appid, font, fill, max_width, data, max_bottom=None, label_fill=None):
         x, y = position
         label = "\u6b63\u5728\u73a9\uff1a"
+        label_fill = label_fill or fill
         game_name = str(game_name or "").strip()
         max_width = int(max_width or 0)
         if not game_name or max_width <= 0:
@@ -1531,12 +1752,13 @@ class SteamProfileDashboard(BasePlugin):
         icon_size = self._game_icon_size(draw, font, min_size=18, max_size=24)
         icon = self._game_square_icon(data, appid, icon_size)
         if icon is None:
-            return self._draw_single_line_text(
+            return self._draw_playing_title_text(
                 draw,
                 (x, y),
                 f"{label}{game_name}",
                 font,
                 fill,
+                label_fill,
                 max_width,
                 max_bottom=max_bottom,
                 min_size=10,
@@ -1547,12 +1769,13 @@ class SteamProfileDashboard(BasePlugin):
         text_x = icon_x + icon_size + 7
         game_width = max_width - (text_x - x)
         if game_width < 80:
-            return self._draw_single_line_text(
+            return self._draw_playing_title_text(
                 draw,
                 (x, y),
                 f"{label}{game_name}",
                 font,
                 fill,
+                label_fill,
                 max_width,
                 max_bottom=max_bottom,
                 min_size=10,
@@ -1561,7 +1784,7 @@ class SteamProfileDashboard(BasePlugin):
         if max_bottom is not None and y + line_height > max_bottom:
             return y, False
 
-        self._text(draw, (x, y), label, font, fill)
+        self._text(draw, (x, y), label, font, label_fill)
         icon_y = y + max(0, (line_height - icon_size) // 2)
         image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
         next_y, fits = self._draw_single_line_text(
@@ -1576,66 +1799,202 @@ class SteamProfileDashboard(BasePlugin):
         )
         return max(next_y, y + icon_size), fits
 
-    def _draw_recent_item(self, image, draw, item, x, y, font, fill, marker_fill, max_width, max_bottom, data):
+    def _recent_stat_lines(self, item):
+        detail = str((item or {}).get("detail") or "").strip()
+        if detail:
+            return [part.strip() for part in detail.split("|") if part.strip()][:2]
+
+        compact = str((item or {}).get("compact_suffix") or (item or {}).get("suffix") or "").strip()
+        compact = compact.lstrip("\uff1a: -")
+        return [compact] if compact else []
+
+    def _recent_stat_text(self, item):
+        return "  ".join(self._recent_stat_lines(item))
+
+    def _draw_recent_grid(self, image, draw, items, x, y, width, max_bottom, font, fill, marker_fill, rule_fill, data, muted_fill=None):
+        items = list(items or [])[:STEAM_LEFT_GAME_ITEM_TARGET]
+        if not items:
+            return y, True
+
+        x = int(x)
+        y = int(y)
+        width = int(width or 0)
+        if width <= 0:
+            return y, False
+
+        muted_fill = muted_fill or self._muted_text_fill(fill)
+        row_count = len(items)
+        available_h = 36 * row_count
+        if max_bottom is not None:
+            available_h = int(max_bottom) - y
+        if available_h <= 0:
+            return y, False
+
+        row_h = max(28, min(36, available_h // row_count))
+        rows_h = row_h * row_count
+        if max_bottom is not None and y + rows_h > int(max_bottom):
+            row_h = max(24, (int(max_bottom) - y) // row_count)
+            rows_h = row_h * row_count
+        if row_h < 24:
+            return y, False
+
+        right = x + width
+        bottom = y + rows_h
+        icon_col_w = min(40, max(34, int(width * 0.12)))
+        stat_col_w = min(154, max(118, int(width * 0.40)))
+        if width - icon_col_w - stat_col_w < 112:
+            stat_col_w = max(0, width - icon_col_w - 112)
+        if stat_col_w < 78:
+            stat_col_w = 0
+
+        name_x = x + icon_col_w + 8
+        stat_x = right - stat_col_w if stat_col_w else right
+        name_right = (stat_x - 10) if stat_col_w else (right - 8)
+        name_w = max(34, name_right - name_x)
+        stat_w = max(0, stat_col_w)
+
+        title_font = font
+        stat_font = self._font(max(12, int(getattr(font, "size", 14) or 14) - 1))
+        title_line_h = self._line_height(draw, title_font)
+        stat_line_h = self._line_height(draw, stat_font)
+
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                item = {"text": str(item or "")}
+            row_y = y + index * row_h
+            row_bottom = row_y + row_h
+            title_text = self._item_text(item)
+            if item.get("name") and item.get("appid"):
+                title_text = f"{item.get('prefix', '')}{item.get('name', '')}"
+
+            base_icon_size = max(16, min(24, row_h - 10))
+            icon_size = min(
+                max(base_icon_size, min(row_h - 4, icon_col_w - 6)),
+                int(math.ceil(base_icon_size * 1.2)),
+            )
+            icon_x = x + max(0, (icon_col_w - icon_size) // 2)
+            icon_y = row_y + max(0, (row_h - icon_size) // 2)
+            icon = self._game_square_icon(data, item.get("appid"), icon_size) if item.get("appid") else None
+            if icon is not None:
+                image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
+            else:
+                self._bullet(draw, x + icon_col_w // 2 - 4, row_y + row_h // 2 - 4, marker_fill)
+
+            stat_text = self._recent_stat_text(item)
+            title_y = row_y + max(0, (row_h - title_line_h) // 2)
+            self._draw_playing_title_text(
+                draw,
+                (name_x, title_y),
+                title_text,
+                title_font,
+                fill,
+                marker_fill,
+                name_w,
+                max_bottom=row_bottom,
+                min_size=9,
+            )
+            if stat_col_w and stat_text:
+                stat_y = row_y + max(0, (row_h - stat_line_h) // 2)
+                self._draw_single_line_clipped_text(
+                    draw,
+                    (stat_x, stat_y),
+                    stat_text,
+                    stat_font,
+                    muted_fill,
+                    stat_w,
+                    max_bottom=row_bottom,
+                    min_size=10,
+                )
+
+        return bottom, True
+
+    def _draw_recent_item(self, image, draw, item, x, y, font, fill, marker_fill, max_width, max_bottom, data, muted_fill=None):
         if not isinstance(item, dict):
             item = {"text": str(item or "")}
         text = self._item_text(item)
         if not text:
             return y, True
 
-        max_right = x + 18 + int(max_width or 0)
+        max_right = x + int(max_width or 0)
+        muted_fill = muted_fill or self._muted_text_fill(fill)
         if item.get("name") and item.get("appid"):
             prefix = str(item.get("prefix") or "")
-            game_text = f"{item.get('name', '')}{item.get('suffix', '')}"
-            line_height = self._line_height(draw, font)
-            icon_size = self._game_icon_size(draw, font, min_size=12, max_size=18)
+            title_text = f"{prefix}{item.get('name', '')}"
+            detail_text = str(item.get("detail") or "").strip()
+            if not detail_text:
+                detail_text = str(item.get("suffix") or item.get("compact_suffix") or "").strip().lstrip("\uff1a: -")
+
+            title_font = font
+            detail_font = self._font(max(10, int(getattr(font, "size", 14) or 14) - 5))
+            title_height = self._line_height(draw, title_font)
+            detail_height = self._line_height(draw, detail_font) if detail_text else 0
+            text_gap = 1 if detail_text else 0
+            text_height = title_height + text_gap + detail_height
+            icon_size = self._game_icon_size(draw, title_font, min_size=18, max_size=22)
+            row_height = max(icon_size, text_height)
+            if max_bottom is not None and y + row_height > max_bottom:
+                return y, False
+
             icon = self._game_square_icon(data, item.get("appid"), icon_size)
-            prefix_width = self._text_width(draw, prefix, font) if prefix else 0
             if icon is not None:
-                icon_x = x + prefix_width
-                icon_y = y + max(0, (line_height - icon_size) // 2)
+                icon_x = x
+                icon_y = y + max(0, (row_height - icon_size) // 2)
+                image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
                 text_x = icon_x + icon_size + 7
             else:
-                text_x = x + prefix_width
-            text_width = max(20, max_right - text_x)
-            lines = self._wrap_text(draw, game_text, font, text_width)
-            text_height = len(lines) * line_height + max(0, len(lines) - 1) * 2
-            if max_bottom is not None and y + max(text_height, icon_size) > max_bottom:
-                return y, False
-            if prefix:
-                self._text(draw, (x, y), prefix, font, fill)
-            if icon is not None:
-                image.paste(icon, (int(icon_x), int(icon_y)), icon if icon.mode == "RGBA" else None)
-            next_y, fits = self._draw_wrapped_text(
+                self._bullet(draw, x, y + max(6, row_height // 2 - 2), marker_fill)
+                text_x = x + 16
+
+            text_width = max(24, max_right - text_x)
+            text_y = y + max(0, (row_height - text_height) // 2)
+            self._draw_single_line_clipped_text(
                 draw,
-                (text_x, y),
-                game_text,
-                font,
+                (text_x, text_y),
+                title_text,
+                title_font,
                 fill,
                 text_width,
                 max_bottom=max_bottom,
+                min_size=10,
             )
-            if not fits:
-                return y, False
-            return max(next_y, y + icon_size), True
+            if detail_text:
+                self._draw_single_line_clipped_text(
+                    draw,
+                    (text_x, text_y + title_height + text_gap),
+                    detail_text,
+                    detail_font,
+                    muted_fill,
+                    text_width,
+                    max_bottom=max_bottom,
+                    min_size=8,
+                )
+            return y + row_height, True
 
-        text_x = x + 18
-        text_width = max_width
-
-        next_y, fits = self._draw_wrapped_text(
+        text_x = x + 16
+        line_height = self._line_height(draw, font)
+        if max_bottom is not None and y + line_height > max_bottom:
+            return y, False
+        self._bullet(draw, x, y + max(6, line_height // 2 - 2), marker_fill)
+        self._draw_single_line_clipped_text(
             draw,
             (text_x, y),
             text,
             font,
             fill,
-            text_width,
+            max_width - 16,
             max_bottom=max_bottom,
+            min_size=9,
         )
-        if not fits:
-            return y, False
+        return y + line_height, True
 
-        self._bullet(draw, x, y + 7, marker_fill)
-        return next_y, True
+    def _muted_text_fill(self, fill):
+        try:
+            r, g, b = [int(value) for value in fill[:3]]
+        except Exception:
+            return fill
+        if r + g + b > 384:
+            return (154, 163, 177)
+        return (78, 88, 104)
 
     def _draw_top_game_item(self, image, draw, item, x, y, font, fill, max_width, max_bottom, data):
         name = str((item or {}).get("name") or "")
@@ -1840,6 +2199,23 @@ class SteamProfileDashboard(BasePlugin):
             return y, False
 
         self._text(draw, (x, y), text, fitted_font, fill)
+        return y + line_height, True
+
+    def _draw_single_line_clipped_text(self, draw, position, text, font, fill, max_width, max_bottom=None, min_size=10):
+        text = str(text or "")
+        max_width = int(max_width or 0)
+        if not text or max_width <= 0:
+            return position[1], True
+
+        x, y = position
+        fitted_font = self._fit_single_line_font(draw, text, font, max_width, min_size=min_size)
+        line_height = self._line_height(draw, fitted_font)
+        if max_bottom is not None and y + line_height > max_bottom:
+            return y, False
+        if self._text_width(draw, text, fitted_font) <= max_width:
+            self._text(draw, (x, y), text, fitted_font, fill)
+        else:
+            self._draw_clipped_text(draw, (x, y), text, fitted_font, fill, max_width, line_height)
         return y + line_height, True
 
     def _fit_single_line_font(self, draw, text, font, max_width, min_size=10):

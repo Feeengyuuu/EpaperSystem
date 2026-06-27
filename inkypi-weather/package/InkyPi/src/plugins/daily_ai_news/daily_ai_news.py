@@ -36,6 +36,21 @@ BACKGROUND_IMAGE = "background_world_news.png"
 PLUGIN_DIR = Path(__file__).resolve().parent
 TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
+TITLE_WORDMARK_IMAGE = "title_wordmark.png"
+TITLE_WORDMARK_SIZE = (220, 58)
+SECTION_WORDMARK_IMAGES = {
+    "top": "section_top_wordmark.png",
+    "quick": "section_quick_wordmark.png",
+    "a_share": "section_a_share_wordmark.png",
+    "us_stock": "section_us_stock_wordmark.png",
+}
+SECTION_WORDMARK_SIZES = {
+    "top": (122, 28),
+    "quick": (132, 28),
+    "a_share": (108, 28),
+    "us_stock": (108, 28),
+}
+SECTION_WORDMARK_Y_OFFSET = -3
 SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v10"
 DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
 DEFAULT_MAX_FEEDS = 16
@@ -1656,9 +1671,13 @@ class DailyAINews(BasePlugin):
         theme_label = self._theme_label(theme_context)
         meta_left = width - margin - max(self._tw(draw, meta, meta_font), self._tw(draw, theme_label, meta_font))
 
-        draw.text((margin, 17), title, font=title_font, fill=ink)
-        draw.line((margin, 64, margin + min(210, self._tw(draw, title, title_font)), 64), fill=red, width=3)
-        title_right = margin + self._tw(draw, title, title_font)
+        title_wordmark_box = self._draw_title_wordmark(img, margin, 8, TITLE_WORDMARK_SIZE, ink)
+        if title_wordmark_box is None:
+            draw.text((margin, 17), title, font=title_font, fill=ink)
+            draw.line((margin, 64, margin + min(210, self._tw(draw, title, title_font)), 64), fill=red, width=3)
+            title_right = margin + self._tw(draw, title, title_font)
+        else:
+            title_right = title_wordmark_box[2]
         self._draw_title_background(
             img,
             (
@@ -1684,8 +1703,8 @@ class DailyAINews(BasePlugin):
         y = max(136, lede_end + 8)
         top_limit_y = module_y = 360
 
-        self._section_header(draw, "◆ " + SECTION_LABELS["top"], top_x, y, main_w, section_font, red, rule)
-        self._section_header(draw, "◇ 快讯补充", side_x, y, side_w, section_font, cyan, rule)
+        self._section_header(draw, "◆ " + SECTION_LABELS["top"], top_x, y, main_w, section_font, red, rule, image=img, asset_key="top")
+        self._section_header(draw, "◇ 快讯补充", side_x, y, side_w, section_font, cyan, rule, image=img, asset_key="quick")
         self._draw_news_items(
             draw,
             top_items[:3],
@@ -1751,6 +1770,7 @@ class DailyAINews(BasePlugin):
                 green,
                 red,
                 max_y=module_y + module_h,
+                target_image=img,
             )
 
         footer = self._footer_text(payload, brief)
@@ -1759,6 +1779,29 @@ class DailyAINews(BasePlugin):
 
     def _base_background(self, dimensions, bg, theme_mode="day") -> Image.Image:
         return Image.new("RGB", dimensions, bg)
+
+    def _draw_title_wordmark(self, image: Image.Image, x, y, size, ink):
+        source = self._load_title_wordmark()
+        if source is None:
+            return None
+
+        try:
+            target_w, target_h = [int(value) for value in size]
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            art = self._prepare_title_wordmark(art, ink)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - art.width) / 2)
+            paste_y = int((target_h - art.height) / 2)
+            layer.alpha_composite(art, (paste_x, paste_y))
+            image.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            bbox = layer.getchannel("A").getbbox()
+            if not bbox:
+                return None
+            return (int(x) + bbox[0], int(y) + bbox[1], int(x) + bbox[2], int(y) + bbox[3])
+        except Exception as exc:
+            logger.warning("Daily AI News title wordmark unavailable: %s", exc)
+            return None
 
     def _draw_title_background(self, image: Image.Image, box) -> bool:
         left, top, right, bottom = [int(round(value)) for value in box]
@@ -1783,6 +1826,36 @@ class DailyAINews(BasePlugin):
         except Exception as exc:
             logger.warning("Daily AI News title background unavailable: %s", exc)
             return False
+
+    @staticmethod
+    def _prepare_title_wordmark(source: Image.Image, ink):
+        wordmark = source.convert("RGBA")
+        ink_rgb = tuple(int(value) for value in tuple(ink)[:3])
+        if sum(ink_rgb) < 384:
+            return wordmark
+
+        pixels = wordmark.load()
+        for y in range(wordmark.height):
+            for x in range(wordmark.width):
+                r, g, b, a = pixels[x, y]
+                if not a:
+                    continue
+                is_red_accent = r > 120 and r > g * 1.25 and r > b * 1.25
+                if not is_red_accent:
+                    pixels[x, y] = ink_rgb + (a,)
+        return wordmark
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_title_wordmark():
+        path = PLUGIN_DIR / TITLE_WORDMARK_IMAGE
+        if not path.is_file():
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load Daily AI News title wordmark %s: %s", path, exc)
+            return None
 
     @staticmethod
     @lru_cache(maxsize=1)
@@ -1868,6 +1941,42 @@ class DailyAINews(BasePlugin):
     def _theme_label(self, theme_context) -> str:
         return "午夜简报" if (theme_context or {}).get("mode") == "night" else "日间简报"
 
+    def _draw_section_wordmark(self, image: Image.Image, key: str, x: int, y: int, accent):
+        source = self._load_section_wordmark(key)
+        if source is None:
+            return None
+        size = SECTION_WORDMARK_SIZES.get(key)
+        if not size:
+            return None
+        try:
+            target_w, target_h = [int(value) for value in size]
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - art.width) / 2)
+            paste_y = int((target_h - art.height) / 2)
+            layer.paste(art, (paste_x, paste_y), art)
+            out_y = int(y + SECTION_WORDMARK_Y_OFFSET)
+            image.paste(layer, (int(x), out_y), layer)
+            return (int(x), out_y, int(x) + target_w, out_y + target_h)
+        except Exception as exc:
+            logger.warning("Could not draw Daily AI News section wordmark %s: %s", key, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _load_section_wordmark(key: str):
+        filename = SECTION_WORDMARK_IMAGES.get(str(key or ""))
+        if not filename:
+            return None
+        path = PLUGIN_DIR / filename
+        if not path.is_file():
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load Daily AI News section wordmark %s: %s", path, exc)
+            return None
     def _footer_text(self, payload: dict[str, Any], brief: dict[str, Any]) -> str:
         sources = brief.get("sources") or []
         if sources:
@@ -1880,12 +1989,20 @@ class DailyAINews(BasePlugin):
         generated_at = str(payload.get("generated_at") or "")[:16].replace("T", " ")
         return f"来源: {source_text}  |  生成: {generated_at}"
 
-    def _section_header(self, draw, label: str, x: int, y: int, width: int, font, accent, rule) -> None:
+    def _section_header(self, draw, label: str, x: int, y: int, width: int, font, accent, rule, image=None, asset_key=None) -> None:
+        if image is not None and asset_key:
+            wordmark_box = self._draw_section_wordmark(image, asset_key, x, y, accent)
+            if wordmark_box is not None:
+                return
         draw.text((x, y), label, font=font, fill=accent)
         underline_w = min(width, max(48, self._tw(draw, label, font) + 8))
         draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
 
-    def _market_section_header(self, draw, label: str, key: str, x: int, y: int, width: int, font, accent, rule) -> None:
+    def _market_section_header(self, draw, label: str, key: str, x: int, y: int, width: int, font, accent, rule, image=None) -> None:
+        if image is not None:
+            wordmark_box = self._draw_section_wordmark(image, key, x, y, accent)
+            if wordmark_box is not None:
+                return
         icon_size = 12
         icon_x = x + 1
         icon_y = y + 5
@@ -1998,8 +2115,9 @@ class DailyAINews(BasePlugin):
         up_color,
         down_color,
         max_y=None,
+        target_image=None,
     ) -> int:
-        self._market_section_header(draw, label, key, x, y, width, section_font, accent, rule)
+        self._market_section_header(draw, label, key, x, y, width, section_font, accent, rule, image=target_image)
         y += 31
         rows = self._market_rows(payload, key)
         prefix, parts = self._market_summary_parts(key, rows, str(payload.get("date") or "")) if rows else ("", [])

@@ -7,6 +7,7 @@ import base64
 import concurrent.futures
 from io import BytesIO
 from functools import lru_cache
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 from datetime import datetime
@@ -22,7 +23,14 @@ import time
 logger = logging.getLogger(__name__)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.dirname(os.path.dirname(PLUGIN_DIR))
+STATIC_FONT_DIR = os.path.join(SRC_DIR, "static", "fonts")
+STATIC_YAHEI_FONT_PATH = os.path.join(STATIC_FONT_DIR, "msyh.ttc")
+STATIC_YAHEI_BOLD_FONT_PATH = os.path.join(STATIC_FONT_DIR, "msyhbd.ttc")
+STATIC_NOTO_SANS_SC_PATH = os.path.join(STATIC_FONT_DIR, "NotoSansSC-VF.ttf")
 STEAM_LOGO_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_logo.png")
+STEAM_TITLE_WORDMARK_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_charts_title_wordmark.png")
+STEAM_PIXEL_KAIJU_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_charts_pixel_kaiju.png")
 STEAM_HEADER_BAR_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_bar.png")
 STEAM_HEADER_SCENE_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_level.png")
 STEAMCHARTS_HOME_URL = "https://steamcharts.com"
@@ -38,7 +46,7 @@ STEAMCHARTS_CHART_TIMEOUT = 30
 STEAMCHARTS_REQUESTS_PER_SECOND = 2
 SANS_FONT_FAMILIES = (
     "Microsoft YaHei",
-    "微软雅黑",
+    "\u5fae\u8f6f\u96c5\u9ed1",
     "Noto Sans SC",
     "Noto Sans CJK SC",
     "WenQuanYi Micro Hei",
@@ -55,11 +63,12 @@ ACCEPTED_SANS_FONT_MATCHES = (
 )
 SANS_FONT_PATHS = {
     "normal": (
+        STATIC_YAHEI_FONT_PATH,
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msyh.ttf",
         r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
         r"C:\Windows\Fonts\Deng.ttf",
-        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
+        STATIC_NOTO_SANS_SC_PATH,
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -67,11 +76,14 @@ SANS_FONT_PATHS = {
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
     ),
     "bold": (
+        STATIC_YAHEI_BOLD_FONT_PATH,
+        STATIC_YAHEI_FONT_PATH,
         r"C:\Windows\Fonts\msyhbd.ttc",
         r"C:\Windows\Fonts\msyhbd.ttf",
+        r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\NotoSansSC-VF.ttf",
         r"C:\Windows\Fonts\Dengb.ttf",
-        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
+        STATIC_NOTO_SANS_SC_PATH,
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
@@ -197,8 +209,10 @@ class SteamCharts(BasePlugin):
             "theme_ink": rgb_to_hex(theme_colors["ink"]),
             "theme_paper": rgb_to_hex(theme_colors["paper"]),
             "steam_logo_uri": self._steam_logo_data_uri(theme_colors),
-            "header_bar_uri": self._header_bar_data_uri(),
-            "header_scene_uri": self._header_scene_data_uri(),
+            "title_wordmark_uri": self._title_wordmark_data_uri(theme_colors),
+            "pixel_kaiju_uri": self._pixel_kaiju_data_uri(),
+            "yahei_font_uri": self._font_file_uri("normal"),
+            "yahei_bold_font_uri": self._font_file_uri("bold"),
             "updated_at_text": updated_at_text,
             "plugin_settings": settings,
         }
@@ -207,6 +221,9 @@ class SteamCharts(BasePlugin):
         render_settings["backgroundOption"] = "color"
         render_settings["backgroundColor"] = rgb_to_hex(theme_colors["paper"])
         render_settings["textColor"] = rgb_to_hex(theme_colors["ink"])
+        render_settings["selectedFrame"] = "None"
+        for margin_key in ("margin", "topMargin", "bottomMargin", "leftMargin", "rightMargin"):
+            render_settings[margin_key] = 0
         template_params["plugin_settings"] = render_settings
 
         image = self.render_image(
@@ -247,6 +264,24 @@ class SteamCharts(BasePlugin):
                 "table_variant": group_config["table_variant"],
                 "games": self._prepare_compact_games(group_config["table_variant"], games),
             })
+        SteamCharts._align_compact_metric_font_scales(groups)
+        return groups
+
+    @staticmethod
+    def _align_compact_metric_font_scales(groups):
+        metric_scales = []
+        for group in groups:
+            for game in group.get("games") or []:
+                metric_scales.append(
+                    SteamCharts._coerce_font_scale(game.get("metric_font_scale"), 1.0)
+                )
+        if not metric_scales:
+            return groups
+
+        shared_scale = SteamCharts._css_scale(min(metric_scales))
+        for group in groups:
+            for game in group.get("games") or []:
+                game["metric_font_scale"] = shared_scale
         return groups
 
     @staticmethod
@@ -294,10 +329,10 @@ class SteamCharts(BasePlugin):
         units = max(primary_units, secondary_units)
         return SteamCharts._linear_font_scale(
             units,
-            full_size_units=8.0,
-            min_size_units=30.0,
-            floor=0.72,
-            ceiling=1.30,
+            full_size_units=7.0,
+            min_size_units=34.0,
+            floor=0.62,
+            ceiling=1.08,
         )
 
     @staticmethod
@@ -305,10 +340,10 @@ class SteamCharts(BasePlugin):
         units = SteamCharts._text_visual_units(metric)
         return SteamCharts._linear_font_scale(
             units,
-            full_size_units=4.0,
-            min_size_units=12.0,
-            floor=0.92,
-            ceiling=1.24,
+            full_size_units=3.5,
+            min_size_units=13.0,
+            floor=0.78,
+            ceiling=1.08,
         )
 
     @staticmethod
@@ -442,10 +477,10 @@ class SteamCharts(BasePlugin):
         subtitle_font = self._font(max(15, int(height * 0.04)), "normal")
         meta_font = self._font(max(12, int(height * 0.032)), "normal")
         rank_font = self._font(max(18, int(height * 0.048)), "bold")
-        name_font = self._font(max(20, int(height * 0.052)), "bold")
-        english_font = self._font(max(13, int(height * 0.034)), "normal")
-        metric_font = self._font(max(18, int(height * 0.046)), "bold")
-        small_font = self._font(max(12, int(height * 0.031)), "normal")
+        name_font_size = max(18, int(height * 0.049))
+        english_font_size = max(11, int(height * 0.031))
+        metric_font_size = max(16, int(height * 0.041))
+        small_font_size = max(10, int(height * 0.027))
 
         title_y = margin
         logo_size = max(34, int(height * 0.087))
@@ -454,16 +489,37 @@ class SteamCharts(BasePlugin):
         subtitle_y = title_y + int(height * 0.09)
         header_art_width = max(76, int(width * 0.115))
 
-        self._draw_header_pixel_gradient(
+
+        self._paste_pixel_kaiju(
             image,
-            margin,
-            subtitle_y,
-            theme_colors,
-            area_width=header_art_width,
+            margin + int(width * 0.34),
+            int(height * 0.009),
+            (max(116, int(width * 0.21)), max(58, int(height * 0.19))),
         )
-        self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
-        draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
-        draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
+
+        logo_slot_x = margin + int(width * 0.008)
+        wordmark_x = margin + logo_size + max(8, int(width * 0.012))
+
+        title_wordmark_drawn = self._paste_title_wordmark(
+            image,
+            wordmark_x,
+            max(0, title_y - int(height * 0.006)),
+            (max(220, int(width * 0.39)), max(48, int(height * 0.12))),
+            theme_colors,
+        )
+        if title_wordmark_drawn:
+            self._paste_steam_logo(
+                image,
+                logo_slot_x,
+                title_y + int(height * 0.047),
+                logo_size,
+                theme_colors,
+            )
+        else:
+            self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
+            draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
+            draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
+
         if updated_at_text:
             updated_bbox = draw.textbbox((0, 0), updated_at_text, font=meta_font)
             updated_width = updated_bbox[2] - updated_bbox[0]
@@ -497,11 +553,12 @@ class SteamCharts(BasePlugin):
         rank_x = margin
         name_x = margin + int(width * 0.052)
         metric_x = width - margin
-        cover_width = int(width * 0.145) if show_images else 0
+        cover_width = int(width * 0.1885) if show_images else 0
         cover_height = max(28, int(cover_width * 3 / 8)) if show_images else 0
         cover_gap = max(40, int(width * 0.056)) if show_images else 0
         title_x = name_x + cover_width + cover_gap
-        name_max_width = max(120, width - title_x - int(width * 0.27))
+        metric_max_width = max(78, int(width * 0.25))
+        name_max_width = max(120, width - title_x - metric_max_width - int(width * 0.035))
         separator_width = max(70, int(width * 0.14))
         separator_line_width = max(1, int(height * 0.0035))
 
@@ -519,25 +576,56 @@ class SteamCharts(BasePlugin):
                     cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
                     image.paste(cover, (cover_x, cover_y))
 
-            name = self._fit_text(draw, str(game.get("name", "Unknown")), name_font, name_max_width)
-            draw.text((title_x, y + row_height * 0.08), name, fill=ink, font=name_font)
-
-            english_name = self._fit_text(
+            name_scale = self._coerce_font_scale(game.get("name_font_scale", 1))
+            metric_scale = self._coerce_font_scale(game.get("metric_font_scale", 1))
+            name_text = str(game.get("name", "Unknown"))
+            row_name_font = self._font_to_fit(
                 draw,
-                str(game.get("secondary_name", "")),
-                english_font,
+                name_text,
                 name_max_width,
+                self._scaled_font_size(name_font_size, name_scale, 13),
+                13,
+                "bold",
             )
+            name = self._fit_text(draw, name_text, row_name_font, name_max_width)
+            draw.text((title_x, y + row_height * 0.08), name, fill=ink, font=row_name_font)
+
+            english_text = str(game.get("secondary_name", ""))
+            row_english_font = self._font_to_fit(
+                draw,
+                english_text,
+                name_max_width,
+                self._scaled_font_size(english_font_size, name_scale, 8),
+                8,
+                "normal",
+            )
+            english_name = self._fit_text(draw, english_text, row_english_font, name_max_width)
             if english_name:
-                draw.text((title_x, y + row_height * 0.43), english_name, fill=ink, font=english_font)
+                draw.text((title_x, y + row_height * 0.43), english_name, fill=ink, font=row_english_font)
 
             metric = self._primary_metric(table_variant, game)
-            metric_width = draw.textlength(metric, font=metric_font)
-            draw.text((metric_x - metric_width, y + row_height * 0.18), metric, fill=ink, font=metric_font)
+            row_metric_font = self._font_to_fit(
+                draw,
+                metric,
+                metric_max_width,
+                self._scaled_font_size(metric_font_size, metric_scale, 8),
+                8,
+                "bold",
+            )
+            metric_width = draw.textlength(metric, font=row_metric_font)
+            draw.text((metric_x - metric_width, y + row_height * 0.18), metric, fill=ink, font=row_metric_font)
             secondary = self._secondary_text(table_variant, game)
             if secondary:
-                secondary_width = draw.textlength(secondary, font=small_font)
-                draw.text((metric_x - secondary_width, y + row_height * 0.56), secondary, fill=ink, font=small_font)
+                row_small_font = self._font_to_fit(
+                    draw,
+                    secondary,
+                    metric_max_width,
+                    self._scaled_font_size(small_font_size, metric_scale, 7),
+                    7,
+                    "normal",
+                )
+                secondary_width = draw.textlength(secondary, font=row_small_font)
+                draw.text((metric_x - secondary_width, y + row_height * 0.56), secondary, fill=ink, font=row_small_font)
 
             if index < len(games) - 1:
                 separator_y = int(y + row_height - max(4, row_gap * 0.55))
@@ -576,8 +664,8 @@ class SteamCharts(BasePlugin):
         rank_font = self._font(max(16, int(height * 0.039)), "bold")
         name_font_size = max(15, int(height * 0.037))
         secondary_font_size = max(9, int(height * 0.023))
-        metric_font_size = max(15, int(height * 0.037))
-        small_font_size = max(9, int(height * 0.023))
+        metric_font_size = max(20, int(height * 0.0481))
+        small_font_size = max(12, int(height * 0.0299))
 
         title_y = margin
         logo_size = max(28, int(height * 0.068))
@@ -586,16 +674,37 @@ class SteamCharts(BasePlugin):
         subtitle_y = title_y + int(height * 0.066)
         header_art_width = max(66, int(width * 0.095))
 
-        self._draw_header_pixel_gradient(
+
+        self._paste_pixel_kaiju(
             image,
-            margin,
-            subtitle_y,
-            theme_colors,
-            area_width=header_art_width,
+            margin + int(width * 0.34),
+            int(height * 0.009),
+            (max(116, int(width * 0.21)), max(58, int(height * 0.19))),
         )
-        self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
-        draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
-        draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
+
+        logo_slot_x = margin + int(width * 0.008)
+        wordmark_x = margin + logo_size + max(8, int(width * 0.012))
+
+        title_wordmark_drawn = self._paste_title_wordmark(
+            image,
+            wordmark_x,
+            max(0, title_y - int(height * 0.006)),
+            (max(210, int(width * 0.36)), max(44, int(height * 0.108))),
+            theme_colors,
+        )
+        if title_wordmark_drawn:
+            self._paste_steam_logo(
+                image,
+                logo_slot_x,
+                title_y + int(height * 0.047),
+                logo_size,
+                theme_colors,
+            )
+        else:
+            self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
+            draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
+            draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
+
         if updated_at_text:
             updated_bbox = draw.textbbox((0, 0), updated_at_text, font=meta_font)
             updated_width = updated_bbox[2] - updated_bbox[0]
@@ -629,15 +738,15 @@ class SteamCharts(BasePlugin):
             rows_top = top + panel_header_height
             row_height = max(38, int((bottom - rows_top) / max(1, len(games))))
             rank_x = left
-            cover_width = max(87, int(col_width * 0.315))
-            cover_height = max(31, int(cover_width * 3 / 8))
-            cover_gap = max(16, int(width * 0.02))
+            cover_width = max(101, int(col_width * 0.34))
+            cover_height = max(29, int(cover_width * 3 / 8))
+            cover_gap = max(9, int(width * 0.0117))
             metric_x = right
             title_x = left + max(22, int(col_width * 0.06))
             if any(game.get("image") for game in games):
                 title_x += cover_width + cover_gap
-            name_max_width = max(70, metric_x - title_x - int(col_width * 0.2))
-            metric_max_width = max(54, int(col_width * 0.2))
+            metric_max_width = max(117, int(col_width * 0.351))
+            name_max_width = max(70, metric_x - title_x - metric_max_width - int(col_width * 0.025))
 
             for row_index, game in enumerate(games):
                 y = rows_top + row_index * row_height
@@ -650,29 +759,53 @@ class SteamCharts(BasePlugin):
                     cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
                     image.paste(cover, (cover_x, cover_y))
 
-                try:
-                    name_scale = float(game.get("name_font_scale", 1))
-                except (TypeError, ValueError):
-                    name_scale = 1.0
-                try:
-                    metric_scale = float(game.get("metric_font_scale", 1))
-                except (TypeError, ValueError):
-                    metric_scale = 1.0
-                row_name_font = self._font(max(10, int(name_font_size * name_scale)), "bold")
-                row_secondary_font = self._font(max(8, int(secondary_font_size * name_scale)), "normal")
-                row_metric_font = self._font(max(11, int(metric_font_size * metric_scale)), "bold")
-                row_small_font = self._font(max(8, int(small_font_size * metric_scale)), "normal")
+                name_scale = self._coerce_font_scale(game.get("name_font_scale", 1))
+                metric_scale = self._coerce_font_scale(game.get("metric_font_scale", 1))
 
-                name = self._fit_text(draw, str(game.get("name") or "Unknown"), row_name_font, name_max_width)
+                name_text = str(game.get("name") or "Unknown")
+                row_name_font = self._font_to_fit(
+                    draw,
+                    name_text,
+                    name_max_width,
+                    self._scaled_font_size(name_font_size, name_scale, 14),
+                    14,
+                    "bold",
+                )
+                name = self._fit_text(draw, name_text, row_name_font, name_max_width)
                 draw.text((title_x, y + int(row_height * 0.06)), name, fill=ink, font=row_name_font)
-                secondary = self._fit_text(draw, str(game.get("secondary_name") or ""), row_secondary_font, name_max_width)
+                secondary_text = str(game.get("secondary_name") or "")
+                row_secondary_font = self._font_to_fit(
+                    draw,
+                    secondary_text,
+                    name_max_width,
+                    self._scaled_font_size(secondary_font_size, name_scale, 8),
+                    8,
+                    "normal",
+                )
+                secondary = self._fit_text(draw, secondary_text, row_secondary_font, name_max_width)
                 if secondary:
                     draw.text((title_x, y + int(row_height * 0.5)), secondary, fill=ink, font=row_secondary_font)
 
-                metric = self._fit_text(draw, str(game.get("primary_metric") or "--"), row_metric_font, metric_max_width)
+                metric = str(game.get("primary_metric") or "--")
+                row_metric_font = self._font_to_fit(
+                    draw,
+                    metric,
+                    metric_max_width,
+                    self._scaled_font_size(metric_font_size, metric_scale, 14),
+                    14,
+                    "bold",
+                )
                 metric_width = draw.textlength(metric, font=row_metric_font)
                 draw.text((metric_x - metric_width, y + int(row_height * 0.08)), metric, fill=ink, font=row_metric_font)
-                secondary_metric = self._fit_text(draw, str(game.get("secondary_metric") or ""), row_small_font, metric_max_width)
+                secondary_metric = str(game.get("secondary_metric") or "")
+                row_small_font = self._font_to_fit(
+                    draw,
+                    secondary_metric,
+                    metric_max_width,
+                    self._scaled_font_size(small_font_size, metric_scale, 12),
+                    12,
+                    "normal",
+                )
                 if secondary_metric:
                     secondary_width = draw.textlength(secondary_metric, font=row_small_font)
                     draw.text((metric_x - secondary_width, y + int(row_height * 0.52)), secondary_metric, fill=ink, font=row_small_font)
@@ -807,6 +940,25 @@ class SteamCharts(BasePlugin):
         return f"data:image/png;base64,{encoded}"
 
     @staticmethod
+    def _title_wordmark_data_uri(theme_colors):
+        wordmark = SteamCharts._theme_title_wordmark(theme_colors)
+        if wordmark is None:
+            return ""
+        buffer = BytesIO()
+        wordmark.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    @staticmethod
+    def _pixel_kaiju_data_uri():
+        try:
+            with open(STEAM_PIXEL_KAIJU_PATH, "rb") as fh:
+                encoded = base64.b64encode(fh.read()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except OSError:
+            return ""
+
+    @staticmethod
     def _header_bar_data_uri():
         try:
             with open(STEAM_HEADER_BAR_PATH, "rb") as fh:
@@ -847,6 +999,76 @@ class SteamCharts(BasePlugin):
         return themed
 
     @staticmethod
+    def _paste_title_wordmark(target, x, y, max_size, theme_colors):
+        source = SteamCharts._theme_title_wordmark(theme_colors)
+        if source is None:
+            return False
+        wordmark = ImageOps.contain(
+            source,
+            (max(1, int(max_size[0])), max(1, int(max_size[1]))),
+            method=Image.Resampling.LANCZOS,
+        )
+        target.paste(wordmark, (int(x), int(y)), wordmark)
+        return True
+
+    @staticmethod
+    def _paste_pixel_kaiju(target, x, y, max_size):
+        source = SteamCharts._load_pixel_kaiju_source()
+        if source is None:
+            return False
+        kaiju = ImageOps.contain(
+            source,
+            (max(1, int(max_size[0])), max(1, int(max_size[1]))),
+            method=Image.Resampling.NEAREST,
+        )
+        target.paste(kaiju, (int(x), int(y)), kaiju)
+        return True
+
+    @staticmethod
+    def _theme_title_wordmark(theme_colors):
+        source = SteamCharts._load_title_wordmark_source()
+        if source is None:
+            return None
+
+        wordmark = source.copy()
+        ink = theme_colors["ink"]
+        paper = theme_colors["paper"]
+        if sum(ink) <= sum(paper):
+            return wordmark
+
+        pixels = wordmark.load()
+        width, height = wordmark.size
+        for y in range(height):
+            for x in range(width):
+                r, g, b, a = pixels[x, y]
+                if a <= 0:
+                    continue
+                luma = 0.299 * r + 0.587 * g + 0.114 * b
+                saturation = max(r, g, b) - min(r, g, b)
+                if luma < 150 or saturation < 24:
+                    pixels[x, y] = (ink[0], ink[1], ink[2], a)
+                elif luma < 190:
+                    pixels[x, y] = (
+                        min(255, int(r * 1.25)),
+                        min(255, int(g * 1.25)),
+                        min(255, int(b * 1.25)),
+                        a,
+                    )
+        return wordmark
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_pixel_kaiju_source():
+        if not os.path.exists(STEAM_PIXEL_KAIJU_PATH):
+            return None
+        try:
+            with Image.open(STEAM_PIXEL_KAIJU_PATH) as kaiju:
+                return kaiju.convert("RGBA")
+        except Exception:
+            logger.warning("Could not load Steam pixel kaiju asset: %s", STEAM_PIXEL_KAIJU_PATH)
+            return None
+
+    @staticmethod
     @lru_cache(maxsize=1)
     def _load_header_bar_source():
         if not os.path.exists(STEAM_HEADER_BAR_PATH):
@@ -869,6 +1091,34 @@ class SteamCharts(BasePlugin):
         except Exception:
             logger.warning("Could not load Steam logo asset: %s", STEAM_LOGO_PATH)
             return None
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_title_wordmark_source():
+        if not os.path.exists(STEAM_TITLE_WORDMARK_PATH):
+            return None
+        try:
+            with Image.open(STEAM_TITLE_WORDMARK_PATH) as wordmark:
+                return wordmark.convert("RGBA")
+        except Exception:
+            logger.warning("Could not load Steam title wordmark asset: %s", STEAM_TITLE_WORDMARK_PATH)
+            return None
+
+    @staticmethod
+    def _font_file_uri(weight="normal"):
+        for font_path in SteamCharts._preferred_sans_font_paths(weight):
+            if not SteamCharts._is_yahei_font_path(font_path):
+                continue
+            try:
+                return Path(font_path).resolve().as_uri()
+            except (OSError, ValueError):
+                return ""
+        return ""
+
+    @staticmethod
+    def _is_yahei_font_path(font_path):
+        name = os.path.basename(str(font_path or "")).lower()
+        return name.startswith("msyh") or "yahei" in name
 
     @staticmethod
     def _font(size, weight="normal"):
@@ -975,6 +1225,29 @@ class SteamCharts(BasePlugin):
             return Image.open(BytesIO(base64.b64decode(encoded)))
         except Exception:
             return None
+
+    @staticmethod
+    def _coerce_font_scale(value, default=1.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _scaled_font_size(base_size, scale, floor):
+        return max(floor, int(base_size * scale))
+
+    @staticmethod
+    def _font_to_fit(draw, text, max_width, start_size, min_size, weight="normal"):
+        text = str(text or "")
+        size = max(int(min_size), int(start_size))
+        min_size = max(1, int(min_size))
+        while size > min_size:
+            font = SteamCharts._font(size, weight)
+            if draw.textlength(text, font=font) <= max_width:
+                return font
+            size -= 1
+        return SteamCharts._font(min_size, weight)
 
     @staticmethod
     def _fit_text(draw, text, font, max_width):

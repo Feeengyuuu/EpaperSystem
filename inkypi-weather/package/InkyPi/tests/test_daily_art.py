@@ -44,6 +44,12 @@ def test_enabled_sources_skips_keyed_sources_without_keys(tmp_path):
     assert plugin._enabled_sources({"sourceMode": "all"}, FakeDeviceConfig()) == ["met", "artic"]
 
 
+def test_open_source_mode_includes_art_institute_without_keys(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    assert plugin._enabled_sources({"sourceMode": "open"}, FakeDeviceConfig()) == ["met", "artic"]
+
+
 def test_enabled_sources_uses_manual_device_keys(tmp_path):
     plugin = make_plugin(tmp_path)
     device = FakeDeviceConfig(env={"Europeana_Key": "eu-secret", "Harvard_Art_Key": "ha-secret"})

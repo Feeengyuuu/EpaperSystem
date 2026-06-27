@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_API_URL = "https://liveradar.pages.dev/api/status/batch"
 DEFAULT_ROOMS_TEXT = "\n".join(
     [
-        "douyu|6979222|fav",
         "bilibili|545318|fav",
+        "douyu|6979222|fav",
         "twitch|xqc",
         "douyu|60937|fav",
         "twitch|shroud",
@@ -133,14 +133,26 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 TITLE_LOGO_FILE = "liveradar_logo.png"
+TITLE_WORDMARK_FILE = "liveradar_wordmark.png"
 HEADER_ART_FILE = "liveradar_header_art.png"
 SLOT_PLACEHOLDER_FILE = "liveradar_slot_placeholder.png"
 COMPACT_PLACEHOLDER_FILE = "liveradar_compact_placeholder.png"
+SECTION_TITLE_WORDMARK_FILES = {
+    "LIVE NOW": "liveradar_section_live_now.png",
+    "LIVE TOO": "liveradar_section_live_too.png",
+    "OFFLINE": "liveradar_section_offline.png",
+}
 COMPACT_PLACEHOLDER_SIZE = (150, 24)
 INKYPI_SRC_DIR = os.path.dirname(os.path.dirname(os.path.dirname(PLUGIN_DIR)))
 LIVE_RADAR_FONT_FILE = os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf")
 STATIC_NOTO_SANS_SC_FILE = os.path.join(INKYPI_SRC_DIR, "static", "fonts", "NotoSansSC-VF.ttf")
 HEADER_ART_SIZE = (270, 64)
+TITLE_WORDMARK_SIZE = (226, 58)
+SECTION_TITLE_WORDMARK_SIZE = (78, 22)
+SECTION_TITLE_WORDMARK_SIZES = {
+    title: SECTION_TITLE_WORDMARK_SIZE for title in SECTION_TITLE_WORDMARK_FILES
+}
+TITLE_WORDMARK_OFFSET_X = -35
 TITLE_LOGO_SCALE = 1.4
 SANS_FONT_PATHS = {
     "normal": (
@@ -176,9 +188,9 @@ STATUS_RANK = {
 }
 
 FAVORITE_PRIORITY = {
-    ("douyu", "60937"): 0,  # Zard1991 stays first inside the favorites group.
-    ("douyu", "6979222"): 1,
-    ("bilibili", "545318"): 2,
+    ("bilibili", "545318"): 0,  # Mr.Quin stays first inside the favorites group.
+    ("douyu", "60937"): 1,
+    ("douyu", "6979222"): 2,
     ("douyu", "12306"): 3,
     ("douyu", "57321"): 4,
     ("bilibili", "5229"): 5,
@@ -524,8 +536,11 @@ class LiveRadar(BasePlugin):
         title_x = margin
         if self._paste_title_logo(image, margin, logo_y, logo_size, theme):
             title_x = margin + logo_size + 10
-        draw.text((title_x, 13), "LiveRadar", fill=theme["ink"], font=title_font)
-        draw.text((title_x + 3, 51), "STREAM CARD WALL", fill=theme["muted"], font=sub_font)
+        wordmark_x = title_x + TITLE_WORDMARK_OFFSET_X
+        wordmark_box = self._paste_title_wordmark(image, wordmark_x, 8, TITLE_WORDMARK_SIZE, theme)
+        if wordmark_box is None:
+            draw.text((title_x, 13), "LiveRadar", fill=theme["ink"], font=title_font)
+            draw.text((title_x + 3, 51), "STREAM CARD WALL", fill=theme["muted"], font=sub_font)
         status_left = self._draw_status_totals(
             draw,
             width - margin,
@@ -539,10 +554,13 @@ class LiveRadar(BasePlugin):
             theme,
         )
         header_rule_y = max(73, logo_y + logo_size + 6)
-        title_right = max(
-            title_x + draw.textlength("LiveRadar", font=title_font),
-            title_x + 3 + draw.textlength("STREAM CARD WALL", font=sub_font),
-        )
+        if wordmark_box is not None:
+            title_right = wordmark_box[2]
+        else:
+            title_right = max(
+                title_x + draw.textlength("LiveRadar", font=title_font),
+                title_x + 3 + draw.textlength("STREAM CARD WALL", font=sub_font),
+            )
         art_left_bound = int(title_right) + 10
         art_right_bound = int(status_left) - 4
         art_bottom_bound = header_rule_y + 1
@@ -580,7 +598,7 @@ class LiveRadar(BasePlugin):
         live_queue_count = self._live_queue_visible_count(live_queue_box, len(live_cards[live_limit:]), live_queue_max)
 
         if live_cards:
-            self._draw_section_title(draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
+            self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
             live_visible = live_cards[:live_limit]
             gap = max(8, int(width * 0.012))
             card_w = int((width - 2 * margin - gap * (len(live_visible) - 1)) / len(live_visible))
@@ -601,7 +619,7 @@ class LiveRadar(BasePlugin):
             if overflow_cards:
                 section_right = (
                     margin
-                    + draw.textlength("LIVE NOW", font=sub_font)
+                    + self._section_title_visual_width("LIVE NOW", draw, sub_font)
                     + draw.textlength(str(len(live_cards)), font=sub_font)
                     + 36
                 )
@@ -947,7 +965,7 @@ class LiveRadar(BasePlugin):
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         content_y = y + 24
         if not cards:
             self._rounded_rectangle(
@@ -992,7 +1010,7 @@ class LiveRadar(BasePlugin):
     def _draw_live_queue_section(self, image, draw, box, title, cards, theme, max_items, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         content_y = y + 24
         content_h = max(1, h - 24)
         if not cards:
@@ -1079,7 +1097,7 @@ class LiveRadar(BasePlugin):
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(draw, x, y, title, len(cards), theme, sub_font)
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         if cards and caption:
             self._draw_text_right(draw, caption, x + w, y, self._font(9, "bold"), theme["muted"])
 
@@ -1503,19 +1521,52 @@ class LiveRadar(BasePlugin):
         draw.line((x + 24, y + h - 34, x + w - 24, y + h - 34), fill=theme["line"], width=2)
         draw.text((x + 24, y + h - 27), "Waiting for the next broadcast window", fill=theme["muted"], font=self._font(13))
 
-    def _draw_section_title(self, draw, x, y, title, count, theme, font):
-        draw.text((x, y), title, fill=theme["ink"], font=font)
+    def _draw_section_title(self, image, draw, x, y, title, count, theme, font):
+        title_w = self._paste_section_title_wordmark(image, x, y, title, theme)
+        if title_w is None:
+            draw.text((x, y), title, fill=theme["ink"], font=font)
+            title_w = draw.textlength(title, font=font)
         count_text = str(count)
         count_w = draw.textlength(count_text, font=font)
+        pill_left = x + title_w + 8
         self._draw_pill(
             draw,
-            (x + draw.textlength(title, font=font) + 8, y - 1, x + draw.textlength(title, font=font) + 22 + count_w, y + 18),
+            (pill_left, y - 1, pill_left + 14 + count_w, y + 18),
             count_text,
             font,
             fill=theme["ink"],
             ink=theme["bg"],
             outline=theme["ink"],
         )
+
+    def _paste_section_title_wordmark(self, image, x, y, title, theme):
+        normalized = str(title or "").upper()
+        source = self._load_section_title_wordmark(normalized)
+        if source is None:
+            return None
+        try:
+            target_w, target_h = SECTION_TITLE_WORDMARK_SIZES.get(normalized, SECTION_TITLE_WORDMARK_SIZE)
+            wordmark = ImageOps.contain(source.copy(), (target_w, target_h), method=self._resampling_filter())
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - wordmark.width) / 2)
+            paste_y = int((target_h - wordmark.height) / 2)
+            wordmark, _mask = self._prepare_title_wordmark(wordmark, theme)
+            layer.alpha_composite(wordmark, (paste_x, paste_y))
+            top = int(y) - 2
+            image.paste(layer.convert("RGB"), (int(x), top), layer.getchannel("A"))
+            bbox = layer.getchannel("A").getbbox()
+            if not bbox:
+                return None
+            return bbox[2]
+        except Exception as exc:
+            logger.warning("LiveRadar section title wordmark unavailable for %s: %s", title, exc)
+            return None
+
+    def _section_title_visual_width(self, title, draw, font):
+        normalized = str(title or "").upper()
+        if normalized in SECTION_TITLE_WORDMARK_SIZES and self._load_section_title_wordmark(normalized) is not None:
+            return SECTION_TITLE_WORDMARK_SIZES[normalized][0]
+        return draw.textlength(title, font=font)
 
     def _draw_status_totals(self, draw, right_x, y, stats, font, theme):
         x = right_x
@@ -1574,6 +1625,27 @@ class LiveRadar(BasePlugin):
             logger.warning("LiveRadar title logo unavailable: %s", exc)
             return False
 
+    def _paste_title_wordmark(self, image, x, y, size, theme):
+        source = self._load_title_wordmark()
+        if source is None:
+            return None
+        try:
+            target_w, target_h = [int(value) for value in size]
+            wordmark = ImageOps.contain(source.copy(), (target_w, target_h), method=self._resampling_filter())
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            paste_x = int((target_w - wordmark.width) / 2)
+            paste_y = int((target_h - wordmark.height) / 2)
+            wordmark, mask = self._prepare_title_wordmark(wordmark, theme)
+            layer.alpha_composite(wordmark, (paste_x, paste_y))
+            image.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            bbox = layer.getchannel("A").getbbox()
+            if not bbox:
+                return None
+            return (int(x) + bbox[0], int(y) + bbox[1], int(x) + bbox[2], int(y) + bbox[3])
+        except Exception as exc:
+            logger.warning("LiveRadar title wordmark unavailable: %s", exc)
+            return None
+
     def _draw_header_art(self, image, box):
         left, top, right, bottom = [int(round(value)) for value in box]
         target_w = max(0, right - left)
@@ -1605,6 +1677,17 @@ class LiveRadar(BasePlugin):
         return size, y
 
     @staticmethod
+    def _prepare_title_wordmark(source, theme):
+        wordmark = source.convert("RGBA")
+        alpha = wordmark.getchannel("A")
+        if theme.get("mode") == "dark":
+            ink = tuple(theme.get("ink", (245, 245, 245)))[:3]
+            recolored = Image.new("RGBA", wordmark.size, ink + (0,))
+            recolored.putalpha(alpha)
+            return recolored, alpha
+        return wordmark, alpha
+
+    @staticmethod
     def _prepare_title_logo(source, theme):
         logo = source.convert("RGBA")
         alpha = logo.getchannel("A")
@@ -1632,6 +1715,33 @@ class LiveRadar(BasePlugin):
             return Image.open(path).convert("RGBA")
         except Exception as exc:
             logger.warning("Could not load LiveRadar title logo %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_title_wordmark():
+        path = os.path.join(PLUGIN_DIR, TITLE_WORDMARK_FILE)
+        if not os.path.isfile(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load LiveRadar title wordmark %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=3)
+    def _load_section_title_wordmark(title):
+        filename = SECTION_TITLE_WORDMARK_FILES.get(str(title or "").upper())
+        if not filename:
+            return None
+        path = os.path.join(PLUGIN_DIR, filename)
+        if not os.path.isfile(path):
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load LiveRadar section title wordmark %s: %s", path, exc)
             return None
 
     @staticmethod

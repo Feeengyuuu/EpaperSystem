@@ -15,6 +15,7 @@ from plugins.stocktracker.stocktracker import (  # noqa: E402
     PANEL_GOLD,
     PAPER,
     WHITE,
+    SECTION_WORDMARK_IMAGES,
     StockTracker,
 )
 from utils.massive_market_data import MassiveBar  # noqa: E402
@@ -164,6 +165,44 @@ def test_stock_tracker_loads_img2_holding_logo_assets():
         bbox = logo.getchannel("A").getbbox()
         assert bbox is not None
         assert abs(((bbox[1] + bbox[3]) / 2) - 10) <= 2.5
+
+
+
+
+def test_stock_tracker_loads_img2_section_wordmark_assets():
+    plugin = StockTracker({"id": "stocktracker"})
+
+    for title, (_, size) in SECTION_WORDMARK_IMAGES.items():
+        wordmark = plugin._load_section_wordmark(title)
+        assert wordmark is not None, title
+        assert wordmark.mode == "RGBA"
+        assert wordmark.size == size
+        alpha = wordmark.getchannel("A")
+        assert alpha.getbbox() is not None
+        assert alpha.getextrema() == (0, 255)
+        assert wordmark.getpixel((0, 0))[3] == 0
+        assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
+
+
+def test_stock_dashboard_uses_img2_section_wordmarks(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    calls = []
+
+    def fake_draw_wordmark(canvas, title, x, y):
+        calls.append((title, x, y))
+        return True
+
+    monkeypatch.setattr(plugin, "_draw_section_wordmark", fake_draw_wordmark)
+    plugin._create_dashboard(
+        [_stock("AAPL", [100, 110], 2), _stock("NVDA", [120, 115], 3), _stock("TSLA", [90, 95], 1)],
+        (800, 480),
+    )
+
+    assert calls == [
+        ("PORTFOLIO", 34, 68),
+        ("PORTFOLIO TREND", 314, 68),
+        ("HOLDINGS", 34, 232),
+    ]
 
 
 def test_stock_tracker_adds_robinhood_cash_to_portfolio_rows_and_total():

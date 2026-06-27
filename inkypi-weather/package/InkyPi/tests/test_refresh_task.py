@@ -196,6 +196,7 @@ def test_refresh_due_plugin_instances_updates_sports_dashboard_live_cache_early(
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
     playlist = Playlist(
@@ -272,6 +273,49 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch)
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
+
+    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
+    )
+
+    assert wait_seconds == 60
+
+
+def test_sports_dashboard_live_refresh_wait_seconds_uses_msi_live_state(monkeypatch):
+    tmp_path = make_test_dir("sports-msi-live-wait")
+    state_path = tmp_path / "msi_live_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-msi-live-v1",
+                "has_live": True,
+                "live_until": "2026-05-26T08:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(state_path))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
 
@@ -313,6 +357,7 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_nba_live_state(monkeypa
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(state_path))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
 
@@ -354,6 +399,7 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_worldcup_live_state(mon
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(state_path))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
 
@@ -397,6 +443,7 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_offseason_hub_live_stat
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(state_path))
 
@@ -440,6 +487,7 @@ def test_sports_dashboard_offseason_hub_live_refresh_can_be_disabled(monkeypatch
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(state_path))
     plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
@@ -487,6 +535,7 @@ def test_sports_dashboard_live_refresh_wait_seconds_defaults_to_one_minute(monke
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
 
@@ -517,6 +566,7 @@ def test_sports_dashboard_live_refresh_is_not_due_without_live_state(monkeypatch
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
     monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing.json"))
+    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
     monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
     monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
     plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
@@ -1140,3 +1190,54 @@ def test_get_current_datetime_falls_back_to_utc_for_invalid_timezone():
 
     assert current_dt.tzinfo is not None
     assert current_dt.tzinfo.zone == "UTC"
+
+
+class NonCacheablePlugin:
+    def __init__(self, calls):
+        self.calls = calls
+
+    def generate_image(self, settings, device_config):
+        self.calls.append(settings["id"])
+        image = Image.new("RGB", (1, 1), "red")
+        image.info["inkypi_skip_cache"] = True
+        return image
+
+
+def test_refresh_due_plugin_instances_preserves_cache_for_non_cacheable_image(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("non-cacheable-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "bambu_monitor",
+                "name": "Bambu",
+                "plugin_settings": {"id": "bambu"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    cache_path = tmp_path / "bambu_monitor_Bambu.png"
+    Image.new("RGB", (2, 1), "black").save(cache_path)
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: NonCacheablePlugin(calls),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["bambu"]
+    assert playlist.find_plugin("bambu_monitor", "Bambu").latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert device_config.write_count == 0
+    with Image.open(cache_path) as saved:
+        assert saved.size == (2, 1)
+        assert saved.getpixel((0, 0)) == (0, 0, 0)

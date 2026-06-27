@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import quote
 
 import pytz
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
@@ -32,6 +32,8 @@ REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
 CACHE_SCHEMA_VERSION = "daily-word-quote-v3"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
+TITLE_WORDMARK_IMAGE = "title_wordmark.png"
+TITLE_WORDMARK_SIZE = (224, 48)
 WIKIQUOTE_MONTH_NAMES = (
     "January",
     "February",
@@ -55,6 +57,14 @@ DISPLAY_TRANSLATION = str.maketrans({
     "\u2013": "-",
     "\u2026": "...",
 })
+QUOTE_WRAPPER_PAIRS = (
+    ('"', '"'),
+    ("'", "'"),
+    ("\u00ab", "\u00bb"),
+    ("\u2039", "\u203a"),
+    ("\u300c", "\u300d"),
+    ("\u300e", "\u300f"),
+)
 LOCAL_WORDS = [
     {
         "word": "luminous",
@@ -398,11 +408,34 @@ def _enabled(value: Any, default: bool = False) -> bool:
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
 
 
-def _clean_text(value: Any, max_len: int = 280) -> str:
+def _normalized_text(value: Any) -> str:
     text = html.unescape(str(value or "")).translate(DISPLAY_TRANSLATION)
     text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:max_len]
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _clean_text(value: Any, max_len: int = 280) -> str:
+    return _normalized_text(value)[:max_len]
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    cleaned = str(text or "").strip()
+    while len(cleaned) >= 2:
+        stripped = False
+        for opener, closer in QUOTE_WRAPPER_PAIRS:
+            if cleaned.startswith(opener) and cleaned.endswith(closer):
+                inner = cleaned[len(opener):-len(closer)].strip()
+                if inner:
+                    cleaned = inner
+                    stripped = True
+                break
+        if not stripped:
+            break
+    return cleaned
+
+
+def _clean_quote_text(value: Any, max_len: int = 220) -> str:
+    return _strip_wrapping_quotes(_normalized_text(value))[:max_len]
 
 
 def _safe_json_load(path: Path, default: Any) -> Any:
@@ -515,7 +548,7 @@ class DailyWordPoem(BasePlugin):
 
         word_text = _clean_text(word.get("word"), 60)
         definition = _clean_text(word.get("definition"), 180)
-        quote_text = _clean_text(quote.get("text"), 180)
+        quote_text = _clean_quote_text(quote.get("text"), 180)
         quote_author = _clean_text(quote.get("author"), 80)
 
         summary_parts = []
@@ -686,7 +719,7 @@ class DailyWordPoem(BasePlugin):
         if not isinstance(data, dict):
             raise RuntimeError("Wikiquote response is not a JSON object.")
 
-        quote_text = _clean_text(data.get("quote") or data.get("text") or data.get("content"), 220)
+        quote_text = _clean_quote_text(data.get("quote") or data.get("text") or data.get("content"), 220)
         author = _clean_text(data.get("author") or data.get("attribution") or "Wikiquote", 80)
         featured_date = _clean_text(data.get("featured_date") or data.get("date"), 20)
         if not quote_text:
@@ -724,10 +757,10 @@ class DailyWordPoem(BasePlugin):
         joined = "\n".join(parts)
         match = re.search(r"(?P<quote>.+?)\s*~\s*(?P<author>[^~\n]+)\s*~", joined, flags=re.DOTALL)
         if match:
-            quote_text = _clean_text(match.group("quote"), 220)
+            quote_text = _clean_quote_text(match.group("quote"), 220)
             author = _clean_text(match.group("author"), 80)
         else:
-            quote_text = _clean_text(parts[0] if parts else "", 220)
+            quote_text = _clean_quote_text(parts[0] if parts else "", 220)
             author = "Wikiquote"
 
         if not quote_text:
@@ -747,7 +780,7 @@ class DailyWordPoem(BasePlugin):
         quotes = custom_quotes or LOCAL_QUOTES
         quote = quotes[now.date().toordinal() % len(quotes)]
         return {
-            "text": _clean_text(quote.get("text"), 220),
+            "text": _clean_quote_text(quote.get("text"), 220),
             "author": _clean_text(quote.get("author") or "Unknown", 80),
             "topic": _clean_text(quote.get("topic") or "golden sentence", 40),
             "source": _clean_text(quote.get("source") or ("custom golden sentences" if custom_quotes else "local golden sentences"), 80),
@@ -763,7 +796,7 @@ class DailyWordPoem(BasePlugin):
                 continue
 
             parts = re.split(r"\s+-\s+|\s+--\s+", line, maxsplit=1)
-            quote_text = _clean_text(parts[0], 220)
+            quote_text = _clean_quote_text(parts[0], 220)
             author = _clean_text(parts[1], 80) if len(parts) > 1 else "Custom"
             if not quote_text:
                 continue
@@ -804,7 +837,8 @@ class DailyWordPoem(BasePlugin):
         small_font = self._load_font(font_family, max(12, height // 36))
         meta_font = self._load_font(font_family, max(11, height // 42))
 
-        draw.text((left, top), "DAILY WORD", font=header_font, fill=accent)
+        if not self._draw_title_wordmark(image, left, top - 1, TITLE_WORDMARK_SIZE, bg, accent):
+            draw.text((left, top), "DAILY WORD", font=header_font, fill=accent)
         date_text = now.strftime("%b %d, %Y")
         date_w = self._text_width(draw, date_text, small_font)
         draw.text((right - date_w, top), date_text, font=small_font, fill=muted)
@@ -874,6 +908,52 @@ class DailyWordPoem(BasePlugin):
         faint = self._mix(text, bg, faint_amount)
         return bg, text, accent, muted, faint, theme_label
 
+    def _draw_title_wordmark(self, canvas, x, y, size, background, accent):
+        source = self._load_title_wordmark()
+        if source is None:
+            return False
+
+        try:
+            target_w, target_h = [int(value) for value in size]
+            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            art = self._prepare_title_wordmark(art, background, accent)
+            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+            layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
+            canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning("Daily Word title wordmark unavailable: %s", exc)
+            return False
+
+    def _title_wordmark_file(self):
+        return Path(__file__).with_name(TITLE_WORDMARK_IMAGE)
+
+    def _load_title_wordmark(self):
+        path = self._title_wordmark_file()
+        if not path.is_file():
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Failed to load Daily Word title wordmark %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    def _prepare_title_wordmark(source, background, accent):
+        if sum(tuple(int(value) for value in background[:3])) > 120:
+            return source
+
+        accent_rgb = tuple(int(value) for value in accent[:3])
+        wordmark = source.convert("RGBA")
+        pixels = wordmark.load()
+        for y in range(wordmark.height):
+            for x in range(wordmark.width):
+                r, g, b, a = pixels[x, y]
+                if a:
+                    pixels[x, y] = accent_rgb + (a,)
+        return wordmark
+
     def _render_word_panel(self, draw, word, box, font_family, text, accent, muted):
         x, y, max_width, bottom = box
         word_text = _clean_text(word.get("word") or "word", 64)
@@ -919,7 +999,7 @@ class DailyWordPoem(BasePlugin):
         draw.text((x, y), "GOLDEN SENTENCE", font=label_font, fill=accent)
         y += self._line_height(draw, label_font) + max(12, int((bottom - y) * 0.035))
 
-        quote_text = _clean_text(quote.get("text") or "Keep going.", 220)
+        quote_text = _clean_quote_text(quote.get("text") or "Keep going.", 220)
         quoted = f'"{quote_text}"'
         topic = _clean_text(quote.get("topic"), 40).upper()
         author_reserved = self._line_height(draw, author_font)

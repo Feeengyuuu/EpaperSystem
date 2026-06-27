@@ -1,11 +1,13 @@
 from collections.abc import Mapping, MutableMapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+import html as html_lib
 from io import BytesIO
 import hashlib
 import json
 import re
 import unicodedata
+from urllib.parse import unquote, urljoin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import os
@@ -67,8 +69,11 @@ WORLD_CUP_LINEUP_STATE_VERSION = "sports-dashboard-worldcup-lineups-v1"
 LPL_ODDS_STATE_VERSION = "sports-dashboard-lpl-odds-v1"
 LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
 LCK_LIVE_STATE_VERSION = "sports-dashboard-lck-live-v1"
+MSI_TOURNAMENT_STATE_VERSION = "sports-dashboard-msi-tournament-v1"
+MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
+EWC_STATE_VERSION = "sports-dashboard-ewc-v1"
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
 NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
@@ -92,6 +97,8 @@ NBA_OFFSEASON_FILLER_RIGHT_BLEED = 12
 NBA_OFFSEASON_FILLER_BOTTOM_BLEED = 8
 NBA_OFFSEASON_ACCENT_SIZE = (132, 72)
 LPL_MSI_OFFSEASON_FILLER_ZOOM = 1.24
+LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL = 12
+LPL_MSI_OFFSEASON_FILLER_VERTICAL_CROP_OFFSET = 8
 DEFAULT_F1_JOLPICA_BASE_URL = "https://api.jolpi.ca/ergast/f1"
 DEFAULT_F1_OPENF1_BASE_URL = "https://api.openf1.org/v1"
 DEFAULT_F1_CACHE_HOURS = 6
@@ -184,6 +191,10 @@ DEFAULT_VALVE_ESPORTS_CS_LIMIT = 80
 DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
 DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
+DEFAULT_EWC_COMPETITIONS_URL = "https://esportsworldcup.com/en/competitions/2026"
+DEFAULT_EWC_CACHE_HOURS = 12
+DEFAULT_EWC_UPCOMING_WINDOW_DAYS = 21
+DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS = 1
 LOL_ESPORTS_ROTATION_MINUTES = 30
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
@@ -192,6 +203,8 @@ LPL_LIVE_STATS_MAX_FRAME_AGE = timedelta(minutes=10)
 FLAG_IMAGE_URL_TEMPLATE = "https://flagcdn.com/w80/{country_code_lower}.png"
 DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
 DEFAULT_LCK_LEAGUE_ID = "98767991310872058"
+DEFAULT_MSI_LEAGUE_ID = "98767991325878492"
+DEFAULT_MSI_TOURNAMENT_CACHE_HOURS = 12
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 ODDS_API_IO_LEAGUE_ALIASES = {
     "international-world-cup": DEFAULT_WORLD_CUP_ODDS_API_IO_LEAGUE,
@@ -207,6 +220,8 @@ LOCAL_LCK_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck")
 LOCAL_DECOR_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "decor"))
 LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
 LOCAL_LCK_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck.png")
+LOCAL_EWC_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "ewc.png")
+LOCAL_EWC_GAME_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "ewc_games")
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
@@ -221,6 +236,10 @@ LOCAL_NFL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nfl.png")
 LOCAL_NCAA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "ncaa.png")
 LOCAL_WORLDCUP_PITCH_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_pitch_strip.png")
 LOCAL_WORLDCUP_HEADER_BANNER_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_header_banner.png")
+LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_title_wordmark.png")
+LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
+LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
+LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")
 LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutout.png")
@@ -230,7 +249,7 @@ LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutou
 SPORT_HEADER_CUTOUT_SCALE = 1.24
 SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
 SPORT_HEADER_CUTOUT_TITLE_GAP = 104
-PGA_HEADER_CUTOUT_X_OFFSET = 16
+PGA_HEADER_CUTOUT_X_OFFSET = 22
 LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot_filler.png")
 LOCAL_NBA_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_filler.png")
 LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_accent.png")
@@ -238,11 +257,25 @@ LOCAL_PGA_FAIRWAY_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_fairway_strip.
 LOCAL_LPL_MARBLE_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_marble_filler.png")
 LOCAL_LPL_MSI_NEXT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_next_filler.png")
 LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_offseason_filler.png")
+LOCAL_LPL_MSI_OFFSEASON_FILLER_PATHS = (
+    os.path.join(LOCAL_DECOR_DIR, "lpl_msi_offseason_filler_01.png"),
+    os.path.join(LOCAL_DECOR_DIR, "lpl_msi_offseason_filler_02.png"),
+)
 LOCAL_LPL_MSI_CARD_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_card_accent.png")
 LOCAL_LPL_MSI_CARD_ACCENT_DIR = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_card_accents")
+LOL_HEADER_LOGO_SIZE = (74, 38)
+MSI_HEADER_LOGO_SCALE = 1.4
+MSI_HEADER_LOGO_SIZE = (
+    int(round(LOL_HEADER_LOGO_SIZE[0] * MSI_HEADER_LOGO_SCALE)),
+    int(round(LOL_HEADER_LOGO_SIZE[1] * MSI_HEADER_LOGO_SCALE)),
+)
 LOLESPORTS_API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 LOLESPORTS_SCHEDULE_URL = (
     "https://esports-api.lolesports.com/persisted/gw/getSchedule"
+    "?hl=en-US&leagueId={league_id}"
+)
+LOLESPORTS_TOURNAMENTS_URL = (
+    "https://esports-api.lolesports.com/persisted/gw/getTournamentsForLeague"
     "?hl=en-US&leagueId={league_id}"
 )
 LOLESPORTS_LIVE_URL = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
@@ -251,6 +284,103 @@ LOLESPORTS_LIVE_STATS_WINDOW_URL = "https://feed.lolesports.com/livestats/v1/win
 BO3_API_BASE_URL = "https://api.bo3.gg/api/v1"
 TEAM_LOGO_CACHE = {}
 FLAG_IMAGE_CACHE = {}
+
+EWC_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
+EWC_GAME_NAME_OVERRIDES = {
+    "apex-legends": "Apex Legends",
+    "call-of-duty-black-ops-7": "Call of Duty: Black Ops 7",
+    "call-of-duty-warzone": "Call of Duty: Warzone",
+    "chess": "Chess",
+    "cod-blackops": "Call of Duty: Black Ops 7",
+    "cod-warzone": "Call of Duty: Warzone",
+    "counter-strike-2": "Counter-Strike 2",
+    "crossfire": "Crossfire",
+    "cs2": "Counter-Strike 2",
+    "dota2": "Dota 2",
+    "ea-sports-fc-26": "EA Sports FC 26",
+    "eafc": "EA Sports FC 26",
+    "fatal-fury": "Fatal Fury",
+    "fortnite": "Fortnite",
+    "free-fire": "Free Fire",
+    "honor-of-kings": "Honor of Kings",
+    "league-of-legends": "League of Legends",
+    "mlbb": "Mobile Legends: Bang Bang",
+    "mlbb-women": "MLBB Women",
+    "mobile-legends-bang-bang": "Mobile Legends: Bang Bang",
+    "mobile-legends-bang-bang-women": "MLBB Women",
+    "overwatch": "Overwatch 2",
+    "overwatch-2": "Overwatch 2",
+    "pmwc": "PUBG Mobile World Cup",
+    "pubg-battlegrounds": "PUBG",
+    "pubg-mobile": "PUBG Mobile",
+    "rainbow-six-siege": "Rainbow Six Siege",
+    "rainbow-six-siege-x": "Rainbow Six Siege X",
+    "rocket-league": "Rocket League",
+    "street-fighter-6": "Street Fighter 6",
+    "street-fighter6": "Street Fighter 6",
+    "teamfight-tactics": "Teamfight Tactics",
+    "tekken-8": "TEKKEN 8",
+    "tekken8": "TEKKEN 8",
+    "trackmania": "Trackmania",
+    "valorant": "VALORANT",
+}
+
+EWC_OFFICIAL_GAME_LOGO_SLUGS = (
+    "apex-legends",
+    "dota2",
+    "fatal-fury",
+    "valorant",
+    "mlbb-women",
+    "league-of-legends",
+    "free-fire",
+    "teamfight-tactics",
+    "pubg-battlegrounds",
+    "eafc",
+    "mlbb",
+    "overwatch",
+    "street-fighter6",
+    "honor-of-kings",
+    "cod-warzone",
+    "rainbow-six-siege",
+    "tekken8",
+    "cod-blackops",
+    "pmwc",
+    "chess",
+    "rocket-league",
+    "crossfire",
+    "cs2",
+    "fortnite",
+    "trackmania",
+)
+EWC_GAME_LOGO_FILES = {slug: f"{slug}.png" for slug in EWC_OFFICIAL_GAME_LOGO_SLUGS}
+EWC_GAME_LOGO_ALIASES = {
+    "call-of-duty-black-ops-7": "cod-blackops",
+    "call-of-duty-warzone": "cod-warzone",
+    "counter-strike-2": "cs2",
+    "dota-2": "dota2",
+    "ea-sports-fc-26": "eafc",
+    "mobile-legends-bang-bang": "mlbb",
+    "mobile-legends-bang-bang-women": "mlbb-women",
+    "overwatch-2": "overwatch",
+    "pubg-mobile": "pmwc",
+    "pubg-mobile-world-cup": "pmwc",
+    "rainbow-six-siege-x": "rainbow-six-siege",
+    "street-fighter-6": "street-fighter6",
+    "tekken-8": "tekken8",
+}
 
 LPL_ODDS_TEAM_ALIASES = {
     "AL": ("Anyones Legend", "Anyone's Legend", "Anyone Legend", "AL"),
@@ -1471,6 +1601,10 @@ DAY_COLORS = {
     "valve_ti_accent": (222, 45, 38),
     "valve_ti_tag": (255, 226, 220),
     "valve_shadow": (222, 45, 38),
+    "ewc_accent": (0, 92, 185),
+    "ewc_live": (222, 45, 38),
+    "ewc_tag": (222, 238, 255),
+    "ewc_shadow": (0, 163, 173),
     "worldcup_accent": (0, 152, 82),
     "worldcup_live": (222, 45, 38),
     "worldcup_tag": (218, 244, 215),
@@ -1514,6 +1648,10 @@ DAY_COLORS = {
     "lck_live": (222, 45, 38),
     "lck_tag": (218, 244, 244),
     "lck_shadow": (0, 92, 185),
+    "msi_accent": (0, 84, 166),
+    "msi_live": (222, 45, 38),
+    "msi_tag": (221, 238, 255),
+    "msi_shadow": (0, 136, 156),
 }
 
 DEEP_NIGHT_COLORS = {
@@ -1538,6 +1676,10 @@ DEEP_NIGHT_COLORS = {
     "valve_ti_accent": (255, 82, 74),
     "valve_ti_tag": (82, 34, 29),
     "valve_shadow": (126, 54, 76),
+    "ewc_accent": (93, 169, 232),
+    "ewc_live": (255, 82, 74),
+    "ewc_tag": (21, 47, 82),
+    "ewc_shadow": (36, 124, 102),
     "worldcup_accent": (82, 202, 128),
     "worldcup_live": (255, 82, 74),
     "worldcup_tag": (28, 70, 48),
@@ -1581,6 +1723,10 @@ DEEP_NIGHT_COLORS = {
     "lck_live": (255, 82, 74),
     "lck_tag": (18, 64, 74),
     "lck_shadow": (34, 84, 130),
+    "msi_accent": (112, 210, 255),
+    "msi_live": (255, 82, 74),
+    "msi_tag": (20, 52, 86),
+    "msi_shadow": (25, 104, 128),
 }
 
 _ACTIVE_COLORS = ContextVar("sports_dashboard_active_colors", default=DAY_COLORS)
@@ -2107,6 +2253,12 @@ class SportsDashboard(BasePlugin):
                 "choice": self._select_lol_esports_sidebar(lol_cards, now, league_override=lol_sidebar_override),
             }
         else:
+            ewc_card = None
+            if self._bool_setting(settings, "ewcSidebarEnabled", True):
+                try:
+                    ewc_card = self._load_ewc_sidebar_card(settings, timezone_info, now)
+                except Exception as exc:
+                    logger.warning("EWC sidebar failed, falling back to other esports panels: %s", _safe_exception_text(exc))
             valve_selected = None
             valve_source_state = ""
             if self._bool_setting(settings, "valveEsportsEnabled", True):
@@ -2114,7 +2266,13 @@ class SportsDashboard(BasePlugin):
                     valve_selected, valve_source_state = self._load_valve_esports(settings, timezone_info, now)
                 except Exception as exc:
                     logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
-            esports_choice = self._select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now)
+            esports_choice = self._select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=ewc_card)
+
+        if esports_choice.get("kind") == "ewc":
+            ewc_selected = esports_choice["selected"]
+            ewc_source_state = esports_choice["source_state"]
+            self._draw_ewc_sidebar(image, left_width, ewc_selected, ewc_source_state, now)
+            return image
 
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
@@ -2348,6 +2506,612 @@ class SportsDashboard(BasePlugin):
             logger.warning("LCK schedule fetch failed: %s", exc)
         return [], "LCK NO DATA"
 
+    def _load_msi_events(self, settings, timezone_info, now):
+        tournament = None
+        try:
+            tournament = self._load_msi_tournament(settings, timezone_info, now)
+        except Exception as exc:
+            logger.warning("MSI tournament metadata fetch failed: %s", _safe_exception_text(exc))
+        featured_event = self._msi_featured_event_from_tournament(tournament, now) or self._lpl_msi_featured_event(now)
+        try:
+            events = self._fetch_msi_events(settings, timezone_info, now, tournament=tournament)
+            if events:
+                return events, "MSI LIVE DATA", featured_event
+            if featured_event:
+                return [], "MSI WATCH", featured_event
+        except Exception as exc:
+            logger.warning("MSI schedule fetch failed: %s", _safe_exception_text(exc))
+        return [], "MSI NO DATA", featured_event
+
+    def _fetch_msi_events(self, settings, timezone_info, now, tournament=None):
+        force_live_endpoint = self._msi_tournament_live_window_active(tournament, now)
+        events = self._fetch_lol_esports_events(
+            settings,
+            timezone_info,
+            "msiLeagueId",
+            DEFAULT_MSI_LEAGUE_ID,
+            "MSI",
+            force_live_endpoint=force_live_endpoint,
+            now=now,
+        )
+        return self._filter_msi_events_to_tournament(events, tournament, now)
+
+    def _load_msi_tournament(self, settings, timezone_info, now):
+        league_id = str(settings.get("msiLeagueId") or DEFAULT_MSI_LEAGUE_ID).strip()
+        cache = self._read_json_file(self._msi_tournament_state_path())
+        cache_hours = self._int_setting(
+            settings,
+            "msiTournamentCacheHours",
+            DEFAULT_MSI_TOURNAMENT_CACHE_HOURS,
+            1,
+            48,
+        )
+        now_utc = (now if isinstance(now, datetime) else datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cached_tournament = self._cached_msi_tournament(cache, league_id, timezone_info)
+        if cached_tournament and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return cached_tournament
+        try:
+            tournament = self._fetch_msi_tournament(settings, timezone_info, now)
+        except Exception:
+            if cached_tournament:
+                return cached_tournament
+            raise
+        self._write_msi_tournament_state(tournament, league_id, now_utc)
+        return tournament
+
+    def _fetch_msi_tournament(self, settings, timezone_info, now):
+        league_id = str(settings.get("msiLeagueId") or DEFAULT_MSI_LEAGUE_ID).strip()
+        url = LOLESPORTS_TOURNAMENTS_URL.format(league_id=league_id)
+        session = get_http_session()
+        response = session.get(
+            url,
+            headers={"x-api-key": LOLESPORTS_API_KEY, "Accept": "application/json"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        leagues_payload = payload.get("data", {}).get("leagues", {})
+        if isinstance(leagues_payload, list):
+            tournaments = []
+            for league in leagues_payload:
+                if isinstance(league, Mapping):
+                    tournaments.extend(league.get("tournaments") or [])
+        elif isinstance(leagues_payload, Mapping):
+            tournaments = leagues_payload.get("tournaments", [])
+        else:
+            tournaments = []
+        tournament = self._select_msi_tournament(tournaments, timezone_info, now)
+        if not tournament:
+            raise ValueError("LoLEsports returned no MSI tournament metadata")
+        return tournament
+
+    @staticmethod
+    def _select_msi_tournament(tournaments, timezone_info, now):
+        parsed = []
+        for item in tournaments or []:
+            start = SportsDashboard._parse_lolesports_date(item.get("startDate"), timezone_info, end_of_day=False)
+            end = SportsDashboard._parse_lolesports_date(item.get("endDate"), timezone_info, end_of_day=True)
+            if not start or not end:
+                continue
+            parsed.append(
+                {
+                    "id": str(item.get("id") or "").strip(),
+                    "slug": str(item.get("slug") or "").strip(),
+                    "start": start,
+                    "end": end,
+                }
+            )
+        if not parsed:
+            return None
+        current = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        current_date = current.astimezone(timezone_info).date()
+        active_or_future = [item for item in parsed if item["end"].date() >= current_date]
+        if active_or_future:
+            return sorted(active_or_future, key=lambda item: item["start"])[0]
+        return sorted(parsed, key=lambda item: item["end"], reverse=True)[0]
+
+    @staticmethod
+    def _parse_lolesports_date(value, timezone_info, end_of_day=False):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone_info)
+        else:
+            parsed = parsed.astimezone(timezone_info)
+        if end_of_day:
+            return parsed.replace(hour=23, minute=59, second=59, microsecond=0)
+        return parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    @staticmethod
+    def _cached_msi_tournament(cache, league_id, timezone_info):
+        if not isinstance(cache, Mapping):
+            return None
+        if cache.get("version") != MSI_TOURNAMENT_STATE_VERSION:
+            return None
+        if str(cache.get("league_id") or "").strip() != str(league_id or "").strip():
+            return None
+        tournament = cache.get("tournament") or {}
+        start = SportsDashboard._parse_lolesports_date(tournament.get("start_date"), timezone_info, end_of_day=False)
+        end = SportsDashboard._parse_lolesports_date(tournament.get("end_date"), timezone_info, end_of_day=True)
+        if not start or not end:
+            return None
+        return {
+            "id": str(tournament.get("id") or "").strip(),
+            "slug": str(tournament.get("slug") or "").strip(),
+            "start": start,
+            "end": end,
+        }
+
+    def _write_msi_tournament_state(self, tournament, league_id, now_utc):
+        if not tournament:
+            return
+        payload = {
+            "version": MSI_TOURNAMENT_STATE_VERSION,
+            "league_id": str(league_id or "").strip(),
+            "fetched_at": now_utc.astimezone(timezone.utc).isoformat(),
+            "tournament": {
+                "id": tournament.get("id") or "",
+                "slug": tournament.get("slug") or "",
+                "start_date": tournament["start"].date().isoformat() if isinstance(tournament.get("start"), datetime) else "",
+                "end_date": tournament["end"].date().isoformat() if isinstance(tournament.get("end"), datetime) else "",
+            },
+        }
+        self._write_json_file(self._msi_tournament_state_path(), payload)
+
+    @staticmethod
+    def _msi_tournament_live_window_active(tournament, now):
+        if not tournament or not isinstance(now, datetime):
+            return False
+        start = tournament.get("start")
+        end = tournament.get("end")
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            return False
+        return start - LPL_LIVE_PREGAME_WINDOW <= now <= end + LPL_INFERRED_LIVE_WINDOW
+
+    @staticmethod
+    def _filter_msi_events_to_tournament(events, tournament, now):
+        filtered = []
+        start = (tournament or {}).get("start")
+        end = (tournament or {}).get("end")
+        if isinstance(start, datetime) and isinstance(end, datetime):
+            lower = start - timedelta(days=1)
+            upper = end + timedelta(days=1)
+            for event in events or []:
+                event_start = event.get("start")
+                if isinstance(event_start, datetime) and lower <= event_start <= upper:
+                    filtered.append(event)
+            return filtered
+        cutoff = now - timedelta(days=2) if isinstance(now, datetime) else None
+        for event in events or []:
+            event_start = event.get("start")
+            if cutoff is None or (isinstance(event_start, datetime) and event_start >= cutoff):
+                filtered.append(event)
+        return filtered
+
+    @staticmethod
+    def _msi_featured_event_from_tournament(tournament, now):
+        if not tournament:
+            return None
+        featured = SportsDashboard._lpl_msi_featured_event(
+            now,
+            start=tournament.get("start"),
+            end=tournament.get("end"),
+        )
+        if featured:
+            featured["tournament_id"] = tournament.get("id") or ""
+            featured["tournament_slug"] = tournament.get("slug") or ""
+        return featured
+
+    def _load_ewc_sidebar_card(self, settings, timezone_info, now):
+        events, source_state = self._load_ewc_events(settings, timezone_info)
+        window_days = self._int_setting(
+            settings,
+            "ewcUpcomingWindowDays",
+            DEFAULT_EWC_UPCOMING_WINDOW_DAYS,
+            1,
+            90,
+        )
+        selected = self._select_ewc_events(events, now, window_days)
+        if not self._ewc_selected_has_displayable_event(selected):
+            return None
+        return {
+            "selected": selected,
+            "source_state": source_state,
+            "priority": self._right_sidebar_ewc_priority(),
+        }
+
+    def _load_ewc_events(self, settings, timezone_info):
+        now_utc = datetime.now(timezone.utc)
+        cache_path = self._ewc_competitions_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._ewc_competitions_cache_key(settings, timezone_info)
+        force_refresh = self._force_refresh_requested(settings)
+        cache_hours = self._int_setting(settings, "ewcCacheHours", DEFAULT_EWC_CACHE_HOURS, 1, 48)
+        has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("events"), list)
+        if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
+            return self._decode_ewc_events(cache.get("events"), timezone_info), "EWC CACHE"
+        try:
+            payload = self._fetch_ewc_competitions_payload(settings, timezone_info, cache_key, now_utc)
+        except Exception as exc:
+            logger.warning("EWC competitions fetch failed: %s", _safe_exception_text(exc))
+            if has_compatible_cache:
+                return self._decode_ewc_events(cache.get("events"), timezone_info), "EWC STALE"
+            return self._fallback_ewc_events(timezone_info), "EWC FALLBACK"
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write EWC cache: %s", exc)
+        return self._decode_ewc_events(payload.get("events"), timezone_info), "EWC LIVE"
+
+    def _fetch_ewc_competitions_payload(self, settings, timezone_info, cache_key, now_utc):
+        url = str(settings.get("ewcCompetitionsUrl") or DEFAULT_EWC_COMPETITIONS_URL).strip() or DEFAULT_EWC_COMPETITIONS_URL
+        session = get_http_session()
+        response = session.get(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": "EpaperSystem/SportsDashboard EWC",
+            },
+            timeout=25,
+        )
+        response.raise_for_status()
+        events = self._parse_ewc_competitions_html(response.text, timezone_info, url)
+        if not events:
+            raise ValueError("EWC competitions page did not contain parseable event cards")
+        return {
+            "version": EWC_STATE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "source_url": url,
+            "events": self._encode_ewc_events(events),
+        }
+
+    def _ewc_competitions_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "ewc_competitions.json"
+
+    def _ewc_competitions_cache_key(self, settings, timezone_info):
+        url = str((settings or {}).get("ewcCompetitionsUrl") or DEFAULT_EWC_COMPETITIONS_URL).strip() or DEFAULT_EWC_COMPETITIONS_URL
+        return hashlib.sha1(f"{url}|{self._timezone_key(timezone_info)}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _encode_ewc_events(events):
+        encoded = []
+        for event in events or []:
+            item = dict(event or {})
+            for key in ("start", "end"):
+                value = item.get(key)
+                if isinstance(value, datetime):
+                    item[key] = value.isoformat()
+            encoded.append(item)
+        return encoded
+
+    @staticmethod
+    def _decode_ewc_events(events, timezone_info):
+        decoded = []
+        for event in events or []:
+            if not isinstance(event, Mapping):
+                continue
+            item = dict(event)
+            for key in ("start", "end"):
+                value = item.get(key)
+                if isinstance(value, datetime):
+                    parsed = value
+                elif value:
+                    try:
+                        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    except ValueError:
+                        parsed = None
+                else:
+                    parsed = None
+                if parsed is not None:
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone_info)
+                    else:
+                        parsed = parsed.astimezone(timezone_info)
+                    item[key] = parsed
+            if isinstance(item.get("start"), datetime):
+                decoded.append(item)
+        return sorted(decoded, key=lambda item: item["start"])
+
+    @staticmethod
+    def _parse_ewc_competitions_html(html_text, timezone_info, source_url=DEFAULT_EWC_COMPETITIONS_URL):
+        if not html_text:
+            return []
+        link_pattern = re.compile(
+            r"href=(?P<quote>[\"'])(?P<href>(?:https?://[^\"']+)?/[a-z]{2}/competitions/(?P<year>20\d{2})/(?P<slug>[^\"'/?#]+))(?P=quote)",
+            re.IGNORECASE,
+        )
+        events = []
+        seen_slugs = set()
+        for match in link_pattern.finditer(str(html_text)):
+            slug = match.group("slug").strip().lower()
+            if not slug or slug in seen_slugs:
+                continue
+            href = match.group("href")
+            prefix = str(html_text)[max(0, match.start() - 2400):match.start()]
+            card_text = SportsDashboard._html_text(prefix)
+            card = SportsDashboard._parse_ewc_card_text(card_text, timezone_info)
+            if not card:
+                continue
+            seen_slugs.add(slug)
+            source_href = href if href.startswith("http") else f"https://esportsworldcup.com{href}"
+            card.update(
+                {
+                    "game": SportsDashboard._ewc_game_name(slug),
+                    "slug": slug,
+                    "year": match.group("year"),
+                    "source_url": source_href,
+                    "logo_url": SportsDashboard._ewc_logo_url_from_card_html(prefix, source_url),
+                    "event_id": f"ewc-{match.group('year')}-{slug}",
+                }
+            )
+            events.append(card)
+        return sorted(events, key=lambda item: (item["start"], item.get("game") or ""))
+
+    @staticmethod
+    def _ewc_logo_url_from_card_html(card_html, source_url=DEFAULT_EWC_COMPETITIONS_URL):
+        img_tags = re.findall(r"<img\b[^>]*?>", str(card_html or ""), flags=re.IGNORECASE | re.DOTALL)
+        for img_tag in reversed(img_tags):
+            alt_match = re.search(r"alt=(?P<quote>[\"'])(?P<alt>.*?)(?P=quote)", img_tag, flags=re.IGNORECASE | re.DOTALL)
+            alt_text = html_lib.unescape(alt_match.group("alt")) if alt_match else ""
+            if alt_text and "competition logo" not in alt_text.lower():
+                continue
+            src_match = re.search(r"(?:src|data-src)=(?P<quote>[\"'])(?P<src>.*?)(?P=quote)", img_tag, flags=re.IGNORECASE | re.DOTALL)
+            if not src_match:
+                continue
+            src = html_lib.unescape(src_match.group("src")).strip()
+            if not src:
+                continue
+            absolute_url = urljoin(str(source_url or DEFAULT_EWC_COMPETITIONS_URL), src)
+            next_match = re.search(r"[?&]url=([^&]+)", absolute_url)
+            if next_match:
+                return unquote(next_match.group(1))
+            return absolute_url
+        return ""
+
+    @staticmethod
+    def _parse_ewc_card_text(card_text, timezone_info):
+        text = SportsDashboard._html_text(card_text)
+        date_matches = list(
+            re.finditer(
+                r"(?:Main Event\s*)?([A-Za-z]{3})\s+(\d{1,2})\s*-\s*(?:([A-Za-z]{3})\s+)?(\d{1,2}),\s*(20\d{2})",
+                text,
+                re.IGNORECASE,
+            )
+        )
+        if not date_matches:
+            return None
+        date_match = date_matches[-1]
+        start_month = EWC_MONTHS.get(date_match.group(1).upper())
+        end_month = EWC_MONTHS.get((date_match.group(3) or date_match.group(1)).upper())
+        if not start_month or not end_month:
+            return None
+        year = int(date_match.group(5))
+        start = datetime(year, start_month, int(date_match.group(2)), 0, 0, tzinfo=timezone_info)
+        end = datetime(year, end_month, int(date_match.group(4)), 23, 59, tzinfo=timezone_info)
+        if end < start:
+            end = end.replace(year=year + 1)
+
+        status = "UPCOMING"
+        for status_match in re.finditer(r"\b(upcoming|ongoing|live|completed)\b", text, re.IGNORECASE):
+            status = status_match.group(1).upper()
+
+        prize_pool = ""
+        prize_matches = list(re.finditer(r"Prize\s*Pool\s*\$?\s*([0-9][0-9,]*(?:\.\d+)?)", text, re.IGNORECASE))
+        if prize_matches:
+            prize_pool = f"${prize_matches[-1].group(1)}"
+
+        participant_count = None
+        participant_label = ""
+        participant_matches = list(
+            re.finditer(r"Participating\s+(clubs|players|teams)\s+(\d+)", text, re.IGNORECASE)
+        )
+        if participant_matches:
+            participant_label = participant_matches[-1].group(1).lower()
+            try:
+                participant_count = int(participant_matches[-1].group(2))
+            except ValueError:
+                participant_count = None
+
+        return {
+            "start": start,
+            "end": end,
+            "status": status,
+            "prize_pool": prize_pool,
+            "participant_count": participant_count,
+            "participant_label": participant_label,
+        }
+
+    @staticmethod
+    def _html_text(value):
+        text = str(value or "")
+        text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = html_lib.unescape(text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _ewc_game_name(slug):
+        slug = str(slug or "").strip().lower()
+        if slug in EWC_GAME_NAME_OVERRIDES:
+            return EWC_GAME_NAME_OVERRIDES[slug]
+        words = [part for part in re.split(r"[-_]+", slug) if part]
+        fixed = []
+        for word in words:
+            if word in {"fc", "pubg"}:
+                fixed.append(word.upper())
+            elif word == "dota2":
+                fixed.append("Dota 2")
+            else:
+                fixed.append(word.capitalize())
+        return " ".join(fixed) or "EWC"
+
+    @staticmethod
+    def _ewc_game_logo_slug(value):
+        values = []
+        if isinstance(value, Mapping):
+            values.extend((value.get("slug"), value.get("game"), value.get("event_id")))
+        else:
+            values.append(value)
+        for raw_value in values:
+            raw_text = str(raw_value or "").strip().lower()
+            if not raw_text:
+                continue
+            if raw_text.startswith("ewc-20"):
+                parts = raw_text.split("-", 2)
+                if len(parts) == 3:
+                    raw_text = parts[2]
+            slug = re.sub(r"[^a-z0-9]+", "-", raw_text).strip("-")
+            if slug in EWC_GAME_LOGO_FILES:
+                return slug
+            alias = EWC_GAME_LOGO_ALIASES.get(slug)
+            if alias:
+                return alias
+        return ""
+
+    @staticmethod
+    def _ewc_game_logo_path(event):
+        slug = SportsDashboard._ewc_game_logo_slug(event)
+        filename = EWC_GAME_LOGO_FILES.get(slug)
+        if not filename:
+            return ""
+        return os.path.join(LOCAL_EWC_GAME_LOGO_DIR, filename)
+
+    @staticmethod
+    def _load_ewc_game_logo(event, size):
+        return SportsDashboard._load_local_logo(
+            SportsDashboard._ewc_game_logo_path(event),
+            (int(size[0]), int(size[1])),
+            alpha_threshold=8,
+        )
+
+    @staticmethod
+    def _fallback_ewc_events(timezone_info):
+        return [
+            {
+                "game": "EWC 2026",
+                "slug": "ewc-2026",
+                "event_id": "ewc-2026-series",
+                "year": "2026",
+                "start": datetime(2026, 7, 6, 0, 0, tzinfo=timezone_info),
+                "end": datetime(2026, 8, 23, 23, 59, tzinfo=timezone_info),
+                "status": "UPCOMING",
+                "prize_pool": "",
+                "participant_count": 25,
+                "participant_label": "events",
+                "source_url": DEFAULT_EWC_COMPETITIONS_URL,
+            }
+        ]
+
+    @staticmethod
+    def _select_ewc_events(events, now, upcoming_window_days=DEFAULT_EWC_UPCOMING_WINDOW_DAYS):
+        if not isinstance(now, datetime):
+            now = datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        normalized_events = []
+        for event in events or []:
+            if not isinstance(event, Mapping):
+                continue
+            start = event.get("start")
+            if not isinstance(start, datetime):
+                continue
+            item = dict(event)
+            if start.tzinfo is None:
+                item["start"] = start.replace(tzinfo=now.tzinfo)
+            else:
+                item["start"] = start.astimezone(now.tzinfo)
+            end = item.get("end")
+            if isinstance(end, datetime):
+                item["end"] = end.replace(tzinfo=now.tzinfo) if end.tzinfo is None else end.astimezone(now.tzinfo)
+            else:
+                item["end"] = item["start"] + timedelta(days=1)
+            normalized_events.append(item)
+        normalized_events = sorted(normalized_events, key=lambda item: item["start"])
+        live = [event for event in normalized_events if SportsDashboard._is_ewc_live_event(event, now)]
+        upcoming = [event for event in normalized_events if event["start"] >= now and not SportsDashboard._is_ewc_finished_event(event, now)]
+        recent = sorted(
+            [event for event in normalized_events if event["start"] < now and not SportsDashboard._is_ewc_live_event(event, now)],
+            key=lambda item: item["start"],
+            reverse=True,
+        )
+        main = live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None))
+        display_window_active = bool(live)
+        if not display_window_active and upcoming:
+            window_days = max(1, int(upcoming_window_days or DEFAULT_EWC_UPCOMING_WINDOW_DAYS))
+            display_window_active = upcoming[0]["start"] - now <= timedelta(days=window_days)
+        if not display_window_active and recent:
+            display_window_active = now - recent[0].get("end", recent[0]["start"]) <= timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
+        return {
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "main": main,
+            "display_window_active": display_window_active,
+        }
+
+    @staticmethod
+    def _is_ewc_live_event(event, now):
+        event = event or {}
+        status = str(event.get("status") or "").strip().upper()
+        if status == "COMPLETED":
+            return False
+        start = event.get("start")
+        end = event.get("end")
+        if not isinstance(start, datetime):
+            return False
+        if not isinstance(end, datetime):
+            end = start + timedelta(days=1)
+        return start <= now <= end or status in {"ONGOING", "LIVE"}
+
+    @staticmethod
+    def _is_ewc_finished_event(event, now):
+        event = event or {}
+        status = str(event.get("status") or "").strip().upper()
+        end = event.get("end")
+        if isinstance(end, datetime) and now > end + timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS):
+            return True
+        return status == "COMPLETED" and (not isinstance(end, datetime) or now > end)
+
+    @staticmethod
+    def _ewc_selected_has_displayable_event(selected):
+        selected = selected or {}
+        return bool(selected.get("main") and selected.get("display_window_active"))
+
+    @staticmethod
+    def _ewc_sidebar_candidate_phase(card):
+        selected = (card or {}).get("selected") or {}
+        if not selected.get("display_window_active"):
+            return None
+        if selected.get("live"):
+            return 0
+        if selected.get("upcoming"):
+            return 1
+        if selected.get("recent"):
+            return 2
+        return None
+
+    @staticmethod
+    def _right_sidebar_ewc_priority():
+        return 2
+
+    @staticmethod
+    def _ewc_sidebar_main_timestamp(card, default):
+        selected = (card or {}).get("selected") or {}
+        event = selected.get("main")
+        if not event and selected.get("upcoming"):
+            event = selected["upcoming"][0]
+        start = (event or {}).get("start")
+        if isinstance(start, datetime):
+            return start.timestamp()
+        return default
     def _load_lol_esports_sidebar_cards(self, settings, device_config, timezone_info, now):
         lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
         lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
@@ -2371,6 +3135,17 @@ class SportsDashboard(BasePlugin):
                     "priority": 1,
                 }
             )
+        if self._bool_setting(settings, "msiEnabled", True):
+            msi_events, msi_source_state, msi_featured_event = self._load_msi_events(settings, timezone_info, now)
+            msi_selected = self._select_msi_events(msi_events, now, featured_event=msi_featured_event)
+            cards.append(
+                {
+                    "league_key": "MSI",
+                    "selected": msi_selected,
+                    "source_state": msi_source_state,
+                    "priority": 2,
+                }
+            )
         return cards
 
     def _load_lol_esports_sidebar(self, settings, device_config, timezone_info, now):
@@ -2386,7 +3161,7 @@ class SportsDashboard(BasePlugin):
             or settings.get("lolSidebarLeagueOverride")
             or ""
         ).strip().upper()
-        if configured in {"LPL", "LCK"}:
+        if configured in {"LPL", "LCK", "MSI"}:
             return configured
         if SportsDashboard._bool_setting(settings, "lckPreviewEnabled", False):
             return "LCK"
@@ -2421,7 +3196,7 @@ class SportsDashboard(BasePlugin):
         return SportsDashboard._right_sidebar_default_lpl_choice(displayable, now)
 
     @staticmethod
-    def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now):
+    def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None):
         lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
         candidates = []
         for card in lol_cards:
@@ -2438,21 +3213,50 @@ class SportsDashboard(BasePlugin):
                 }
             )
 
+        ewc_phase = SportsDashboard._ewc_sidebar_candidate_phase(ewc_card)
+        if ewc_phase is not None:
+            ewc_selected = (ewc_card or {}).get("selected") or {}
+            candidates.append(
+                {
+                    "kind": "ewc",
+                    "selected": ewc_selected,
+                    "source_state": (ewc_card or {}).get("source_state") or "EWC DATA",
+                    "phase": ewc_phase,
+                    "priority": SportsDashboard._right_sidebar_ewc_priority(),
+                    "tie": SportsDashboard._ewc_sidebar_main_timestamp(ewc_card, float("inf")),
+                }
+            )
+
         for card in SportsDashboard._valve_esports_active_cards(valve_selected):
             candidates.append(
                 {
                     "kind": "valve",
                     "selected": SportsDashboard._valve_esports_selected_for_card(valve_selected, card),
                     "source_state": card.get("source_state") or valve_source_state or "VALVE DATA",
-                    "phase": 0,
+                    "phase": 1,
                     "priority": SportsDashboard._right_sidebar_valve_priority(card),
                     "tie": str(card.get("event_name") or ""),
                 }
             )
 
         if candidates:
+            if not SportsDashboard._right_sidebar_has_active_competition(candidates):
+                return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
             return sorted(candidates, key=lambda item: (item["phase"], item["priority"], item.get("tie") or ""))[0]
         return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
+
+    @staticmethod
+    def _right_sidebar_has_active_competition(candidates):
+        for item in candidates or []:
+            phase = item.get("phase")
+            kind = str(item.get("kind") or "").strip().lower()
+            if kind == "lol" and phase in (0, 1):
+                return True
+            if kind == "ewc" and phase == 0:
+                return True
+            if kind == "valve":
+                return True
+        return False
 
     @staticmethod
     def _lol_sidebar_candidate_phase(card):
@@ -2490,11 +3294,11 @@ class SportsDashboard(BasePlugin):
     def _right_sidebar_valve_priority(card):
         series = str((card or {}).get("series") or "").strip().upper()
         if series == "CS":
-            return 2
-        if series == "TI":
             return 3
+        if series == "TI":
+            return 4
         try:
-            return 4 + int((card or {}).get("order") or 0)
+            return 5 + int((card or {}).get("order") or 0)
         except (TypeError, ValueError):
             return 99
 
@@ -6595,7 +7399,7 @@ class SportsDashboard(BasePlugin):
             "LCK",
         )
 
-    def _fetch_lol_esports_events(self, settings, timezone_info, league_setting_key, default_league_id, league_key):
+    def _fetch_lol_esports_events(self, settings, timezone_info, league_setting_key, default_league_id, league_key, force_live_endpoint=False, now=None):
         league_id = str(settings.get(league_setting_key) or default_league_id).strip()
         url = LOLESPORTS_SCHEDULE_URL.format(league_id=league_id)
         session = get_http_session()
@@ -6606,9 +7410,14 @@ class SportsDashboard(BasePlugin):
         )
         response.raise_for_status()
         events = self._parse_lpl_events(response.json(), timezone_info)
-        now = datetime.now(timezone_info)
-        live_endpoint_key = "lplLiveEndpointEnabled" if str(league_key).upper() == "LPL" else "lckLiveEndpointEnabled"
-        if self._bool_setting(settings, live_endpoint_key, True) and self._should_poll_lpl_live_endpoint(events, now):
+        now = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        live_endpoint_key = {
+            "LPL": "lplLiveEndpointEnabled",
+            "LCK": "lckLiveEndpointEnabled",
+            "MSI": "msiLiveEndpointEnabled",
+        }.get(str(league_key).upper(), "lolLiveEndpointEnabled")
+        should_poll_live = force_live_endpoint or self._should_poll_lpl_live_endpoint(events, now)
+        if self._bool_setting(settings, live_endpoint_key, True) and should_poll_live:
             try:
                 live_events = self._fetch_lpl_live_events(settings, timezone_info)
                 events = self._merge_lpl_live_events(events, live_events, league_id)
@@ -6968,6 +7777,21 @@ class SportsDashboard(BasePlugin):
         return SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
 
     @staticmethod
+    def _select_msi_events(events, now, featured_event=None):
+        selected = SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
+        if (
+            featured_event
+            and not selected.get("live")
+            and not selected.get("upcoming")
+            and not selected.get("recent")
+            and not selected.get("main")
+        ):
+            selected = dict(selected)
+            selected["featured_event"] = featured_event
+            selected["featured_event_page"] = True
+            selected["offseason"] = featured_event.get("phase") == "countdown"
+        return selected
+    @staticmethod
     def _select_lol_events(events, now, include_lpl_featured=True):
         live = [event for event in events if SportsDashboard._is_lpl_live_event(event, now)]
         upcoming = [
@@ -7037,12 +7861,12 @@ class SportsDashboard(BasePlugin):
         return ""
 
     @staticmethod
-    def _lpl_msi_featured_event(now, phase_override=None, start=None):
+    def _lpl_msi_featured_event(now, phase_override=None, start=None, end=None):
         if not isinstance(now, datetime):
             now = datetime.now(timezone.utc)
         tzinfo = now.tzinfo or timezone.utc
         start_at = start if isinstance(start, datetime) else datetime(*MSI_2026_START, 0, 0, tzinfo=tzinfo)
-        end_at = datetime(*MSI_2026_END, 23, 59, tzinfo=tzinfo)
+        end_at = end if isinstance(end, datetime) else datetime(*MSI_2026_END, 23, 59, tzinfo=tzinfo)
         if phase_override:
             phase = phase_override
         elif now.date() < start_at.date():
@@ -7219,7 +8043,7 @@ class SportsDashboard(BasePlugin):
         live_events = (selected or {}).get("live") or []
         event = live_events[0] if live_events else None
         payload = {
-            "version": LCK_LIVE_STATE_VERSION if key == "LCK" else LPL_LIVE_STATE_VERSION,
+            "version": {"LCK": LCK_LIVE_STATE_VERSION, "MSI": MSI_LIVE_STATE_VERSION}.get(key, LPL_LIVE_STATE_VERSION),
             "league_key": key,
             "updated_at": now.astimezone(timezone.utc).isoformat(),
             "source_state": source_state,
@@ -7243,7 +8067,7 @@ class SportsDashboard(BasePlugin):
                 }
             )
         try:
-            path = self._lck_live_state_path() if key == "LCK" else self._lpl_live_state_path()
+            path = {"LCK": self._lck_live_state_path, "MSI": self._msi_live_state_path}.get(key, self._lpl_live_state_path)()
             self._write_json_file(path, payload)
         except OSError as exc:
             logger.warning("Failed to write %s live refresh state: %s", key, exc)
@@ -7837,6 +8661,12 @@ class SportsDashboard(BasePlugin):
 
     def _lck_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "lck_live_state.json"
+
+    def _msi_tournament_state_path(self):
+        return self._sports_dashboard_cache_dir() / "msi_tournament_state.json"
+
+    def _msi_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "msi_live_state.json"
 
     def _nba_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "nba_live_state.json"
@@ -10271,11 +11101,22 @@ class SportsDashboard(BasePlugin):
         logo_size = 30
         self._draw_worldcup_logo(image, draw, x1 + 14, header_y - 1, logo_size)
         title_year = self._worldcup_title_year(selected)
-        title, title_font = self._fit_text(draw, f"{title_year} World Cup", 178, 20, bold=True, min_size=15)
-        draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
+        source_y = header_y + 24
+        title_drawn = False
+        if str(title_year) == "2026":
+            title_drawn = self._draw_worldcup_title_wordmark(
+                image,
+                x1 + 52,
+                header_y - 2,
+                178,
+                27,
+            )
+        if not title_drawn:
+            title, title_font = self._fit_text(draw, f"{title_year} World Cup", 178, 20, bold=True, min_size=15)
+            draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source = self._worldcup_api_source_label(source_state, fetched_at)
         source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
-        draw.text((x1 + 52, header_y + 24), source_text, font=source_font, fill=COLORS["muted"])
+        draw.text((x1 + 52, source_y), source_text, font=source_font, fill=COLORS["muted"])
         self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
 
         live = selected.get("live") or []
@@ -10681,7 +11522,7 @@ class SportsDashboard(BasePlugin):
             self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
 
     def _draw_worldcup_mini_rows(self, image, draw, x1, x2, y, bottom, title, events, show_time):
-        self._draw_worldcup_mini_section_header(draw, x1, x2, y, title)
+        self._draw_worldcup_mini_section_header(image, draw, x1, x2, y, title)
         if not events:
             message = "No more World Cup schedule" if title == "UPCOMING" else "No recent results"
             message, message_font = self._fit_text(draw, message, x2 - x1 - 16, 10, bold=True, min_size=7)
@@ -10706,7 +11547,7 @@ class SportsDashboard(BasePlugin):
             )
         return row_y + len(rows) * (row_h + 2) - 2
 
-    def _draw_worldcup_mini_section_header(self, draw, x1, x2, y, title):
+    def _draw_worldcup_mini_section_header(self, image, draw, x1, x2, y, title):
         draw.rectangle((x1, y + 2, x1 + 8, y + 17), fill=COLORS["worldcup_accent"], outline=COLORS["border"], width=1)
         draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
         draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
@@ -10714,7 +11555,7 @@ class SportsDashboard(BasePlugin):
     def _draw_worldcup_recent_rows(self, image, draw, x1, x2, y, bottom, events):
         if bottom - y < 45:
             return y
-        self._draw_worldcup_mini_section_header(draw, x1, x2, y, "RECENT")
+        self._draw_worldcup_mini_section_header(image, draw, x1, x2, y, "RECENT")
         row_y = y + 20
         available = bottom - row_y + 1
         row_h = min(32, available)
@@ -11253,20 +12094,48 @@ class SportsDashboard(BasePlugin):
             return None
 
     @staticmethod
-    def _load_lpl_msi_offseason_filler(size):
+    def _lpl_msi_offseason_filler_paths():
+        paths = tuple(
+            path for path in LOCAL_LPL_MSI_OFFSEASON_FILLER_PATHS
+            if os.path.exists(path)
+        )
+        if paths:
+            return paths
+        if os.path.exists(LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH):
+            return (LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH,)
+        return ()
+
+    @staticmethod
+    def _lpl_msi_offseason_filler_index(rotation_seed, count):
+        if count <= 1:
+            return 0
+        try:
+            if isinstance(rotation_seed, datetime):
+                bucket = int(rotation_seed.timestamp()) // 60
+            elif rotation_seed is not None:
+                bucket = int(rotation_seed)
+            else:
+                bucket = int(datetime.now(timezone.utc).timestamp()) // 60
+        except (TypeError, ValueError, OSError, OverflowError):
+            bucket = int(datetime.now(timezone.utc).timestamp()) // 60
+        digest = hashlib.sha1(f"lpl-msi-offseason:{bucket}".encode("ascii")).digest()
+        return digest[0] % count
+
+    @staticmethod
+    def _load_lpl_msi_offseason_filler(size, rotation_seed=None):
         width, height = int(size[0]), int(size[1])
         if width <= 0 or height <= 0:
             return None
-        path = LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH
-        cache_key = (path, (width, height), "lpl-msi-offseason-filler-v1")
+        paths = SportsDashboard._lpl_msi_offseason_filler_paths()
+        if not paths:
+            return None
+        path = paths[SportsDashboard._lpl_msi_offseason_filler_index(rotation_seed, len(paths))]
+        cache_key = (path, (width, height), "lpl-msi-offseason-filler-v2-alpha")
         if cache_key in TEAM_LOGO_CACHE:
             return TEAM_LOGO_CACHE[cache_key]
-        if not os.path.exists(path):
-            TEAM_LOGO_CACHE[cache_key] = None
-            return None
         try:
             with Image.open(path) as source:
-                filler = source.convert("RGB")
+                filler = source.convert("RGBA")
             if filler.size != (width, height):
                 filler = ImageOps.fit(
                     filler,
@@ -11280,7 +12149,6 @@ class SportsDashboard(BasePlugin):
             logger.warning("Failed to load LPL MSI offseason filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
     @staticmethod
     def _lpl_msi_card_accent_paths():
         paths = []
@@ -11447,7 +12315,71 @@ class SportsDashboard(BasePlugin):
         text, font = self._fit_text(draw, "WC", max(10, size - 8), max(10, int(size * 0.42)), bold=True, min_size=8)
         self._draw_centered(draw, (x + size / 2, y + size / 2), text, font, COLORS["text"])
 
+    def _draw_worldcup_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_WORLDCUP_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        paste_x = int(x)
+        paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
+    def _draw_mlb_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_MLB_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        paste_x = int(x)
+        paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
+    def _draw_wnba_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_WNBA_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        paste_x = int(x)
+        paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
+    def _draw_pga_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_PGA_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        paste_x = int(x)
+        paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
+    def _draw_local_wordmark(self, image, path, x, y, max_width, max_height, alpha_threshold=8, align_bottom_y=None):
+        wordmark = self._load_local_logo(path, (int(max_width), int(max_height)), alpha_threshold=alpha_threshold)
+        if not wordmark:
+            return False
+        paste_x = int(x)
+        if align_bottom_y is None:
+            paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        else:
+            paste_y = int(align_bottom_y) - wordmark.height + 1
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
     def _draw_worldcup_header_brand(self, image, draw, width, compact=False):
+
         logo_size = 28 if compact else 36
         gap = 10 if compact else 14
         title = "2026 World Cup"
@@ -12264,7 +13196,7 @@ class SportsDashboard(BasePlugin):
         right = (split_x + 6, content_y, x2 - 12, bottom)
         self._draw_vertical_split(draw, split_x, content_y - 6, bottom)
         self._draw_pga_event_card(image, draw, left, card, now)
-        self._draw_pga_leaderboard_column(draw, right, card, now)
+        self._draw_pga_leaderboard_column(image, draw, right, card, now)
 
     def _draw_nfl_standalone_panel(self, image, draw, bounds, card, source_state, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
@@ -12607,8 +13539,16 @@ class SportsDashboard(BasePlugin):
         self._draw_sport_logo(image, draw, sport, x1 + 14, header_y - 1, logo_w, 34)
         title_x = x1 + 98 if sport in {"MLB", "WNBA"} else x1 + 66
         title_text = "PGA TOUR" if sport == "PGA" else ("NCAA FB" if sport == "NCAA" else sport)
-        title, title_font = self._fit_text(draw, title_text, 134, 22, bold=True, min_size=15)
-        draw.text((title_x, header_y), title, font=title_font, fill=COLORS["text"])
+        title_drawn = False
+        if sport == "MLB":
+            title_drawn = self._draw_mlb_title_wordmark(image, title_x, header_y - 1, 154, 24)
+        elif sport == "WNBA":
+            title_drawn = self._draw_wnba_title_wordmark(image, title_x, header_y - 1, 154, 24)
+        elif sport == "PGA":
+            title_drawn = self._draw_pga_title_wordmark(image, title_x, header_y - 1, 154, 24)
+        if not title_drawn:
+            title, title_font = self._fit_text(draw, title_text, 134, 22, bold=True, min_size=15)
+            draw.text((title_x, header_y), title, font=title_font, fill=COLORS["text"])
         source_label = self._standalone_sport_source_label(sport, card, source_state)
         source_label, source_font = self._fit_text(draw, source_label, 112, 10, bold=True, min_size=7)
         draw.text((title_x, header_y + 24), source_label, font=source_font, fill=COLORS["muted"])
@@ -15395,7 +16335,18 @@ class SportsDashboard(BasePlugin):
         draw.ellipse((x2 - 36, fallback_y1 + 7, x2 - 10, fallback_y1 + 28), outline=COLORS["pga_accent"], width=2)
         draw.line((x2 - 22, fallback_y1 + 7, x2 - 22, fallback_y1 - 8), fill=COLORS["red"], width=2)
 
-    def _draw_pga_leaderboard_column(self, draw, bounds, card, now):
+    def _draw_pga_leaderboard_column(self, image_or_draw, draw_or_bounds, bounds_or_card, card_or_now, now=None):
+        if now is None:
+            image = None
+            draw = image_or_draw
+            bounds = draw_or_bounds
+            card = bounds_or_card
+            now = card_or_now
+        else:
+            image = image_or_draw
+            draw = draw_or_bounds
+            bounds = bounds_or_card
+            card = card_or_now
         x1, y1, x2, y2 = [int(value) for value in bounds]
         event = (card or {}).get("main") or {}
         rows = list(event.get("leaderboard") or [])
@@ -16879,6 +17830,198 @@ class SportsDashboard(BasePlugin):
             parts.append(f"{label} {scores_a[index]}-{scores_b[index]}")
         return "  ".join(parts)
 
+    def _draw_ewc_sidebar(self, image, left_width, selected, source_state, now):
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        right_x = left_width + LPL_SEPARATOR_WIDTH
+        right_w = width - right_x
+        draw.rectangle((left_width, 0, right_x - 1, height), fill=COLORS["paper"])
+        draw.line((left_width, 0, left_width, height), fill=COLORS["border"], width=1)
+        if LPL_SEPARATOR_WIDTH > 2:
+            draw.line((left_width + 2, 0, left_width + 2, height), fill=COLORS["line"], width=1)
+        draw.rectangle((right_x, 0, width - 1, height - 1), fill=COLORS["panel"])
+        self._draw_halftone(draw, (right_x, 0, width - 1, height - 1), COLORS["ewc_shadow"], COLORS["panel"], 20, 1)
+        draw.line((right_x, 0, right_x, height), fill=COLORS["border"], width=1)
+
+        header_y = 12
+        self._draw_ewc_logo(image, draw, right_x + 12, header_y + 5, 92, 35)
+        source_label = self._source_label(source_state)
+        source_label, source_font = self._fit_text_ellipsis(draw, source_label, 58, 9, bold=True, min_size=7)
+        self._draw_text_in_box(
+            draw,
+            (right_x + 108, header_y + 10, right_x + right_w - 92, header_y + 31),
+            source_label,
+            source_font,
+            COLORS["muted"],
+            align="center",
+        )
+        live = (selected or {}).get("live") or []
+        main_event = (selected or {}).get("main") or None
+        is_live = bool(main_event and live and main_event.get("event_id") == live[0].get("event_id"))
+        self._draw_status_pill(draw, right_x + right_w - 88, header_y + 8, "LIVE" if is_live else "NEXT", is_live)
+        draw.line((right_x + 14, 66, right_x + right_w - 14, 66), fill=COLORS["border"], width=1)
+
+        self._draw_ewc_focus_card(image, draw, right_x, right_w, 78, main_event, now, is_live)
+        upcoming = list((selected or {}).get("upcoming") or [])
+        if main_event:
+            main_id = main_event.get("event_id")
+            upcoming = [event for event in upcoming if event.get("event_id") != main_id]
+        if upcoming:
+            self._draw_ewc_event_rows(image, draw, right_x, right_w, 252, "UPCOMING", upcoming[:4], now, "No more EWC events")
+            return
+        recent = list((selected or {}).get("recent") or [])
+        self._draw_ewc_event_rows(image, draw, right_x, right_w, 252, "RECENT", recent[:4], now, "No EWC schedule")
+
+    def _draw_ewc_logo(self, image, draw, x, y, width, height):
+        logo = self._load_local_logo(LOCAL_EWC_LOGO_PATH, (int(width), int(height)), alpha_threshold=8)
+        if logo:
+            alpha = logo.getchannel("A")
+            recolored = Image.new("RGBA", logo.size, COLORS["text"] + (0,))
+            recolored.putalpha(alpha)
+            paste_x = int(x) + (int(width) - logo.width) // 2
+            paste_y = int(y) + (int(height) - logo.height) // 2
+            image.paste(recolored, (paste_x, paste_y), recolored)
+            return
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=5, fill=COLORS["ewc_tag"], outline=COLORS["border"], width=2)
+        draw.rectangle((x + 5, y + 5, x + 14, y + height - 5), fill=COLORS["ewc_accent"], outline=COLORS["border"], width=1)
+        text, font = self._fit_text_ellipsis(draw, "EWC", width - 26, 18, bold=True, min_size=13)
+        self._draw_centered(draw, (x + width / 2 + 4, y + height / 2), text, font, COLORS["text"])
+
+    def _draw_ewc_focus_card(self, image, draw, right_x, right_w, y, event, now, is_live):
+        card_x1 = right_x + 12
+        card_x2 = right_x + right_w - 12
+        card_y2 = y + 154
+        accent = COLORS["ewc_live"] if is_live else COLORS["ewc_accent"]
+        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["ewc_shadow"])
+        draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        if not event:
+            draw.text((card_x1 + 20, y + 58), "No EWC schedule", font=self._font(19, True), fill=COLORS["text"])
+            return
+
+        tag = "LIVE EVENT" if is_live else "NEXT EVENT"
+        tag_w = 106 if is_live else 98
+        tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
+        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=COLORS["ewc_live"] if is_live else COLORS["ewc_tag"], outline=COLORS["border"], width=1)
+        draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
+        date_text = self._ewc_date_label(event)
+        date_text, date_font = self._fit_text_ellipsis(draw, date_text, 82, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (card_x2 - 12, y + 14), date_text, date_font, COLORS["muted"])
+
+        game_logo = self._load_ewc_game_logo(event, (112, 34))
+        if game_logo:
+            logo_x = int(right_x + right_w / 2 - game_logo.width / 2)
+            logo_y = int(y + 40 + (34 - game_logo.height) / 2)
+            image.paste(game_logo, (logo_x, logo_y), game_logo)
+            title_y = y + 80
+            status_y = y + 104
+            detail_y = y + 126
+        else:
+            title_y = y + 58
+            status_y = y + 88
+            detail_y = y + 115
+
+        title, title_font = self._fit_text_ellipsis(draw, event.get("game") or "EWC", card_x2 - card_x1 - 34, 18, bold=True, min_size=12)
+        self._draw_centered(draw, (right_x + right_w / 2, title_y), title, title_font, COLORS["text"])
+        status_text = "IN PROGRESS" if is_live else self._ewc_countdown_label(event, now)
+        status_text, status_font = self._fit_text_ellipsis(draw, status_text, card_x2 - card_x1 - 40, 15, bold=True, min_size=10)
+        self._draw_centered(draw, (right_x + right_w / 2, status_y), status_text, status_font, accent)
+
+        detail = self._ewc_detail_label(event)
+        detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 32, 11, bold=True, min_size=7)
+        self._draw_centered(draw, (right_x + right_w / 2, detail_y), detail, detail_font, COLORS["muted"])
+        source = str(event.get("source_url") or DEFAULT_EWC_COMPETITIONS_URL).replace("https://", "")
+        source = source.split("/")[0].upper()
+        source, source_font = self._fit_text_ellipsis(draw, source, card_x2 - card_x1 - 34, 8, bold=True, min_size=6)
+        self._draw_centered(draw, (right_x + right_w / 2, y + 138), source, source_font, COLORS["muted"])
+
+    def _draw_ewc_event_rows(self, image, draw, right_x, right_w, y, title, events, now, empty_text):
+        self._draw_section_header(draw, right_x, right_w, y, title, COLORS["ewc_accent"])
+        if not events:
+            draw.text((right_x + 18, y + 38), empty_text, font=self._font(14, True), fill=COLORS["muted"])
+            return
+        row_y = y + 30
+        for index, event in enumerate(events[:4]):
+            self._draw_ewc_event_row(image, draw, right_x, right_w, row_y + index * 45, event, now)
+
+    def _draw_ewc_event_row(self, image, draw, right_x, right_w, y, event, now):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        draw.rounded_rectangle((row_x1, y, row_x2, y + 40), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + 39), fill=COLORS["ewc_accent"])
+        logo = self._load_ewc_game_logo(event, (27, 24))
+        text_left = row_x1 + 12
+        if logo:
+            logo_x = row_x1 + 11 + (27 - logo.width) // 2
+            logo_y = y + 8 + (24 - logo.height) // 2
+            image.paste(logo, (logo_x, logo_y), logo)
+            text_left = row_x1 + 44
+        date_text, date_font = self._fit_text_ellipsis(draw, self._ewc_date_label(event), 54, 9, bold=True, min_size=7)
+        self._draw_right_aligned(draw, (row_x2 - 8, y + 3), date_text, date_font, COLORS["muted"])
+        text_width_available = max(36, row_x2 - text_left - 66)
+        game, game_font = self._fit_text_ellipsis(draw, event.get("game") or "EWC", text_width_available, 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (text_left, y + 2, row_x2 - 66, y + 19), game, game_font, COLORS["text"])
+        detail = self._ewc_detail_label(event, compact=True)
+        detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - text_left - 10, 8, bold=True, min_size=6)
+        self._draw_text_in_box(draw, (text_left, y + 21, row_x2 - 8, y + 38), detail, detail_font, COLORS["muted"])
+
+    @staticmethod
+    def _ewc_date_label(event):
+        start = (event or {}).get("start")
+        end = (event or {}).get("end")
+        if isinstance(start, datetime) and isinstance(end, datetime) and start.date() != end.date():
+            if start.month == end.month:
+                return f"{start.strftime('%b %d')}-{end.strftime('%d')}".upper()
+            return f"{start.strftime('%b %d')}-{end.strftime('%b %d')}".upper()
+        if isinstance(start, datetime):
+            return start.strftime("%b %d").upper()
+        return "--"
+
+    @staticmethod
+    def _ewc_countdown_label(event, now):
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime) or not isinstance(now, datetime):
+            return "MAIN EVENT"
+        delta_days = (start.date() - now.date()).days
+        if delta_days <= 0:
+            return "STARTS TODAY"
+        if delta_days == 1:
+            return "STARTS TOMORROW"
+        return f"STARTS IN {delta_days} DAYS"
+
+    @staticmethod
+    def _ewc_detail_label(event, compact=False):
+        event = event or {}
+        parts = []
+        participants = SportsDashboard._ewc_participants_label(event)
+        if participants:
+            parts.append(participants)
+        prize = str(event.get("prize_pool") or "").strip()
+        if prize:
+            parts.append(prize if compact else f"PRIZE {prize}")
+        if not compact:
+            duration = SportsDashboard._ewc_duration_label(event)
+            if duration:
+                parts.append(duration)
+        return "  |  ".join(parts) or "MAIN EVENT"
+
+    @staticmethod
+    def _ewc_duration_label(event):
+        start = (event or {}).get("start")
+        end = (event or {}).get("end")
+        if isinstance(start, datetime) and isinstance(end, datetime):
+            days = max(1, (end.date() - start.date()).days + 1)
+            return f"{days} DAYS"
+        return ""
+
+    @staticmethod
+    def _ewc_participants_label(event):
+        count = (event or {}).get("participant_count")
+        label = str((event or {}).get("participant_label") or "").strip().upper()
+        if count is None:
+            return ""
+        label = label or "ENTRIES"
+        return f"{count} {label}"
     def _draw_valve_esports_sidebar(self, image, left_width, selected, source_state, now):
         draw = ImageDraw.Draw(image)
         width, height = image.size
@@ -17264,6 +18407,18 @@ class SportsDashboard(BasePlugin):
                 "empty_schedule": "No LCK schedule",
                 "empty_upcoming": "No more LCK schedule",
             }
+        if key == "MSI":
+            return {
+                "key": "MSI",
+                "name": "MSI",
+                "logo_path": LOCAL_MSI_LOGO_PATH,
+                "accent": "msi_accent",
+                "live": "msi_live",
+                "tag": "msi_tag",
+                "shadow": "msi_shadow",
+                "empty_schedule": "No MSI schedule",
+                "empty_upcoming": "No more MSI schedule",
+            }
         return {
             "key": "LPL",
             "name": "LPL",
@@ -17306,7 +18461,14 @@ class SportsDashboard(BasePlugin):
 
         header_y = 12
 
-        self._draw_lpl_logo(image, draw, right_x + 13, header_y + 5, 74, 38, logo_path=logo_path, fallback_text=config["key"])
+        logo_x = right_x + 13
+        logo_y = header_y + 5
+        logo_w, logo_h = LOL_HEADER_LOGO_SIZE
+        if logo_path == LOCAL_MSI_LOGO_PATH:
+            logo_w, logo_h = MSI_HEADER_LOGO_SIZE
+            logo_x += (LOL_HEADER_LOGO_SIZE[0] - logo_w) // 2
+            logo_y += (LOL_HEADER_LOGO_SIZE[1] - logo_h) // 2
+        self._draw_lpl_logo(image, draw, logo_x, logo_y, logo_w, logo_h, logo_path=logo_path, fallback_text=config["key"])
         source_label = "MSI WATCH" if featured_event_page and config["key"] == "LPL" else self._source_label(source_state)
         source_label, source_font = self._fit_text(draw, source_label, 62, 10, bold=True, min_size=8)
         self._draw_text_in_box(
@@ -17464,7 +18626,7 @@ class SportsDashboard(BasePlugin):
                 title_label, title_font = self._fit_text(draw, title_label, row_x2 - row_x1 - 66, 11, bold=True, min_size=7)
                 self._draw_right_aligned(draw, (row_x2 - 9, top + 3), title_label, title_font, COLORS["text"])
             filler_top = row_y + visible_count * 32 + 4
-            self._draw_lpl_featured_event_filler(image, right_x, right_x + right_w - 1, filler_top, y2)
+            self._draw_lpl_featured_event_filler(image, right_x, right_x + right_w - 1, filler_top, y2, now)
 
     @staticmethod
     def _lpl_featured_watch_items(featured, is_countdown):
@@ -17484,7 +18646,7 @@ class SportsDashboard(BasePlugin):
             ("TBD", "LPL \u540e\u7eed\u8d5b\u7a0b"),
         ]
 
-    def _draw_lpl_featured_event_filler(self, image, x1, x2, y1, y2):
+    def _draw_lpl_featured_event_filler(self, image, x1, x2, y1, y2, rotation_seed=None):
         x1 = int(x1)
         x2 = int(x2)
         y1 = int(y1)
@@ -17493,17 +18655,28 @@ class SportsDashboard(BasePlugin):
         height = y2 - y1 + 1
         if width < 80 or height < 24:
             return
+        overfill = min(LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL, max(0, height - 1))
+        target_height = height + overfill
         source_width = max(width, int(width * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999))
-        source_height = max(height, int(height * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999))
-        filler = self._load_lpl_msi_offseason_filler((source_width, source_height))
+        source_height = max(target_height, int(target_height * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999))
+        filler = self._load_lpl_msi_offseason_filler((source_width, source_height), rotation_seed)
         if filler:
-            if filler.size[0] >= width and filler.size[1] >= height:
+            if filler.size[0] >= width and filler.size[1] >= target_height:
                 crop_x = (filler.size[0] - width) // 2
-                crop_y = filler.size[1] - height
-                filler = filler.crop((crop_x, crop_y, crop_x + width, crop_y + height))
-            elif filler.size != (width, height):
-                filler = ImageOps.fit(filler, (width, height), method=Image.LANCZOS, centering=(0.5, 1.0))
-            image.paste(filler, (x1, y1))
+                crop_y = filler.size[1] - target_height
+                filler = filler.crop((crop_x, crop_y, crop_x + width, crop_y + target_height))
+            elif filler.size != (width, target_height):
+                filler = ImageOps.fit(filler, (width, target_height), method=Image.LANCZOS, centering=(0.5, 1.0))
+            if filler.size[1] > height:
+                crop_top = min(
+                    LPL_MSI_OFFSEASON_FILLER_VERTICAL_CROP_OFFSET,
+                    filler.size[1] - height,
+                )
+                filler = filler.crop((0, crop_top, width, crop_top + height))
+            if filler.mode == "RGBA":
+                image.paste(filler, (x1, y1), filler)
+            else:
+                image.paste(filler, (x1, y1))
 
     def _draw_status_pill(self, draw, x, y, text, is_live):
         color = COLORS["red"] if is_live else COLORS["green"]
@@ -17566,7 +18739,8 @@ class SportsDashboard(BasePlugin):
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
 
         stage = self._lpl_stage_label(event, league_key=league_key)
-        if not is_live:
+        stage_is_lower_badge = config["key"] == "MSI"
+        if not is_live and not stage_is_lower_badge:
             stage_text, stage_font = self._fit_text(draw, stage, 88, 12, bold=True, min_size=7)
             self._draw_centered_in_box(
                 draw,
@@ -17584,6 +18758,16 @@ class SportsDashboard(BasePlugin):
         team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 22, bold=True, min_size=13)
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
+
+        if not is_live and stage_is_lower_badge:
+            stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
+            self._draw_centered_in_box(
+                draw,
+                (card_x1 + 21, y + 138, card_x2 - 21, y + 152),
+                stage_text,
+                stage_font,
+                COLORS[config["accent"]],
+            )
 
         odds = event.get("odds") or {}
         has_odds = bool(odds.get("team_a") and odds.get("team_b"))

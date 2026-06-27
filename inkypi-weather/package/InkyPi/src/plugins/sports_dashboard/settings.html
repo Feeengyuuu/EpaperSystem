@@ -368,6 +368,28 @@
     <label for="valveEsportsWindowAfterDays" class="form-label">Valve event active window after latest result:</label>
     <input type="number" id="valveEsportsWindowAfterDays" name="valveEsportsWindowAfterDays" min="0" max="14" placeholder="2" class="form-input">
 </div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="ewcSidebarEnabled" name="ewcSidebarEnabled" value="true">
+        Include EWC right sidebar from official competitions page
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="ewcCompetitionsUrl" class="form-label">EWC competitions URL:</label>
+    <input type="text" id="ewcCompetitionsUrl" name="ewcCompetitionsUrl" placeholder="https://esportsworldcup.com/en/competitions/2026" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="ewcCacheHours" class="form-label">EWC cache hours:</label>
+    <input type="number" id="ewcCacheHours" name="ewcCacheHours" min="1" max="48" placeholder="12" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="ewcUpcomingWindowDays" class="form-label">EWC upcoming sidebar window days:</label>
+    <input type="number" id="ewcUpcomingWindowDays" name="ewcUpcomingWindowDays" min="1" max="90" placeholder="21" class="form-input">
+</div>
 <div class="form-group">
     <label for="lplLeagueId" class="form-label">LPL league ID:</label>
     <input type="text" id="lplLeagueId" name="lplLeagueId" placeholder="98767991314006698" class="form-input">
@@ -503,6 +525,10 @@
             document.getElementById('valveEsportsCacheHours').value = pluginSettings.valveEsportsCacheHours || '';
             document.getElementById('valveEsportsDailyLimit').value = pluginSettings.valveEsportsDailyLimit || '';
             document.getElementById('valveEsportsWindowAfterDays').value = pluginSettings.valveEsportsWindowAfterDays || '';
+            document.getElementById('ewcSidebarEnabled').checked = pluginSettings.ewcSidebarEnabled !== 'false';
+            document.getElementById('ewcCompetitionsUrl').value = pluginSettings.ewcCompetitionsUrl || '';
+            document.getElementById('ewcCacheHours').value = pluginSettings.ewcCacheHours || '';
+            document.getElementById('ewcUpcomingWindowDays').value = pluginSettings.ewcUpcomingWindowDays || '';
             document.getElementById('lplLeagueId').value = pluginSettings.lplLeagueId || '';
             document.getElementById('lckEnabled').checked = pluginSettings.lckEnabled !== 'false';
             document.getElementById('lckLeagueId').value = pluginSettings.lckLeagueId || '';

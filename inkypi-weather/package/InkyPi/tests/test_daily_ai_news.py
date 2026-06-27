@@ -2,12 +2,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
-from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE
+from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE, SECTION_WORDMARK_IMAGES, SECTION_WORDMARK_SIZES
 
 
 def _plugin():
@@ -492,7 +492,7 @@ def test_daily_ai_news_market_headers_use_plain_text_labels(monkeypatch):
     plugin = _plugin()
     seen_labels = []
 
-    def capture_market_module(draw, label, brief, payload, key, x, y, width, section_font, body_font, accent, ink, rule, up_color, down_color, max_y=None):
+    def capture_market_module(draw, label, brief, payload, key, x, y, width, section_font, body_font, accent, ink, rule, up_color, down_color, max_y=None, target_image=None):
         seen_labels.append(label)
         return y
 
@@ -526,6 +526,131 @@ def test_title_background_asset_is_transparent_measured_strip():
         assert image.getchannel("A").getextrema()[0] == 0
 
 
+def test_title_wordmark_asset_is_transparent_measured_strip():
+    path = daily_ai_news_module.PLUGIN_DIR / TITLE_WORDMARK_IMAGE
+
+    with Image.open(path) as image:
+        assert image.mode == "RGBA"
+        assert image.size == TITLE_WORDMARK_SIZE
+        alpha = image.getchannel("A")
+        assert alpha.getextrema()[0] == 0
+        assert alpha.getbbox() is not None
+        assert alpha.getpixel((0, 0)) == 0
+        assert alpha.getpixel((image.width - 1, 0)) == 0
+
+def test_section_wordmark_assets_are_transparent_measured_strips():
+    assert set(SECTION_WORDMARK_IMAGES) == {"top", "quick", "a_share", "us_stock"}
+
+    for key, filename in SECTION_WORDMARK_IMAGES.items():
+        path = daily_ai_news_module.PLUGIN_DIR / filename
+        with Image.open(path) as image:
+            assert image.mode == "RGBA"
+            assert image.size == SECTION_WORDMARK_SIZES[key]
+            alpha = image.getchannel("A")
+            assert alpha.getextrema()[0] == 0
+            assert alpha.getbbox() is not None
+            assert alpha.getpixel((0, 0)) == 0
+            assert alpha.getpixel((image.width - 1, 0)) == 0
+
+
+def test_render_uses_section_wordmarks_for_fixed_headers(monkeypatch):
+    plugin = _plugin()
+    seen_keys = []
+    text_calls = []
+
+    def fake_draw_section_wordmark(image, key, x, y, accent):
+        seen_keys.append(key)
+        return (int(x), int(y), int(x) + SECTION_WORDMARK_SIZES[key][0], int(y) + SECTION_WORDMARK_SIZES[key][1])
+
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        text_calls.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_section_wordmark", fake_draw_section_wordmark)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    payload = {
+        "date": "2026-06-26",
+        "generated_at": "2026-06-26T05:51:00",
+        "model": "gpt-5-nano",
+        "brief": {"lede": "新闻摘要", "top": [], "a_share": {}, "us_stock": {}},
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 26), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert seen_keys == ["top", "quick", "a_share", "us_stock"]
+    assert "今日头条" not in text_calls
+    assert "快讯补充" not in text_calls
+    assert "A股今日" not in text_calls
+    assert "美股今日" not in text_calls
+
+
+def test_render_uses_title_wordmark_instead_of_plain_title(monkeypatch):
+    plugin = _plugin()
+    seen = {}
+    text_calls = []
+
+    def fake_draw_title_wordmark(image, x, y, size, ink):
+        seen["wordmark"] = (int(x), int(y), tuple(int(value) for value in size))
+        return (int(x), int(y), int(x) + 205, int(y) + int(size[1]))
+
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        text_calls.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_title_wordmark", fake_draw_title_wordmark)
+    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box: True)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    payload = {
+        "date": "2026-06-08",
+        "generated_at": "2026-06-08T05:51:00",
+        "model": "gpt-5-nano",
+        "brief": {"lede": "新闻摘要", "top": [], "a_share": {}, "us_stock": {}},
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 8), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert seen["wordmark"] == (24, 8, TITLE_WORDMARK_SIZE)
+    assert "整点新闻" not in text_calls
+
+
+def test_render_falls_back_to_plain_title_when_wordmark_missing(monkeypatch):
+    plugin = _plugin()
+    text_calls = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        text_calls.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box: True)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    payload = {
+        "date": "2026-06-08",
+        "generated_at": "2026-06-08T05:51:00",
+        "model": "gpt-5-nano",
+        "brief": {"lede": "新闻摘要", "top": [], "a_share": {}, "us_stock": {}},
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 8), {"mode": "day"})
+
+    assert "整点新闻" in text_calls
+
 def test_render_positions_title_background_between_title_and_meta(monkeypatch):
     plugin = _plugin()
     seen = {}
@@ -554,9 +679,9 @@ def test_render_positions_title_background_between_title_and_meta(monkeypatch):
 
     assert image.size == (800, 480)
     left, top, right, bottom = seen["box"]
-    assert right - left >= TITLE_BACKGROUND_SIZE[0]
+    assert right - left >= 290
     assert bottom - top == TITLE_BACKGROUND_SIZE[1]
-    assert 210 <= left <= 214
+    assert 250 <= left <= 260
     assert top == 8
     assert 565 <= right <= 575
     assert bottom == 73

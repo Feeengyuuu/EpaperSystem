@@ -1,20 +1,42 @@
 {% extends "plugin.html" %}
 
 {% block content %}
-<div class="steam-container theme-{{ theme_mode or 'day' }}{% if layout_variant == 'combined' %} layout-combined{% endif %}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }}; {% if header_bar_uri %}--header-bar-uri: url('{{ header_bar_uri }}');{% endif %} {% if header_scene_uri %}--header-scene-uri: url('{{ header_scene_uri }}');{% endif %}">
+{% if yahei_font_uri %}
+<style>
+@font-face {
+    font-family: "InkySteamYaHei";
+    src: url("{{ yahei_font_uri }}");
+    font-style: normal;
+    font-weight: 400;
+}
+@font-face {
+    font-family: "InkySteamYaHei";
+    src: url("{{ yahei_bold_font_uri or yahei_font_uri }}");
+    font-style: normal;
+    font-weight: 600 900;
+}
+</style>
+{% endif %}
+<div class="steam-container theme-{{ theme_mode or 'day' }}{% if layout_variant == 'combined' %} layout-combined{% endif %}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }};">
     <div class="header">
         <div class="title-wrap">
             {% if steam_logo_uri %}
             <img class="steam-logo" src="{{ steam_logo_uri }}" alt="" />
             {% endif %}
+            {% if title_wordmark_uri %}
+            <img class="title-wordmark" src="{{ title_wordmark_uri }}" alt="{{ title }}{% if subtitle %} {{ subtitle }}{% endif %}" />
+            {% else %}
             <div class="title-copy">
                 <div class="title"><span class="title-steam">STEAM</span> <span class="title-charts">CHARTS</span></div>
                 {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
             </div>
+            {% endif %}
         </div>
-        {% if header_scene_uri %}
-        <div class="header-scene-strip" aria-hidden="true"></div>
+
+        {% if pixel_kaiju_uri %}
+        <img class="header-kaiju" src="{{ pixel_kaiju_uri }}" alt="" aria-hidden="true" />
         {% endif %}
+
         {% if updated_at_text %}
         <div class="updated-at">{{ updated_at_text }}</div>
         {% endif %}
@@ -25,8 +47,8 @@
         {% for group in chart_groups %}
         <section class="chart-panel variant-{{ group.table_variant | replace('_', '-') }}">
             <div class="panel-header">
-                <div class="panel-title">{{ group.title }}</div>
-                {% if group.subtitle %}<div class="panel-subtitle">{{ group.subtitle }}</div>{% endif %}
+                <div class="panel-title" data-fit-text data-fit-min="12">{{ group.title }}</div>
+                {% if group.subtitle %}<div class="panel-subtitle" data-fit-text data-fit-min="8">{{ group.subtitle }}</div>{% endif %}
             </div>
             <div class="compact-list">
                 {% for game in group.games %}
@@ -37,13 +59,13 @@
                         <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none'" />
                         {% endif %}
                         <div class="compact-copy">
-                            <div class="compact-title">{{ game.name }}</div>
-                            {% if game.secondary_name %}<div class="compact-secondary">{{ game.secondary_name }}</div>{% endif %}
+                            <div class="compact-title" data-fit-text data-fit-min="14.04">{{ game.name }}</div>
+                            {% if game.secondary_name %}<div class="compact-secondary" data-fit-text data-fit-min="6.5">{{ game.secondary_name }}</div>{% endif %}
                         </div>
                     </div>
                     <div class="compact-metrics">
-                        <div class="compact-primary">{{ game.primary_metric }}</div>
-                        {% if game.secondary_metric %}<div class="compact-metric-secondary">{{ game.secondary_metric }}</div>{% endif %}
+                        <div class="compact-primary" data-fit-text data-fit-min="14.3">{{ game.primary_metric }}</div>
+                        {% if game.secondary_metric %}<div class="compact-metric-secondary" data-fit-text data-fit-min="11.7">{{ game.secondary_metric }}</div>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -84,15 +106,15 @@
                         <div class="game-name-placeholder" style="display:none;">?</div>
                         {% endif %}
                         <span class="game-name-text">
-                            <span class="game-name-primary">{{ game.name }}</span>
+                            <span class="game-name-primary" data-fit-text data-fit-min="14.3">{{ game.name }}</span>
                             {% if game.secondary_name %}
-                            <span class="game-name-secondary">{{ game.secondary_name }}</span>
+                            <span class="game-name-secondary" data-fit-text data-fit-min="9">{{ game.secondary_name }}</span>
                             {% endif %}
                         </span>
                     </div>
                 </td>
                 {% if table_variant == "trending" %}
-                <td class="col-change change {% if game.change_24h_fmt and game.change_24h_fmt != '--' %}{% if game.change_24h_fmt.startswith('+') %}positive{% elif game.change_24h_fmt.startswith('-') %}negative{% endif %}{% endif %}">
+                <td class="col-change change {% if game.change_24h_fmt and game.change_24h_fmt != '--' %}{% if game.change_24h_fmt.startswith('+') %}positive{% elif game.change_24h_fmt.startswith('-') %}negative{% endif %}{% endif %}" data-fit-text data-fit-min="9">
                     {{ game.change_24h_fmt }}
                 </td>
                 <td class="col-sparkline sparkline-cell">
@@ -104,9 +126,9 @@
                     <span class="no-data">--</span>
                     {% endif %}
                 </td>
-                <td class="col-players players">{{ game.current_players_fmt }}</td>
+                <td class="col-players players" data-fit-text data-fit-min="9">{{ game.current_players_fmt }}</td>
                 {% elif table_variant == "top_games" %}
-                <td class="col-players players">{{ game.current_players_fmt }}</td>
+                <td class="col-players players" data-fit-text data-fit-min="9">{{ game.current_players_fmt }}</td>
                 <td class="col-sparkline sparkline-cell">
                     {% if game.sparkline_svg %}
                     <svg viewBox="0 0 120 30" preserveAspectRatio="none">
@@ -116,10 +138,10 @@
                     <span class="no-data">--</span>
                     {% endif %}
                 </td>
-                <td class="col-peak peak">{{ game.peak_players_fmt }}</td>
+                <td class="col-peak peak" data-fit-text data-fit-min="9">{{ game.peak_players_fmt }}</td>
                 {% elif table_variant == "top_records" %}
-                <td class="col-peak peak">{{ game.peak_players_fmt }}</td>
-                <td class="col-time record-time">{{ game.peak_time_fmt }}</td>
+                <td class="col-peak peak" data-fit-text data-fit-min="9">{{ game.peak_players_fmt }}</td>
+                <td class="col-time record-time" data-fit-text data-fit-min="8">{{ game.peak_time_fmt }}</td>
                 <td class="col-sparkline sparkline-cell">
                     {% if game.sparkline_svg %}
                     <svg viewBox="0 0 120 30" preserveAspectRatio="none">
@@ -136,4 +158,54 @@
     </table>
     {% endif %}
 </div>
+<script>
+(function () {
+    function numeric(value, fallback) {
+        var parsed = Number.parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function fits(element) {
+        return (
+            element.scrollWidth <= element.clientWidth + 1 &&
+            element.scrollHeight <= element.clientHeight + 1
+        );
+    }
+
+    function fitElement(element) {
+        if (!element.dataset.fitBaseSize) {
+            element.dataset.fitBaseSize = window.getComputedStyle(element).fontSize;
+        }
+
+        var baseSize = numeric(element.dataset.fitBaseSize, 12);
+        var minSize = numeric(element.dataset.fitMin, 8);
+        var step = numeric(element.dataset.fitStep, 0.75);
+        var size = baseSize;
+
+        element.style.fontSize = baseSize + "px";
+        if (element.clientWidth <= 0 || element.clientHeight <= 0) {
+            return;
+        }
+
+        for (var guard = 0; guard < 32 && size > minSize && !fits(element); guard += 1) {
+            size = Math.max(minSize, size - step);
+            element.style.fontSize = size.toFixed(2) + "px";
+        }
+    }
+
+    function fitAllText() {
+        document.querySelectorAll("[data-fit-text]").forEach(fitElement);
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fitAllText);
+    } else {
+        fitAllText();
+    }
+    window.addEventListener("load", fitAllText);
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(fitAllText).catch(function () {});
+    }
+})();
+</script>
 {% endblock %}

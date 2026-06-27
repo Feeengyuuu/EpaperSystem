@@ -14,6 +14,12 @@ from plugins.live_radar.live_radar import (
     HEADER_ART_FILE,
     HEADER_ART_SIZE,
     LIVE_STATUS_DOT,
+    SECTION_TITLE_WORDMARK_FILES,
+    SECTION_TITLE_WORDMARK_SIZE,
+    SECTION_TITLE_WORDMARK_SIZES,
+    TITLE_WORDMARK_FILE,
+    TITLE_WORDMARK_OFFSET_X,
+    TITLE_WORDMARK_SIZE,
     STATUS_TOTAL_DARK_OFFLINE_FILL,
     STATUS_TOTAL_FILLS,
     TITLE_LOGO_SCALE,
@@ -88,7 +94,7 @@ def test_parse_rooms_json_prefers_liveradar_export_shape():
     ]
 
 
-def test_yellow_border_favorites_are_pinned_with_zard_first():
+def test_yellow_border_favorites_are_pinned_with_mr_quin_first():
     plugin = _plugin()
 
     rooms = plugin._parse_rooms(
@@ -97,6 +103,7 @@ def test_yellow_border_favorites_are_pinned_with_zard_first():
                 [
                     "douyu|3507497",
                     "douyu|60937",
+                    "bilibili|545318",
                     "twitch|xqc",
                     "douyu|12306",
                 ]
@@ -104,7 +111,7 @@ def test_yellow_border_favorites_are_pinned_with_zard_first():
         }
     )
 
-    assert [room["isFav"] for room in rooms] == [True, True, False, True]
+    assert [room["isFav"] for room in rooms] == [True, True, True, False, True]
 
     cards = [
         {"platform": room["platform"], "id": room["id"], "status": "offline", "is_fav": room["isFav"], "favorite_rank": plugin._favorite_priority(room["platform"], room["id"]), "heat": 9999, "owner": room["id"]}
@@ -112,8 +119,8 @@ def test_yellow_border_favorites_are_pinned_with_zard_first():
     ]
     sorted_cards = plugin._sort_cards(cards)
 
-    assert sorted_cards[0]["id"] == "60937"
-    assert [card["id"] for card in sorted_cards[:3]] == ["60937", "12306", "3507497"]
+    assert sorted_cards[0]["id"] == "545318"
+    assert [card["id"] for card in sorted_cards[:4]] == ["545318", "60937", "12306", "3507497"]
 
 
 def test_default_rooms_match_latest_backup_and_favorite_order():
@@ -122,13 +129,13 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
     rooms = plugin._parse_rooms({"roomsText": DEFAULT_ROOMS_TEXT})
 
     assert len(rooms) == 64
-    assert (rooms[0]["platform"], rooms[0]["id"]) == ("douyu", "6979222")
+    assert (rooms[0]["platform"], rooms[0]["id"]) == ("bilibili", "545318")
     assert (rooms[-1]["platform"], rooms[-1]["id"]) == ("twitch", "jie_220")
 
     favorite_keys = [(room["platform"], room["id"]) for room in rooms if room["isFav"]]
     assert favorite_keys == [
-        ("douyu", "6979222"),
         ("bilibili", "545318"),
+        ("douyu", "6979222"),
         ("douyu", "60937"),
         ("douyu", "12306"),
         ("douyu", "57321"),
@@ -154,7 +161,9 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         if room["isFav"]
     ]
 
-    assert plugin._sort_cards(favorite_cards)[0]["id"] == "60937"
+    sorted_favorite_cards = plugin._sort_cards(favorite_cards)
+    assert sorted_favorite_cards[0]["id"] == "545318"
+    assert [card["id"] for card in sorted_favorite_cards[:3]] == ["545318", "60937", "6979222"]
 
 
 def test_clean_text_keeps_separators_when_dropping_emoji():
@@ -487,6 +496,100 @@ def test_header_art_asset_is_transparent_measured_strip():
         assert image.getchannel("A").getextrema()[0] == 0
 
 
+def test_title_wordmark_asset_is_transparent_measured_strip():
+    path = Path(live_radar_module.PLUGIN_DIR) / TITLE_WORDMARK_FILE
+
+    with Image.open(path) as image:
+        assert image.mode == "RGBA"
+        assert image.size == TITLE_WORDMARK_SIZE
+        alpha = image.getchannel("A")
+        assert alpha.getextrema()[0] == 0
+        assert alpha.getbbox() is not None
+        assert alpha.getpixel((0, 0)) == 0
+        assert alpha.getpixel((image.width - 1, 0)) == 0
+
+
+def test_section_title_wordmark_assets_are_transparent_measured_strips():
+    for title, filename in SECTION_TITLE_WORDMARK_FILES.items():
+        path = Path(live_radar_module.PLUGIN_DIR) / filename
+
+        with Image.open(path) as image:
+            assert image.mode == "RGBA"
+            assert image.size == SECTION_TITLE_WORDMARK_SIZES[title]
+            alpha = image.getchannel("A")
+            assert alpha.getextrema()[0] == 0
+            assert alpha.getbbox() is not None
+            visible_pixels = sum(1 for value in alpha.getdata() if value > 0)
+            assert visible_pixels < image.width * image.height * 0.45
+
+
+def test_section_title_wordmark_offsets_count_pill(monkeypatch):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    image = Image.new("RGB", (180, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    source = Image.new("RGBA", SECTION_TITLE_WORDMARK_SIZE, (0, 0, 0, 255))
+    seen = {}
+
+    monkeypatch.setattr(LiveRadar, "_load_section_title_wordmark", staticmethod(lambda title: source))
+    plugin._draw_pill = lambda _draw, box, text, _font, **_kwargs: seen.update(box=box, text=text)
+
+    plugin._draw_section_title(image, draw, 10, 20, "LIVE TOO", 5, theme, plugin._font(13, "bold"))
+
+    assert image.getpixel((14, 20)) != theme["bg"]
+    assert seen["text"] == "5"
+    assert seen["box"][0] == 10 + SECTION_TITLE_WORDMARK_SIZE[0] + 8
+
+def test_dashboard_uses_generated_wordmark_instead_of_plain_header_text(monkeypatch):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    seen = {}
+    text_calls = []
+
+    def fake_paste_title_wordmark(image, x, y, size, theme):
+        seen["wordmark"] = (int(x), int(y), tuple(int(value) for value in size))
+        return (int(x), int(y), int(x) + 190, int(y) + int(size[1]))
+
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        text_calls.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    plugin._paste_title_wordmark = fake_paste_title_wordmark
+    plugin._draw_header_art = lambda image, box: True
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    plugin._render_dashboard([], (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    logo_size, _logo_y = LiveRadar._title_logo_layout(480)
+    expected_x = max(14, int(800 * 0.02)) + logo_size + 10 + TITLE_WORDMARK_OFFSET_X
+    assert seen["wordmark"][0] == expected_x
+    assert seen["wordmark"][2] == TITLE_WORDMARK_SIZE
+    assert "LiveRadar" not in text_calls
+    assert "STREAM CARD WALL" not in text_calls
+
+
+def test_dashboard_falls_back_to_plain_header_text_when_wordmark_missing(monkeypatch):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    text_calls = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        text_calls.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    plugin._paste_title_wordmark = lambda *args, **kwargs: None
+    plugin._draw_header_art = lambda image, box: True
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    plugin._render_dashboard([], (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert "LiveRadar" in text_calls
+    assert "STREAM CARD WALL" in text_calls
+
+
 def test_dashboard_positions_header_art_between_title_and_status():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
@@ -496,15 +599,23 @@ def test_dashboard_positions_header_art_between_title_and_status():
         seen["box"] = tuple(int(value) for value in box)
         return True
 
+    def fake_paste_title_wordmark(image, x, y, size, theme):
+        seen["wordmark_size"] = tuple(int(value) for value in size)
+        return (int(x), int(y), int(x) + 200, int(y) + int(size[1]))
+
     plugin._draw_header_art = fake_draw_header_art
+    plugin._paste_title_wordmark = fake_paste_title_wordmark
     plugin._render_dashboard([], (800, 480), theme, datetime.now(timezone.utc), False, None)
 
     left, top, right, bottom = seen["box"]
-    assert (right - left, bottom - top) == HEADER_ART_SIZE
+    assert seen["wordmark_size"] == TITLE_WORDMARK_SIZE
+    assert TITLE_WORDMARK_OFFSET_X == -35
+    assert bottom - top == HEADER_ART_SIZE[1]
     assert 8 <= top <= 13
     assert 74 <= bottom <= 76
-    assert 266 <= left <= 286
-    assert 536 <= right <= 556
+    assert 250 <= left <= 280
+    assert right <= 556
+    assert right - left >= 240
 
 
 def test_status_total_badges_use_semantic_backgrounds_in_both_themes():

@@ -41,10 +41,14 @@ from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
+    DEFAULT_EWC_COMPETITIONS_URL,
+    DEFAULT_MSI_LEAGUE_ID,
     DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS,
     DEFAULT_WORLD_CUP_STANDINGS_URL,
     LOCAL_F1_LOGO_PATH,
     LOCAL_CS_MAJOR_LOGO_PATH,
+    LOCAL_EWC_LOGO_PATH,
+    LOCAL_EWC_GAME_LOGO_DIR,
     LOCAL_TI_LOGO_PATH,
     LOCAL_LPL_LOGO_PATH,
     LOCAL_LCK_LOGO_PATH,
@@ -54,9 +58,13 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_LPL_MSI_CARD_ACCENT_PATH,
     LOCAL_LPL_MSI_NEXT_FILLER_PATH,
     LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH,
+    LOCAL_LPL_MSI_OFFSEASON_FILLER_PATHS,
+    LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL,
+    LPL_MSI_OFFSEASON_FILLER_VERTICAL_CROP_OFFSET,
     LPL_MSI_OFFSEASON_FILLER_ZOOM,
     LOCAL_MLB_HEADER_CUTOUT_PATH,
     LOCAL_MLB_LOGO_PATH,
+    LOCAL_MLB_TITLE_WORDMARK_PATH,
     LOCAL_MSI_LOGO_PATH,
     LOCAL_NCAA_HEADER_CUTOUT_PATH,
     LOCAL_NCAA_LOGO_PATH,
@@ -70,12 +78,15 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_PGA_HEADER_CUTOUT_PATH,
     LOCAL_PGA_FAIRWAY_STRIP_PATH,
     LOCAL_PGA_LOGO_PATH,
+    LOCAL_PGA_TITLE_WORDMARK_PATH,
     LOCAL_WNBA_HEADER_CUTOUT_PATH,
     LOCAL_WNBA_LOGO_PATH,
+    LOCAL_WNBA_TITLE_WORDMARK_PATH,
     SPORT_HEADER_CUTOUT_SCALE,
     NBA_OFFSEASON_ACCENT_SIZE,
     NBA_OFFSEASON_FILLER_ZOOM,
     LOCAL_WORLDCUP_HEADER_BANNER_PATH,
+    LOCAL_WORLDCUP_TITLE_WORDMARK_PATH,
     LOCAL_WORLDCUP_PITCH_STRIP_PATH,
     LOCAL_WORLDCUP_LOGO_PATH,
     MLB_TEAM_ZH_FULL_NAMES,
@@ -137,6 +148,13 @@ def test_league_accent_palettes_are_distinct():
         assert palette["worldcup_tag"] != palette["nba_tag"]
         assert palette["nba_tag"] != palette["lpl_tag"]
         assert palette["lck_tag"] != palette["lpl_tag"]
+        assert palette["ewc_accent"] != palette["lpl_accent"]
+        assert palette["ewc_accent"] != palette["worldcup_accent"]
+        assert palette["ewc_tag"] != palette["lpl_tag"]
+        assert palette["msi_accent"] != palette["lpl_shadow"]
+        assert palette["msi_accent"] != palette["ewc_accent"]
+        assert palette["msi_tag"] != palette["lpl_tag"]
+        assert palette["msi_tag"] != palette["ewc_tag"]
 
 
 def test_offseason_hub_sport_accents_are_distinct_comic_palette_colors():
@@ -296,6 +314,34 @@ def _sample_payload():
         }
     }
 
+def _sample_ewc_competitions_html():
+    return """
+    <section>
+      <div class="card">upcoming <img alt="Competition Logo" src="/_next/image?url=https%3A%2F%2Fd3h9qea4qy4169.cloudfront.net%2FALGS_Split_1_Playoff_Logo_Black_b705b1f3d8.png&amp;w=1920&amp;q=50">
+        Main Event Jul 07 - 11, 2026
+        Confirmed until 2026
+        Prize Pool$2,000,000
+        Participating clubs 40
+        <a href="/en/competitions/2026/apex-legends">Visit Game Page</a>
+      </div>
+      <div class="card">upcoming <img alt="Competition Logo" src="https://d3h9qea4qy4169.cloudfront.net/Game_dota2_Variant_Dark_82f230e51b.svg">
+        Main Event Jul 07 - 19, 2026
+        Prize Pool$2,000,000
+        Participating clubs 24
+        <a href="/en/competitions/2026/dota2">Visit Game Page</a>
+      </div>
+      <div class="card">upcoming <img alt="Competition Logo" src="/_next/image?url=https%3A%2F%2Fd3h9qea4qy4169.cloudfront.net%2Ffatalfury_cotw_Logo_Black_f768ff3bae.png&amp;w=1920&amp;q=50">
+        Main Event Jul 08 - 11, 2026
+        Prize Pool$1,000,000
+        Participating players 32
+        <a href="/en/competitions/2026/fatal-fury">Visit Game Page</a>
+      </div>
+      <div class="card duplicate">upcoming
+        Main Event Jul 07 - 11, 2026 Prize Pool$2,000,000 Participating clubs 40
+        <a href="/en/competitions/2026/apex-legends">Visit Game Page</a>
+      </div>
+    </section>
+    """
 
 def _sample_worldcup_fixture():
     return {
@@ -1154,6 +1200,7 @@ def test_lol_sidebar_override_forces_lck(monkeypatch):
     }
     plugin._load_lpl_events = lambda _settings, _timezone_info: ([lpl_event], "LIVE DATA")
     plugin._load_lck_events = lambda _settings, _timezone_info: ([lck_event], "LCK LIVE DATA")
+    plugin._load_msi_events = lambda _settings, _timezone_info, _now: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
 
     choice = plugin._load_lol_esports_sidebar(
@@ -1182,6 +1229,186 @@ def test_lol_sidebar_defaults_to_lpl_when_lck_has_no_schedule():
 
     assert choice["league_key"] == "LPL"
 
+
+def test_ewc_competitions_parser_extracts_official_cards():
+    la = ZoneInfo("America/Los_Angeles")
+
+    events = SportsDashboard._parse_ewc_competitions_html(
+        _sample_ewc_competitions_html(),
+        la,
+        DEFAULT_EWC_COMPETITIONS_URL,
+    )
+
+    assert [event["game"] for event in events] == ["Apex Legends", "Dota 2", "Fatal Fury"]
+    assert events[0]["start"].strftime("%Y-%m-%d %H:%M") == "2026-07-07 00:00"
+    assert events[0]["end"].strftime("%Y-%m-%d %H:%M") == "2026-07-11 23:59"
+    assert events[0]["prize_pool"] == "$2,000,000"
+    assert events[0]["participant_count"] == 40
+    assert events[0]["participant_label"] == "clubs"
+    assert events[0]["logo_url"] == "https://d3h9qea4qy4169.cloudfront.net/ALGS_Split_1_Playoff_Logo_Black_b705b1f3d8.png"
+    assert events[1]["logo_url"].endswith("/Game_dota2_Variant_Dark_82f230e51b.svg")
+    assert events[1]["source_url"].endswith("/en/competitions/2026/dota2")
+
+
+def test_ewc_game_logo_slug_and_path_use_official_assets():
+    assert SportsDashboard._ewc_game_logo_slug({"slug": "cs2", "game": "Counter-Strike 2"}) == "cs2"
+    assert SportsDashboard._ewc_game_logo_slug({"game": "EA Sports FC 26"}) == "eafc"
+    assert SportsDashboard._ewc_game_logo_slug("street-fighter-6") == "street-fighter6"
+    path = Path(SportsDashboard._ewc_game_logo_path({"slug": "street-fighter6"}))
+    assert path.parent == Path(LOCAL_EWC_GAME_LOGO_DIR)
+    assert path.name == "street-fighter6.png"
+
+
+def test_ewc_current_short_slugs_use_clean_titles():
+    assert SportsDashboard._ewc_game_name("eafc") == "EA Sports FC 26"
+    assert SportsDashboard._ewc_game_name("mlbb") == "Mobile Legends: Bang Bang"
+    assert SportsDashboard._ewc_game_name("mlbb-women") == "MLBB Women"
+    assert SportsDashboard._ewc_game_name("cs2") == "Counter-Strike 2"
+    assert SportsDashboard._ewc_game_name("pmwc") == "PUBG Mobile World Cup"
+    assert SportsDashboard._ewc_game_name("street-fighter6") == "Street Fighter 6"
+    assert SportsDashboard._ewc_game_name("cod-blackops") == "Call of Duty: Black Ops 7"
+
+def test_select_ewc_events_activates_upcoming_window_and_live_range():
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_ewc_competitions_html(_sample_ewc_competitions_html(), la, DEFAULT_EWC_COMPETITIONS_URL)
+
+    upcoming_selected = SportsDashboard._select_ewc_events(events, datetime(2026, 6, 24, 12, 0, tzinfo=la), upcoming_window_days=21)
+    assert upcoming_selected["display_window_active"] is True
+    assert upcoming_selected["main"]["game"] == "Apex Legends"
+    assert upcoming_selected["upcoming"][0]["game"] == "Apex Legends"
+
+    live_selected = SportsDashboard._select_ewc_events(events, datetime(2026, 7, 8, 12, 0, tzinfo=la), upcoming_window_days=21)
+    assert [event["game"] for event in live_selected["live"][:3]] == ["Apex Legends", "Dota 2", "Fatal Fury"]
+    assert live_selected["main"]["game"] == "Apex Legends"
+
+
+def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
+    now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            {
+                "event_id": "ewc-apex",
+                "game": "Apex Legends",
+                "start": now + timedelta(days=2),
+                "end": now + timedelta(days=6),
+                "status": "UPCOMING",
+                "participant_count": 40,
+                "participant_label": "clubs",
+            }
+        ],
+        now,
+        upcoming_window_days=21,
+    )
+    valve_selected = {
+        "cards": [
+            {
+                "series": "CS",
+                "event_name": "CS Major",
+                "main": {"match_id": "cs-1", "start": now, "team_a": "A", "team_b": "B"},
+                "window_active": True,
+                "status": "ACTIVE",
+                "source_state": "CSAPI LIVE",
+            }
+        ]
+    }
+    lpl_offseason = SportsDashboard._select_lpl_events([], now)
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [{"league_key": "LPL", "selected": lpl_offseason, "source_state": "CACHE DATA", "priority": 0}],
+        valve_selected,
+        "CSAPI LIVE",
+        now,
+        ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
+    )
+    assert choice["kind"] == "ewc"
+
+    lpl_event = {
+        "start": now + timedelta(hours=2),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 3,
+        "block": "Split 2",
+    }
+    lpl_selected = SportsDashboard._select_lpl_events([lpl_event], now)
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [{"league_key": "LPL", "selected": lpl_selected, "source_state": "LIVE DATA", "priority": 0}],
+        valve_selected,
+        "CSAPI LIVE",
+        now,
+        ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
+    )
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
+
+
+def test_right_sidebar_falls_back_to_lpl_when_all_right_competitions_are_offseason():
+    now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
+    lpl_offseason = {
+        "league_key": "LPL",
+        "selected": SportsDashboard._select_lpl_events([], now),
+        "source_state": "CACHE DATA",
+        "priority": 0,
+    }
+    lck_offseason = {
+        "league_key": "LCK",
+        "selected": SportsDashboard._select_lck_events([], now),
+        "source_state": "LCK NO DATA",
+        "priority": 1,
+    }
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            {
+                "event_id": "ewc-apex",
+                "game": "Apex Legends",
+                "start": now + timedelta(days=2),
+                "end": now + timedelta(days=6),
+                "status": "UPCOMING",
+            }
+        ],
+        now,
+        upcoming_window_days=21,
+    )
+    break_card = {
+        "series": "CS",
+        "event_name": "Finished Major",
+        "status": "BREAK",
+        "window_active": False,
+        "main": {"start": now - timedelta(days=3)},
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [lpl_offseason, lck_offseason],
+        {"primary": break_card, "cards": [break_card], "rotation_pool": []},
+        "VALVE CACHE",
+        now,
+        ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
+    )
+
+    assert SportsDashboard._ewc_sidebar_candidate_phase({"selected": ewc_selected}) == 1
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
+
+def test_ewc_logo_asset_and_sidebar_render_are_available():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    events = SportsDashboard._parse_ewc_competitions_html(_sample_ewc_competitions_html(), la, DEFAULT_EWC_COMPETITIONS_URL)
+    selected = SportsDashboard._select_ewc_events(events, datetime(2026, 6, 24, 12, 0, tzinfo=la), upcoming_window_days=21)
+    logo = SportsDashboard._load_local_logo(LOCAL_EWC_LOGO_PATH, (92, 35), alpha_threshold=8)
+    game_logo = SportsDashboard._load_ewc_game_logo(events[0], (112, 34))
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+
+    plugin._draw_ewc_sidebar(image, 552, selected, "EWC CACHE", datetime(2026, 6, 24, 12, 0, tzinfo=la))
+
+    assert logo is not None
+    assert game_logo is not None
+    assert logo.getchannel("A").getextrema()[0] == 0
+    assert game_logo.getchannel("A").getextrema()[0] == 0
+    assert image.getpixel((560, 80)) != COLORS["paper"]
 
 def test_lck_sidebar_uses_lck_logo_and_plain_team_names(monkeypatch):
     plugin = _plugin()
@@ -1221,6 +1448,37 @@ def test_lck_sidebar_uses_lck_logo_and_plain_team_names(monkeypatch):
     assert "T1" in seen_texts
 
 
+def test_msi_sidebar_header_logo_is_forty_percent_larger(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
+    selected = {
+        "live": [
+            {
+                "start": now,
+                "state": "inprogress",
+                "team_a": "T1",
+                "team_b": "TLAW",
+            }
+        ],
+        "upcoming": [],
+        "recent": [],
+    }
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    logo_calls = []
+
+    def record_lol_logo(_image, _draw, x, y, width, height, logo_path=None, fallback_text=None):
+        logo_calls.append((x, y, width, height, logo_path, fallback_text))
+
+    monkeypatch.setattr(plugin, "_draw_lpl_logo", record_lol_logo)
+    monkeypatch.setattr(plugin, "_draw_lpl_focus_card", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_next_rows", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_recent_rows", lambda *_args, **_kwargs: None)
+
+    plugin._draw_lpl_sidebar(image, 552, selected, "MSI LIVE DATA", now, league_key="MSI")
+
+    assert logo_calls[0] == (554, 9, 104, 53, LOCAL_MSI_LOGO_PATH, "MSI")
+
+
 def test_fetch_lck_events_uses_official_lck_league_id(monkeypatch):
     plugin = _plugin()
     calls = []
@@ -1241,6 +1499,263 @@ def test_fetch_lck_events_uses_official_lck_league_id(monkeypatch):
 
     assert plugin._fetch_lck_events({}, timezone.utc) == []
     assert "leagueId=98767991310872058" in calls[0][0]
+
+def test_select_msi_tournament_uses_next_riot_msi_window():
+    la = ZoneInfo("America/Los_Angeles")
+    tournaments = [
+        {"id": "old", "slug": "msi_2024", "startDate": "2024-04-30", "endDate": "2024-05-19"},
+        {"id": "115570934354631452", "slug": "msi_2026", "startDate": "2026-06-27", "endDate": "2026-07-12"},
+    ]
+
+    selected = SportsDashboard._select_msi_tournament(
+        tournaments,
+        la,
+        datetime(2026, 6, 24, 12, 0, tzinfo=la),
+    )
+
+    assert selected["id"] == "115570934354631452"
+    assert selected["slug"] == "msi_2026"
+    assert selected["start"].strftime("%Y-%m-%d") == "2026-06-27"
+    assert selected["end"].strftime("%Y-%m-%d %H:%M") == "2026-07-12 23:59"
+
+
+def test_fetch_msi_tournament_accepts_riot_leagues_list_payload(monkeypatch):
+    plugin = _plugin()
+    calls = []
+    payload = {
+        "data": {
+            "leagues": [
+                {
+                    "id": DEFAULT_MSI_LEAGUE_ID,
+                    "tournaments": [
+                        {
+                            "id": "115570934354631452",
+                            "slug": "msi_2026",
+                            "startDate": "2026-06-27",
+                            "endDate": "2026-07-12",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+    class FakeResponse:
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append(url)
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    tournament = plugin._fetch_msi_tournament({}, timezone.utc, datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc))
+
+    assert tournament["id"] == "115570934354631452"
+    assert tournament["slug"] == "msi_2026"
+    assert f"leagueId={DEFAULT_MSI_LEAGUE_ID}" in calls[0]
+
+def test_fetch_msi_events_uses_official_msi_league_id_and_filters_old_schedule(monkeypatch):
+    plugin = _plugin()
+    calls = []
+    old_schedule = {
+        "data": {
+            "schedule": {
+                "events": [
+                    {
+                        "id": "old-msi-match",
+                        "startTime": "2024-05-01T08:00:00Z",
+                        "state": "completed",
+                        "blockName": "Play-Ins",
+                        "match": {
+                            "id": "old-msi-match",
+                            "strategy": {"type": "bestOf", "count": 3},
+                            "teams": [
+                                {"code": "FLY", "result": {"gameWins": 2}},
+                                {"code": "PSG", "result": {"gameWins": 1}},
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    class FakeResponse:
+        def json(self):
+            return old_schedule
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, headers, timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+    tournament = {
+        "id": "115570934354631452",
+        "slug": "msi_2026",
+        "start": datetime(2026, 6, 27, tzinfo=timezone.utc),
+        "end": datetime(2026, 7, 12, 23, 59, tzinfo=timezone.utc),
+    }
+
+    events = plugin._fetch_msi_events({}, timezone.utc, datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc), tournament)
+
+    assert events == []
+    assert f"leagueId={DEFAULT_MSI_LEAGUE_ID}" in calls[0][0]
+    assert len(calls) == 1
+
+
+def test_fetch_msi_events_polls_live_endpoint_during_msi_window(monkeypatch):
+    plugin = _plugin()
+    calls = []
+    old_schedule = {"data": {"schedule": {"events": []}}}
+    live_payload = {
+        "data": {
+            "schedule": {
+                "events": [
+                    {
+                        "id": "msi-live-event",
+                        "startTime": "2026-06-27T09:00:00Z",
+                        "state": "inProgress",
+                        "blockName": "Bracket Stage",
+                        "league": {"id": DEFAULT_MSI_LEAGUE_ID, "name": "MSI", "slug": "msi"},
+                        "match": {
+                            "id": "msi-live-match",
+                            "strategy": {"type": "bestOf", "count": 5},
+                            "teams": [
+                                {"code": "T1", "result": {"gameWins": 1}},
+                                {"code": "BLG", "result": {"gameWins": 1}},
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append(url)
+            if "getLive" in url:
+                return FakeResponse(live_payload)
+            return FakeResponse(old_schedule)
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+    tournament = {
+        "id": "115570934354631452",
+        "slug": "msi_2026",
+        "start": datetime(2026, 6, 27, tzinfo=timezone.utc),
+        "end": datetime(2026, 7, 12, 23, 59, tzinfo=timezone.utc),
+    }
+
+    events = plugin._fetch_msi_events({}, timezone.utc, datetime(2026, 6, 27, 9, 15, tzinfo=timezone.utc), tournament)
+
+    assert len(events) == 1
+    assert events[0]["league_key"] == "MSI"
+    assert events[0]["team_a"] == "T1"
+    assert events[0]["team_b"] == "BLG"
+    assert any("getSchedule" in url and f"leagueId={DEFAULT_MSI_LEAGUE_ID}" in url for url in calls)
+    assert any("getLive" in url for url in calls)
+
+
+def test_select_msi_events_uses_featured_page_only_without_matches():
+    now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
+    featured = SportsDashboard._lpl_msi_featured_event(now)
+
+    empty_selected = SportsDashboard._select_msi_events([], now, featured_event=featured)
+
+    assert empty_selected["featured_event_page"] is True
+    assert empty_selected["featured_event"]["key"] == "MSI"
+
+    recent_event = {
+        "start": now - timedelta(hours=2),
+        "state": "completed",
+        "team_a": "T1",
+        "team_b": "BLG",
+        "wins_a": 3,
+        "wins_b": 2,
+        "best_of": 5,
+        "block": "Bracket Stage",
+    }
+    selected_with_recent = SportsDashboard._select_msi_events([recent_event], now, featured_event=featured)
+
+    assert selected_with_recent["featured_event_page"] is False
+    assert selected_with_recent["main"]["team_a"] == "T1"
+
+
+def test_lol_sidebar_override_forces_msi(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 27, 9, 15, tzinfo=timezone.utc)
+    msi_event = {
+        "start": now - timedelta(minutes=15),
+        "state": "inprogress",
+        "team_a": "T1",
+        "team_b": "BLG",
+        "wins_a": 1,
+        "wins_b": 1,
+        "best_of": 5,
+        "block": "Bracket Stage",
+    }
+    plugin._load_lpl_events = lambda _settings, _timezone_info: ([], "CACHE DATA")
+    plugin._load_lck_events = lambda _settings, _timezone_info: ([], "LCK NO DATA")
+    plugin._load_msi_events = lambda _settings, _timezone_info, _now: ([msi_event], "MSI LIVE DATA", None)
+    plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
+
+    choice = plugin._load_lol_esports_sidebar(
+        {"lolEsportsSidebarOverride": "MSI"},
+        FakeDeviceConfig(timezone="UTC"),
+        timezone.utc,
+        now,
+    )
+
+    assert choice["league_key"] == "MSI"
+    assert choice["selected"]["live"][0]["team_b"] == "BLG"
+
+
+def test_write_lol_live_state_uses_msi_file(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "get_plugin_dir", lambda name: str(tmp_path / name))
+    now = datetime(2026, 6, 27, 9, 15, tzinfo=timezone.utc)
+    selected = {
+        "live": [
+            {
+                "event_id": "msi-live-event",
+                "start": now - timedelta(minutes=15),
+                "state": "inprogress",
+                "team_a": "T1",
+                "team_b": "BLG",
+                "wins_a": 1,
+                "wins_b": 1,
+                "best_of": 5,
+            }
+        ]
+    }
+
+    plugin._write_lol_live_state(selected, now, "MSI LIVE DATA", league_key="MSI")
+
+    payload = json.loads((tmp_path / "cache" / "msi_live_state.json").read_text(encoding="utf-8"))
+    assert payload["version"] == "sports-dashboard-msi-live-v1"
+    assert payload["league_key"] == "MSI"
+    assert payload["team_a"] == "T1"
+    assert not (tmp_path / "cache" / "lpl_live_state.json").exists()
 
 def test_lpl_generic_playoff_stages_are_inferred_from_schedule_order():
     tz = timezone.utc
@@ -1387,6 +1902,57 @@ def test_lpl_focus_stage_label_draws_above_vs():
     assert final_box[3] <= 88
     assert final_box[3] < vs_center[1]
 
+
+
+def test_msi_focus_stage_label_draws_below_team_names():
+    plugin = _plugin()
+    image = Image.new("RGB", (320, 220), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    centered_labels = []
+    centered_points = []
+    fit_text_calls = []
+    original_centered_in_box = plugin._draw_centered_in_box
+    original_centered = plugin._draw_centered
+    original_fit_text = plugin._fit_text
+
+    def capture_centered_in_box(draw_obj, box, text, *args, **kwargs):
+        centered_labels.append((box, str(text)))
+        return original_centered_in_box(draw_obj, box, text, *args, **kwargs)
+
+    def capture_centered(draw_obj, center, text, *args, **kwargs):
+        centered_points.append((center, str(text)))
+        return original_centered(draw_obj, center, text, *args, **kwargs)
+
+    def capture_fit_text(draw_obj, text, max_width, size, bold=False, min_size=11):
+        fit_text_calls.append((str(text), max_width, size, bold, min_size))
+        return original_fit_text(draw_obj, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._draw_centered_in_box = capture_centered_in_box
+    plugin._draw_centered = capture_centered
+    plugin._fit_text = capture_fit_text
+    event = {
+        "start": datetime(2026, 6, 27, 20, 0, tzinfo=timezone.utc),
+        "state": "unstarted",
+        "team_a": "T1",
+        "team_b": "TLAW",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Play In Knockouts",
+        "stage_label": "Play In Knockouts",
+    }
+
+    plugin._draw_lpl_focus_card(image, draw, 0, 220, 0, event, event["start"], False, league_key="MSI")
+
+    stage_box = next(box for box, text in centered_labels if text == "Play In Knockouts")
+    stage_fit = next(call for call in fit_text_calls if call[0] == "Play In Knockouts")
+    team_y = max(center[1] for center, text in centered_points if text in {"T1", "TLAW"})
+    vs_center = next(center for center, text in centered_points if text == "VS")
+    assert stage_fit[2] == 11
+    assert stage_box[1] >= team_y + 22
+    assert stage_box[3] <= 152
+    assert stage_box[3] > vs_center[1]
 
 def test_lpl_display_team_names_prefer_chinese_short_names():
     assert SportsDashboard._lpl_display_team_name("BLG") == "\u54d4\u54e9\u54d4\u54e9"
@@ -1627,6 +2193,18 @@ def test_lpl_msi_logo_and_offseason_filler_assets_are_available():
         fallback_accent = source.convert("RGBA")
     assert fallback_accent.size == (128, 92)
 
+def test_lpl_msi_offseason_filler_pool_assets_are_transparent():
+    paths = SportsDashboard._lpl_msi_offseason_filler_paths()
+
+    assert paths == LOCAL_LPL_MSI_OFFSEASON_FILLER_PATHS
+    assert {SportsDashboard._lpl_msi_offseason_filler_index(seed, len(paths)) for seed in range(64)} == {0, 1}
+    for path in paths:
+        with Image.open(path) as source:
+            filler = source.convert("RGBA")
+        assert filler.size == (212, 80)
+        assert filler.getchannel("A").getextrema()[0] == 0
+        assert filler.getpixel((0, 0))[3] == 0
+
 
 def test_lpl_msi_card_accent_pool_rotates_by_render_time():
     paths = SportsDashboard._lpl_msi_card_accent_paths()
@@ -1775,7 +2353,7 @@ def test_lpl_featured_event_panel_omits_duplicate_card_logo(monkeypatch):
         return Image.new("RGBA", size, (255, 0, 0, 255))
 
     monkeypatch.setattr(plugin, "_load_local_logo", record_logo)
-    monkeypatch.setattr(plugin, "_load_lpl_msi_offseason_filler", lambda size: None)
+    monkeypatch.setattr(plugin, "_load_lpl_msi_offseason_filler", lambda size, *_args: None)
 
     plugin._draw_lpl_featured_event_panel(
         image,
@@ -1818,7 +2396,8 @@ def test_lpl_featured_event_panel_bleeds_bottom_filler_to_sidebar_edges(monkeypa
     )
 
     assert calls
-    assert calls[0][1:] == (0, 239, 388, 408)
+    assert calls[0][1:5] == (0, 239, 388, 408)
+    assert calls[0][5] == datetime(2026, 6, 14, 9, 0, tzinfo=la)
 
 
 def test_lpl_featured_event_sidebar_allows_filler_to_reach_canvas_bottom(monkeypatch):
@@ -1846,7 +2425,7 @@ def test_lpl_featured_event_filler_uses_zoomed_bottom_crop(monkeypatch):
     image = Image.new("RGB", (220, 100), COLORS["paper"])
     requested_sizes = []
 
-    def load_filler(size):
+    def load_filler(size, *_args):
         requested_sizes.append(size)
         filler = Image.new("RGB", size, (200, 10, 10))
         filler_draw = ImageDraw.Draw(filler)
@@ -1860,12 +2439,33 @@ def test_lpl_featured_event_filler_uses_zoomed_bottom_crop(monkeypatch):
     assert requested_sizes == [
         (
             int(200 * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
-            int(80 * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
+            int((80 + LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL) * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
         )
     ]
-    assert image.getpixel((10, 20)) == (12, 200, 40)
+    assert image.getpixel((10, 20)) == (200, 10, 10)
     assert image.getpixel((209, 99)) == (12, 200, 40)
 
+def test_lpl_featured_event_filler_overfills_transparent_bottom_gap(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (220, 100), COLORS["paper"])
+    requested_sizes = []
+
+    def load_filler(size, *_args):
+        requested_sizes.append(size)
+        return Image.new("RGBA", size, (12, 200, 40, 255))
+
+    monkeypatch.setattr(plugin, "_load_lpl_msi_offseason_filler", load_filler)
+
+    plugin._draw_lpl_featured_event_filler(image, 10, 209, 20, 99)
+
+    assert requested_sizes == [
+        (
+            int(200 * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
+            int((80 + LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL) * LPL_MSI_OFFSEASON_FILLER_ZOOM + 0.999),
+        )
+    ]
+    assert LPL_MSI_OFFSEASON_FILLER_VERTICAL_CROP_OFFSET < LPL_MSI_OFFSEASON_FILLER_BOTTOM_OVERFILL
+    assert image.getpixel((10, 99)) == (12, 200, 40)
 
 def test_f1_jolpica_parser_builds_race_sessions_and_standings():
     la = ZoneInfo("America/Los_Angeles")
@@ -1982,8 +2582,8 @@ def test_mlb_info_rows_map_short_codes_to_chinese_team_names():
         SportsDashboard._mlb_compact_rhe_label(event)
         == "\u9053\u5947 5/8/0  \u5de8\u4eba 3/7/1"
     )
-    assert SportsDashboard._mlb_display_team_from_event(event, "a", full=True) == "洛杉矶道奇"
-    assert SportsDashboard._mlb_display_team_from_event(event, "b", full=True) == "旧金山巨人"
+    assert SportsDashboard._mlb_display_team_from_event(event, "a", full=True) == "\u6d1b\u6749\u77f6\u9053\u5947"
+    assert SportsDashboard._mlb_display_team_from_event(event, "b", full=True) == "\u65e7\u91d1\u5c71\u5de8\u4eba"
 
 
 def test_mlb_phillies_full_name_uses_compact_chinese_label():
@@ -2264,7 +2864,7 @@ def test_wnba_connecticut_sun_uses_official_chinese_short_name():
 
 def test_wnba_golden_state_uses_official_chinese_short_name():
     assert SportsDashboard._wnba_display_team_name("GS", "Valkyries") == "\u5973\u6b66\u795e"
-    assert SportsDashboard._wnba_display_team_name("GS", "Valkyries", full=True) == "金州女武神"
+    assert SportsDashboard._wnba_display_team_name("GS", "Valkyries", full=True) == "\u91d1\u5dde\u5973\u6b66\u795e"
     assert (
         SportsDashboard._wnba_display_team_name(
             "",
@@ -2278,7 +2878,7 @@ def test_wnba_golden_state_uses_official_chinese_short_name():
 def test_wnba_2026_expansion_teams_use_chinese_names_and_logo_fallbacks():
     assert SportsDashboard._wnba_display_team_name("POR", "Fire") == "\u6ce2\u7279\u5170\u706b\u7130"
     assert SportsDashboard._wnba_display_team_name("TOR", "Tempo") == "\u591a\u4f26\u591a\u8282\u594f"
-    assert SportsDashboard._wnba_display_team_name("TOR", "Tempo", full=True) == "多伦多节奏"
+    assert SportsDashboard._wnba_display_team_name("TOR", "Tempo", full=True) == "\u591a\u4f26\u591a\u8282\u594f"
     assert SportsDashboard._wnba_display_team_name("", "Portland Fire", ["Fire"]) == "\u6ce2\u7279\u5170\u706b\u7130"
     assert SportsDashboard._wnba_display_team_name("", "Toronto Tempo", ["Tempo"]) == "\u591a\u4f26\u591a\u8282\u594f"
     assert SportsDashboard._espn_cdn_team_logo_url("wnba", "POR").endswith("/wnba/500/por.png")
@@ -3063,8 +3663,8 @@ def test_standalone_sport_panels_draw_their_own_information():
     assert "R3 68 / -2" in seen_texts
     assert "LEADERBOARD" in seen_texts
     assert "NFL LIVE" in seen_texts
-    assert "西雅图海鹰" in seen_texts
-    assert "新英格兰爱国者" in seen_texts
+    assert "\u897f\u96c5\u56fe\u6d77\u9e70" in seen_texts
+    assert "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005" in seen_texts
     assert "3RD & 4" in seen_texts
     assert any("Kenneth Walker run for 6 yards" in text for text in seen_texts)
     assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
@@ -3081,6 +3681,149 @@ def test_standalone_sport_panels_draw_their_own_information():
     assert ("https://example.com/nfl-sea.png", 20, "SEA") in logo_calls
     assert ("https://example.com/ncaa-tex.png", 20, "TEX") in logo_calls
     assert any(call == ("https://a.espncdn.com/i/teamlogos/mlb/500/tex.png", 11, "TEX") for call in logo_calls)
+
+
+
+
+def test_pga_title_wordmark_asset_is_transparent():
+    wordmark = Image.open(LOCAL_PGA_TITLE_WORDMARK_PATH).convert("RGBA")
+    assert wordmark.size == (154, 24)
+    alpha = wordmark.getchannel("A")
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)
+    assert wordmark.getpixel((0, 0))[3] == 0
+    assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
+
+
+def test_mlb_title_wordmark_asset_is_transparent():
+    wordmark = Image.open(LOCAL_MLB_TITLE_WORDMARK_PATH).convert("RGBA")
+    assert wordmark.size == (154, 24)
+    alpha = wordmark.getchannel("A")
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)
+    assert wordmark.getpixel((0, 0))[3] == 0
+    assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
+
+def test_wnba_title_wordmark_asset_is_transparent():
+    wordmark = Image.open(LOCAL_WNBA_TITLE_WORDMARK_PATH).convert("RGBA")
+    assert wordmark.size == (154, 24)
+    alpha = wordmark.getchannel("A")
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)
+    assert wordmark.getpixel((0, 0))[3] == 0
+    assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
+
+
+def test_standalone_mlb_header_uses_img2_title_wordmark(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    wordmark_calls = []
+    fit_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_wordmark(_image, x, y, max_width, max_height):
+        wordmark_calls.append((x, y, max_width, max_height))
+        return True
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        fit_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_mlb_title_wordmark", capture_wordmark)
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_logo = lambda *_args, **_kwargs: None
+    plugin._draw_status_pill = lambda *_args, **_kwargs: None
+    plugin._draw_standalone_sport_header_cutout = lambda *_args, **_kwargs: True
+
+    plugin._draw_standalone_sport_header(
+        image,
+        draw,
+        0,
+        0,
+        551,
+        "MLB",
+        {"sport": "MLB", "status": "LIVE"},
+        "HUB LIVE",
+    )
+
+    assert wordmark_calls == [(98, 7, 154, 24)]
+    assert "MLB" not in fit_texts
+    assert "LIVE BOX" in fit_texts
+
+
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    wordmark_calls = []
+    fit_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_wordmark(_image, x, y, max_width, max_height):
+        wordmark_calls.append((x, y, max_width, max_height))
+        return True
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        fit_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_pga_title_wordmark", capture_wordmark)
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_logo = lambda *_args, **_kwargs: None
+    plugin._draw_status_pill = lambda *_args, **_kwargs: None
+    plugin._draw_standalone_sport_header_cutout = lambda *_args, **_kwargs: True
+
+    plugin._draw_standalone_sport_header(
+        image,
+        draw,
+        0,
+        0,
+        551,
+        "PGA",
+        {"sport": "PGA", "status": "LIVE"},
+        "HUB LIVE",
+    )
+
+    assert wordmark_calls == [(66, 7, 154, 24)]
+    assert "PGA TOUR" not in fit_texts
+    assert "LEADERBOARD" in fit_texts
+
+def test_standalone_wnba_header_uses_img2_title_wordmark(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (552, 80), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    wordmark_calls = []
+    fit_texts = []
+    original_fit_text = plugin._fit_text
+
+    def capture_wordmark(_image, x, y, max_width, max_height):
+        wordmark_calls.append((x, y, max_width, max_height))
+        return True
+
+    def capture_fit_text(draw_obj, text, *args, **kwargs):
+        fit_texts.append(str(text))
+        return original_fit_text(draw_obj, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_wnba_title_wordmark", capture_wordmark)
+    plugin._fit_text = capture_fit_text
+    plugin._draw_sport_logo = lambda *_args, **_kwargs: None
+    plugin._draw_status_pill = lambda *_args, **_kwargs: None
+    plugin._draw_standalone_sport_header_cutout = lambda *_args, **_kwargs: True
+
+    plugin._draw_standalone_sport_header(
+        image,
+        draw,
+        0,
+        0,
+        551,
+        "WNBA",
+        {"sport": "WNBA", "status": "LIVE"},
+        "HUB LIVE",
+    )
+
+    assert wordmark_calls == [(98, 7, 154, 24)]
+    assert "WNBA" not in fit_texts
+    assert "LIVE GAME" in fit_texts
 
 
 def test_standalone_sport_header_uses_sport_local_status_label():
@@ -3167,7 +3910,7 @@ def test_standalone_sport_header_cutout_scales_up_and_left_biases(monkeypatch):
     assert centered_x - bbox[0] <= 6
 
 
-def test_pga_header_cutout_moves_right_sixteen_pixels(monkeypatch):
+def test_pga_header_cutout_moves_right_twenty_two_pixels(monkeypatch):
     plugin = _plugin()
     source = Image.new("RGBA", (20, 10), (255, 255, 255, 255))
     monkeypatch.setattr(plugin, "_load_sport_header_cutout", lambda _sport: source)
@@ -3197,7 +3940,7 @@ def test_pga_header_cutout_moves_right_sixteen_pixels(monkeypatch):
     pga_bbox = pga_image.getbbox()
     assert base_bbox is not None
     assert pga_bbox is not None
-    assert pga_bbox[0] == base_bbox[0] + 16
+    assert pga_bbox[0] == base_bbox[0] + 22
 
 
 def test_mlb_side_column_prioritizes_live_state_before_schedule():
@@ -3445,11 +4188,11 @@ def test_mlb_main_card_highlights_current_batting_side():
     plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
     plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
 
-    assert team_score_calls[0]["team"] == "旧金山巨人"
+    assert team_score_calls[0]["team"] == "\u65e7\u91d1\u5c71\u5de8\u4eba"
     assert team_score_calls[0]["score"] == 3
     assert team_score_calls[0]["team_fill"] == COLORS["amber"]
     assert team_score_calls[0]["score_fill"] == COLORS["amber"]
-    assert team_score_calls[1]["team"] == "洛杉矶道奇"
+    assert team_score_calls[1]["team"] == "\u6d1b\u6749\u77f6\u9053\u5947"
     assert team_score_calls[1]["team_fill"] == COLORS["text"]
 
 
@@ -3529,9 +4272,9 @@ def test_mlb_main_card_highlights_final_winner():
     plugin._draw_mlb_rhe_line = lambda *_args, **_kwargs: None
     plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
 
-    assert team_score_calls[0]["team"] == "旧金山巨人"
+    assert team_score_calls[0]["team"] == "\u65e7\u91d1\u5c71\u5de8\u4eba"
     assert team_score_calls[0]["team_fill"] == COLORS["text"]
-    assert team_score_calls[1]["team"] == "洛杉矶道奇"
+    assert team_score_calls[1]["team"] == "\u6d1b\u6749\u77f6\u9053\u5947"
     assert team_score_calls[1]["score"] == 5
     assert team_score_calls[1]["team_fill"] == COLORS["amber"]
     assert team_score_calls[1]["score_fill"] == COLORS["amber"]
@@ -5117,12 +5860,12 @@ def test_wnba_main_card_highlights_score_leader():
     plugin._draw_hub_team_score = capture_team_score
     plugin._draw_wnba_main_card(image, draw, (0, 0, 300, 190), card, now)
 
-    assert team_score_calls[0]["team"] == "西雅图风暴"
+    assert team_score_calls[0]["team"] == "\u897f\u96c5\u56fe\u98ce\u66b4"
     assert team_score_calls[0]["score"] == 72
     assert team_score_calls[0]["team_fill"] == COLORS["text"]
     assert team_score_calls[0]["score_fill"] == COLORS["text"]
     assert team_score_calls[0]["logo_fallback"] == "SEA"
-    assert team_score_calls[1]["team"] == "拉斯维加斯王牌"
+    assert team_score_calls[1]["team"] == "\u62c9\u65af\u7ef4\u52a0\u65af\u738b\u724c"
     assert team_score_calls[1]["score"] == 78
     assert team_score_calls[1]["team_fill"] == COLORS["wnba_accent"]
     assert team_score_calls[1]["score_fill"] == COLORS["wnba_accent"]
@@ -5669,8 +6412,8 @@ def test_football_possession_display_label_uses_chinese_team_names():
     assert ncaa_event["possession"] == "TEX"
     assert SportsDashboard._football_possession_display_label(nfl_event, "NFL") == "\u6d77\u9e70"
     assert SportsDashboard._football_possession_display_label(ncaa_event, "NCAA") == "\u5fb7\u5dde"
-    assert SportsDashboard._football_display_team(nfl_event, "a", "NFL", full=True) == "西雅图海鹰"
-    assert SportsDashboard._football_display_team(nfl_event, "b", "NFL", full=True) == "新英格兰爱国者"
+    assert SportsDashboard._football_display_team(nfl_event, "a", "NFL", full=True) == "\u897f\u96c5\u56fe\u6d77\u9e70"
+    assert SportsDashboard._football_display_team(nfl_event, "b", "NFL", full=True) == "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005"
 
 
 def test_football_display_team_honors_full_ncaa_program_names_when_zh_short_exists():
@@ -5863,11 +6606,11 @@ def test_nfl_main_card_keeps_live_team_scores_high_contrast():
     plugin._draw_team_logo = lambda *_args, **_kwargs: None
     plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
 
-    assert team_score_calls[0]["team"] == "西雅图海鹰"
+    assert team_score_calls[0]["team"] == "\u897f\u96c5\u56fe\u6d77\u9e70"
     assert team_score_calls[0]["score"] == 17
     assert team_score_calls[0]["team_fill"] == COLORS["text"]
     assert team_score_calls[0]["score_fill"] == COLORS["text"]
-    assert team_score_calls[1]["team"] == "新英格兰爱国者"
+    assert team_score_calls[1]["team"] == "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005"
     assert team_score_calls[1]["team_fill"] == COLORS["text"]
     assert team_score_calls[1]["score_fill"] == COLORS["text"]
 
@@ -6391,8 +7134,8 @@ def test_nfl_standalone_panel_uses_drive_first_layout():
     plugin._draw_nfl_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
 
     assert "NFL LIVE" in seen_texts
-    assert "西雅图海鹰" in seen_texts
-    assert "新英格兰爱国者" in seen_texts
+    assert "\u897f\u96c5\u56fe\u6d77\u9e70" in seen_texts
+    assert "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005" in seen_texts
     assert "NFL DRIVE" in seen_texts
     assert "3RD & 4" in seen_texts
     assert "SEA 42" in seen_texts
@@ -7520,8 +8263,8 @@ def test_mlb_main_card_uses_chinese_names_with_code_logo_fallback():
     plugin._draw_team_logo = capture_team_logo
     plugin._draw_mlb_main_card(image, draw, (0, 0, 300, 190), card, now)
 
-    assert "洛杉矶道奇" in seen_texts
-    assert "旧金山巨人" in seen_texts
+    assert "\u6d1b\u6749\u77f6\u9053\u5947" in seen_texts
+    assert "\u65e7\u91d1\u5c71\u5de8\u4eba" in seen_texts
     assert ("https://example.com/mlb-lad.png", 20, "LAD") in logo_calls
     assert ("https://example.com/mlb-sf.png", 20, "SF") in logo_calls
 
@@ -7761,7 +8504,7 @@ def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
     monkeypatch.setattr(plugin, "_draw_nba_compact_panel", lambda *_args, **_kwargs: calls.append("nba"))
     monkeypatch.setattr(plugin, "_load_lpl_events", lambda *_args, **_kwargs: ([], "CACHE DATA"))
     monkeypatch.setattr(plugin, "_attach_lpl_odds", lambda events, *_args, **_kwargs: events)
-    monkeypatch.setattr(plugin, "_attach_lpl_realtime_info", lambda selected, settings: selected)
+    monkeypatch.setattr(plugin, "_attach_lpl_realtime_info", lambda selected, settings, **_kwargs: selected)
     monkeypatch.setattr(plugin, "_write_lpl_live_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_draw_lpl_sidebar", lambda *_args, **_kwargs: None)
 
@@ -8603,7 +9346,7 @@ def test_nba_offseason_panel_bleeds_filler_past_inner_slot(monkeypatch):
         "offseason": True,
     }
 
-    def load_filler(size):
+    def load_filler(size, *_args):
         requested_sizes.append(size)
         return Image.new("RGB", size, filler_color)
 
@@ -8780,7 +9523,7 @@ def test_nba_offseason_watch_draws_filler_in_bottom_blank_slot(monkeypatch):
     draw = ImageDraw.Draw(image)
     requested_sizes = []
 
-    def load_filler(size):
+    def load_filler(size, *_args):
         requested_sizes.append(size)
         filler = Image.new("RGB", size, (200, 10, 10))
         filler_draw = ImageDraw.Draw(filler)
@@ -9701,7 +10444,7 @@ def test_worldcup_espn_parser_reads_finished_and_live_scores():
     assert len(events) == 2
     assert events[0]["event_id"] == "760415"
     assert events[0]["state"] == "FT"
-    assert events[0]["team_a"] == "墨西哥"
+    assert events[0]["team_a"] == "\u58a8\u897f\u54e5"
     assert events[0]["team_b"] == "南非"
     assert events[0]["team_a_tla"] == "MEX"
     assert events[0]["team_b_tla"] == "RSA"
@@ -9866,8 +10609,8 @@ def test_worldcup_main_card_uses_uniform_height_flag_slots():
         "start": datetime(2026, 6, 18, 14, 0, tzinfo=la),
         "state": "LIVE",
         "status": "45'+6'",
-        "team_a": "加拿大",
-        "team_b": "卡塔尔",
+        "team_a": "\u52a0\u62ff\u5927",
+        "team_b": "\u5361\u5854\u5c14",
         "team_a_tla": "CAN",
         "team_b_tla": "QAT",
         "team_a_flag": "https://flagcdn.com/w80/ca.png",
@@ -10297,7 +11040,7 @@ def test_worldcup_api_parser_converts_fixture_to_local_match_row():
 
     assert events[0]["start"].strftime("%Y-%m-%d %H:%M") == "2026-06-11 17:00"
     assert events[0]["team_a"] == "美国"
-    assert events[0]["team_b"] == "墨西哥"
+    assert events[0]["team_b"] == "\u58a8\u897f\u54e5"
     assert events[0]["state"] == "NS"
     assert events[0]["block"] == "Group Stage - 1"
     assert events[0]["fixture_id"] == "10101"
@@ -10313,22 +11056,22 @@ def test_worldcup_country_name_aliases_stay_simplified_chinese():
 
     assert SportsDashboard._localized_country_name({"name": "Deutschland"}, "") == "德国"
     assert "Germania" in SportsDashboard._country_aliases_for_value("德国")
-    assert SportsDashboard._localized_country_name({"name": "Curacao"}, "") == "库拉索"
-    assert "Curacao" in SportsDashboard._country_aliases_for_value("库拉索")
+    assert SportsDashboard._localized_country_name({"name": "Curacao"}, "") == "\u5e93\u62c9\u7d22"
+    assert "Curacao" in SportsDashboard._country_aliases_for_value("\u5e93\u62c9\u7d22")
     assert events[0]["team_a"] == "德国"
-    assert events[0]["team_b"] == "库拉索"
+    assert events[0]["team_b"] == "\u5e93\u62c9\u7d22"
     assert events[0]["team_a_tla"] == "GER"
     assert events[0]["team_b_tla"] == "CUW"
     assert "Germany" in events[0]["team_a_source_aliases"]
     assert "Curacao" in events[0]["team_b_source_aliases"]
     assert events[0]["team_a_flag"] == "https://flagcdn.com/w80/de.png"
     assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/cw.png"
-    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "") == "佛得角"
-    assert SportsDashboard._localized_country_name({"name": "Cabo Verde"}, "") == "佛得角"
-    assert SportsDashboard._localized_country_name({"name": "Cabo-Verde"}, "") == "佛得角"
-    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "CVE") == "佛得角"
+    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "") == "\u4f5b\u5f97\u89d2"
+    assert SportsDashboard._localized_country_name({"name": "Cabo Verde"}, "") == "\u4f5b\u5f97\u89d2"
+    assert SportsDashboard._localized_country_name({"name": "Cabo-Verde"}, "") == "\u4f5b\u5f97\u89d2"
+    assert SportsDashboard._localized_country_name({"name": "Cape Verde"}, "CVE") == "\u4f5b\u5f97\u89d2"
     assert SportsDashboard._canonical_country_tla("CVE") == "CPV"
-    assert "Cabo Verde" in SportsDashboard._country_aliases_for_value("佛得角")
+    assert "Cabo Verde" in SportsDashboard._country_aliases_for_value("\u4f5b\u5f97\u89d2")
     assert SportsDashboard._flag_url_for_tla("CVE") == "https://flagcdn.com/w80/cv.png"
 
 
@@ -10370,8 +11113,8 @@ def test_worldcup_espn_parser_localizes_cape_verde():
 
     events = SportsDashboard._parse_worldcup_espn_events(payload, la)
 
-    assert events[0]["team_a"] == "西班牙"
-    assert events[0]["team_b"] == "佛得角"
+    assert events[0]["team_a"] == "\u897f\u73ed\u7259"
+    assert events[0]["team_b"] == "\u4f5b\u5f97\u89d2"
     assert events[0]["team_b_tla"] == "CPV"
     assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/cv.png"
 
@@ -10568,7 +11311,7 @@ def test_football_data_parser_uses_chinese_country_names_and_flat_flags():
     events = SportsDashboard._parse_football_data_events([_sample_football_data_match()], la)
 
     assert events[0]["start"].strftime("%Y-%m-%d %H:%M") == "2026-06-11 12:00"
-    assert events[0]["team_a"] == "墨西哥"
+    assert events[0]["team_a"] == "\u58a8\u897f\u54e5"
     assert events[0]["team_b"] == "南非"
     assert events[0]["team_a_flag"] == "https://flagcdn.com/w80/mx.png"
     assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/za.png"
@@ -11394,6 +12137,28 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
         assert logo.getchannel("A").getextrema()[0] == 0
 
 
+def test_worldcup_title_wordmark_asset_is_transparent_and_wide():
+    wordmark = Image.open(LOCAL_WORLDCUP_TITLE_WORDMARK_PATH).convert("RGBA")
+
+    assert wordmark.size == (640, 123)
+    assert wordmark.width > wordmark.height * 4
+    assert wordmark.getbbox() is not None
+    assert wordmark.getchannel("A").getextrema()[0] == 0
+
+
+def test_worldcup_title_wordmark_draws_inside_header_slot():
+    plugin = _plugin()
+    image = Image.new("RGBA", (240, 70), (0, 0, 0, 0))
+
+    assert plugin._draw_worldcup_title_wordmark(image, 52, 6, 178, 27) is True
+    bbox = image.getbbox()
+
+    assert bbox is not None
+    assert bbox[0] >= 52
+    assert bbox[2] <= 52 + 178
+    assert bbox[1] >= 6
+    assert bbox[3] <= 6 + 27
+
 def test_lck_team_logos_are_synced_and_loadable():
     expected_codes = {"BFX", "BRO", "DK", "DNS", "GEN", "HLE", "KRX", "KT", "NS", "T1"}
     logo_dir = Path(LOCAL_LCK_TEAM_LOGO_DIR)
@@ -11422,14 +12187,19 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_NBA_LOGO_PATH,
         LOCAL_F1_LOGO_PATH,
         LOCAL_CS_MAJOR_LOGO_PATH,
+        LOCAL_EWC_LOGO_PATH,
         LOCAL_TI_LOGO_PATH,
         LOCAL_MLB_LOGO_PATH,
+        LOCAL_MLB_TITLE_WORDMARK_PATH,
         LOCAL_WNBA_LOGO_PATH,
+        LOCAL_WNBA_TITLE_WORDMARK_PATH,
         LOCAL_PGA_LOGO_PATH,
+        LOCAL_PGA_TITLE_WORDMARK_PATH,
         LOCAL_NFL_LOGO_PATH,
         LOCAL_NCAA_LOGO_PATH,
         LOCAL_WORLDCUP_PITCH_STRIP_PATH,
         LOCAL_WORLDCUP_HEADER_BANNER_PATH,
+        LOCAL_WORLDCUP_TITLE_WORDMARK_PATH,
         LOCAL_NBA_COURT_STRIP_PATH,
         LOCAL_MLB_HEADER_CUTOUT_PATH,
         LOCAL_WNBA_HEADER_CUTOUT_PATH,
@@ -11868,6 +12638,7 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
     plugin._lol_esports_sidebar_override = lambda settings=None: ""
     plugin._load_lpl_events = lambda settings, timezone_info: ([lpl_event], "LIVE DATA")
     plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
+    plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
     plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
@@ -11916,6 +12687,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._lol_esports_sidebar_override = lambda settings=None: ""
     plugin._load_lpl_events = lambda settings, timezone_info: ([], "CACHE DATA")
     plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
+    plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
     plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
@@ -11924,7 +12696,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append("lpl")
 
     image = plugin._generate_image_with_active_colors(
-        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false", "ewcSidebarEnabled": "false"},
         FakeDeviceConfig(),
         (800, 480),
         la,
@@ -11991,6 +12763,27 @@ def test_settings_exposes_offseason_hub_controls():
         assert f'name="{field}"' not in html
         assert f"pluginSettings.{field}" not in html
 
+
+
+def test_settings_exposes_ewc_sidebar_controls():
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+    fields = [
+        "ewcSidebarEnabled",
+        "ewcCompetitionsUrl",
+        "ewcCacheHours",
+        "ewcUpcomingWindowDays",
+    ]
+
+    for field in fields:
+        assert f'id="{field}"' in html
+        assert f"pluginSettings.{field}" in html
 
 
 def test_settings_exposes_valve_esports_controls():

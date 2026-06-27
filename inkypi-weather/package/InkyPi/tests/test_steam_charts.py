@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.steam_charts.steam_charts import Image, SteamCharts
+from plugins.steam_charts.steam_charts import Image, SANS_FONT_PATHS, STATIC_YAHEI_FONT_PATH, STEAM_PIXEL_KAIJU_PATH, STEAM_TITLE_WORDMARK_PATH, SteamCharts
 
 
 class FakeDeviceConfig:
@@ -116,6 +116,9 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
         "images", include_images
     )
     plugin.render_image = fake_render
+    plugin._font_file_uri = lambda weight="normal": (
+        "file:///fonts/msyhbd.ttc" if weight == "bold" else "file:///fonts/msyh.ttc"
+    )
 
     result = plugin.generate_image(
         {"mode": "top_sellers", "itemsCount": "99", "showImages": "false", "themeMode": "day"},
@@ -132,11 +135,18 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     assert calls["template_params"]["theme_ink"] == "#000000"
     assert calls["template_params"]["theme_paper"] == "#ffffff"
     assert calls["template_params"]["steam_logo_uri"].startswith("data:image/png;base64,")
-    assert calls["template_params"]["header_bar_uri"].startswith("data:image/png;base64,")
-    assert calls["template_params"]["header_scene_uri"].startswith("data:image/png;base64,")
+    assert calls["template_params"]["title_wordmark_uri"].startswith("data:image/png;base64,")
+    assert calls["template_params"]["pixel_kaiju_uri"].startswith("data:image/png;base64,")
+    assert "header_bar_uri" not in calls["template_params"]
+    assert "header_scene_uri" not in calls["template_params"]
+    assert calls["template_params"]["yahei_font_uri"] == "file:///fonts/msyh.ttc"
+    assert calls["template_params"]["yahei_bold_font_uri"] == "file:///fonts/msyhbd.ttc"
     assert calls["template_params"]["updated_at_text"].startswith("刷新时间 ")
     assert calls["template_params"]["plugin_settings"]["backgroundColor"] == "#ffffff"
     assert calls["template_params"]["plugin_settings"]["textColor"] == "#000000"
+    assert calls["template_params"]["plugin_settings"]["selectedFrame"] == "None"
+    for margin_key in ("margin", "topMargin", "bottomMargin", "leftMargin", "rightMargin"):
+        assert calls["template_params"]["plugin_settings"][margin_key] == 0
     assert calls["images"] is False
 
 
@@ -178,6 +188,9 @@ def test_generate_image_combined_mode_renders_two_top_five_live_groups():
     plugin._fetch_games = fake_fetch
     plugin._apply_store_metadata = fake_apply
     plugin.render_image = fake_render
+    plugin._font_file_uri = lambda weight="normal": (
+        "file:///fonts/msyhbd.ttc" if weight == "bold" else "file:///fonts/msyh.ttc"
+    )
 
     result = plugin.generate_image(
         {"mode": "live_overview", "itemsCount": "4", "showImages": "false", "themeMode": "day"},
@@ -203,7 +216,21 @@ def test_generate_image_combined_mode_renders_two_top_five_live_groups():
     assert params["chart_groups"][1]["games"][0]["primary_metric"] == "555,555"
     assert params["chart_groups"][1]["games"][0]["secondary_metric"] == "Peak 777,777"
     assert params["chart_groups"][0]["games"][0]["name_font_scale"]
-    assert params["chart_groups"][0]["games"][0]["metric_font_scale"]
+    left_metric_scale = params["chart_groups"][0]["games"][0]["metric_font_scale"]
+    right_metric_scale = params["chart_groups"][1]["games"][0]["metric_font_scale"]
+    assert left_metric_scale
+    assert left_metric_scale == right_metric_scale
+
+
+def test_metric_font_scale_prioritizes_full_player_counts():
+    short = SteamCharts._metric_font_scale("821")
+    current_count = SteamCharts._metric_font_scale("1,146,000")
+    peak_count = SteamCharts._metric_font_scale("Peak 1,754,724")
+
+    assert short > current_count > peak_count
+    assert current_count <= 1.04
+    assert peak_count >= 0.9
+    assert peak_count < 1
 
 
 def test_compact_font_scales_expand_short_text_and_shrink_long_text():
@@ -260,6 +287,280 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.getpixel((0, 0)) == (0, 0, 0)
 
 
+def test_steam_charts_css_prefers_embedded_yahei_font():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+
+    assert 'font-family: "InkySteamYaHei", "Microsoft YaHei", Arial, sans-serif;' in css
+
+
+def test_steam_charts_css_overrides_base_plugin_page_shell():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+
+    assert "margin: 0 !important;" in css
+    assert "padding: 0 !important;" in css
+    assert "background-image: none !important;" in css
+
+
+
+def test_steam_charts_cover_images_are_scaled_up():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "steam_charts.py"
+    ).read_text(encoding="utf-8")
+
+    assert "--image-width: 18.85vw;" in css
+    assert "grid-template-columns: minmax(96px, 16.4vw) minmax(0, 1fr);" in css
+    assert "cover_width = int(width * 0.1885)" in source
+    assert "cover_width = max(101, int(col_width * 0.34))" in source
+
+
+def test_steam_charts_compact_metric_divider_favors_title_space():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "steam_charts.py"
+    ).read_text(encoding="utf-8")
+
+    assert "minmax(7.45rem, 8.65rem)" in css
+    assert "metric_max_width = max(117, int(col_width * 0.351))" in source
+
+
+def test_steam_charts_primary_game_title_minimum_is_scaled_up():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "steam_charts.py"
+    ).read_text(encoding="utf-8")
+
+    assert "font-size: clamp(18.2px, calc(18px * var(--name-font-scale, 1)), 22px);" in css
+    assert "font-size: clamp(14.04px, calc(14.2px * var(--name-font-scale, 1)), 17px);" in css
+    assert "font-size: clamp(14.3px, calc(18.85px * var(--metric-font-scale, 1)), 21.5px);" in css
+    assert "font-size: clamp(11.7px, calc(12.22px * var(--metric-font-scale, 1)), 14.3px);" in css
+    assert "max-height: 3.18em;" in css
+    assert 'class="compact-title" data-fit-text data-fit-min="14.04"' in template
+    assert 'class="game-name-primary" data-fit-text data-fit-min="14.3"' in template
+    assert "self._scaled_font_size(name_font_size, name_scale, 13)" in source
+    assert "self._scaled_font_size(name_font_size, name_scale, 14)" in source
+
+
+def test_steam_charts_template_embeds_yahei_font_faces():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'font-family: "InkySteamYaHei"' in template
+    assert '{{ yahei_font_uri }}' in template
+    assert '{{ yahei_bold_font_uri or yahei_font_uri }}' in template
+
+
+def test_steam_charts_template_marks_overflow_text_for_dynamic_fit():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'data-fit-text data-fit-min="14.04">{{ game.name }}' in template
+    assert 'data-fit-text data-fit-min="14.3">{{ game.primary_metric }}' in template
+    assert 'data-fit-text data-fit-min="11.7">{{ game.secondary_metric }}' in template
+    assert "function fitAllText()" in template
+    assert "document.fonts.ready.then(fitAllText)" in template
+
+
+def test_steam_charts_removes_right_header_pixel_bar():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+
+    assert ".header::after" not in css
+    assert "--header-bar-uri" not in css
+    assert "--header-scene-uri" not in css
+    assert "header-scene-strip" not in css
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+    assert "header-scene-strip" not in template
+    assert "--header-scene-uri" not in template
+
+
+def test_steam_charts_uses_transparent_title_wordmark():
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+    wordmark = Image.open(STEAM_TITLE_WORDMARK_PATH).convert("RGBA")
+
+    assert "title_wordmark_uri" in template
+    assert "steam_logo_uri" in template
+    assert "class=\"steam-logo\"" in template
+    assert "transform: translate(0.8vw, 9dvh);" in css
+    assert template.index("steam_logo_uri") < template.index("title_wordmark_uri")
+    assert "class=\"title-wordmark\"" in template
+    assert ".title-wordmark" in css
+    assert "width: min(60vw, 30rem);" in css
+    assert "height: min(22.2dvh, 6.75rem);" in css
+    assert "margin-bottom: -0.72dvh;" in css
+    assert "margin-left: auto;" in css
+    assert "transform: translateY(-4.2dvh);" in css
+    assert "height: calc(100% + 4.2dvh);" in css
+    assert wordmark.size == (320, 72)
+    assert wordmark.getbbox() is not None
+    assert wordmark.getchannel("A").getextrema()[0] == 0
+
+
+def test_steam_charts_title_wordmark_tints_for_night_theme():
+    wordmark = SteamCharts._theme_title_wordmark(
+        {"ink": (255, 255, 255), "paper": (0, 0, 0)}
+    )
+
+    assert wordmark is not None
+    opaque_colors = [
+        pixel[:3]
+        for count, pixel in wordmark.getcolors(maxcolors=wordmark.width * wordmark.height)
+        if pixel[3] > 220
+    ]
+    assert (255, 255, 255) in opaque_colors
+
+
+def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
+    logo_calls = []
+    wordmark_calls = []
+    monkeypatch.setattr(SteamCharts, "_paste_pixel_kaiju", staticmethod(lambda *args: True))
+
+    def fake_paste_wordmark(_target, x, y, max_size, _theme_colors):
+        wordmark_calls.append((x, y, max_size))
+        return True
+
+    monkeypatch.setattr(SteamCharts, "_paste_title_wordmark", staticmethod(fake_paste_wordmark))
+
+    def fake_paste_logo(_target, x, y, size, _theme_colors):
+        logo_calls.append((x, y, size))
+
+    monkeypatch.setattr(SteamCharts, "_paste_steam_logo", staticmethod(fake_paste_logo))
+
+    plugin = _plugin()
+    plugin._render_combined_fallback_image(
+        (800, 480),
+        "Live Overview",
+        [{"title": "Trending Top 5", "subtitle": "24h movers", "games": []}],
+    )
+
+    assert logo_calls == [(26, 42, 32)]
+    assert wordmark_calls == [(61, 18, (288, 51))]
+
+def test_steam_charts_pixel_kaiju_asset_is_transparent_header_cutout():
+    kaiju = Image.open(STEAM_PIXEL_KAIJU_PATH).convert("RGBA")
+    alpha = kaiju.getchannel("A")
+
+    assert kaiju.size == (168, 92)
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)
+    assert kaiju.getpixel((0, 0))[3] == 0
+    assert kaiju.getpixel((kaiju.width - 1, 0))[3] == 0
+
+
+def test_sans_font_paths_prefer_static_yahei_before_fallbacks():
+    assert SANS_FONT_PATHS["normal"][0] == STATIC_YAHEI_FONT_PATH
+    assert SANS_FONT_PATHS["bold"][1] == STATIC_YAHEI_FONT_PATH
+    assert "NotoSansSC" not in SANS_FONT_PATHS["normal"][0]
+
+
+def test_font_file_uri_exports_yahei_file_uri(monkeypatch, tmp_path):
+    noto = tmp_path / "NotoSansSC-VF.ttf"
+    yahei = tmp_path / "msyh.ttc"
+    noto.write_bytes(b"noto")
+    yahei.write_bytes(b"yahei")
+    monkeypatch.setattr(
+        SteamCharts,
+        "_preferred_sans_font_paths",
+        staticmethod(lambda weight="normal": (str(noto), str(yahei))),
+    )
+
+    assert SteamCharts._font_file_uri("normal") == yahei.resolve().as_uri()
+
 def test_font_match_rejects_non_cjk_sans_fallbacks():
     assert SteamCharts._is_accepted_sans_match("Microsoft YaHei", "DejaVu Sans") is False
     assert SteamCharts._is_accepted_sans_match("Noto Sans SC", "Noto Sans SC") is True
@@ -299,25 +600,7 @@ def test_steam_logo_renders_theme_colors():
     assert (0, 0, 0) in night_pixels
 
 
-def test_header_pixel_gradient_uses_theme_ink():
-    day = Image.new("RGB", (800, 480), "white")
-    night = Image.new("RGB", (800, 480), "black")
 
-    SteamCharts._draw_header_pixel_gradient(
-        day,
-        22,
-        65,
-        {"ink": (0, 0, 0), "paper": (255, 255, 255)},
-    )
-    SteamCharts._draw_header_pixel_gradient(
-        night,
-        22,
-        65,
-        {"ink": (255, 255, 255), "paper": (0, 0, 0)},
-    )
-
-    assert day.crop((620, 16, 780, 68)).getbbox() is not None
-    assert night.crop((620, 16, 780, 68)).getbbox() is not None
 
 
 def test_apply_store_metadata_prefers_schinese_name_and_cover_image():

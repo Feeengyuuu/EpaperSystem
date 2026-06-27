@@ -1,0 +1,190 @@
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<div class="form-group">
+    <label class="form-label">Location</label>
+    <div class="form-group">
+        <label for="locationSource">Source:</label>
+        <select id="locationSource" name="locationSource" class="form-input">
+            <option value="weather">Use Weather plugin location</option>
+            <option value="manual">Manual location</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <span>Latitude</span>
+        <input readonly type="text" id="latitude" name="latitude" class="form-input" />
+    </div>
+    <div class="form-group">
+        <span>Longitude</span>
+        <input readonly type="text" id="longitude" name="longitude" class="form-input" />
+    </div>
+    <div class="form-group">
+        <span>Location name</span>
+        <input type="text" id="locationName" name="locationName" class="form-input" placeholder="Fremont, CA" />
+    </div>
+    <button type="button" id="openMap" class="action-button compact">Select Location</button>
+</div>
+
+<div class="form-group">
+    <label class="form-label">Appearance</label>
+    <div class="form-group">
+        <label for="themeMode">Theme:</label>
+        <select id="themeMode" name="themeMode" class="form-input">
+            <option value="auto">Auto day / night</option>
+            <option value="comic">Comic day</option>
+            <option value="night">Comic night</option>
+        </select>
+    </div>
+</div>
+<div class="form-group">
+    <label class="form-label">GBIF Search</label>
+    <div class="form-group">
+        <label for="radiusKm">Radius:</label>
+        <input type="number" id="radiusKm" name="radiusKm" class="form-input" min="1" max="100" step="1" />
+        <span>km</span>
+    </div>
+    <div class="form-group">
+        <label for="lookbackDays">Look back:</label>
+        <input type="number" id="lookbackDays" name="lookbackDays" class="form-input" min="7" max="1825" step="1" />
+        <span>days</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="includeLuoyang" name="includeLuoyang" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Also include Luoyang</span>
+    </div>
+    <div class="form-group">
+        <label for="luoyangLookbackDays">Luoyang look back:</label>
+        <input type="number" id="luoyangLookbackDays" name="luoyangLookbackDays" class="form-input" min="7" max="1825" step="1" />
+        <span>days</span>
+    </div>
+    <div class="form-group">
+        <label for="refreshHours">Data refresh:</label>
+        <input type="number" id="refreshHours" name="refreshHours" class="form-input" min="1" max="24" step="1" />
+        <span>hours</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="refreshOnDisplay" name="refreshOnDisplay" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Refresh when displayed</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="forceRefresh" name="forceRefresh" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Force refresh next render</span>
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="form-label">Observation Map</label>
+    <div class="form-group">
+        <input type="checkbox" id="showObservationMap" name="showObservationMap" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Show Google map marker</span>
+    </div>
+    <div class="form-group">
+        <label for="googleMapType">Map type:</label>
+        <select id="googleMapType" name="googleMapType" class="form-input">
+            <option value="terrain">Terrain</option>
+            <option value="roadmap">Roadmap</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="satellite">Satellite</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="observationMapZoom">Zoom:</label>
+        <input type="number" id="observationMapZoom" name="observationMapZoom" class="form-input" min="8" max="17" step="1" />
+    </div>
+    <div class="form-group">
+        <label for="mapCacheHours">Map cache:</label>
+        <input type="number" id="mapCacheHours" name="mapCacheHours" class="form-input" min="1" max="168" step="1" />
+        <span>hours</span>
+    </div>
+</div>
+
+<div id="mapModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button" onclick="closeModal('mapModal')">x</span>
+        <h2 id="modalTitle">Select Species Radar Location</h2>
+        <div class="separator"></div>
+        <div id="map" style="width: 100%; height: 220px; margin: 10px 0px;"></div>
+        <button id="closeMap" class="action-button">Save</button>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const $latitude = document.querySelector('#latitude');
+        const $longitude = document.querySelector('#longitude');
+        const $openMap = document.querySelector('#openMap');
+        const $closeMap = document.querySelector('#closeMap');
+        const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+        let latitude = 37.5485;
+        let longitude = -121.9886;
+        let map, marker;
+
+        if (loadPluginSettings) {
+            document.getElementById('themeMode').value = pluginSettings.themeMode || 'auto';
+            document.getElementById('locationSource').value = pluginSettings.locationSource || 'weather';
+            document.getElementById('latitude').value = pluginSettings.latitude || '';
+            document.getElementById('longitude').value = pluginSettings.longitude || '';
+            document.getElementById('locationName').value = pluginSettings.locationName || '';
+            document.getElementById('radiusKm').value = pluginSettings.radiusKm || 25;
+            document.getElementById('lookbackDays').value = pluginSettings.lookbackDays || 365;
+            document.getElementById('refreshHours').value = pluginSettings.refreshHours || 6;
+            document.getElementById('includeLuoyang').checked = pluginSettings.includeLuoyang !== 'false';
+            document.getElementById('includeLuoyang').value = document.getElementById('includeLuoyang').checked ? 'true' : 'false';
+            document.getElementById('luoyangLookbackDays').value = pluginSettings.luoyangLookbackDays || 730;
+            document.getElementById('refreshOnDisplay').checked = pluginSettings.refreshOnDisplay === 'true';
+            document.getElementById('refreshOnDisplay').value = document.getElementById('refreshOnDisplay').checked ? 'true' : 'false';
+            document.getElementById('forceRefresh').checked = pluginSettings.forceRefresh === 'true';
+            document.getElementById('forceRefresh').value = document.getElementById('forceRefresh').checked ? 'true' : 'false';
+            document.getElementById('showObservationMap').checked = pluginSettings.showObservationMap !== 'false';
+            document.getElementById('showObservationMap').value = document.getElementById('showObservationMap').checked ? 'true' : 'false';
+            document.getElementById('googleMapType').value = pluginSettings.googleMapType || 'terrain';
+            document.getElementById('observationMapZoom').value = pluginSettings.observationMapZoom || 12;
+            document.getElementById('mapCacheHours').value = pluginSettings.mapCacheHours || 24;
+            latitude = +pluginSettings.latitude || latitude;
+            longitude = +pluginSettings.longitude || longitude;
+        } else {
+            document.getElementById('themeMode').value = 'auto';
+            document.getElementById('locationSource').value = 'weather';
+            document.getElementById('latitude').value = '';
+            document.getElementById('longitude').value = '';
+            document.getElementById('locationName').value = '';
+            document.getElementById('radiusKm').value = 25;
+            document.getElementById('lookbackDays').value = 365;
+            document.getElementById('refreshHours').value = 6;
+            document.getElementById('includeLuoyang').checked = true;
+            document.getElementById('includeLuoyang').value = 'true';
+            document.getElementById('luoyangLookbackDays').value = 730;
+            document.getElementById('refreshOnDisplay').checked = false;
+            document.getElementById('refreshOnDisplay').value = 'false';
+            document.getElementById('forceRefresh').checked = false;
+            document.getElementById('forceRefresh').value = 'false';
+            document.getElementById('showObservationMap').checked = true;
+            document.getElementById('showObservationMap').value = 'true';
+            document.getElementById('googleMapType').value = 'terrain';
+            document.getElementById('observationMapZoom').value = 12;
+            document.getElementById('mapCacheHours').value = 24;
+        }
+
+        $openMap.addEventListener('click', () => {
+            openModal('mapModal');
+            setTimeout(() => {
+                if (!map) {
+                    map = L.map('map').setView([latitude, longitude], 10);
+                    L.tileLayer(OSM_TILE_URL).addTo(map);
+                    marker = L.marker([latitude, longitude], { draggable: true }).addTo(map);
+                    map.on('click', event => marker.setLatLng(event.latlng));
+                }
+                map.invalidateSize();
+            }, 100);
+        });
+
+        $closeMap.addEventListener('click', () => {
+            const position = marker.getLatLng().wrap();
+            $latitude.value = position.lat.toFixed(6);
+            $longitude.value = position.lng.toFixed(6);
+            document.getElementById('locationSource').value = 'manual';
+            closeModal('mapModal');
+        });
+    });
+</script>

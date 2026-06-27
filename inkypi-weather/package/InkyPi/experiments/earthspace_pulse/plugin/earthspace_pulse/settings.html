@@ -1,0 +1,137 @@
+<div class="form-group">
+    <label class="form-label">Display</label>
+    <div class="form-group">
+        <label for="themeMode">Theme:</label>
+        <select id="themeMode" name="themeMode" class="form-input">
+            <option value="auto">Auto atlas</option>
+            <option value="dark">Dark atlas</option>
+            <option value="paper">Paper atlas</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="refreshMinutes">Data refresh:</label>
+        <input type="number" id="refreshMinutes" name="refreshMinutes" class="form-input" min="5" max="720" step="5" />
+        <span>minutes</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="showAurora" name="showAurora" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Show aurora probability band</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="showSolarWind" name="showSolarWind" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Show solar wind chips</span>
+    </div>
+    <div class="form-group">
+        <input type="checkbox" id="forceRefresh" name="forceRefresh" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Force refresh next render</span>
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="form-label">Earthquake Feed</label>
+    <div class="form-group">
+        <label for="quakeFeed">Feed:</label>
+        <select id="quakeFeed" name="quakeFeed" class="form-input">
+            <option value="all_day">All earthquakes, past day</option>
+            <option value="significant_day">Significant earthquakes, past day</option>
+            <option value="2.5_day">M2.5+ earthquakes, past day</option>
+            <option value="4.5_day">M4.5+ earthquakes, past day</option>
+            <option value="all_week">All earthquakes, past week</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="minMagnitude">Minimum magnitude:</label>
+        <input type="number" id="minMagnitude" name="minMagnitude" class="form-input" min="0" max="10" step="0.1" placeholder="feed default" />
+    </div>
+    <div class="form-group">
+        <label for="maxQuakes">Recent rows:</label>
+        <input type="number" id="maxQuakes" name="maxQuakes" class="form-input" min="1" max="8" step="1" />
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="form-label">Earth Map</label>
+    <div class="form-group">
+        <label for="quakeMapMode">Map source:</label>
+        <select id="quakeMapMode" name="quakeMapMode" class="form-input">
+            <option value="auto">Auto Google map</option>
+            <option value="google">Google Static map</option>
+            <option value="drawn">Drawn fallback map</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="googleMapType">Map type:</label>
+        <select id="googleMapType" name="googleMapType" class="form-input">
+            <option value="terrain">Terrain</option>
+            <option value="roadmap">Roadmap</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="satellite">Satellite</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="quakeMapZoom">Global zoom:</label>
+        <input type="number" id="quakeMapZoom" name="quakeMapZoom" class="form-input" min="1" max="6" step="1" />
+    </div>
+    <div class="form-group">
+        <label for="mapCacheHours">Map cache:</label>
+        <input type="number" id="mapCacheHours" name="mapCacheHours" class="form-input" min="1" max="168" step="1" />
+        <span>hours</span>
+    </div>
+</div>
+<div class="form-group">
+    <label class="form-label">Nearest Quake</label>
+    <div class="form-group">
+        <input type="checkbox" id="showNearestToLocation" name="showNearestToLocation" onclick="this.value=this.checked ? 'true' : 'false';">
+        <span>Show nearest quake to a location</span>
+    </div>
+    <div class="form-group">
+        <span>Latitude</span>
+        <input type="number" id="latitude" name="latitude" class="form-input" step="0.000001" />
+    </div>
+    <div class="form-group">
+        <span>Longitude</span>
+        <input type="number" id="longitude" name="longitude" class="form-input" step="0.000001" />
+    </div>
+    <div class="form-group">
+        <span>Location name</span>
+        <input type="text" id="locationName" name="locationName" class="form-input" placeholder="Fremont, CA" />
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const checkboxDefaults = {
+            showAurora: true,
+            showSolarWind: true,
+            showNearestToLocation: false,
+            forceRefresh: false,
+        };
+
+        const valueOrDefault = (name, fallback) => {
+            if (loadPluginSettings && pluginSettings[name] !== undefined && pluginSettings[name] !== null) {
+                return pluginSettings[name];
+            }
+            return fallback;
+        };
+
+        document.getElementById('themeMode').value = valueOrDefault('themeMode', 'auto');
+        document.getElementById('refreshMinutes').value = valueOrDefault('refreshMinutes', 30);
+        document.getElementById('quakeFeed').value = valueOrDefault('quakeFeed', 'all_day');
+        document.getElementById('minMagnitude').value = valueOrDefault('minMagnitude', '');
+        document.getElementById('maxQuakes').value = valueOrDefault('maxQuakes', 4);
+        document.getElementById('quakeMapMode').value = valueOrDefault('quakeMapMode', 'auto');
+        document.getElementById('googleMapType').value = valueOrDefault('googleMapType', 'terrain');
+        document.getElementById('quakeMapZoom').value = valueOrDefault('quakeMapZoom', 1);
+        document.getElementById('mapCacheHours').value = valueOrDefault('mapCacheHours', 24);
+        document.getElementById('latitude').value = valueOrDefault('latitude', '');
+        document.getElementById('longitude').value = valueOrDefault('longitude', '');
+        document.getElementById('locationName').value = valueOrDefault('locationName', '');
+
+        Object.keys(checkboxDefaults).forEach((name) => {
+            const element = document.getElementById(name);
+            const value = valueOrDefault(name, checkboxDefaults[name] ? 'true' : 'false');
+            element.checked = value !== 'false';
+            element.value = element.checked ? 'true' : 'false';
+        });
+    });
+</script>

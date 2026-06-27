@@ -63,6 +63,12 @@ YAHEI_REGULAR_FILE = "msyh.ttc"
 YAHEI_BOLD_FILE = "msyhbd.ttc"
 CINEMA_PLACEHOLDER_FILE = "boxoffice_cinema_placeholder.png"
 CINEMA_PLACEHOLDER_SIZE = (300, 90)
+CHINA_TITLE_WORDMARK_FILE = "boxoffice_china_title_wordmark.png"
+CHINA_TITLE_WORDMARK_SIZE = (384, 86)
+CHINA_TITLE_WORDMARK_DISPLAY_SIZE = (269, 60)
+NORTH_AMERICA_TITLE_WORDMARK_FILE = "boxoffice_na_bauhaus_title_wordmark.png"
+NORTH_AMERICA_TITLE_WORDMARK_SIZE = (384, 86)
+NORTH_AMERICA_TITLE_WORDMARK_DISPLAY_SIZE = (323, 72)
 CJK_FONT_SAMPLE = "\u6d4b\u8bd5\u7535\u5f71\u63ed\u79d8\u65e5"
 
 
@@ -698,8 +704,20 @@ class BoxOfficeTopMovies(BasePlugin):
         metric_font = self._font(max(16, height // 27), bold=True)
         copy = self._chart_copy(settings, source_label, len(movies))
 
-        draw.text((margin, margin - 2), copy["title"], fill=colors["ink"], font=title_font)
-        draw.text((margin, margin + int(header_h * 0.58)), copy["subtitle"], fill=accent, font=subtitle_font)
+        title_drawn = False
+        if self._is_china_chart(settings, source_label):
+            title_drawn = self._draw_china_title_wordmark(
+                image,
+                self._china_title_wordmark_box(width, height, margin),
+            )
+        else:
+            title_drawn = self._draw_north_america_title_wordmark(
+                image,
+                self._north_america_title_wordmark_box(width, height, margin),
+            )
+        if not title_drawn:
+            draw.text((margin, margin - 2), copy["title"], fill=colors["ink"], font=title_font)
+            draw.text((margin, margin + int(header_h * 0.58)), copy["subtitle"], fill=accent, font=subtitle_font)
 
         meta = self._updated_text(generated_at, source_label, stale)
         meta_w = draw.textlength(meta, font=small_font)
@@ -856,6 +874,85 @@ class BoxOfficeTopMovies(BasePlugin):
         except Exception as exc:
             logger.warning("Cinema placeholder asset unavailable: %s", exc)
 
+    def _china_title_wordmark_box(self, width, height, margin):
+        target_w, target_h = CHINA_TITLE_WORDMARK_DISPLAY_SIZE
+        draw_w = min(target_w, max(196, round(width * 0.336)))
+        draw_h = min(target_h, max(43, round(height * 0.126)))
+        x = max(0, margin - 3)
+        y = max(0, margin - max(8, height // 70))
+        return (int(x), int(y), int(draw_w), int(draw_h))
+
+    def _north_america_title_wordmark_box(self, width, height, margin):
+        target_w, target_h = NORTH_AMERICA_TITLE_WORDMARK_DISPLAY_SIZE
+        draw_w = min(target_w, max(236, round(width * 0.404)))
+        draw_h = min(target_h, max(52, round(height * 0.151)))
+        x = margin
+        y = max(0, margin - max(8, height // 70))
+        return (int(x), int(y), int(draw_w), int(draw_h))
+
+    def _draw_north_america_title_wordmark(self, image, box):
+        asset = self._load_north_america_title_wordmark_asset()
+        if asset is None:
+            return False
+        x, y, w, h = [int(value) for value in box]
+        if w <= 0 or h <= 0:
+            return False
+        try:
+            fitted = ImageOps.contain(asset, (w, h), method=Image.Resampling.LANCZOS)
+            visible_bbox = fitted.getchannel("A").getbbox()
+            visible_left = visible_bbox[0] if visible_bbox else 0
+            paste_x = x - visible_left - 2
+            paste_y = y + (h - fitted.height) // 2
+            image.paste(fitted.convert("RGB"), (paste_x, paste_y), fitted.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning("North America title wordmark asset unavailable: %s", exc)
+            return False
+
+    def _draw_china_title_wordmark(self, image, box):
+        asset = self._load_china_title_wordmark_asset()
+        if asset is None:
+            return False
+        x, y, w, h = [int(value) for value in box]
+        if w <= 0 or h <= 0:
+            return False
+        try:
+            fitted = ImageOps.contain(asset, (w, h), method=Image.Resampling.LANCZOS)
+            paste_x = x
+            paste_y = y + (h - fitted.height) // 2
+            image.paste(fitted.convert("RGB"), (paste_x, paste_y), fitted.getchannel("A"))
+            return True
+        except Exception as exc:
+            logger.warning("China title wordmark asset unavailable: %s", exc)
+            return False
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_china_title_wordmark_asset():
+        path = PLUGIN_DIR / CHINA_TITLE_WORDMARK_FILE
+        if not path.is_file():
+            return None
+        try:
+            with Image.open(path) as image:
+                image.load()
+                return ImageOps.exif_transpose(image).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load China title wordmark asset %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_north_america_title_wordmark_asset():
+        path = PLUGIN_DIR / NORTH_AMERICA_TITLE_WORDMARK_FILE
+        if not path.is_file():
+            return None
+        try:
+            with Image.open(path) as image:
+                image.load()
+                return ImageOps.exif_transpose(image).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Could not load North America title wordmark asset %s: %s", path, exc)
+            return None
     @staticmethod
     @lru_cache(maxsize=1)
     def _load_cinema_placeholder_asset():

@@ -58,7 +58,7 @@ MPLCONFIGDIR = os.path.join(os.path.dirname(__file__), "_mplconfig")
 os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from utils.app_utils import get_font
 from utils.image_utils import text_width
 from utils.massive_market_data import (
@@ -132,6 +132,11 @@ LOGO_ASSET_BY_SYMBOL = {
 	"VGIT": "vgit.png",
 	"VTI": "vti.png",
 	"VXUS": "vxus.png",
+}
+SECTION_WORDMARK_IMAGES = {
+	"PORTFOLIO": ("subtitle_portfolio.png", (118, 24)),
+	"PORTFOLIO TREND": ("subtitle_portfolio_trend.png", (184, 24)),
+	"HOLDINGS": ("subtitle_holdings.png", (116, 24)),
 }
 CSV_SYMBOL_FIELDS = ("symbol", "ticker", "tickersymbol", "instrument", "securitysymbol")
 CSV_SHARE_FIELDS = ("shares", "share", "quantity", "qty", "currentquantity", "position")
@@ -235,6 +240,7 @@ class StockTracker(BasePlugin):
 	DEFAULT_TICKER_NAME_MAX_LENGTH = 25
 	_holding_logo_cache = {}
 	_header_logo_cache = {}
+	_section_wordmark_cache = {}
 
 	def generate_image(self, settings, device_config):
 
@@ -883,18 +889,20 @@ class StockTracker(BasePlugin):
 			return CINNABAR
 		return MUTED
 
-	def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
+	def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL, canvas=None):
 		left, top, right, bottom = [int(v) for v in box]
 		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=ACCENT_ORANGE)
 		draw.rectangle((left, top, right, bottom), fill=fill)
 		draw.rectangle((left, top, right, bottom), outline=BORDER, width=2)
 		draw.rectangle((left, top, right, top + 6), fill=accent)
 		if title:
+			if canvas is not None and self._draw_section_wordmark(canvas, title, left + 10, top + 8):
+				return
 			draw.text((left + 12, top + 12), title, fill=INK, font=self._font(16, True))
 
-	def _draw_summary(self, draw, box, stock_data, account_value_override=None):
+	def _draw_summary(self, img, draw, box, stock_data, account_value_override=None):
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD)
+		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD, canvas=img)
 		total_value, total_change, total_change_percent = self._portfolio_totals(
 			stock_data,
 			account_value_override=account_value_override,
@@ -918,9 +926,9 @@ class StockTracker(BasePlugin):
 		draw.text((left + 24, top + 100), change_text, fill=change_color, font=change_font)
 		draw.text((left + 14, bottom - 18), datetime.now().strftime("Updated %H:%M"), fill=MUTED, font=self._font(10))
 
-	def _draw_sparkline(self, draw, box, values, history_points=None):
+	def _draw_sparkline(self, img, draw, box, values, history_points=None):
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE)
+		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE, canvas=img)
 		plot = (left + 14, top + 42, right - 14, bottom - 16)
 		chart_bg = (247, 251, 252)
 		draw.rounded_rectangle(plot, radius=4, fill=chart_bg, outline=self._blend(GRID, PANEL_BLUE, 0.65), width=1)
@@ -1108,10 +1116,55 @@ class StockTracker(BasePlugin):
 
 	@staticmethod
 	def _trim_transparent_border(image):
-		bbox = image.getchannel("A").getbbox()
-		if bbox:
-			return image.crop(bbox)
-		return image
+		if image.mode != "RGBA":
+			image = image.convert("RGBA")
+		alpha = image.getchannel("A")
+		threshold_bbox = alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
+		return image.crop(threshold_bbox or alpha.getbbox()) if alpha.getbbox() else image
+
+	def _draw_section_wordmark(self, canvas, title, x, y):
+		config = SECTION_WORDMARK_IMAGES.get(title)
+		if not config:
+			return False
+		source = self._load_section_wordmark(title)
+		if source is None:
+			return False
+
+		try:
+			_, size = config
+			target_w, target_h = [int(value) for value in size]
+			source = self._trim_transparent_border(source.copy())
+			resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+			art = ImageOps.contain(source, (target_w, target_h), method=resample)
+			layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+			layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
+			canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
+			return True
+		except Exception as e:
+			logging.warning(f"Could not render stock section wordmark {title}: {type(e).__name__}: {e}")
+			return False
+
+	def _section_wordmark_file(self, title):
+		config = SECTION_WORDMARK_IMAGES.get(title)
+		if not config:
+			return None
+		asset_name, _ = config
+		return os.path.join(os.path.dirname(__file__), "assets", "subtitles", asset_name)
+
+	def _load_section_wordmark(self, title):
+		path = self._section_wordmark_file(title)
+		if not path or not os.path.exists(path):
+			return None
+		cache_key = (title, path)
+		if cache_key in self._section_wordmark_cache:
+			return self._section_wordmark_cache[cache_key]
+		try:
+			wordmark = Image.open(path).convert("RGBA")
+		except Exception as e:
+			logging.warning(f"Could not load stock section wordmark {title}: {type(e).__name__}: {e}")
+			return None
+		self._section_wordmark_cache[cache_key] = wordmark
+		return wordmark
 
 	def _holding_logo_image(self, symbol, size):
 		asset_name = self._holding_logo_asset(symbol)
@@ -1261,7 +1314,7 @@ class StockTracker(BasePlugin):
 		ticker_theme=None,
 	):
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL)
+		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL, canvas=img)
 		if tracking_window_label:
 			draw.text((right - 14, top + 14), tracking_window_label, fill=MUTED, font=self._font(12, True), anchor="ra")
 		header_font = self._font(12, True)
@@ -1339,8 +1392,9 @@ class StockTracker(BasePlugin):
 
 		self._draw_header(img, draw, width, stock_data, header_brand=header_brand)
 
-		self._draw_summary(draw, (24, 60, 284, 204), stock_data, account_value_override=account_value_override)
+		self._draw_summary(img, draw, (24, 60, 284, 204), stock_data, account_value_override=account_value_override)
 		self._draw_sparkline(
+			img,
 			draw,
 			(304, 60, width - 24, 204),
 			self._portfolio_values(stock_data, account_value_override=account_value_override),

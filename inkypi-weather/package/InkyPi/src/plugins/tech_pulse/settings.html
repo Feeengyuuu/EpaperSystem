@@ -1,0 +1,79 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="feed">Hacker News feed</label>
+  <select name="feed" id="feed">
+    <option value="topstories" selected>Top stories</option>
+    <option value="beststories">Best stories</option>
+    <option value="newstories">New stories</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="maxStories">Stories to show</label>
+  <input class="form-control" type="number" min="1" max="8" step="1" name="maxStories" id="maxStories" value="5">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="refreshMinutes">Refresh minutes</label>
+  <input class="form-control" type="number" min="5" max="720" step="5" name="refreshMinutes" id="refreshMinutes" value="30">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="minScore">Minimum score</label>
+  <input class="form-control" type="number" min="0" step="1" name="minScore" id="minScore" placeholder="Optional">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="themeMode">Theme</label>
+  <select name="themeMode" id="themeMode">
+    <option value="dark" selected>Dark atlas</option>
+    <option value="paper">Paper</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="showDomain" id="showDomain" value="true" checked> Show domains</label>
+  <input type="hidden" name="showDomain" value="false">
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="showByline" id="showByline" value="true" checked> Show author and age</label>
+  <input type="hidden" name="showByline" value="false">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="fontFamily">Font</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> Ignore cache once</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const [key, value] of Object.entries(pluginSettings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else {
+          el.value = value;
+        }
+      }
+    }
+
+    const fontFamily = document.getElementById('fontFamily');
+    if (fontFamily && !fontFamily.value) {
+      if ([...fontFamily.options].some(option => option.value === 'Jost')) {
+        fontFamily.value = 'Jost';
+      }
+    }
+  });
+</script>
