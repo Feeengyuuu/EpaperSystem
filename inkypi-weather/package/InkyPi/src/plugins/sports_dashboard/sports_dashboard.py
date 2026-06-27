@@ -230,6 +230,7 @@ LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutou
 SPORT_HEADER_CUTOUT_SCALE = 1.24
 SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
 SPORT_HEADER_CUTOUT_TITLE_GAP = 104
+PGA_HEADER_CUTOUT_X_OFFSET = 16
 LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot_filler.png")
 LOCAL_NBA_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_filler.png")
 LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_accent.png")
@@ -12646,6 +12647,8 @@ class SportsDashboard(BasePlugin):
         alpha = tinted.getchannel("A").point(lambda value: min(210, value))
         tinted.putalpha(alpha)
         paste_x = x1 + max(0, int((width - tinted.width) * SPORT_HEADER_CUTOUT_LEFT_BIAS))
+        if str(sport or "").upper() == "PGA":
+            paste_x += PGA_HEADER_CUTOUT_X_OFFSET
         paste_y = y2 - tinted.height + 1
         image.paste(tinted, (paste_x, paste_y), tinted)
         return True

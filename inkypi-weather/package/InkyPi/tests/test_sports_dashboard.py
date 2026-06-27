@@ -3167,6 +3167,39 @@ def test_standalone_sport_header_cutout_scales_up_and_left_biases(monkeypatch):
     assert centered_x - bbox[0] <= 6
 
 
+def test_pga_header_cutout_moves_right_sixteen_pixels(monkeypatch):
+    plugin = _plugin()
+    source = Image.new("RGBA", (20, 10), (255, 255, 255, 255))
+    monkeypatch.setattr(plugin, "_load_sport_header_cutout", lambda _sport: source)
+    base_image = Image.new("RGB", (180, 70), (0, 0, 0))
+    pga_image = Image.new("RGB", (180, 70), (0, 0, 0))
+
+    assert plugin._draw_standalone_sport_header_cutout(
+        base_image,
+        "NFL",
+        20,
+        10,
+        119,
+        49,
+        COLORS["nfl_accent"],
+    ) is True
+    assert plugin._draw_standalone_sport_header_cutout(
+        pga_image,
+        "PGA",
+        20,
+        10,
+        119,
+        49,
+        COLORS["pga_accent"],
+    ) is True
+
+    base_bbox = base_image.getbbox()
+    pga_bbox = pga_image.getbbox()
+    assert base_bbox is not None
+    assert pga_bbox is not None
+    assert pga_bbox[0] == base_bbox[0] + 16
+
+
 def test_mlb_side_column_prioritizes_live_state_before_schedule():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
