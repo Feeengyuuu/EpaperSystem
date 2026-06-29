@@ -1676,6 +1676,78 @@ def test_fetch_msi_events_polls_live_endpoint_during_msi_window(monkeypatch):
     assert any("getLive" in url for url in calls)
 
 
+def test_msi_live_placeholder_stage_fallback_uses_msi_label():
+    payload = {
+        "data": {
+            "schedule": {
+                "events": [
+                    {
+                        "id": "116357327527674222",
+                        "startTime": "2026-06-29T02:01:00.071Z",
+                        "state": "inProgress",
+                        "type": "show",
+                        "blockName": "",
+                        "league": {"id": DEFAULT_MSI_LEAGUE_ID, "name": "MSI", "slug": "msi"},
+                    }
+                ]
+            }
+        }
+    }
+
+    events = SportsDashboard._parse_lpl_events(payload, timezone.utc)
+
+    assert len(events) == 1
+    assert events[0]["team_a"] == "TBD"
+    assert events[0]["team_b"] == "TBD"
+    assert events[0]["stage_label"] == "MSI"
+    assert SportsDashboard._lpl_stage_label(events[0], league_key="MSI") == "MSI"
+
+def test_select_msi_events_ignores_live_show_placeholder_for_next_match():
+    now = datetime(2026, 6, 28, 19, 30, tzinfo=timezone.utc)
+    placeholder = {
+        "event_id": "116357327527674222",
+        "match_id": "116357327527674222",
+        "source_match_id": "",
+        "event_type": "show",
+        "league_id": DEFAULT_MSI_LEAGUE_ID,
+        "league_name": "MSI",
+        "league_slug": "msi",
+        "start": now - timedelta(minutes=29),
+        "state": "inprogress",
+        "team_a": "TBD",
+        "team_b": "TBD",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": None,
+        "block": "",
+        "stage_label": "MSI",
+    }
+    next_match = {
+        "event_id": "real-msi-match",
+        "match_id": "115570934355614509",
+        "source_match_id": "115570934355614509",
+        "event_type": "match",
+        "league_id": DEFAULT_MSI_LEAGUE_ID,
+        "league_name": "MSI",
+        "league_slug": "msi",
+        "start": now + timedelta(minutes=30),
+        "state": "unstarted",
+        "team_a": "T1",
+        "team_b": "KC",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 5,
+        "block": "Play In Knockouts",
+        "stage_label": "Play In Knockouts",
+    }
+
+    selected = SportsDashboard._select_msi_events([placeholder, next_match], now)
+
+    assert selected["live"] == []
+    assert selected["main"]["team_a"] == "T1"
+    assert selected["main"]["team_b"] == "KC"
+    assert selected["upcoming"] == [next_match]
+
 def test_select_msi_events_uses_featured_page_only_without_matches():
     now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
     featured = SportsDashboard._lpl_msi_featured_event(now)

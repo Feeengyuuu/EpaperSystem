@@ -7456,12 +7456,15 @@ class SportsDashboard(BasePlugin):
             team_a, wins_a, team_a_logo = SportsDashboard._team_info(teams, 0)
             team_b, wins_b, team_b_logo = SportsDashboard._team_info(teams, 1)
             best_of = SportsDashboard._lpl_best_of(match)
-            event_id = str(event.get("id") or match.get("id") or "").strip()
+            source_match_id = str(match.get("id") or "").strip()
+            event_id = str(event.get("id") or source_match_id or "").strip()
             block = str(event.get("blockName") or "").strip()
             parsed.append(
                 {
                     "event_id": event_id,
-                    "match_id": str(match.get("id") or event_id).strip(),
+                    "match_id": str(source_match_id or event_id).strip(),
+                    "source_match_id": source_match_id,
+                    "event_type": str(event.get("type") or "").strip().lower(),
                     "league_id": str(league.get("id") or "").strip(),
                     "league_name": str(league.get("name") or "").strip(),
                     "league_slug": str(league.get("slug") or "").strip(),
@@ -7599,6 +7602,28 @@ class SportsDashboard(BasePlugin):
         return " ".join(words)
 
     @staticmethod
+    def _lol_event_stage_fallback(event):
+        event = event or {}
+        for key in ("league_key", "league_id", "league_slug", "league_name"):
+            text = str(event.get(key) or "").strip()
+            if not text:
+                continue
+            if text == DEFAULT_MSI_LEAGUE_ID:
+                return "MSI"
+            if text == DEFAULT_LCK_LEAGUE_ID:
+                return "LCK"
+            if text == DEFAULT_LPL_LEAGUE_ID:
+                return "LPL"
+            compact = "".join(ch for ch in text.lower() if ch.isalnum())
+            if compact in {"msi", "midseasoninvitational"}:
+                return "MSI"
+            if compact in {"lck", "leagueoflegendschampionskorea"}:
+                return "LCK"
+            if compact in {"lpl", "leagueoflegendsproleague"}:
+                return "LPL"
+
+
+
     def _annotate_lpl_stage_labels(events):
         annotated = [dict(event) for event in sorted(events or [], key=lambda item: item.get("start") or datetime.max)]
         generic_indices = []
@@ -7614,7 +7639,8 @@ class SportsDashboard(BasePlugin):
             if SportsDashboard._is_generic_lpl_playoff_stage(event.get("stage_label")) or SportsDashboard._is_generic_lpl_playoff_stage(event.get("block")):
                 generic_indices.append(index)
                 continue
-            event["stage_label"] = SportsDashboard._format_lpl_stage_label(event.get("stage_label") or event.get("block") or "LPL")
+            stage_fallback = SportsDashboard._lol_event_stage_fallback(event)
+            event["stage_label"] = SportsDashboard._format_lpl_stage_label(event.get("stage_label") or event.get("block") or stage_fallback)
 
         if not generic_indices:
             return annotated
@@ -7769,6 +7795,18 @@ class SportsDashboard(BasePlugin):
         return sorted(events, key=lambda item: item["start"])
 
     @staticmethod
+    def _is_msi_displayable_match_event(event):
+        event = event or {}
+        if str(event.get("event_type") or "").strip().lower() == "show":
+            return False
+        source_match_id = str(event.get("source_match_id") or "").strip()
+        team_a = str(event.get("team_a") or "").strip().upper()
+        team_b = str(event.get("team_b") or "").strip().upper()
+        if not source_match_id and team_a in {"", "TBD"} and team_b in {"", "TBD"}:
+            return False
+        return True
+
+    @staticmethod
     def _select_lpl_events(events, now):
         return SportsDashboard._select_lol_events(events, now, include_lpl_featured=True)
 
@@ -7778,6 +7816,7 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _select_msi_events(events, now, featured_event=None):
+        events = [event for event in (events or []) if SportsDashboard._is_msi_displayable_match_event(event)]
         selected = SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
         if (
             featured_event
@@ -7791,6 +7830,7 @@ class SportsDashboard(BasePlugin):
             selected["featured_event_page"] = True
             selected["offseason"] = featured_event.get("phase") == "countdown"
         return selected
+
     @staticmethod
     def _select_lol_events(events, now, include_lpl_featured=True):
         live = [event for event in events if SportsDashboard._is_lpl_live_event(event, now)]
