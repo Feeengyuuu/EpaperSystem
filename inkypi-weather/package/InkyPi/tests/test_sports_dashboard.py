@@ -950,6 +950,7 @@ def _sample_worldcup_espn_scoreboard_payload():
                             {
                                 "homeAway": "home",
                                 "score": "2",
+                                "advance": True,
                                 "team": {
                                     "abbreviation": "MEX",
                                     "shortDisplayName": "Mexico",
@@ -960,6 +961,7 @@ def _sample_worldcup_espn_scoreboard_payload():
                             {
                                 "homeAway": "away",
                                 "score": "0",
+                                "advance": False,
                                 "team": {
                                     "abbreviation": "RSA",
                                     "shortDisplayName": "South Africa",
@@ -10527,12 +10529,31 @@ def test_worldcup_espn_parser_reads_finished_and_live_scores():
     assert events[0]["source_url"] == "https://www.espn.com/soccer/match/_/gameId/760415/mex-rsa"
     assert events[0]["provider_status_confirmed"] is True
     assert events[0]["score_confirmed"] is True
+    assert events[0]["team_a_advance"] is True
+    assert events[0]["team_b_advance"] is False
+    assert SportsDashboard._worldcup_team_eliminated(events[0], "b") is False
     assert events[1]["state"] == "1H"
     assert events[1]["source_url"] == "https://www.espn.com/soccer/gamecast/_/gameId/760414/kor-cze"
     assert events[1]["team_a"] == "韩国"
     assert events[1]["team_b"] == "捷克"
     assert events[1]["elapsed"] == 9
     assert SportsDashboard._worldcup_event_status_label(events[1], datetime(2026, 6, 11, 19, 10, tzinfo=la)) == "9' 0-0"
+
+
+def test_worldcup_espn_parser_marks_eliminated_knockout_loser():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = _sample_worldcup_espn_scoreboard_payload()
+    event = payload["events"][0]
+    event["season"] = {"slug": "round-of-32"}
+    event["competitions"][0]["altGameNote"] = "FIFA World Cup, Round of 32"
+
+    events = SportsDashboard._parse_worldcup_espn_events(payload, la)
+
+    assert events[0]["block"] == "Round of 32"
+    assert events[0]["team_a_advance"] is True
+    assert events[0]["team_b_advance"] is False
+    assert SportsDashboard._worldcup_team_eliminated(events[0], "a") is False
+    assert SportsDashboard._worldcup_team_eliminated(events[0], "b") is True
 
 
 def _worldcup_espn_scheduled_competition(detail):
@@ -10748,6 +10769,38 @@ def test_worldcup_main_card_meta_uses_mirrored_points_and_record():
     assert right_text == "0-1-0 / PTS 1"
     assert left_max_size == 8
     assert right_max_size == 8
+
+
+def test_worldcup_team_points_meta_hides_points_for_knockout_stage():
+    event = {
+        "block": "Round of 32",
+        "team_a_group_record": "2-0-1",
+        "team_b_group_record": "1-1-1",
+        "team_a_group_points": 6,
+        "team_b_group_points": 4,
+        "odds": {"team_a": "2.20", "draw": "3.10", "team_b": "3.40"},
+    }
+
+    assert SportsDashboard._worldcup_is_group_stage_event(event) is False
+    assert SportsDashboard._worldcup_team_points_meta(event, "a") == ""
+    assert SportsDashboard._worldcup_team_points_meta(event, "b") == ""
+    assert SportsDashboard._worldcup_team_points_meta(event, "a", include_odds=True) == "2.20"
+    assert SportsDashboard._worldcup_team_points_meta(event, "b", include_odds=True) == "3.40"
+
+
+def test_worldcup_team_points_meta_shows_points_for_group_stage_alias():
+    event = {
+        "block": "GROUP_STAGE",
+        "group": "GROUP_A",
+        "team_a_group_record": "1-1-0",
+        "team_b_group_record": "0-1-1",
+        "team_a_group_points": 4,
+        "team_b_group_points": 1,
+    }
+
+    assert SportsDashboard._worldcup_is_group_stage_event(event) is True
+    assert SportsDashboard._worldcup_team_points_meta(event, "a") == "PTS 4 / 1-1-0"
+    assert SportsDashboard._worldcup_team_points_meta(event, "b") == "0-1-1 / PTS 1"
 
 def test_worldcup_main_card_draws_verified_source_in_status_line():
     plugin = _plugin()
@@ -11997,6 +12050,7 @@ def test_worldcup_recent_row_meta_uses_mirrored_points_and_record():
         "team_b_group_record": "0-1-0",
         "team_a_group_points": 6,
         "team_b_group_points": 3,
+        "block": "Group A",
         "wins_a": 1,
         "wins_b": 0,
     }
@@ -12021,6 +12075,54 @@ def test_worldcup_recent_row_meta_uses_mirrored_points_and_record():
     assert right_text == "0-1-0 / PTS 3"
     assert left_max_size == 7
     assert right_max_size == 7
+
+def test_worldcup_recent_row_strikes_eliminated_knockout_team():
+    plugin = _plugin()
+    event = {
+        "start": datetime(2026, 6, 29, 17, 0, tzinfo=timezone.utc),
+        "state": "FT",
+        "team_a": "Brazil",
+        "team_b": "Japan",
+        "team_a_tla": "BRA",
+        "team_b_tla": "JPN",
+        "team_a_flag": "https://flagcdn.com/w80/br.png",
+        "team_b_flag": "https://flagcdn.com/w80/jp.png",
+        "team_a_advance": True,
+        "team_b_advance": False,
+        "block": "Round of 32",
+        "wins_a": 2,
+        "wins_b": 1,
+    }
+    image = Image.new("RGB", (260, 50), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+    strikes = []
+
+    plugin._draw_worldcup_flag = lambda *_args, **_kwargs: calls.append("flag")
+    plugin._draw_worldcup_elimination_strike = lambda _draw, x1, x2, y1, y2: (calls.append("strike"), strikes.append((x1, x2, y1, y2)))
+
+    plugin._draw_worldcup_recent_match_row(image, draw, 4, 256, 10, 32, event)
+
+    assert calls[-2:] == ["flag", "strike"]
+    assert len(strikes) == 1
+    strike_left, strike_right, _y1, _y2 = strikes[0]
+    assert strike_left > 130
+    assert strike_right == 248
+
+
+
+def test_worldcup_elimination_strike_overflows_identity_bounds():
+    plugin = _plugin()
+    image = Image.new("RGB", (40, 20), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_worldcup_elimination_strike(draw, 10, 20, 4, 12)
+
+    strike_y = 9
+    assert image.getpixel((7, strike_y)) == COLORS["red"]
+    assert image.getpixel((23, strike_y)) == COLORS["red"]
+    assert image.getpixel((6, strike_y)) != COLORS["red"]
+    assert image.getpixel((24, strike_y)) != COLORS["red"]
 
 def test_worldcup_compact_row_flag_slot_budget():
     plugin = _plugin()

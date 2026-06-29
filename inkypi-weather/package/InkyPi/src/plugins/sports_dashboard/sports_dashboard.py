@@ -6388,6 +6388,18 @@ class SportsDashboard(BasePlugin):
         return None
 
     @staticmethod
+    def _espn_competitor_advance(competitor):
+        value = (competitor or {}).get("advance")
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        if text in {"true", "1", "yes", "y"}:
+            return True
+        if text in {"false", "0", "no", "n"}:
+            return False
+        return None
+
+    @staticmethod
     def _nba_normalized_team_code(raw_code, aliases=None):
         code = str(raw_code or "").strip().upper()
         if code in NBA_TEAM_ZH_NAMES:
@@ -10684,6 +10696,8 @@ class SportsDashboard(BasePlugin):
                     "team_b_source_aliases": team_b_aliases,
                     "team_a_flag": team_a_flag,
                     "team_b_flag": team_b_flag,
+                    "team_a_advance": SportsDashboard._espn_competitor_advance(home),
+                    "team_b_advance": SportsDashboard._espn_competitor_advance(away),
                     "wins_a": wins_a,
                     "wins_b": wins_b,
                     "block": SportsDashboard._worldcup_espn_event_block(event, competition),
@@ -10915,11 +10929,19 @@ class SportsDashboard(BasePlugin):
             event["wins_b"] = scoreboard_event.get("wins_a")
             event["team_a_flag"] = event.get("team_a_flag") or scoreboard_event.get("team_b_flag", "")
             event["team_b_flag"] = event.get("team_b_flag") or scoreboard_event.get("team_a_flag", "")
+            if "team_b_advance" in scoreboard_event:
+                event["team_a_advance"] = scoreboard_event.get("team_b_advance")
+            if "team_a_advance" in scoreboard_event:
+                event["team_b_advance"] = scoreboard_event.get("team_a_advance")
         else:
             event["wins_a"] = scoreboard_event.get("wins_a")
             event["wins_b"] = scoreboard_event.get("wins_b")
             event["team_a_flag"] = event.get("team_a_flag") or scoreboard_event.get("team_a_flag", "")
             event["team_b_flag"] = event.get("team_b_flag") or scoreboard_event.get("team_b_flag", "")
+            if "team_a_advance" in scoreboard_event:
+                event["team_a_advance"] = scoreboard_event.get("team_a_advance")
+            if "team_b_advance" in scoreboard_event:
+                event["team_b_advance"] = scoreboard_event.get("team_b_advance")
         for key in ("state", "status", "elapsed", "score_source", "provider", "source_url"):
             value = scoreboard_event.get(key)
             if value is not None and str(value).strip():
@@ -11106,6 +11128,15 @@ class SportsDashboard(BasePlugin):
     @staticmethod
     def _is_worldcup_finished_event(event):
         return str((event or {}).get("state") or "").strip().upper() in WORLD_CUP_FINISHED_STATES
+
+    @staticmethod
+    def _worldcup_team_eliminated(event, side):
+        if not SportsDashboard._worldcup_is_knockout_stage_event(event):
+            return False
+        if not SportsDashboard._is_worldcup_finished_event(event):
+            return False
+        side_key = "a" if side == "a" else "b"
+        return (event or {}).get(f"team_{side_key}_advance") is False
 
     @staticmethod
     def _worldcup_live_refresh_seconds(settings):
@@ -11661,6 +11692,8 @@ class SportsDashboard(BasePlugin):
             flag_x = int(right - flag_w)
             text_right = int(flag_x - gap)
             text_left = max(left, int(text_right - text_w))
+            strike_left = text_left
+            strike_right = flag_x + flag_w
             self._draw_text_in_box(
                 draw,
                 (text_left, y1, text_right, y2),
@@ -11673,6 +11706,8 @@ class SportsDashboard(BasePlugin):
             flag_x = int(left)
             text_left = int(flag_x + flag_w + gap)
             text_right = min(right, int(text_left + text_w))
+            strike_left = flag_x
+            strike_right = text_right
             self._draw_text_in_box(
                 draw,
                 (text_left, y1, text_right, y2),
@@ -11681,6 +11716,17 @@ class SportsDashboard(BasePlugin):
                 COLORS["text"],
             )
         self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback)
+        if self._worldcup_team_eliminated(event, side_key):
+            self._draw_worldcup_elimination_strike(draw, strike_left, strike_right, y1, y2)
+
+    def _draw_worldcup_elimination_strike(self, draw, x1, x2, y1, y2):
+        overflow = 3
+        x1 = int(x1) - overflow
+        x2 = int(x2) + overflow
+        if x2 <= x1:
+            return
+        strike_y = int(round((y1 + y2) / 2)) + 1
+        draw.line((x1, strike_y, x2, strike_y), fill=COLORS["red"], width=2)
 
     def _draw_worldcup_mini_match_row(self, image, draw, x1, x2, y, row_h, event, center_text, show_time=False):
         draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
@@ -12318,9 +12364,56 @@ class SportsDashboard(BasePlugin):
         return ""
 
     @staticmethod
+    def _worldcup_normalized_stage_text(event):
+        if not isinstance(event, Mapping):
+            return ""
+        values = []
+        for key in ("block", "stage", "stage_label", "round", "round_label", "phase", "group"):
+            value = event.get(key)
+            if value is not None:
+                values.append(SportsDashboard._clean_worldcup_stage(value))
+        text = " ".join(str(value or "") for value in values)
+        return re.sub(r"[^A-Za-z0-9]+", " ", text).strip().lower()
+
+    @staticmethod
+    def _worldcup_is_group_stage_event(event):
+        normalized = SportsDashboard._worldcup_normalized_stage_text(event)
+        if not normalized:
+            return False
+        return bool(
+            re.search(r"\bgroup\s+[a-l]\b", normalized)
+            or re.search(r"\bgroup\s+stage\b", normalized)
+        )
+
+    @staticmethod
+    def _worldcup_is_knockout_stage_event(event):
+        normalized = SportsDashboard._worldcup_normalized_stage_text(event)
+        if not normalized:
+            return False
+        if SportsDashboard._worldcup_is_group_stage_event(event):
+            return False
+        return bool(
+            re.search(r"\bround\s+of\s+\d+\b", normalized)
+            or re.search(r"\bround\s+\d+\b", normalized)
+            or re.search(r"\blast\s+\d+\b", normalized)
+            or re.search(r"\bknock\s*out\b", normalized)
+            or re.search(r"\bknockout\b", normalized)
+            or re.search(r"\bquarter\b", normalized)
+            or re.search(r"\bsemi\b", normalized)
+            or re.search(r"\bthird\s+place\b", normalized)
+            or re.search(r"\bfinal\b", normalized)
+        )
+
+    @staticmethod
     def _worldcup_team_points_meta(event, side, include_odds=False):
-        points = SportsDashboard._worldcup_group_points_label(event, side)
-        record = SportsDashboard._worldcup_group_record_label(event, side)
+        include_group_meta = SportsDashboard._worldcup_is_group_stage_event(event)
+        if not include_group_meta and not SportsDashboard._worldcup_is_knockout_stage_event(event):
+            include_group_meta = (
+                SportsDashboard._worldcup_group_points_value(event, side) is not None
+                or bool(SportsDashboard._worldcup_group_record_value(event, side))
+            )
+        points = SportsDashboard._worldcup_group_points_label(event, side) if include_group_meta else ""
+        record = SportsDashboard._worldcup_group_record_label(event, side) if include_group_meta else ""
         odds_key = "team_a" if side == "a" else "team_b"
         event_data = event if isinstance(event, Mapping) else {}
         odds_value = (event_data.get("odds") or {}).get(odds_key) if include_odds else None
