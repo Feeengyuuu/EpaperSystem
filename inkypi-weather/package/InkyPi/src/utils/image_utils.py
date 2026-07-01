@@ -8,8 +8,17 @@ import tempfile
 import subprocess
 import shutil
 import signal
+import threading
 
 logger = logging.getLogger(__name__)
+_SCREENSHOT_BROWSER_LOCK = threading.Lock()
+
+
+def _get_browser_profile_dir():
+    configured_dir = os.getenv("INKYPI_BROWSER_PROFILE_DIR")
+    if configured_dir:
+        return configured_dir
+    return os.path.join(tempfile.gettempdir(), "inkypi-browser-profile")
 
 def get_image(image_url):
     response = requests.get(image_url, timeout=30)
@@ -133,7 +142,6 @@ def _find_chromium_binary():
 def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
     image = None
     img_file_path = None
-    browser_profile_dir = None
     try:
         # Find available browser binary
         browser = _find_chromium_binary()
@@ -144,7 +152,8 @@ def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
         # Create a temporary output file for the screenshot
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_file:
             img_file_path = img_file.name
-        browser_profile_dir = tempfile.mkdtemp(prefix="inkypi-browser-")
+        browser_profile_dir = _get_browser_profile_dir()
+        os.makedirs(browser_profile_dir, exist_ok=True)
 
         command = [
             browser,
@@ -166,6 +175,8 @@ def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
             "--disable-crashpad",
             "--run-all-compositor-stages-before-draw",
             f"--user-data-dir={browser_profile_dir}",
+            "--disk-cache-size=1",
+            "--media-cache-size=1",
             "--mute-audio",
             "--renderer-process-limit=1",
             "--no-zygote",
@@ -185,35 +196,36 @@ def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
         if os.name != "nt":
             popen_kwargs["start_new_session"] = True
 
-        process = subprocess.Popen(command, **popen_kwargs)
-        try:
-            stdout, stderr = process.communicate(timeout=process_timeout)
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timed out taking screenshot after {process_timeout:.0f}s.")
-            if os.name != "nt":
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=5)
-                except Exception:
+        with _SCREENSHOT_BROWSER_LOCK:
+            process = subprocess.Popen(command, **popen_kwargs)
+            try:
+                stdout, stderr = process.communicate(timeout=process_timeout)
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timed out taking screenshot after {process_timeout:.0f}s.")
+                if os.name != "nt":
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        os.killpg(process.pid, signal.SIGTERM)
+                        process.wait(timeout=5)
                     except Exception:
-                        pass
-            else:
-                process.kill()
-                process.wait()
-            return None
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+                else:
+                    process.kill()
+                    process.wait()
+                return None
 
-        # Check if the process failed or the output file is missing
-        if process.returncode != 0 or not os.path.exists(img_file_path):
-            logger.error(f"Failed to take screenshot (return code: {process.returncode})")
-            if stderr:
-                logger.debug(stderr.decode("utf-8", errors="replace")[:2000])
-            return None
+            # Check if the process failed or the output file is missing
+            if process.returncode != 0 or not os.path.exists(img_file_path):
+                logger.error(f"Failed to take screenshot (return code: {process.returncode})")
+                if stderr:
+                    logger.debug(stderr.decode("utf-8", errors="replace")[:2000])
+                return None
 
-        # Load the image using PIL
-        with Image.open(img_file_path) as img:
-            image = img.copy()
+            # Load the image using PIL
+            with Image.open(img_file_path) as img:
+                image = img.copy()
 
         # Remove image files
         os.remove(img_file_path)
@@ -226,13 +238,9 @@ def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
                 os.remove(img_file_path)
             except OSError:
                 pass
-        if browser_profile_dir and os.path.exists(browser_profile_dir):
-            try:
-                shutil.rmtree(browser_profile_dir)
-            except OSError:
-                pass
 
     return image
+
 
 def pad_image_blur(img: Image, dimensions: tuple[int, int]) -> Image:
     bkg = ImageOps.fit(img, dimensions)
