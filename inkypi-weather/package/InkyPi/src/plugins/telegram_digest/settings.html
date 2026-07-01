@@ -1,0 +1,111 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="accessMode">Access mode</label>
+  <select class="form-control" name="accessMode" id="accessMode">
+    <option value="account" selected>Telegram account unread</option>
+    <option value="bot">Bot API updates</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="telegramApiId">Account API ID</label>
+  <input class="form-control" type="text" name="telegramApiId" id="telegramApiId" placeholder="Use TELEGRAM_API_ID when empty">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="telegramApiHash">Account API hash</label>
+  <input class="form-control" type="password" name="telegramApiHash" id="telegramApiHash" placeholder="Use TELEGRAM_API_HASH when empty">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="telegramSessionPath">Account session path</label>
+  <input class="form-control" type="text" name="telegramSessionPath" id="telegramSessionPath" placeholder="Use TELEGRAM_SESSION_PATH or plugin cache session">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="dialogFilter">Dialog or channel filter</label>
+  <input class="form-control" type="text" name="dialogFilter" id="dialogFilter" placeholder="@daily_signal, channel title, or chat id">
+</div>
+
+<div class="form-group">
+  <input type="hidden" name="unreadOnly" value="false">
+  <label><input type="checkbox" name="unreadOnly" id="unreadOnly" value="true" checked> Only unread dialogs</label>
+</div>
+
+<div class="form-group">
+  <input type="hidden" name="markDisplayedRead" value="false">
+  <label><input type="checkbox" name="markDisplayedRead" id="markDisplayedRead" value="true" checked> Mark displayed account messages read in this plugin</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="botToken">Bot token</label>
+  <input class="form-control" type="password" name="botToken" id="botToken" placeholder="Use TELEGRAM_BOT_TOKEN when empty">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="chatFilter">Bot channel or chat filter</label>
+  <input class="form-control" type="text" name="chatFilter" id="chatFilter" placeholder="@daily_signal or -1001234567890">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="channelLabel">Display label</label>
+  <input class="form-control" type="text" name="channelLabel" id="channelLabel" value="@daily_signal">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="maxMessages">Messages to keep</label>
+  <input class="form-control" type="number" min="4" max="30" step="1" name="maxMessages" id="maxMessages" value="18">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="dialogLimit">Dialogs per refresh</label>
+  <input class="form-control" type="number" min="1" max="100" step="1" name="dialogLimit" id="dialogLimit" value="30">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="messagesPerDialog">Messages per dialog</label>
+  <input class="form-control" type="number" min="1" max="10" step="1" name="messagesPerDialog" id="messagesPerDialog" value="4">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh</label>
+  <input class="form-control" type="number" min="1" max="30" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="12">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="updateLimit">Bot updates per refresh</label>
+  <input class="form-control" type="number" min="5" max="100" step="5" name="updateLimit" id="updateLimit" value="50">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="footerRefreshLabel">Next refresh label</label>
+  <input class="form-control" type="text" name="footerRefreshLabel" id="footerRefreshLabel" value="refresh on display">
+</div>
+
+<div class="form-group">
+  <input type="hidden" name="showMediaStats" value="false">
+  <label><input type="checkbox" name="showMediaStats" id="showMediaStats" value="true" checked> Show media stats</label>
+</div>
+
+<div class="form-group">
+  <span style="color: var(--text-primary);">
+    Account mode reads an authorized local Telethon session file. Displayed account messages are remembered as read only inside this plugin; Telegram global read state is unchanged. Bot mode only reads bot updates.
+  </span>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const [key, value] of Object.entries(pluginSettings)) {
+        const el = document.getElementById(key);
+        if (!el) continue;
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else if ((key !== 'botToken' && key !== 'telegramApiHash') || value) {
+          el.value = value;
+        }
+      }
+    }
+  });
+</script>

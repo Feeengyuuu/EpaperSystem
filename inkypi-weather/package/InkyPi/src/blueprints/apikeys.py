@@ -3,6 +3,7 @@ from dotenv import dotenv_values
 import json
 import os
 import re
+import tempfile
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,21 +45,63 @@ def parse_env_file(filepath):
         return []
 
 
+def _format_env_value(value):
+    value = "" if value is None else str(value)
+    needs_quotes = (
+        value == ""
+        or value != value.strip()
+        or any(char.isspace() for char in value)
+        or any(char in value for char in ['"', "'", "\\", "#"])
+    )
+    if not needs_quotes:
+        return value
+
+    escaped = (
+        value
+        .replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace('"', '\\"')
+    )
+    return f'"{escaped}"'
+
+
 def write_env_file(filepath, entries):
-    """Write entries to .env file."""
-    try:
-        with open(filepath, 'w') as f:
+    """Write entries to .env file using an atomic same-directory replace."""
+    tmp_path = None
+
+    def write_entries(target_path):
+        with open(target_path, 'w', encoding="utf-8", newline="\n") as f:
             f.write("# InkyPi API Keys and Secrets\n")
             f.write("# Managed via web interface\n\n")
             for key, value in entries:
-                # Quote values with spaces or special characters
-                if ' ' in value or '"' in value or "'" in value:
-                    value = f'"{value}"'
-                f.write(f"{key}={value}\n")
+                f.write(f"{key}={_format_env_value(value)}\n")
+
+    try:
+        env_dir = os.path.dirname(filepath) or "."
+        os.makedirs(env_dir, exist_ok=True)
+        if os.name == "nt":
+            write_entries(filepath)
+            return True
+        fd, tmp_path = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=env_dir)
+        os.close(fd)
+        write_entries(tmp_path)
+        try:
+            os.replace(tmp_path, filepath)
+            tmp_path = None
+        except OSError:
+            logger.exception("Atomic .env replace failed; falling back to direct write: %s", filepath)
+            write_entries(filepath)
         return True
     except Exception as e:
         logger.error(f"Error writing .env file: {e}")
         return False
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                logger.warning("Could not remove temporary .env file: %s", tmp_path)
 
 
 def mask_value(value):
