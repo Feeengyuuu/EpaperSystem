@@ -16,23 +16,31 @@ New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $processTemp | Out-Null
 
 $pythonCandidates = @(
-  (Join-Path $projectRoot ".venv-test\Scripts\python.exe"),
   (Join-Path $projectRoot ".venv\Scripts\python.exe"),
+  (Join-Path $projectRoot ".venv-test\Scripts\python.exe"),
   (Join-Path $projectRoot ".venv-codex\Scripts\python.exe"),
   (Join-Path $projectRoot ".venv-local\Scripts\python.exe"),
   "python"
 )
 
+function Test-PythonHasPytest($candidate) {
+  if ($candidate -ne "python" -and -not (Test-Path -LiteralPath $candidate)) {
+    return $false
+  }
+  & $candidate -m pytest --version *> $null
+  return $LASTEXITCODE -eq 0
+}
+
 $python = $null
 foreach ($candidate in $pythonCandidates) {
-  if ($candidate -eq "python" -or (Test-Path -LiteralPath $candidate)) {
+  if (Test-PythonHasPytest $candidate) {
     $python = $candidate
     break
   }
 }
 
 if (-not $python) {
-  throw "No Python executable found."
+  throw "No Python executable with pytest found. From inkypi-weather/package/InkyPi, create .venv and run: .\.venv\Scripts\python.exe -m pip install -r install\requirements-dev.txt"
 }
 
 $previousPythonPath = $env:PYTHONPATH
@@ -43,7 +51,7 @@ $pythonPathEntries = @(
   (Join-Path $projectRoot "src"),
   $projectRoot
 )
-if (Test-Path -LiteralPath $pcPackages) {
+if ($python -eq "python" -and (Test-Path -LiteralPath $pcPackages)) {
   $pythonPathEntries += $pcPackages
 }
 if ($previousPythonPath) {

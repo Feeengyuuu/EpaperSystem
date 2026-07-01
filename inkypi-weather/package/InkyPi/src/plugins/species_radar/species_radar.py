@@ -1185,7 +1185,8 @@ LIMIT 8
             style = CATEGORY_STYLES.get(obs.get("category_label"), CATEGORY_STYLES["\u5176\u4ed6\u751f\u7269"])
             draw.ellipse((x, recent_y + 4, x + 9, recent_y + 13), fill=style["color"])
             primary = self._compact_bilingual_name(obs)
-            line = f"{obs.get('category_label') or '\u5176\u4ed6\u751f\u7269'} / {primary}"
+            category_label = obs.get("category_label") or "\u5176\u4ed6\u751f\u7269"
+            line = f"{category_label} / {primary}"
             draw.text((x + 16, recent_y), self._ellipsize(draw, line, row_font, width - 16), fill=palette["ink"], font=self._font_for_text(line, row_font))
             meta = self._observation_distance_meta(obs, include_date=True)
             draw.text((x + 16, recent_y + 15), self._ellipsize(draw, meta, micro_font, width - 16), fill=palette["muted"], font=micro_font)

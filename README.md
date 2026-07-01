@@ -101,6 +101,7 @@ Full guides:
 
 - English: [Install From Zero](inkypi-weather/package/InkyPi/docs/install_from_zero.md)
 - 简体中文：[从零安装](inkypi-weather/package/InkyPi/docs/install_from_zero.zh-CN.md)
+- Development: [Local Tests](docs/development.md)
 
 ## API Keys And Demo Mode
 

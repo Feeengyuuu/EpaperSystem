@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Match Raspberry Pi OS Bookworm
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: inkypi-weather/package/InkyPi/install/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r inkypi-weather/package/InkyPi/install/requirements-dev.txt
+      - name: Ruff fatal lint
+        run: ruff check --no-cache inkypi-weather/package/InkyPi/src inkypi-weather/package/InkyPi/tests
+      - name: Run test suite
+        working-directory: inkypi-weather/package/InkyPi
+        run: python -m pytest tests -q --no-header -p no:cacheprovider
