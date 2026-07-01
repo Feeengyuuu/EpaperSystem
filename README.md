@@ -25,6 +25,8 @@ The runnable app lives here:
 inkypi-weather/package/InkyPi
 ```
 
+Legacy `dashboard-7in5/` prototype code is archived on branch `archive/dashboard-7in5`; it is no longer part of the runnable app tree.
+
 README screen content now starts with a public sample render from the real
 SportsDashboard plugin, then mixes in saved device captures from the
 `ColoredEpaperFrame` workflow. img-2 was used only for the desk/device scene
