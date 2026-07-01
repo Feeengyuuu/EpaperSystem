@@ -8,7 +8,23 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_FONT_FAMILY = "Microsoft YaHei"
+
 FONT_FAMILIES = {
+    "Microsoft YaHei": [{
+        "font-weight": "normal",
+        "file": "msyh.ttf"
+    },{
+        "font-weight": "bold",
+        "file": "msyhbd.ttf"
+    }],
+    "\u5fae\u8f6f\u96c5\u9ed1": [{
+        "font-weight": "normal",
+        "file": "msyh.ttf"
+    },{
+        "font-weight": "bold",
+        "file": "msyhbd.ttf"
+    }],
     "Dogica": [{
         "font-weight": "normal",
         "file": "dogicapixel.ttf"
@@ -54,6 +70,10 @@ FONT_FAMILIES = {
 }
 
 FONTS = {
+    "microsoft-yahei": "msyh.ttf",
+    "microsoft-yahei-bold": "msyhbd.ttf",
+    "yahei": "msyh.ttf",
+    "yahei-bold": "msyhbd.ttf",
     "ds-gigi": "DS-DIGI.TTF",
     "napoli": "Napoli.ttf",
     "jost": "Jost.ttf",

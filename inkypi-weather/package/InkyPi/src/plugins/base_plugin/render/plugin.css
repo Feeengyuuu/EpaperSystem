@@ -1,6 +1,7 @@
 /* Basic Reset */
 * {
     box-sizing: border-box;
+    font-family: "Microsoft YaHei", "\5FAE\8F6F\96C5\9ED1", Arial, sans-serif;
     margin: 0;
     padding: 0;
     font-smooth: never;
