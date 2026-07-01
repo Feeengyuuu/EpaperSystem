@@ -1,7 +1,7 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
-from utils.http_client import get_http_session
+from utils.http_client import DEFAULT_TIMEOUT_SECONDS, get_http_session
 from utils.draw_utils import fit_text as fit_text_to_width
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
@@ -55,7 +55,6 @@ STEAM_CAPSULE_CACHE_SIZE = 128
 STEAM_STORE_TIMEOUT = 20
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
-STEAMCHARTS_CHART_TIMEOUT = 30
 STEAMCHARTS_REQUESTS_PER_SECOND = 2
 SANS_FONT_FAMILIES = (
     "Microsoft YaHei",
@@ -1746,7 +1745,7 @@ class SteamCharts(BasePlugin):
                 )
                 session.mount('http://', adapter)
                 session.mount('https://', adapter)
-                resp = session.get(url, timeout=STEAMCHARTS_CHART_TIMEOUT)
+                resp = session.get(url, timeout=DEFAULT_TIMEOUT_SECONDS)
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:

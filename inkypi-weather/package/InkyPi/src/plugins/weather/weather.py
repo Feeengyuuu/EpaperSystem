@@ -12,6 +12,7 @@ import math
 from plugins.context_cache import write_context
 from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context
 from utils.plugin_cache import read_json, write_json
+from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
         
@@ -924,7 +925,7 @@ class Weather(BasePlugin):
             self._write_json_file(state_path, state)
 
         try:
-            response = requests.get(url, timeout=30)
+            response = get_http_session().get(url)
         except requests.RequestException as e:
             message = f"OpenWeather {namespace} request failed: {type(e).__name__}"
             return self._use_stale_cache_or_raise(cache_path, cache_entry, message)
@@ -986,7 +987,7 @@ class Weather(BasePlugin):
     def get_open_meteo_data(self, lat, long, units, forecast_days):
         unit_params = OPEN_METEO_UNIT_PARAMS[units]
         url = OPEN_METEO_FORECAST_URL.format(lat=lat, long=long, forecast_days=forecast_days) + f"&{unit_params}"
-        response = requests.get(url, timeout=30)
+        response = get_http_session().get(url)
 
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to retrieve Open-Meteo weather data: {response.content}")
@@ -996,7 +997,7 @@ class Weather(BasePlugin):
 
     def get_open_meteo_air_quality(self, lat, long):
         url = OPEN_METEO_AIR_QUALITY_URL.format(lat=lat, long=long)
-        response = requests.get(url, timeout=30)
+        response = get_http_session().get(url)
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to retrieve Open-Meteo air quality data: {response.content}")
             raise RuntimeError("Failed to retrieve Open-Meteo air quality data.")

@@ -253,7 +253,6 @@ class RedditRule34Hot(PixivR18Ranking):
             data={"grant_type": "refresh_token", "refresh_token": refresh_token},
             auth=(client_id, client_secret),
             headers={"Accept": "application/json", "User-Agent": REDDIT_USER_AGENT},
-            timeout=30,
         )
         response.raise_for_status()
         payload = response.json()

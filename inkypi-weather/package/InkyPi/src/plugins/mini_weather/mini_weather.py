@@ -5,13 +5,13 @@ import unicodedata
 from pathlib import Path
 
 import pytz
-import requests
 import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.weather.weather import UNITS, Weather
 from utils.app_utils import get_font
 from utils.draw_utils import text_width
+from utils.http_client import get_http_session
 from utils.plugin_cache import MemoryTTLCache
 from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context, get_theme_palette
 
@@ -959,10 +959,9 @@ class MiniWeather(Weather):
 
         headers = {"User-Agent": "InkyPi Mini Weather/1.0 (+https://github.com/inkypi)"}
         try:
-            response = requests.get(
+            response = get_http_session().get(
                 REVERSE_GEOCODE_URL.format(lat=lat, long=long),
                 headers=headers,
-                timeout=30,
             )
         except Exception as exc:
             logger.warning("Reverse geocode request failed: %s", exc)

@@ -7,9 +7,9 @@ import icalendar
 import recurring_ical_events
 from io import BytesIO
 import logging
-import requests
 from datetime import datetime, timedelta
 import pytz
+from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ class Calendar(BasePlugin):
         if calendar_url.startswith("webcal://"):
             calendar_url = calendar_url.replace("webcal://", "https://")
         try:
-            response = requests.get(calendar_url, timeout=30)
+            response = get_http_session().get(calendar_url)
             response.raise_for_status()
             return icalendar.Calendar.from_ical(response.text)
         except Exception as e:

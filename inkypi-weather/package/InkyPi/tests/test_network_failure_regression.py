@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 from pathlib import Path
 
 import pytest
@@ -54,7 +54,7 @@ class FakeResponse:
 
 
 
-def test_ai_image_download_uses_timeout_and_http_errors(monkeypatch):
+def test_ai_image_download_uses_shared_session_and_http_errors(monkeypatch):
     calls = []
 
     class Session:
@@ -74,7 +74,7 @@ def test_ai_image_download_uses_timeout_and_http_errors(monkeypatch):
     with pytest.raises(requests.exceptions.HTTPError):
         plugin.fetch_image(type("Client", (), {"images": Images()})(), "prompt")
 
-    assert calls == [{"url": "https://example.test/generated.png", "timeout": 30}]
+    assert calls == [{"url": "https://example.test/generated.png", "timeout": None}]
 
 
 def test_apod_http_500_fails_fast_with_timeout(monkeypatch):

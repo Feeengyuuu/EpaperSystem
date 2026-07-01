@@ -1,4 +1,3 @@
-import requests
 from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 from io import BytesIO
 import os
@@ -9,6 +8,7 @@ import subprocess
 import shutil
 import signal
 import threading
+from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 _SCREENSHOT_BROWSER_LOCK = threading.Lock()
@@ -21,7 +21,7 @@ def _get_browser_profile_dir():
     return os.path.join(tempfile.gettempdir(), "inkypi-browser-profile")
 
 def get_image(image_url):
-    response = requests.get(image_url, timeout=30)
+    response = get_http_session().get(image_url)
     img = None
     if 200 <= response.status_code < 300 or response.status_code == 304:
         img = Image.open(BytesIO(response.content))
