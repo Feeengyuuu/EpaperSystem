@@ -8,10 +8,36 @@ import uuid
 from PIL import Image
 
 from src.model import Playlist, PlaylistManager, RefreshInfo
-from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
+from src.refresh_task import ManualRefresh, PlaylistRefresh, REFRESH_ON_DISPLAY_PLUGIN_IDS, RefreshTask
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
+PLUGIN_SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "plugins"
+
+
+def _settings_default_refresh_on_display_plugin_ids():
+    plugin_ids = set()
+    for settings_path in PLUGIN_SOURCE_ROOT.glob("*/settings.html"):
+        text = settings_path.read_text(encoding="utf-8")
+        if "refreshOnDisplay" not in text:
+            continue
+        if (
+            'value="true"' in text
+            or "value='true'" in text
+            or 'refreshOnDisplay: "true"' in text
+            or "refreshOnDisplay: 'true'" in text
+            or ".checked = true" in text
+            or "!== 'false'" in text
+            or '!== "false"' in text
+        ):
+            plugin_ids.add(settings_path.parent.name)
+    return plugin_ids
+
+
+def test_refresh_on_display_settings_defaults_have_runtime_fallback():
+    expected_plugin_ids = _settings_default_refresh_on_display_plugin_ids()
+
+    assert expected_plugin_ids <= REFRESH_ON_DISPLAY_PLUGIN_IDS
 
 
 def make_test_dir(name):
@@ -140,6 +166,96 @@ def test_refresh_due_plugin_instances_updates_due_cache_only(monkeypatch):
     assert playlist.find_plugin("due", "Due Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
     assert playlist.find_plugin("fresh", "Fresh Plugin").latest_refresh_time == "2026-05-26T07:04:00+00:00"
     assert device_config.write_count == 1
+
+
+def test_refresh_due_plugin_instances_prefers_oldest_due_cache_when_limited(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("oldest-due-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_radar",
+                "name": "LiveRadar",
+                "plugin_settings": {"id": "live_radar"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:04:00+00:00",
+            },
+            {
+                "plugin_id": "steam_charts",
+                "name": "Steam Charts",
+                "plugin_settings": {"id": "steam_charts"},
+                "refresh": {"interval": 21600},
+                "latest_refresh_time": "2026-05-25T07:00:00+00:00",
+            },
+        ],
+    )
+    for plugin_instance in playlist.plugins:
+        Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        max_updates=1,
+    )
+
+    assert calls == ["steam_charts"]
+    assert playlist.find_plugin("steam_charts", "Steam Charts").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert playlist.find_plugin("live_radar", "LiveRadar").latest_refresh_time == "2026-05-26T07:04:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_playlist_cache_refresh_due_detects_stale_long_interval_plugin():
+    tmp_path = make_test_dir("playlist-cache-due")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    current_dt = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_radar",
+                "name": "LiveRadar",
+                "plugin_settings": {"id": "live_radar"},
+                "refresh": {"interval": 999999999},
+                "latest_refresh_time": current_dt.isoformat(),
+            },
+            {
+                "plugin_id": "steam_charts",
+                "name": "Steam Charts",
+                "plugin_settings": {"id": "steam_charts"},
+                "refresh": {"interval": 21600},
+                "latest_refresh_time": "2026-05-25T07:00:00+00:00",
+            },
+        ],
+    )
+    for plugin_instance in playlist.plugins:
+        Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    live_radar = playlist.find_plugin("live_radar", "LiveRadar")
+    steam_charts = playlist.find_plugin("steam_charts", "Steam Charts")
+
+    assert task._plugin_instance_cache_refresh_due(live_radar, current_dt) is False
+    assert task._plugin_instance_cache_refresh_due(
+        live_radar,
+        current_dt,
+        displayed_plugin_instance=live_radar,
+    ) is True
+    assert task._playlist_has_cache_refresh_due(playlist, current_dt) is True
+
+    steam_charts.latest_refresh_time = current_dt.isoformat()
+    assert task._playlist_has_cache_refresh_due(playlist, current_dt) is False
 
 
 def test_refresh_due_plugin_instances_refreshes_missing_image(monkeypatch):
@@ -649,6 +765,74 @@ def test_playlist_refresh_rerenders_lol_info_on_scheduled_display():
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:05:00+00:00"
 
 
+def test_playlist_refresh_rerenders_simple_calendar_on_scheduled_display():
+    calls = []
+    tmp_path = make_test_dir("scheduled-simple-calendar-refresh")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "simple_calendar",
+                "name": "Date",
+                "plugin_settings": {"id": "simple-calendar"},
+                "refresh": {"scheduled": "00:00"},
+                "latest_refresh_time": "2026-06-29T00:01:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("simple_calendar", "Date")
+    Image.new("RGB", (2, 1), "black").save(tmp_path / "simple_calendar_Date.png")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 6, 29, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["simple-calendar"]
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert plugin_instance.latest_refresh_time == "2026-06-29T07:05:00+00:00"
+
+
+
+def test_playlist_refresh_rerenders_steam_daily_art_on_scheduled_display():
+    calls = []
+    tmp_path = make_test_dir("scheduled-steam-daily-art-refresh")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "steam_daily_art",
+                "name": "SteamDailyArt",
+                "plugin_settings": {"id": "steam-art"},
+                "refresh": {"scheduled": "00:00"},
+                "latest_refresh_time": "2026-06-29T00:01:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("steam_daily_art", "SteamDailyArt")
+    Image.new("RGB", (2, 1), "black").save(tmp_path / "steam_daily_art_SteamDailyArt.png")
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls),
+        device_config,
+        datetime(2026, 6, 29, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["steam-art"]
+    assert image.size == (1, 1)
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert plugin_instance.latest_refresh_time == "2026-06-29T07:05:00+00:00"
+
+
+
 def test_playlist_refresh_generates_when_scheduled_cache_is_missing():
     calls = []
     tmp_path = make_test_dir("scheduled-placeholder")
@@ -746,7 +930,7 @@ def test_playlist_force_refresh_marks_plugin_settings():
         datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
     )
 
-    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True}]
+    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True, "_inkypiDisplayRender": True}]
     assert plugin_instance.settings == {"id": "worldcup", "forceRefresh": "false"}
 
 
@@ -759,7 +943,7 @@ def test_manual_refresh_marks_plugin_settings():
         current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
     )
 
-    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True}]
+    assert calls == [{"id": "worldcup", "forceRefresh": True, "force_refresh": True, "_inkypiDisplayRender": True}]
 
 
 def test_manual_update_times_out_instead_of_waiting_forever():
@@ -826,7 +1010,7 @@ def test_manual_update_runs_after_in_flight_playlist_refresh(monkeypatch):
         assert not manual_thread.is_alive()
         assert errors == []
         assert calls
-        assert all(call == {"id": "live_radar", "forceRefresh": True, "force_refresh": True} for call in calls)
+        assert all(call == {"id": "live_radar", "forceRefresh": True, "force_refresh": True, "_inkypiDisplayRender": True} for call in calls)
     finally:
         display_manager.release_first_display.set()
         task.stop()
@@ -1241,3 +1425,341 @@ def test_refresh_due_plugin_instances_preserves_cache_for_non_cacheable_image(mo
     with Image.open(cache_path) as saved:
         assert saved.size == (2, 1)
         assert saved.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_playlist_refresh_uses_previous_cache_for_non_cacheable_display_image():
+    calls = []
+    tmp_path = make_test_dir("non-cacheable-display")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "bambu_monitor",
+                "name": "Bambu",
+                "plugin_settings": {"id": "bambu"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("bambu_monitor", "Bambu")
+    cache_path = tmp_path / "bambu_monitor_Bambu.png"
+    Image.new("RGB", (2, 1), "black").save(cache_path)
+
+    image = PlaylistRefresh(playlist, plugin_instance, force=True).execute(
+        NonCacheablePlugin(calls),
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["bambu"]
+    assert image.size == (2, 1)
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    with Image.open(cache_path) as saved:
+        assert saved.size == (2, 1)
+        assert saved.getpixel((0, 0)) == (0, 0, 0)
+
+
+class FailingPlugin:
+    def generate_image(self, settings, device_config):
+        raise RuntimeError("boom")
+
+
+def test_refresh_due_plugin_instances_limits_background_pass(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("due-cache-limit")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "one",
+                "name": "One",
+                "plugin_settings": {"id": "one"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+            {
+                "plugin_id": "two",
+                "name": "Two",
+                "plugin_settings": {"id": "two"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin(calls),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        max_updates=1,
+    )
+
+    assert calls == ["one"]
+    assert (tmp_path / "one_One.png").exists()
+    assert not (tmp_path / "two_Two.png").exists()
+    assert playlist.find_plugin("one", "One").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert playlist.find_plugin("two", "Two").latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_failed_due_cache_refresh_marks_attempt_to_avoid_immediate_retry(monkeypatch):
+    tmp_path = make_test_dir("due-cache-failure-cooldown")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "bad",
+                "name": "Bad Plugin",
+                "plugin_settings": {"id": "bad"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FailingPlugin(),
+    )
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        max_updates=1,
+    )
+
+    assert playlist.find_plugin("bad", "Bad Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert not (tmp_path / "bad_Bad_Plugin.png").exists()
+    assert device_config.write_count == 1
+
+
+def test_memory_maintenance_collects_and_trims_when_forced(monkeypatch):
+    tmp_path = make_test_dir("memory-maintenance")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    collected = []
+
+    monkeypatch.setattr("src.refresh_task.gc.collect", lambda: collected.append("gc") or 7)
+    monkeypatch.setattr(task, "_malloc_trim", lambda: True)
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {"available_mb": 64.0, "memory_percent": 91.0, "swap_percent": 99.0},
+    )
+
+    result = task._run_memory_maintenance("test", force=True)
+
+    assert collected == ["gc"]
+    assert result["collected_objects"] == 7
+    assert result["malloc_trim"] is True
+    assert result["after"]["swap_percent"] == 99.0
+
+
+def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
+    tmp_path = make_test_dir("memory-watchdog-swap")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["memory_watchdog_min_available_mb"] = 70
+    device_config.config["memory_watchdog_max_swap_percent"] = 98
+    device_config.config["memory_watchdog_restart_min_interval_seconds"] = 1800
+    task = RefreshTask(device_config, display_manager=None)
+    captured = []
+
+    memory = type("Memory", (), {"available": 200 * 1024 * 1024, "percent": 82.0})()
+    swap = type("Swap", (), {"percent": 99.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda stats, min_available_mb, max_swap_percent: captured.append(
+            (stats, min_available_mb, max_swap_percent)
+        ),
+    )
+
+    assert task._memory_watchdog_should_restart() is True
+
+    assert captured[0][0]["available_mb"] == 200.0
+    assert captured[0][0]["swap_percent"] == 99.0
+    assert captured[0][1:] == (70.0, 98.0)
+    assert float((tmp_path / ".memory_watchdog_last_restart").read_text(encoding="utf-8")) == 2000.0
+
+
+def test_memory_watchdog_respects_persisted_restart_cooldown(monkeypatch):
+    tmp_path = make_test_dir("memory-watchdog-cooldown")
+    (tmp_path / ".memory_watchdog_last_restart").write_text("1990.0", encoding="utf-8")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["memory_watchdog_min_available_mb"] = 70
+    device_config.config["memory_watchdog_max_swap_percent"] = 98
+    device_config.config["memory_watchdog_restart_min_interval_seconds"] = 60
+    task = RefreshTask(device_config, display_manager=None)
+    captured = []
+
+    memory = type("Memory", (), {"available": 50 * 1024 * 1024, "percent": 95.0})()
+    swap = type("Swap", (), {"percent": 99.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr(task, "_restart_process_for_memory_pressure", lambda *args: captured.append(args))
+
+    assert task._memory_watchdog_should_restart() is False
+    assert captured == []
+
+def test_cache_refresh_resource_pressure_ignores_swap_when_memory_is_available(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["background_cache_refresh_min_available_mb"] = 80
+    device_config.config["background_cache_refresh_max_swap_percent"] = 70
+    task = RefreshTask(device_config, display_manager=None)
+
+    memory = type("Memory", (), {"available": 200 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 91.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    assert task._cache_refresh_under_resource_pressure() is False
+
+
+def test_cache_refresh_resource_pressure_respects_low_available_memory(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-low-memory")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["background_cache_refresh_min_available_mb"] = 80
+    device_config.config["background_cache_refresh_max_swap_percent"] = 70
+    task = RefreshTask(device_config, display_manager=None)
+
+    memory = type("Memory", (), {"available": 60 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 10.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    assert task._cache_refresh_under_resource_pressure() is True
+
+def test_sports_live_cache_refresh_can_ignore_swap_pressure(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-sports-live")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["background_cache_refresh_min_available_mb"] = 80
+    device_config.config["background_cache_refresh_max_swap_percent"] = 70
+    task = RefreshTask(device_config, display_manager=None)
+
+    memory = type("Memory", (), {"available": 200 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 82.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is False
+
+
+def test_sports_live_cache_refresh_still_respects_low_memory(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-sports-low-memory")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["background_cache_refresh_min_available_mb"] = 80
+    device_config.config["background_cache_refresh_max_swap_percent"] = 70
+    task = RefreshTask(device_config, display_manager=None)
+
+    memory = type("Memory", (), {"available": 60 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 82.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is True
+
+def test_sports_dashboard_live_cache_refresh_passes_swap_pressure_override(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-sports-path")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    task.running = True
+    captured = []
+
+    def fake_pressure(**kwargs):
+        captured.append(kwargs)
+        return True
+
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", fake_pressure)
+
+    task._start_due_plugin_cache_refresh(
+        playlist=None,
+        current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+    task._start_due_plugin_cache_refresh(
+        playlist=None,
+        current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="weather",
+    )
+
+    assert captured == [{"allow_high_swap": True}, {"allow_high_swap": False}]
+
+
+def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("async-manual-after-inflight")
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_radar",
+                "name": "LiveRadar",
+                "plugin_settings": {"id": "live_radar"},
+                "refresh": {"interval": 999999999},
+                "latest_refresh_time": "2999-01-01T00:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.find_plugin("live_radar", "LiveRadar")
+    Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    display_manager = BlockingDisplayManager()
+    task = RefreshTask(device_config, display_manager=display_manager)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: CapturePlugin(calls),
+    )
+
+    task.start()
+    try:
+        assert display_manager.first_display_started.wait(timeout=1)
+
+        started = time.monotonic()
+        job = task.submit_manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.2
+        assert job["status"] == "queued"
+        assert job["plugin_id"] == "live_radar"
+        assert task.get_manual_update_job(job["id"])["status"] == "queued"
+
+        display_manager.release_first_display.set()
+        for _ in range(30):
+            latest_job = task.get_manual_update_job(job["id"])
+            if latest_job and latest_job["status"] == "completed":
+                break
+            time.sleep(0.05)
+
+        latest_job = task.get_manual_update_job(job["id"])
+        assert latest_job["status"] == "completed"
+        assert {"id": "live_radar", "forceRefresh": True, "force_refresh": True, "_inkypiDisplayRender": True} in calls
+    finally:
+        display_manager.release_first_display.set()
+        task.stop()

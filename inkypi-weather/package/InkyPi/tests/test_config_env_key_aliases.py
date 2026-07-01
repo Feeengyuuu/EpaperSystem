@@ -59,6 +59,34 @@ def test_load_env_key_accepts_pixiv_phpsessid_cookie_aliases(monkeypatch):
     assert config.load_env_key("PIXIV_PHPSESSID") == "pixiv-cookie-value"
 
 
+def test_load_env_key_accepts_telegram_account_aliases(monkeypatch):
+    env_path = cache_dir_for("telegram") / ".env"
+    env_path.write_text(
+        "\n".join([
+            "TG_API_ID=12345",
+            "TG_API_HASH=hash-value",
+            "TELEGRAM_ACCOUNT_SESSION=/tmp/telegram_account",
+        ]),
+        encoding="utf-8",
+    )
+    for key in (
+        "TELEGRAM_API_ID",
+        "TG_API_ID",
+        "TELEGRAM_API_HASH",
+        "TG_API_HASH",
+        "TELEGRAM_SESSION_PATH",
+        "TELEGRAM_ACCOUNT_SESSION",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
+
+    assert config.load_env_key("TELEGRAM_API_ID") == "12345"
+    assert config.load_env_key("TELEGRAM_API_HASH") == "hash-value"
+    assert config.load_env_key("TELEGRAM_SESSION_PATH") == "/tmp/telegram_account"
+
+
 def test_write_config_persists_device_json(tmp_path):
     config = Config.__new__(Config)
     config.config_file = str(tmp_path / "device.json")

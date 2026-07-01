@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import tempfile
+import threading
 from dotenv import load_dotenv
 from model import PlaylistManager, RefreshInfo
 
@@ -14,6 +15,10 @@ ENV_KEY_ALIASES = {
     "BLIZZARD_ACCESS_TOKEN": ("BNET_ACCESS_TOKEN", "BATTLE_NET_ACCESS_TOKEN", "WOW_ACCESS_TOKEN"),
     "BLIZZARD_USER_ACCESS_TOKEN": ("BNET_USER_ACCESS_TOKEN", "BATTLE_NET_USER_ACCESS_TOKEN", "WOW_PROFILE_ACCESS_TOKEN"),
     "PIXIV_PHPSESSID": ("PIXIV_COOKIE", "PIXIV_SESSION"),
+    "TELEGRAM_BOT_TOKEN": ("TG_BOT_TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_DIGEST_BOT_TOKEN"),
+    "TELEGRAM_API_ID": ("TG_API_ID", "TELEGRAM_APP_ID", "TELEGRAM_DIGEST_API_ID"),
+    "TELEGRAM_API_HASH": ("TG_API_HASH", "TELEGRAM_APP_HASH", "TELEGRAM_DIGEST_API_HASH"),
+    "TELEGRAM_SESSION_PATH": ("TG_SESSION_PATH", "TELEGRAM_ACCOUNT_SESSION", "TELEGRAM_DIGEST_SESSION_PATH"),
 }
 
 class Config:
@@ -30,6 +35,7 @@ class Config:
     plugin_image_dir = os.path.join(BASE_DIR, "static", "images", "plugins")
 
     def __init__(self):
+        self._write_lock = threading.RLock()
         self.config = self.read_config()
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
@@ -82,35 +88,41 @@ class Config:
 
     def write_config(self):
         """Updates the cached config from the model objects and writes to the config file."""
-        logger.debug(f"Writing device config to {self.config_file}")
-        self.update_value("playlist_config", self.playlist_manager.to_dict())
-        self.update_value("refresh_info", self.refresh_info.to_dict())
-        config_dir = os.path.dirname(self.config_file)
-        os.makedirs(config_dir, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=".device.",
-            suffix=".json.tmp",
-            dir=config_dir,
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as outfile:
-                self._write_json(outfile)
+        with self._get_write_lock():
+            logger.debug(f"Writing device config to {self.config_file}")
+            self.update_value("playlist_config", self.playlist_manager.to_dict())
+            self.update_value("refresh_info", self.refresh_info.to_dict())
+            config_dir = os.path.dirname(self.config_file)
+            os.makedirs(config_dir, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=".device.",
+                suffix=".json.tmp",
+                dir=config_dir,
+            )
             try:
-                os.replace(tmp_path, self.config_file)
-                tmp_path = None
-            except OSError:
-                logger.exception(
-                    "Atomic config replace failed; falling back to direct write: %s",
-                    self.config_file,
-                )
-                with open(self.config_file, "w", encoding="utf-8") as outfile:
+                with os.fdopen(fd, "w", encoding="utf-8") as outfile:
                     self._write_json(outfile)
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
                 try:
-                    os.unlink(tmp_path)
+                    os.replace(tmp_path, self.config_file)
+                    tmp_path = None
                 except OSError:
-                    logger.warning("Could not remove temporary config file: %s", tmp_path)
+                    logger.exception(
+                        "Atomic config replace failed; falling back to direct write: %s",
+                        self.config_file,
+                    )
+                    with open(self.config_file, "w", encoding="utf-8") as outfile:
+                        self._write_json(outfile)
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        logger.warning("Could not remove temporary config file: %s", tmp_path)
+
+    def _get_write_lock(self):
+        if not hasattr(self, "_write_lock"):
+            self._write_lock = threading.RLock()
+        return self._write_lock
 
     def _write_json(self, outfile):
         json.dump(self.config, outfile, indent=4)

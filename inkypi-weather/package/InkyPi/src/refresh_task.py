@@ -3,9 +3,13 @@ import time
 import os
 import logging
 import json
+import ctypes
+import gc
 import psutil
 import pytz
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 from plugins.plugin_registry import get_plugin_instance
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import get_theme_context
@@ -15,6 +19,14 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger(__name__)
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
+DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
+DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
+DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB = 80
+DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT = 70
+DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS = 60
+DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
+DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 98
+DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS = 30 * 60
 SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
 SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
 SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
@@ -25,8 +37,27 @@ DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS = 60
 DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS = 60
-REFRESH_ON_DISPLAY_PLUGIN_IDS = {"backtothedate", "lol_info"}
+REFRESH_ON_DISPLAY_PLUGIN_IDS = {
+    "backtothedate",
+    "daily_art",
+    "daily_wiki_page",
+    "dota_profile_dashboard",
+    "flight_radar",
+    "gcd_comic_covers",
+    "live_radar",
+    "lol_info",
+    "magazine_covers",
+    "pixiv_r18_ranking",
+    "reddit_rule34_hot",
+    "simple_calendar",
+    "species_radar",
+    "steam_daily_art",
+    "tech_pulse",
+    "telegram_digest",
+    "wow_profile_dashboard",
+}
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
+DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
 
 def _setting_enabled(value):
@@ -47,11 +78,13 @@ def _refresh_on_display(plugin_instance):
     return False
 
 
-def _settings_with_force_refresh(settings, force=False):
+def _settings_with_force_refresh(settings, force=False, display_render=False):
     merged = dict(settings or {})
     if force:
         merged["forceRefresh"] = True
         merged["force_refresh"] = True
+    if display_render:
+        merged[DISPLAY_RENDER_SETTING] = True
     return merged
 
 
@@ -60,9 +93,33 @@ def _save_image_atomic(image, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     root, ext = os.path.splitext(path)
     tmp_path = f"{root}.tmp-{os.getpid()}-{threading.get_ident()}{ext or '.png'}"
+    save_format = {
+        ".bmp": "BMP",
+        ".gif": "GIF",
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".webp": "WEBP",
+    }.get((ext or ".png").lower())
+
+    def write_image(target_path):
+        with open(target_path, "wb") as handle:
+            kwargs = {"format": save_format} if save_format else {}
+            image.save(handle, **kwargs)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    if os.name == "nt":
+        write_image(path)
+        return
+
     try:
-        image.save(tmp_path)
-        os.replace(tmp_path, path)
+        write_image(tmp_path)
+        try:
+            os.replace(tmp_path, path)
+        except OSError:
+            logger.exception("Atomic image replace failed; falling back to direct write: %s", path)
+            write_image(path)
     finally:
         try:
             if os.path.exists(tmp_path):
@@ -96,10 +153,16 @@ class RefreshTask:
         self.condition = threading.Condition(self.lock)
         self.running = False
         self.manual_update_request = ()
+        self.manual_update_requests = deque()
+        self.manual_update_jobs = {}
 
         self.refresh_event = threading.Event()
         self.refresh_event.set()
         self.refresh_result = {}
+        self._last_cache_pressure_log_monotonic = 0.0
+        self._last_memory_maintenance_monotonic = 0.0
+        self._last_memory_pressure_restart_monotonic = 0.0
+        self._libc = None
 
     def start(self):
         """Starts the background thread for refreshing the display."""
@@ -146,7 +209,7 @@ class RefreshTask:
             active_manual_request = None
             try:
                 with self.condition:
-                    if not self.manual_update_request:
+                    if not self.manual_update_requests:
                         sleep_time = self._get_refresh_wait_seconds()
                         # Wait for sleep_time or until notified.
                         self.condition.wait(timeout=sleep_time)
@@ -160,22 +223,26 @@ class RefreshTask:
                     playlist_manager = self.device_config.get_playlist_manager()
                     latest_refresh = self.device_config.get_refresh_info()
                     current_dt = self._get_current_datetime()
+                    self._run_memory_maintenance("refresh-loop")
 
                     refresh_action = None
                     background_cache_refresh = None
                     background_cache_refresh_only_plugin_id = None
                     background_cache_refresh_force = False
                     theme_context_to_persist = None
-                    if self.manual_update_request:
+                    if self.manual_update_requests:
                         # handle immediate update request
                         logger.info("Manual update requested")
-                        active_manual_request = self.manual_update_request
+                        active_manual_request = self.manual_update_requests.popleft()
                         refresh_action = active_manual_request["action"]
-                        self.manual_update_request = ()
+                        self.manual_update_request = self.manual_update_requests[0] if self.manual_update_requests else ()
+                        self._mark_manual_update_job_locked(active_manual_request, "running", "started_at")
                     else:
 
                         if self.device_config.get_config("log_system_stats"):
                             self.log_system_stats()
+                        if self._memory_watchdog_should_restart():
+                            continue
 
                         # handle refresh based on playlists
                         logger.info(f"Running interval refresh check. | current_time: {current_dt.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -199,10 +266,10 @@ class RefreshTask:
                                 background_cache_refresh = (playlist, plugin_instance)
                             else:
                                 playlist = playlist_manager.determine_active_playlist(current_dt)
-                                if playlist and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt):
-                                    logger.info("SportsDashboard live cache refresh due before playlist display tick.")
+                                if playlist and self._playlist_has_cache_refresh_due(playlist, current_dt):
+                                    if self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt):
+                                        logger.info("SportsDashboard live cache refresh due before playlist display tick.")
                                     background_cache_refresh = (playlist, None)
-                                    background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
 
                     if refresh_action:
                         plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
@@ -231,6 +298,14 @@ class RefreshTask:
 
                         if background_cache_refresh:
                             playlist, displayed_plugin_instance = background_cache_refresh
+                            if (
+                                background_cache_refresh_only_plugin_id is None
+                                and playlist
+                                and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
+                                and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
+                            ):
+                                logger.info("SportsDashboard live cache refresh due after playlist display tick.")
+                                background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
                             self._start_due_plugin_cache_refresh(
                                 playlist,
                                 current_dt,
@@ -241,6 +316,14 @@ class RefreshTask:
                             )
                     elif background_cache_refresh:
                         playlist, displayed_plugin_instance = background_cache_refresh
+                        if (
+                            background_cache_refresh_only_plugin_id is None
+                            and playlist
+                            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
+                            and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
+                        ):
+                            logger.info("SportsDashboard live cache refresh due after playlist display tick.")
+                            background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
                         self._start_due_plugin_cache_refresh(
                             playlist,
                             current_dt,
@@ -257,7 +340,18 @@ class RefreshTask:
                 else:
                     self.refresh_result["exception"] = e  # Capture exception
             finally:
+                self._run_memory_maintenance("refresh-loop-finally")
                 if active_manual_request:
+                    with self.condition:
+                        if active_manual_request["result"].get("exception"):
+                            self._mark_manual_update_job_locked(
+                                active_manual_request,
+                                "failed",
+                                "completed_at",
+                                error=str(active_manual_request["result"].get("exception")),
+                            )
+                        else:
+                            self._mark_manual_update_job_locked(active_manual_request, "completed", "completed_at")
                     active_manual_request["event"].set()
                 else:
                     self.refresh_event.set()
@@ -265,27 +359,129 @@ class RefreshTask:
     def manual_update(self, refresh_action):
         """Manually triggers an update for the specified plugin id and plugin settings by notifying the background process."""
         if self.running:
-            request = {
-                "action": refresh_action,
-                "event": threading.Event(),
-                "result": {},
-            }
-            with self.condition:
-                self.manual_update_request = request
-                self.refresh_result = {}
-                self.condition.notify_all()  # Wake the thread to process manual update
+            request = self._queue_manual_update(refresh_action)
 
             timeout = self._manual_update_timeout_seconds()
             completed = request["event"].wait(timeout=timeout)
             if not completed:
                 with self.condition:
+                    try:
+                        self.manual_update_requests.remove(request)
+                    except ValueError:
+                        pass
                     if self.manual_update_request is request:
-                        self.manual_update_request = ()
+                        self.manual_update_request = self.manual_update_requests[0] if self.manual_update_requests else ()
+                    self._mark_manual_update_job_locked(request, "timed_out", "completed_at")
                 raise TimeoutError(f"Manual update timed out after {timeout:.0f} seconds")
             if request["result"].get("exception"):
                 raise request["result"].get("exception")
         else:
             logger.warning("Background refresh task is not running, unable to do a manual update")
+
+    def submit_manual_update(self, refresh_action):
+        """Queue a manual refresh and return immediately with a job status payload."""
+        if not self.running:
+            job = {
+                "id": uuid4().hex,
+                "status": "rejected",
+                "plugin_id": self._manual_update_plugin_id(refresh_action),
+                "refresh_type": type(refresh_action).__name__,
+                "submitted_at": time.time(),
+                "completed_at": time.time(),
+                "error": "Background refresh task is not running",
+            }
+            with self.condition:
+                self.manual_update_jobs[job["id"]] = job
+                self._trim_manual_update_jobs_locked()
+            logger.warning("Background refresh task is not running, unable to queue a manual update")
+            return self._manual_update_job_payload(job)
+
+        request = self._make_manual_update_request(refresh_action)
+        if self.condition.acquire(blocking=False):
+            try:
+                self._append_manual_update_request(request)
+                self.condition.notify_all()
+            finally:
+                self.condition.release()
+        else:
+            self._append_manual_update_request(request)
+        return self._manual_update_job_payload(request["job"])
+
+    def get_manual_update_job(self, job_id):
+        if self.condition.acquire(blocking=False):
+            try:
+                job = self.manual_update_jobs.get(job_id)
+                if not job:
+                    return None
+                return self._manual_update_job_payload(job)
+            finally:
+                self.condition.release()
+        job = self.manual_update_jobs.get(job_id)
+        if not job:
+            return None
+        return self._manual_update_job_payload(job)
+
+    def _queue_manual_update(self, refresh_action):
+        request = self._make_manual_update_request(refresh_action)
+        with self.condition:
+            self._append_manual_update_request(request)
+            self.condition.notify_all()  # Wake the thread to process manual update
+        return request
+
+    def _make_manual_update_request(self, refresh_action):
+        return {
+            "action": refresh_action,
+            "event": threading.Event(),
+            "result": {},
+            "job": {
+                "id": uuid4().hex,
+                "status": "queued",
+                "plugin_id": self._manual_update_plugin_id(refresh_action),
+                "refresh_type": type(refresh_action).__name__,
+                "submitted_at": time.time(),
+            },
+        }
+
+    def _append_manual_update_request(self, request):
+        self.manual_update_requests.append(request)
+        self.manual_update_request = self.manual_update_requests[0]
+        self.manual_update_jobs[request["job"]["id"]] = request["job"]
+        self._trim_manual_update_jobs_locked()
+        self.refresh_result = {}
+
+    def _manual_update_plugin_id(self, refresh_action):
+        try:
+            return refresh_action.get_plugin_id()
+        except Exception:
+            return None
+
+    def _manual_update_job_payload(self, job):
+        return dict(job)
+
+    def _mark_manual_update_job_locked(self, request, status, timestamp_key, error=None):
+        job = request.get("job")
+        if not job:
+            return
+        if job.get("status") in {"timed_out"} and status == "completed":
+            return
+        job["status"] = status
+        job[timestamp_key] = time.time()
+        if error:
+            job["error"] = error
+        elif status in {"completed", "running"}:
+            job.pop("error", None)
+
+    def _trim_manual_update_jobs_locked(self):
+        if len(self.manual_update_jobs) <= DEFAULT_MANUAL_UPDATE_JOB_RETENTION:
+            return
+        removable_statuses = {"completed", "failed", "timed_out", "rejected"}
+        overflow = len(self.manual_update_jobs) - DEFAULT_MANUAL_UPDATE_JOB_RETENTION
+        for job_id, job in list(self.manual_update_jobs.items()):
+            if overflow <= 0:
+                break
+            if job.get("status") in removable_statuses:
+                self.manual_update_jobs.pop(job_id, None)
+                overflow -= 1
 
     def _manual_update_timeout_seconds(self):
         raw_value = self.device_config.get_config(
@@ -446,6 +642,8 @@ class RefreshTask:
         """Start a non-blocking cache refresh for due plugin instances."""
         if not self.running:
             return
+        if self._cache_refresh_under_resource_pressure(allow_high_swap=only_plugin_id == SPORTS_DASHBOARD_PLUGIN_ID):
+            return
         if not self.cache_refresh_lock.acquire(blocking=False):
             logger.info("Due plugin cache refresh already running, skipping this tick.")
             return
@@ -459,6 +657,7 @@ class RefreshTask:
                     displayed_plugin_instance=displayed_plugin_instance,
                     force=force,
                     only_plugin_id=only_plugin_id,
+                    max_updates=self._background_cache_refresh_max_per_pass(),
                 )
             finally:
                 self.cache_refresh_lock.release()
@@ -466,7 +665,234 @@ class RefreshTask:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False, only_plugin_id=None):
+    def _config_float(self, key, default):
+        raw_value = self.device_config.get_config(key, default=default)
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _read_memory_stats(self):
+        try:
+            memory = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+        except Exception:
+            logger.exception("Could not read system memory stats.")
+            return None
+        return {
+            "available_mb": memory.available / (1024 * 1024),
+            "memory_percent": getattr(memory, "percent", 0.0),
+            "swap_percent": getattr(swap, "percent", 0.0),
+        }
+
+    def _run_memory_maintenance(self, reason, force=False):
+        interval_seconds = max(0.0, self._config_float(
+            "memory_maintenance_interval_seconds",
+            DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS,
+        ))
+        if interval_seconds <= 0 and not force:
+            return None
+
+        now = time.monotonic()
+        if (
+            not force
+            and self._last_memory_maintenance_monotonic
+            and now - self._last_memory_maintenance_monotonic < interval_seconds
+        ):
+            return None
+        self._last_memory_maintenance_monotonic = now
+
+        before = self._read_memory_stats()
+        collected_objects = 0
+        try:
+            collected_objects = gc.collect()
+        except Exception:
+            logger.exception("Python garbage collection failed during memory maintenance.")
+        malloc_trimmed = self._malloc_trim()
+        after = self._read_memory_stats()
+        logger.info(
+            "Memory maintenance completed. | reason: %s | collected_objects: %s | "
+            "malloc_trim: %s | available_mb_before: %s | available_mb_after: %s | "
+            "swap_percent_after: %s",
+            reason,
+            collected_objects,
+            malloc_trimmed,
+            None if before is None else round(before.get("available_mb", 0.0), 1),
+            None if after is None else round(after.get("available_mb", 0.0), 1),
+            None if after is None else round(after.get("swap_percent", 0.0), 1),
+        )
+        return {
+            "collected_objects": collected_objects,
+            "malloc_trim": malloc_trimmed,
+            "before": before,
+            "after": after,
+        }
+
+    def _malloc_trim(self):
+        if os.name != "posix":
+            return False
+        try:
+            if self._libc is None:
+                self._libc = ctypes.CDLL("libc.so.6")
+            malloc_trim = getattr(self._libc, "malloc_trim", None)
+            if malloc_trim is None:
+                return False
+            return bool(malloc_trim(0))
+        except Exception:
+            logger.debug("malloc_trim is not available on this platform.", exc_info=True)
+            return False
+
+    def _memory_watchdog_state_path(self):
+        return os.path.join(self.device_config.plugin_image_dir, ".memory_watchdog_last_restart")
+
+    def _read_memory_watchdog_last_restart_epoch(self):
+        try:
+            with open(self._memory_watchdog_state_path(), "r", encoding="utf-8") as handle:
+                return float(handle.read().strip() or "0")
+        except FileNotFoundError:
+            return 0.0
+        except Exception:
+            logger.warning("Could not read memory watchdog restart state.", exc_info=True)
+            return 0.0
+
+    def _write_memory_watchdog_last_restart_epoch(self, value):
+        path = self._memory_watchdog_state_path()
+        tmp_path = f"{path}.tmp-{os.getpid()}-{threading.get_ident()}"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                handle.write(str(float(value)))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            logger.warning(
+                "Could not atomically write memory watchdog restart state; falling back to direct write.",
+                exc_info=True,
+            )
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(str(float(value)))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except Exception:
+                logger.warning("Could not write memory watchdog restart state.", exc_info=True)
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+    def _memory_watchdog_should_restart(self):
+        watchdog_enabled = self.device_config.get_config("memory_watchdog_enabled", default=True)
+        if not _setting_enabled(watchdog_enabled):
+            return False
+
+        stats = self._read_memory_stats()
+        if stats is None:
+            return False
+
+        min_available_mb = max(0.0, self._config_float(
+            "memory_watchdog_min_available_mb",
+            DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB,
+        ))
+        max_swap_percent = self._config_float(
+            "memory_watchdog_max_swap_percent",
+            DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT,
+        )
+        under_pressure = (
+            stats["available_mb"] < min_available_mb
+            or stats["swap_percent"] >= max_swap_percent
+        )
+        if not under_pressure:
+            return False
+
+        now_monotonic = time.monotonic()
+        now_epoch = time.time()
+        min_interval_seconds = max(0.0, self._config_float(
+            "memory_watchdog_restart_min_interval_seconds",
+            DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS,
+        ))
+        if (
+            self._last_memory_pressure_restart_monotonic
+            and now_monotonic - self._last_memory_pressure_restart_monotonic < min_interval_seconds
+        ):
+            return False
+        last_restart_epoch = self._read_memory_watchdog_last_restart_epoch()
+        if last_restart_epoch and now_epoch - last_restart_epoch < min_interval_seconds:
+            return False
+
+        self._last_memory_pressure_restart_monotonic = now_monotonic
+        self._write_memory_watchdog_last_restart_epoch(now_epoch)
+        self._restart_process_for_memory_pressure(stats, min_available_mb, max_swap_percent)
+        return True
+
+    def _restart_process_for_memory_pressure(self, stats, min_available_mb, max_swap_percent):
+        logger.error(
+            "Restarting InkyPi process due to memory pressure. | available_mb: %.1f | "
+            "min_available_mb: %.1f | swap_percent: %.1f | max_swap_percent: %.1f",
+            stats["available_mb"],
+            min_available_mb,
+            stats["swap_percent"],
+            max_swap_percent,
+        )
+        os._exit(75)
+
+    def _background_cache_refresh_max_per_pass(self):
+        raw_value = self.device_config.get_config(
+            "background_cache_refresh_max_per_pass",
+            default=DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS,
+        )
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS
+        return max(1, min(20, value))
+
+    def _cache_refresh_under_resource_pressure(self, allow_high_swap=False):
+        min_available_mb = self.device_config.get_config(
+            "background_cache_refresh_min_available_mb",
+            default=DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB,
+        )
+        max_swap_percent = self.device_config.get_config(
+            "background_cache_refresh_max_swap_percent",
+            default=DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT,
+        )
+        try:
+            min_available_mb = float(min_available_mb)
+        except (TypeError, ValueError):
+            min_available_mb = DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB
+        try:
+            max_swap_percent = float(max_swap_percent)
+        except (TypeError, ValueError):
+            max_swap_percent = DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT
+
+        try:
+            memory = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+        except Exception:
+            logger.exception("Could not read system memory pressure for cache refresh.")
+            return False
+
+        available_mb = memory.available / (1024 * 1024)
+        swap_under_pressure = swap.percent >= max_swap_percent and not allow_high_swap
+        under_pressure = available_mb < min_available_mb
+        if under_pressure:
+            now = time.monotonic()
+            if now - self._last_cache_pressure_log_monotonic >= 60:
+                logger.warning(
+                    "Skipping background cache refresh due to resource pressure. | "
+                    "available_mb: %.1f | min_available_mb: %.1f | "
+                    "swap_percent: %.1f | max_swap_percent: %.1f",
+                    available_mb,
+                    min_available_mb,
+                    swap.percent,
+                    max_swap_percent,
+                )
+                self._last_cache_pressure_log_monotonic = now
+        return under_pressure
+
+    def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False, only_plugin_id=None, max_updates=None):
         """Refresh cached images for due plugin instances in the active playlist.
 
         This is intended for the non-blocking background cache pass. Display
@@ -474,6 +900,8 @@ class RefreshTask:
         stale caches without blocking the next visible playlist tick.
         """
         updated = False
+        attempted_updates = 0
+        candidates = []
         for plugin_instance in list(playlist.plugins):
             if only_plugin_id and plugin_instance.plugin_id != only_plugin_id:
                 continue
@@ -492,6 +920,30 @@ class RefreshTask:
             live_refresh_due = self._sports_dashboard_live_refresh_due(plugin_instance, current_dt)
             if not force and not image_missing and not plugin_instance.should_refresh(current_dt) and not refresh_on_display and not live_refresh_due:
                 continue
+
+            candidates.append((
+                self._cache_refresh_candidate_sort_key(
+                    plugin_instance,
+                    current_dt,
+                    image_missing=image_missing,
+                    refresh_on_display=refresh_on_display,
+                    live_refresh_due=live_refresh_due,
+                    displayed_plugin_instance=displayed_plugin_instance,
+                ),
+                plugin_instance,
+                plugin_image_path,
+                image_missing,
+                live_refresh_due,
+            ))
+
+        for _, plugin_instance, plugin_image_path, image_missing, live_refresh_due in sorted(candidates, key=lambda item: item[0]):
+            if max_updates is not None and attempted_updates >= max_updates:
+                logger.info(
+                    "Due plugin cache refresh pass limit reached. | "
+                    f"max_updates: {max_updates}"
+                )
+                break
+            attempted_updates += 1
 
             try:
                 if image_missing:
@@ -532,9 +984,68 @@ class RefreshTask:
                     "Exception during due plugin instance cache refresh. | "
                     f"plugin_instance: '{plugin_instance.name}'"
                 )
+                plugin_instance.latest_refresh_time = current_dt.isoformat()
+                updated = True
+                logger.info(
+                    "Marked failed cache refresh attempt to avoid immediate retry. | "
+                    f"plugin_instance: '{plugin_instance.name}'"
+                )
+            finally:
+                self._run_memory_maintenance("background-cache")
 
         if updated:
             self._write_device_config()
+
+    def _plugin_instance_cache_refresh_due(self, plugin_instance, current_dt, displayed_plugin_instance=None):
+        if plugin_instance is None:
+            return False
+        plugin_image_path = os.path.join(
+            self.device_config.plugin_image_dir,
+            plugin_instance.get_image_path(),
+        )
+        if not os.path.exists(plugin_image_path):
+            return True
+        if plugin_instance.should_refresh(current_dt):
+            return True
+        if (
+            self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
+            and _refresh_on_display(plugin_instance)
+        ):
+            return True
+        return self._sports_dashboard_live_refresh_due(plugin_instance, current_dt)
+
+    def _playlist_has_cache_refresh_due(self, playlist, current_dt):
+        return any(
+            self._plugin_instance_cache_refresh_due(plugin_instance, current_dt)
+            for plugin_instance in list(playlist.plugins)
+        )
+
+    def _cache_refresh_candidate_sort_key(
+        self,
+        plugin_instance,
+        current_dt,
+        image_missing=False,
+        refresh_on_display=False,
+        live_refresh_due=False,
+        displayed_plugin_instance=None,
+    ):
+        priority = 0
+        if image_missing:
+            priority += 4
+        if self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance):
+            priority += 3
+        if refresh_on_display:
+            priority += 2
+        if live_refresh_due:
+            priority += 1
+
+        latest_refresh = plugin_instance.get_latest_refresh_dt()
+        if latest_refresh is None:
+            latest_timestamp = float("-inf")
+        else:
+            latest_timestamp = plugin_instance.align_datetime_tz(latest_refresh, current_dt).timestamp()
+
+        return (-priority, latest_timestamp, plugin_instance.plugin_id, plugin_instance.name)
 
     def _playlist_has_sports_dashboard_live_refresh_due(self, playlist, current_dt):
         return any(
@@ -861,7 +1372,7 @@ class ManualRefresh(RefreshAction):
 
     def execute(self, plugin, device_config, current_dt: datetime):
         """Performs a manual refresh using the stored plugin ID and settings."""
-        return plugin.generate_image(_settings_with_force_refresh(self.plugin_settings, True), device_config)
+        return plugin.generate_image(_settings_with_force_refresh(self.plugin_settings, True, display_render=True), device_config)
 
     def get_refresh_info(self):
         """Return refresh metadata as a dictionary."""
@@ -925,7 +1436,7 @@ class PlaylistRefresh(RefreshAction):
                     "Plugin instance image unavailable for scheduled display; refreshing now. | "
                     f"plugin_instance: '{self.plugin_instance.name}'"
                 )
-                image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
+                image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force, display_render=True), device_config)
                 if _image_allows_cache(image):
                     _save_image_atomic(image, plugin_image_path)
                     self.plugin_instance.latest_refresh_time = current_dt.isoformat()
@@ -951,7 +1462,7 @@ class PlaylistRefresh(RefreshAction):
             else:
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
-            image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force), device_config)
+            image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force, display_render=True), device_config)
             if _image_allows_cache(image):
                 _save_image_atomic(image, plugin_image_path)
                 self.plugin_instance.latest_refresh_time = current_dt.isoformat()
@@ -960,6 +1471,14 @@ class PlaylistRefresh(RefreshAction):
                     "Plugin instance generated a non-cacheable image; leaving previous cache in place. | "
                     f"plugin_instance: '{self.plugin_instance.name}'"
                 )
+                if not image_missing and os.path.exists(plugin_image_path):
+                    try:
+                        return _load_image_copy(plugin_image_path)
+                    except Exception:
+                        logger.exception(
+                            "Previous plugin cache could not be loaded after non-cacheable refresh. | "
+                            f"plugin_instance: '{self.plugin_instance.name}'"
+                        )
         else:
             logger.info(f"Not time to refresh plugin instance, using latest image. | plugin_instance: {self.plugin_instance.name}.")
             # Load the existing image from disk
