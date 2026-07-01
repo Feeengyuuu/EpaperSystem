@@ -2,6 +2,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
 from utils.http_client import get_http_session
+from utils.draw_utils import fit_text as fit_text_to_width
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
 import concurrent.futures
@@ -1322,14 +1323,7 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _fit_text(draw, text, font, max_width):
-        if draw.textlength(text, font=font) <= max_width:
-            return text
-        suffix = "..."
-        available = max(0, max_width - draw.textlength(suffix, font=font))
-        clipped = text
-        while clipped and draw.textlength(clipped, font=font) > available:
-            clipped = clipped[:-1]
-        return f"{clipped.rstrip()}{suffix}" if clipped else suffix
+        return fit_text_to_width(draw, text, font, max_width)
 
     @staticmethod
     def _draw_sparkline_svg(draw, sparkline_svg, box, ink, line_width=1):

@@ -1,7 +1,6 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from PIL import Image
 import os
-import json
 import hashlib
 import requests
 import logging
@@ -12,6 +11,7 @@ from io import BytesIO
 import math
 from plugins.context_cache import write_context
 from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context
+from utils.plugin_cache import read_json, write_json
 
 logger = logging.getLogger(__name__)
         
@@ -855,25 +855,10 @@ class Weather(BasePlugin):
         return cache_dir
 
     def _read_json_file(self, path, default):
-        try:
-            with open(path, "r", encoding="utf-8") as file:
-                return json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return default
+        return read_json(path, default=default)
 
     def _write_json_file(self, path, data):
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as file:
-            json.dump(data, file)
-        try:
-            os.replace(tmp_path, path)
-        except PermissionError:
-            with open(path, "w", encoding="utf-8") as file:
-                json.dump(data, file)
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+        write_json(path, data, ensure_ascii=False, indent=None)
 
     def _cache_path_for_url(self, cache_dir, namespace, url):
         key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
