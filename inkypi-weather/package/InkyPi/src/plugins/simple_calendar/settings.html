@@ -11,6 +11,7 @@
 	<label for="customDate" class="form-label">Date (optional)</label>
 	<input type="date" id="customDate" name="customDate" class="form-input" />
 </div>
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true" />
 
 <div class="form-group">
 	<label for="language" class="form-label">Language:</label>
@@ -177,6 +178,11 @@
 				language.value = 'en';
 			}
 			document.getElementById('layoutPosition').value = pluginSettings.layoutPosition || 'left';
+			const refreshOnDisplay = document.getElementById('refreshOnDisplay');
+			const refreshOnDisplayEnabled = pluginSettings.refreshOnDisplay === undefined || pluginSettings.refreshOnDisplay === null
+				? true
+				: pluginSettings.refreshOnDisplay !== 'false' && pluginSettings.refreshOnDisplay !== false;
+			refreshOnDisplay.value = refreshOnDisplayEnabled ? 'true' : 'false';
 			document.querySelector('[name=primaryColor]').value = pluginSettings.primaryColor || '#e61a1a';
 			document.querySelector('[name=highlightColor]').value = pluginSettings.highlightColor || '#a30d0d';
 			const weatherPanelEnabled = pluginSettings.weatherPanelBackground !== 'false' && pluginSettings.weatherPanelBackground !== false;

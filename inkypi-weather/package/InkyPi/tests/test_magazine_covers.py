@@ -14,6 +14,7 @@ from plugins.magazine_covers.magazine_covers import (  # noqa: E402
     CORE_DEFAULT_SOURCES,
     DAILY_LIBRARY_REFRESH_INTERVAL,
     DEFAULT_SOURCES,
+    LEGACY_DEFAULT_SOURCES,
     PRE_ART_DEFAULT_SOURCES,
     PRE_MATURE_DEFAULT_SOURCES,
     MATURE_DEFAULT_SOURCES,
@@ -76,16 +77,25 @@ def test_default_source_pool_has_fresh_collection_sources():
     sources = plugin._parse_sources(DEFAULT_SOURCES)
     source_ids = {plugin._source_id(source) for source in sources}
 
-    assert len(sources) >= 36
+    assert len(sources) >= 130
     assert "Newest Releases Page 2|https://magazineshop.us/collections/new-releases?page=2" in source_ids
+    assert "Newest Releases Page 20|https://magazineshop.us/collections/new-releases?page=20" in source_ids
+    assert "All In Stock Page 20|https://magazineshop.us/collections/all-in-stock-products?page=20" in source_ids
+    assert "All Magazines Page 20|https://magazineshop.us/collections/all?page=20" in source_ids
+    assert "Digital Magazines Page 10|https://magazineshop.us/collections/digital-magazines?page=10" in source_ids
     assert "Newsweek|https://magazineshop.us/collections/newsweek" in source_ids
     assert "Athlon Sports|https://magazineshop.us/collections/athlon-sports" in source_ids
+    assert "Archie Comics|https://magazineshop.us/collections/archie-comics" in source_ids
+    assert "VegNews|https://magazineshop.us/collections/vegnews" in source_ids
     assert "Art in America|https://magazineshop.us/collections/art-in-america" in source_ids
     assert "Artforum|https://magazineshop.us/collections/artforum" in source_ids
     assert "Aspire Design and Home|https://magazineshop.us/collections/aspire-design-and-home" in source_ids
     assert "Decorator|https://magazineshop.us/collections/decorator" in source_ids
     assert "Home Design|https://magazineshop.us/collections/home-design" in source_ids
     assert "Playboy|https://magazineshop.us/collections/playboy" in source_ids
+    assert "Playboy Magazine|https://www.playboy.com/magazine" in source_ids
+    assert "Penthouse Magazine|https://penthousemagazine.com/" in source_ids
+    assert "Hustler Magazine|https://hustlermagazine.com/" in source_ids
 
 
 def test_legacy_saved_default_sources_are_expanded_with_new_pool():
@@ -95,7 +105,18 @@ def test_legacy_saved_default_sources_are_expanded_with_new_pool():
 
     assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
     assert sources[0]["name"] == "TIME"
-    assert sources[-1]["name"] == "Playboy"
+    assert sources[-1]["name"] == "Maxim"
+
+
+def test_legacy_saved_full_default_sources_are_expanded_with_new_pool():
+    plugin = MagazineCovers({"id": "magazine_covers"})
+
+    sources = plugin._sources_from_settings({"sources": LEGACY_DEFAULT_SOURCES})
+    source_ids = {plugin._source_id(source) for source in sources}
+
+    assert len(sources) == len(plugin._parse_sources(DEFAULT_SOURCES))
+    assert "All In Stock Page 20|https://magazineshop.us/collections/all-in-stock-products?page=20" in source_ids
+    assert "Hustler Magazine|https://hustlermagazine.com/" in source_ids
 
 
 def test_pre_art_default_sources_are_expanded_with_art_pool():

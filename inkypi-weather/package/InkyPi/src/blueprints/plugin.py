@@ -9,6 +9,30 @@ import logging
 logger = logging.getLogger(__name__)
 plugin_bp = Blueprint("plugin", __name__)
 
+
+def _signal_config_change():
+    refresh_task = current_app.config.get("REFRESH_TASK")
+    if refresh_task and hasattr(refresh_task, "signal_config_change"):
+        refresh_task.signal_config_change()
+
+
+def _queued_refresh_response(job):
+    if job.get("status") == "rejected":
+        return jsonify({
+            "success": False,
+            "message": job.get("error", "Refresh task is not running"),
+            "job": job,
+            "job_id": job.get("id"),
+        }), 503
+    return jsonify({
+        "success": True,
+        "message": "Display update queued",
+        "job": job,
+        "job_id": job.get("id"),
+        "status_url": f"/refresh_job/{job.get('id')}",
+    }), 202
+
+
 def _delete_plugin_instance_images(device_config, plugin_instance_obj):
     """Delete all images associated with a plugin instance."""
     # Delete the plugin instance's generated image
@@ -147,6 +171,7 @@ def delete_plugin_instance():
 
         # save changes to device config file
         device_config.write_config()
+        _signal_config_change()
 
     except Exception as e:
         logger.exception("EXCEPTION CAUGHT: " + str(e))
@@ -196,6 +221,7 @@ def update_plugin_instance(instance_name):
             plugin_instance.settings = plugin_settings
 
         device_config.write_config()
+        _signal_config_change()
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
     return jsonify({"success": True, "message": f"Updated plugin instance {instance_name}."})
@@ -220,11 +246,10 @@ def display_plugin_instance():
         if not plugin_instance:
             return jsonify({"success": False, "message": f"Plugin instance '{plugin_instance_name}' not found"}), 400
 
-        refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+        job = refresh_task.submit_manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+        return _queued_refresh_response(job)
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
-
-    return jsonify({"success": True, "message": "Display updated"}), 200
 
 @plugin_bp.route('/update_now', methods=['POST'])
 def update_now():
@@ -239,7 +264,8 @@ def update_now():
 
         # Check if refresh task is running
         if refresh_task.running:
-            refresh_task.manual_update(ManualRefresh(plugin_id, plugin_settings))
+            job = refresh_task.submit_manual_update(ManualRefresh(plugin_id, plugin_settings))
+            return _queued_refresh_response(job)
         else:
             # In development mode, directly update the display
             logger.info("Refresh task not running, updating display directly")
@@ -248,7 +274,9 @@ def update_now():
                 return jsonify({"error": f"Plugin '{plugin_id}' not found"}), 404
 
             plugin = get_plugin_instance(plugin_config)
-            image = plugin.generate_image(plugin_settings, device_config)
+            display_settings = dict(plugin_settings)
+            display_settings["_inkypiDisplayRender"] = True
+            image = plugin.generate_image(display_settings, device_config)
             display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
 
     except Exception as e:
@@ -256,3 +284,12 @@ def update_now():
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
     return jsonify({"success": True, "message": "Display updated"}), 200
+
+
+@plugin_bp.route('/refresh_job/<job_id>', methods=['GET'])
+def refresh_job(job_id):
+    refresh_task = current_app.config['REFRESH_TASK']
+    job = refresh_task.get_manual_update_job(job_id) if hasattr(refresh_task, "get_manual_update_job") else None
+    if not job:
+        return jsonify({"success": False, "message": "Refresh job not found"}), 404
+    return jsonify({"success": True, "job": job}), 200

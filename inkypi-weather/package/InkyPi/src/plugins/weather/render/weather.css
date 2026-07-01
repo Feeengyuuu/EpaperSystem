@@ -92,14 +92,19 @@
 }
 
 .current-temp {
-  font-size: 45cqmin;
+  flex: 0 0 60%;
+  font-family: "Jost";
+  font-size: 58.5cqmin;
+  line-height: 0.9;
   text-align: center;
   align-content: end;
   position: relative;
-  height: 50%;
+  transform: translateY(-5px);
+  height: 60%;
 }
 
 .temperature-unit {
+  font-family: "Jost";
   font-size: 0.4em;
   position: absolute;
   top: 0.6em;
@@ -285,14 +290,15 @@
   font-size: 12cqmin;
   text-align: center;
   position: relative;
-  line-height: 140%;
+  line-height: 125%;
 }
 
 .feels-like {
   font-size: 10cqmin;
   text-align: center;
   position: relative;
-  line-height: 140%;
+  line-height: 115%;
+  margin-top: 0.8cqmin;
 }
 
 @media (max-aspect-ratio: 1) {

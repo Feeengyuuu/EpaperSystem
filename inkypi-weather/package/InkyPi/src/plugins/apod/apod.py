@@ -57,7 +57,7 @@ class Apod(BasePlugin):
 
         logger.debug("Requesting NASA APOD API...")
         session = get_http_session()
-        response = session.get("https://api.nasa.gov/planetary/apod", params=params)
+        response = session.get("https://api.nasa.gov/planetary/apod", params=params, timeout=10)
 
         if response.status_code != 200:
             logger.error(f"NASA API error (status {response.status_code}): {response.text}")

@@ -32,7 +32,8 @@ class SteamDailyArt(BasePlugin):
         cache_key = self._cache_key(settings, dimensions, rotation_key)
         cache_entry = self._read_cache()
 
-        if cache_entry.get("cache_key") == cache_key:
+        force_refresh = self._settings_enabled(settings.get("forceRefresh")) or self._settings_enabled(settings.get("force_refresh"))
+        if not force_refresh and cache_entry.get("cache_key") == cache_key:
             cached_image = cache_entry.get("image_path")
             if cached_image and os.path.exists(cached_image):
                 logger.info(f"Using cached Steam daily art for {rotation_key}: {cached_image}")
@@ -102,6 +103,10 @@ class SteamDailyArt(BasePlugin):
             generated_at=generated_at,
             ttl_seconds=self._context_ttl_seconds(settings),
         )
+
+    @staticmethod
+    def _settings_enabled(value):
+        return value is True or str(value).strip().lower() in {"1", "true", "on", "yes"}
 
     def _context_ttl_seconds(self, settings):
         cadence = settings.get("rotationCadence", "hourly")

@@ -187,6 +187,9 @@ class Comic(BasePlugin):
         return datetime.now().date().isoformat()
 
     def _compose_image(self, comic_panel, is_caption, caption_font_size, width, height):
+        if comic_panel.get("placeholder"):
+            return self._placeholder_image(comic_panel, caption_font_size, width, height)
+
         # Use adaptive loader for memory-efficient processing
         # Note: Comic images are usually reasonable size, but still benefit from optimization
         img = self.image_loader.from_url(
@@ -229,6 +232,15 @@ class Comic(BasePlugin):
             background.paste(img, (x, y))
 
             return background
+
+    def _placeholder_image(self, comic_panel, caption_font_size, width, height):
+        background = Image.new("RGB", (width, height), "white")
+        font = get_font("Jost", font_size=max(14, int(caption_font_size)))
+        draw = ImageDraw.Draw(background)
+        lines = [comic_panel.get("title") or "Comic", comic_panel.get("caption") or "Feed temporarily unavailable."]
+        text = "\n".join(line for line in lines if line)
+        draw.multiline_text((width // 2, height // 2), text, font=font, fill="black", anchor="mm", align="center")
+        return background
 
     def _wrap_text(self, text, font, width):
         lines = []

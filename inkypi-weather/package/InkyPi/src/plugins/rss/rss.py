@@ -1,10 +1,12 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image
-from io import BytesIO
+from utils.http_client import get_http_session
 import feedparser
-import requests
-import logging
+import hashlib
 import html
+import json
+import logging
+import os
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +46,40 @@ class Rss(BasePlugin):
         return image
     
     def parse_rss_feed(self, url, timeout=10):
-        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        
-        # Parse the feed content
-        feed = feedparser.parse(resp.content)
-        items = []
+        try:
+            session = get_http_session()
+            resp = session.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
 
+            feed = feedparser.parse(resp.content)
+            if getattr(feed, "bozo", False) and not getattr(feed, "entries", None):
+                raise RuntimeError("RSS parser could not read the feed.")
+
+            items = self._feed_items(feed)
+            if not items:
+                raise RuntimeError("RSS feed contains no entries.")
+
+            self._write_feed_cache(url, items)
+            return items
+        except Exception as exc:
+            cached_items = self._read_feed_cache(url)
+            if cached_items:
+                logger.warning("Using cached RSS feed after fetch/parse failure for %s: %s", url, exc)
+                return cached_items
+            logger.warning("RSS feed unavailable and no cache exists for %s: %s", url, exc)
+            return [self._placeholder_item(url)]
+
+    def _feed_items(self, feed):
+        items = []
         for entry in feed.entries:
             item = {
                 "title": html.unescape(entry.get("title", "")),
                 "description": html.unescape(entry.get("description", "")),
                 "published": entry.get("published", ""),
                 "link": entry.get("link", ""),
-                "image": None
+                "image": None,
             }
 
-            # Try to extract image from common RSS fields
             if "media_content" in entry and len(entry.media_content) > 0:
                 item["image"] = entry.media_content[0].get("url")
             elif "media_thumbnail" in entry and len(entry.media_thumbnail) > 0:
@@ -69,5 +88,67 @@ class Rss(BasePlugin):
                 item["image"] = entry.enclosures[0].get("url")
 
             items.append(item)
-
         return items
+
+    def _rss_cache_path(self, url):
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+        return self.cache_dir(leaf="cache") / f"rss-{digest}.json"
+
+    def _write_feed_cache(self, url, items):
+        cache_path = self._rss_cache_path(url)
+        tmp_path = None
+        payload = {"url": url, "items": items}
+
+        def write_payload(target_path):
+            with open(target_path, "w", encoding="utf-8") as outfile:
+                json.dump(payload, outfile, ensure_ascii=False)
+                outfile.write("\n")
+
+        try:
+            if os.name == "nt":
+                write_payload(cache_path)
+                return
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=f".{cache_path.stem}.",
+                suffix=".tmp",
+                dir=str(cache_path.parent),
+            )
+            os.close(fd)
+            write_payload(tmp_path)
+            try:
+                os.replace(tmp_path, cache_path)
+                tmp_path = None
+            except OSError:
+                logger.exception("Atomic RSS cache replace failed; falling back to direct write: %s", cache_path)
+                write_payload(cache_path)
+        except Exception:
+            logger.exception("Could not write RSS cache: %s", cache_path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    logger.warning("Could not remove temporary RSS cache file: %s", tmp_path)
+
+    def _read_feed_cache(self, url):
+        cache_path = self._rss_cache_path(url)
+        try:
+            with open(cache_path, "r", encoding="utf-8") as infile:
+                payload = json.load(infile)
+            items = payload.get("items")
+            if isinstance(items, list):
+                return items
+        except FileNotFoundError:
+            return None
+        except Exception:
+            logger.exception("Could not read RSS cache: %s", cache_path)
+        return None
+
+    def _placeholder_item(self, url):
+        return {
+            "title": "RSS feed temporarily unavailable",
+            "description": f"Could not fetch or parse {url}. The next refresh will retry.",
+            "published": "",
+            "link": url,
+            "image": None,
+        }

@@ -2,7 +2,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -23,10 +23,13 @@ def test_effective_feeds_expands_legacy_bbc_only_settings():
     urls = [url for _name, url in feeds]
 
     assert urls.count("https://feeds.bbci.co.uk/news/world/rss.xml") == 1
+    assert "https://www.news.cn/politics/news_politics.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/china.xml" in urls
     assert "https://www.aljazeera.com/xml/rss/all.xml" in urls
     assert "https://www.france24.com/en/rss" in urls
     assert "https://rss.dw.com/rdf/rss-en-all" in urls
-    assert len(feeds) >= 10
+    assert "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml" not in urls
+    assert len(feeds) >= 12
 
 
 def test_effective_feeds_expands_previous_default_feed_set():
@@ -35,9 +38,55 @@ def test_effective_feeds_expands_previous_default_feed_set():
     effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_DEFAULT_FEEDS)
     urls = {url for _name, url in plugin._parse_feeds(effective)}
 
+    assert "https://www.news.cn/politics/news_politics.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/china.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" not in urls
     assert "https://www.pbs.org/newshour/feeds/rss/headlines" in urls
     assert "https://abcnews.go.com/abcnews/internationalheadlines" in urls
 
+
+def test_effective_feeds_expands_world_only_previous_default_feed_set():
+    plugin = _plugin()
+
+    effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_WORLD_ONLY_DEFAULT_FEEDS)
+    urls = {url for _name, url in plugin._parse_feeds(effective)}
+
+    assert "https://www.news.cn/politics/news_politics.xml" in urls
+    assert "https://www.people.com.cn/rss/politics.xml" in urls
+    assert "https://feeds.bbci.co.uk/news/world/rss.xml" in urls
+
+
+def test_effective_feeds_upgrades_saved_regional_default_with_generic_bbc_chinese():
+    plugin = _plugin()
+    saved_old_default = """大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml
+大陆新闻:人民网时政|https://www.people.com.cn/rss/politics.xml
+大陆新闻:中国新闻网国内|https://www.chinanews.com.cn/rss/china.xml
+世界新闻:BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
+世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+世界新闻:NPR新闻|https://feeds.npr.org/1001/rss.xml
+世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+世界新闻:卫报国际|https://www.theguardian.com/world/rss
+世界新闻:半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+世界新闻:法国24|https://www.france24.com/en/rss
+世界新闻:德国之声|https://rss.dw.com/rdf/rss-en-all
+世界新闻:PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+世界新闻:ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
+
+    effective = plugin._effective_feeds_text(saved_old_default)
+    urls = {url for _name, url in plugin._parse_feeds(effective)}
+
+    assert "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml" not in urls
+    assert "https://feeds.bbci.co.uk/news/world/rss.xml" in urls
+
+def test_default_feeds_tag_mainland_and_world_sections():
+    plugin = _plugin()
+    feeds = plugin._parse_feeds(daily_ai_news_module.DEFAULT_FEEDS)
+    sections = [plugin._feed_source_and_section(name, url) for name, url in feeds]
+
+    assert ("新华网时政", "mainland") in sections
+    assert ("中国新闻网国内", "mainland") in sections
+    assert ("BBC世界", "world") in sections
+    assert ("半岛电视台", "world") in sections
 
 def test_effective_feeds_preserves_custom_non_legacy_settings():
     plugin = _plugin()
@@ -83,6 +132,35 @@ def test_fetch_items_samples_all_configured_sources(monkeypatch):
 
     assert calls == urls
     assert {item["source"] for item in items} == {f"Source {index}" for index in range(5)}
+
+
+def test_fetch_items_strips_source_section_prefix_and_tags_items(monkeypatch):
+    plugin = _plugin()
+    feeds_text = "\n".join([
+        "大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml",
+        "世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml",
+    ])
+
+    class FakeResponse:
+        def __init__(self, url):
+            self.content = url.encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **_kwargs):
+        return FakeResponse(url)
+
+    def fake_parse(content):
+        url = content.decode("utf-8")
+        return type("FakeFeed", (), {"entries": [{"title": f"{url} 标题", "summary": "摘要", "published": "", "link": url}]})()
+
+    monkeypatch.setattr(daily_ai_news_module.requests, "get", fake_get)
+    monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
+
+    items = plugin._fetch_items(feeds_text, 4)
+
+    assert [(item["source"], item["section"]) for item in items] == [("新华网时政", "mainland"), ("BBC世界", "world")]
 
 
 def test_diversify_news_items_limits_single_source_dominance():
@@ -348,6 +426,81 @@ def test_parse_brief_json_repairs_model_trailing_commas():
     assert brief["sources"] == ["BBC中文"]
 
 
+def test_parse_brief_json_accepts_mainland_and_world_sections():
+    plugin = _plugin()
+    content = """
+    {
+      "lede": "大陆与世界新闻同步更新",
+      "mainland": [
+        {"title": "国务院发布新政策安排", "why": "影响后续执行"}
+      ],
+      "world": [
+        {"title": "欧洲多国推进安全谈判", "why": "外交压力上升"},
+        {"title": "中东停火谈判出现新进展", "why": "地区风险缓和"}
+      ],
+      "sources": ["新华网时政", "BBC世界"]
+    }
+    """
+
+    brief = plugin._parse_brief_json(content)
+
+    assert brief["mainland"] == [{"title": "国务院发布新政策安排", "why": "影响后续执行"}]
+    assert brief["world"] == [
+        {"title": "欧洲多国推进安全谈判", "why": "外交压力上升"},
+        {"title": "中东停火谈判出现新进展", "why": "地区风险缓和"},
+    ]
+    assert brief["top"] == brief["mainland"] + brief["world"]
+
+
+def test_postprocess_drops_cross_section_ai_items_and_backfills():
+    plugin = _plugin()
+    brief = {
+        "mainland": [{"title": "委内瑞拉强震遇难人数升至1450人", "why": "错放到大陆栏"}],
+        "world": [{"title": "欧洲热浪致多国高温", "why": "世卫组织提醒"}],
+        "top": [],
+    }
+    items = [
+        {
+            "title": "第六届海峡两岸中山论坛在广东中山开幕",
+            "summary": "活动在广东中山开幕",
+            "source": "新华网时政",
+            "section": "mainland",
+        },
+        {
+            "title": "欧洲热浪致多国高温 世卫组织发出提醒",
+            "summary": "欧洲多国迎来高温",
+            "source": "BBC世界",
+            "section": "world",
+        },
+    ]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["mainland"][0]["title"].startswith("第六届海峡两岸中山论坛")
+    assert all("委内瑞拉" not in item["title"] for item in result["mainland"])
+    assert result["world"] == [{"title": "欧洲热浪致多国高温", "why": "世卫组织提醒"}]
+
+
+def test_postprocess_keeps_translated_world_ai_items_from_english_feeds():
+    plugin = _plugin()
+    brief = {
+        "mainland": [],
+        "world": [{"title": "欧洲多国热浪升级，世卫组织提醒公共卫生风险", "why": "英文 RSS 已由 AI 中文化"}],
+        "top": [],
+    }
+    items = [
+        {
+            "title": "Europe heatwave intensifies as WHO warns health systems are not ready",
+            "summary": "Several countries face extreme heat.",
+            "source": "BBC世界",
+            "section": "world",
+        },
+    ]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["world"] == brief["world"]
+
 def test_simplifies_common_traditional_chinese_payload():
     plugin = _plugin()
 
@@ -433,6 +586,8 @@ def test_sanitize_brief_visible_text_removes_untranslated_english_leaks():
 def test_static_render_labels_use_simplified_chinese():
     plugin = _plugin()
 
+    assert daily_ai_news_module.SECTION_LABELS["top"] == "大陆新闻"
+    assert daily_ai_news_module.SECTION_LABELS["quick"] == "世界快报"
     assert plugin._theme_label({"mode": "night"}) == "午夜简报"
     assert plugin._theme_label({"mode": "day"}) == "日间简报"
     assert plugin._footer_text({"generated_at": "2026-06-17T21:12:00"}, {"sources": []}).startswith("来源: 新闻源 + AI摘要")
@@ -487,6 +642,316 @@ def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
     assert font_calls
     assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}
 
+def test_draw_news_items_fit_uses_larger_type_for_sparse_news(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 220), "white")
+    draw = ImageDraw.Draw(image)
+    original_font = plugin._font
+    font_calls = []
+
+    def record_font(family, size, weight="normal"):
+        font_calls.append((family, size, weight))
+        return original_font(family, size, weight)
+
+    monkeypatch.setattr(plugin, "_font", record_font)
+
+    y = plugin._draw_news_items(
+        draw,
+        [
+            {"title": "短标题一", "why": "短正文一"},
+            {"title": "短标题二", "why": "短正文二"},
+        ],
+        0,
+        0,
+        360,
+        original_font("Microsoft YaHei", 18, "bold"),
+        original_font("Microsoft YaHei", 16),
+        (180, 120, 20),
+        (0, 0, 0),
+        (70, 70, 70),
+        max_y=196,
+        force_all=True,
+        fit_family="Microsoft YaHei",
+    )
+
+    assert y <= 196
+    # Sparse news should scale type up beyond the 18/16 defaults; exact sizes
+    # vary with the rendering environment's font metrics.
+    assert max(size for _family, size, weight in font_calls if weight == "bold") > 18
+    assert max(size for _family, size, weight in font_calls if weight == "normal") > 16
+
+
+def test_draw_news_items_fit_caps_body_size_for_many_short_news(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 360), "white")
+    draw = ImageDraw.Draw(image)
+    original_text = ImageDraw.ImageDraw.text
+    why_sizes = []
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        if str(text).startswith("多新闻正文"):
+            font = kwargs.get("font")
+            why_sizes.append(getattr(font, "size", None))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    items = [
+        {"title": f"多新闻标题{index}", "why": f"多新闻正文{index}"}
+        for index in range(1, 6)
+    ]
+
+    y = plugin._draw_news_items(
+        draw,
+        items,
+        0,
+        0,
+        360,
+        plugin._font("Microsoft YaHei", 18, "bold"),
+        plugin._font("Microsoft YaHei", 16),
+        (20, 120, 180),
+        (0, 0, 0),
+        (70, 70, 70),
+        max_y=320,
+        force_all=True,
+        fit_family="Microsoft YaHei",
+    )
+
+    assert y <= 320
+    assert len(why_sizes) == 5
+    assert max(size for size in why_sizes if size is not None) <= 15
+
+
+def test_draw_news_items_fit_shrinks_without_dropping_body(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 240), "white")
+    draw = ImageDraw.Draw(image)
+    original_text = ImageDraw.ImageDraw.text
+    drawn_text = []
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    items = [
+        {"title": f"第{index}条国际新闻标题包含较多事实细节与地点", "why": f"第{index}条正文说明影响范围和后续观察重点"}
+        for index in range(1, 5)
+    ]
+
+    y = plugin._draw_news_items(
+        draw,
+        items,
+        0,
+        0,
+        330,
+        plugin._font("Microsoft YaHei", 18, "bold"),
+        plugin._font("Microsoft YaHei", 16),
+        (20, 120, 180),
+        (0, 0, 0),
+        (70, 70, 70),
+        max_y=196,
+        start_index=4,
+        force_all=True,
+        fit_family="Microsoft YaHei",
+    )
+
+    rendered = "".join(drawn_text)
+    assert y <= 196
+    assert "..." not in rendered
+    for item in items:
+        assert item["title"][:8] in rendered
+        assert item["why"] in rendered
+
+def test_draw_news_items_fit_keeps_four_item_news_readable_when_given_full_news_area(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (430, 340), "white")
+    draw = ImageDraw.Draw(image)
+    original_text = ImageDraw.ImageDraw.text
+    why_sizes = []
+    title_sizes = []
+    drawn_text = []
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        value = str(text)
+        drawn_text.append(value)
+        font = kwargs.get("font")
+        if font is not None:
+            if value.startswith("第") and "标题" in value:
+                title_sizes.append(getattr(font, "size", None))
+            if value.startswith("第") and "正文" in value:
+                why_sizes.append(getattr(font, "size", None))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    items = [
+        {"title": f"第{index}条新闻标题包含较多事实细节", "why": f"第{index}条正文说明影响范围"}
+        for index in range(1, 5)
+    ]
+
+    y = plugin._draw_news_items(
+        draw,
+        items,
+        0,
+        0,
+        360,
+        plugin._font("Microsoft YaHei", 18, "bold"),
+        plugin._font("Microsoft YaHei", 16),
+        (20, 120, 180),
+        (0, 0, 0),
+        (70, 70, 70),
+        max_y=296,
+        force_all=True,
+        fit_family="Microsoft YaHei",
+    )
+
+    rendered = "".join(drawn_text)
+    # Allow one text line of overflow tolerance: absolute pixel height varies
+    # with the rendering environment's font metrics.
+    assert y <= 296 + 8
+    assert "..." not in rendered
+    assert why_sizes and min(size for size in why_sizes if size is not None) >= 15
+    assert title_sizes and min(size for size in title_sizes if size is not None) >= 18
+
+
+def test_render_keeps_market_modules_while_shrinking_dense_news(monkeypatch):
+    plugin = _plugin()
+    market_calls = []
+    drawn_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_market_module(*args, **kwargs):
+        market_calls.append(args)
+        return 0
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_market_module", capture_market_module)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    mainland = [
+        {"title": f"第{index}条大陆新闻标题包含较多事实细节与地点", "why": f"第{index}条大陆正文说明影响范围和后续观察重点"}
+        for index in range(1, 5)
+    ]
+    world = [
+        {"title": f"第{index}条世界新闻标题包含较多事实细节与地点", "why": f"第{index}条世界正文说明影响范围和后续观察重点"}
+        for index in range(1, 5)
+    ]
+    payload = {
+        "date": "2026-07-01",
+        "generated_at": "2026-07-01T08:00:00",
+        "model": "gpt-5-nano",
+        "brief": {
+            "lede": "整点新闻摘要",
+            "mainland": mainland,
+            "world": world,
+            "a_share": {},
+            "us_stock": {},
+            "sources": ["测试来源"],
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 7, 1), {"mode": "night"})
+
+    rendered = "".join(drawn_text)
+    assert image.size == (800, 480)
+    assert len(market_calls) == 2
+    assert "..." not in rendered
+    for item in mainland + world:
+        assert item["why"] in rendered
+
+def test_render_includes_seventh_top_item_in_quick_sidebar(monkeypatch):
+    plugin = _plugin()
+    news_calls = []
+
+    def capture_news_items(draw, items, x, y, *args, **kwargs):
+        news_calls.append([item["title"] for item in items])
+        return y
+
+    monkeypatch.setattr(plugin, "_draw_news_items", capture_news_items)
+    payload = {
+        "date": "2026-06-27",
+        "generated_at": "2026-06-27T08:00:00",
+        "model": "gpt-5-nano",
+        "brief": {
+            "lede": "整点新闻摘要",
+            "top": [
+                {"title": f"新闻标题{index}", "why": f"新闻正文{index}"}
+                for index in range(1, 8)
+            ],
+            "a_share": {},
+            "us_stock": {},
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 27), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert news_calls[0] == ["新闻标题1", "新闻标题2", "新闻标题3"]
+    assert news_calls[1] == ["新闻标题4", "新闻标题5", "新闻标题6", "新闻标题7"]
+
+
+def test_render_news_section_items_do_not_force_backfill_when_summary_is_sparse():
+    plugin = _plugin()
+    brief = {
+        "mainland": [
+            {"title": "大陆新闻一", "why": "国内更新"},
+            {"title": "大陆新闻二", "why": "政策进展"},
+        ],
+    }
+    payload = {
+        "items": [
+            {"title": f"RSS 大陆新闻 {index}", "summary": "补充", "section": "mainland"}
+            for index in range(1, 7)
+        ]
+    }
+
+    items = plugin._render_news_section_items(brief, payload, "mainland")
+
+    assert [item["title"] for item in items] == ["大陆新闻一", "大陆新闻二"]
+
+
+def test_render_prefers_mainland_and_world_sections_over_legacy_top(monkeypatch):
+    plugin = _plugin()
+    news_calls = []
+
+    def capture_news_items(draw, items, x, y, *args, **kwargs):
+        news_calls.append([item["title"] for item in items])
+        return y
+
+    monkeypatch.setattr(plugin, "_draw_news_items", capture_news_items)
+    payload = {
+        "date": "2026-06-28",
+        "generated_at": "2026-06-28T08:00:00",
+        "model": "gpt-5-nano",
+        "brief": {
+            "lede": "整点新闻摘要",
+            "mainland": [
+                {"title": "大陆新闻一", "why": "国内更新"},
+                {"title": "大陆新闻二", "why": "政策进展"},
+            ],
+            "world": [
+                {"title": "世界新闻一", "why": "国际进展"},
+                {"title": "世界新闻二", "why": "外交动态"},
+                {"title": "世界新闻三", "why": "地区变化"},
+            ],
+            "top": [{"title": "旧头条", "why": "不应优先"}],
+            "a_share": {},
+            "us_stock": {},
+        },
+        "items": [],
+        "market_snapshot": {},
+    }
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 28), {"mode": "day"})
+
+    assert image.size == (800, 480)
+    assert news_calls[0] == ["大陆新闻一", "大陆新闻二"]
+    assert news_calls[1] == ["世界新闻一", "世界新闻二", "世界新闻三"]
 
 def test_daily_ai_news_market_headers_use_plain_text_labels(monkeypatch):
     plugin = _plugin()
@@ -553,6 +1018,67 @@ def test_section_wordmark_assets_are_transparent_measured_strips():
             assert alpha.getpixel((image.width - 1, 0)) == 0
 
 
+def test_section_wordmarks_are_recolored_for_night_readability():
+    plugin = _plugin()
+    accents = {
+        "top": (255, 82, 74),
+        "quick": (107, 204, 255),
+        "a_share": (255, 82, 74),
+        "us_stock": (146, 221, 166),
+    }
+
+    for key, accent in accents.items():
+        source = plugin._load_section_wordmark(key)
+        assert source is not None
+        prepared = plugin._prepare_section_wordmark(source, accent)
+        alpha = prepared.getchannel("A")
+        dark_panel = Image.new("RGBA", prepared.size, (0, 0, 0, 255))
+        dark_panel.alpha_composite(prepared)
+        bbox = alpha.getbbox()
+        assert bbox is not None
+        luminance_values = []
+        solid_luminance_values = []
+        for py in range(prepared.height):
+            for px in range(prepared.width):
+                alpha_value = alpha.getpixel((px, py))
+                if alpha_value < 128:
+                    continue
+                red, green, blue = dark_panel.getpixel((px, py))[:3]
+                luminance = (red * 299 + green * 587 + blue * 114) / 1000
+                luminance_values.append(luminance)
+                if alpha_value >= 220:
+                    solid_luminance_values.append(luminance)
+        assert luminance_values
+        assert solid_luminance_values
+        assert min(solid_luminance_values) >= 150
+        assert sum(luminance_values) / len(luminance_values) >= 150
+
+def test_section_wordmark_headers_draw_thin_divider(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (220, 70), "white")
+    draw = ImageDraw.Draw(image)
+    rule = (185, 188, 194)
+
+    def fake_wordmark(target_image, key, x, y, accent):
+        return (x, y, x + 80, y + 24)
+
+    monkeypatch.setattr(plugin, "_draw_section_wordmark", fake_wordmark)
+    plugin._section_header(
+        draw,
+        "大陆新闻",
+        10,
+        12,
+        180,
+        plugin._font("Microsoft YaHei", 18, "bold"),
+        (166, 38, 48),
+        rule,
+        image=image,
+        asset_key="top",
+    )
+
+    assert image.getpixel((10, 39)) == rule
+    assert image.getpixel((190, 39)) == rule
+
 def test_render_uses_section_wordmarks_for_fixed_headers(monkeypatch):
     plugin = _plugin()
     seen_keys = []
@@ -584,6 +1110,9 @@ def test_render_uses_section_wordmarks_for_fixed_headers(monkeypatch):
 
     assert image.size == (800, 480)
     assert seen_keys == ["top", "quick", "a_share", "us_stock"]
+    assert "大陆新闻" not in text_calls
+    assert "世界新闻" not in text_calls
+    assert "世界快报" not in text_calls
     assert "今日头条" not in text_calls
     assert "快讯补充" not in text_calls
     assert "A股今日" not in text_calls

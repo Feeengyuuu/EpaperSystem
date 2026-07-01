@@ -10,6 +10,13 @@ from utils.app_utils import resolve_path, handle_request_files, parse_form
 logger = logging.getLogger(__name__)
 playlist_bp = Blueprint("playlist", __name__)
 
+
+def _signal_config_change():
+    refresh_task = current_app.config.get("REFRESH_TASK")
+    if refresh_task and hasattr(refresh_task, "signal_config_change"):
+        refresh_task.signal_config_change()
+
+
 @playlist_bp.route('/add_plugin', methods=['POST'])
 def add_plugin():
     device_config = current_app.config['DEVICE_CONFIG']
@@ -63,6 +70,7 @@ def add_plugin():
             return jsonify({"error": "Failed to add to playlist"}), 500
 
         device_config.write_config()
+        _signal_config_change()
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
     return jsonify({"success": True, "message": "Scheduled refresh configured."})
@@ -107,6 +115,7 @@ def create_playlist():
 
         # save changes to device config file
         device_config.write_config()
+        _signal_config_change()
 
     except Exception as e:
         logger.exception("EXCEPTION CAUGHT: " + str(e))
@@ -136,6 +145,7 @@ def update_playlist(playlist_name):
     if not result:
         return jsonify({"error": "Failed to delete playlist"}), 500
     device_config.write_config()
+    _signal_config_change()
 
     return jsonify({"success": True, "message": f"Updated playlist '{playlist_name}'!"})
 
@@ -158,6 +168,7 @@ def delete_playlist(playlist_name):
 
     playlist_manager.delete_playlist(playlist_name)
     device_config.write_config()
+    _signal_config_change()
 
     return jsonify({"success": True, "message": f"Deleted playlist '{playlist_name}'!"})
 

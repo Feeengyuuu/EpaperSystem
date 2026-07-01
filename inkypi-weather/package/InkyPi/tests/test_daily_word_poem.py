@@ -231,6 +231,44 @@ def test_render_quote_panel_does_not_double_wrap_cached_quote(tmp_path, monkeypa
     assert seen["rendered_text"] == '"Cached quote."'
 
 
+class RecordingDraw:
+    def __init__(self, draw):
+        self.draw = draw
+        self.text_calls = []
+
+    def text(self, position, text, *args, **kwargs):
+        self.text_calls.append(str(text))
+        return self.draw.text(position, text, *args, **kwargs)
+
+    def textbbox(self, *args, **kwargs):
+        return self.draw.textbbox(*args, **kwargs)
+
+
+def test_render_quote_panel_draws_full_long_wikiquote_sentence(tmp_path):
+    plugin = _plugin(tmp_path)
+    draw = RecordingDraw(ImageDraw.Draw(Image.new("RGB", (800, 480), "white")))
+    quote_text = (
+        "Never dream of forcing men into the ways of God. Think yourself, and let think. "
+        "Use no constraint in matters of religion. Even those who are farthest out of the way "
+        "never compel to come in by any other means than reason, truth, and love."
+    )
+
+    plugin._render_quote_panel(
+        draw,
+        {"text": quote_text, "author": "John Wesley", "topic": "Wikiquote QOTD"},
+        (445, 79, 326, 454),
+        "Jost",
+        (0, 0, 0),
+        (35, 110, 70),
+        (120, 120, 120),
+    )
+
+    rendered = " ".join(draw.text_calls)
+
+    assert "reason, truth, and love." in rendered
+    assert rendered.count("Never dream") == 1
+
+
 def test_title_wordmark_asset_is_transparent_measured_strip():
     path = Path(word_module.__file__).with_name(TITLE_WORDMARK_IMAGE)
 

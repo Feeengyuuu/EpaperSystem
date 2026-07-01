@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from PIL import ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -95,6 +96,30 @@ def test_fetch_games_enriches_missing_trending_fields_without_images():
     assert "polyline" in games[0]["sparkline_svg"]
 
 
+def test_fetch_games_uses_30_day_bar_sparkline_for_top_games():
+    plugin = _plugin()
+    calls = {}
+    plugin._scrape_steamcharts_top_games = lambda count: [
+        {"rank": 1, "app_id": 570, "name": "Dota 2", "image": ""}
+    ]
+
+    def fake_chart_batch(app_ids, sparkline_hours, include_change=False, sparkline_style="line"):
+        calls["args"] = (app_ids, sparkline_hours, include_change, sparkline_style)
+        return {
+            570: {
+                "current_players": 789588,
+                "sparkline_svg": '<rect x="0" y="4" width="3" height="26" />',
+            }
+        }
+
+    plugin._fetch_chart_data_batch = fake_chart_batch
+
+    games = plugin._fetch_games("steamcharts_top_games", 1)
+
+    assert calls["args"] == ([570], 30 * 24, False, "bars")
+    assert games[0]["current_players_fmt"] == "789,588"
+    assert games[0]["sparkline_svg"].startswith("<rect")
+
 def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     plugin = _plugin()
     calls = {}
@@ -134,6 +159,7 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     assert calls["template_params"]["theme_mode"] == "day"
     assert calls["template_params"]["theme_ink"] == "#000000"
     assert calls["template_params"]["theme_paper"] == "#ffffff"
+    assert calls["template_params"]["theme_chart_ink"] == "#064e3b"
     assert calls["template_params"]["steam_logo_uri"].startswith("data:image/png;base64,")
     assert calls["template_params"]["title_wordmark_uri"].startswith("data:image/png;base64,")
     assert calls["template_params"]["pixel_kaiju_uri"].startswith("data:image/png;base64,")
@@ -141,7 +167,7 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     assert "header_scene_uri" not in calls["template_params"]
     assert calls["template_params"]["yahei_font_uri"] == "file:///fonts/msyh.ttc"
     assert calls["template_params"]["yahei_bold_font_uri"] == "file:///fonts/msyhbd.ttc"
-    assert calls["template_params"]["updated_at_text"].startswith("刷新时间 ")
+    assert calls["template_params"]["updated_at_text"].startswith("\u5237\u65b0\u65f6\u95f4 ")
     assert calls["template_params"]["plugin_settings"]["backgroundColor"] == "#ffffff"
     assert calls["template_params"]["plugin_settings"]["textColor"] == "#000000"
     assert calls["template_params"]["plugin_settings"]["selectedFrame"] == "None"
@@ -222,6 +248,54 @@ def test_generate_image_combined_mode_renders_two_top_five_live_groups():
     assert left_metric_scale == right_metric_scale
 
 
+def _polyline_y_span(svg):
+    points = svg.split('points="', 1)[1].split('"', 1)[0].split()
+    y_values = [float(pair.split(",", 1)[1]) for pair in points]
+    return max(y_values) - min(y_values)
+
+
+def test_sparkline_generator_supports_line_and_bar_shapes():
+    points = [[index * 1000, 100 + index * index] for index in range(40)]
+
+    line_svg = SteamCharts._generate_sparkline_svg(points, chart_style="line")
+    bar_svg = SteamCharts._generate_sparkline_svg(points, chart_style="bars")
+
+    assert line_svg.startswith("<polyline")
+    assert "<rect" not in line_svg
+    assert bar_svg.count("<rect") == 30
+    assert "<polyline" not in bar_svg
+
+
+def test_line_sparkline_exaggerates_vertical_movement_without_touching_edges():
+    points = [[index * 1000, 100 + index * index] for index in range(40)]
+    svg = SteamCharts._generate_sparkline_svg(points, chart_style="line")
+    point_pairs = svg.split('points="', 1)[1].split('"', 1)[0].split()
+    y_values = [float(pair.split(",", 1)[1]) for pair in point_pairs]
+
+    assert _polyline_y_span(svg) >= 25.0
+    assert min(y_values) >= 2.0
+    assert max(y_values) <= 28.0
+
+def test_pil_fallback_draws_line_and_bar_sparklines():
+    image = Image.new("RGB", (240, 40), "white")
+    draw = ImageDraw.Draw(image)
+    points = [[index * 1000, 100 + index * index] for index in range(40)]
+    line_svg = SteamCharts._generate_sparkline_svg(points, chart_style="line")
+    bar_svg = SteamCharts._generate_sparkline_svg(points, chart_style="bars")
+
+    assert SteamCharts._draw_sparkline_svg(draw, bar_svg, (0, 0, 110, 30), (0, 0, 0))
+    assert SteamCharts._draw_sparkline_svg(draw, line_svg, (130, 0, 240, 30), (0, 0, 0))
+    colors = dict((color, count) for count, color in image.getcolors(maxcolors=image.width * image.height))
+    assert colors[(0, 0, 0)] > 50
+
+def test_compact_sparkline_widths_match_group_shape():
+    assert SteamCharts._compact_sparkline_width_ratio("trending", '<polyline points="0,10 120,20" />') == 0.64
+    assert SteamCharts._compact_sparkline_width_ratio("top_records", '<polyline points="0,10 120,20" />') == 0.64
+    assert SteamCharts._compact_sparkline_width_ratio("top_games", '<rect x="0" y="4" width="3" height="26" />') == 0.64
+    assert SteamCharts._compact_sparkline_y_offset("trending") == 0
+    assert SteamCharts._compact_sparkline_y_offset("top_records") == 0
+    assert SteamCharts._compact_sparkline_y_offset("top_games") == 5
+
 def test_metric_font_scale_prioritizes_full_player_counts():
     short = SteamCharts._metric_font_scale("821")
     current_count = SteamCharts._metric_font_scale("1,146,000")
@@ -262,6 +336,47 @@ def test_compact_font_scales_expand_short_text_and_shrink_long_text():
     assert float(long_game["name_font_scale"]) < 1
 
 
+def test_prepared_games_use_bold_safe_cjk_middle_dot_without_control_chars():
+    name = "TBH: \u5854\u65af\u514b\u5df4\u00b7\u82f1\u96c4"
+    expected_display = "TBH: \u5854\u65af\u514b\u5df4\u2027\u82f1\u96c4"
+
+    compact = SteamCharts._prepare_compact_games(
+        "top_games",
+        [
+            {
+                "rank": 1,
+                "app_id": 3678970,
+                "name": name,
+                "image": "",
+                "current_players_fmt": "470,984",
+                "peak_players_fmt": "545,349",
+            }
+        ],
+    )[0]
+    table = SteamCharts._prepare_table_games(
+        "top_games",
+        [
+            {
+                "rank": 1,
+                "app_id": 3678970,
+                "name": name,
+                "image": "",
+                "current_players_fmt": "470,984",
+                "peak_players_fmt": "545,349",
+            }
+        ],
+    )[0]
+
+    assert compact["name"] == name
+    assert table["name"] == name
+    assert compact["display_name"] == expected_display
+    assert table["display_name"] == expected_display
+    assert "\u00b7" not in compact["display_name"]
+    assert "\u00b7" not in table["display_name"]
+    assert "\u2060" not in compact["display_name"]
+    assert "\u2060" not in table["display_name"]
+
+
 def test_generate_image_uses_pil_fallback_when_html_render_fails():
     plugin = _plugin()
     plugin._fetch_games = lambda source, count: [
@@ -285,6 +400,7 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_steam_charts_css_prefers_embedded_yahei_font():
@@ -334,9 +450,9 @@ def test_steam_charts_cover_images_are_scaled_up():
     ).read_text(encoding="utf-8")
 
     assert "--image-width: 18.85vw;" in css
-    assert "grid-template-columns: minmax(96px, 16.4vw) minmax(0, 1fr);" in css
+    assert "grid-template-columns: minmax(104px, 14.4vw) minmax(0, 1fr);" in css
     assert "cover_width = int(width * 0.1885)" in source
-    assert "cover_width = max(101, int(col_width * 0.34))" in source
+    assert "cover_width = max(104, int(col_width * 0.31))" in source
 
 
 def test_steam_charts_compact_metric_divider_favors_title_space():
@@ -356,8 +472,8 @@ def test_steam_charts_compact_metric_divider_favors_title_space():
         / "steam_charts.py"
     ).read_text(encoding="utf-8")
 
-    assert "minmax(7.45rem, 8.65rem)" in css
-    assert "metric_max_width = max(117, int(col_width * 0.351))" in source
+    assert "minmax(6.75rem, 7.65rem)" in css
+    assert "metric_max_width = max(108, int(col_width * 0.30))" in source
 
 
 def test_steam_charts_primary_game_title_minimum_is_scaled_up():
@@ -385,16 +501,73 @@ def test_steam_charts_primary_game_title_minimum_is_scaled_up():
         / "steam_charts.py"
     ).read_text(encoding="utf-8")
 
-    assert "font-size: clamp(18.2px, calc(18px * var(--name-font-scale, 1)), 22px);" in css
-    assert "font-size: clamp(14.04px, calc(14.2px * var(--name-font-scale, 1)), 17px);" in css
-    assert "font-size: clamp(14.3px, calc(18.85px * var(--metric-font-scale, 1)), 21.5px);" in css
-    assert "font-size: clamp(11.7px, calc(12.22px * var(--metric-font-scale, 1)), 14.3px);" in css
-    assert "max-height: 3.18em;" in css
-    assert 'class="compact-title" data-fit-text data-fit-min="14.04"' in template
-    assert 'class="game-name-primary" data-fit-text data-fit-min="14.3"' in template
+    assert "--single-name-size: clamp(18.8px, calc(19.2px * var(--name-font-scale, 1)), 22.2px);" in css
+    assert "--compact-title-size: clamp(13.8px, calc(15.4px * var(--name-font-scale, 1)), 17.4px);" in css
+    assert "--compact-primary-size: clamp(12.4px, calc(16.4px * var(--metric-font-scale, 1)), 19px);" in css
+    assert "--compact-metric-secondary-size: clamp(9.6px, calc(10.8px * var(--metric-font-scale, 1)), 12.6px);" in css
+    assert "max-height: 2.26em;" in css
+    assert 'class="compact-title" data-fit-text data-fit-min="13.8"' in template
+    assert 'class="game-name-primary" data-fit-text data-fit-min="15"' in template
     assert "self._scaled_font_size(name_font_size, name_scale, 13)" in source
     assert "self._scaled_font_size(name_font_size, name_scale, 14)" in source
 
+
+def test_steam_charts_combined_template_draws_compact_sparklines():
+    base = Path(__file__).resolve().parents[1]
+    template = (
+        base
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
+    css = (
+        base
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+    source = (
+        base
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "steam_charts.py"
+    ).read_text(encoding="utf-8")
+
+    assert "class=\"compact-sparkline compact-sparkline--{{ group.table_variant | replace('_', '-') }}\"" in template
+    assert "{{ game.sparkline_svg | safe }}" in template
+    assert "--chart-ink: {{ theme_chart_ink }};" in template
+    assert "--chart-ink: #064e3b;" in css
+    assert "width: var(--compact-sparkline-width, 64%);" in css
+    assert "margin-left: auto;" in css
+    assert "overflow: visible;" in css
+    assert "overflow-wrap: normal;" in css
+    assert "word-break: keep-all;" in css
+    assert ".compact-sparkline--top-games" in css
+    assert "transform: translateY(5px);" in css
+    assert "--compact-sparkline-width: 96%;" not in css
+    assert "stroke: var(--chart-ink);" in css
+    assert "fill: var(--chart-ink);" in css
+    assert ".sparkline-cell svg rect" in css
+    assert ".compact-sparkline polyline" in css
+    assert ".compact-sparkline rect" in css
+    assert "SPARKLINE_INK = (6, 78, 59)" in source
+    assert "LINE_SPARKLINE_AMPLIFICATION = 1.55" in source
+    assert "LINE_SPARKLINE_EDGE_PADDING = 2.0" in source
+    assert "chart_ink = SPARKLINE_INK" in source
+    assert "sparkline_y_offset = self._compact_sparkline_y_offset" in source
+    assert "sparkline_bottom_gap = max(3, int(height * 0.006))" in source
+    assert "BOLD_SAFE_MIDDLE_DOT = \"\\u2027\"" in source
+    assert "MIDDLE_DOT_DISPLAY_TRANSLATION" in source
+    assert "WORD_JOINER" not in source
+    assert "CJK_MIDDLE_DOT_RE" not in source
+    assert "def _draw_sparkline_svg" in source
+    assert "def _compact_sparkline_width_ratio" in source
+    assert "def _compact_sparkline_y_offset" in source
 
 def test_steam_charts_template_embeds_yahei_font_faces():
     template = (
@@ -421,9 +594,9 @@ def test_steam_charts_template_marks_overflow_text_for_dynamic_fit():
         / "steam_charts.html"
     ).read_text(encoding="utf-8")
 
-    assert 'data-fit-text data-fit-min="14.04">{{ game.name }}' in template
-    assert 'data-fit-text data-fit-min="14.3">{{ game.primary_metric }}' in template
-    assert 'data-fit-text data-fit-min="11.7">{{ game.secondary_metric }}' in template
+    assert 'data-fit-text data-fit-min="13.8">{{ game.display_name | default(game.name) }}' in template
+    assert 'data-fit-text data-fit-min="12.4">{{ game.primary_metric }}' in template
+    assert 'data-fit-text data-fit-min="9.6">{{ game.secondary_metric }}' in template
     assert "function fitAllText()" in template
     assert "document.fonts.ready.then(fitAllText)" in template
 
@@ -476,6 +649,12 @@ def test_steam_charts_uses_transparent_title_wordmark():
     assert "title_wordmark_uri" in template
     assert "steam_logo_uri" in template
     assert "class=\"steam-logo\"" in template
+    assert "--logo-size: min(11.31dvh, 7.15vw);" in css
+    assert "--logo-size: min(8.84dvh, 4.03rem);" in css
+    assert "class=\"header-kaiju\"" in template
+    assert ".header-kaiju" in css
+    assert "display: none;" in css
+    assert ".layout-combined .header-kaiju" not in css
     assert "transform: translate(0.8vw, 9dvh);" in css
     assert template.index("steam_logo_uri") < template.index("title_wordmark_uri")
     assert "class=\"title-wordmark\"" in template
@@ -508,7 +687,11 @@ def test_steam_charts_title_wordmark_tints_for_night_theme():
 def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
     logo_calls = []
     wordmark_calls = []
-    monkeypatch.setattr(SteamCharts, "_paste_pixel_kaiju", staticmethod(lambda *args: True))
+
+    def fail_paste_kaiju(*_args):
+        raise AssertionError("Steam Charts fallback should hide the header kaiju")
+
+    monkeypatch.setattr(SteamCharts, "_paste_pixel_kaiju", staticmethod(fail_paste_kaiju))
 
     def fake_paste_wordmark(_target, x, y, max_size, _theme_colors):
         wordmark_calls.append((x, y, max_size))
@@ -528,8 +711,87 @@ def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
         [{"title": "Trending Top 5", "subtitle": "24h movers", "games": []}],
     )
 
-    assert logo_calls == [(26, 42, 32)]
-    assert wordmark_calls == [(61, 18, (288, 51))]
+    assert logo_calls == [(26, 22, 42)]
+    assert wordmark_calls == [(71, 18, (288, 51))]
+    logo_y, logo_size = logo_calls[0][1], logo_calls[0][2]
+    wordmark_y, wordmark_height = wordmark_calls[0][1], wordmark_calls[0][2][1]
+    assert abs((logo_y + logo_size / 2) - (wordmark_y + wordmark_height / 2)) <= 1
+
+
+def test_steam_charts_single_fallback_aligns_logo_with_title_wordmark(monkeypatch):
+    logo_calls = []
+    wordmark_calls = []
+
+    def fake_paste_wordmark(_target, x, y, max_size, _theme_colors):
+        wordmark_calls.append((x, y, max_size))
+        return True
+
+    monkeypatch.setattr(SteamCharts, "_paste_title_wordmark", staticmethod(fake_paste_wordmark))
+
+    def fake_paste_logo(_target, x, y, size, _theme_colors):
+        logo_calls.append((x, y, size))
+
+    monkeypatch.setattr(SteamCharts, "_paste_steam_logo", staticmethod(fake_paste_logo))
+
+    plugin = _plugin()
+    plugin._render_fallback_image(
+        (800, 480),
+        "Player Count",
+        "top_games",
+        [],
+        show_images=False,
+    )
+
+    assert logo_calls == [(28, 22, 54)]
+    assert wordmark_calls == [(85, 20, (312, 57))]
+    logo_y, logo_size = logo_calls[0][1], logo_calls[0][2]
+    wordmark_y, wordmark_height = wordmark_calls[0][1], wordmark_calls[0][2][1]
+    assert abs((logo_y + logo_size / 2) - (wordmark_y + wordmark_height / 2)) <= 1
+
+
+def test_generate_image_skips_html_render_when_pil_first_configured():
+    plugin = _plugin()
+    plugin._fetch_games = lambda source, count: [
+        {
+            "rank": 1,
+            "app_id": 730,
+            "name": "Counter-Strike 2",
+            "image": "",
+            "change_24h_fmt": "+12.5%",
+            "current_players_fmt": "1,234,567",
+        }
+    ]
+    plugin._apply_store_metadata = lambda games, include_images: None
+    plugin.render_image = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("HTML renderer should be skipped")
+    )
+
+    image = plugin.generate_image(
+        {
+            "mode": "new_trending",
+            "itemsCount": "1",
+            "showImages": "false",
+            "themeMode": "night",
+            "preferPilFallback": "true",
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert image.mode == "RGB"
+    assert "inkypi_skip_cache" not in image.info
+
+
+def test_prefer_pil_fallback_first_honors_setting_and_env(monkeypatch):
+    assert SteamCharts._prefer_pil_fallback_first({}) is False
+    assert SteamCharts._prefer_pil_fallback_first({"preferPilFallback": "true"}) is True
+    assert SteamCharts._prefer_pil_fallback_first({"preferPilFallback": "false"}) is False
+
+    monkeypatch.setenv("INKYPI_STEAM_CHARTS_PIL_FIRST", "1")
+    assert SteamCharts._prefer_pil_fallback_first({}) is True
+
+    monkeypatch.setenv("INKYPI_STEAM_CHARTS_PIL_FIRST", "0")
+    assert SteamCharts._prefer_pil_fallback_first({}) is False
 
 def test_steam_charts_pixel_kaiju_asset_is_transparent_header_cutout():
     kaiju = Image.open(STEAM_PIXEL_KAIJU_PATH).convert("RGBA")
@@ -569,7 +831,7 @@ def test_font_match_rejects_non_cjk_sans_fallbacks():
 def test_updated_at_uses_device_timezone():
     utc_now = datetime(2026, 5, 28, 2, 15, tzinfo=ZoneInfo("UTC"))
 
-    assert SteamCharts._format_updated_at(FakeDeviceConfig(), utc_now) == "刷新时间 05/27 19:15"
+    assert SteamCharts._format_updated_at(FakeDeviceConfig(), utc_now) == "\u5237\u65b0\u65f6\u95f4 05/27 19:15"
 
 
 def test_steam_logo_renders_theme_colors():

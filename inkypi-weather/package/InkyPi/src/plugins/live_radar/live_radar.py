@@ -88,9 +88,10 @@ DEFAULT_ROOMS_TEXT = "\n".join(
         "bilibili|20984",
         "bilibili|23668205",
         "douyu|8682569",
-        "bilibili|30931147",
         "bilibili|382436",
+        "bilibili|173551",
         "twitch|jie_220",
+        "twitch|ludwig",
     ]
 )
 CACHE_SCHEMA_VERSION = "live-radar-card-wall-v1"
@@ -154,6 +155,12 @@ SECTION_TITLE_WORDMARK_SIZES = {
 }
 TITLE_WORDMARK_OFFSET_X = -35
 TITLE_LOGO_SCALE = 1.4
+CARD_DETAIL_FONT_SIZE_NUDGE = 2
+CARD_DETAIL_Y_NUDGE = 2
+CARD_META_Y_NUDGE = 2
+LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
+LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
+COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
 SANS_FONT_PATHS = {
     "normal": (
         LIVE_RADAR_FONT_FILE,
@@ -759,7 +766,7 @@ class LiveRadar(BasePlugin):
 
         pill_font = self._font(10 if large else 9, "bold")
         body_font = self._font(20 if large else 14, "bold")
-        title_font = self._font(13 if large else 10)
+        title_font = self._font(13 + CARD_DETAIL_FONT_SIZE_NUDGE if large else 10 + CARD_DETAIL_FONT_SIZE_NUDGE, "bold")
         meta_font = self._font(10 if large else 9, "bold")
 
         pad = 14 if large else 10
@@ -797,7 +804,7 @@ class LiveRadar(BasePlugin):
             body_font = self._fit_font(draw, owner_text, text_w, 13 if snapshot_h else 14, 9, "bold")
             owner = self._fit_text(draw, owner_text, body_font, text_w)
             draw.text((text_x, text_y), owner, fill=ink, font=body_font)
-            detail_y = text_y + self._line_height(body_font) + 1
+            detail_y = text_y + self._line_height(body_font) + 1 + CARD_DETAIL_Y_NUDGE
             if detail_y + self._line_height(title_font) <= y + h - 3:
                 detail = self._fit_text(draw, card["title"] or self._meta_text(card), title_font, w - 2 * pad)
                 draw.text((x + pad, detail_y), detail, fill=muted, font=title_font)
@@ -866,10 +873,11 @@ class LiveRadar(BasePlugin):
         meta_font = self._fit_font(draw, meta_text, text_w, 10 if snapshot_h else 12, 8, "bold")
         meta_h = self._line_height(meta_font)
         meta_y = max(text_top + self._line_height(body_font) + 2, text_bottom - meta_h)
+        meta_y = min(y + h - meta_h - 6, meta_y + CARD_META_Y_NUDGE)
         meta = self._fit_text(draw, meta_text, meta_font, text_w)
 
         title = card["title"] or self._offline_title(card)
-        title_y = text_top + self._line_height(body_font) + (2 if snapshot_h else 5)
+        title_y = text_top + self._line_height(body_font) + (2 if snapshot_h else 5) + CARD_DETAIL_Y_NUDGE
         title_space = max(0, meta_y - title_y - 2)
         max_lines = 1 if snapshot_h else 2
         title_font, title_lines = self._fit_wrapped_text(
@@ -878,8 +886,9 @@ class LiveRadar(BasePlugin):
             text_w,
             title_space,
             max_lines,
-            10 if snapshot_h else 14,
+            LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE if snapshot_h else LIVE_CARD_TITLE_MAX_SIZE,
             7,
+            "bold",
         )
         line_h = self._line_height(title_font) + 1
         for line in title_lines:
@@ -1424,10 +1433,10 @@ class LiveRadar(BasePlugin):
         owner_text = self._card_display_name(card)
         name_font = self._fit_font(draw, owner_text, text_w, 12, 9, "bold")
         detail_text = card["title"] or self._meta_text(card)
-        detail_font = self._fit_font(draw, detail_text, text_w, 8, 7)
+        detail_font = self._fit_font(draw, detail_text, text_w, COMPACT_CARD_DETAIL_MAX_SIZE, 7, "bold")
 
         name_y = y + max(5, int((h - self._line_height(name_font) - self._line_height(detail_font) - 2) / 2))
-        detail_y = name_y + self._line_height(name_font) + 2
+        detail_y = name_y + self._line_height(name_font) + 2 + CARD_DETAIL_Y_NUDGE
         owner = self._fit_text(draw, owner_text, name_font, text_w)
         detail = self._fit_text(draw, detail_text, detail_font, text_w)
         draw.text((text_x, name_y), owner, fill=ink, font=name_font)

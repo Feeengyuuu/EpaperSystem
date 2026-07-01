@@ -23,17 +23,19 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="feed_urls">RSS 新闻源</label>
-  <textarea class="form-control" name="feed_urls" id="feed_urls" rows="11">BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
-BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
-NPR新闻|https://feeds.npr.org/1001/rss.xml
-纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
-卫报国际|https://www.theguardian.com/world/rss
-半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
-法国24|https://www.france24.com/en/rss
-德国之声|https://rss.dw.com/rdf/rss-en-all
-PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
-ABC国际|https://abcnews.go.com/abcnews/internationalheadlines</textarea>
+  <label class="form-label" for="feed_urls">RSS 新闻源（大陆 / 世界）</label>
+  <textarea class="form-control" name="feed_urls" id="feed_urls" rows="15">大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml
+大陆新闻:人民网时政|https://www.people.com.cn/rss/politics.xml
+大陆新闻:中国新闻网国内|https://www.chinanews.com.cn/rss/china.xml
+世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+世界新闻:NPR新闻|https://feeds.npr.org/1001/rss.xml
+世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+世界新闻:卫报国际|https://www.theguardian.com/world/rss
+世界新闻:半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+世界新闻:法国24|https://www.france24.com/en/rss
+世界新闻:德国之声|https://rss.dw.com/rdf/rss-en-all
+世界新闻:PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+世界新闻:ABC国际|https://abcnews.go.com/abcnews/internationalheadlines</textarea>
 </div>
 
 <div class="form-group">
@@ -43,7 +45,7 @@ ABC国际|https://abcnews.go.com/abcnews/internationalheadlines</textarea>
 
 <div class="form-group">
   <label class="form-label" for="daily_api_limit">每日 API 调用上限</label>
-  <input type="number" class="form-control" name="daily_api_limit" id="daily_api_limit" min="1" max="5" value="1">
+  <input type="number" class="form-control" name="daily_api_limit" id="daily_api_limit" min="1" max="20" value="1">
 </div>
 
 <div class="form-group">

@@ -22,6 +22,18 @@ import time
 
 logger = logging.getLogger(__name__)
 
+
+SPARKLINE_INK = (6, 78, 59)
+LINE_SPARKLINE_AMPLIFICATION = 1.55
+LINE_SPARKLINE_EDGE_PADDING = 2.0
+SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
+BOLD_SAFE_MIDDLE_DOT = "\u2027"
+MIDDLE_DOT_DISPLAY_TRANSLATION = str.maketrans({
+    "\u00b7": BOLD_SAFE_MIDDLE_DOT,
+    "\u2219": BOLD_SAFE_MIDDLE_DOT,
+    "\u0387": BOLD_SAFE_MIDDLE_DOT,
+})
+
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.dirname(os.path.dirname(PLUGIN_DIR))
 STATIC_FONT_DIR = os.path.join(SRC_DIR, "static", "fonts")
@@ -208,6 +220,7 @@ class SteamCharts(BasePlugin):
             "theme_mode": theme_context.get("mode", "day"),
             "theme_ink": rgb_to_hex(theme_colors["ink"]),
             "theme_paper": rgb_to_hex(theme_colors["paper"]),
+            "theme_chart_ink": rgb_to_hex(SPARKLINE_INK),
             "steam_logo_uri": self._steam_logo_data_uri(theme_colors),
             "title_wordmark_uri": self._title_wordmark_data_uri(theme_colors),
             "pixel_kaiju_uri": self._pixel_kaiju_data_uri(),
@@ -226,30 +239,43 @@ class SteamCharts(BasePlugin):
             render_settings[margin_key] = 0
         template_params["plugin_settings"] = render_settings
 
-        image = self.render_image(
-            dimensions, "steam_charts.html", "steam_charts.css", template_params
-        )
-        if image is not None:
-            return image
+        image = None
+        html_render_failed = False
+        prefer_pil_first = self._prefer_pil_fallback_first(settings)
+        if not prefer_pil_first:
+            image = self.render_image(
+                dimensions, "steam_charts.html", "steam_charts.css", template_params
+            )
+            if image is not None:
+                return image
 
-        logger.warning("Steam Charts HTML render failed; using PIL fallback renderer.")
+            html_render_failed = True
+            logger.warning("Steam Charts HTML render failed; using PIL fallback renderer.")
+        else:
+            logger.info("Steam Charts using PIL fallback renderer first on constrained display runtime.")
+
         if table_variant == "combined":
-            return self._render_combined_fallback_image(
+            fallback_image = self._render_combined_fallback_image(
                 dimensions,
                 mode_config["label"],
                 chart_groups,
                 theme_context,
                 updated_at_text,
             )
-        return self._render_fallback_image(
-            dimensions,
-            mode_config["label"],
-            table_variant,
-            games,
-            show_images,
-            theme_context,
-            updated_at_text,
-        )
+        else:
+            fallback_image = self._render_fallback_image(
+                dimensions,
+                mode_config["label"],
+                table_variant,
+                games,
+                show_images,
+                theme_context,
+                updated_at_text,
+            )
+
+        if html_render_failed:
+            fallback_image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
+        return fallback_image
 
     def _fetch_combined_chart_groups(self, items_count, show_images=True):
         groups = []
@@ -292,6 +318,7 @@ class SteamCharts(BasePlugin):
             compact["rank"] = game.get("rank") or index
             compact["primary_metric"] = SteamCharts._primary_metric(table_variant, game)
             compact["secondary_metric"] = SteamCharts._secondary_text(table_variant, game)
+            SteamCharts._apply_display_names(compact)
             SteamCharts._apply_layout_font_scales(compact)
             compact_games.append(compact)
         return compact_games
@@ -303,9 +330,20 @@ class SteamCharts(BasePlugin):
             row = dict(game)
             row["primary_metric"] = SteamCharts._primary_metric(table_variant, game)
             row["secondary_metric"] = SteamCharts._secondary_text(table_variant, game)
+            SteamCharts._apply_display_names(row)
             SteamCharts._apply_layout_font_scales(row)
             prepared.append(row)
         return prepared
+
+    @staticmethod
+    def _apply_display_names(game):
+        game["display_name"] = SteamCharts._display_safe_name(game.get("name", ""))
+        game["display_secondary_name"] = SteamCharts._display_safe_name(game.get("secondary_name", ""))
+        return game
+
+    @staticmethod
+    def _display_safe_name(value):
+        return str(value or "").translate(MIDDLE_DOT_DISPLAY_TRANSLATION)
 
     @staticmethod
     def _apply_layout_font_scales(game):
@@ -477,41 +515,37 @@ class SteamCharts(BasePlugin):
         subtitle_font = self._font(max(15, int(height * 0.04)), "normal")
         meta_font = self._font(max(12, int(height * 0.032)), "normal")
         rank_font = self._font(max(18, int(height * 0.048)), "bold")
-        name_font_size = max(18, int(height * 0.049))
-        english_font_size = max(11, int(height * 0.031))
-        metric_font_size = max(16, int(height * 0.041))
-        small_font_size = max(10, int(height * 0.027))
+        name_font_size = max(19, int(height * 0.046))
+        english_font_size = max(11, int(height * 0.027))
+        metric_font_size = max(15, int(height * 0.036))
+        small_font_size = max(9, int(height * 0.024))
 
         title_y = margin
-        logo_size = max(34, int(height * 0.087))
+        logo_size = max(44, int(height * 0.1131))
         logo_y = title_y + max(1, int(height * 0.006))
         header_text_x = margin + logo_size + max(8, int(width * 0.012))
         subtitle_y = title_y + int(height * 0.09)
         header_art_width = max(76, int(width * 0.115))
 
 
-        self._paste_pixel_kaiju(
-            image,
-            margin + int(width * 0.34),
-            int(height * 0.009),
-            (max(116, int(width * 0.21)), max(58, int(height * 0.19))),
-        )
 
         logo_slot_x = margin + int(width * 0.008)
         wordmark_x = margin + logo_size + max(8, int(width * 0.012))
 
+        wordmark_y = max(0, title_y - int(height * 0.006))
+        wordmark_size = (max(220, int(width * 0.39)), max(48, int(height * 0.12)))
         title_wordmark_drawn = self._paste_title_wordmark(
             image,
             wordmark_x,
-            max(0, title_y - int(height * 0.006)),
-            (max(220, int(width * 0.39)), max(48, int(height * 0.12))),
+            wordmark_y,
+            wordmark_size,
             theme_colors,
         )
         if title_wordmark_drawn:
             self._paste_steam_logo(
                 image,
                 logo_slot_x,
-                title_y + int(height * 0.047),
+                self._centered_logo_y(wordmark_y, wordmark_size, logo_size),
                 logo_size,
                 theme_colors,
             )
@@ -652,6 +686,7 @@ class SteamCharts(BasePlugin):
         theme_colors = self._theme_colors(theme_context)
         ink = theme_colors["ink"]
         paper = theme_colors["paper"]
+        chart_ink = SPARKLINE_INK
         image = Image.new("RGB", dimensions, paper)
         draw = ImageDraw.Draw(image)
 
@@ -662,41 +697,34 @@ class SteamCharts(BasePlugin):
         panel_font = self._font(max(17, int(height * 0.041)), "bold")
         panel_sub_font = self._font(max(11, int(height * 0.027)), "normal")
         rank_font = self._font(max(16, int(height * 0.039)), "bold")
-        name_font_size = max(15, int(height * 0.037))
+        name_font_size = max(16, int(height * 0.037))
         secondary_font_size = max(9, int(height * 0.023))
-        metric_font_size = max(20, int(height * 0.0481))
-        small_font_size = max(12, int(height * 0.0299))
+        metric_font_size = max(17, int(height * 0.0395))
+        small_font_size = max(10, int(height * 0.025))
 
         title_y = margin
-        logo_size = max(28, int(height * 0.068))
+        logo_size = max(36, int(height * 0.0884))
         logo_y = title_y + max(1, int(height * 0.004))
         header_text_x = margin + logo_size + max(8, int(width * 0.012))
         subtitle_y = title_y + int(height * 0.066)
-        header_art_width = max(66, int(width * 0.095))
-
-
-        self._paste_pixel_kaiju(
-            image,
-            margin + int(width * 0.34),
-            int(height * 0.009),
-            (max(116, int(width * 0.21)), max(58, int(height * 0.19))),
-        )
 
         logo_slot_x = margin + int(width * 0.008)
         wordmark_x = margin + logo_size + max(8, int(width * 0.012))
 
+        wordmark_y = max(0, title_y - int(height * 0.006))
+        wordmark_size = (max(210, int(width * 0.36)), max(44, int(height * 0.108)))
         title_wordmark_drawn = self._paste_title_wordmark(
             image,
             wordmark_x,
-            max(0, title_y - int(height * 0.006)),
-            (max(210, int(width * 0.36)), max(44, int(height * 0.108))),
+            wordmark_y,
+            wordmark_size,
             theme_colors,
         )
         if title_wordmark_drawn:
             self._paste_steam_logo(
                 image,
                 logo_slot_x,
-                title_y + int(height * 0.047),
+                self._centered_logo_y(wordmark_y, wordmark_size, logo_size),
                 logo_size,
                 theme_colors,
             )
@@ -738,14 +766,14 @@ class SteamCharts(BasePlugin):
             rows_top = top + panel_header_height
             row_height = max(38, int((bottom - rows_top) / max(1, len(games))))
             rank_x = left
-            cover_width = max(101, int(col_width * 0.34))
+            cover_width = max(104, int(col_width * 0.31))
             cover_height = max(29, int(cover_width * 3 / 8))
-            cover_gap = max(9, int(width * 0.0117))
+            cover_gap = max(6, int(width * 0.007))
             metric_x = right
             title_x = left + max(22, int(col_width * 0.06))
             if any(game.get("image") for game in games):
                 title_x += cover_width + cover_gap
-            metric_max_width = max(117, int(col_width * 0.351))
+            metric_max_width = max(108, int(col_width * 0.30))
             name_max_width = max(70, metric_x - title_x - metric_max_width - int(col_width * 0.025))
 
             for row_index, game in enumerate(games):
@@ -772,43 +800,66 @@ class SteamCharts(BasePlugin):
                     "bold",
                 )
                 name = self._fit_text(draw, name_text, row_name_font, name_max_width)
-                draw.text((title_x, y + int(row_height * 0.06)), name, fill=ink, font=row_name_font)
+                draw.text((title_x, y + int(row_height * 0.05)), name, fill=ink, font=row_name_font)
                 secondary_text = str(game.get("secondary_name") or "")
                 row_secondary_font = self._font_to_fit(
                     draw,
                     secondary_text,
                     name_max_width,
-                    self._scaled_font_size(secondary_font_size, name_scale, 8),
-                    8,
+                    self._scaled_font_size(secondary_font_size, name_scale, 9),
+                    9,
                     "normal",
                 )
                 secondary = self._fit_text(draw, secondary_text, row_secondary_font, name_max_width)
                 if secondary:
-                    draw.text((title_x, y + int(row_height * 0.5)), secondary, fill=ink, font=row_secondary_font)
+                    draw.text((title_x, y + int(row_height * 0.54)), secondary, fill=ink, font=row_secondary_font)
 
                 metric = str(game.get("primary_metric") or "--")
                 row_metric_font = self._font_to_fit(
                     draw,
                     metric,
                     metric_max_width,
-                    self._scaled_font_size(metric_font_size, metric_scale, 14),
-                    14,
+                    self._scaled_font_size(metric_font_size, metric_scale, 12),
+                    12,
                     "bold",
                 )
                 metric_width = draw.textlength(metric, font=row_metric_font)
-                draw.text((metric_x - metric_width, y + int(row_height * 0.08)), metric, fill=ink, font=row_metric_font)
+                draw.text((metric_x - metric_width, y + int(row_height * 0.10)), metric, fill=ink, font=row_metric_font)
                 secondary_metric = str(game.get("secondary_metric") or "")
                 row_small_font = self._font_to_fit(
                     draw,
                     secondary_metric,
                     metric_max_width,
-                    self._scaled_font_size(small_font_size, metric_scale, 12),
-                    12,
+                    self._scaled_font_size(small_font_size, metric_scale, 9),
+                    9,
                     "normal",
                 )
                 if secondary_metric:
                     secondary_width = draw.textlength(secondary_metric, font=row_small_font)
-                    draw.text((metric_x - secondary_width, y + int(row_height * 0.52)), secondary_metric, fill=ink, font=row_small_font)
+                    draw.text((metric_x - secondary_width, y + int(row_height * 0.54)), secondary_metric, fill=ink, font=row_small_font)
+
+                sparkline_height = max(7, int(row_height * 0.16))
+                sparkline_y_offset = self._compact_sparkline_y_offset(group.get("table_variant"))
+                sparkline_bottom_gap = max(3, int(height * 0.006))
+                sparkline_y = min(
+                    y + int(row_height * 0.74) + sparkline_y_offset,
+                    y + row_height - sparkline_height - sparkline_bottom_gap,
+                )
+                sparkline_svg = game.get("sparkline_svg")
+                sparkline_width = max(
+                    1,
+                    int(
+                        metric_max_width
+                        * self._compact_sparkline_width_ratio(group.get("table_variant"), sparkline_svg)
+                    ),
+                )
+                self._draw_sparkline_svg(
+                    draw,
+                    sparkline_svg,
+                    (metric_x - sparkline_width, sparkline_y, metric_x, sparkline_y + sparkline_height),
+                    chart_ink,
+                    max(1, line_width),
+                )
 
                 if row_index < len(games) - 1:
                     separator_y = y + row_height - max(4, int(height * 0.008))
@@ -897,7 +948,26 @@ class SteamCharts(BasePlugin):
     @staticmethod
     def _format_updated_at(device_config, now=None):
         current = SteamCharts._device_local_datetime(device_config, now)
-        return f"刷新时间 {current.strftime('%m/%d %H:%M')}"
+        return f"\u5237\u65b0\u65f6\u95f4 {current.strftime('%m/%d %H:%M')}"
+
+    @staticmethod
+    def _centered_logo_y(wordmark_y, wordmark_size, logo_size):
+        wordmark_height = max(1, int(wordmark_size[1]))
+        return max(0, int(round(wordmark_y + (wordmark_height - int(logo_size)) / 2)))
+
+    @staticmethod
+    def _prefer_pil_fallback_first(settings):
+        setting = str((settings or {}).get("preferPilFallback", "")).strip().lower()
+        if setting in {"1", "true", "yes", "on"}:
+            return True
+        if setting in {"0", "false", "no", "off"}:
+            return False
+        env_value = os.environ.get("INKYPI_STEAM_CHARTS_PIL_FIRST", "").strip().lower()
+        if env_value in {"1", "true", "yes", "on"}:
+            return True
+        if env_value in {"0", "false", "no", "off"}:
+            return False
+        return False
 
     @staticmethod
     def _device_local_datetime(device_config, now=None):
@@ -1023,6 +1093,7 @@ class SteamCharts(BasePlugin):
         )
         target.paste(kaiju, (int(x), int(y)), kaiju)
         return True
+
 
     @staticmethod
     def _theme_title_wordmark(theme_colors):
@@ -1261,6 +1332,59 @@ class SteamCharts(BasePlugin):
         return f"{clipped.rstrip()}{suffix}" if clipped else suffix
 
     @staticmethod
+    def _draw_sparkline_svg(draw, sparkline_svg, box, ink, line_width=1):
+        svg = str(sparkline_svg or "")
+        if not svg:
+            return False
+
+        left, top, right, bottom = [int(v) for v in box]
+        chart_width = max(1, right - left)
+        chart_height = max(1, bottom - top)
+
+        rects = re.findall(
+            r'<rect[^>]*\sx="([^"]+)"[^>]*\sy="([^"]+)"[^>]*\swidth="([^"]+)"[^>]*\sheight="([^"]+)"[^>]*/?>',
+            svg,
+        )
+        if rects:
+            for x, y, width, height in rects:
+                try:
+                    x1 = left + (float(x) / 120) * chart_width
+                    y1 = top + (float(y) / 30) * chart_height
+                    x2 = x1 + max(1, (float(width) / 120) * chart_width)
+                    y2 = y1 + max(1, (float(height) / 30) * chart_height)
+                except ValueError:
+                    continue
+                draw.rectangle((int(x1), int(y1), int(x2), int(y2)), fill=ink)
+            return True
+
+        match = re.search(r'points="([^"]+)"', svg)
+        if not match:
+            return False
+
+        points = []
+        for pair in match.group(1).split():
+            try:
+                raw_x, raw_y = pair.split(",", 1)
+                x = left + (float(raw_x) / 120) * chart_width
+                y = top + (float(raw_y) / 30) * chart_height
+            except ValueError:
+                continue
+            points.append((int(x), int(y)))
+
+        if len(points) < 2:
+            return False
+        draw.line(points, fill=ink, width=max(1, int(line_width)))
+        return True
+
+    @staticmethod
+    def _compact_sparkline_width_ratio(table_variant, sparkline_svg=""):
+        return 0.64
+
+    @staticmethod
+    def _compact_sparkline_y_offset(table_variant):
+        return 5 if table_variant == "top_games" else 0
+
+    @staticmethod
     def _primary_metric(table_variant, game):
         if table_variant == "top_records":
             return str(game.get("peak_players_fmt", "--"))
@@ -1286,7 +1410,9 @@ class SteamCharts(BasePlugin):
         elif source == "steamcharts_top_games":
             games = self._scrape_steamcharts_top_games(count)
             chart_data = self._fetch_chart_data_batch(
-                [g["app_id"] for g in games], sparkline_hours=30 * 24
+                [g["app_id"] for g in games],
+                sparkline_hours=30 * 24,
+                sparkline_style="bars",
             )
         elif source == "steamcharts_top_records":
             games = self._scrape_steamcharts_top_records(count)
@@ -1563,12 +1689,12 @@ class SteamCharts(BasePlugin):
 
         return games
 
-    def _fetch_chart_data_batch(self, app_ids, sparkline_hours=48, include_change=False):
+    def _fetch_chart_data_batch(self, app_ids, sparkline_hours=48, include_change=False, sparkline_style="line"):
         """Fetch chart data for multiple games in parallel with a mode-specific window."""
         results = {}
 
         def fetch_one(app_id):
-            return app_id, self._fetch_chart_stats(app_id, sparkline_hours, include_change)
+            return app_id, self._fetch_chart_stats(app_id, sparkline_hours, include_change, sparkline_style)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(fetch_one, aid): aid for aid in app_ids}
@@ -1603,7 +1729,7 @@ class SteamCharts(BasePlugin):
     def _clean_game_name(name):
         return " ".join(str(name or "").split())
 
-    def _fetch_chart_stats(self, app_id, sparkline_hours=48, include_change=True):
+    def _fetch_chart_stats(self, app_id, sparkline_hours=48, include_change=True, sparkline_style="line"):
         """Fetch chart data and compute a sparkline window plus optional 24h change."""
         try:
             url = STEAMCHARTS_CHART_URL.format(appid=app_id)
@@ -1653,7 +1779,7 @@ class SteamCharts(BasePlugin):
             if target_24h[1] > 0:
                 change_24h = ((current_players - target_24h[1]) / target_24h[1]) * 100
 
-        sparkline_svg = self._generate_sparkline_svg(recent_window)
+        sparkline_svg = self._generate_sparkline_svg(recent_window, chart_style=sparkline_style)
 
         return {
             "current_players": current_players,
@@ -1662,40 +1788,32 @@ class SteamCharts(BasePlugin):
         }
 
     @staticmethod
-    def _generate_sparkline_svg(data_points, width=120, height=30):
+    def _generate_sparkline_svg(data_points, width=120, height=30, chart_style="line"):
         """
-        Generate inline SVG polyline string from [[timestamp_ms, count]] pairs.
-        Includes downsampling, smoothing, and normalization for e-paper.
+        Generate inline SVG content from [[timestamp_ms, count]] pairs.
+        `line` is used for 48-hour movement; `bars` mirrors SteamCharts' 30-day volume strips.
         """
         if not data_points or len(data_points) < 2:
             return None
 
-        # 1. Downsample to ~24 points max
-        target_points = 24
-        if len(data_points) > target_points:
-            indices = [int(i * (len(data_points) - 1) / (target_points - 1)) for i in range(target_points)]
-            data_points = [data_points[i] for i in indices]
+        if chart_style == "bars":
+            return SteamCharts._generate_bar_sparkline_svg(data_points, width, height)
 
+        data_points = SteamCharts._downsample_chart_points(data_points, target_points=24)
         counts = [p[1] for p in data_points]
 
-        # 2. Simple Moving Average (window=5) to smooth the line further
         if len(counts) > 5:
             smoothed = []
             for i in range(len(counts)):
-                # Window of 5: [i-2, i-1, i, i+1, i+2]
-                window = counts[max(0, i-2):min(len(counts), i+3)]
+                window = counts[max(0, i - 2):min(len(counts), i + 3)]
                 smoothed.append(sum(window) / len(window))
             counts = smoothed
 
         min_c, max_c = min(counts), max(counts)
-
-        # 3. Handle flat line or very small variation
         if max_c == min_c or (max_c - min_c) < (max_c * 0.001):
             y = height / 2
             return f'<polyline points="0,{y} {width},{y}" />'
 
-        # 4. Normalize vertical range with a larger margin (15%) to avoid extreme spikes
-        # This keeps the variation readable and prevents touching top/bottom
         range_c = max_c - min_c
         margin = range_c * 0.15
         plot_min = min_c - margin
@@ -1705,12 +1823,57 @@ class SteamCharts(BasePlugin):
         points = []
         for i, c in enumerate(counts):
             x = (i / (len(counts) - 1)) * width
-            # Invert Y for SVG (0 is top)
-            # Ensure we stay within [1, height-1] to account for stroke width
             y = (height - 2) - ((c - plot_min) / plot_range) * (height - 4) + 1
+            y = SteamCharts._amplify_sparkline_y(y, height)
             points.append(f"{x:.1f},{y:.1f}")
 
         return '<polyline points="{}" />'.format(" ".join(points))
+
+    @staticmethod
+    def _amplify_sparkline_y(y, height):
+        center = height / 2
+        amplified = center + (y - center) * LINE_SPARKLINE_AMPLIFICATION
+        lower = LINE_SPARKLINE_EDGE_PADDING
+        upper = height - LINE_SPARKLINE_EDGE_PADDING
+        return min(upper, max(lower, amplified))
+
+    @staticmethod
+    def _generate_bar_sparkline_svg(data_points, width=120, height=30):
+        data_points = SteamCharts._downsample_chart_points(data_points, target_points=30)
+        counts = [p[1] for p in data_points]
+        if not counts:
+            return None
+
+        min_c, max_c = min(counts), max(counts)
+        usable_height = max(1, height - 2)
+        step = width / len(counts)
+        bar_width = max(1.0, step * 0.72)
+        rects = []
+
+        for i, count in enumerate(counts):
+            if max_c == min_c or (max_c - min_c) < (max_c * 0.001):
+                ratio = 0.58
+            else:
+                ratio = (count - min_c) / (max_c - min_c)
+                ratio = 0.18 + ratio * 0.82
+            bar_height = max(1.0, ratio * usable_height)
+            x = i * step + (step - bar_width) / 2
+            y = height - 1 - bar_height
+            rects.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" />'
+            )
+
+        return "".join(rects)
+
+    @staticmethod
+    def _downsample_chart_points(data_points, target_points):
+        if len(data_points) <= target_points:
+            return data_points
+        indices = [
+            int(i * (len(data_points) - 1) / (target_points - 1))
+            for i in range(target_points)
+        ]
+        return [data_points[i] for i in indices]
 
     @staticmethod
     def _format_count(count):

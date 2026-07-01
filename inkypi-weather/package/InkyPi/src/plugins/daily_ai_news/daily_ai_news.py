@@ -51,7 +51,8 @@ SECTION_WORDMARK_SIZES = {
     "us_stock": (108, 28),
 }
 SECTION_WORDMARK_Y_OFFSET = -3
-SUMMARY_SCHEMA_VERSION = "fresh-hard-news-rss-only-dedupe-v10"
+SECTION_HEADER_RULE_Y_OFFSET = 27
+SUMMARY_SCHEMA_VERSION = "mainland-world-rss-only-dedupe-v14"
 DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
 DEFAULT_MAX_FEEDS = 16
 LEGACY_DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
@@ -59,7 +60,7 @@ BBC World|https://feeds.bbci.co.uk/news/world/rss.xml
 NPR|https://feeds.npr.org/1001/rss.xml
 NYTimes World|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
 Guardian World|https://www.theguardian.com/world/rss"""
-DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
+LEGACY_WORLD_ONLY_DEFAULT_FEEDS = """BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml
 BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
 NPR新闻|https://feeds.npr.org/1001/rss.xml
 纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
@@ -69,6 +70,19 @@ NPR新闻|https://feeds.npr.org/1001/rss.xml
 德国之声|https://rss.dw.com/rdf/rss-en-all
 PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
 ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
+DEFAULT_MAINLAND_FEEDS = """大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml
+大陆新闻:人民网时政|https://www.people.com.cn/rss/politics.xml
+大陆新闻:中国新闻网国内|https://www.chinanews.com.cn/rss/china.xml"""
+DEFAULT_WORLD_FEEDS = """世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+世界新闻:NPR新闻|https://feeds.npr.org/1001/rss.xml
+世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+世界新闻:卫报国际|https://www.theguardian.com/world/rss
+世界新闻:半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+世界新闻:法国24|https://www.france24.com/en/rss
+世界新闻:德国之声|https://rss.dw.com/rdf/rss-en-all
+世界新闻:PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+世界新闻:ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
+DEFAULT_FEEDS = f"{DEFAULT_MAINLAND_FEEDS}\n{DEFAULT_WORLD_FEEDS}"
 MARKET_GROUPS = {
     "a_share": [
         ("000001.SS", "上证指数"),
@@ -88,10 +102,32 @@ MASSIVE_INDEX_TICKERS = {
 }
 
 SECTION_LABELS = {
-    "top": "今日头条",
+    "top": "大陆新闻",
+    "quick": "世界快报",
     "a_share": "A股今日",
     "us_stock": "美股今日",
 }
+
+FEED_SECTION_PREFIXES = {
+    "大陆": "mainland",
+    "大陆新闻": "mainland",
+    "国内": "mainland",
+    "中国": "mainland",
+    "世界": "world",
+    "世界新闻": "world",
+    "世界快报": "world",
+    "国际": "world",
+    "全球": "world",
+}
+MAINLAND_FEED_HOST_HINTS = (
+    "chinanews.com",
+    "news.cn",
+    "xinhuanet.com",
+    "people.com.cn",
+    "cctv.com",
+)
+MAINLAND_NEWS_MAX = 4
+WORLD_NEWS_MAX = 5
 
 TRADITIONAL_PHRASE_REPLACEMENTS = (
     ("繁體中文", "简体中文"),
@@ -805,8 +841,12 @@ class DailyAINews(BasePlugin):
         if not isinstance(payload, dict):
             return
 
+        context_news = self._as_list(payload.get("top"), MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
+        if not context_news:
+            context_news = self._as_list(payload.get("mainland"), MAINLAND_NEWS_MAX) + self._as_list(payload.get("world"), WORLD_NEWS_MAX)
+
         items = []
-        for item in (payload.get("top") or [])[:7]:
+        for item in context_news[:MAINLAND_NEWS_MAX + WORLD_NEWS_MAX]:
             if isinstance(item, dict):
                 title = str(item.get("title") or "").strip()
                 why = str(item.get("why") or "").strip()
@@ -834,15 +874,18 @@ class DailyAINews(BasePlugin):
         model = (settings.get("model") or DEFAULT_MODEL).strip()
         feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = _parse_int(settings.get("max_items"), 22, 6, 40)
-        force_refresh = _enabled(settings.get("force_refresh"))
+        cache_only_render = _enabled(settings.get("_cached_render_only") or settings.get("cached_render_only"))
+        force_refresh = _enabled(settings.get("force_refresh")) and not cache_only_render
         date_key = now.strftime("%Y-%m-%d")
         cache_key = self._cache_key(date_key, model, feeds_text, max_items, settings.get("region_focus"))
 
         cache_file = self._cache_dir() / "brief.json"
         cached = _safe_json_load(cache_file, {})
         cache_matches_current_settings = cached.get("cache_key") == cache_key
-        if cache_matches_current_settings and not force_refresh:
+        if cached.get("brief") and (cache_only_render or (cache_matches_current_settings and not force_refresh)):
             cached["from_cache"] = True
+            if cache_only_render and not cache_matches_current_settings:
+                cached["warning"] = "仅重渲染显示，复用现有新闻缓存。"
             return cached
 
         items = self._fetch_items(feeds_text, max_items)
@@ -928,8 +971,33 @@ class DailyAINews(BasePlugin):
         urls = {self._normalize_feed_url(url) for _name, url in feeds if self._normalize_feed_url(url)}
         if not urls:
             return True
-        legacy_urls = {self._normalize_feed_url(url) for _name, url in self._parse_feeds(LEGACY_DEFAULT_FEEDS)}
-        if urls == legacy_urls:
+        legacy_feed_sets = (LEGACY_DEFAULT_FEEDS, LEGACY_WORLD_ONLY_DEFAULT_FEEDS)
+        for legacy_text in legacy_feed_sets:
+            legacy_urls = {self._normalize_feed_url(url) for _name, url in self._parse_feeds(legacy_text)}
+            if urls == legacy_urls:
+                return True
+        historical_default_urls = {
+            self._normalize_feed_url(url)
+            for _name, url in self._parse_feeds(DEFAULT_FEEDS)
+        }
+        historical_default_urls.update({
+            "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml",
+            "https://www.chinanews.com.cn/rss/scroll-news.xml",
+        })
+        required_regional_default_urls = {
+            "https://www.news.cn/politics/news_politics.xml",
+            "https://www.people.com.cn/rss/politics.xml",
+            "https://www.chinanews.com.cn/rss/china.xml",
+            "https://feeds.bbci.co.uk/news/world/rss.xml",
+        }
+        if (
+            urls <= historical_default_urls
+            and required_regional_default_urls <= urls
+            and (
+                "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml" in urls
+                or "https://www.chinanews.com.cn/rss/scroll-news.xml" in urls
+            )
+        ):
             return True
         if urls and all("bbci.co.uk" in url or "bbc.co.uk" in url or "bbc.com" in url for url in urls):
             return True
@@ -939,8 +1007,31 @@ class DailyAINews(BasePlugin):
     def _normalize_feed_url(url: str) -> str:
         return str(url or "").strip().rstrip("/")
 
+    def _feed_source_and_section(self, source: str, url: str) -> tuple[str, str]:
+        label = str(source or "").strip()
+        section = ""
+        for prefix, mapped_section in FEED_SECTION_PREFIXES.items():
+            for separator in (":", "："):
+                marker = f"{prefix}{separator}"
+                if label.startswith(marker):
+                    label = label[len(marker):].strip()
+                    section = mapped_section
+                    break
+            if section:
+                break
+
+        if not section:
+            normalized_url = self._normalize_feed_url(url).lower()
+            section = "mainland" if any(hint in normalized_url for hint in MAINLAND_FEED_HOST_HINTS) else "world"
+
+        return label or str(source or url).strip(), section
+
+    def _item_section(self, item: dict[str, Any]) -> str:
+        section = str(item.get("section") or "").strip().lower()
+        return section if section in {"mainland", "world"} else "world"
+
     def _allow_api_call(self, settings, date_key: str) -> bool:
-        limit = _parse_int(settings.get("daily_api_limit"), 1, 1, 5)
+        limit = _parse_int(settings.get("daily_api_limit"), 1, 1, 20)
         state = _safe_json_load(self._cache_dir() / "state.json", {})
         if state.get("date") != date_key:
             return True
@@ -978,6 +1069,7 @@ class DailyAINews(BasePlugin):
         per_feed_limit = max(3, min(8, (max_items * 2 + len(feeds) - 1) // len(feeds)))
         entry_scan_limit = max(12, per_feed_limit * 2)
         for source, url in feeds:
+            display_source, section = self._feed_source_and_section(source, url)
             try:
                 resp = requests.get(
                     url,
@@ -1000,7 +1092,8 @@ class DailyAINews(BasePlugin):
                     continue
                 seen.add(key)
                 items.append({
-                    "source": source,
+                    "source": display_source,
+                    "section": section,
                     "title": title,
                     "summary": _clean_text(
                         entry.get("summary", "") or entry.get("description", ""),
@@ -1276,10 +1369,10 @@ class DailyAINews(BasePlugin):
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
         system = (
-            "你是中文新闻编辑。只根据用户提供的 RSS 条目写简体中文每日简报。"
+            "你是中文新闻编辑。只根据用户提供的 RSS 条目写简体中文整点新闻。"
             "所有中文必须使用简体中文，不得使用繁体中文或港澳台繁体词形。"
             "所有用户可见文字必须是简体中文；常见英文地名、人名、组织名必须译成通用简体中文。"
-            "top 新闻只能来自 RSS 条目，不能使用市场行情、常识或背景知识补充。"
+            "mainland 新闻只能来自 section=mainland 的 RSS 条目，world 新闻只能来自 section=world 的 RSS 条目。"
             "新闻必须强调今天或最近一次更新的具体变化，标题要具体，避免宏观空话。"
             "输出必须是一个 JSON object，不要 Markdown。"
         )
@@ -1288,7 +1381,8 @@ class DailyAINews(BasePlugin):
             "style": settings.get("region_focus") or "china_global",
             "output_schema": {
                 "lede": "不超过32字的总览",
-                "top": [{"title": "包含对象、动作、结果的具体标题", "why": "为什么重要"}],
+                "mainland": [{"title": "大陆新闻标题", "why": "为什么重要"}],
+                "world": [{"title": "世界新闻标题", "why": "为什么重要"}],
                 "sources": ["来源名"],
             },
             "rules": [
@@ -1296,14 +1390,15 @@ class DailyAINews(BasePlugin):
                 "不要留下英文单词或英文地名，例如 Moscow 必须写成莫斯科，United States 必须写成美国，Iran 必须写成伊朗",
                 "如果无法确定某个英文术语的标准中文译名，必须改写句子，不要把英文原词放进 title、why 或 lede",
                 "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
-                "top 给 7 条，每条 title 18到28字，why 16到26字",
-                "top 只选最近 24-48 小时内有明确新进展的硬新闻；优先冲突、政策、事故、市场、外交、法律、重大科技治理",
-                "top 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
+                "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
+                "world 给 3 到 5 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
+                "如果某个分区素材不足，宁可少写，不得跨区挪用，也不得编造新闻",
+                "mainland 和 world 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
                 "不得写 RSS items 中不存在的人名、机构、政策或市场事件",
-                "top 中同一事件只能出现一次，不要用不同标题重复同一军事行动、谈判或事故",
+                "同一事件只能出现一次，不要用不同标题重复同一军事行动、谈判或事故",
                 "title 必须包含具体人物/机构/地点/事件动作/结果，禁止只写宏观分类",
                 "避免使用“引发讨论”“风险升级”“议题焦点”“全球媒体聚焦”这类宽泛标题，除非同时写清具体事件",
-                "不要把人生、心理健康、生活方式、科普解释稿、旧背景稿放进 top，除非它们是当天重大政策或公共事件",
+                "不要把人生、心理健康、生活方式、科普解释稿、旧背景稿放进新闻列表，除非它们是当天重大政策或公共事件",
                 "lede 必须概括今天最重要的新变化，不要写“今日新闻简报已生成”",
                 "尽量保留素材里的数字、地点、人物、机构和动作",
                 "sources 只能从 items 里已有的 source 字段原样选择，最多5个，不得自造来源名",
@@ -1345,7 +1440,7 @@ class DailyAINews(BasePlugin):
         if not content:
             raise RuntimeError("OpenAI returned an empty summary.")
         brief = self._parse_brief_json(content)
-        brief["top"] = self._dedupe_top_items(brief.get("top") or [], items)
+        brief = self._postprocess_brief_news(brief, items)
         brief["sources"] = self._clean_brief_sources(brief.get("sources"), items)
         brief = self._sanitize_brief_visible_text(brief)
         if not str(brief.get("lede") or "").strip():
@@ -1354,13 +1449,24 @@ class DailyAINews(BasePlugin):
 
     def _parse_brief_json(self, content: str) -> dict[str, Any]:
         data = self._load_brief_json_object(content)
-        top = self._as_list(data.get("top"), 7)
+        top = self._as_list(data.get("top"), MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
+        mainland = self._as_list(
+            data.get("mainland") or data.get("mainland_news") or data.get("china") or data.get("domestic"),
+            MAINLAND_NEWS_MAX,
+        )
+        world = self._as_list(
+            data.get("world") or data.get("world_news") or data.get("quick") or data.get("international"),
+            WORLD_NEWS_MAX,
+        )
         lede = str(data.get("lede") or "").strip()
+        top_items = self._merge_section_news(mainland, world) or top
         if not lede or lede == "今日新闻简报已生成。":
-            lede = self._fallback_lede(top)
+            lede = self._fallback_lede(top_items)
         return self._simplify_chinese_payload({
             "lede": lede[:48],
-            "top": top,
+            "mainland": mainland,
+            "world": world,
+            "top": top_items,
             "a_share": self._as_market_block(data.get("a_share")),
             "us_stock": self._as_market_block(data.get("us_stock")),
             "sources": self._as_list(data.get("sources"), 5),
@@ -1430,6 +1536,48 @@ class DailyAINews(BasePlugin):
             return [value]
         return []
 
+    def _postprocess_brief_news(self, brief: dict[str, Any], items: list[dict[str, str]]) -> dict[str, Any]:
+        payload = dict(brief)
+        mainland_sources = [item for item in items if self._item_section(item) == "mainland"]
+        world_sources = [item for item in items if self._item_section(item) == "world"]
+        mainland = self._as_list(payload.get("mainland"), MAINLAND_NEWS_MAX)
+        world = self._as_list(payload.get("world"), WORLD_NEWS_MAX)
+
+        if not mainland and not world:
+            mainland, world = self._split_legacy_top_sections(payload.get("top"))
+
+        mainland = self._dedupe_top_items(
+            mainland,
+            mainland_sources,
+            MAINLAND_NEWS_MAX,
+            require_source_match=True,
+        )
+        world = self._dedupe_top_items(
+            world,
+            world_sources,
+            WORLD_NEWS_MAX,
+        )
+        top = self._merge_section_news(mainland, world)
+        if not top:
+            top = self._dedupe_top_items(payload.get("top") or [], items, MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
+            mainland, world = self._split_legacy_top_sections(top)
+
+        payload["mainland"] = mainland
+        payload["world"] = world
+        payload["top"] = top
+        if not str(payload.get("lede") or "").strip():
+            payload["lede"] = self._fallback_lede(top)
+        return payload
+
+    def _split_legacy_top_sections(self, top: Any) -> tuple[list[Any], list[Any]]:
+        top_items = self._as_list(top, MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
+        left_count = min(3, len(top_items))
+        return top_items[:left_count], top_items[left_count:left_count + WORLD_NEWS_MAX]
+
+    @staticmethod
+    def _merge_section_news(mainland: list[Any], world: list[Any]) -> list[Any]:
+        return list(mainland or [])[:MAINLAND_NEWS_MAX] + list(world or [])[:WORLD_NEWS_MAX]
+
     def _clean_brief_sources(self, sources: Any, items: list[dict[str, str]]) -> list[str]:
         allowed = []
         for item in items:
@@ -1457,16 +1605,21 @@ class DailyAINews(BasePlugin):
         sanitized = dict(brief)
         sanitized["lede"] = self._strip_untranslated_english_terms(str(sanitized.get("lede") or ""))
 
-        top = []
-        for item in self._as_list(sanitized.get("top"), 7):
-            if isinstance(item, dict):
-                cleaned_item = dict(item)
-                cleaned_item["title"] = self._strip_untranslated_english_terms(str(cleaned_item.get("title") or ""))
-                cleaned_item["why"] = self._strip_untranslated_english_terms(str(cleaned_item.get("why") or ""))
-                top.append(cleaned_item)
-            else:
-                top.append(self._strip_untranslated_english_terms(str(item or "")))
-        sanitized["top"] = top
+        for list_name, limit in (
+            ("mainland", MAINLAND_NEWS_MAX),
+            ("world", WORLD_NEWS_MAX),
+            ("top", MAINLAND_NEWS_MAX + WORLD_NEWS_MAX),
+        ):
+            cleaned_items = []
+            for item in self._as_list(sanitized.get(list_name), limit):
+                if isinstance(item, dict):
+                    cleaned_item = dict(item)
+                    cleaned_item["title"] = self._strip_untranslated_english_terms(str(cleaned_item.get("title") or ""))
+                    cleaned_item["why"] = self._strip_untranslated_english_terms(str(cleaned_item.get("why") or ""))
+                    cleaned_items.append(cleaned_item)
+                else:
+                    cleaned_items.append(self._strip_untranslated_english_terms(str(item or "")))
+            sanitized[list_name] = cleaned_items
 
         for block_name in ("a_share", "us_stock"):
             block = sanitized.get(block_name)
@@ -1512,25 +1665,41 @@ class DailyAINews(BasePlugin):
             "analysis": items[1] if len(items) > 1 else "",
         }
 
-    def _rss_only_brief(self, items: list[dict[str, str]], warning: str) -> dict[str, Any]:
-        top = []
-        sources = []
+    def _rss_news_cards(self, items: list[dict[str, str]], limit: int, existing: list[Any] | None = None) -> list[Any]:
+        result = list(existing or [])[:limit]
         for item in items:
             title = str(item.get("title") or "").strip()
-            if not title:
+            if not title or not self._has_cjk(title):
+                continue
+            if any(self._similar_news_title(title, self._news_text(existing_item)[0]) for existing_item in result):
                 continue
             source = str(item.get("source") or "").strip()
             summary = str(item.get("summary") or "").strip()
             why = summary[:36] if summary else (source[:36] or "来自 RSS 源。")
-            top.append({"title": title[:32], "why": why})
+            result.append({"title": title[:32], "why": why})
+            if len(result) >= limit:
+                break
+        return result[:limit]
+
+    def _rss_only_brief(self, items: list[dict[str, str]], warning: str) -> dict[str, Any]:
+        mainland_sources = [item for item in items if self._item_section(item) == "mainland"]
+        world_sources = [item for item in items if self._item_section(item) == "world"]
+        mainland = self._rss_news_cards(mainland_sources, MAINLAND_NEWS_MAX)
+        world = self._rss_news_cards(world_sources, WORLD_NEWS_MAX)
+        if not mainland and not world:
+            mainland, world = self._split_legacy_top_sections(self._rss_news_cards(items, MAINLAND_NEWS_MAX + WORLD_NEWS_MAX))
+        top = self._merge_section_news(mainland, world)
+
+        sources = []
+        for item in mainland_sources + world_sources:
+            source = str(item.get("source") or "").strip()
             if source and source not in sources:
                 sources.append(source)
-            if len(top) >= 7:
-                break
 
-        top = self._dedupe_top_items(top, items)
         return {
             "lede": self._fallback_lede(top),
+            "mainland": mainland,
+            "world": world,
             "top": top,
             "a_share": {"summary": "A股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
             "us_stock": {"summary": "美股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
@@ -1547,16 +1716,30 @@ class DailyAINews(BasePlugin):
                 return headline[:32]
         return "今日硬新闻更新"
 
-    def _dedupe_top_items(self, top: list[Any], source_items: list[dict[str, str]]) -> list[Any]:
+    def _dedupe_top_items(
+        self,
+        top: list[Any],
+        source_items: list[dict[str, str]],
+        limit: int = 7,
+        *,
+        require_source_match: bool = False,
+    ) -> list[Any]:
         result = []
+        source_titles = [
+            str(source.get("title") or "").strip()
+            for source in source_items
+            if str(source.get("title") or "").strip()
+        ]
         for item in top:
             headline, _why = self._news_text(item)
             if not headline:
                 continue
+            if require_source_match and source_titles and not self._matches_source_title(headline, source_titles):
+                continue
             if any(self._similar_news_title(headline, self._news_text(existing)[0]) for existing in result):
                 continue
             result.append(item)
-            if len(result) >= 7:
+            if len(result) >= limit:
                 return result
 
         for source in source_items:
@@ -1567,9 +1750,12 @@ class DailyAINews(BasePlugin):
                 continue
             summary = str(source.get("summary") or source.get("source") or "").strip()
             result.append({"title": title[:32], "why": summary[:36]})
-            if len(result) >= 7:
+            if len(result) >= limit:
                 break
         return result
+
+    def _matches_source_title(self, headline: str, source_titles: list[str]) -> bool:
+        return any(self._similar_news_title(headline, title) for title in source_titles)
 
     def _ai_error_reason(self, exc: Exception) -> str:
         status = getattr(exc, "status_code", None)
@@ -1597,6 +1783,8 @@ class DailyAINews(BasePlugin):
             "model": settings.get("model") or DEFAULT_MODEL,
             "brief": {
                 "lede": "AI新闻暂不可用，等待下次刷新。",
+                "mainland": [{"title": "新闻简报生成失败", "why": error[:48]}],
+                "world": [],
                 "top": [{"title": "新闻简报生成失败", "why": error[:48]}],
                 "a_share": {"summary": "A股行情暂不可用", "analysis": "等待下一次刷新。"},
                 "us_stock": {"summary": "美股行情暂不可用", "analysis": "等待下一次刷新。"},
@@ -1694,7 +1882,8 @@ class DailyAINews(BasePlugin):
         draw.line((margin, 88, margin, 124), fill=gold, width=4)
         lede_end = self._draw_wrapped_full(draw, lede, margin + 14, 86, width - margin * 2 - 14, lede_font, ink, 30)
 
-        top_items = list(brief.get("top") or [])
+        mainland_items = self._render_news_section_items(brief, payload, "mainland")
+        world_items = self._render_news_section_items(brief, payload, "world")
         main_gap = 14
         side_w = 350
         main_w = width - margin * 2 - main_gap - side_w
@@ -1704,10 +1893,10 @@ class DailyAINews(BasePlugin):
         top_limit_y = module_y = 360
 
         self._section_header(draw, "◆ " + SECTION_LABELS["top"], top_x, y, main_w, section_font, red, rule, image=img, asset_key="top")
-        self._section_header(draw, "◇ 快讯补充", side_x, y, side_w, section_font, cyan, rule, image=img, asset_key="quick")
+        self._section_header(draw, "◇ " + SECTION_LABELS["quick"], side_x, y, side_w, section_font, cyan, rule, image=img, asset_key="quick")
         self._draw_news_items(
             draw,
-            top_items[:3],
+            mainland_items,
             top_x,
             y + 28,
             main_w,
@@ -1722,12 +1911,9 @@ class DailyAINews(BasePlugin):
             fit_family=font_family,
         )
 
-        side_items = top_items[3:6]
-        if len(side_items) < 3:
-            side_items.extend(self._rss_sidebar_items(payload, len(top_items), 3 - len(side_items)))
         self._draw_news_items(
             draw,
-            side_items,
+            world_items,
             side_x,
             y + 28,
             side_w,
@@ -1737,13 +1923,11 @@ class DailyAINews(BasePlugin):
             ink,
             muted,
             max_y=top_limit_y,
-            start_index=4,
+            start_index=1,
             compact=True,
             force_all=True,
             fit_family=font_family,
-            drop_why_if_needed=True,
         )
-
         module_h = 96
         gap = 20
         col_w = (width - margin * 2 - gap) // 2
@@ -1776,6 +1960,31 @@ class DailyAINews(BasePlugin):
         footer = self._footer_text(payload, brief)
         draw.text((margin, height - 20), footer, font=footer_font, fill=dim)
         return img
+
+    def _render_news_section_items(self, brief: dict[str, Any], payload: dict[str, Any], section: str) -> list[Any]:
+        max_count = MAINLAND_NEWS_MAX if section == "mainland" else WORLD_NEWS_MAX
+        existing = self._as_list(brief.get(section), max_count)
+        if not existing:
+            legacy_mainland, legacy_world = self._split_legacy_top_sections(brief.get("top"))
+            existing = legacy_mainland if section == "mainland" else legacy_world
+
+        target_count = self._section_display_limit(payload, section, len(existing))
+        selected = existing[:target_count]
+        if len(selected) < target_count:
+            rss_items = [item for item in list(payload.get("items") or []) if isinstance(item, dict) and self._item_section(item) == section]
+            selected = self._rss_news_cards(rss_items, target_count, selected)
+        return selected[:target_count]
+
+    def _section_display_limit(self, payload: dict[str, Any], section: str, existing_count: int) -> int:
+        max_count = MAINLAND_NEWS_MAX if section == "mainland" else WORLD_NEWS_MAX
+        if existing_count:
+            return min(max_count, max(0, existing_count))
+        rss_count = sum(
+            1
+            for item in list(payload.get("items") or [])
+            if isinstance(item, dict) and self._item_section(item) == section
+        )
+        return min(max_count, max(0, rss_count))
 
     def _base_background(self, dimensions, bg, theme_mode="day") -> Image.Image:
         return Image.new("RGB", dimensions, bg)
@@ -1952,6 +2161,7 @@ class DailyAINews(BasePlugin):
             target_w, target_h = [int(value) for value in size]
             resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
             art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
+            art = self._prepare_section_wordmark(art, accent)
             layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
             paste_x = int((target_w - art.width) / 2)
             paste_y = int((target_h - art.height) / 2)
@@ -1963,6 +2173,30 @@ class DailyAINews(BasePlugin):
             logger.warning("Could not draw Daily AI News section wordmark %s: %s", key, exc)
             return None
 
+    @staticmethod
+    def _prepare_section_wordmark(source: Image.Image, accent):
+        wordmark = source.convert("RGBA")
+        accent_rgb = DailyAINews._readable_section_color(accent)
+        pixels = wordmark.load()
+        for py in range(wordmark.height):
+            for px in range(wordmark.width):
+                red, green, blue, alpha = pixels[px, py]
+                if alpha <= 0:
+                    continue
+                luma = (red * 299 + green * 587 + blue * 114) / 1000
+                if luma < 190:
+                    pixels[px, py] = accent_rgb + (alpha,)
+        return wordmark
+
+    @staticmethod
+    def _readable_section_color(color):
+        rgb = tuple(int(value) for value in tuple(color)[:3])
+        luma = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000
+        if luma >= 170 or max(rgb) < 220:
+            return rgb
+        target_luma = 185
+        mix = max(0.0, min(1.0, (target_luma - luma) / max(1, 255 - luma)))
+        return tuple(max(0, min(255, int(round(value + (255 - value) * mix)))) for value in rgb)
     @staticmethod
     @lru_cache(maxsize=8)
     def _load_section_wordmark(key: str):
@@ -1993,10 +2227,15 @@ class DailyAINews(BasePlugin):
         if image is not None and asset_key:
             wordmark_box = self._draw_section_wordmark(image, asset_key, x, y, accent)
             if wordmark_box is not None:
+                self._draw_section_header_rule(draw, x, y, width, rule)
                 return
         draw.text((x, y), label, font=font, fill=accent)
-        underline_w = min(width, max(48, self._tw(draw, label, font) + 8))
-        draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
+        self._draw_section_header_rule(draw, x, y, width, rule)
+
+    @staticmethod
+    def _draw_section_header_rule(draw, x: int, y: int, width: int, rule) -> None:
+        line_y = int(y + SECTION_HEADER_RULE_Y_OFFSET)
+        draw.line((int(x), line_y, int(x + width), line_y), fill=rule, width=1)
 
     def _market_section_header(self, draw, label: str, key: str, x: int, y: int, width: int, font, accent, rule, image=None) -> None:
         if image is not None:
@@ -2260,45 +2499,15 @@ class DailyAINews(BasePlugin):
         font_family,
         drop_why_if_needed=False,
     ) -> int:
-        styles = [
-            {"title": 18, "why": 16, "marker_w": 38, "title_h": 21, "why_h": 18, "gap": 3},
-            {"title": 17, "why": 15, "marker_w": 36, "title_h": 20, "why_h": 17, "gap": 2},
-            {"title": 16, "why": 14, "marker_w": 34, "title_h": 19, "why_h": 16, "gap": 1},
-            {"title": 15, "why": 13, "marker_w": 32, "title_h": 18, "why_h": 15, "gap": 0},
-            {"title": 14, "why": 12, "marker_w": 30, "title_h": 17, "why_h": 14, "gap": 0},
-            {"title": 13, "why": 11, "marker_w": 28, "title_h": 16, "why_h": 13, "gap": 0},
-            {"title": 12, "why": 10, "marker_w": 26, "title_h": 15, "why_h": 12, "gap": 0},
-        ]
+        item_list = list(items or [])
+        news_count = self._renderable_news_count(item_list)
+        styles = [self._news_fit_style(title_size, news_count) for title_size in range(24, 5, -1)]
         prepared = []
         available = max_y - y
-        why_modes = (False, True) if drop_why_if_needed else (False,)
-        for omit_why in why_modes:
-            prepared = []
-            for style in styles:
-                headline_font = self._font(font_family, style["title"], "bold")
-                why_font = self._font(font_family, style["why"])
-                rows = []
-                needed_total = 0
-                for item in items:
-                    headline, why = self._news_text(item)
-                    if not headline and not why:
-                        continue
-                    if omit_why:
-                        why = ""
-                    text_w = width - style["marker_w"]
-                    title_lines = self._wrap(draw, headline, headline_font, text_w)
-                    why_lines = self._wrap(draw, why, why_font, text_w) if why else []
-                    needed = (
-                        len(title_lines) * style["title_h"]
-                        + len(why_lines) * style["why_h"]
-                        + style["gap"]
-                    )
-                    rows.append((title_lines, why_lines, needed, headline_font, why_font, style))
-                    needed_total += needed
-                prepared = rows
-                if needed_total <= available:
-                    break
-            if not prepared or needed_total <= available:
+        allowed_available = available + 4
+        for style in styles:
+            prepared, needed_total = self._prepare_news_rows_for_style(draw, item_list, width, font_family, style)
+            if needed_total <= allowed_available:
                 break
 
         markers = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
@@ -2315,6 +2524,67 @@ class DailyAINews(BasePlugin):
                 y += style["why_h"]
             y += style["gap"]
         return y
+
+    def _renderable_news_count(self, items) -> int:
+        return sum(1 for item in items if any(self._news_text(item)))
+
+
+    def _prepare_news_rows_for_style(self, draw, items, width: int, font_family: str, style: dict[str, int]):
+        headline_font = self._font(font_family, style["title"], "bold")
+        why_font = self._font(font_family, style["why"])
+        rows = []
+        needed_total = 0
+        text_w = max(1, width - style["marker_w"])
+        for item in list(items or []):
+            headline, why = self._news_text(item)
+            if not headline and not why:
+                continue
+            title_lines = self._wrap(draw, headline, headline_font, text_w)
+            why_lines = self._wrap(draw, why, why_font, text_w) if why else []
+            needed = (
+                len(title_lines) * style["title_h"]
+                + len(why_lines) * style["why_h"]
+                + style["gap"]
+            )
+            rows.append((title_lines, why_lines, needed, headline_font, why_font, style))
+            needed_total += needed
+        return rows, needed_total
+
+    @staticmethod
+    def _news_body_size_cap(news_count: int) -> int:
+        news_count = max(0, int(news_count))
+        if news_count <= 1:
+            return 23
+        if news_count == 2:
+            return 22
+        if news_count == 3:
+            return 20
+        if news_count == 4:
+            return 18
+        return 15
+
+    @staticmethod
+    def _news_fit_style(title_size: int, news_count: int | None = None) -> dict[str, int]:
+        title_size = max(6, int(title_size))
+        why_size = max(6, title_size - 3)
+        if news_count is not None:
+            why_size = min(why_size, DailyAINews._news_body_size_cap(news_count))
+        if title_size <= 14:
+            title_h = title_size + 1
+            why_h = why_size + 1
+            gap = 1
+        else:
+            title_h = title_size + 3
+            why_h = why_size + 2
+            gap = max(0, min(7, (title_size - 11) // 2))
+        return {
+            "title": title_size,
+            "why": why_size,
+            "marker_w": max(18, title_size * 2 + 2),
+            "title_h": title_h,
+            "why_h": why_h,
+            "gap": gap,
+        }
 
     def _news_text(self, item) -> tuple[str, str]:
         if isinstance(item, dict):

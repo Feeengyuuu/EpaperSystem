@@ -128,9 +128,12 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
 
     rooms = plugin._parse_rooms({"roomsText": DEFAULT_ROOMS_TEXT})
 
-    assert len(rooms) == 64
+    assert len(rooms) == 65
     assert (rooms[0]["platform"], rooms[0]["id"]) == ("bilibili", "545318")
-    assert (rooms[-1]["platform"], rooms[-1]["id"]) == ("twitch", "jie_220")
+    assert (rooms[-1]["platform"], rooms[-1]["id"]) == ("twitch", "ludwig")
+    assert ("bilibili", "173551") in [(room["platform"], room["id"]) for room in rooms]
+    assert ("twitch", "ludwig") in [(room["platform"], room["id"]) for room in rooms]
+    assert ("bilibili", "30931147") not in [(room["platform"], room["id"]) for room in rooms]
 
     favorite_keys = [(room["platform"], room["id"]) for room in rooms if room["isFav"]]
     assert favorite_keys == [
@@ -146,6 +149,7 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         ("bilibili", "733"),
     ]
     assert ("bilibili", "7586498") not in favorite_keys
+    assert ("bilibili", "173551") not in favorite_keys
 
     favorite_cards = [
         {
@@ -803,6 +807,69 @@ def test_large_live_card_draws_avatar_in_lower_left():
     avatar_area = image.crop((38, 145, 60, 167))
     assert (220, 40, 90) in set(avatar_area.getdata())
     assert any(r != g or g != b for r, g, b in avatar_area.getdata())
+
+
+def test_card_detail_text_size_nudge_is_uniform(monkeypatch):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    image = Image.new("RGB", (760, 320), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    base_card = {
+        "platform": "twitch",
+        "id": "xqc",
+        "label": "xQc",
+        "is_fav": False,
+        "owner": "xQc",
+        "title": "Uniform title sizing check",
+        "heat": 57000,
+        "start_time": None,
+        "cover": "",
+        "avatar": "",
+        "is_error": False,
+        "favorite_rank": None,
+        "status": "live",
+    }
+
+    wrapped_start_sizes = []
+    fit_font_requests = []
+    font_requests = []
+    original_fit_wrapped_text = plugin._fit_wrapped_text
+    original_fit_font = plugin._fit_font
+    original_font = plugin._font
+
+    def capture_fit_wrapped_text(draw_obj, text, max_width, max_height, max_lines, start_size, min_size, weight="normal"):
+        wrapped_start_sizes.append(start_size)
+        return original_fit_wrapped_text(draw_obj, text, max_width, max_height, max_lines, start_size, min_size, weight)
+
+    def capture_fit_font(draw_obj, text, max_width, start_size, min_size, weight="normal"):
+        fit_font_requests.append((str(text), start_size, min_size, weight))
+        return original_fit_font(draw_obj, text, max_width, start_size, min_size, weight)
+
+    def capture_font(size, weight="normal"):
+        font_requests.append((size, weight))
+        return original_font(size, weight)
+
+    monkeypatch.setattr(plugin, "_fit_wrapped_text", capture_fit_wrapped_text)
+    monkeypatch.setattr(plugin, "_fit_font", capture_fit_font)
+    monkeypatch.setattr(plugin, "_font", capture_font)
+
+    plugin._draw_card(image, draw, (10, 10, 240, 118), base_card, theme, large=True, show_snapshot=False)
+    monkeypatch.setattr(plugin, "_draw_snapshot_header", lambda *_args, **_kwargs: 104)
+    plugin._draw_card(image, draw, (270, 10, 240, 170), base_card, theme, large=True, show_snapshot=True)
+    plugin._draw_card(image, draw, (10, 210, 220, 60), base_card, theme, large=False, show_snapshot=False)
+    plugin._draw_compact_card(image, draw, (270, 210, 250, 52), base_card, theme)
+
+    assert live_radar_module.CARD_DETAIL_FONT_SIZE_NUDGE == 2
+    assert live_radar_module.CARD_DETAIL_Y_NUDGE == 2
+    assert live_radar_module.LIVE_CARD_TITLE_MAX_SIZE in wrapped_start_sizes
+    assert live_radar_module.LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE in wrapped_start_sizes
+    assert (10 + live_radar_module.CARD_DETAIL_FONT_SIZE_NUDGE, "bold") in font_requests
+    assert (
+        "Uniform title sizing check",
+        live_radar_module.COMPACT_CARD_DETAIL_MAX_SIZE,
+        7,
+        "bold",
+    ) in fit_font_requests
 
 
 def test_platform_badges_render_known_icons():

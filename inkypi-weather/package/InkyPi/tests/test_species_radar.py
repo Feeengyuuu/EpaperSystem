@@ -412,13 +412,58 @@ def test_display_payload_rotates_daily_discovery_pool_without_repeating(tmp_path
         "location": location,
     }
 
+    monkeypatch.setattr(plugin, "_shuffled_display_indices", lambda values: list(reversed(range(values) if isinstance(values, int) else values)))
+
     views = [plugin._display_payload(payload, {}, now) for _ in range(3)]
     selected_keys = [view["observations"][0]["gbif_key"] for view in views]
+    state = plugin._read_display_state()
 
-    assert len(set(selected_keys)) == 3
+    assert selected_keys == ["203", "202", "201"]
     assert payload["observations"][0]["gbif_key"] == observations[0]["gbif_key"]
     assert all(view["display_pool_size"] == 3 for view in views)
-    assert plugin._read_display_state()["cursor"] == 0
+    assert state["available"] == []
+    assert state["discarded"] == [2, 1, 0]
+
+    reset_view = plugin._display_payload(payload, {}, now)
+    reset_state = plugin._read_display_state()
+
+    assert reset_view["observations"][0]["gbif_key"] == "202"
+    assert reset_state["available"] == [0, 2]
+    assert reset_state["discarded"] == [1]
+
+
+def test_display_payload_resets_random_pool_when_cache_bucket_changes(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 27, tzinfo=timezone.utc)
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    observations = [
+        plugin._observation_from_occurrence(occurrence(key=301 + index, taxonKey=301 + index, speciesKey=301 + index), location)
+        for index in range(3)
+    ]
+    monkeypatch.setattr(plugin, "_ensure_display_common_name", lambda _observation: None)
+    monkeypatch.setattr(plugin, "_shuffled_display_indices", lambda values: [1, 0, 2] if isinstance(values, int) else list(values))
+    plugin._write_display_state({
+        "schema": "species-radar-v2",
+        "pool_key": "old-cache:3:abc",
+        "count": 3,
+        "available": [],
+        "discarded": [2, 1, 0],
+    })
+    payload = {
+        "schema": "species-radar-v1",
+        "cache_key": "new-six-hour-cache",
+        "observations": observations,
+        "category_counts": plugin._category_counts(observations),
+        "location": location,
+    }
+
+    display_payload = plugin._display_payload(payload, {}, now)
+    state = plugin._read_display_state()
+
+    assert display_payload["observations"][0]["gbif_key"] == "302"
+    assert state["pool_key"].startswith("new-six-hour-cache:3:")
+    assert state["available"] == [0, 2]
+    assert state["discarded"] == [1]
 
 
 def test_display_payload_enriches_rotated_hero_chinese_name(tmp_path, monkeypatch):

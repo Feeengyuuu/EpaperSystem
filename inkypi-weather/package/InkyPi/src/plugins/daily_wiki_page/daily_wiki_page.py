@@ -38,10 +38,12 @@ class _HTMLTextExtractor(HTMLParser):
 PLUGIN_ID = "daily_wiki_page"
 PLUGIN_DIR = Path(__file__).resolve().parent
 DAILY_IMAGE_TITLE_PATH = PLUGIN_DIR / "assets" / "daily_image_title.png"
+DAILY_HEADER_FILLER_PATH = PLUGIN_DIR / "assets" / "daily_header_pixel_filler.png"
 HISTORY_TITLE_WORDMARK_PATH = PLUGIN_DIR / "assets" / "history_title_wordmark.png"
 TOPIC_PLACEHOLDER_PATH = PLUGIN_DIR / "assets" / "topic_pixel_placeholder.png"
 CACHE_SCHEMA_VERSION = "daily-wiki-page-v6"
-DEFAULT_FONT = "Jost"
+DEFAULT_FONT = "Microsoft YaHei"
+LEGACY_DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 FEED_URL = "https://api.wikimedia.org/feed/v1/wikipedia/{language}/featured/{year}/{month}/{day}"
 ZH_ACTION_API_URL = "https://zh.wikipedia.org/w/api.php"
@@ -55,11 +57,12 @@ YEAR_LABEL_Y_OFFSET = -10
 HISTORY_TITLE_Y_OFFSET = 0
 HISTORY_TITLE_RULE_GAP = 12
 HISTORY_BODY_Y_OFFSET = 8
-HISTORY_LINE_SPACING = 1.02
+HISTORY_LINE_SPACING = 1.08
 HISTORY_MIN_EVENT_FONT_SIZE = 15
 HISTORY_IMAGE_WIDTH = 104
 HISTORY_IMAGE_HEIGHT = 68
 HISTORY_IMAGE_GAP = 10
+HISTORY_FLOAT_MIN_TEXT_WIDTH = 118
 HISTORY_TEXT_INDENT = 17
 HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET = 20
 DAILY_CAPTION_GAP = 4
@@ -260,11 +263,11 @@ class DailyWikiPage(BasePlugin):
         header_h = max(46, height // 10)
         footer_h = max(18, height // 32)
 
-        font_family = str(settings.get("fontFamily") or DEFAULT_FONT)
+        font_family = self._resolved_font_family(settings)
         cjk = self._language_is_cjk(payload.get("language"))
         label_font = self._font(font_family, max(22, min(26, width // 30)), "bold")
         date_font = self._font(font_family, max(11, width // 72))
-        caption_font = self._font(font_family, max(18, min(20, width // 42)))
+        caption_font = self._font(font_family, max(17, min(19, width // 42 - 1)))
         event_title_font = self._font(font_family, max(23, min(30, width // 27)), "bold")
         year_font = self._font(font_family, max(20, min(23, width // 34)), "bold")
         event_font = self._font(font_family, max(19, min(21, width // 40)))
@@ -272,19 +275,30 @@ class DailyWikiPage(BasePlugin):
 
         header = "\u6bcf\u65e5\u56fe\u7247" if cjk else "DAILY IMAGE"
         date_text = now.strftime("%Y.%m.%d")
+        date_x = width - margin - self._text_width(draw, date_text, date_font)
         rule_y = margin + header_h - 10
         title_asset = self._load_daily_image_title() if cjk else None
         title_drawn = False
+        title_y = margin - 4
+        title_right = margin + self._text_width(draw, header, label_font)
         if title_asset is not None:
             title_y = max(2, margin - max(21, height // 23))
             title_max_h = max(28, min(58, rule_y - title_y - 2))
             title_max_w = min(max(190, int(width * 0.34)), max(1, width - margin * 2 - self._text_width(draw, date_text, date_font) - gap))
             if title_max_w > 0 and title_max_h > 0:
+                title_w, _title_h = self._daily_image_title_fitted_size(title_asset, title_max_w, title_max_h)
                 self._draw_daily_image_title(image, title_asset, margin, title_y, title_max_w, title_max_h, rule_y=rule_y)
+                title_right = margin + title_w
                 title_drawn = True
         if not title_drawn:
             draw.text((margin, margin - 4), header, font=self._font_for_text(header, label_font), fill=palette["accent"])
-        draw.text((width - margin - self._text_width(draw, date_text, date_font), margin - 2), date_text, font=date_font, fill=palette["muted"])
+        if cjk and title_drawn:
+            header_filler = self._load_daily_header_filler()
+            if header_filler is not None:
+                filler_left = int(title_right + max(24, gap + 8))
+                filler_right = int(date_x - max(22, gap + 6))
+                self._draw_daily_header_filler(image, header_filler, filler_left, filler_right, title_y, rule_y)
+        draw.text((date_x, margin - 2), date_text, font=date_font, fill=palette["muted"])
         draw.line((margin, rule_y, width - margin, rule_y), fill=palette["rule"], width=EPAPER_RULE_WIDTH)
 
         content_y = rule_y + max(12, height // 42)
@@ -293,6 +307,7 @@ class DailyWikiPage(BasePlugin):
         left_w = max(350, min(430, int(usable_w * 0.54)))
         right_x = margin + left_w + gap
         right_w = width - margin - right_x
+        right_content_bottom = height - margin
         caption_gap = DAILY_CAPTION_GAP
         caption = self._clean_text(payload.get("image_caption") or payload.get("daily_image_title") or payload.get("title") or "")
         caption_draw_font = self._font_for_text(caption, caption_font)
@@ -317,7 +332,7 @@ class DailyWikiPage(BasePlugin):
 
         history_image = None
         if self._enabled(settings.get("showOnThisDay"), default=True) and payload.get("history_image_url"):
-            history_target = self._history_image_download_size(right_w, content_bottom - content_y)
+            history_target = self._history_image_download_size(right_w, right_content_bottom - content_y)
             history_image = self._download_image(payload.get("history_image_url"), history_target, settings)
 
         caption_y = content_y + image_h + caption_gap
@@ -338,7 +353,7 @@ class DailyWikiPage(BasePlugin):
             right_x,
             content_y,
             right_w,
-            content_bottom - content_y,
+            right_content_bottom - content_y,
             event_title_font,
             year_font,
             event_font,
@@ -393,28 +408,28 @@ class DailyWikiPage(BasePlugin):
             return
 
         text_width_px = max(90, width - HISTORY_TEXT_INDENT)
-        target_count = len([item for item in events[:5] if isinstance(item, dict)])
-        reserved_image_h = 0
+        float_image_box = None
+        float_width_px = 0
+        float_height_px = 0
         rows = []
         if history_image and target_image is not None:
-            desired_reserve_h = self._history_image_reserved_height(width, available_h)
-            for candidate_reserve_h in range(desired_reserve_h, 27, -4):
-                rows_available_h = max(0, available_h - candidate_reserve_h - HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET)
-                candidate_font, candidate_rows = self._fit_history_event_rows(
+            float_image_box = self._history_image_float_box(x, current_y, width, available_h, text_width_px, history_image)
+            if float_image_box is not None:
+                _image_x, _image_y, image_w, image_h = float_image_box
+                float_width_px = image_w + HISTORY_IMAGE_GAP
+                float_height_px = image_h + HISTORY_IMAGE_GAP
+                event_font, rows = self._fit_history_event_rows(
                     draw,
                     events,
                     text_width_px,
-                    rows_available_h,
+                    available_h,
                     year_font,
                     event_font,
                     date_key=date_key,
                     cjk=cjk,
+                    float_width_px=float_width_px,
+                    float_height_px=float_height_px,
                 )
-                if len(candidate_rows) >= target_count:
-                    event_font = candidate_font
-                    rows = candidate_rows
-                    reserved_image_h = candidate_reserve_h
-                    break
         if not rows:
             event_font, rows = self._fit_history_event_rows(
                 draw,
@@ -431,10 +446,10 @@ class DailyWikiPage(BasePlugin):
             if current_y + row["height"] > usable_bottom:
                 break
             marker_x = x
-            marker_y = current_y + max(6, min(14, row["height"] // 4))
-            draw.ellipse((marker_x, marker_y, marker_x + 7, marker_y + 7), fill=palette["accent"])
             text_x = x + HISTORY_TEXT_INDENT
-            text_y = current_y
+            text_y = current_y + row.get("text_offset_y", 0)
+            marker_y = text_y + max(6, min(14, row["line_h"] // 2))
+            draw.ellipse((marker_x, marker_y, marker_x + 7, marker_y + 7), fill=palette["accent"])
             date_label = row.get("date_label") or ""
             for line_index, body_line in enumerate(row["body_lines"]):
                 body_font = self._font_for_text(body_line, event_font)
@@ -445,19 +460,21 @@ class DailyWikiPage(BasePlugin):
                 text_y += row["line_h"]
             current_y += row["height"]
 
+        if target_image is not None and history_image and float_image_box is not None:
+            image_area_x, image_area_y, image_area_w, image_area_h = float_image_box
+            self._draw_history_image(target_image, history_image, image_area_x, image_area_y, image_area_w, image_area_h)
+            return
+
         image_area_x = x + HISTORY_TEXT_INDENT
         image_area_y = current_y + HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET
         image_area_w = max(1, text_width_px)
         image_area_h = usable_bottom - image_area_y
         if target_image is not None and image_area_h >= 28:
-            if history_image:
-                self._draw_history_image(target_image, history_image, image_area_x, image_area_y, image_area_w, image_area_h)
-            else:
-                placeholder = self._load_topic_placeholder()
-                if placeholder is not None:
-                    self._draw_topic_placeholder(target_image, placeholder, image_area_x, image_area_y, image_area_w, image_area_h)
+            placeholder = self._load_topic_placeholder()
+            if placeholder is not None:
+                self._draw_topic_placeholder(target_image, placeholder, image_area_x, image_area_y, image_area_w, image_area_h)
 
-    def _fit_history_event_rows(self, draw, events, text_width_px, available_h, year_font, event_font, date_key=None, cjk=False, float_width_px=0, float_rows=0):
+    def _fit_history_event_rows(self, draw, events, text_width_px, available_h, year_font, event_font, date_key=None, cjk=False, float_width_px=0, float_rows=0, float_height_px=0):
         target_count = len([item for item in events[:5] if isinstance(item, dict)])
         if target_count <= 0:
             return event_font, []
@@ -478,6 +495,7 @@ class DailyWikiPage(BasePlugin):
                 cjk=cjk,
                 float_width_px=float_width_px,
                 float_rows=float_rows,
+                float_height_px=float_height_px,
             )
             if len(rows) > len(best_rows):
                 best_font = candidate_font
@@ -492,25 +510,54 @@ class DailyWikiPage(BasePlugin):
         family = getattr(fallback_font, "family", None) or DEFAULT_FONT
         return self._font(family, size)
 
-    def _event_rows_for_height(self, draw, events, text_width_px, available_h, year_font, event_font, date_key=None, cjk=False, float_width_px=0, float_rows=0):
+    def _event_rows_for_height(self, draw, events, text_width_px, available_h, year_font, event_font, date_key=None, cjk=False, float_width_px=0, float_rows=0, float_height_px=0):
         events = [item for item in events[:5] if isinstance(item, dict)]
         if not events or available_h <= 0:
             return []
         line_h = max(15, int(self._text_height(draw, "Ag", event_font) * HISTORY_LINE_SPACING))
         body_gap_h = max(2, line_h // 8)
         row_gap_h = max(3, line_h // 6)
+        if float_height_px <= 0 and float_rows > 0:
+            float_height_px = float_rows * line_h
         fitted = []
         used = 0
-        for index, item in enumerate(events):
-            row_width_px = text_width_px
-            if float_width_px > 0 and index < float_rows:
-                row_width_px = max(120, text_width_px - float_width_px)
-            row = self._measure_event_row(draw, item, row_width_px, year_font, event_font, line_h, body_gap_h, row_gap_h, date_key=date_key, cjk=cjk)
+        for item in events:
+            row = self._measure_event_row(
+                draw,
+                item,
+                text_width_px,
+                year_font,
+                event_font,
+                line_h,
+                body_gap_h,
+                row_gap_h,
+                date_key=date_key,
+                cjk=cjk,
+                float_width_px=float_width_px,
+                float_height_px=float_height_px,
+                row_top_px=used,
+            )
             if used + row["height"] > available_h:
                 break
             fitted.append(row)
             used += row["height"]
+        self._stretch_history_rows_to_bottom(fitted, available_h)
         return fitted
+
+    def _stretch_history_rows_to_bottom(self, rows, available_h):
+        if not rows:
+            return
+        extra_h = int(available_h - sum(row.get("height", 0) for row in rows))
+        if extra_h <= 0:
+            return
+        stretchable_count = max(1, len(rows) - 1)
+        per_row = extra_h // stretchable_count
+        remainder = extra_h % stretchable_count
+        for index, row in enumerate(rows[:stretchable_count]):
+            row["height"] += per_row + (1 if index < remainder else 0)
+        last_row = rows[-1]
+        ink_h = max(1, int(last_row.get("ink_height", 0)))
+        last_row["text_offset_y"] = max(0, int(last_row.get("height", 0)) - ink_h)
 
     def _measure_event_rows(self, draw, events, text_width_px, year_font, event_font, date_key=None, cjk=False):
         line_h = max(15, int(self._text_height(draw, "Ag", event_font) * HISTORY_LINE_SPACING))
@@ -521,7 +568,7 @@ class DailyWikiPage(BasePlugin):
             for item in events
         ]
 
-    def _measure_event_row(self, draw, item, text_width_px, year_font, event_font, line_h, body_gap_h, row_gap_h, date_key=None, cjk=False):
+    def _measure_event_row(self, draw, item, text_width_px, year_font, event_font, line_h, body_gap_h, row_gap_h, date_key=None, cjk=False, float_width_px=0, float_height_px=0, row_top_px=0):
         year = self._clean_text(item.get("year"))
         date_label = self._event_date_label(year, date_key, cjk)
         body_text = self._clean_text(item.get("text"))
@@ -529,8 +576,18 @@ class DailyWikiPage(BasePlugin):
         if date_label:
             display_text = f"{date_label}  {body_text}" if body_text else date_label
         body_font = self._font_for_text(display_text, event_font)
-        body_lines = self._wrap_all(draw, display_text, body_font, text_width_px) if display_text else []
+        body_lines, line_widths = self._wrap_history_text_around_float(
+            draw,
+            display_text,
+            body_font,
+            text_width_px,
+            line_h,
+            float_width_px,
+            float_height_px,
+            row_top_px,
+        ) if display_text else ([], [])
         content_h = len(body_lines) * line_h
+        ink_h = self._history_text_block_ink_height(draw, body_lines, event_font, line_h)
         return {
             "year": year,
             "date_label": date_label,
@@ -541,8 +598,71 @@ class DailyWikiPage(BasePlugin):
             "section_gap_h": 0,
             "body_gap_h": body_gap_h,
             "height": max(32, content_h + row_gap_h),
+            "ink_height": ink_h,
+            "text_offset_y": 0,
             "source_text": body_text,
+            "line_widths": line_widths,
         }
+
+    def _history_text_block_ink_height(self, draw, lines, font, line_h):
+        if not lines:
+            return 0
+        last_line = lines[-1]
+        return (len(lines) - 1) * line_h + max(1, self._text_height(draw, last_line, self._font_for_text(last_line, font)))
+
+    def _wrap_history_text_around_float(self, draw, text, font, text_width_px, line_h, float_width_px=0, float_height_px=0, row_top_px=0):
+        text = self._clean_text(text)
+        if not text:
+            return [], []
+        narrow_width = max(HISTORY_FLOAT_MIN_TEXT_WIDTH, text_width_px - max(0, float_width_px))
+        widths = []
+
+        def width_for_line(line_index):
+            line_top = row_top_px + line_index * line_h
+            if float_width_px > 0 and line_top < float_height_px:
+                return min(text_width_px, narrow_width)
+            return text_width_px
+
+        if self._contains_cjk(text):
+            lines = self._wrap_chars_variable_width(draw, text, font, width_for_line)
+        else:
+            lines = self._wrap_words_variable_width(draw, text, font, width_for_line)
+        for index, _line in enumerate(lines):
+            widths.append(width_for_line(index))
+        return lines, widths
+
+    def _wrap_chars_variable_width(self, draw, text, font, width_for_line):
+        lines, current = [], ""
+        line_index = 0
+        for char in text:
+            max_width = max(1, width_for_line(line_index))
+            candidate = current + char
+            if self._text_width(draw, candidate, font) <= max_width or not current:
+                current = candidate
+                continue
+            lines.append(current)
+            line_index += 1
+            current = char
+        if current:
+            lines.append(current)
+        return lines
+
+    def _wrap_words_variable_width(self, draw, text, font, width_for_line):
+        lines, current = [], ""
+        line_index = 0
+        for word in text.split():
+            max_width = max(1, width_for_line(line_index))
+            candidate = word if not current else f"{current} {word}"
+            if self._text_width(draw, candidate, font) <= max_width or not current:
+                current = candidate
+                continue
+            lines.append(current)
+            line_index += 1
+            current = word
+        if current:
+            lines.append(current)
+        return lines
+
     def _event_date_label(self, year, date_key, cjk=False):
         year = self._clean_text(year)
         if not year:
@@ -565,20 +685,45 @@ class DailyWikiPage(BasePlugin):
         image.paste(fitted, (paste_x, paste_y))
 
     def _draw_history_image(self, image, history_image, x, y, width, height):
-        fitted = ImageOps.contain(history_image, (width, height), method=RESAMPLE)
-        paste_x = x + (width - fitted.width) // 2
-        paste_y = y + (height - fitted.height) // 2
-        image.paste(fitted, (paste_x, paste_y))
+        width = max(1, int(width))
+        height = max(1, int(height))
+        fitted = ImageOps.fit(history_image, (width, height), method=RESAMPLE, centering=(0.5, 0.5))
+        image.paste(fitted, (int(x), int(y)))
 
+    def _history_image_float_box(self, x, y, panel_width, available_h, text_width_px, history_image=None):
+        if available_h < HISTORY_IMAGE_HEIGHT + 20 or text_width_px < HISTORY_FLOAT_MIN_TEXT_WIDTH + 70:
+            return None
+        aspect = 1.45
+        if history_image is not None:
+            source_w, source_h = getattr(history_image, "size", (0, 0))
+            if source_w > 0 and source_h > 0:
+                aspect = max(0.45, min(3.6, source_w / source_h))
+
+        max_image_w = max(70, text_width_px - HISTORY_FLOAT_MIN_TEXT_WIDTH - HISTORY_IMAGE_GAP)
+        max_image_h = max(
+            HISTORY_IMAGE_HEIGHT,
+            min(int(available_h * 0.44), int(panel_width * 0.58)),
+        )
+        if aspect >= 1:
+            image_w = max_image_w
+            image_h = max(42, int(round(image_w / aspect)))
+            if image_h > max_image_h:
+                image_h = max_image_h
+                image_w = min(max_image_w, max(70, int(round(image_h * aspect))))
+        else:
+            image_h = max_image_h
+            image_w = min(max_image_w, max(70, int(round(image_h * aspect))))
+
+        image_h = min(max(42, image_h), max(42, available_h - HISTORY_IMAGE_GAP))
+        if image_w < 70 or image_h < 42:
+            return None
+        image_x = x + panel_width - image_w
+        image_y = y
+        return (image_x, image_y, image_w, image_h)
     def _history_image_download_size(self, panel_width, panel_height):
         target_w = max(HISTORY_IMAGE_WIDTH, max(1, panel_width - HISTORY_TEXT_INDENT))
         target_h = max(HISTORY_IMAGE_HEIGHT, max(1, int(panel_height * 0.5)))
         return (target_w, target_h)
-
-    def _history_image_reserved_height(self, panel_width, available_h):
-        if available_h < 170:
-            return 0
-        return min(max(40, int(panel_width * 0.18)), max(32, available_h // 5))
 
     def _load_daily_image_title(self):
         try:
@@ -596,6 +741,35 @@ class DailyWikiPage(BasePlugin):
             paste_y = int(round(rule_y - self._title_image_rule_offset(fitted)))
         image.paste(fitted, (x, paste_y), fitted)
         return paste_y, fitted.height
+
+    def _daily_image_title_fitted_size(self, title_image, max_width, max_height):
+        fitted = ImageOps.contain(title_image, (max_width, max_height), method=RESAMPLE)
+        return fitted.size
+
+    def _load_daily_header_filler(self):
+        try:
+            with Image.open(DAILY_HEADER_FILLER_PATH) as asset:
+                return asset.convert("RGBA")
+        except Exception as exc:
+            logger.warning("DailyWikiPage header filler load failed: %s", exc)
+            return None
+
+    def _draw_daily_header_filler(self, image, filler, x1, x2, y, rule_y):
+        x1 = int(x1)
+        x2 = int(x2)
+        available_w = x2 - x1
+        available_h = int(rule_y) - int(y) - 2
+        if available_w < 80 or available_h < 16:
+            return None
+        target_w = min(int(filler.width), available_w)
+        target_h = min(int(filler.height), available_h)
+        fitted = filler
+        if fitted.size != (target_w, target_h):
+            fitted = ImageOps.contain(filler, (target_w, target_h), method=RESAMPLE)
+        paste_x = x1 + (available_w - fitted.width) // 2
+        paste_y = int(rule_y) - fitted.height - 2
+        image.paste(fitted, (paste_x, paste_y), fitted)
+        return (paste_x, paste_y, fitted.width, fitted.height)
 
     def _epaper_wordmark_image(self, title_image):
         rgba = title_image.convert("RGBA")
@@ -1335,6 +1509,12 @@ class DailyWikiPage(BasePlugin):
                 pass
         return ImageFont.load_default()
 
+    def _resolved_font_family(self, settings):
+        font_family = str((settings or {}).get("fontFamily") or "").strip()
+        if not font_family or font_family == LEGACY_DEFAULT_FONT:
+            return DEFAULT_FONT
+        return font_family
+
     def _font_for_text(self, text, fallback_font):
         if not self._contains_cjk(text):
             return fallback_font
@@ -1342,7 +1522,14 @@ class DailyWikiPage(BasePlugin):
 
     def _cjk_font_path(self):
         plugin_root = Path(self.get_plugin_dir()).parent
-        for relative in ("chinese_literature_clock/fonts/FandolKai-Regular.otf", "../static/fonts/LXGWWenKai-Regular.ttf", "chinese_literature_clock/fonts/I.Ming-8.10.ttf"):
+        for relative in (
+            "../static/fonts/msyh.ttf",
+            "../static/fonts/msyh.ttc",
+            "../static/fonts/NotoSansSC-VF.ttf",
+            "../static/fonts/LXGWWenKai-Regular.ttf",
+            "chinese_literature_clock/fonts/FandolKai-Regular.otf",
+            "chinese_literature_clock/fonts/I.Ming-8.10.ttf",
+        ):
             path = plugin_root / relative
             if path.is_file():
                 return path

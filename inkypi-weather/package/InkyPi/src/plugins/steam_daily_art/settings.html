@@ -1,3 +1,5 @@
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true" />
+
 <div class="form-group">
     <label for="sourceCategory" class="form-label">Steam Source:</label>
     <select id="sourceCategory" name="sourceCategory" class="form-input">
@@ -95,6 +97,12 @@
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         if (!loadPluginSettings) return;
+
+        const refreshOnDisplay = document.getElementById('refreshOnDisplay');
+        const refreshOnDisplayEnabled = pluginSettings.refreshOnDisplay === undefined || pluginSettings.refreshOnDisplay === null
+            ? true
+            : pluginSettings.refreshOnDisplay !== 'false' && pluginSettings.refreshOnDisplay !== false;
+        refreshOnDisplay.value = refreshOnDisplayEnabled ? 'true' : 'false';
 
         document.getElementById('sourceCategory').value = pluginSettings.sourceCategory || 'fresh_frontpage';
         document.getElementById('selectionMode').value = pluginSettings.selectionMode || 'daily_rotation';

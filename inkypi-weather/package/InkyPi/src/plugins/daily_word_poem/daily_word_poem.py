@@ -29,11 +29,13 @@ WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/
 WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
 WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
 REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
-CACHE_SCHEMA_VERSION = "daily-word-quote-v3"
+CACHE_SCHEMA_VERSION = "daily-word-quote-v4"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (224, 48)
+QUOTE_TEXT_MAX_LEN = 360
+QUOTE_SOURCE_MAX_LEN = 520
 WIKIQUOTE_MONTH_NAMES = (
     "January",
     "February",
@@ -434,7 +436,7 @@ def _strip_wrapping_quotes(text: str) -> str:
     return cleaned
 
 
-def _clean_quote_text(value: Any, max_len: int = 220) -> str:
+def _clean_quote_text(value: Any, max_len: int = QUOTE_TEXT_MAX_LEN) -> str:
     return _strip_wrapping_quotes(_normalized_text(value))[:max_len]
 
 
@@ -719,7 +721,7 @@ class DailyWordPoem(BasePlugin):
         if not isinstance(data, dict):
             raise RuntimeError("Wikiquote response is not a JSON object.")
 
-        quote_text = _clean_quote_text(data.get("quote") or data.get("text") or data.get("content"), 220)
+        quote_text = _clean_quote_text(data.get("quote") or data.get("text") or data.get("content"))
         author = _clean_text(data.get("author") or data.get("attribution") or "Wikiquote", 80)
         featured_date = _clean_text(data.get("featured_date") or data.get("date"), 20)
         if not quote_text:
@@ -747,20 +749,20 @@ class DailyWordPoem(BasePlugin):
 
         paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", raw, flags=re.IGNORECASE | re.DOTALL)
         if paragraphs:
-            parts = [_clean_text(re.sub(r"<[^>]+>", " ", part), 260) for part in paragraphs]
+            parts = [_clean_text(re.sub(r"<[^>]+>", " ", part), QUOTE_SOURCE_MAX_LEN) for part in paragraphs]
         else:
             text = re.sub(r"<[^>]+>", " ", raw)
             text = re.sub(r"^\s*(?:\{\||\|\}|!|\|[-}]?|\|\s*align=.*)$", " ", text, flags=re.MULTILINE)
-            parts = [_clean_text(part, 260) for part in text.splitlines()]
+            parts = [_clean_text(part, QUOTE_SOURCE_MAX_LEN) for part in text.splitlines()]
 
         parts = [part for part in parts if part and not part.lower().startswith("image")]
         joined = "\n".join(parts)
         match = re.search(r"(?P<quote>.+?)\s*~\s*(?P<author>[^~\n]+)\s*~", joined, flags=re.DOTALL)
         if match:
-            quote_text = _clean_quote_text(match.group("quote"), 220)
+            quote_text = _clean_quote_text(match.group("quote"))
             author = _clean_text(match.group("author"), 80)
         else:
-            quote_text = _clean_quote_text(parts[0] if parts else "", 220)
+            quote_text = _clean_quote_text(parts[0] if parts else "")
             author = "Wikiquote"
 
         if not quote_text:
@@ -780,7 +782,7 @@ class DailyWordPoem(BasePlugin):
         quotes = custom_quotes or LOCAL_QUOTES
         quote = quotes[now.date().toordinal() % len(quotes)]
         return {
-            "text": _clean_quote_text(quote.get("text"), 220),
+            "text": _clean_quote_text(quote.get("text")),
             "author": _clean_text(quote.get("author") or "Unknown", 80),
             "topic": _clean_text(quote.get("topic") or "golden sentence", 40),
             "source": _clean_text(quote.get("source") or ("custom golden sentences" if custom_quotes else "local golden sentences"), 80),
@@ -791,12 +793,12 @@ class DailyWordPoem(BasePlugin):
         quotes = []
         seen = set()
         for line in str(text or "").splitlines():
-            line = _clean_text(line, 260)
+            line = _clean_text(line, QUOTE_SOURCE_MAX_LEN)
             if not line:
                 continue
 
             parts = re.split(r"\s+-\s+|\s+--\s+", line, maxsplit=1)
-            quote_text = _clean_quote_text(parts[0], 220)
+            quote_text = _clean_quote_text(parts[0])
             author = _clean_text(parts[1], 80) if len(parts) > 1 else "Custom"
             if not quote_text:
                 continue
@@ -999,7 +1001,7 @@ class DailyWordPoem(BasePlugin):
         draw.text((x, y), "GOLDEN SENTENCE", font=label_font, fill=accent)
         y += self._line_height(draw, label_font) + max(12, int((bottom - y) * 0.035))
 
-        quote_text = _clean_quote_text(quote.get("text") or "Keep going.", 220)
+        quote_text = _clean_quote_text(quote.get("text") or "Keep going.")
         quoted = f'"{quote_text}"'
         topic = _clean_text(quote.get("topic"), 40).upper()
         author_reserved = self._line_height(draw, author_font)
@@ -1025,16 +1027,16 @@ class DailyWordPoem(BasePlugin):
 
     def _fit_quote_font(self, draw, text, font_family, max_width, max_height):
         max_size = min(92, max(42, int(max_height * 0.62)))
-        for size in range(max_size, 16, -1):
+        for size in range(max_size, 11, -1):
             font = self._load_font(font_family, size)
             wrapped = self._wrap_text(draw, text, font, max_width)
             needed = len(wrapped) * self._quote_line_height(draw, font)
             if needed <= max_height:
                 return font
-        return self._load_font(font_family, 16)
+        return self._load_font(font_family, 11)
 
     def _quote_line_height(self, draw, font):
-        return max(12, int(self._text_height(draw, "Ag", font) * 1.18))
+        return max(11, int(self._text_height(draw, "Ag", font) * 1.14))
 
     def _fit_wrapped_text(self, draw, text, font_family, max_width, max_height, max_size, min_size):
         for size in range(max_size, min_size - 1, -1):

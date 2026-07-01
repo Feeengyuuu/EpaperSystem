@@ -17,7 +17,7 @@
 }
 </style>
 {% endif %}
-<div class="steam-container theme-{{ theme_mode or 'day' }}{% if layout_variant == 'combined' %} layout-combined{% endif %}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }};">
+<div class="steam-container theme-{{ theme_mode or 'day' }}{% if layout_variant == 'combined' %} layout-combined{% endif %}" style="--ink: {{ theme_ink }}; --paper: {{ theme_paper }}; --chart-ink: {{ theme_chart_ink }};">
     <div class="header">
         <div class="title-wrap">
             {% if steam_logo_uri %}
@@ -47,8 +47,8 @@
         {% for group in chart_groups %}
         <section class="chart-panel variant-{{ group.table_variant | replace('_', '-') }}">
             <div class="panel-header">
-                <div class="panel-title" data-fit-text data-fit-min="12">{{ group.title }}</div>
-                {% if group.subtitle %}<div class="panel-subtitle" data-fit-text data-fit-min="8">{{ group.subtitle }}</div>{% endif %}
+                <div class="panel-title" data-fit-text data-fit-min="11">{{ group.title }}</div>
+                {% if group.subtitle %}<div class="panel-subtitle" data-fit-text data-fit-min="7.5">{{ group.subtitle }}</div>{% endif %}
             </div>
             <div class="compact-list">
                 {% for game in group.games %}
@@ -59,13 +59,18 @@
                         <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none'" />
                         {% endif %}
                         <div class="compact-copy">
-                            <div class="compact-title" data-fit-text data-fit-min="14.04">{{ game.name }}</div>
-                            {% if game.secondary_name %}<div class="compact-secondary" data-fit-text data-fit-min="6.5">{{ game.secondary_name }}</div>{% endif %}
+                            <div class="compact-title" data-fit-text data-fit-min="13.8">{{ game.display_name | default(game.name) }}</div>
+                            {% if game.secondary_name %}<div class="compact-secondary" data-fit-text data-fit-min="8">{{ game.display_secondary_name | default(game.secondary_name) }}</div>{% endif %}
                         </div>
                     </div>
                     <div class="compact-metrics">
-                        <div class="compact-primary" data-fit-text data-fit-min="14.3">{{ game.primary_metric }}</div>
-                        {% if game.secondary_metric %}<div class="compact-metric-secondary" data-fit-text data-fit-min="11.7">{{ game.secondary_metric }}</div>{% endif %}
+                        <div class="compact-primary" data-fit-text data-fit-min="12.4">{{ game.primary_metric }}</div>
+                        {% if game.secondary_metric %}<div class="compact-metric-secondary" data-fit-text data-fit-min="9.6">{{ game.secondary_metric }}</div>{% endif %}
+                        {% if game.sparkline_svg %}
+                        <svg class="compact-sparkline compact-sparkline--{{ group.table_variant | replace('_', '-') }}" viewBox="0 0 120 30" preserveAspectRatio="none">
+                            {{ game.sparkline_svg | safe }}
+                        </svg>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -106,15 +111,15 @@
                         <div class="game-name-placeholder" style="display:none;">?</div>
                         {% endif %}
                         <span class="game-name-text">
-                            <span class="game-name-primary" data-fit-text data-fit-min="14.3">{{ game.name }}</span>
+                            <span class="game-name-primary" data-fit-text data-fit-min="15">{{ game.display_name | default(game.name) }}</span>
                             {% if game.secondary_name %}
-                            <span class="game-name-secondary" data-fit-text data-fit-min="9">{{ game.secondary_name }}</span>
+                            <span class="game-name-secondary" data-fit-text data-fit-min="10">{{ game.display_secondary_name | default(game.secondary_name) }}</span>
                             {% endif %}
                         </span>
                     </div>
                 </td>
                 {% if table_variant == "trending" %}
-                <td class="col-change change {% if game.change_24h_fmt and game.change_24h_fmt != '--' %}{% if game.change_24h_fmt.startswith('+') %}positive{% elif game.change_24h_fmt.startswith('-') %}negative{% endif %}{% endif %}" data-fit-text data-fit-min="9">
+                <td class="col-change change {% if game.change_24h_fmt and game.change_24h_fmt != '--' %}{% if game.change_24h_fmt.startswith('+') %}positive{% elif game.change_24h_fmt.startswith('-') %}negative{% endif %}{% endif %}" data-fit-text data-fit-min="8.8">
                     {{ game.change_24h_fmt }}
                 </td>
                 <td class="col-sparkline sparkline-cell">
@@ -126,9 +131,9 @@
                     <span class="no-data">--</span>
                     {% endif %}
                 </td>
-                <td class="col-players players" data-fit-text data-fit-min="9">{{ game.current_players_fmt }}</td>
+                <td class="col-players players" data-fit-text data-fit-min="8.8">{{ game.current_players_fmt }}</td>
                 {% elif table_variant == "top_games" %}
-                <td class="col-players players" data-fit-text data-fit-min="9">{{ game.current_players_fmt }}</td>
+                <td class="col-players players" data-fit-text data-fit-min="8.8">{{ game.current_players_fmt }}</td>
                 <td class="col-sparkline sparkline-cell">
                     {% if game.sparkline_svg %}
                     <svg viewBox="0 0 120 30" preserveAspectRatio="none">
@@ -138,9 +143,9 @@
                     <span class="no-data">--</span>
                     {% endif %}
                 </td>
-                <td class="col-peak peak" data-fit-text data-fit-min="9">{{ game.peak_players_fmt }}</td>
+                <td class="col-peak peak" data-fit-text data-fit-min="8.8">{{ game.peak_players_fmt }}</td>
                 {% elif table_variant == "top_records" %}
-                <td class="col-peak peak" data-fit-text data-fit-min="9">{{ game.peak_players_fmt }}</td>
+                <td class="col-peak peak" data-fit-text data-fit-min="8.8">{{ game.peak_players_fmt }}</td>
                 <td class="col-time record-time" data-fit-text data-fit-min="8">{{ game.peak_time_fmt }}</td>
                 <td class="col-sparkline sparkline-cell">
                     {% if game.sparkline_svg %}

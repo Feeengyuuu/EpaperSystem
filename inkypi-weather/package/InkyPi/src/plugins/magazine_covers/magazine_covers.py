@@ -28,6 +28,18 @@ REQUEST_HEADERS = {
     )
 }
 
+def _magazineshop_pages(label, slug, first_page, last_page):
+    lines = []
+    for page in range(first_page, last_page + 1):
+        name = label if page == 1 else f"{label} Page {page}"
+        if page == 1:
+            url = f"https://magazineshop.us/collections/{slug}"
+        else:
+            url = f"https://magazineshop.us/collections/{slug}?page={page}"
+        lines.append(f"{name}|{url}")
+    return "\n".join(lines)
+
+
 CORE_DEFAULT_SOURCES = """TIME|https://magazineshop.us/collections/time
 Rolling Stone|https://magazineshop.us/collections/rolling-stone
 Billboard|https://magazineshop.us/collections/billboard
@@ -63,7 +75,40 @@ Food & Recipes|https://magazineshop.us/collections/food-and-recipes
 Football|https://magazineshop.us/collections/football
 Politics|https://magazineshop.us/collections/politics"""
 
-PRE_ART_DEFAULT_SOURCES = f"{CORE_DEFAULT_SOURCES}\n{ADDITIONAL_DEFAULT_SOURCES}"
+LEGACY_PRE_ART_DEFAULT_SOURCES = f"{CORE_DEFAULT_SOURCES}\n{ADDITIONAL_DEFAULT_SOURCES}"
+
+FRESH_COLLECTION_SOURCES = "\n".join([
+    _magazineshop_pages("Newest Releases", "new-releases", 4, 20),
+    _magazineshop_pages("All In Stock", "all-in-stock-products", 1, 20),
+    _magazineshop_pages("All Magazines", "all", 1, 20),
+    _magazineshop_pages("Best Sellers", "best-sellers", 2, 10),
+    _magazineshop_pages("Digital Magazines", "digital-magazines", 3, 10),
+])
+
+EXPANDED_CATEGORY_SOURCES = """Archie Comics|https://magazineshop.us/collections/archie-comics
+DC Comics|https://magazineshop.us/collections/dc-comics
+Celebrate with Woman's World|https://magazineshop.us/collections/celebrate-with-womans-world
+Closer Weekly|https://magazineshop.us/collections/closer-weekly-1
+Harvard Health|https://magazineshop.us/collections/harvard-health
+Hoffman Media|https://magazineshop.us/collections/hoffman
+Penny Press|https://magazineshop.us/collections/penny-press
+Sur La Table|https://magazineshop.us/collections/sur-la-table
+VegNews|https://magazineshop.us/collections/vegnews
+Woman's World|https://magazineshop.us/collections/womans-world-magazine
+Coloring Books|https://magazineshop.us/collections/coloring-books
+Fitness and Active Living|https://magazineshop.us/collections/fitness-and-active-living
+Gift Guide|https://magazineshop.us/collections/gift-guide
+Men's Interest|https://magazineshop.us/collections/mens-interest
+Music|https://magazineshop.us/collections/music
+Special Interest|https://magazineshop.us/collections/special-interest
+Taylor Swift|https://magazineshop.us/collections/taylor-swift
+Women's Interest|https://magazineshop.us/collections/womens-interest"""
+
+PRE_ART_DEFAULT_SOURCES = (
+    f"{LEGACY_PRE_ART_DEFAULT_SOURCES}\n"
+    f"{FRESH_COLLECTION_SOURCES}\n"
+    f"{EXPANDED_CATEGORY_SOURCES}"
+)
 
 ART_DEFAULT_SOURCES = """Art in America|https://magazineshop.us/collections/art-in-america
 Artforum|https://magazineshop.us/collections/artforum
@@ -71,9 +116,18 @@ Aspire Design and Home|https://magazineshop.us/collections/aspire-design-and-hom
 Decorator|https://magazineshop.us/collections/decorator
 Home Design|https://magazineshop.us/collections/home-design"""
 
+LEGACY_PRE_MATURE_DEFAULT_SOURCES = f"{LEGACY_PRE_ART_DEFAULT_SOURCES}\n{ART_DEFAULT_SOURCES}"
 PRE_MATURE_DEFAULT_SOURCES = f"{PRE_ART_DEFAULT_SOURCES}\n{ART_DEFAULT_SOURCES}"
 
-MATURE_DEFAULT_SOURCES = """Playboy|https://magazineshop.us/collections/playboy"""
+LEGACY_MATURE_DEFAULT_SOURCES = """Playboy|https://magazineshop.us/collections/playboy"""
+LEGACY_DEFAULT_SOURCES = f"{LEGACY_PRE_MATURE_DEFAULT_SOURCES}\n{LEGACY_MATURE_DEFAULT_SOURCES}"
+
+MATURE_DEFAULT_SOURCES = """Playboy|https://magazineshop.us/collections/playboy
+Playboy Page 2|https://magazineshop.us/collections/playboy?page=2
+Playboy Magazine|https://www.playboy.com/magazine
+Penthouse Magazine|https://penthousemagazine.com/
+Hustler Magazine|https://hustlermagazine.com/
+Maxim|https://www.maxim.com/"""
 
 DEFAULT_SOURCES = f"{PRE_MATURE_DEFAULT_SOURCES}\n{MATURE_DEFAULT_SOURCES}"
 
@@ -508,10 +562,17 @@ class MagazineCovers(BasePlugin):
         if not configured:
             return defaults
 
+        legacy_default_texts = [
+            CORE_DEFAULT_SOURCES,
+            LEGACY_PRE_ART_DEFAULT_SOURCES,
+            PRE_ART_DEFAULT_SOURCES,
+            LEGACY_PRE_MATURE_DEFAULT_SOURCES,
+            PRE_MATURE_DEFAULT_SOURCES,
+            LEGACY_DEFAULT_SOURCES,
+        ]
         legacy_default_id_sets = [
-            {self._source_id(source) for source in self._parse_sources(CORE_DEFAULT_SOURCES)},
-            {self._source_id(source) for source in self._parse_sources(PRE_ART_DEFAULT_SOURCES)},
-            {self._source_id(source) for source in self._parse_sources(PRE_MATURE_DEFAULT_SOURCES)},
+            {self._source_id(source) for source in self._parse_sources(sources_text)}
+            for sources_text in legacy_default_texts
         ]
         configured_ids = {self._source_id(source) for source in configured}
         if any(configured_ids == legacy_ids for legacy_ids in legacy_default_id_sets):
@@ -706,7 +767,25 @@ class MagazineCovers(BasePlugin):
             ("decorator", 14),
             ("aspire", 14),
             ("home-design", 14),
+            ("all-in-stock", 14),
+            ("archie", 14),
+            ("comics", 14),
+            ("harvard", 14),
+            ("hoffman", 14),
+            ("penny", 14),
+            ("sur-la-table", 14),
+            ("vegnews", 14),
+            ("coloring", 12),
+            ("fitness", 14),
+            ("gift", 12),
+            ("music", 12),
+            ("special-interest", 12),
+            ("taylor", 12),
+            ("swift", 12),
             ("playboy", 16),
+            ("penthouse", 16),
+            ("hustler", 16),
+            ("maxim", 14),
         ]:
             if token in haystack:
                 score += weight

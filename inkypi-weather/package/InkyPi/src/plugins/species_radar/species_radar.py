@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -193,28 +194,37 @@ class SpeciesRadar(BasePlugin):
         display_payload["display_pool_size"] = len(observations)
         display_payload["display_pool_index"] = index
         display_payload["display_observation_key"] = self._observation_identity(selected) or str(index)
-        display_payload["display_rotation"] = "daily_pool"
+        display_payload["display_rotation"] = "random_pool"
         return display_payload
 
     def _next_display_index(self, payload, observations, now):
         pool_key = self._discovery_pool_key(payload, observations, now)
         count = len(observations)
-        default_order = self._discovery_pool_order(pool_key, count)
         state = self._read_display_state()
-        order = state.get("order") if isinstance(state, dict) and state.get("pool_key") == pool_key else None
-        if not self._valid_display_order(order, count):
-            order = default_order
-            cursor = 0
+        pools = self._display_state_pools(state, pool_key, count)
+        if pools is None:
+            available = self._shuffled_display_indices(count)
+            discarded = []
+            previous_index = None
         else:
-            cursor = self._int(state.get("cursor"), 0, 0, max(0, count - 1))
-        selected_index = int(order[cursor % count])
-        next_cursor = (cursor + 1) % count
+            available, discarded = pools
+            previous_index = self._coerce_display_index(state.get("selected_index"), count)
+
+        if not available:
+            available = self._shuffled_display_indices(discarded or count)
+            discarded = []
+            self._avoid_immediate_display_repeat(available, previous_index)
+
+        selected_index = int(available.pop(0))
+        discarded.append(selected_index)
         self._write_display_state({
             "schema": CACHE_SCHEMA_VERSION,
             "pool_key": pool_key,
             "count": count,
-            "order": order,
-            "cursor": next_cursor,
+            "available": available,
+            "discarded": discarded,
+            "remaining": len(available),
+            "discarded_count": len(discarded),
             "selected_index": selected_index,
             "selected_key": self._observation_identity(observations[selected_index]) or str(selected_index),
         })
@@ -230,18 +240,57 @@ class SpeciesRadar(BasePlugin):
         digest = hashlib.sha1("|".join(identities).encode("utf-8")).hexdigest()[:16]
         return f"{cache_key}:{len(observations)}:{digest}"
 
-    def _discovery_pool_order(self, pool_key, count):
-        order = list(range(count))
-        order.sort(key=lambda index: hashlib.sha1(f"{pool_key}:{index}".encode("utf-8")).hexdigest())
+    def _display_state_pools(self, state, pool_key, count):
+        if not isinstance(state, dict) or state.get("pool_key") != pool_key:
+            return None
+        available = self._coerce_display_indices(state.get("available"), count)
+        discarded = self._coerce_display_indices(state.get("discarded"), count)
+        if available is None or discarded is None:
+            return None
+        combined = available + discarded
+        if len(combined) != count or len(set(combined)) != count:
+            return None
+        if sorted(combined) != list(range(count)):
+            return None
+        return available, discarded
+
+    def _coerce_display_indices(self, values, count):
+        if not isinstance(values, list):
+            return None
+        coerced = []
+        for value in values:
+            index = self._coerce_display_index(value, count)
+            if index is None:
+                return None
+            coerced.append(index)
+        return coerced
+
+    def _coerce_display_index(self, value, count):
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            return None
+        if index < 0 or index >= count:
+            return None
+        return index
+
+    def _shuffled_display_indices(self, values):
+        if isinstance(values, int):
+            order = list(range(max(0, values)))
+        else:
+            order = [int(value) for value in values]
+        random.shuffle(order)
         return order
 
-    def _valid_display_order(self, order, count):
-        if not isinstance(order, list) or len(order) != count:
-            return False
-        try:
-            return sorted(int(value) for value in order) == list(range(count))
-        except (TypeError, ValueError):
-            return False
+    def _avoid_immediate_display_repeat(self, available, previous_index):
+        if previous_index is None or len(available) < 2 or available[0] != previous_index:
+            return
+        replacement_index = next(
+            (index for index, value in enumerate(available[1:], start=1) if value != previous_index),
+            None,
+        )
+        if replacement_index is not None:
+            available[0], available[replacement_index] = available[replacement_index], available[0]
 
     def _read_display_state(self):
         value = self._read_json(self._display_state_path(), {})

@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DAILY_IMAGE_TITLE_PATH, HISTORY_TITLE_WORDMARK_PATH, DAILY_CAPTION_GAP, DAILY_CAPTION_LINE_SPACING, EPAPER_RULE_WIDTH, HISTORY_BODY_Y_OFFSET, HISTORY_IMAGE_HEIGHT, HISTORY_IMAGE_WIDTH, HISTORY_LINE_SPACING, HISTORY_MIN_EVENT_FONT_SIZE, HISTORY_TEXT_INDENT, HISTORY_TITLE_RULE_GAP, HISTORY_TITLE_Y_OFFSET, HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET, YEAR_LABEL_Y_OFFSET, TOPIC_PLACEHOLDER_PATH  # noqa: E402
+from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DAILY_IMAGE_TITLE_PATH, DAILY_HEADER_FILLER_PATH, HISTORY_TITLE_WORDMARK_PATH, DAILY_CAPTION_GAP, DAILY_CAPTION_LINE_SPACING, EPAPER_RULE_WIDTH, HISTORY_BODY_Y_OFFSET, HISTORY_FLOAT_MIN_TEXT_WIDTH, HISTORY_IMAGE_GAP, HISTORY_IMAGE_HEIGHT, HISTORY_IMAGE_WIDTH, HISTORY_LINE_SPACING, HISTORY_MIN_EVENT_FONT_SIZE, HISTORY_TEXT_INDENT, HISTORY_TITLE_RULE_GAP, HISTORY_TITLE_Y_OFFSET, HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET, YEAR_LABEL_Y_OFFSET, TOPIC_PLACEHOLDER_PATH, DEFAULT_FONT  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -74,6 +74,25 @@ def test_daily_wiki_settings_refresh_on_display_default_enabled():
 
     assert 'name="refreshOnDisplay"' in html
     assert 'value="true"' in html
+
+
+
+def test_daily_wiki_defaults_to_microsoft_yahei(tmp_path):
+    plugin = make_plugin(tmp_path)
+    settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_wiki_page" / "settings.html"
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert DEFAULT_FONT == "Microsoft YaHei"
+    assert plugin._resolved_font_family({}) == "Microsoft YaHei"
+    assert plugin._resolved_font_family({"fontFamily": "Jost"}) == "Microsoft YaHei"
+    assert "fontFamily.value = 'Microsoft YaHei';" in html
+    assert "fontFamily.value = 'Jost';" not in html
+
+
+def test_daily_wiki_cjk_font_prefers_microsoft_yahei_static_file(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    assert Path(plugin._cjk_font_path()).name == "msyh.ttf"
 
 def test_payload_uses_daily_image_and_history_only(tmp_path):
     plugin = make_plugin(tmp_path)
@@ -208,17 +227,34 @@ def test_render_page_downloads_history_image_for_panel_size(tmp_path, monkeypatc
     assert history_targets[0][1] > HISTORY_IMAGE_HEIGHT
 
 
-def test_history_image_uses_remaining_panel_space_after_events(tmp_path, monkeypatch):
+def test_render_page_extends_history_panel_to_left_visual_bottom(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    payload = plugin._payload_from_feed(sample_feed(), "zh-cn", {})
+    payload["source_state"] = "live"
+    payload["date"] = "2026-06-25"
+    captured = {}
+
+    monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: None)
+
+    def fake_history_panel(_draw, _events, _palette, _x, y, _width, panel_h, *_args, **_kwargs):
+        captured["bottom"] = y + panel_h
+
+    monkeypatch.setattr(plugin, "_draw_on_this_day_panel", fake_history_panel)
+
+    plugin._render_page((800, 480), payload, {"language": "zh-cn"}, datetime(2026, 6, 25, 10, 0))
+
+    assert captured["bottom"] == 480 - max(20, min(800, 480) // 18)
+
+
+def test_history_image_floats_at_history_text_top_right(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     canvas = Image.new("RGB", (800, 480), (244, 240, 230))
     draw = ImageDraw.Draw(canvas)
     palette = plugin._palette({"theme": "paper"})
     events = [
-        {"year": "1991", "text": "第一条历史事件。"},
-        {"year": "1950", "text": "第二条历史事件。"},
-        {"year": "1938", "text": "第三条历史事件。"},
-        {"year": "1876", "text": "第四条历史事件。"},
-        {"year": "1530", "text": "第五条历史事件。"},
+        {"year": "1991", "text": "First history event text for the wrapped panel."},
+        {"year": "1950", "text": "Second history event text for the wrapped panel."},
+        {"year": "1938", "text": "Third history event text for the wrapped panel."},
     ]
     captured = {}
 
@@ -243,49 +279,70 @@ def test_history_image_uses_remaining_panel_space_after_events(tmp_path, monkeyp
         target_image=canvas,
     )
 
-    assert captured["box"][0] == 460 + HISTORY_TEXT_INDENT
-    assert captured["box"][2] == 300 - HISTORY_TEXT_INDENT
-    assert captured["box"][3] >= 28
+    title_font = plugin._font_for_text("历史上的今天", plugin._font("Jost", 24, "bold"))
+    title_h = plugin._text_height(draw, "历史上的今天", title_font)
+    body_y = 80 + HISTORY_TITLE_Y_OFFSET + title_h + HISTORY_TITLE_RULE_GAP + max(9, 360 // 42) + HISTORY_BODY_Y_OFFSET
+    image_x, image_y, image_w, image_h = captured["box"]
+
+    assert image_x == 460 + 300 - image_w
+    assert image_y == body_y
+    expected_w = 300 - HISTORY_TEXT_INDENT - HISTORY_FLOAT_MIN_TEXT_WIDTH - HISTORY_IMAGE_GAP
+    assert image_w == expected_w
+    assert image_h == max(42, round(expected_w / 2))
 
 
-def test_history_image_compacts_rows_before_dropping_current_event_image(tmp_path, monkeypatch):
+def test_history_float_wraps_overlapping_lines_then_restores_full_width(tmp_path):
     plugin = make_plugin(tmp_path)
-    canvas = Image.new("RGB", (800, 480), (244, 240, 230))
+    canvas = Image.new("RGB", (800, 480), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
-    palette = plugin._palette({"theme": "paper"})
-    events = [
-        {"year": "2015", "text": "美国最高法院在奥贝格费尔诉霍奇斯案裁定同性婚姻受到《美国宪法》修正案的保障。"},
-        {"year": "1976", "text": "加拿大多伦多的加拿大国家电视塔首次向公众开放，为当时世界上最高的自立式建筑。"},
-        {"year": "1963", "text": "在苏联与东德建立柏林墙后，美国总统约翰·肯尼迪发表支持西德的\"我是柏林人\"演讲。"},
-        {"year": "1945", "text": "联合国国际组织会议的会员国代表在美国旧金山签署《联合国宪章》，正式建立联合国。"},
-        {"year": "363", "text": "罗马帝国皇帝尤利安在率领军队远征波斯萨珊王朝时阵亡，军队推立约维安为新任皇帝。"},
-    ]
-    captured = {}
+    event_font = plugin._font("__cjk__", 15)
+    events = [{"year": "1991", "text": "This historical entry is intentionally long enough to cross several lines before and after the floating image area in the right panel."}]
 
-    monkeypatch.setattr(plugin, "_load_history_title_wordmark", lambda: None)
-    monkeypatch.setattr(plugin, "_draw_history_image", lambda _image, _history_image, x, y, w, h: captured.setdefault("box", (x, y, w, h)))
-
-    plugin._draw_on_this_day_panel(
+    rows = plugin._event_rows_for_height(
         draw,
         events,
-        palette,
-        437,
-        76,
-        337,
-        360,
-        plugin._font("Jost", 29, "bold"),
-        plugin._font("Jost", 23, "bold"),
-        plugin._font("Jost", 20),
-        plugin._font("Jost", 10),
-        True,
-        date_key="2026-06-26",
-        history_image=Image.new("RGB", (330, 220), (80, 130, 170)),
-        target_image=canvas,
+        260,
+        220,
+        plugin._font("Jost", 20, "bold"),
+        event_font,
+        date_key="2026-06-25",
+        cjk=True,
+        float_width_px=100,
+        float_height_px=64,
     )
 
-    assert captured["box"][0] == 437 + HISTORY_TEXT_INDENT
-    assert captured["box"][2] == 337 - HISTORY_TEXT_INDENT
-    assert captured["box"][3] >= 28
+    assert rows
+    line_widths = rows[0]["line_widths"]
+    assert line_widths[0] == max(HISTORY_FLOAT_MIN_TEXT_WIDTH, 260 - 100)
+    assert line_widths[0] < 260
+    assert line_widths[-1] == 260
+    assert rows[0]["height"] <= 220
+
+
+def test_history_rows_stretch_to_bottom_edge(tmp_path):
+    plugin = make_plugin(tmp_path)
+    canvas = Image.new("RGB", (800, 480), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    events = [
+        {"year": str(1990 + index), "text": "Short event"}
+        for index in range(5)
+    ]
+
+    rows = plugin._event_rows_for_height(
+        draw,
+        events,
+        260,
+        240,
+        plugin._font("Jost", 18, "bold"),
+        plugin._font("Jost", 13),
+        date_key="2026-06-25",
+    )
+
+    assert len(rows) == 5
+    assert sum(row["height"] for row in rows) == 240
+    last_top = sum(row["height"] for row in rows[:-1])
+    assert last_top + rows[-1]["text_offset_y"] + rows[-1]["ink_height"] == 240
+    assert rows[0]["height"] > rows[-1]["height"]
 
 
 def test_render_page_allocates_space_for_full_daily_image_caption(tmp_path, monkeypatch):
@@ -369,7 +426,7 @@ def test_daily_image_caption_is_close_to_image_and_readable(tmp_path, monkeypatc
     assert DAILY_CAPTION_GAP == 4
     assert DAILY_CAPTION_LINE_SPACING <= 1.12
     assert caption_xy[1] - captured["image_bottom"] == DAILY_CAPTION_GAP
-    assert caption_size >= 19
+    assert caption_size == 18
     assert caption_fill == ink
 
 
@@ -446,6 +503,19 @@ def test_daily_image_title_asset_has_transparent_background():
     assert alpha.getpixel((asset.width - 1, asset.height - 1)) == 0
 
 
+def test_daily_header_filler_asset_has_exact_transparent_size():
+    asset = Image.open(DAILY_HEADER_FILLER_PATH).convert("RGBA")
+    alpha = asset.getchannel("A")
+
+    assert asset.size == (424, 52)
+    assert alpha.getbbox() is not None
+    assert alpha.getextrema() == (0, 255)
+    assert alpha.getpixel((0, 0)) == 0
+    assert alpha.getpixel((asset.width - 1, 0)) == 0
+    assert alpha.getpixel((0, asset.height - 1)) == 0
+    assert alpha.getpixel((asset.width - 1, asset.height - 1)) == 0
+
+
 def test_history_title_wordmark_asset_has_transparent_background():
     asset = Image.open(HISTORY_TITLE_WORDMARK_PATH).convert("RGBA")
     alpha = asset.getchannel("A")
@@ -456,6 +526,35 @@ def test_history_title_wordmark_asset_has_transparent_background():
     assert alpha.getpixel((asset.width - 1, 0)) == 0
     assert alpha.getpixel((0, asset.height - 1)) == 0
     assert alpha.getpixel((asset.width - 1, asset.height - 1)) == 0
+
+def test_daily_image_header_draws_pixel_filler_between_title_and_date(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    payload = plugin._payload_from_feed(sample_feed(), "zh-cn", {})
+    payload["source_state"] = "live"
+    payload["date"] = "2026-06-25"
+    captured = {}
+
+    monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_load_daily_image_title", lambda: Image.new("RGBA", (620, 165), (96, 64, 42, 255)))
+    monkeypatch.setattr(plugin, "_load_daily_header_filler", lambda: Image.new("RGBA", (424, 52), (10, 20, 30, 255)))
+    monkeypatch.setattr(plugin, "_draw_daily_image_title", lambda *_args, **_kwargs: None)
+
+    def fake_draw_filler(_image, filler, x1, x2, y, rule_y):
+        captured["filler"] = (x1, x2, y, rule_y, filler.size)
+        return (x1, rule_y - filler.height - 2, filler.width, filler.height)
+
+    monkeypatch.setattr(plugin, "_draw_daily_header_filler", fake_draw_filler)
+
+    plugin._render_page((800, 480), payload, {"language": "zh-cn"}, datetime(2026, 6, 25, 10, 0))
+
+    x1, x2, y, rule_y, filler_size = captured["filler"]
+    assert filler_size == (424, 52)
+    assert 250 <= x1 <= 285
+    assert 685 <= x2 <= 710
+    assert x2 - x1 >= 424
+    assert y >= 0
+    assert rule_y == 64
+
 
 def test_daily_image_header_uses_title_image_asset(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
@@ -480,6 +579,18 @@ def test_daily_image_header_uses_title_image_asset(tmp_path, monkeypatch):
     assert captured["box"][2] >= 190
     assert 28 <= captured["box"][3] <= 58
     assert captured["rule_y"] is not None
+
+
+def test_daily_header_filler_keeps_native_size_when_slot_matches(tmp_path):
+    plugin = make_plugin(tmp_path)
+    canvas = Image.new("RGBA", (520, 90), (0, 0, 0, 0))
+    filler = Image.new("RGBA", (424, 52), (10, 20, 30, 255))
+
+    box = plugin._draw_daily_header_filler(canvas, filler, 48, 472, 10, 64)
+
+    assert box == (48, 10, 424, 52)
+    assert canvas.getpixel((48, 10)) == (10, 20, 30, 255)
+    assert canvas.getpixel((471, 61)) == (10, 20, 30, 255)
 
 
 def test_daily_image_title_rule_aligns_with_header_rule(tmp_path):
@@ -899,7 +1010,17 @@ def test_history_topic_placeholder_draws_in_remaining_space(tmp_path, monkeypatc
     assert captured["placeholder_box"][2] == 220 - HISTORY_TEXT_INDENT
     assert captured["placeholder_box"][3] >= 28
 
-def test_history_image_is_drawn_after_body_without_narrowing_rows(tmp_path, monkeypatch):
+def test_history_image_cover_fills_float_box(tmp_path):
+    plugin = make_plugin(tmp_path)
+    canvas = Image.new("RGB", (160, 100), (255, 255, 255))
+    portrait = Image.new("RGB", (40, 120), (20, 80, 120))
+
+    plugin._draw_history_image(canvas, portrait, 10, 20, 120, 50)
+
+    assert canvas.getpixel((10, 20)) == (20, 80, 120)
+    assert canvas.getpixel((129, 69)) == (20, 80, 120)
+
+def test_history_image_float_passes_wrap_dimensions_to_rows(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     canvas = Image.new("RGB", (320, 240), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
@@ -913,15 +1034,15 @@ def test_history_image_is_drawn_after_body_without_narrowing_rows(tmp_path, monk
     def fake_rows(_draw, _events, _text_width_px, available_h, _year_font, _event_font, **kwargs):
         captured["available_h"] = available_h
         captured["float_width_px"] = kwargs.get("float_width_px")
-        captured["float_rows"] = kwargs.get("float_rows")
+        captured["float_height_px"] = kwargs.get("float_height_px")
         return [{
             "height": row_height,
-            "date_label": "1991\u5e746\u670825\u65e5",
+            "date_label": "1991年6月25日",
             "year_h": 0,
             "topic_lines": [],
             "section_gap_h": 0,
             "body_gap_h": 0,
-            "body_lines": ["1991\u5e746\u670825\u65e5 Event"],
+            "body_lines": ["1991年6月25日 Event"],
             "line_h": 15,
         }]
 
@@ -949,20 +1070,19 @@ def test_history_image_is_drawn_after_body_without_narrowing_rows(tmp_path, monk
         target_image=canvas,
     )
 
-    title_draw_font = plugin._font_for_text("\u5386\u53f2\u4e0a\u7684\u4eca\u5929", title_font)
-    title_h = plugin._text_height(draw, "\u5386\u53f2\u4e0a\u7684\u4eca\u5929", title_draw_font)
+    title_draw_font = plugin._font_for_text("历史上的今天", title_font)
+    title_h = plugin._text_height(draw, "历史上的今天", title_draw_font)
     expected_start_offset = HISTORY_TITLE_Y_OFFSET + title_h + HISTORY_TITLE_RULE_GAP + max(9, 180 // 42) + HISTORY_BODY_Y_OFFSET
     body_y = 20 + expected_start_offset
 
     assert captured["available_h"] == 180 - expected_start_offset
-    assert captured["float_rows"] == 0
-    assert captured["float_width_px"] == 0
+    assert captured["float_width_px"] == captured["image_box"][2] + HISTORY_IMAGE_GAP
+    assert captured["float_height_px"] == captured["image_box"][3] + HISTORY_IMAGE_GAP
     image_x, image_y, image_w, image_h = captured["image_box"]
-    assert image_x == 10 + HISTORY_TEXT_INDENT
-    assert image_y == body_y + row_height + HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET
-    assert image_w == 220 - HISTORY_TEXT_INDENT
-    assert image_h >= 28
-
+    assert image_x == 10 + 220 - image_w
+    assert image_y == body_y
+    assert image_w >= 70
+    assert image_h >= 42
 
 def test_history_date_label_uses_cjk_font_when_drawing(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
@@ -1057,8 +1177,8 @@ def test_history_body_draws_with_ink_color_for_readability(tmp_path, monkeypatch
     assert dim not in body_fills
 
 
-def test_history_line_spacing_is_compact_for_larger_right_text():
-    assert HISTORY_LINE_SPACING <= 1.02
+def test_history_line_spacing_is_relaxed_for_readability():
+    assert 1.06 <= HISTORY_LINE_SPACING <= 1.10
 
 
 def test_history_current_length_events_fit_five_rows(tmp_path):

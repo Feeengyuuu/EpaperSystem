@@ -23,6 +23,15 @@ def test_default_us_cn_holiday_sources_when_enabled():
     assert all(source["url"].startswith("https://calendar.google.com/calendar/ical/") for source in sources)
 
 
+def test_settings_template_persists_refresh_on_display_default():
+    settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "simple_calendar" / "settings.html"
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert 'name="refreshOnDisplay"' in html
+    assert 'value="true"' in html
+
+
+
 def test_extract_holiday_events_for_selected_month():
     plugin = SimpleCalendar({"id": "simple_calendar"})
     cal = icalendar.Calendar.from_ical(

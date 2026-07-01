@@ -132,7 +132,7 @@
             document.getElementById('includeLuoyang').checked = pluginSettings.includeLuoyang !== 'false';
             document.getElementById('includeLuoyang').value = document.getElementById('includeLuoyang').checked ? 'true' : 'false';
             document.getElementById('luoyangLookbackDays').value = pluginSettings.luoyangLookbackDays || 730;
-            document.getElementById('refreshOnDisplay').checked = pluginSettings.refreshOnDisplay === 'true';
+            document.getElementById('refreshOnDisplay').checked = pluginSettings.refreshOnDisplay !== 'false';
             document.getElementById('refreshOnDisplay').value = document.getElementById('refreshOnDisplay').checked ? 'true' : 'false';
             document.getElementById('forceRefresh').checked = pluginSettings.forceRefresh === 'true';
             document.getElementById('forceRefresh').value = document.getElementById('forceRefresh').checked ? 'true' : 'false';
@@ -155,8 +155,8 @@
             document.getElementById('includeLuoyang').checked = true;
             document.getElementById('includeLuoyang').value = 'true';
             document.getElementById('luoyangLookbackDays').value = 730;
-            document.getElementById('refreshOnDisplay').checked = false;
-            document.getElementById('refreshOnDisplay').value = 'false';
+            document.getElementById('refreshOnDisplay').checked = true;
+            document.getElementById('refreshOnDisplay').value = 'true';
             document.getElementById('forceRefresh').checked = false;
             document.getElementById('forceRefresh').value = 'false';
             document.getElementById('showObservationMap').checked = true;

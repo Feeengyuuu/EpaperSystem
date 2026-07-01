@@ -8,6 +8,8 @@ from utils.image_utils import pad_image_blur
 
 logger = logging.getLogger(__name__)
 
+IMMICH_REQUEST_TIMEOUT_SECONDS = 15
+
 
 class ImmichProvider:
     def __init__(self, base_url: str, key: str, image_loader):
@@ -19,7 +21,7 @@ class ImmichProvider:
 
     def get_album_id(self, album: str) -> str:
         logger.debug(f"Fetching albums from {self.base_url}")
-        r = self.session.get(f"{self.base_url}/api/albums", headers=self.headers)
+        r = self.session.get(f"{self.base_url}/api/albums", headers=self.headers, timeout=IMMICH_REQUEST_TIMEOUT_SECONDS)
         r.raise_for_status()
         albums = r.json()
 
@@ -42,7 +44,7 @@ class ImmichProvider:
                 "size": 1000,
                 "page": page
             }
-            r2 = self.session.post(f"{self.base_url}/api/search/metadata", json=body, headers=self.headers)
+            r2 = self.session.post(f"{self.base_url}/api/search/metadata", json=body, headers=self.headers, timeout=IMMICH_REQUEST_TIMEOUT_SECONDS)
             r2.raise_for_status()
             assets_data = r2.json()
 
