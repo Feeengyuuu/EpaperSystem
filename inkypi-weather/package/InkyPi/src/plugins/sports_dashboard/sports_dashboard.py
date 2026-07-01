@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from utils.app_utils import resolve_path
 
 try:
@@ -8127,16 +8128,18 @@ class SportsDashboard(BasePlugin):
     def _write_worldcup_live_state(self, selected, now, source_state):
         live_events = (selected or {}).get("live") or []
         event = live_events[0] if live_events else None
+        live_until = self._worldcup_live_refresh_until(selected, now)
         payload = {
             "version": WORLD_CUP_LIVE_STATE_VERSION,
             "updated_at": now.astimezone(timezone.utc).isoformat(),
             "source_state": source_state,
-            "has_live": bool(event),
+            "has_live": isinstance(live_until, datetime) and now <= live_until,
             "live_until": None,
         }
+        if isinstance(live_until, datetime):
+            payload["live_until"] = live_until.astimezone(timezone.utc).isoformat()
         if event:
             start = event.get("start")
-            live_until = start + WORLD_CUP_INFERRED_LIVE_WINDOW if isinstance(start, datetime) else now + WORLD_CUP_INFERRED_LIVE_WINDOW
             inferred_live = bool(event.get("inferred_live"))
             source_state_text = str(source_state or "").upper()
             provider = str(event.get("provider") or "").strip()
@@ -8145,7 +8148,6 @@ class SportsDashboard(BasePlugin):
                 provider = "ESPN"
             payload.update(
                 {
-                    "live_until": live_until.astimezone(timezone.utc).isoformat(),
                     "event_id": event.get("event_id") or "",
                     "team_a": event.get("team_a") or "",
                     "team_b": event.get("team_b") or "",
@@ -8166,6 +8168,37 @@ class SportsDashboard(BasePlugin):
             self._write_json_file(self._worldcup_live_state_path(), payload)
         except OSError as exc:
             logger.warning("Failed to write World Cup live refresh state: %s", exc)
+
+    @staticmethod
+    def _worldcup_live_refresh_until(selected, now):
+        if not isinstance(selected, Mapping) or not isinstance(now, datetime):
+            return None
+
+        def event_refresh_end(event):
+            start = (event or {}).get("start")
+            if isinstance(start, datetime):
+                return start + WORLD_CUP_INFERRED_LIVE_WINDOW
+            return now + WORLD_CUP_INFERRED_LIVE_WINDOW
+
+        refresh_until = None
+        for event in selected.get("live") or []:
+            event_until = event_refresh_end(event)
+            if isinstance(event_until, datetime) and (refresh_until is None or event_until > refresh_until):
+                refresh_until = event_until
+
+        for event in selected.get("upcoming") or []:
+            start = (event or {}).get("start")
+            if not isinstance(start, datetime):
+                continue
+            event_until = start + WORLD_CUP_INFERRED_LIVE_WINDOW
+            if refresh_until is None:
+                if start - WORLD_CUP_LIVE_PREGAME_WINDOW <= now < event_until:
+                    refresh_until = event_until
+                continue
+            if start - WORLD_CUP_LIVE_PREGAME_WINDOW <= refresh_until and event_until > refresh_until:
+                refresh_until = event_until
+
+        return refresh_until
 
     def _attach_lpl_realtime_info(self, selected, settings, league_key="LPL"):
         if not self._bool_setting(settings, "lplLiveStatsEnabled", True):
@@ -10437,29 +10470,11 @@ class SportsDashboard(BasePlugin):
 
     @staticmethod
     def _read_json_file(path):
-        try:
-            with Path(path).open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            return data if isinstance(data, dict) else {}
-        except (FileNotFoundError, OSError, ValueError):
-            return {}
+        return read_json_file(path)
 
     @staticmethod
     def _write_json_file(path, payload):
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = target.with_name(f"{target.name}.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, separators=(",", ":"))
-        try:
-            os.replace(tmp_path, target)
-        except OSError:
-            with target.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=True, separators=(",", ":"))
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+        write_json_file(path, payload)
 
     @staticmethod
     def _int_setting(settings, key, default, minimum, maximum):
@@ -10484,26 +10499,40 @@ class SportsDashboard(BasePlugin):
             away_aliases = SportsDashboard._football_data_team_aliases(away, away_tla)
             score = item.get("score") or {}
             fulltime = score.get("fullTime") or score.get("fulltime") or {}
-            parsed.append(
-                {
-                    "start": start_time,
-                    "state": str(item.get("status") or "").upper(),
-                    "status": str(item.get("status") or "").strip(),
-                    "team_a": SportsDashboard._localized_country_name(home, home_tla),
-                    "team_b": SportsDashboard._localized_country_name(away, away_tla),
-                    "team_a_tla": home_tla,
-                    "team_b_tla": away_tla,
-                    "team_a_source_name": home_aliases[0] if home_aliases else home_tla,
-                    "team_b_source_name": away_aliases[0] if away_aliases else away_tla,
-                    "team_a_source_aliases": home_aliases,
-                    "team_b_source_aliases": away_aliases,
-                    "team_a_flag": SportsDashboard._flag_url_for_tla(home_tla),
-                    "team_b_flag": SportsDashboard._flag_url_for_tla(away_tla),
-                    "wins_a": SportsDashboard._first_number(fulltime.get("home")),
-                    "wins_b": SportsDashboard._first_number(fulltime.get("away")),
-                    "block": SportsDashboard._clean_football_data_stage(item.get("group") or item.get("stage")),
-                }
+            extra_a, extra_b = SportsDashboard._worldcup_score_pair_from_score(
+                score,
+                "extraTime",
+                "extratime",
+                "extra_time",
             )
+            penalty_a, penalty_b = SportsDashboard._worldcup_score_pair_from_score(
+                score,
+                "penalties",
+                "penalty",
+                "penaltyShootout",
+                "shootout",
+            )
+            row = {
+                "start": start_time,
+                "state": str(item.get("status") or "").upper(),
+                "status": str(item.get("status") or "").strip(),
+                "team_a": SportsDashboard._localized_country_name(home, home_tla),
+                "team_b": SportsDashboard._localized_country_name(away, away_tla),
+                "team_a_tla": home_tla,
+                "team_b_tla": away_tla,
+                "team_a_source_name": home_aliases[0] if home_aliases else home_tla,
+                "team_b_source_name": away_aliases[0] if away_aliases else away_tla,
+                "team_a_source_aliases": home_aliases,
+                "team_b_source_aliases": away_aliases,
+                "team_a_flag": SportsDashboard._flag_url_for_tla(home_tla),
+                "team_b_flag": SportsDashboard._flag_url_for_tla(away_tla),
+                "wins_a": SportsDashboard._first_number(fulltime.get("home")),
+                "wins_b": SportsDashboard._first_number(fulltime.get("away")),
+                "block": SportsDashboard._clean_football_data_stage(item.get("group") or item.get("stage")),
+            }
+            SportsDashboard._write_worldcup_period_score(row, "extra_time_score", extra_a, extra_b)
+            SportsDashboard._write_worldcup_period_score(row, "penalty_score", penalty_a, penalty_b)
+            parsed.append(row)
         return sorted(parsed, key=lambda item: item["start"])
 
     @staticmethod
@@ -10628,29 +10657,43 @@ class SportsDashboard(BasePlugin):
             league = item.get("league") or {}
             goals = item.get("goals") or {}
             score = item.get("score") or {}
-            fulltime = score.get("fulltime") or {}
-            parsed.append(
-                {
-                    "fixture_id": str(fixture.get("id") or "").strip(),
-                    "start": start_time,
-                    "state": str(status.get("short") or "").upper(),
-                    "status": str(status.get("long") or "").strip(),
-                    "elapsed": status.get("elapsed"),
-                    "team_a": SportsDashboard._api_team_name(home),
-                    "team_b": SportsDashboard._api_team_name(away),
-                    "team_a_tla": home_tla,
-                    "team_b_tla": away_tla,
-                    "team_a_source_name": str(home.get("name") or home_tla or "").strip(),
-                    "team_b_source_name": str(away.get("name") or away_tla or "").strip(),
-                    "team_a_source_aliases": SportsDashboard._api_team_aliases(home),
-                    "team_b_source_aliases": SportsDashboard._api_team_aliases(away),
-                    "team_a_flag": SportsDashboard._flag_url_for_tla(home_tla),
-                    "team_b_flag": SportsDashboard._flag_url_for_tla(away_tla),
-                    "wins_a": SportsDashboard._first_number(goals.get("home"), fulltime.get("home")),
-                    "wins_b": SportsDashboard._first_number(goals.get("away"), fulltime.get("away")),
-                    "block": str(league.get("round") or "World Cup").strip(),
-                }
+            fulltime = score.get("fulltime") or score.get("fullTime") or {}
+            extra_a, extra_b = SportsDashboard._worldcup_score_pair_from_score(
+                score,
+                "extratime",
+                "extraTime",
+                "extra_time",
             )
+            penalty_a, penalty_b = SportsDashboard._worldcup_score_pair_from_score(
+                score,
+                "penalty",
+                "penalties",
+                "penaltyShootout",
+                "shootout",
+            )
+            row = {
+                "fixture_id": str(fixture.get("id") or "").strip(),
+                "start": start_time,
+                "state": str(status.get("short") or "").upper(),
+                "status": str(status.get("long") or "").strip(),
+                "elapsed": status.get("elapsed"),
+                "team_a": SportsDashboard._api_team_name(home),
+                "team_b": SportsDashboard._api_team_name(away),
+                "team_a_tla": home_tla,
+                "team_b_tla": away_tla,
+                "team_a_source_name": str(home.get("name") or home_tla or "").strip(),
+                "team_b_source_name": str(away.get("name") or away_tla or "").strip(),
+                "team_a_source_aliases": SportsDashboard._api_team_aliases(home),
+                "team_b_source_aliases": SportsDashboard._api_team_aliases(away),
+                "team_a_flag": SportsDashboard._flag_url_for_tla(home_tla),
+                "team_b_flag": SportsDashboard._flag_url_for_tla(away_tla),
+                "wins_a": SportsDashboard._first_number(goals.get("home"), fulltime.get("home")),
+                "wins_b": SportsDashboard._first_number(goals.get("away"), fulltime.get("away")),
+                "block": str(league.get("round") or "World Cup").strip(),
+            }
+            SportsDashboard._write_worldcup_period_score(row, "extra_time_score", extra_a, extra_b)
+            SportsDashboard._write_worldcup_period_score(row, "penalty_score", penalty_a, penalty_b)
+            parsed.append(row)
         return sorted(parsed, key=lambda item: item["start"])
 
     @staticmethod
@@ -10679,35 +10722,43 @@ class SportsDashboard(BasePlugin):
                 show_score,
             )
             source_url = SportsDashboard._worldcup_espn_event_url(event, competition)
-            parsed.append(
-                {
-                    "event_id": str(event.get("id") or competition.get("id") or "").strip(),
-                    "start": start_time,
-                    "state": state,
-                    "status": SportsDashboard._worldcup_espn_status_text(event, competition, start_time),
-                    "elapsed": SportsDashboard._worldcup_espn_elapsed(event, competition),
-                    "team_a": team_a,
-                    "team_b": team_b,
-                    "team_a_tla": team_a_tla,
-                    "team_b_tla": team_b_tla,
-                    "team_a_source_name": team_a_name,
-                    "team_b_source_name": team_b_name,
-                    "team_a_source_aliases": team_a_aliases,
-                    "team_b_source_aliases": team_b_aliases,
-                    "team_a_flag": team_a_flag,
-                    "team_b_flag": team_b_flag,
-                    "team_a_advance": SportsDashboard._espn_competitor_advance(home),
-                    "team_b_advance": SportsDashboard._espn_competitor_advance(away),
-                    "wins_a": wins_a,
-                    "wins_b": wins_b,
-                    "block": SportsDashboard._worldcup_espn_event_block(event, competition),
-                    "score_source": "ESPN",
-                    "provider": "ESPN",
-                    "source_url": source_url,
-                    "provider_status_confirmed": state in WORLD_CUP_LIVE_STATES.union(WORLD_CUP_FINISHED_STATES),
-                    "score_confirmed": show_score and wins_a is not None and wins_b is not None,
-                }
+            extra_a, extra_b, penalty_a, penalty_b = SportsDashboard._worldcup_espn_period_scores(
+                event,
+                competition,
+                home,
+                away,
+                state,
             )
+            row = {
+                "event_id": str(event.get("id") or competition.get("id") or "").strip(),
+                "start": start_time,
+                "state": state,
+                "status": SportsDashboard._worldcup_espn_status_text(event, competition, start_time),
+                "elapsed": SportsDashboard._worldcup_espn_elapsed(event, competition),
+                "team_a": team_a,
+                "team_b": team_b,
+                "team_a_tla": team_a_tla,
+                "team_b_tla": team_b_tla,
+                "team_a_source_name": team_a_name,
+                "team_b_source_name": team_b_name,
+                "team_a_source_aliases": team_a_aliases,
+                "team_b_source_aliases": team_b_aliases,
+                "team_a_flag": team_a_flag,
+                "team_b_flag": team_b_flag,
+                "team_a_advance": SportsDashboard._espn_competitor_advance(home),
+                "team_b_advance": SportsDashboard._espn_competitor_advance(away),
+                "wins_a": wins_a,
+                "wins_b": wins_b,
+                "block": SportsDashboard._worldcup_espn_event_block(event, competition),
+                "score_source": "ESPN",
+                "provider": "ESPN",
+                "source_url": source_url,
+                "provider_status_confirmed": state in WORLD_CUP_LIVE_STATES.union(WORLD_CUP_FINISHED_STATES),
+                "score_confirmed": show_score and wins_a is not None and wins_b is not None,
+            }
+            SportsDashboard._write_worldcup_period_score(row, "extra_time_score", extra_a, extra_b)
+            SportsDashboard._write_worldcup_period_score(row, "penalty_score", penalty_a, penalty_b)
+            parsed.append(row)
         parsed = sorted(parsed, key=lambda item: item["start"])
         unique = []
         seen = set()
@@ -10788,6 +10839,140 @@ class SportsDashboard(BasePlugin):
             if text and text not in aliases:
                 aliases.append(text)
         return aliases
+
+    @staticmethod
+    def _worldcup_espn_period_scores(event, competition, home, away, state):
+        extra_a = SportsDashboard._worldcup_espn_competitor_period_score(
+            home,
+            "extraTimeScore",
+            "extra_time_score",
+            "overtimeScore",
+            "overtime_score",
+        )
+        extra_b = SportsDashboard._worldcup_espn_competitor_period_score(
+            away,
+            "extraTimeScore",
+            "extra_time_score",
+            "overtimeScore",
+            "overtime_score",
+        )
+        penalty_a = SportsDashboard._worldcup_espn_competitor_period_score(
+            home,
+            "penaltyKickScore",
+            "penaltyScore",
+            "penalty_score",
+            "penaltyShootoutScore",
+            "shootoutScore",
+            "shootout_score",
+        )
+        penalty_b = SportsDashboard._worldcup_espn_competitor_period_score(
+            away,
+            "penaltyKickScore",
+            "penaltyScore",
+            "penalty_score",
+            "penaltyShootoutScore",
+            "shootoutScore",
+            "shootout_score",
+        )
+        detail_extra_a, detail_extra_b, detail_penalty_a, detail_penalty_b = SportsDashboard._worldcup_espn_detail_period_scores(
+            event,
+            competition,
+            home,
+            away,
+            state,
+        )
+        if extra_a is None or extra_b is None:
+            extra_a, extra_b = detail_extra_a, detail_extra_b
+        if penalty_a is None or penalty_b is None:
+            penalty_a, penalty_b = detail_penalty_a, detail_penalty_b
+        return extra_a, extra_b, penalty_a, penalty_b
+
+    @staticmethod
+    def _worldcup_espn_competitor_period_score(competitor, *keys):
+        competitor = competitor or {}
+        for key in keys:
+            value = competitor.get(key)
+            parsed = SportsDashboard._worldcup_score_value(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _worldcup_espn_detail_period_scores(event, competition, home, away, state):
+        details = list((competition or {}).get("details") or [])
+        details.extend((event or {}).get("details") or [])
+        if not details:
+            return None, None, None, None
+        team_side = {}
+        for team_id in SportsDashboard._worldcup_espn_competitor_ids(home):
+            team_side[team_id] = "a"
+        for team_id in SportsDashboard._worldcup_espn_competitor_ids(away):
+            team_side[team_id] = "b"
+        extra_counts = {"a": 0, "b": 0}
+        penalty_counts = {"a": 0, "b": 0}
+        saw_extra_context = str(state or "").upper() in {"AET", "PEN", "ET", "P"}
+        saw_extra_score = False
+        saw_penalty_score = False
+        for detail in details:
+            side = SportsDashboard._worldcup_espn_detail_side(detail, team_side)
+            in_extra_time = SportsDashboard._worldcup_espn_detail_is_extra_time(detail)
+            saw_extra_context = saw_extra_context or in_extra_time
+            if not side or not SportsDashboard._worldcup_espn_detail_is_scoring_play(detail):
+                continue
+            value = SportsDashboard._worldcup_score_value(detail.get("scoreValue"), 1) or 1
+            if bool((detail or {}).get("shootout")):
+                penalty_counts[side] += value
+                saw_penalty_score = True
+            elif in_extra_time:
+                extra_counts[side] += value
+                saw_extra_score = True
+        extra_a = extra_counts["a"] if saw_extra_score or saw_extra_context else None
+        extra_b = extra_counts["b"] if saw_extra_score or saw_extra_context else None
+        penalty_a = penalty_counts["a"] if saw_penalty_score else None
+        penalty_b = penalty_counts["b"] if saw_penalty_score else None
+        return extra_a, extra_b, penalty_a, penalty_b
+
+    @staticmethod
+    def _worldcup_espn_competitor_ids(competitor):
+        competitor = competitor or {}
+        team = competitor.get("team") or {}
+        ids = []
+        for value in (competitor.get("id"), competitor.get("uid"), team.get("id"), team.get("uid")):
+            text = str(value or "").strip()
+            if text and text not in ids:
+                ids.append(text)
+        return ids
+
+    @staticmethod
+    def _worldcup_espn_detail_side(detail, team_side):
+        detail = detail or {}
+        team = detail.get("team") or {}
+        for value in (detail.get("teamId"), detail.get("team_id"), team.get("id"), team.get("uid")):
+            side = team_side.get(str(value or "").strip())
+            if side:
+                return side
+        return ""
+
+    @staticmethod
+    def _worldcup_espn_detail_is_scoring_play(detail):
+        detail = detail or {}
+        if detail.get("scoringPlay") is True:
+            return True
+        return SportsDashboard._worldcup_score_value(detail.get("scoreValue")) not in (None, 0)
+
+    @staticmethod
+    def _worldcup_espn_detail_is_extra_time(detail):
+        detail = detail or {}
+        period = SportsDashboard._worldcup_score_value(detail.get("period"), detail.get("periodNumber"))
+        if period is not None and period > 2:
+            return True
+        clock = detail.get("clock") or {}
+        display = str(clock.get("displayValue") or detail.get("displayClock") or "").strip()
+        match = re.search(r"\b(\d{1,3})(?:\+\d{1,2})?['’]?", display)
+        if match:
+            minute = SportsDashboard._worldcup_score_value(match.group(1))
+            return minute is not None and minute > 90
+        return False
 
     @staticmethod
     def _worldcup_espn_event_state(event, competition):
@@ -10942,6 +11127,16 @@ class SportsDashboard(BasePlugin):
                 event["team_a_advance"] = scoreboard_event.get("team_a_advance")
             if "team_b_advance" in scoreboard_event:
                 event["team_b_advance"] = scoreboard_event.get("team_b_advance")
+        for prefix in ("extra_time_score", "penalty_score"):
+            source_a = f"{prefix}_b" if reversed_order else f"{prefix}_a"
+            source_b = f"{prefix}_a" if reversed_order else f"{prefix}_b"
+            if source_a in scoreboard_event and source_b in scoreboard_event:
+                SportsDashboard._write_worldcup_period_score(
+                    event,
+                    prefix,
+                    scoreboard_event.get(source_a),
+                    scoreboard_event.get(source_b),
+                )
         for key in ("state", "status", "elapsed", "score_source", "provider", "source_url"):
             value = scoreboard_event.get(key)
             if value is not None and str(value).strip():
@@ -11021,6 +11216,47 @@ class SportsDashboard(BasePlugin):
             if value is not None:
                 return value
         return None
+
+    @staticmethod
+    def _worldcup_score_value(*values):
+        for value in values:
+            parsed = SportsDashboard._lpl_int_value(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _worldcup_score_pair_from_score(score, *keys):
+        if not isinstance(score, Mapping):
+            return None, None
+        for key in keys:
+            block = score.get(key)
+            if not isinstance(block, Mapping):
+                continue
+            home = SportsDashboard._worldcup_score_value(
+                block.get("home"),
+                block.get("Home"),
+                block.get("homeScore"),
+                block.get("home_score"),
+            )
+            away = SportsDashboard._worldcup_score_value(
+                block.get("away"),
+                block.get("Away"),
+                block.get("awayScore"),
+                block.get("away_score"),
+            )
+            if home is not None or away is not None:
+                return home, away
+        return None, None
+
+    @staticmethod
+    def _write_worldcup_period_score(event, prefix, score_a, score_b):
+        score_a = SportsDashboard._worldcup_score_value(score_a)
+        score_b = SportsDashboard._worldcup_score_value(score_b)
+        if score_a is None or score_b is None:
+            return
+        event[f"{prefix}_a"] = score_a
+        event[f"{prefix}_b"] = score_b
 
     @staticmethod
     def _select_worldcup_events(events, now, visible_matches):
@@ -11568,6 +11804,20 @@ class SportsDashboard(BasePlugin):
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
+        if is_recent:
+            detail_y1 = flag_y + flag_h + 1
+            detail_y2 = detail_y1 + 12
+            self._draw_worldcup_score_detail_chip(
+                draw,
+                (center_x - 88, detail_y1, center_x - 34, detail_y2),
+                self._worldcup_side_period_score_label(event, "a"),
+                align="right",
+            )
+            self._draw_worldcup_score_detail_chip(
+                draw,
+                (center_x + 34, detail_y1, center_x + 88, detail_y2),
+                self._worldcup_side_period_score_label(event, "b"),
+            )
 
         team_y = flag_y + flag_h + 16
         team_a, team_a_font = self._fit_text(draw, event.get("team_a"), left_area[1] - left_area[0], 16, bold=True, min_size=9)
@@ -11656,15 +11906,36 @@ class SportsDashboard(BasePlugin):
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
 
         center_x = (x1 + x2) / 2
-        score_w = 48
+        left_label = self._worldcup_side_period_score_label(event, "a")
+        right_label = self._worldcup_side_period_score_label(event, "b")
+        score_w = 44 if left_label or right_label else 48
+        detail_w = 43
+        detail_gap = 4
+        left_detail_w = detail_w if left_label else 0
+        right_detail_w = detail_w if right_label else 0
         team_y1 = y + 8
         team_y2 = min(y + row_h - 10, y + 20)
-        left_area = (x1 + 8, center_x - score_w / 2 - 4)
-        right_area = (center_x + score_w / 2 + 4, x2 - 8)
+        left_score_edge = center_x - score_w / 2
+        right_score_edge = center_x + score_w / 2
+        left_area = (x1 + 8, left_score_edge - left_detail_w - detail_gap - 4)
+        right_area = (right_score_edge + right_detail_w + detail_gap + 4, x2 - 8)
         self._draw_worldcup_recent_team_identity(image, draw, event, "a", left_area, team_y1, team_y2)
+        if left_label:
+            self._draw_worldcup_score_detail_chip(
+                draw,
+                (left_score_edge - left_detail_w - detail_gap, team_y1 + 1, left_score_edge - detail_gap, team_y2 - 1),
+                left_label,
+                align="right",
+            )
         score = self._worldcup_score_or_vs(event)
         score, score_font = self._fit_text(draw, score, score_w, 10, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (center_x - score_w / 2, team_y1, center_x + score_w / 2, team_y2), score, score_font, COLORS["text"])
+        self._draw_centered_in_box(draw, (left_score_edge, team_y1, right_score_edge, team_y2), score, score_font, COLORS["text"])
+        if right_label:
+            self._draw_worldcup_score_detail_chip(
+                draw,
+                (right_score_edge + detail_gap, team_y1 + 1, right_score_edge + detail_gap + right_detail_w, team_y2 - 1),
+                right_label,
+            )
         self._draw_worldcup_recent_team_identity(image, draw, event, "b", right_area, team_y1, team_y2)
         points_y = y + row_h - 10
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), score_w - 4, 7, bold=True, min_size=6)
@@ -11673,6 +11944,16 @@ class SportsDashboard(BasePlugin):
         right_meta = self._worldcup_team_points_meta(event, "b")
         self._draw_worldcup_odds_text(draw, (left_area[0], points_y, left_area[1], y + row_h - 1), left_meta, max_size=7)
         self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1], y + row_h - 1), right_meta, max_size=7)
+
+    def _draw_worldcup_score_detail_chip(self, draw, box, text, align="left"):
+        text = str(text or "").strip()
+        if not text:
+            return
+        left, top, right, bottom = [int(round(value)) for value in box]
+        if right - left < 20 or bottom - top < 7:
+            return
+        text, font = self._fit_text(draw, text, max(1, right - left), 9, bold=True, min_size=6)
+        self._draw_text_in_box(draw, (left, top - 1, right, bottom + 1), text, font, COLORS["text"], align=align)
 
     def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
         left, right = [int(value) for value in area]
@@ -12305,6 +12586,17 @@ class SportsDashboard(BasePlugin):
         if (event or {}).get("wins_a") is None or (event or {}).get("wins_b") is None:
             return "VS"
         return f"{event['wins_a']}-{event['wins_b']}"
+
+    @staticmethod
+    def _worldcup_side_period_score_label(event, side):
+        event = event or {}
+        side = "a" if side == "a" else "b"
+        extra_score = SportsDashboard._worldcup_score_value(event.get(f"extra_time_score_{side}"))
+        penalty_score = SportsDashboard._worldcup_score_value(event.get(f"penalty_score_{side}"))
+        extra_label = f"ET {extra_score}" if extra_score is not None else ""
+        penalty_label = f"P{penalty_score}" if penalty_score is not None else ""
+        parts = [extra_label, penalty_label] if side == "a" else [penalty_label, extra_label]
+        return "/".join(part for part in parts if part)
 
     @staticmethod
     def _worldcup_group_points_value(event, side):

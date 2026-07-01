@@ -10511,6 +10511,45 @@ def test_worldcup_api_season_can_follow_football_data_season_for_history():
     )
 
 
+def test_worldcup_football_data_and_api_parsers_read_extra_time_and_penalties():
+    la = ZoneInfo("America/Los_Angeles")
+    match = _sample_football_data_match()
+    match["status"] = "FINISHED"
+    match["score"] = {
+        "fullTime": {"home": 1, "away": 1},
+        "extraTime": {"home": 0, "away": 0},
+        "penalties": {"home": 4, "away": 3},
+    }
+
+    football_data_event = SportsDashboard._parse_football_data_events([match], la)[0]
+
+    assert football_data_event["wins_a"] == 1
+    assert football_data_event["wins_b"] == 1
+    assert football_data_event["extra_time_score_a"] == 0
+    assert football_data_event["extra_time_score_b"] == 0
+    assert football_data_event["penalty_score_a"] == 4
+    assert football_data_event["penalty_score_b"] == 3
+    assert SportsDashboard._worldcup_side_period_score_label(football_data_event, "a") == "ET 0/P4"
+    assert SportsDashboard._worldcup_side_period_score_label(football_data_event, "b") == "P3/ET 0"
+
+    fixture = _sample_worldcup_fixture()
+    fixture["fixture"]["status"] = {"short": "PEN", "long": "Match Finished", "elapsed": 120}
+    fixture["goals"] = {"home": 2, "away": 2}
+    fixture["score"] = {
+        "fulltime": {"home": 2, "away": 2},
+        "extratime": {"home": 1, "away": 1},
+        "penalty": {"home": 5, "away": 4},
+    }
+
+    api_event = SportsDashboard._parse_worldcup_api_events([fixture], la)[0]
+
+    assert api_event["wins_a"] == 2
+    assert api_event["wins_b"] == 2
+    assert api_event["extra_time_score_a"] == 1
+    assert api_event["extra_time_score_b"] == 1
+    assert api_event["penalty_score_a"] == 5
+    assert api_event["penalty_score_b"] == 4
+
 def test_worldcup_espn_parser_reads_finished_and_live_scores():
     la = ZoneInfo("America/Los_Angeles")
     events = SportsDashboard._parse_worldcup_espn_events(_sample_worldcup_espn_scoreboard_payload(), la)
@@ -10539,6 +10578,46 @@ def test_worldcup_espn_parser_reads_finished_and_live_scores():
     assert events[1]["elapsed"] == 9
     assert SportsDashboard._worldcup_event_status_label(events[1], datetime(2026, 6, 11, 19, 10, tzinfo=la)) == "9' 0-0"
 
+
+def test_worldcup_espn_parser_reads_extra_time_and_penalty_scores():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_worldcup_espn_scoreboard_payload()))
+    event = payload["events"][0]
+    competition = event["competitions"][0]
+    competition["altGameNote"] = "FIFA World Cup, Round of 32"
+    competition["status"]["period"] = 5
+    competition["status"]["type"].update(
+        {
+            "name": "STATUS_FINAL_PEN",
+            "description": "Final Penalties",
+            "shortDetail": "PEN",
+            "detail": "PEN",
+        }
+    )
+    home = competition["competitors"][0]
+    away = competition["competitors"][1]
+    home["score"] = "2"
+    away["score"] = "2"
+    home["penaltyKickScore"] = "4"
+    away["penaltyKickScore"] = "3"
+    home["team"]["id"] = "203"
+    away["team"]["id"] = "799"
+    competition["details"] = [
+        {"clock": {"displayValue": "105'"}, "team": {"id": "203"}, "scoringPlay": True, "scoreValue": 1, "shootout": False},
+        {"clock": {"displayValue": "118'"}, "team": {"id": "799"}, "scoringPlay": True, "scoreValue": 1, "shootout": False},
+    ]
+
+    parsed = SportsDashboard._parse_worldcup_espn_events(payload, la)[0]
+
+    assert parsed["state"] == "PEN"
+    assert parsed["wins_a"] == 2
+    assert parsed["wins_b"] == 2
+    assert parsed["extra_time_score_a"] == 1
+    assert parsed["extra_time_score_b"] == 1
+    assert parsed["penalty_score_a"] == 4
+    assert parsed["penalty_score_b"] == 3
+    assert SportsDashboard._worldcup_side_period_score_label(parsed, "a") == "ET 1/P4"
+    assert SportsDashboard._worldcup_side_period_score_label(parsed, "b") == "P3/ET 1"
 
 def test_worldcup_espn_parser_marks_eliminated_knockout_loser():
     la = ZoneInfo("America/Los_Angeles")
@@ -10667,6 +10746,29 @@ def test_worldcup_scoreboard_overlay_updates_football_data_scores():
     assert merged[0]["score_confirmed"] is True
     assert SportsDashboard._worldcup_event_status_label(merged[0], datetime(2026, 6, 11, 14, 0, tzinfo=la)) == "2-0"
 
+
+def test_worldcup_scoreboard_overlay_carries_reversed_extra_time_and_penalties():
+    la = ZoneInfo("America/Los_Angeles")
+    match = _sample_football_data_match()
+    match["homeTeam"], match["awayTeam"] = match["awayTeam"], match["homeTeam"]
+    events = SportsDashboard._parse_football_data_events([match], la)
+    scoreboard_events = SportsDashboard._parse_worldcup_espn_events(_sample_worldcup_espn_scoreboard_payload(), la)
+    scoreboard_events[0]["extra_time_score_a"] = 1
+    scoreboard_events[0]["extra_time_score_b"] = 0
+    scoreboard_events[0]["penalty_score_a"] = 4
+    scoreboard_events[0]["penalty_score_b"] = 3
+
+    merged, attached_count = SportsDashboard._merge_worldcup_scoreboard_events(events, scoreboard_events)
+
+    assert attached_count == 1
+    assert merged[0]["team_a_tla"] == "RSA"
+    assert merged[0]["team_b_tla"] == "MEX"
+    assert merged[0]["wins_a"] == 0
+    assert merged[0]["wins_b"] == 2
+    assert merged[0]["extra_time_score_a"] == 0
+    assert merged[0]["extra_time_score_b"] == 1
+    assert merged[0]["penalty_score_a"] == 3
+    assert merged[0]["penalty_score_b"] == 4
 
 def test_worldcup_main_status_label_marks_verified_score_source_only_when_confirmed():
     la = ZoneInfo("America/Los_Angeles")
@@ -11099,6 +11201,47 @@ def test_worldcup_live_state_file_tracks_active_match():
     assert state["provider_status_confirmed"] is True
     assert state["score_confirmed"] is True
 
+
+def test_worldcup_live_state_bridges_back_to_back_match_refresh_window():
+    plugin = _plugin()
+    tmp_path = _sports_dashboard_tmp("worldcup_live_state_back_to_back")
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 6, 29, 21, 49, tzinfo=timezone.utc)
+    current = {
+        "event_id": "ger-par",
+        "start": datetime(2026, 6, 29, 20, 30, tzinfo=timezone.utc),
+        "state": "2H",
+        "status": "54'",
+        "elapsed": 54,
+        "team_a": "Germany",
+        "team_b": "Paraguay",
+        "wins_a": 0,
+        "wins_b": 1,
+        "block": "Round of 32",
+        "provider": "ESPN",
+        "score_source": "ESPN",
+    }
+    next_match = {
+        "event_id": "ned-mar",
+        "start": datetime(2026, 6, 29, 23, 30, tzinfo=timezone.utc),
+        "state": "TIMED",
+        "status": "23:30",
+        "team_a": "Netherlands",
+        "team_b": "Morocco",
+        "wins_a": None,
+        "wins_b": None,
+        "block": "Round of 32",
+    }
+    selected = SportsDashboard._select_worldcup_event_sections([current, next_match], now, 4)
+
+    plugin._write_worldcup_live_state(selected, now, "ESPN LIVE")
+    state = json.loads((tmp_path / "worldcup_live_state.json").read_text(encoding="utf-8"))
+
+    assert selected["live"] == [current]
+    assert selected["upcoming"] == [next_match]
+    assert state["has_live"] is True
+    assert state["event_id"] == "ger-par"
+    assert state["live_until"] == "2026-06-30T02:30:00+00:00"
 
 def test_worldcup_fallback_renders_compact_four_match_list():
     plugin = _plugin()
@@ -12075,6 +12218,77 @@ def test_worldcup_recent_row_meta_uses_mirrored_points_and_record():
     assert right_text == "0-1-0 / PTS 3"
     assert left_max_size == 7
     assert right_max_size == 7
+
+def test_worldcup_recent_row_draws_team_side_extra_time_and_penalty_score_chips():
+    plugin = _plugin()
+    event = {
+        "start": datetime(2026, 6, 29, 17, 0, tzinfo=timezone.utc),
+        "state": "PEN",
+        "team_a": "Brazil",
+        "team_b": "Japan",
+        "team_a_tla": "BRA",
+        "team_b_tla": "JPN",
+        "team_a_flag": "https://flagcdn.com/w80/br.png",
+        "team_b_flag": "https://flagcdn.com/w80/jp.png",
+        "block": "Round of 32",
+        "wins_a": 2,
+        "wins_b": 2,
+        "extra_time_score_a": 1,
+        "extra_time_score_b": 1,
+        "penalty_score_a": 4,
+        "penalty_score_b": 3,
+    }
+    image = Image.new("RGB", (260, 50), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    chip_calls = []
+
+    plugin._draw_worldcup_recent_team_identity = lambda *_args, **_kwargs: None
+
+    def record_chip(_draw, box, text, align="left"):
+        chip_calls.append((tuple(int(value) for value in box), text, align))
+
+    plugin._draw_worldcup_score_detail_chip = record_chip
+
+    plugin._draw_worldcup_recent_match_row(image, draw, 4, 256, 10, 32, event)
+
+    assert [call[1] for call in chip_calls] == ["ET 1/P4", "P3/ET 1"]
+    assert chip_calls[0][0][2] <= 108
+    assert chip_calls[0][2] == "right"
+    assert chip_calls[1][0][0] >= 152
+    assert chip_calls[1][2] == "left"
+
+
+def test_worldcup_score_detail_text_has_no_background_or_border():
+    plugin = _plugin()
+    image = Image.new("RGB", (120, 40), COLORS["paper"])
+    base_draw = ImageDraw.Draw(image)
+
+    class RecordingDraw:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+            self.rounded_calls = []
+            self.text_calls = []
+
+        def textbbox(self, *args, **kwargs):
+            return self.wrapped.textbbox(*args, **kwargs)
+
+        def text(self, *args, **kwargs):
+            self.text_calls.append((args, kwargs))
+            return self.wrapped.text(*args, **kwargs)
+
+        def rounded_rectangle(self, *args, **kwargs):
+            self.rounded_calls.append((args, kwargs))
+
+    draw = RecordingDraw(base_draw)
+
+    plugin._draw_worldcup_score_detail_chip(draw, (10, 10, 68, 23), "ET 1/P4", align="right")
+
+    assert draw.rounded_calls == []
+    assert len(draw.text_calls) == 1
+    font = draw.text_calls[0][1]["font"]
+    assert getattr(font, "size", None) == 9
+    assert draw.text_calls[0][1]["fill"] == COLORS["text"]
+
 
 def test_worldcup_recent_row_strikes_eliminated_knockout_team():
     plugin = _plugin()
