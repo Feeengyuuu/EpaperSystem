@@ -51,6 +51,14 @@ class BasePlugin:
                 autoescape=select_autoescape(['html', 'xml'])
             )
 
+    def wants_refresh_on_display(self, settings):
+        """Return whether cached playlist display should refresh this plugin instance."""
+        return bool(self.config.get("refresh_on_display", False))
+
+    def get_live_refresh_state(self, settings, current_dt):
+        """Return live refresh state for scheduler cache refresh, or None when inactive."""
+        return None
+
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
 

@@ -2,5 +2,6 @@
     "display_name": "Simple Calendar",
     "id": "simple_calendar",
     "class": "SimpleCalendar",
-    "repository": "https://github.com/saulob/InkyPi-Simple-Calendar"
+    "repository": "https://github.com/saulob/InkyPi-Simple-Calendar",
+    "refresh_on_display": true
 }

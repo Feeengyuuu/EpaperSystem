@@ -1,5 +1,6 @@
 {
   "display_name": "WoW Profile Dashboard",
   "id": "wow_profile_dashboard",
-  "class": "WowProfileDashboard"
+  "class": "WowProfileDashboard",
+    "refresh_on_display": true
 }

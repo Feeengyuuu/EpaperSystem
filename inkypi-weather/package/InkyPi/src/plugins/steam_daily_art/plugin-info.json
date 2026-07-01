@@ -1,5 +1,6 @@
 {
   "display_name": "Steam Daily Art",
   "id": "steam_daily_art",
-  "class": "SteamDailyArt"
+  "class": "SteamDailyArt",
+    "refresh_on_display": true
 }

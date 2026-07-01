@@ -1,5 +1,6 @@
 {
     "display_name": "Magazine Covers",
     "id": "magazine_covers",
-    "class": "MagazineCovers"
+    "class": "MagazineCovers",
+    "refresh_on_display": true
 }

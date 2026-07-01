@@ -1,5 +1,6 @@
 {
     "display_name": "Pixiv R-18 Ranking",
     "id": "pixiv_r18_ranking",
-    "class": "PixivR18Ranking"
+    "class": "PixivR18Ranking",
+    "refresh_on_display": true
 }

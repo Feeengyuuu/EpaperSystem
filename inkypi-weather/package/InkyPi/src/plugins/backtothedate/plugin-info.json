@@ -1,5 +1,6 @@
 {
     "display_name": "BacktotheDate",
     "id": "backtothedate",
-    "class": "BacktotheDate"
+    "class": "BacktotheDate",
+    "refresh_on_display": true
 }

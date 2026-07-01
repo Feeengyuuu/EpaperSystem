@@ -1105,6 +1105,114 @@ def _sports_dashboard_tmp(name):
     return path
 
 
+def _write_live_refresh_state(path, version, **overrides):
+    payload = {
+        "version": version,
+        "has_live": True,
+        "live_until": "2026-05-26T08:00:00+00:00",
+    }
+    payload.update(overrides)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_live_refresh_state_reads_active_source_files():
+    cases = [
+        (
+            "worldcup_live_state.json",
+            "sports-dashboard-worldcup-live-v1",
+            "worldCupLiveRefreshIntervalSeconds",
+            120,
+        ),
+        (
+            "lpl_live_state.json",
+            "sports-dashboard-lpl-live-v1",
+            "lplLiveRefreshIntervalSeconds",
+            180,
+        ),
+        (
+            "msi_live_state.json",
+            "sports-dashboard-msi-live-v1",
+            "lplLiveRefreshIntervalSeconds",
+            240,
+        ),
+        (
+            "nba_live_state.json",
+            "sports-dashboard-nba-live-v1",
+            "nbaLiveRefreshIntervalSeconds",
+            300,
+        ),
+        (
+            "offseason_hub_live.json",
+            "sports-dashboard-offseason-hub-v1",
+            "offseasonHubLiveRefreshIntervalSeconds",
+            360,
+        ),
+    ]
+    current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+
+    for file_name, version, setting_key, interval_seconds in cases:
+        plugin = _plugin()
+        cache_dir = _sports_dashboard_tmp(f"live_refresh_hook_{file_name}")
+        plugin._sports_dashboard_cache_dir = lambda cache_dir=cache_dir: cache_dir
+        _write_live_refresh_state(cache_dir / file_name, version)
+
+        state = plugin.get_live_refresh_state(
+            {"id": "sports", setting_key: str(interval_seconds)},
+            current_dt,
+        )
+
+        assert state == {"active": True, "interval_seconds": interval_seconds}
+
+
+def test_live_refresh_state_defaults_to_one_minute_interval():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_default")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(cache_dir / "lpl_live_state.json", "sports-dashboard-lpl-live-v1")
+
+    state = plugin.get_live_refresh_state(
+        {"id": "sports"},
+        datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc),
+    )
+
+    assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_live_refresh_state_respects_disabled_source():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_disabled")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(
+        cache_dir / "offseason_hub_live.json",
+        "sports-dashboard-offseason-hub-v1",
+        status="LIVE",
+        sport="WNBA",
+    )
+
+    state = plugin.get_live_refresh_state(
+        {"id": "sports", "offseasonHubLiveRefreshEnabled": "false"},
+        datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc),
+    )
+
+    assert state is None
+
+
+def test_live_refresh_state_ignores_missing_or_expired_state():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_expired")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+
+    assert plugin.get_live_refresh_state({"id": "sports"}, current_dt) is None
+
+    _write_live_refresh_state(
+        cache_dir / "lpl_live_state.json",
+        "sports-dashboard-lpl-live-v1",
+        live_until="2026-05-26T06:59:00+00:00",
+    )
+
+    assert plugin.get_live_refresh_state({"id": "sports"}, current_dt) is None
+
 def _fresh_lpl_frame_time(minutes_ago=0):
     frame_time = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     return frame_time.replace(microsecond=0).isoformat().replace("+00:00", "Z")

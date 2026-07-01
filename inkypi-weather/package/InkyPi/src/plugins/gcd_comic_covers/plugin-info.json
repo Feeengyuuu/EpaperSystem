@@ -1,5 +1,6 @@
 {
   "display_name": "GCD Comic Covers",
   "id": "gcd_comic_covers",
-  "class": "GcdComicCovers"
+  "class": "GcdComicCovers",
+    "refresh_on_display": true
 }

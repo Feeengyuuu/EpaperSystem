@@ -2125,6 +2125,85 @@ for _team_code, _aliases in NCAA_TEAM_NAME_ALIASES.items():
 
 
 class SportsDashboard(BasePlugin):
+    def get_live_refresh_state(self, settings, current_dt):
+        settings = settings or {}
+        active_intervals = []
+        for source in self._active_live_refresh_sources(settings, current_dt):
+            active_intervals.append(self._live_image_refresh_interval(settings, source))
+        if not active_intervals:
+            return None
+        return {"active": True, "interval_seconds": min(active_intervals)}
+
+    def _active_live_refresh_sources(self, settings, current_dt):
+        sources = []
+        if self._live_state_active(self._worldcup_live_state_path(), WORLD_CUP_LIVE_STATE_VERSION, current_dt):
+            sources.append("worldcup")
+        if self._live_state_active(self._lpl_live_state_path(), LPL_LIVE_STATE_VERSION, current_dt):
+            sources.append("lpl")
+        if self._live_state_active(self._msi_live_state_path(), MSI_LIVE_STATE_VERSION, current_dt):
+            sources.append("msi")
+        if self._live_state_active(self._nba_live_state_path(), NBA_LIVE_STATE_VERSION, current_dt):
+            sources.append("nba")
+        if self._live_state_active(
+            self._offseason_hub_live_state_path(),
+            OFFSEASON_HUB_STATE_VERSION,
+            current_dt,
+            live_status_fallback=True,
+        ):
+            sources.append("offseason_hub")
+        return [source for source in sources if self._live_image_refresh_enabled(settings, source)]
+
+    def _live_image_refresh_enabled(self, settings, source):
+        if source == "nba":
+            return self._bool_setting(settings, "nbaLiveRefreshEnabled", True)
+        if source == "worldcup":
+            return self._bool_setting(settings, "worldCupLiveRefreshEnabled", True)
+        if source == "offseason_hub":
+            return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
+        if source in {"lpl", "msi"}:
+            return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
+        return False
+
+    def _live_image_refresh_interval(self, settings, source):
+        if source == "nba":
+            return self._int_setting(settings, "nbaLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "worldcup":
+            return self._int_setting(settings, "worldCupLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "offseason_hub":
+            return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source in {"lpl", "msi"}:
+            return self._int_setting(settings, "lplLiveRefreshIntervalSeconds", 60, 60, 900)
+        return 60
+
+    def _live_state_active(self, path, version, current_dt, live_status_fallback=False):
+        state = self._read_json_file(path)
+        if state.get("version") != version:
+            return False
+        has_live = state.get("has_live")
+        if has_live is None and live_status_fallback:
+            has_live = str(state.get("status") or "").strip().upper() == "LIVE"
+        if not has_live:
+            return False
+        live_until = self._parse_live_state_datetime(state.get("live_until"))
+        if not live_until:
+            return True
+        current = current_dt if isinstance(current_dt, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        return current.astimezone(timezone.utc) <= live_until
+
+    @staticmethod
+    def _parse_live_state_datetime(value):
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     def generate_image(self, settings, device_config):
         dimensions = self._display_dimensions(device_config)
         timezone_info = self._timezone(settings, device_config)

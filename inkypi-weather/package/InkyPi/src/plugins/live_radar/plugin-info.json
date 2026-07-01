@@ -2,5 +2,6 @@
     "display_name": "LiveRadar",
     "id": "live_radar",
     "class": "LiveRadar",
-    "repository": "local://live-radar-epaper"
+    "repository": "local://live-radar-epaper",
+    "refresh_on_display": true
 }

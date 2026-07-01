@@ -1,5 +1,6 @@
 {
   "display_name": "Daily Wiki Page",
   "id": "daily_wiki_page",
-  "class": "DailyWikiPage"
+  "class": "DailyWikiPage",
+    "refresh_on_display": true
 }

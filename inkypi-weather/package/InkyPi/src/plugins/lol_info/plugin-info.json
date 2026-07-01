@@ -1,5 +1,6 @@
 {
   "display_name": "LoLInfo",
   "id": "lol_info",
-  "class": "LoLInfo"
+  "class": "LoLInfo",
+    "refresh_on_display": true
 }
