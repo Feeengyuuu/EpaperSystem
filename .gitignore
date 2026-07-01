@@ -43,3 +43,11 @@ inkypi-weather/dist/
 # Local publish staging
 .github-backup-stage/
 $known
+# Runtime/generated outputs
+.tmp_*.json
+dashboard-7in5/app/dashboard.log
+dashboard-7in5/app/output*/
+inkypi-weather/package/InkyPi/src/static/images/current_image.png
+.codex_tmp/
+# Proprietary fonts must not be committed (Microsoft EULA); install locally instead
+inkypi-weather/package/InkyPi/src/static/fonts/msyh*
