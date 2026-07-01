@@ -36,6 +36,7 @@ class Config:
 
     def __init__(self):
         self._write_lock = threading.RLock()
+        self._env_file_mtimes = None
         self.config = self.read_config()
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
@@ -182,15 +183,29 @@ class Config:
 
     def load_env_key(self, key):
         """Loads an environment variable from stable InkyPi .env locations."""
-        for env_file in self._env_file_candidates():
-            if env_file and os.path.isfile(env_file):
-                load_dotenv(env_file, override=True)
-        load_dotenv(override=True)
+        self._reload_env_if_changed()
         for candidate in self._env_key_candidates(key):
             value = os.getenv(candidate)
             if value:
                 return value
         return ""
+
+    def _reload_env_if_changed(self):
+        """Re-parses the .env candidate files only when one is new or its mtime changed."""
+        cached_mtimes = getattr(self, "_env_file_mtimes", None)
+        current_mtimes = {}
+        for env_file in self._env_file_candidates():
+            if env_file and os.path.isfile(env_file):
+                try:
+                    current_mtimes[env_file] = os.path.getmtime(env_file)
+                except OSError:
+                    current_mtimes[env_file] = None
+        if cached_mtimes is not None and current_mtimes == cached_mtimes:
+            return
+        for env_file in current_mtimes:
+            load_dotenv(env_file, override=True)
+        load_dotenv(override=True)
+        self._env_file_mtimes = current_mtimes
 
     def _env_key_candidates(self, key):
         """Returns accepted names for a logical environment key."""

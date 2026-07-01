@@ -227,7 +227,6 @@ class RefreshTask:
 
                     refresh_action = None
                     background_cache_refresh = None
-                    background_cache_refresh_only_plugin_id = None
                     background_cache_refresh_force = False
                     theme_context_to_persist = None
                     if self.manual_update_requests:
@@ -298,39 +297,19 @@ class RefreshTask:
 
                         if background_cache_refresh:
                             playlist, displayed_plugin_instance = background_cache_refresh
-                            if (
-                                background_cache_refresh_only_plugin_id is None
-                                and playlist
-                                and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
-                                and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
-                            ):
-                                logger.info("SportsDashboard live cache refresh due after playlist display tick.")
-                                background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
-                            self._start_due_plugin_cache_refresh(
+                            self._maybe_start_background_cache_refresh(
                                 playlist,
+                                displayed_plugin_instance,
                                 current_dt,
-                                skip_plugin_instance=displayed_plugin_instance if background_cache_refresh_force else None,
-                                displayed_plugin_instance=displayed_plugin_instance,
-                                force=background_cache_refresh_force,
-                                only_plugin_id=background_cache_refresh_only_plugin_id,
+                                background_cache_refresh_force,
                             )
                     elif background_cache_refresh:
                         playlist, displayed_plugin_instance = background_cache_refresh
-                        if (
-                            background_cache_refresh_only_plugin_id is None
-                            and playlist
-                            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
-                            and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
-                        ):
-                            logger.info("SportsDashboard live cache refresh due after playlist display tick.")
-                            background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
-                        self._start_due_plugin_cache_refresh(
+                        self._maybe_start_background_cache_refresh(
                             playlist,
+                            displayed_plugin_instance,
                             current_dt,
-                            skip_plugin_instance=None,
-                            displayed_plugin_instance=displayed_plugin_instance,
-                            force=False,
-                            only_plugin_id=background_cache_refresh_only_plugin_id,
+                            False,
                         )
 
             except Exception as e:
@@ -664,6 +643,25 @@ class RefreshTask:
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
+
+    def _maybe_start_background_cache_refresh(self, playlist, displayed_plugin_instance, current_dt, force=False):
+        """Kick off a background cache refresh pass after a display tick."""
+        only_plugin_id = None
+        if (
+            playlist
+            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
+            and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
+        ):
+            logger.info("SportsDashboard live cache refresh due after playlist display tick.")
+            only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
+        self._start_due_plugin_cache_refresh(
+            playlist,
+            current_dt,
+            skip_plugin_instance=displayed_plugin_instance if force else None,
+            displayed_plugin_instance=displayed_plugin_instance,
+            force=force,
+            only_plugin_id=only_plugin_id,
+        )
 
     def _config_float(self, key, default):
         raw_value = self.device_config.get_config(key, default=default)

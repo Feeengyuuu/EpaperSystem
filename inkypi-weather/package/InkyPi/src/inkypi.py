@@ -12,7 +12,6 @@ import warnings
 warnings.filterwarnings("ignore", message=".*Busy Wait: Held high.*")
 
 import os
-import random
 import time
 import sys
 import json
@@ -21,6 +20,7 @@ import threading
 import argparse
 from utils.app_utils import generate_startup_image
 from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
+from utils.secret_key import load_or_create_secret_key
 from utils.http_client import sanitize_dead_local_proxy_environment
 from flask import Flask, request, send_from_directory
 from werkzeug.serving import is_running_from_reloader
@@ -107,7 +107,7 @@ if __name__ == '__main__':
 
     try:
         # Run the Flask app
-        app.secret_key = str(random.randint(100000,999999))
+        app.secret_key = load_or_create_secret_key(os.path.join(Config.BASE_DIR, "config", ".flask_secret"))
 
         # Get local IP address for display (only in dev mode when running on non-Pi)
         if DEV_MODE:
@@ -121,6 +121,13 @@ if __name__ == '__main__':
             except:
                 pass  # Ignore if we can't get the IP
 
-        serve(app, host="0.0.0.0", port=PORT, threads=1)
+        raw_threads = device_config.get_config("web_server_threads", default=4)
+        try:
+            web_server_threads = int(raw_threads)
+        except (TypeError, ValueError):
+            web_server_threads = 4
+        web_server_threads = max(1, min(16, web_server_threads))
+
+        serve(app, host="0.0.0.0", port=PORT, threads=web_server_threads)
     finally:
         refresh_task.stop()

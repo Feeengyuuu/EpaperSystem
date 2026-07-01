@@ -177,3 +177,6 @@ mock_display_output/
 *.session
 *.session-journal
 /src/plugins/telegram_digest/cache/
+
+# Persistent Flask secret key
+/src/config/.flask_secret

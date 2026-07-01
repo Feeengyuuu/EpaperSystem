@@ -1,9 +1,11 @@
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import config as config_module
 from config import Config
 from model import PlaylistManager, RefreshInfo
 
@@ -85,6 +87,48 @@ def test_load_env_key_accepts_telegram_account_aliases(monkeypatch):
     assert config.load_env_key("TELEGRAM_API_ID") == "12345"
     assert config.load_env_key("TELEGRAM_API_HASH") == "hash-value"
     assert config.load_env_key("TELEGRAM_SESSION_PATH") == "/tmp/telegram_account"
+
+
+def test_load_env_key_picks_up_modified_env_file(monkeypatch):
+    env_path = cache_dir_for("mtime_change") / ".env"
+    env_path.write_text("INKYPI_TEST_MTIME_KEY=old-value\n", encoding="utf-8")
+    monkeypatch.delenv("INKYPI_TEST_MTIME_KEY", raising=False)
+
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
+
+    assert config.load_env_key("INKYPI_TEST_MTIME_KEY") == "old-value"
+
+    env_path.write_text("INKYPI_TEST_MTIME_KEY=new-value\n", encoding="utf-8")
+    stat = env_path.stat()
+    os.utime(env_path, (stat.st_atime, stat.st_mtime + 2))
+
+    assert config.load_env_key("INKYPI_TEST_MTIME_KEY") == "new-value"
+
+
+def test_load_env_key_does_not_reparse_unchanged_env_files(monkeypatch):
+    env_path = cache_dir_for("no_reparse") / ".env"
+    env_path.write_text("INKYPI_TEST_CACHED_KEY=cached-value\n", encoding="utf-8")
+    monkeypatch.delenv("INKYPI_TEST_CACHED_KEY", raising=False)
+
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
+
+    calls = []
+    real_load_dotenv = config_module.load_dotenv
+
+    def counting_load_dotenv(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_load_dotenv(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "load_dotenv", counting_load_dotenv)
+
+    assert config.load_env_key("INKYPI_TEST_CACHED_KEY") == "cached-value"
+    first_call_count = len(calls)
+    assert first_call_count > 0
+
+    assert config.load_env_key("INKYPI_TEST_CACHED_KEY") == "cached-value"
+    assert len(calls) == first_call_count
 
 
 def test_write_config_persists_device_json(tmp_path):
