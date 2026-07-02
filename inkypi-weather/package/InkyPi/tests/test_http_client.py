@@ -60,3 +60,41 @@ def test_http_session_keeps_real_proxy_support(monkeypatch):
 
     assert session.trust_env is True
     http_client.close_http_session()
+
+
+def test_http_session_applies_default_timeout(monkeypatch):
+    http_client.close_http_session()
+    for name in http_client._PROXY_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("requests.Session.request", fake_request)
+
+    session = http_client.get_http_session()
+    session.get("https://example.com")
+
+    assert captured["timeout"] == http_client.DEFAULT_TIMEOUT_SECONDS
+    http_client.close_http_session()
+
+
+def test_http_session_keeps_explicit_timeout(monkeypatch):
+    http_client.close_http_session()
+    for name in http_client._PROXY_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("requests.Session.request", fake_request)
+
+    session = http_client.get_http_session()
+    session.get("https://example.com", timeout=5)
+
+    assert captured["timeout"] == 5
+    http_client.close_http_session()

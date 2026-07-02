@@ -8,7 +8,7 @@ import uuid
 from PIL import Image
 
 from src.model import Playlist, PlaylistManager, RefreshInfo
-from src.refresh_task import ManualRefresh, PlaylistRefresh, REFRESH_ON_DISPLAY_PLUGIN_IDS, RefreshTask
+from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
@@ -34,10 +34,19 @@ def _settings_default_refresh_on_display_plugin_ids():
     return plugin_ids
 
 
+def _refresh_on_display_plugin_info_ids():
+    plugin_ids = set()
+    for info_path in PLUGIN_SOURCE_ROOT.glob("*/plugin-info.json"):
+        data = json.loads(info_path.read_text(encoding="utf-8"))
+        if data.get("refresh_on_display"):
+            plugin_ids.add(info_path.parent.name)
+    return plugin_ids
+
+
 def test_refresh_on_display_settings_defaults_have_runtime_fallback():
     expected_plugin_ids = _settings_default_refresh_on_display_plugin_ids()
 
-    assert expected_plugin_ids <= REFRESH_ON_DISPLAY_PLUGIN_IDS
+    assert expected_plugin_ids <= _refresh_on_display_plugin_info_ids()
 
 
 def make_test_dir(name):
@@ -70,8 +79,33 @@ class FakeDeviceConfig:
 
 
 class FakePlugin:
-    def __init__(self, calls):
+    REFRESH_ON_DISPLAY_IDS = {
+        "backtothedate",
+        "live_radar",
+        "riot-page",
+        "simple-calendar",
+        "steam-art",
+    }
+
+    def __init__(self, calls, refresh_on_display=False, live_state=None):
         self.calls = calls
+        self.refresh_on_display = refresh_on_display
+        self.live_state = live_state
+
+    def wants_refresh_on_display(self, settings):
+        if callable(self.refresh_on_display):
+            return bool(self.refresh_on_display(settings or {}))
+        if self.refresh_on_display:
+            return True
+        settings = settings or {}
+        if str(settings.get("mediaRotationMode") or "").lower() == "rotate":
+            return True
+        return settings.get("id") in self.REFRESH_ON_DISPLAY_IDS
+
+    def get_live_refresh_state(self, settings, current_dt):
+        if callable(self.live_state):
+            return self.live_state(settings or {}, current_dt)
+        return self.live_state
 
     def generate_image(self, settings, device_config):
         self.calls.append(settings["id"])
@@ -214,10 +248,14 @@ def test_refresh_due_plugin_instances_prefers_oldest_due_cache_when_limited(monk
     assert device_config.write_count == 1
 
 
-def test_playlist_cache_refresh_due_detects_stale_long_interval_plugin():
+def test_playlist_cache_refresh_due_detects_stale_long_interval_plugin(monkeypatch):
     tmp_path = make_test_dir("playlist-cache-due")
     device_config = FakeDeviceConfig(tmp_path)
     task = RefreshTask(device_config, display_manager=None)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: FakePlugin([], refresh_on_display=config["id"] == "live_radar"),
+    )
     current_dt = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
     playlist = Playlist(
         "DailyDoseOfDay",
@@ -294,27 +332,12 @@ def test_refresh_due_plugin_instances_refreshes_missing_image(monkeypatch):
     assert device_config.write_count == 1
 
 
-def test_refresh_due_plugin_instances_updates_sports_dashboard_live_cache_early(monkeypatch):
+def test_refresh_due_plugin_instances_updates_live_hook_cache_early(monkeypatch):
     calls = []
-    tmp_path = make_test_dir("sports-live-cache")
-    state_path = tmp_path / "lpl_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-lpl-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
+    tmp_path = make_test_dir("live-hook-cache")
     device_config = FakeDeviceConfig(tmp_path)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
+    live_plugin = FakePlugin(calls, live_state={"active": True, "interval_seconds": 180})
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
@@ -328,49 +351,42 @@ def test_refresh_due_plugin_instances_updates_sports_dashboard_live_cache_early(
                 "latest_refresh_time": "2026-05-26T07:00:00+00:00",
             },
             {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "plugin_id": "live_plugin",
+                "name": "LivePlugin",
+                "plugin_settings": {"id": "live"},
                 "refresh": {"interval": 3600},
                 "latest_refresh_time": "2026-05-26T07:00:00+00:00",
             },
         ],
     )
-    plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
+    plugin_instance = playlist.find_plugin("live_plugin", "LivePlugin")
     other_plugin = playlist.find_plugin("live_radar", "LiveRadar")
     Image.new("RGB", (1, 1), "black").save(tmp_path / other_plugin.get_image_path())
     Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
 
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
-        lambda config: FakePlugin(calls),
+        lambda config: live_plugin if config["id"] == "live_plugin" else FakePlugin(calls),
     )
 
     task._refresh_due_plugin_instances(
         playlist,
         datetime(2026, 5, 26, 7, 4, tzinfo=timezone.utc),
-        only_plugin_id="sports_dashboard",
+        only_plugin_id="live_plugin",
     )
 
-    assert calls == ["sports"]
+    assert calls == ["live"]
     assert other_plugin.latest_refresh_time == "2026-05-26T07:00:00+00:00"
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:04:00+00:00"
     assert device_config.write_count == 1
 
 
-def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-live-wait")
-    state_path = tmp_path / "lpl_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-lpl-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_refresh_due_plugin_instances_skips_sports_dashboard_background_by_default(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("sports-dashboard-display-only-background")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    live_plugin = FakePlugin(calls, live_state={"active": True, "interval_seconds": 60})
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
@@ -379,7 +395,70 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch)
             {
                 "plugin_id": "sports_dashboard",
                 "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "plugin_settings": {"id": "sports_dashboard"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+
+    assert calls == []
+    assert playlist.find_plugin("sports_dashboard", "SportsDashboard").latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert device_config.write_count == 0
+
+
+def test_refresh_due_plugin_instances_allows_sports_dashboard_background_when_enabled(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("sports-dashboard-background-enabled")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    live_plugin = FakePlugin(calls, live_state={"active": True, "interval_seconds": 60})
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports_dashboard", "backgroundCacheRefreshEnabled": "true"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+
+    assert calls == ["sports_dashboard"]
+    assert playlist.find_plugin("sports_dashboard", "SportsDashboard").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert device_config.write_count == 1
+
+
+def test_live_refresh_wait_seconds_uses_plugin_hook(monkeypatch):
+    tmp_path = make_test_dir("live-hook-wait")
+    live_plugin = FakePlugin([], live_state={"active": True, "interval_seconds": 180})
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "live_plugin",
+                "name": "LivePlugin",
+                "plugin_settings": {"id": "live"},
                 "refresh": {"interval": 3600},
                 "latest_refresh_time": "2026-05-26T07:00:00+00:00",
             },
@@ -387,83 +466,54 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_live_state(monkeypatch)
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
 
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+    wait_seconds = task._live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
     )
 
     assert wait_seconds == 60
 
 
-def test_sports_dashboard_live_refresh_wait_seconds_uses_msi_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-msi-live-wait")
-    state_path = tmp_path / "msi_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-msi-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_live_refresh_wait_seconds_is_due_without_prior_refresh(monkeypatch):
+    tmp_path = make_test_dir("live-hook-no-prior-refresh")
+    live_plugin = FakePlugin([], live_state={"active": True, "interval_seconds": 180})
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
         "24:00",
         plugins=[
             {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "lplLiveRefreshIntervalSeconds": "180"},
+                "plugin_id": "live_plugin",
+                "name": "LivePlugin",
+                "plugin_settings": {"id": "live"},
                 "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
             },
         ],
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
 
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+    wait_seconds = task._live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
     )
 
-    assert wait_seconds == 60
+    assert wait_seconds == 0
 
 
-def test_sports_dashboard_live_refresh_wait_seconds_uses_nba_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-nba-live-wait")
-    state_path = tmp_path / "nba_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-nba-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_live_refresh_is_not_due_without_active_hook(monkeypatch):
+    tmp_path = make_test_dir("live-hook-inactive")
+    live_plugin = FakePlugin([], live_state=None)
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
         "24:00",
         plugins=[
             {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "nbaLiveRefreshIntervalSeconds": "120"},
+                "plugin_id": "live_plugin",
+                "name": "LivePlugin",
+                "plugin_settings": {"id": "live"},
                 "refresh": {"interval": 3600},
                 "latest_refresh_time": "2026-05-26T07:00:00+00:00",
             },
@@ -471,227 +521,14 @@ def test_sports_dashboard_live_refresh_wait_seconds_uses_nba_live_state(monkeypa
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    plugin_instance = playlist.find_plugin("live_plugin", "LivePlugin")
 
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
-        datetime(2026, 5, 26, 7, 1, tzinfo=timezone.utc)
-    )
-
-    assert wait_seconds == 60
-
-
-def test_sports_dashboard_live_refresh_wait_seconds_uses_worldcup_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-worldcup-live-wait")
-    state_path = tmp_path / "worldcup_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-worldcup-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    playlist = Playlist(
-        "DailyDoseOfDay",
-        "00:00",
-        "24:00",
-        plugins=[
-            {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "worldCupLiveRefreshIntervalSeconds": "120"},
-                "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
-            },
-        ],
-    )
-    device_config = ThreadedDeviceConfig(tmp_path, playlist)
-    task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
-
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
-        datetime(2026, 5, 26, 7, 1, tzinfo=timezone.utc)
-    )
-
-    assert wait_seconds == 60
-
-
-def test_sports_dashboard_live_refresh_wait_seconds_uses_offseason_hub_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-hub-live-wait")
-    state_path = tmp_path / "offseason_hub_live.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-offseason-hub-v1",
-                "has_live": True,
-                "status": "LIVE",
-                "sport": "MLB",
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    playlist = Playlist(
-        "DailyDoseOfDay",
-        "00:00",
-        "24:00",
-        plugins=[
-            {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "offseasonHubLiveRefreshIntervalSeconds": "120"},
-                "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
-            },
-        ],
-    )
-    device_config = ThreadedDeviceConfig(tmp_path, playlist)
-    task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(state_path))
-
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
-        datetime(2026, 5, 26, 7, 1, tzinfo=timezone.utc)
-    )
-
-    assert wait_seconds == 60
-
-
-def test_sports_dashboard_offseason_hub_live_refresh_can_be_disabled(monkeypatch):
-    tmp_path = make_test_dir("sports-hub-live-disabled")
-    state_path = tmp_path / "offseason_hub_live.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-offseason-hub-v1",
-                "has_live": True,
-                "status": "LIVE",
-                "sport": "WNBA",
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    playlist = Playlist(
-        "DailyDoseOfDay",
-        "00:00",
-        "24:00",
-        plugins=[
-            {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports", "offseasonHubLiveRefreshEnabled": "false"},
-                "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
-            },
-        ],
-    )
-    device_config = ThreadedDeviceConfig(tmp_path, playlist)
-    task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing_lpl.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(state_path))
-    plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
-
-    live_due = task._sports_dashboard_live_refresh_due(
+    live_due = task._plugin_live_refresh_due(
         plugin_instance,
         datetime(2026, 5, 26, 7, 10, tzinfo=timezone.utc),
     )
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
-        datetime(2026, 5, 26, 7, 10, tzinfo=timezone.utc)
-    )
-
-    assert live_due is False
-    assert wait_seconds is None
-
-
-def test_sports_dashboard_live_refresh_wait_seconds_defaults_to_one_minute(monkeypatch):
-    tmp_path = make_test_dir("sports-live-wait-default")
-    state_path = tmp_path / "lpl_live_state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "version": "sports-dashboard-lpl-live-v1",
-                "has_live": True,
-                "live_until": "2026-05-26T08:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    playlist = Playlist(
-        "DailyDoseOfDay",
-        "00:00",
-        "24:00",
-        plugins=[
-            {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports"},
-                "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
-            },
-        ],
-    )
-    device_config = ThreadedDeviceConfig(tmp_path, playlist)
-    task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(state_path))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
-
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
-        datetime(2026, 5, 26, 7, 0, 30, tzinfo=timezone.utc)
-    )
-
-    assert wait_seconds == 30
-
-
-def test_sports_dashboard_live_refresh_is_not_due_without_live_state(monkeypatch):
-    tmp_path = make_test_dir("sports-live-no-state")
-    playlist = Playlist(
-        "DailyDoseOfDay",
-        "00:00",
-        "24:00",
-        plugins=[
-            {
-                "plugin_id": "sports_dashboard",
-                "name": "SportsDashboard",
-                "plugin_settings": {"id": "sports"},
-                "refresh": {"interval": 3600},
-                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
-            },
-        ],
-    )
-    device_config = ThreadedDeviceConfig(tmp_path, playlist)
-    task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr(task, "_sports_dashboard_worldcup_live_state_path", lambda: str(tmp_path / "missing_worldcup.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_lpl_live_state_path", lambda: str(tmp_path / "missing.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_msi_live_state_path", lambda: str(tmp_path / "missing_msi.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_nba_live_state_path", lambda: str(tmp_path / "missing_nba.json"))
-    monkeypatch.setattr(task, "_sports_dashboard_offseason_hub_live_state_path", lambda: str(tmp_path / "missing_hub.json"))
-    plugin_instance = playlist.find_plugin("sports_dashboard", "SportsDashboard")
-
-    live_due = task._sports_dashboard_live_refresh_due(
-        plugin_instance,
-        datetime(2026, 5, 26, 7, 10, tzinfo=timezone.utc),
-    )
-    wait_seconds = task._sports_dashboard_live_refresh_wait_seconds(
+    wait_seconds = task._live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 10, tzinfo=timezone.utc)
     )
 
@@ -1147,7 +984,7 @@ def test_refresh_due_plugin_instances_refreshes_displayed_lol_info_by_default(mo
     Image.new("RGB", (1, 1), "black").save(tmp_path / "lol_info_LoL_Other.png")
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
-        lambda config: FakePlugin(calls),
+        lambda config: FakePlugin(calls, refresh_on_display=True),
     )
 
     displayed = playlist.find_plugin("lol_info", "LoL Daily")
@@ -1653,8 +1490,8 @@ def test_cache_refresh_resource_pressure_respects_low_available_memory(monkeypat
 
     assert task._cache_refresh_under_resource_pressure() is True
 
-def test_sports_live_cache_refresh_can_ignore_swap_pressure(monkeypatch):
-    tmp_path = make_test_dir("cache-pressure-sports-live")
+def test_live_cache_refresh_can_ignore_swap_pressure(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-live")
     device_config = FakeDeviceConfig(tmp_path)
     device_config.config["background_cache_refresh_min_available_mb"] = 80
     device_config.config["background_cache_refresh_max_swap_percent"] = 70
@@ -1668,8 +1505,8 @@ def test_sports_live_cache_refresh_can_ignore_swap_pressure(monkeypatch):
     assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is False
 
 
-def test_sports_live_cache_refresh_still_respects_low_memory(monkeypatch):
-    tmp_path = make_test_dir("cache-pressure-sports-low-memory")
+def test_live_cache_refresh_still_respects_low_memory(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-live-low-memory")
     device_config = FakeDeviceConfig(tmp_path)
     device_config.config["background_cache_refresh_min_available_mb"] = 80
     device_config.config["background_cache_refresh_max_swap_percent"] = 70
@@ -1682,8 +1519,8 @@ def test_sports_live_cache_refresh_still_respects_low_memory(monkeypatch):
 
     assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is True
 
-def test_sports_dashboard_live_cache_refresh_passes_swap_pressure_override(monkeypatch):
-    tmp_path = make_test_dir("cache-pressure-sports-path")
+def test_targeted_cache_refresh_passes_swap_pressure_override(monkeypatch):
+    tmp_path = make_test_dir("cache-pressure-live-path")
     device_config = FakeDeviceConfig(tmp_path)
     task = RefreshTask(device_config, display_manager=None)
     task.running = True
@@ -1698,15 +1535,98 @@ def test_sports_dashboard_live_cache_refresh_passes_swap_pressure_override(monke
     task._start_due_plugin_cache_refresh(
         playlist=None,
         current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
-        only_plugin_id="sports_dashboard",
+        only_plugin_id="live_plugin",
     )
     task._start_due_plugin_cache_refresh(
         playlist=None,
         current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
-        only_plugin_id="weather",
     )
 
     assert captured == [{"allow_high_swap": True}, {"allow_high_swap": False}]
+
+
+def test_cache_refresh_in_progress_reflects_background_lock():
+    tmp_path = make_test_dir("cache-refresh-in-progress")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+
+    assert task.cache_refresh_in_progress() is False
+    assert task.cache_refresh_lock.acquire(blocking=False) is True
+    try:
+        assert task.cache_refresh_in_progress() is True
+    finally:
+        task.cache_refresh_lock.release()
+
+
+def test_manual_update_in_progress_reflects_manual_refresh_lock():
+    tmp_path = make_test_dir("manual-refresh-in-progress")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+
+    assert task.manual_update_in_progress() is False
+    assert task.manual_refresh_lock.acquire(blocking=False) is True
+    try:
+        assert task.manual_update_in_progress() is True
+    finally:
+        task.manual_refresh_lock.release()
+
+
+def test_background_cache_refresh_skips_while_manual_update_running(monkeypatch):
+    tmp_path = make_test_dir("manual-refresh-skips-background-cache")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+    task.running = True
+    pressure_checks = []
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda **kwargs: pressure_checks.append(kwargs) or False)
+
+    assert task.manual_refresh_lock.acquire(blocking=False) is True
+    try:
+        task._start_due_plugin_cache_refresh(
+            playlist=None,
+            current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        )
+    finally:
+        task.manual_refresh_lock.release()
+
+    assert pressure_checks == []
+    assert task.cache_refresh_in_progress() is False
+
+
+def test_refresh_due_plugin_instances_stops_when_manual_update_starts(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("manual-refresh-stops-cache-pass")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "a_plugin",
+                "name": "A Plugin",
+                "plugin_settings": {"id": "a_plugin"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+            {
+                "plugin_id": "b_plugin",
+                "name": "B Plugin",
+                "plugin_settings": {"id": "b_plugin"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    manual_states = iter([False, False, True])
+    monkeypatch.setattr(task, "manual_update_in_progress", lambda: next(manual_states, True))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 6, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["a_plugin"]
+    assert playlist.find_plugin("a_plugin", "A Plugin").latest_refresh_time == "2026-05-26T07:06:00+00:00"
+    assert playlist.find_plugin("b_plugin", "B Plugin").latest_refresh_time == "2026-05-26T07:00:00+00:00"
 
 
 def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(monkeypatch):

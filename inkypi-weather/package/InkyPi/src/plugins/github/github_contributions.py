@@ -1,8 +1,8 @@
-import requests
 import logging
 from datetime import datetime, date, timedelta
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 from utils.app_utils import get_font, resolve_dimensions
+from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +446,7 @@ def fetch_contributions(username, api_key):
     url = "https://api.github.com/graphql"
     headers = {"Authorization": f"Bearer {api_key}"}
     variables = {"username": username}
-    resp = requests.post(url, json={"query": GRAPHQL_QUERY, "variables": variables}, headers=headers, timeout=30)
+    resp = get_http_session().post(url, json={"query": GRAPHQL_QUERY, "variables": variables}, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     if data.get("errors"):

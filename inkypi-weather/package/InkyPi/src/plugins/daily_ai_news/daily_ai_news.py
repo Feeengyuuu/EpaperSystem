@@ -4,7 +4,6 @@ import hashlib
 import html
 import json
 import logging
-import os
 import re
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -24,6 +23,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, get_available_font_names, get_font
 from utils.image_utils import text_width
 from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
+from utils.plugin_cache import read_json, write_json
 from utils.theme_utils import get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
@@ -784,27 +784,11 @@ def _parse_int(value: Any, default: int, low: int, high: int) -> int:
 
 
 def _safe_json_load(path: Path, default: Any) -> Any:
-    try:
-        if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("Could not read JSON cache %s: %s", path, exc)
-    return default
+    return read_json(path, default=default)
 
 
 def _safe_json_write(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(payload, ensure_ascii=False, indent=2)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    except Exception:
-        path.write_text(text, encoding="utf-8")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
+    write_json(path, payload, ensure_ascii=False, indent=2)
 
 
 class DailyAINews(BasePlugin):

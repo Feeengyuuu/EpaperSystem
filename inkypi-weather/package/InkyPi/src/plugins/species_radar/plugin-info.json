@@ -1,5 +1,6 @@
 {
   "display_name": "Species Radar",
   "id": "species_radar",
-  "class": "SpeciesRadar"
+  "class": "SpeciesRadar",
+    "refresh_on_display": true
 }

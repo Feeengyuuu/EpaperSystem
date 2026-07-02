@@ -16,6 +16,13 @@ def _signal_config_change():
         refresh_task.signal_config_change()
 
 
+def _display_instance_force_refresh(plugin_id, cache_refresh_busy):
+    if cache_refresh_busy:
+        return False
+    if str(plugin_id or "").strip() == "sports_dashboard":
+        return False
+    return True
+
 def _queued_refresh_response(job):
     if job.get("status") == "rejected":
         return jsonify({
@@ -246,7 +253,26 @@ def display_plugin_instance():
         if not plugin_instance:
             return jsonify({"success": False, "message": f"Plugin instance '{plugin_instance_name}' not found"}), 400
 
-        job = refresh_task.submit_manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+        cache_refresh_busy = bool(getattr(refresh_task, "cache_refresh_in_progress", lambda: False)())
+        if cache_refresh_busy:
+            logger.info(
+                "Cache refresh already running; displaying cached plugin instance image. | "
+                f"plugin_instance: '{plugin_instance.name}'"
+            )
+        force_refresh = _display_instance_force_refresh(plugin_id, cache_refresh_busy)
+        if plugin_id == "sports_dashboard" and not cache_refresh_busy:
+            logger.info(
+                "Using cache-friendly display refresh for SportsDashboard. | "
+                f"plugin_instance: '{plugin_instance.name}'"
+            )
+        job = refresh_task.submit_manual_update(
+            PlaylistRefresh(
+                playlist,
+                plugin_instance,
+                force=force_refresh,
+                display_cached_only=cache_refresh_busy,
+            )
+        )
         return _queued_refresh_response(job)
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500

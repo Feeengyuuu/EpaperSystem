@@ -2,5 +2,6 @@
     "display_name": "E-Paper Pet",
     "id": "epaper_pet",
     "class": "EpaperPet",
-    "repository": "local://epaper-pet"
+    "repository": "local://epaper-pet",
+    "has_blueprint": true
 }

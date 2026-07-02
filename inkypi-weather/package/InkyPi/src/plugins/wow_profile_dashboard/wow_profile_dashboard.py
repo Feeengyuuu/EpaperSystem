@@ -191,7 +191,7 @@ class WowProfileDashboard(BasePlugin):
         cfg = REGION_CONFIG[region]
         params = {"namespace": cfg["namespace"], "locale": locale}
         headers = {"Authorization": f"Bearer {token}"}
-        response = get_http_session().get(f"{cfg['api']}{path}", params=params, headers=headers, timeout=30)
+        response = get_http_session().get(f"{cfg['api']}{path}", params=params, headers=headers)
         response.raise_for_status()
         return response.json()
 

@@ -343,6 +343,59 @@ def _sample_ewc_competitions_html():
     </section>
     """
 
+def _sample_ewc_detail_schedule_html():
+    return """
+    <section aria-label="Schedule">
+      <article class="match-row">
+        <span>Thu, Jul 2 - 11:00</span>
+        <span>upcoming</span>
+        <span>Group A - Opening Match #1</span>
+        <img alt="Team RRQ" src="/_next/image?url=https%3A%2F%2Ftds-cdn.ewc.efg.gg%2Fassets%2Fclubs%2F2068035497296400384%2FLOGO_LIGHT.png&amp;w=256&amp;q=50">
+        <h5>Team RRQ</h5>
+        <strong>-</strong>
+      </article>
+      <article class="match-row">
+        <span>Thu, Jul 2 - 11:00</span>
+        <span>upcoming</span>
+        <span>Group A - Opening Match #1</span>
+        <img alt="100 Thieves" srcset="/_next/image?url=https%3A%2F%2Ftds-cdn.ewc.efg.gg%2Fassets%2Fclubs%2F2068035456414519296%2FLOGO_LIGHT.png&amp;w=128&amp;q=50 1x">
+        <h5>100 Thieves</h5>
+        <strong>-</strong>
+      </article>
+      <article class="match-row">
+        <span>Thu, Jul 2 - 11:00</span>
+        <span>live</span>
+        <span>Group B - Opening Match #1</span>
+        <img alt="BBL Esports" src="https://example.com/bbl.png">
+        <h5>BBL Esports</h5>
+        <strong>1</strong>
+      </article>
+      <article class="match-row">
+        <span>Thu, Jul 2 - 11:00</span>
+        <span>live</span>
+        <span>Group B - Opening Match #1</span>
+        <img alt="EDward Gaming" src="https://example.com/edg.png">
+        <h5>EDward Gaming</h5>
+        <strong>0</strong>
+      </article>
+      <article class="match-row">
+        <span>Wed, Jul 1 - 09:00</span>
+        <span>completed</span>
+        <span>Round 1 1</span>
+        <img alt="The MongolZ" src="https://example.com/mongolz.png">
+        <h5>The MongolZ</h5>
+        <strong>0</strong>
+      </article>
+      <article class="match-row">
+        <span>Wed, Jul 1 - 09:00</span>
+        <span>completed</span>
+        <span>Round 1 1</span>
+        <img alt="FUT Esports" src="https://example.com/fut.png">
+        <h5>FUT Esports</h5>
+        <strong>1</strong>
+      </article>
+    </section>
+    """
 def _sample_worldcup_fixture():
     return {
         "fixture": {
@@ -1105,6 +1158,120 @@ def _sports_dashboard_tmp(name):
     return path
 
 
+def _write_live_refresh_state(path, version, **overrides):
+    payload = {
+        "version": version,
+        "has_live": True,
+        "live_until": "2026-05-26T08:00:00+00:00",
+    }
+    payload.update(overrides)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_live_refresh_state_reads_active_source_files():
+    cases = [
+        (
+            "worldcup_live_state.json",
+            "sports-dashboard-worldcup-live-v1",
+            "worldCupLiveRefreshIntervalSeconds",
+            120,
+        ),
+        (
+            "lpl_live_state.json",
+            "sports-dashboard-lpl-live-v1",
+            "lplLiveRefreshIntervalSeconds",
+            180,
+        ),
+        (
+            "msi_live_state.json",
+            "sports-dashboard-msi-live-v1",
+            "lplLiveRefreshIntervalSeconds",
+            240,
+        ),
+        (
+            "ewc_live_state.json",
+            "sports-dashboard-ewc-live-v1",
+            "ewcLiveRefreshIntervalSeconds",
+            150,
+        ),
+        (
+            "nba_live_state.json",
+            "sports-dashboard-nba-live-v1",
+            "nbaLiveRefreshIntervalSeconds",
+            300,
+        ),
+        (
+            "offseason_hub_live.json",
+            "sports-dashboard-offseason-hub-v1",
+            "offseasonHubLiveRefreshIntervalSeconds",
+            360,
+        ),
+    ]
+    current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+
+    for file_name, version, setting_key, interval_seconds in cases:
+        plugin = _plugin()
+        cache_dir = _sports_dashboard_tmp(f"live_refresh_hook_{file_name}")
+        plugin._sports_dashboard_cache_dir = lambda cache_dir=cache_dir: cache_dir
+        _write_live_refresh_state(cache_dir / file_name, version)
+
+        state = plugin.get_live_refresh_state(
+            {"id": "sports", setting_key: str(interval_seconds)},
+            current_dt,
+        )
+
+        assert state == {"active": True, "interval_seconds": interval_seconds}
+
+
+def test_live_refresh_state_defaults_to_one_minute_interval():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_default")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(cache_dir / "lpl_live_state.json", "sports-dashboard-lpl-live-v1")
+
+    state = plugin.get_live_refresh_state(
+        {"id": "sports"},
+        datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc),
+    )
+
+    assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_live_refresh_state_respects_disabled_source():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_disabled")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(
+        cache_dir / "offseason_hub_live.json",
+        "sports-dashboard-offseason-hub-v1",
+        status="LIVE",
+        sport="WNBA",
+    )
+
+    state = plugin.get_live_refresh_state(
+        {"id": "sports", "offseasonHubLiveRefreshEnabled": "false"},
+        datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc),
+    )
+
+    assert state is None
+
+
+def test_live_refresh_state_ignores_missing_or_expired_state():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("live_refresh_hook_expired")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+
+    assert plugin.get_live_refresh_state({"id": "sports"}, current_dt) is None
+
+    _write_live_refresh_state(
+        cache_dir / "lpl_live_state.json",
+        "sports-dashboard-lpl-live-v1",
+        live_until="2026-05-26T06:59:00+00:00",
+    )
+
+    assert plugin.get_live_refresh_state({"id": "sports"}, current_dt) is None
+
 def _fresh_lpl_frame_time(minutes_ago=0):
     frame_time = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     return frame_time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -1252,6 +1419,348 @@ def test_ewc_competitions_parser_extracts_official_cards():
     assert events[1]["source_url"].endswith("/en/competitions/2026/dota2")
 
 
+def test_ewc_detail_schedule_parser_pairs_official_match_rows():
+    la = ZoneInfo("America/Los_Angeles")
+
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_detail_schedule_html(),
+        la,
+        "valorant",
+        "VALORANT",
+        "https://esportsworldcup.com/en/competitions/2026/valorant",
+    )
+
+    assert len(matches) == 3
+    upcoming = next(match for match in matches if match["stage"] == "Group A - Opening Match #1")
+    assert upcoming["kind"] == "match"
+    assert upcoming["event_id"] == "ewc-2026-valorant-20260702-1100-group-a-opening-match-1"
+    assert upcoming["game"] == "VALORANT"
+    assert upcoming["slug"] == "valorant"
+    assert upcoming["source_url"].endswith("/en/competitions/2026/valorant")
+    assert upcoming["start"].strftime("%Y-%m-%d %H:%M") == "2026-07-02 11:00"
+    assert upcoming["end"].strftime("%Y-%m-%d %H:%M") == "2026-07-02 14:00"
+    assert upcoming["status"] == "UPCOMING"
+    assert upcoming["team_a"] == "Team RRQ"
+    assert upcoming["team_b"] == "100 Thieves"
+    assert upcoming["score_a"] is None
+    assert upcoming["score_b"] is None
+    assert upcoming["team_a_logo"] == "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497296400384/LOGO_LIGHT.png"
+    assert upcoming["team_b_logo"] == "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035456414519296/LOGO_LIGHT.png"
+
+    live = next(match for match in matches if match["stage"] == "Group B - Opening Match #1")
+    assert live["status"] == "LIVE"
+    assert live["score_a"] == 1
+    assert live["score_b"] == 0
+
+    completed = next(match for match in matches if match["stage"] == "Round 1 1")
+    assert completed["status"] == "COMPLETED"
+    assert completed["team_a"] == "The MongolZ"
+    assert completed["team_b"] == "FUT Esports"
+    assert completed["score_a"] == 0
+    assert completed["score_b"] == 1
+
+
+def test_select_ewc_events_prioritizes_and_rotates_live_matches():
+    la = ZoneInfo("America/Los_Angeles")
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_detail_schedule_html(),
+        la,
+        "valorant",
+        "VALORANT",
+        "https://esportsworldcup.com/en/competitions/2026/valorant",
+    )
+    live_match = next(match for match in matches if match["status"] == "LIVE")
+    second_live = dict(live_match)
+    second_live.update(
+        {
+            "event_id": "ewc-2026-valorant-20260702-1100-group-c-opening-match-1",
+            "stage": "Group C - Opening Match #1",
+            "team_a": "FNATIC",
+            "team_b": "Rex Regum Qeon",
+            "score_a": 0,
+            "score_b": 0,
+        }
+    )
+    now = datetime(2026, 7, 2, 11, 20, tzinfo=la)
+
+    selected_first = SportsDashboard._select_ewc_events([live_match, second_live], now, 21, rotation_seed=0)
+    selected_second = SportsDashboard._select_ewc_events([live_match, second_live], now, 21, rotation_seed=1)
+
+    assert selected_first["display_window_active"] is True
+    assert [match["team_a"] for match in selected_first["live_matches"]] == ["BBL Esports", "FNATIC"]
+    assert selected_first["main_match"]["team_a"] == "BBL Esports"
+    assert selected_first["main"] == selected_first["main_match"]
+    assert selected_second["main_match"]["team_a"] == "FNATIC"
+
+
+def test_select_ewc_events_uses_next_match_and_rotates_same_start_time():
+    la = ZoneInfo("America/Los_Angeles")
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_detail_schedule_html(),
+        la,
+        "valorant",
+        "VALORANT",
+        "https://esportsworldcup.com/en/competitions/2026/valorant",
+    )
+    next_match = next(match for match in matches if match["status"] == "UPCOMING")
+    same_time_match = dict(next_match)
+    same_time_match.update(
+        {
+            "event_id": "ewc-2026-valorant-20260702-1100-group-a-opening-match-2",
+            "stage": "Group A - Opening Match #2",
+            "team_a": "Sentinels",
+            "team_b": "Bilibili Gaming",
+        }
+    )
+    later_match = dict(next_match)
+    later_match.update(
+        {
+            "event_id": "ewc-2026-valorant-20260702-1400-group-d-opening-match-1",
+            "start": datetime(2026, 7, 2, 14, 0, tzinfo=la),
+            "end": datetime(2026, 7, 2, 17, 0, tzinfo=la),
+            "stage": "Group D - Opening Match #1",
+            "team_a": "Paper Rex",
+            "team_b": "Gen.G",
+        }
+    )
+    now = datetime(2026, 7, 2, 9, 0, tzinfo=la)
+
+    selected_first = SportsDashboard._select_ewc_events([later_match, same_time_match, next_match], now, 21, rotation_seed=0)
+    selected_second = SportsDashboard._select_ewc_events([later_match, same_time_match, next_match], now, 21, rotation_seed=1)
+
+    assert selected_first["display_window_active"] is True
+    assert [match["team_a"] for match in selected_first["upcoming_matches"][:2]] == ["Team RRQ", "Sentinels"]
+    assert selected_first["main_match"]["team_a"] == "Team RRQ"
+    assert selected_second["main_match"]["team_a"] == "Sentinels"
+
+
+def test_select_ewc_events_rotates_overlapping_match_lists_by_game():
+    la = ZoneInfo("America/Los_Angeles")
+    valorant = {
+        "kind": "match",
+        "event_id": "ewc-2026-valorant-bbl-edg",
+        "match_id": "ewc-2026-valorant-bbl-edg",
+        "game": "VALORANT",
+        "slug": "valorant",
+        "start": datetime(2026, 7, 8, 11, 0, tzinfo=la),
+        "end": datetime(2026, 7, 8, 14, 0, tzinfo=la),
+        "status": "LIVE",
+        "stage": "Group B",
+        "team_a": "BBL Esports",
+        "team_b": "EDward Gaming",
+        "score_a": 1,
+        "score_b": 0,
+    }
+    valorant_next = dict(valorant)
+    valorant_next.update(
+        {
+            "event_id": "ewc-2026-valorant-nrg-prx",
+            "match_id": "ewc-2026-valorant-nrg-prx",
+            "start": datetime(2026, 7, 8, 15, 0, tzinfo=la),
+            "end": datetime(2026, 7, 8, 18, 0, tzinfo=la),
+            "status": "UPCOMING",
+            "team_a": "NRG",
+            "team_b": "Paper Rex",
+            "score_a": None,
+            "score_b": None,
+        }
+    )
+    apex = {
+        "kind": "match",
+        "event_id": "ewc-2026-apex-legends-final-a",
+        "match_id": "ewc-2026-apex-legends-final-a",
+        "game": "Apex Legends",
+        "slug": "apex-legends",
+        "start": datetime(2026, 7, 8, 11, 0, tzinfo=la),
+        "end": datetime(2026, 7, 8, 14, 0, tzinfo=la),
+        "status": "LIVE",
+        "stage": "Finals Match 1",
+        "team_a": "Alliance",
+        "team_b": "Team Falcons",
+        "score_a": 2,
+        "score_b": 1,
+    }
+    apex_recent = dict(apex)
+    apex_recent.update(
+        {
+            "event_id": "ewc-2026-apex-legends-group-a",
+            "match_id": "ewc-2026-apex-legends-group-a",
+            "start": datetime(2026, 7, 8, 9, 0, tzinfo=la),
+            "end": datetime(2026, 7, 8, 10, 0, tzinfo=la),
+            "status": "COMPLETED",
+            "stage": "Group A",
+            "team_a": "NRG",
+            "team_b": "Fnatic",
+            "score_a": 1,
+            "score_b": 0,
+        }
+    )
+    now = datetime(2026, 7, 8, 11, 15, tzinfo=la)
+
+    selected_apex = SportsDashboard._select_ewc_events(
+        [valorant, valorant_next, apex, apex_recent],
+        now,
+        21,
+        rotation_seed=0,
+    )
+    selected_valorant = SportsDashboard._select_ewc_events(
+        [valorant, valorant_next, apex, apex_recent],
+        now,
+        21,
+        rotation_seed=1,
+    )
+
+    assert selected_apex["selected_match_group"]["slug"] == "apex-legends"
+    assert selected_apex["main_match"]["team_a"] == "Alliance"
+    assert [match["game"] for match in selected_apex["live_matches"]] == ["Apex Legends"]
+    assert [match["game"] for match in selected_apex["recent_matches"]] == ["Apex Legends"]
+    assert selected_apex["upcoming_matches"] == []
+
+    assert selected_valorant["selected_match_group"]["slug"] == "valorant"
+    assert selected_valorant["main_match"]["team_a"] == "BBL Esports"
+    assert [match["game"] for match in selected_valorant["live_matches"]] == ["VALORANT"]
+    assert [match["game"] for match in selected_valorant["upcoming_matches"]] == ["VALORANT"]
+    assert selected_valorant["recent_matches"] == []
+
+def test_ewc_live_state_file_marks_live_match_group():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_live_state")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 8, 11, 15, tzinfo=la)
+    live_match = {
+        "kind": "match",
+        "event_id": "ewc-2026-apex-legends-final-a",
+        "match_id": "ewc-2026-apex-legends-final-a",
+        "game": "Apex Legends",
+        "slug": "apex-legends",
+        "start": datetime(2026, 7, 8, 11, 0, tzinfo=la),
+        "end": datetime(2026, 7, 8, 14, 0, tzinfo=la),
+        "status": "LIVE",
+        "stage": "Finals Match 1",
+        "team_a": "Alliance",
+        "team_b": "Team Falcons",
+        "score_a": 2,
+        "score_b": 1,
+    }
+    selected = SportsDashboard._select_ewc_events([live_match], now, 21, rotation_seed=0)
+
+    plugin._write_ewc_live_state(selected, now, "EWC DETAIL")
+
+    state = json.loads((cache_dir / "ewc_live_state.json").read_text(encoding="utf-8"))
+    assert state["version"] == "sports-dashboard-ewc-live-v1"
+    assert state["has_live"] is True
+    assert state["event_id"] == "ewc-2026-apex-legends-final-a"
+    assert state["game"] == "Apex Legends"
+    assert state["team_a"] == "Alliance"
+    assert state["team_b"] == "Team Falcons"
+    assert state["live_until"] == "2026-07-08T21:00:00+00:00"
+
+
+def test_ewc_sidebar_render_draws_detail_match_names_and_official_logos(monkeypatch, tmp_path):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_detail_schedule_html(),
+        la,
+        "valorant",
+        "VALORANT",
+        "https://esportsworldcup.com/en/competitions/2026/valorant",
+    )
+    selected = SportsDashboard._select_ewc_events(matches, datetime(2026, 7, 2, 9, 0, tzinfo=la), 21, rotation_seed=0)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    seen_texts = []
+    original_fit_text_ellipsis = plugin._fit_text_ellipsis
+
+    def record_fit_text_ellipsis(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text_ellipsis(draw_obj, text, *args, **kwargs)
+
+    remote_logo_urls = []
+    source = Image.new("RGBA", (12, 12), (12, 34, 56, 255))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+    logo_bytes = buffer.getvalue()
+
+    def record_remote_logo(logo_url, timeout):
+        remote_logo_urls.append(logo_url)
+        return logo_bytes
+
+    monkeypatch.setattr(plugin, "_fit_text_ellipsis", record_fit_text_ellipsis)
+    monkeypatch.setattr(plugin, "_load_local_team_logo", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_team_logo_disk_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(SportsDashboard, "_fetch_remote_image_bytes", record_remote_logo)
+    TEAM_LOGO_CACHE.clear()
+
+    plugin._draw_ewc_sidebar(image, 552, selected, "EWC DETAIL", datetime(2026, 7, 2, 9, 0, tzinfo=la))
+
+    assert remote_logo_urls == [
+        "https://www.esportsworldcup.com/_next/image?url=https%3A%2F%2Ftds-cdn.ewc.efg.gg%2Fassets%2Fclubs%2F2068035497296400384%2FLOGO_LIGHT.png&w=128&q=50",
+        "https://www.esportsworldcup.com/_next/image?url=https%3A%2F%2Ftds-cdn.ewc.efg.gg%2Fassets%2Fclubs%2F2068035456414519296%2FLOGO_LIGHT.png&w=128&q=50",
+    ]
+    assert len(list(tmp_path.iterdir())) == 2
+    assert "Team RRQ" in seen_texts
+    assert "100 Thieves" in seen_texts
+    assert image.getpixel((560, 80)) != COLORS["paper"]
+
+
+def test_ewc_match_focus_card_draws_game_logo_and_name_without_box_chrome(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_detail_schedule_html(),
+        la,
+        "valorant",
+        "VALORANT",
+        "https://esportsworldcup.com/en/competitions/2026/valorant",
+    )
+    match = next(item for item in matches if item["status"] == "UPCOMING")
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    seen_texts = []
+    logo_calls = []
+    text_box_calls = []
+    original_fit_text_ellipsis = plugin._fit_text_ellipsis
+    original_draw_text_in_box = plugin._draw_text_in_box
+
+    def record_fit_text_ellipsis(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text_ellipsis(draw_obj, text, *args, **kwargs)
+
+    def load_game_logo(event, size):
+        logo_calls.append((event.get("slug"), size))
+        return Image.new("RGBA", (24, 14), (0, 163, 173, 255))
+
+    def record_draw_text_in_box(draw_obj, box, text, font, color, align="left"):
+        text_box_calls.append((str(text), box, align))
+        return original_draw_text_in_box(draw_obj, box, text, font, color, align=align)
+
+    monkeypatch.setattr(plugin, "_fit_text_ellipsis", record_fit_text_ellipsis)
+    monkeypatch.setattr(plugin, "_load_ewc_game_logo", load_game_logo)
+    monkeypatch.setattr(plugin, "_draw_text_in_box", record_draw_text_in_box)
+    monkeypatch.setattr(plugin, "_load_local_team_logo", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *_args: None)
+
+    plugin._draw_ewc_match_focus_card(image, draw, 556, 244, 78, match, datetime(2026, 7, 2, 9, 0, tzinfo=la), False)
+
+    assert logo_calls == [("valorant", (46, 16))]
+    assert "VALORANT" in seen_texts
+    game_text_call = next(call for call in text_box_calls if call[0] == "VALORANT")
+    assert game_text_call[1] == (651, 114, 765, 135)
+    assert game_text_call[2] == "right"
+    assert image.getpixel((613, 124)) == (0, 163, 173)
+    assert image.getpixel((586, 114)) == COLORS["panel"]
+    assert image.getpixel((646, 114)) == COLORS["panel"]
+
+
+def test_ewc_team_logo_url_filters_non_official_sources():
+    assert SportsDashboard._ewc_team_logo_url(
+        {"team_a_logo": "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497296400384/LOGO_LIGHT.png"},
+        "a",
+    ) == "https://www.esportsworldcup.com/_next/image?url=https%3A%2F%2Ftds-cdn.ewc.efg.gg%2Fassets%2Fclubs%2F2068035497296400384%2FLOGO_LIGHT.png&w=128&q=50"
+    assert SportsDashboard._ewc_team_logo_url({"team_a_logo": "https://example.com/rrq.png"}, "a") == ""
+
+
 def test_ewc_game_logo_slug_and_path_use_official_assets():
     assert SportsDashboard._ewc_game_logo_slug({"slug": "cs2", "game": "Counter-Strike 2"}) == "cs2"
     assert SportsDashboard._ewc_game_logo_slug({"game": "EA Sports FC 26"}) == "eafc"
@@ -1348,7 +1857,7 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
     assert choice["choice"]["league_key"] == "LPL"
 
 
-def test_right_sidebar_falls_back_to_lpl_when_all_right_competitions_are_offseason():
+def test_right_sidebar_uses_ewc_next_match_when_no_live_right_competition():
     now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
     lpl_offseason = {
         "league_key": "LPL",
@@ -1392,8 +1901,8 @@ def test_right_sidebar_falls_back_to_lpl_when_all_right_competitions_are_offseas
     )
 
     assert SportsDashboard._ewc_sidebar_candidate_phase({"selected": ewc_selected}) == 1
-    assert choice["kind"] == "lol"
-    assert choice["choice"]["league_key"] == "LPL"
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main"]["game"] == "Apex Legends"
 
 def test_ewc_logo_asset_and_sidebar_render_are_available():
     plugin = _plugin()
@@ -12671,6 +13180,71 @@ def test_remote_team_logo_uses_shared_http_session(monkeypatch):
     assert logo.size == (24, 24)
     assert calls == [(logo_url, {"User-Agent": "InkyPi/1.0"}, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
     TEAM_LOGO_CACHE.pop(cache_key, None)
+
+
+def test_remote_team_logo_loader_uses_disk_cache(monkeypatch, tmp_path):
+    logo_url = "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497296400384/LOGO_LIGHT.png"
+    TEAM_LOGO_CACHE.clear()
+    source = Image.new("RGBA", (12, 12), (0, 92, 185, 255))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+    data = buffer.getvalue()
+    calls = []
+
+    class FakeResponse:
+        content = data
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    first = SportsDashboard._load_team_logo(logo_url, 24, cache_dir=tmp_path)
+    TEAM_LOGO_CACHE.clear()
+    second = SportsDashboard._load_team_logo(logo_url, 24, cache_dir=tmp_path)
+
+    assert first is not None
+    assert second is not None
+    assert calls == [(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_remote_team_logo_loader_replaces_oversized_disk_cache(monkeypatch, tmp_path):
+    logo_url = "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497296400384/LOGO_LIGHT.png"
+    TEAM_LOGO_CACHE.clear()
+    disk_path = SportsDashboard._team_logo_disk_cache_path(tmp_path, logo_url)
+    Image.new("RGBA", (2050, 8), (0, 92, 185, 255)).save(disk_path, format="PNG")
+    small = Image.new("RGBA", (12, 12), (12, 34, 56, 255))
+    buffer = BytesIO()
+    small.save(buffer, format="PNG")
+    data = buffer.getvalue()
+    calls = []
+
+    class FakeResponse:
+        content = data
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, timeout))
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    logo = SportsDashboard._load_team_logo(logo_url, 24, cache_dir=tmp_path)
+
+    assert logo is not None
+    assert logo.size == (24, 24)
+    assert calls == [(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
+    with Image.open(disk_path) as cached:
+        assert cached.size == (12, 12)
 
 
 def _sample_valve_csapi_major_payload():

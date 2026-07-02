@@ -2,7 +2,6 @@ import threading
 import time
 import os
 import logging
-import json
 import ctypes
 import gc
 import psutil
@@ -27,55 +26,12 @@ DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS = 60
 DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
 DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 98
 DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS = 30 * 60
-SPORTS_DASHBOARD_PLUGIN_ID = "sports_dashboard"
-SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION = "sports-dashboard-worldcup-live-v1"
-SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
-SPORTS_DASHBOARD_MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
-SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
-SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_STATE_VERSION = "sports-dashboard-offseason-hub-v1"
-DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS = 60
-DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS = 60
-DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS = 60
-DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS = 60
-REFRESH_ON_DISPLAY_PLUGIN_IDS = {
-    "backtothedate",
-    "daily_art",
-    "daily_wiki_page",
-    "dota_profile_dashboard",
-    "flight_radar",
-    "gcd_comic_covers",
-    "live_radar",
-    "lol_info",
-    "magazine_covers",
-    "pixiv_r18_ranking",
-    "reddit_rule34_hot",
-    "simple_calendar",
-    "species_radar",
-    "steam_daily_art",
-    "tech_pulse",
-    "telegram_digest",
-    "wow_profile_dashboard",
-}
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
 
 def _setting_enabled(value):
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
-
-
-def _refresh_on_display(plugin_instance):
-    settings = plugin_instance.settings or {}
-    if "refreshOnDisplay" in settings:
-        return _setting_enabled(settings.get("refreshOnDisplay"))
-
-    if plugin_instance.plugin_id == "newspaper":
-        return str(settings.get("mediaRotationMode") or "rotate").lower() != "single"
-
-    if plugin_instance.plugin_id in REFRESH_ON_DISPLAY_PLUGIN_IDS:
-        return True
-
-    return False
 
 
 def _settings_with_force_refresh(settings, force=False, display_render=False):
@@ -148,6 +104,7 @@ class RefreshTask:
 
         self.thread = None
         self.cache_refresh_lock = threading.Lock()
+        self.manual_refresh_lock = threading.Lock()
         self.config_write_lock = threading.Lock()
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
@@ -171,6 +128,12 @@ class RefreshTask:
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.running = True
             self.thread.start()
+
+    def cache_refresh_in_progress(self):
+        return self.cache_refresh_lock.locked()
+
+    def manual_update_in_progress(self):
+        return self.manual_refresh_lock.locked()
 
     def stop(self):
         """Stops the refresh task by notifying the background thread to exit."""
@@ -227,7 +190,6 @@ class RefreshTask:
 
                     refresh_action = None
                     background_cache_refresh = None
-                    background_cache_refresh_only_plugin_id = None
                     background_cache_refresh_force = False
                     theme_context_to_persist = None
                     if self.manual_update_requests:
@@ -267,70 +229,58 @@ class RefreshTask:
                             else:
                                 playlist = playlist_manager.determine_active_playlist(current_dt)
                                 if playlist and self._playlist_has_cache_refresh_due(playlist, current_dt):
-                                    if self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt):
-                                        logger.info("SportsDashboard live cache refresh due before playlist display tick.")
+                                    if self._playlist_has_live_refresh_due(playlist, current_dt):
+                                        logger.info("Live plugin cache refresh due before playlist display tick.")
                                     background_cache_refresh = (playlist, None)
 
                     if refresh_action:
-                        plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
-                        if plugin_config is None:
-                            logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
-                            continue
-                        plugin = get_plugin_instance(plugin_config)
-                        image = refresh_action.execute(plugin, self.device_config, current_dt)
-                        image_hash = compute_image_hash(image)
+                        manual_refresh_locked = False
+                        if active_manual_request:
+                            self.manual_refresh_lock.acquire()
+                            manual_refresh_locked = True
+                        try:
+                            plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
+                            if plugin_config is None:
+                                logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
+                                continue
+                            plugin = get_plugin_instance(plugin_config)
+                            image = refresh_action.execute(plugin, self.device_config, current_dt)
+                            image_hash = compute_image_hash(image)
 
-                        refresh_info = refresh_action.get_refresh_info()
-                        refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
-                        display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
-                        # check if image is the same as current image
-                        if image_hash != latest_refresh.image_hash or display_target_changed:
-                            logger.info(f"Updating display. | refresh_info: {refresh_info}")
-                            self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
-                        else:
-                            logger.info(f"Image already displayed, skipping refresh. | refresh_info: {refresh_info}")
+                            refresh_info = refresh_action.get_refresh_info()
+                            refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
+                            display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
+                            # check if image is the same as current image
+                            if image_hash != latest_refresh.image_hash or display_target_changed:
+                                logger.info(f"Updating display. | refresh_info: {refresh_info}")
+                                self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
+                            else:
+                                logger.info(f"Image already displayed, skipping refresh. | refresh_info: {refresh_info}")
 
-                        # update latest refresh data in the device config
-                        self.device_config.refresh_info = RefreshInfo(**refresh_info)
-                        if theme_context_to_persist:
-                            self._persist_active_theme(theme_context_to_persist, current_dt)
-                        self._write_device_config()
+                            # update latest refresh data in the device config
+                            self.device_config.refresh_info = RefreshInfo(**refresh_info)
+                            if theme_context_to_persist:
+                                self._persist_active_theme(theme_context_to_persist, current_dt)
+                            self._write_device_config()
 
-                        if background_cache_refresh:
-                            playlist, displayed_plugin_instance = background_cache_refresh
-                            if (
-                                background_cache_refresh_only_plugin_id is None
-                                and playlist
-                                and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
-                                and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
-                            ):
-                                logger.info("SportsDashboard live cache refresh due after playlist display tick.")
-                                background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
-                            self._start_due_plugin_cache_refresh(
-                                playlist,
-                                current_dt,
-                                skip_plugin_instance=displayed_plugin_instance if background_cache_refresh_force else None,
-                                displayed_plugin_instance=displayed_plugin_instance,
-                                force=background_cache_refresh_force,
-                                only_plugin_id=background_cache_refresh_only_plugin_id,
-                            )
+                            if background_cache_refresh:
+                                playlist, displayed_plugin_instance = background_cache_refresh
+                                self._maybe_start_background_cache_refresh(
+                                    playlist,
+                                    displayed_plugin_instance,
+                                    current_dt,
+                                    background_cache_refresh_force,
+                                )
+                        finally:
+                            if manual_refresh_locked:
+                                self.manual_refresh_lock.release()
                     elif background_cache_refresh:
                         playlist, displayed_plugin_instance = background_cache_refresh
-                        if (
-                            background_cache_refresh_only_plugin_id is None
-                            and playlist
-                            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
-                            and self._playlist_has_sports_dashboard_live_refresh_due(playlist, current_dt)
-                        ):
-                            logger.info("SportsDashboard live cache refresh due after playlist display tick.")
-                            background_cache_refresh_only_plugin_id = SPORTS_DASHBOARD_PLUGIN_ID
-                        self._start_due_plugin_cache_refresh(
+                        self._maybe_start_background_cache_refresh(
                             playlist,
+                            displayed_plugin_instance,
                             current_dt,
-                            skip_plugin_instance=None,
-                            displayed_plugin_instance=displayed_plugin_instance,
-                            force=False,
-                            only_plugin_id=background_cache_refresh_only_plugin_id,
+                            False,
                         )
 
             except Exception as e:
@@ -527,7 +477,7 @@ class RefreshTask:
             latest_refresh_dt = localize(latest_refresh_dt) if localize else latest_refresh_dt.replace(tzinfo=current_dt.tzinfo)
         elapsed = (current_dt - latest_refresh_dt).total_seconds()
         wait_seconds = max(0, min(interval, interval - elapsed))
-        live_wait_seconds = self._sports_dashboard_live_refresh_wait_seconds(current_dt)
+        live_wait_seconds = self._live_refresh_wait_seconds(current_dt)
         if live_wait_seconds is not None:
             if live_wait_seconds <= 0 < wait_seconds:
                 wait_seconds = min(wait_seconds, 5.0)
@@ -642,7 +592,10 @@ class RefreshTask:
         """Start a non-blocking cache refresh for due plugin instances."""
         if not self.running:
             return
-        if self._cache_refresh_under_resource_pressure(allow_high_swap=only_plugin_id == SPORTS_DASHBOARD_PLUGIN_ID):
+        if self.manual_update_in_progress():
+            logger.info("Due plugin cache refresh skipped while manual update is running.")
+            return
+        if self._cache_refresh_under_resource_pressure(allow_high_swap=only_plugin_id is not None):
             return
         if not self.cache_refresh_lock.acquire(blocking=False):
             logger.info("Due plugin cache refresh already running, skipping this tick.")
@@ -664,6 +617,25 @@ class RefreshTask:
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
+
+    def _maybe_start_background_cache_refresh(self, playlist, displayed_plugin_instance, current_dt, force=False):
+        """Kick off a background cache refresh pass after a display tick."""
+        only_plugin_id = None
+        if (
+            playlist
+            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
+            and self._playlist_has_live_refresh_due(playlist, current_dt)
+        ):
+            logger.info("Live plugin cache refresh due after playlist display tick.")
+            only_plugin_id = self._playlist_live_refresh_due_plugin_id(playlist, current_dt)
+        self._start_due_plugin_cache_refresh(
+            playlist,
+            current_dt,
+            skip_plugin_instance=displayed_plugin_instance if force else None,
+            displayed_plugin_instance=displayed_plugin_instance,
+            force=force,
+            only_plugin_id=only_plugin_id,
+        )
 
     def _config_float(self, key, default):
         raw_value = self.device_config.get_config(key, default=default)
@@ -899,6 +871,10 @@ class RefreshTask:
         rotation uses the latest cached image first, then this pass updates
         stale caches without blocking the next visible playlist tick.
         """
+        if self.manual_update_in_progress():
+            logger.info("Due plugin cache refresh pass skipped while manual update is running.")
+            return
+
         updated = False
         attempted_updates = 0
         candidates = []
@@ -915,10 +891,18 @@ class RefreshTask:
             image_missing = not os.path.exists(plugin_image_path)
             refresh_on_display = (
                 self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
-                and _refresh_on_display(plugin_instance)
+                and self._plugin_wants_refresh_on_display(plugin_instance)
             )
-            live_refresh_due = self._sports_dashboard_live_refresh_due(plugin_instance, current_dt)
-            if not force and not image_missing and not plugin_instance.should_refresh(current_dt) and not refresh_on_display and not live_refresh_due:
+            live_refresh_due = self._plugin_live_refresh_due(plugin_instance, current_dt)
+            refresh_due = plugin_instance.should_refresh(current_dt)
+            if self._plugin_background_cache_refresh_disabled(plugin_instance):
+                if force or image_missing or refresh_due or refresh_on_display or live_refresh_due:
+                    logger.info(
+                        "Skipping background cache refresh for display-only plugin. | "
+                        f"plugin_instance: '{plugin_instance.name}'"
+                    )
+                continue
+            if not force and not image_missing and not refresh_due and not refresh_on_display and not live_refresh_due:
                 continue
 
             candidates.append((
@@ -937,6 +921,9 @@ class RefreshTask:
             ))
 
         for _, plugin_instance, plugin_image_path, image_missing, live_refresh_due in sorted(candidates, key=lambda item: item[0]):
+            if self.manual_update_in_progress():
+                logger.info("Due plugin cache refresh pass stopped while manual update is running.")
+                break
             if max_updates is not None and attempted_updates >= max_updates:
                 logger.info(
                     "Due plugin cache refresh pass limit reached. | "
@@ -953,7 +940,7 @@ class RefreshTask:
                     )
                 if live_refresh_due and not force and not image_missing:
                     logger.info(
-                        "SportsDashboard live cache refresh due. | "
+                        "Live plugin cache refresh due. | "
                         f"plugin_instance: '{plugin_instance.name}'"
                     )
                 logger.info(
@@ -1009,10 +996,10 @@ class RefreshTask:
             return True
         if (
             self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
-            and _refresh_on_display(plugin_instance)
+            and self._plugin_wants_refresh_on_display(plugin_instance)
         ):
             return True
-        return self._sports_dashboard_live_refresh_due(plugin_instance, current_dt)
+        return self._plugin_live_refresh_due(plugin_instance, current_dt)
 
     def _playlist_has_cache_refresh_due(self, playlist, current_dt):
         return any(
@@ -1047,43 +1034,80 @@ class RefreshTask:
 
         return (-priority, latest_timestamp, plugin_instance.plugin_id, plugin_instance.name)
 
-    def _playlist_has_sports_dashboard_live_refresh_due(self, playlist, current_dt):
-        return any(
-            self._sports_dashboard_live_refresh_due(plugin_instance, current_dt)
-            for plugin_instance in list(getattr(playlist, "plugins", []) or [])
-        )
+    def _get_plugin_for_instance(self, plugin_instance):
+        plugin_config = self.device_config.get_plugin(plugin_instance.plugin_id)
+        if plugin_config is None:
+            logger.error(f"Plugin config not found for '{plugin_instance.plugin_id}'.")
+            return None
+        try:
+            return get_plugin_instance(plugin_config)
+        except Exception:
+            logger.exception(f"Plugin '{plugin_instance.plugin_id}' could not be loaded.")
+            return None
 
-    def _sports_dashboard_live_refresh_due(self, plugin_instance, current_dt):
-        if getattr(plugin_instance, "plugin_id", None) != SPORTS_DASHBOARD_PLUGIN_ID:
+    def _plugin_wants_refresh_on_display(self, plugin_instance, plugin=None):
+        plugin = plugin or self._get_plugin_for_instance(plugin_instance)
+        if plugin is None:
             return False
-        active_sources = self._sports_dashboard_enabled_live_sources(plugin_instance, current_dt)
-        if not active_sources:
+        hook = getattr(plugin, "wants_refresh_on_display", None)
+        if not callable(hook):
+            return False
+        try:
+            return bool(hook(plugin_instance.settings or {}))
+        except Exception:
+            logger.exception(f"Plugin '{plugin_instance.plugin_id}' refresh-on-display hook failed.")
+            return False
+
+    def _plugin_live_refresh_state(self, plugin_instance, current_dt, plugin=None):
+        plugin = plugin or self._get_plugin_for_instance(plugin_instance)
+        if plugin is None:
+            return None
+        hook = getattr(plugin, "get_live_refresh_state", None)
+        if not callable(hook):
+            return None
+        try:
+            state = hook(plugin_instance.settings or {}, current_dt)
+        except Exception:
+            logger.exception(f"Plugin '{plugin_instance.plugin_id}' live refresh hook failed.")
+            return None
+        if not isinstance(state, dict) or not state.get("active"):
+            return None
+        try:
+            interval = int(state.get("interval_seconds"))
+        except (TypeError, ValueError):
+            return None
+        return {"active": True, "interval_seconds": max(1, interval)}
+
+    def _plugin_background_cache_refresh_disabled(self, plugin_instance):
+        plugin_id = str(getattr(plugin_instance, "plugin_id", "") or "").strip()
+        if plugin_id != "sports_dashboard":
+            return False
+        settings = getattr(plugin_instance, "settings", None) or {}
+        return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled", False))
+
+    def _plugin_live_refresh_due(self, plugin_instance, current_dt):
+        state = self._plugin_live_refresh_state(plugin_instance, current_dt)
+        if not state:
             return False
         latest_refresh_dt = plugin_instance.get_latest_refresh_dt()
         if not latest_refresh_dt:
             return True
         latest_refresh_dt = self._align_datetime_tz(latest_refresh_dt, current_dt)
-        interval = min(
-            self._sports_dashboard_live_refresh_interval(plugin_instance, source)
-            for source in active_sources
-        )
-        return (current_dt - latest_refresh_dt) >= timedelta(seconds=interval)
+        return (current_dt - latest_refresh_dt) >= timedelta(seconds=state["interval_seconds"])
 
-    def _sports_dashboard_live_refresh_wait_seconds(self, current_dt):
+    def _live_refresh_wait_seconds(self, current_dt):
         try:
             playlist_manager = self.device_config.get_playlist_manager()
             playlist = playlist_manager.determine_active_playlist(current_dt)
         except Exception:
             return None
-        if not playlist or not self._sports_dashboard_active_live_sources(current_dt):
+        if not playlist:
             return None
 
         waits = []
         for plugin_instance in list(getattr(playlist, "plugins", []) or []):
-            if getattr(plugin_instance, "plugin_id", None) != SPORTS_DASHBOARD_PLUGIN_ID:
-                continue
-            active_sources = self._sports_dashboard_enabled_live_sources(plugin_instance, current_dt)
-            if not active_sources:
+            state = self._plugin_live_refresh_state(plugin_instance, current_dt)
+            if not state:
                 continue
             latest_refresh_dt = plugin_instance.get_latest_refresh_dt()
             if not latest_refresh_dt:
@@ -1091,204 +1115,19 @@ class RefreshTask:
                 continue
             latest_refresh_dt = self._align_datetime_tz(latest_refresh_dt, current_dt)
             elapsed = (current_dt - latest_refresh_dt).total_seconds()
-            interval = min(
-                self._sports_dashboard_live_refresh_interval(plugin_instance, source)
-                for source in active_sources
-            )
-            waits.append(interval - elapsed)
+            waits.append(state["interval_seconds"] - elapsed)
         if not waits:
             return None
         return min(waits)
 
-    def _sports_dashboard_enabled_live_sources(self, plugin_instance, current_dt):
-        return [
-            source
-            for source in self._sports_dashboard_active_live_sources(current_dt)
-            if self._sports_dashboard_live_refresh_enabled(plugin_instance, source)
-        ]
+    def _playlist_has_live_refresh_due(self, playlist, current_dt):
+        return self._playlist_live_refresh_due_plugin_id(playlist, current_dt) is not None
 
-    def _sports_dashboard_active_live_sources(self, current_dt):
-        sources = []
-        if self._sports_dashboard_worldcup_live_state_active(current_dt):
-            sources.append("worldcup")
-        if self._sports_dashboard_lpl_live_state_active(current_dt):
-            sources.append("lpl")
-        if self._sports_dashboard_msi_live_state_active(current_dt):
-            sources.append("msi")
-        if self._sports_dashboard_nba_live_state_active(current_dt):
-            sources.append("nba")
-        if self._sports_dashboard_offseason_hub_live_state_active(current_dt):
-            sources.append("offseason_hub")
-        return sources
-
-    def _sports_dashboard_live_refresh_enabled(self, plugin_instance, source):
-        settings = getattr(plugin_instance, "settings", None) or {}
-        if source == "nba":
-            if "nbaLiveRefreshEnabled" not in settings:
-                return True
-            return _setting_enabled(settings.get("nbaLiveRefreshEnabled"))
-        if source == "worldcup":
-            if "worldCupLiveRefreshEnabled" not in settings:
-                return True
-            return _setting_enabled(settings.get("worldCupLiveRefreshEnabled"))
-        if source == "offseason_hub":
-            if "offseasonHubLiveRefreshEnabled" not in settings:
-                return True
-            return _setting_enabled(settings.get("offseasonHubLiveRefreshEnabled"))
-        if source in {"lpl", "msi"}:
-            return self._sports_dashboard_lpl_live_refresh_enabled(plugin_instance)
-        return False
-
-    def _sports_dashboard_live_refresh_interval(self, plugin_instance, source):
-        settings = getattr(plugin_instance, "settings", None) or {}
-        if source == "nba":
-            try:
-                value = int(settings.get(
-                    "nbaLiveRefreshIntervalSeconds",
-                    DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS,
-                ))
-            except (TypeError, ValueError):
-                value = DEFAULT_SPORTS_DASHBOARD_NBA_LIVE_REFRESH_SECONDS
-            return max(60, min(900, value))
-        if source == "worldcup":
-            try:
-                value = int(settings.get(
-                    "worldCupLiveRefreshIntervalSeconds",
-                    DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS,
-                ))
-            except (TypeError, ValueError):
-                value = DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
-            return max(60, min(900, value))
-        if source == "offseason_hub":
-            try:
-                value = int(settings.get(
-                    "offseasonHubLiveRefreshIntervalSeconds",
-                    DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS,
-                ))
-            except (TypeError, ValueError):
-                value = DEFAULT_SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_REFRESH_SECONDS
-            return max(60, min(900, value))
-        if source in {"lpl", "msi"}:
-            return self._sports_dashboard_lpl_live_refresh_interval(plugin_instance)
-        return DEFAULT_SPORTS_DASHBOARD_WORLD_CUP_LIVE_REFRESH_SECONDS
-
-    def _sports_dashboard_lpl_live_refresh_enabled(self, plugin_instance):
-        settings = getattr(plugin_instance, "settings", None) or {}
-        if "lplLiveRefreshEnabled" not in settings:
-            return True
-        return _setting_enabled(settings.get("lplLiveRefreshEnabled"))
-
-    def _sports_dashboard_lpl_live_refresh_interval(self, plugin_instance):
-        settings = getattr(plugin_instance, "settings", None) or {}
-        try:
-            value = int(settings.get(
-                "lplLiveRefreshIntervalSeconds",
-                DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS,
-            ))
-        except (TypeError, ValueError):
-            value = DEFAULT_SPORTS_DASHBOARD_LPL_LIVE_REFRESH_SECONDS
-        return max(60, min(900, value))
-
-    def _sports_dashboard_lpl_live_state_active(self, current_dt):
-        return self._sports_dashboard_live_state_active(
-            current_dt,
-            self._sports_dashboard_lpl_live_state_path(),
-            SPORTS_DASHBOARD_LPL_LIVE_STATE_VERSION,
-        )
-
-    def _sports_dashboard_msi_live_state_active(self, current_dt):
-        return self._sports_dashboard_live_state_active(
-            current_dt,
-            self._sports_dashboard_msi_live_state_path(),
-            SPORTS_DASHBOARD_MSI_LIVE_STATE_VERSION,
-        )
-
-    def _sports_dashboard_worldcup_live_state_active(self, current_dt):
-        return self._sports_dashboard_live_state_active(
-            current_dt,
-            self._sports_dashboard_worldcup_live_state_path(),
-            SPORTS_DASHBOARD_WORLD_CUP_LIVE_STATE_VERSION,
-        )
-
-    def _sports_dashboard_nba_live_state_active(self, current_dt):
-        return self._sports_dashboard_live_state_active(
-            current_dt,
-            self._sports_dashboard_nba_live_state_path(),
-            SPORTS_DASHBOARD_NBA_LIVE_STATE_VERSION,
-        )
-
-    def _sports_dashboard_offseason_hub_live_state_active(self, current_dt):
-        return self._sports_dashboard_live_state_active(
-            current_dt,
-            self._sports_dashboard_offseason_hub_live_state_path(),
-            SPORTS_DASHBOARD_OFFSEASON_HUB_LIVE_STATE_VERSION,
-            live_status_fallback=True,
-        )
-
-    def _sports_dashboard_live_state_active(self, current_dt, path, version, live_status_fallback=False):
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                state = json.load(handle)
-        except (FileNotFoundError, OSError, ValueError):
-            return False
-        if not isinstance(state, dict):
-            return False
-        if state.get("version") != version:
-            return False
-        has_live = state.get("has_live")
-        if has_live is None and live_status_fallback:
-            has_live = str(state.get("status") or "").strip().upper() == "LIVE"
-        if not has_live:
-            return False
-        live_until = self._parse_iso_datetime(state.get("live_until"))
-        if not live_until:
-            return True
-        return current_dt <= self._align_datetime_tz(live_until, current_dt)
-
-    def _sports_dashboard_lpl_live_state_path(self):
-        return os.path.join(
-            os.path.dirname(__file__),
-            "plugins",
-            SPORTS_DASHBOARD_PLUGIN_ID,
-            "cache",
-            "lpl_live_state.json",
-        )
-
-    def _sports_dashboard_msi_live_state_path(self):
-        return os.path.join(
-            os.path.dirname(__file__),
-            "plugins",
-            SPORTS_DASHBOARD_PLUGIN_ID,
-            "cache",
-            "msi_live_state.json",
-        )
-
-    def _sports_dashboard_worldcup_live_state_path(self):
-        return os.path.join(
-            os.path.dirname(__file__),
-            "plugins",
-            SPORTS_DASHBOARD_PLUGIN_ID,
-            "cache",
-            "worldcup_live_state.json",
-        )
-
-    def _sports_dashboard_nba_live_state_path(self):
-        return os.path.join(
-            os.path.dirname(__file__),
-            "plugins",
-            SPORTS_DASHBOARD_PLUGIN_ID,
-            "cache",
-            "nba_live_state.json",
-        )
-
-    def _sports_dashboard_offseason_hub_live_state_path(self):
-        return os.path.join(
-            os.path.dirname(__file__),
-            "plugins",
-            SPORTS_DASHBOARD_PLUGIN_ID,
-            "cache",
-            "offseason_hub_live.json",
-        )
+    def _playlist_live_refresh_due_plugin_id(self, playlist, current_dt):
+        for plugin_instance in list(getattr(playlist, "plugins", []) or []):
+            if self._plugin_live_refresh_due(plugin_instance, current_dt):
+                return plugin_instance.plugin_id
+        return None
 
     @staticmethod
     def _parse_iso_datetime(value):
@@ -1415,7 +1254,12 @@ class PlaylistRefresh(RefreshAction):
         plugin_image_path = os.path.join(device_config.plugin_image_dir, self.plugin_instance.get_image_path())
         image_missing = not os.path.exists(plugin_image_path)
 
-        refresh_on_display = _refresh_on_display(self.plugin_instance)
+        refresh_on_display_hook = getattr(plugin, "wants_refresh_on_display", None)
+        refresh_on_display = (
+            bool(refresh_on_display_hook(self.plugin_instance.settings or {}))
+            if callable(refresh_on_display_hook)
+            else False
+        )
 
         if self.display_cached_only and not self.force and not refresh_on_display:
             if not image_missing:

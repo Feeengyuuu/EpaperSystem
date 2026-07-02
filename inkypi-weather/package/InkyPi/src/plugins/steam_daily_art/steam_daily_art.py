@@ -200,7 +200,7 @@ class SteamDailyArt(BasePlugin):
         params = {"cc": country_code, "l": language}
 
         session = get_http_session()
-        response = session.get(STEAM_FEATURED_CATEGORIES_URL, params=params, timeout=30)
+        response = session.get(STEAM_FEATURED_CATEGORIES_URL, params=params)
         response.raise_for_status()
         return response.json()
 
@@ -464,7 +464,7 @@ class SteamDailyArt(BasePlugin):
 
     def _download_logo(self, url):
         session = get_http_session()
-        response = session.get(url, timeout=30)
+        response = session.get(url)
         response.raise_for_status()
         logo = Image.open(BytesIO(response.content))
         logo = ImageOps.exif_transpose(logo)

@@ -224,7 +224,7 @@ class NatGeoPhotoOfTheDay(BasePlugin):
         return photo
 
     def _fetch_natgeo_photo(self, dimensions):
-        response = get_http_session().get(PAGE_URL, timeout=30, headers=PAGE_HEADERS)
+        response = get_http_session().get(PAGE_URL, headers=PAGE_HEADERS)
         response.raise_for_status()
         if not response.encoding:
             response.encoding = "utf-8"

@@ -105,7 +105,7 @@ class AIImage(BasePlugin):
             # Use adaptive loader for memory-efficient processing
             # AI images are pre-sized, but still benefit from optimized loading
             session = get_http_session()
-            response = session.get(image_url, timeout=30)
+            response = session.get(image_url)
             response.raise_for_status()
             img = Image.open(BytesIO(response.content))
         elif model == "gpt-image-1":

@@ -7,6 +7,8 @@ Benefits:
 - Reduced TCP handshake overhead
 - Automatic keep-alive handling
 - Consistent headers across all requests
+- Default timeout (DEFAULT_TIMEOUT_SECONDS) applied to every request unless
+  the caller passes an explicit timeout
 
 Usage:
     from utils.http_client import get_http_session
@@ -23,6 +25,18 @@ from urllib.parse import urlparse
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Default timeout applied to all requests made through the shared session
+DEFAULT_TIMEOUT_SECONDS = 30
+
+
+class TimeoutSession(requests.Session):
+    """Session that applies a default timeout unless the caller passes one."""
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", DEFAULT_TIMEOUT_SECONDS)
+        return super().request(method, url, **kwargs)
+
 
 # Global session instance (singleton)
 _HTTP_SESSION: Optional[requests.Session] = None
@@ -91,7 +105,7 @@ def get_http_session() -> requests.Session:
 
     if _HTTP_SESSION is None:
         logger.debug("Initializing shared HTTP session with connection pooling")
-        _HTTP_SESSION = requests.Session()
+        _HTTP_SESSION = TimeoutSession()
         _disable_dead_local_proxy(_HTTP_SESSION)
 
         # Set common headers for all InkyPi requests

@@ -146,6 +146,9 @@ def _enabled(value, default=False):
 
 
 class Newspaper(BasePlugin):
+    def wants_refresh_on_display(self, settings):
+        return str((settings or {}).get("mediaRotationMode") or "rotate").lower() != "single"
+
     def generate_image(self, settings, device_config):
         if self._rotation_enabled(settings):
             sources = self._parse_media_sources(settings.get("mediaSources") or DEFAULT_MEDIA_SOURCES)

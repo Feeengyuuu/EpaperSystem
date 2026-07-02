@@ -2,5 +2,6 @@
     "display_name": "Sky Radar",
     "id": "flight_radar",
     "class": "FlightRadar",
-    "repository": "local://flight-radar"
+    "repository": "local://flight-radar",
+    "refresh_on_display": true
 }
