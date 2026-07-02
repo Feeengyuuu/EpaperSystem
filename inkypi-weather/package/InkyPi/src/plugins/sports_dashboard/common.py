@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from urllib.parse import unquote, urljoin
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlparse, urlunparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import os
@@ -75,6 +75,8 @@ MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
 EWC_STATE_VERSION = "sports-dashboard-ewc-v1"
+EWC_DETAIL_STATE_VERSION = "sports-dashboard-ewc-detail-v1"
+EWC_LIVE_STATE_VERSION = "sports-dashboard-ewc-live-v1"
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
 NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
@@ -123,6 +125,9 @@ OFFSEASON_HUB_URGENT_NEXT_WINDOW = timedelta(minutes=90)
 OFFSEASON_HUB_DEFAULT_LIVE_WINDOW = timedelta(hours=5)
 OFFSEASON_HUB_PGA_POST_EVENT_WINDOW = timedelta(hours=18)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
+TEAM_LOGO_DISK_CACHE_MAX_BYTES = 2 * 1024 * 1024
+TEAM_LOGO_DISK_CACHE_MAX_SIDE = 2048
+TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
 # correct on every matchday regardless of the scoreboard date window. Note: apis/v2
@@ -194,8 +199,14 @@ DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
 DEFAULT_EWC_COMPETITIONS_URL = "https://esportsworldcup.com/en/competitions/2026"
 DEFAULT_EWC_CACHE_HOURS = 12
+DEFAULT_EWC_DETAIL_CACHE_SECONDS = 600
+DEFAULT_EWC_DETAIL_LOOKAHEAD_DAYS = 7
+DEFAULT_EWC_DETAIL_MAX_PAGES = 5
 DEFAULT_EWC_UPCOMING_WINDOW_DAYS = 21
 DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS = 1
+DEFAULT_EWC_LIVE_REFRESH_SECONDS = 60
+EWC_LIVE_PREGAME_WINDOW = timedelta(minutes=30)
+EWC_MATCH_DEFAULT_DURATION = timedelta(hours=3)
 LOL_ESPORTS_ROTATION_MINUTES = 30
 LPL_LIVE_STATES = {"inprogress", "in_progress", "in-progress", "live"}
 LPL_INFERRED_LIVE_WINDOW = timedelta(hours=6)
@@ -2261,6 +2272,12 @@ class SportsDashboardCommonMixin:
             if self._bool_setting(settings, "ewcSidebarEnabled", True):
                 try:
                     ewc_card = self._load_ewc_sidebar_card(settings, timezone_info, now)
+                    if ewc_card:
+                        self._write_ewc_live_state(
+                            ewc_card.get("selected"),
+                            now,
+                            ewc_card.get("source_state") or "EWC DATA",
+                        )
                 except Exception as exc:
                     logger.warning("EWC sidebar failed, falling back to other esports panels: %s", _safe_exception_text(exc))
             valve_selected = None
@@ -2672,7 +2689,7 @@ class SportsDashboardCommonMixin:
         draw_size = self._team_logo_draw_size(fallback_text, size)
         draw_x = int(x - (draw_size - size) / 2)
         draw_y = int(y - (draw_size - size) / 2)
-        logo = self._load_local_team_logo(fallback_text, draw_size) or self._load_team_logo(logo_url, draw_size)
+        logo = self._load_local_team_logo(fallback_text, draw_size) or self._load_team_logo_for_render(logo_url, draw_size)
         if logo:
             image.paste(logo, (draw_x + (draw_size - logo.width) // 2, draw_y + (draw_size - logo.height) // 2), logo)
             return
@@ -2680,6 +2697,22 @@ class SportsDashboardCommonMixin:
         fallback = str(fallback_text or "?")[:1].upper()
         fallback_font = self._font(max(10, int(draw_size * 0.55)), True)
         self._draw_centered(draw, (draw_x + draw_size / 2, draw_y + draw_size / 2), fallback, fallback_font, COLORS["muted"])
+
+
+    def _load_team_logo_for_render(self, logo_url, size):
+        try:
+            return self._load_team_logo(logo_url, size, cache_dir=self._team_logo_disk_cache_dir())
+        except TypeError:
+            return self._load_team_logo(logo_url, size)
+
+    def _team_logo_disk_cache_dir(self):
+        try:
+            cache_dir = self._sports_dashboard_cache_dir() / "team_logos"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            return cache_dir
+        except OSError as exc:
+            logger.warning("Failed to prepare team logo disk cache: %s", exc)
+            return None
 
     @staticmethod
     def _team_logo_draw_size(team_code, size):
@@ -2763,26 +2796,98 @@ class SportsDashboardCommonMixin:
         return response.content
 
     @staticmethod
-    def _load_team_logo(logo_url, size):
+    def _load_team_logo(logo_url, size, cache_dir=None):
         if not logo_url:
             return None
-        cache_key = (logo_url, size)
+        cache_key = (logo_url, size) if cache_dir is None else (logo_url, size, str(cache_dir))
         if cache_key in TEAM_LOGO_CACHE:
             return TEAM_LOGO_CACHE[cache_key]
         try:
-            data = SportsDashboard._fetch_remote_image_bytes(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)
-            with Image.open(BytesIO(data)) as source:
-                logo = SportsDashboard._logo_with_transparent_background(source)
-                bbox = logo.getbbox()
-                if bbox:
-                    logo = logo.crop(bbox)
-                logo = ImageOps.contain(logo, (size, size), Image.LANCZOS)
+            disk_path = SportsDashboard._team_logo_disk_cache_path(cache_dir, logo_url)
+            data = SportsDashboard._read_team_logo_disk_cache(disk_path)
+            if data is None:
+                data = SportsDashboard._fetch_remote_image_bytes(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)
+                if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+                    logger.warning("Skipping oversized team logo %s", logo_url)
+                    TEAM_LOGO_CACHE[cache_key] = None
+                    return None
+                SportsDashboard._write_team_logo_disk_cache(disk_path, data)
+            logo = SportsDashboard._team_logo_from_bytes(data, size)
             TEAM_LOGO_CACHE[cache_key] = logo
             return logo
         except Exception as exc:
             logger.warning("Failed to load team logo %s: %s", logo_url, _safe_exception_text(exc))
             TEAM_LOGO_CACHE[cache_key] = None
             return None
+
+    @staticmethod
+    def _team_logo_from_bytes(data, size):
+        if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+            return None
+        with Image.open(BytesIO(data)) as source:
+            logo = SportsDashboard._logo_with_transparent_background(source)
+            bbox = logo.getbbox()
+            if bbox:
+                logo = logo.crop(bbox)
+            return ImageOps.contain(logo, (size, size), Image.LANCZOS)
+
+    @staticmethod
+    def _team_logo_disk_cache_path(cache_dir, logo_url):
+        if cache_dir is None:
+            return None
+        try:
+            cache_dir = Path(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to prepare team logo disk cache %s: %s", cache_dir, exc)
+            return None
+        parsed = urlparse(str(logo_url or ""))
+        suffix = Path(parsed.path).suffix.lower()
+        if suffix not in {".png", ".webp", ".jpg", ".jpeg", ".gif"}:
+            suffix = ".img"
+        digest = hashlib.sha1(str(logo_url).encode("utf-8")).hexdigest()
+        return cache_dir / f"{digest}{suffix}"
+
+    @staticmethod
+    def _read_team_logo_disk_cache(path):
+        if path is None or not path.exists():
+            return None
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            logger.warning("Failed to read team logo disk cache %s: %s", path, exc)
+            return None
+        if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+            try:
+                path.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove oversized team logo disk cache %s: %s", path, exc)
+            return None
+        return data
+
+    @staticmethod
+    def _write_team_logo_disk_cache(path, data):
+        if path is None or not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+            return
+        try:
+            path.write_bytes(data)
+        except OSError as exc:
+            logger.warning("Failed to write team logo disk cache %s: %s", path, exc)
+
+    @staticmethod
+    def _team_logo_data_is_safe_to_decode(data):
+        if not data or len(data) > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+            return False
+        try:
+            with Image.open(BytesIO(data)) as source:
+                width, height = source.size
+        except Exception:
+            return False
+        if width <= 0 or height <= 0:
+            return False
+        if width > TEAM_LOGO_DISK_CACHE_MAX_SIDE or height > TEAM_LOGO_DISK_CACHE_MAX_SIDE:
+            return False
+        return width * height <= TEAM_LOGO_DISK_CACHE_MAX_PIXELS
 
     @staticmethod
     def _logo_with_transparent_background(source):

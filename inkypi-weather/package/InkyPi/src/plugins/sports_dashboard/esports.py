@@ -257,15 +257,17 @@ class EsportsMixin:
             1,
             90,
         )
-        selected = self._select_ewc_events(events, now, window_days)
+        detail_matches, detail_source_state = self._load_ewc_detail_matches(settings, timezone_info, events, now, window_days)
+        selected = self._select_ewc_events([*events, *detail_matches], now, window_days, rotation_seed=now)
         if not self._ewc_selected_has_displayable_event(selected):
             return None
+        if selected.get("main_match") and detail_source_state:
+            source_state = detail_source_state
         return {
             "selected": selected,
             "source_state": source_state,
             "priority": self._right_sidebar_ewc_priority(),
         }
-
     def _load_ewc_events(self, settings, timezone_info):
         now_utc = datetime.now(timezone.utc)
         cache_path = self._ewc_competitions_cache_path()
@@ -313,6 +315,310 @@ class EsportsMixin:
             "events": self._encode_ewc_events(events),
         }
 
+    def _load_ewc_detail_matches(self, settings, timezone_info, events, now, window_days):
+        candidates = self._ewc_detail_candidate_events(events, now, window_days)
+        if not candidates:
+            return [], ""
+        now_utc = (now if isinstance(now, datetime) else datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cache_path = self._ewc_detail_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._ewc_detail_cache_key(settings, timezone_info)
+        force_refresh = self._force_refresh_requested(settings)
+        cache_seconds = self._int_setting(
+            settings,
+            "ewcDetailCacheSeconds",
+            DEFAULT_EWC_DETAIL_CACHE_SECONDS,
+            60,
+            6 * 60 * 60,
+        )
+        has_compatible_cache = (
+            cache.get("version") == EWC_DETAIL_STATE_VERSION
+            and cache.get("cache_key") == cache_key
+            and isinstance(cache.get("pages"), Mapping)
+        )
+        if has_compatible_cache and not force_refresh and self._cache_is_fresh_seconds(cache, cache_seconds, now_utc):
+            matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+            return matches, "EWC DETAIL CACHE" if matches else ""
+
+        pages = dict(cache.get("pages") or {}) if has_compatible_cache else {}
+        fetched_any = False
+        for event in candidates:
+            try:
+                page = self._fetch_ewc_detail_page(event, timezone_info, now_utc)
+            except Exception as exc:
+                logger.warning(
+                    "EWC detail fetch failed for %s: %s",
+                    event.get("slug") or event.get("game") or "unknown",
+                    _safe_exception_text(exc),
+                )
+                continue
+            pages[page["page_key"]] = page
+            fetched_any = True
+
+        if fetched_any:
+            payload = {
+                "version": EWC_DETAIL_STATE_VERSION,
+                "cache_key": cache_key,
+                "fetched_at": now_utc.isoformat(),
+                "pages": pages,
+            }
+            try:
+                self._write_json_file(cache_path, payload)
+            except OSError as exc:
+                logger.warning("Failed to write EWC detail cache: %s", exc)
+            cache = payload
+        elif has_compatible_cache:
+            matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+            return matches, "EWC DETAIL STALE" if matches else ""
+
+        matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+        return matches, "EWC DETAIL" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
+
+    def _fetch_ewc_detail_page(self, event, timezone_info, now_utc):
+        source_url = str((event or {}).get("source_url") or "").strip()
+        if not source_url:
+            raise ValueError("EWC event has no detail source_url")
+        slug = str((event or {}).get("slug") or "").strip().lower()
+        game = str((event or {}).get("game") or self._ewc_game_name(slug)).strip() or "EWC"
+        year = str((event or {}).get("year") or self._ewc_year_from_url(source_url) or "").strip()
+        session = get_http_session()
+        response = session.get(
+            source_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
+            },
+            timeout=25,
+        )
+        response.raise_for_status()
+        matches = self._parse_ewc_detail_schedule_html(response.text, timezone_info, slug, game, source_url, year=year)
+        page_key = f"{year or self._ewc_year_from_url(source_url) or 'unknown'}:{slug or source_url}"
+        return {
+            "page_key": page_key,
+            "source_url": source_url,
+            "slug": slug,
+            "game": game,
+            "year": year,
+            "fetched_at": now_utc.isoformat(),
+            "matches": self._encode_ewc_events(matches),
+        }
+
+    @staticmethod
+    def _ewc_detail_candidate_events(events, now, window_days):
+        if not isinstance(now, datetime):
+            now = datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        lookahead_days = min(
+            max(1, int(window_days or DEFAULT_EWC_UPCOMING_WINDOW_DAYS)),
+            DEFAULT_EWC_DETAIL_LOOKAHEAD_DAYS,
+        )
+        lower = now - timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
+        upper = now + timedelta(days=lookahead_days)
+        candidates = []
+        seen = set()
+        for event in events or []:
+            if not isinstance(event, Mapping):
+                continue
+            source_url = str(event.get("source_url") or "").strip()
+            slug = str(event.get("slug") or "").strip().lower()
+            if not source_url or not slug or slug in seen:
+                continue
+            start = event.get("start")
+            end = event.get("end")
+            if not isinstance(start, datetime):
+                continue
+            start = start.replace(tzinfo=now.tzinfo) if start.tzinfo is None else start.astimezone(now.tzinfo)
+            if isinstance(end, datetime):
+                end = end.replace(tzinfo=now.tzinfo) if end.tzinfo is None else end.astimezone(now.tzinfo)
+            else:
+                end = start + timedelta(days=1)
+            if end < lower or start > upper:
+                continue
+            candidates.append(dict(event))
+            seen.add(slug)
+        return sorted(candidates, key=lambda item: (item.get("start") or now, item.get("game") or ""))[:DEFAULT_EWC_DETAIL_MAX_PAGES]
+
+    @staticmethod
+    def _ewc_detail_cached_matches(cache, candidates):
+        pages = cache.get("pages") if isinstance(cache, Mapping) else {}
+        if not isinstance(pages, Mapping):
+            return []
+        candidate_keys = set()
+        for event in candidates or []:
+            if not isinstance(event, Mapping):
+                continue
+            slug = str(event.get("slug") or "").strip().lower()
+            year = str(event.get("year") or SportsDashboard._ewc_year_from_url(event.get("source_url")) or "").strip()
+            if slug:
+                candidate_keys.add(f"{year or 'unknown'}:{slug}")
+        matches = []
+        for key, page in pages.items():
+            if candidate_keys and key not in candidate_keys:
+                continue
+            if isinstance(page, Mapping) and isinstance(page.get("matches"), list):
+                matches.extend(page.get("matches") or [])
+        return matches
+
+    def _ewc_detail_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "ewc_detail_matches.json"
+
+    def _ewc_detail_cache_key(self, settings, timezone_info):
+        url = str((settings or {}).get("ewcCompetitionsUrl") or DEFAULT_EWC_COMPETITIONS_URL).strip() or DEFAULT_EWC_COMPETITIONS_URL
+        return hashlib.sha1(f"detail|{url}|{self._timezone_key(timezone_info)}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _parse_ewc_detail_schedule_html(html_text, timezone_info, slug, game, source_url, year=None):
+        if not html_text:
+            return []
+        slug = str(slug or "").strip().lower()
+        game = str(game or SportsDashboard._ewc_game_name(slug)).strip() or "EWC"
+        source_url = str(source_url or DEFAULT_EWC_COMPETITIONS_URL).strip() or DEFAULT_EWC_COMPETITIONS_URL
+        year_text = str(year or SportsDashboard._ewc_year_from_url(source_url) or "").strip()
+        if not year_text:
+            year_text = str(datetime.now(timezone_info).year)
+        try:
+            year_value = int(year_text)
+        except ValueError:
+            year_value = datetime.now(timezone_info).year
+
+        time_pattern = re.compile(
+            r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*[A-Za-z]{3}\.?\s+\d{1,2}(?:st|nd|rd|th)?\s+-\s+\d{1,2}:\d{2}(?:\s*[AP]M)?\b",
+            re.IGNORECASE,
+        )
+        matches = list(time_pattern.finditer(str(html_text)))
+        sides = []
+        for index, match in enumerate(matches):
+            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(str(html_text))
+            chunk = str(html_text)[match.start():next_start]
+            side = SportsDashboard._parse_ewc_detail_match_side(chunk, match.group(0), timezone_info, year_value, source_url)
+            if side:
+                sides.append(side)
+
+        grouped = {}
+        for side in sides:
+            key = (side["start"].isoformat(), side["status"], side["stage"])
+            grouped.setdefault(key, []).append(side)
+
+        parsed_matches = []
+        for group in grouped.values():
+            for pair_index in range(0, len(group) - 1, 2):
+                left = group[pair_index]
+                right = group[pair_index + 1]
+                stage_slug = re.sub(r"[^a-z0-9]+", "-", left["stage"].lower()).strip("-") or f"match-{pair_index // 2 + 1}"
+                event_id = f"ewc-{year_value}-{slug}-{left['start'].strftime('%Y%m%d-%H%M')}-{stage_slug}"
+                parsed_matches.append(
+                    {
+                        "kind": "match",
+                        "event_id": event_id,
+                        "match_id": event_id,
+                        "game": game,
+                        "slug": slug,
+                        "year": str(year_value),
+                        "source_url": source_url,
+                        "start": left["start"],
+                        "end": left["start"] + EWC_MATCH_DEFAULT_DURATION,
+                        "status": left["status"],
+                        "stage": left["stage"],
+                        "team_a": left["team"],
+                        "team_b": right["team"],
+                        "team_a_logo": left.get("logo_url") or "",
+                        "team_b_logo": right.get("logo_url") or "",
+                        "score_a": left.get("score"),
+                        "score_b": right.get("score"),
+                    }
+                )
+        return sorted(parsed_matches, key=lambda item: (item["start"], item.get("stage") or "", item.get("team_a") or ""))
+
+    @staticmethod
+    def _parse_ewc_detail_match_side(chunk, time_label, timezone_info, year_value, source_url):
+        start = SportsDashboard._parse_ewc_match_time_label(time_label, timezone_info, year_value)
+        if not start:
+            return None
+        team_match = re.search(r"<h[1-6]\b[^>]*>(?P<team>.*?)</h[1-6]>", chunk, flags=re.IGNORECASE | re.DOTALL)
+        if not team_match:
+            return None
+        team = SportsDashboard._html_text(team_match.group("team"))
+        if not team:
+            return None
+        text = SportsDashboard._html_text(chunk)
+        status_match = re.search(r"\b(upcoming|ongoing|live|completed)\b", text, flags=re.IGNORECASE)
+        status = status_match.group(1).upper() if status_match else "UPCOMING"
+        if status == "ONGOING":
+            status = "LIVE"
+        stage = "MATCH"
+        if status_match:
+            after_status = text[status_match.end():]
+            team_index = after_status.find(team)
+            if team_index >= 0:
+                stage_candidate = after_status[:team_index]
+                stage_candidate = re.sub(r"\s+", " ", stage_candidate).strip(" -")
+                if stage_candidate:
+                    stage = stage_candidate
+        score = None
+        after_team = text.split(team, 1)[1] if team in text else ""
+        score_match = re.search(r"(?:^|\s)(-|\d+)(?:\s|$)", after_team)
+        if score_match:
+            raw_score = score_match.group(1)
+            score = None if raw_score == "-" else int(raw_score)
+        logo_url = ""
+        img_match = re.search(r"<img\b[^>]*?>", chunk, flags=re.IGNORECASE | re.DOTALL)
+        if img_match:
+            logo_url = SportsDashboard._ewc_image_url_from_tag(img_match.group(0), source_url)
+        return {
+            "start": start,
+            "status": status,
+            "stage": stage,
+            "team": team,
+            "score": score,
+            "logo_url": logo_url,
+        }
+
+    @staticmethod
+    def _parse_ewc_match_time_label(label, timezone_info, year_value):
+        match = re.search(
+            r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*([A-Za-z]{3})\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s+-\s+(\d{1,2}):(\d{2})(?:\s*([AP]M))?\b",
+            str(label or ""),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        month = EWC_MONTHS.get(match.group(1).upper())
+        if not month:
+            return None
+        hour = int(match.group(3))
+        minute = int(match.group(4))
+        meridiem = str(match.group(5) or "").upper()
+        if meridiem == "PM" and hour < 12:
+            hour += 12
+        elif meridiem == "AM" and hour == 12:
+            hour = 0
+        return datetime(int(year_value), month, int(match.group(2)), hour, minute, tzinfo=timezone_info)
+
+    @staticmethod
+    def _ewc_year_from_url(source_url):
+        match = re.search(r"/competitions/(20\d{2})(?:/|$)", str(source_url or ""))
+        return match.group(1) if match else ""
+
+    @staticmethod
+    def _ewc_image_url_from_tag(img_tag, source_url=DEFAULT_EWC_COMPETITIONS_URL):
+        tag = str(img_tag or "")
+        for attribute in ("src", "data-src", "srcset"):
+            attr_match = re.search(fr"\b{attribute}=(?P<quote>[\"'])(?P<value>.*?)(?P=quote)", tag, flags=re.IGNORECASE | re.DOTALL)
+            if not attr_match:
+                continue
+            value = html_lib.unescape(attr_match.group("value")).strip()
+            if not value:
+                continue
+            if attribute == "srcset":
+                value = value.split(",", 1)[0].strip().split(" ", 1)[0]
+            absolute_url = urljoin(str(source_url or DEFAULT_EWC_COMPETITIONS_URL), value)
+            next_match = re.search(r"[?&]url=([^&]+)", absolute_url)
+            if next_match:
+                return unquote(next_match.group(1))
+            return absolute_url
+        return ""
     def _ewc_competitions_cache_path(self):
         return self._sports_dashboard_cache_dir() / "ewc_competitions.json"
 
@@ -543,7 +849,7 @@ class EsportsMixin:
         ]
 
     @staticmethod
-    def _select_ewc_events(events, now, upcoming_window_days=DEFAULT_EWC_UPCOMING_WINDOW_DAYS):
+    def _select_ewc_events(events, now, upcoming_window_days=DEFAULT_EWC_UPCOMING_WINDOW_DAYS, rotation_seed=None):
         if not isinstance(now, datetime):
             now = datetime.now(timezone.utc)
         if now.tzinfo is None:
@@ -563,32 +869,212 @@ class EsportsMixin:
             end = item.get("end")
             if isinstance(end, datetime):
                 item["end"] = end.replace(tzinfo=now.tzinfo) if end.tzinfo is None else end.astimezone(now.tzinfo)
+            elif SportsDashboard._is_ewc_match_item(item):
+                item["end"] = item["start"] + EWC_MATCH_DEFAULT_DURATION
             else:
                 item["end"] = item["start"] + timedelta(days=1)
             normalized_events.append(item)
-        normalized_events = sorted(normalized_events, key=lambda item: item["start"])
-        live = [event for event in normalized_events if SportsDashboard._is_ewc_live_event(event, now)]
-        upcoming = [event for event in normalized_events if event["start"] >= now and not SportsDashboard._is_ewc_finished_event(event, now)]
-        recent = sorted(
-            [event for event in normalized_events if event["start"] < now and not SportsDashboard._is_ewc_live_event(event, now)],
+        normalized_events = sorted(
+            normalized_events,
+            key=lambda item: (item["start"], item.get("stage") or "", item.get("game") or "", item.get("team_a") or ""),
+        )
+        match_items = [event for event in normalized_events if SportsDashboard._is_ewc_match_item(event)]
+        event_items = [event for event in normalized_events if not SportsDashboard._is_ewc_match_item(event)]
+
+        live_matches = [event for event in match_items if SportsDashboard._is_ewc_live_event(event, now)]
+        upcoming_matches = [event for event in match_items if event["start"] >= now and not SportsDashboard._is_ewc_finished_event(event, now)]
+        recent_matches = sorted(
+            [event for event in match_items if event["start"] < now and not SportsDashboard._is_ewc_live_event(event, now)],
             key=lambda item: item["start"],
             reverse=True,
         )
-        main = live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None))
-        display_window_active = bool(live)
-        if not display_window_active and upcoming:
+        live_events = [event for event in event_items if SportsDashboard._is_ewc_live_event(event, now)]
+        upcoming_events = [event for event in event_items if event["start"] >= now and not SportsDashboard._is_ewc_finished_event(event, now)]
+        recent_events = sorted(
+            [event for event in event_items if event["start"] < now and not SportsDashboard._is_ewc_live_event(event, now)],
+            key=lambda item: item["start"],
+            reverse=True,
+        )
+
+        rotation_bucket = SportsDashboard._ewc_rotation_bucket(rotation_seed if rotation_seed is not None else now)
+        selected_match_group = None
+        if live_matches:
+            selected_match_group = SportsDashboard._ewc_match_group_for_display(
+                live_matches,
+                live_matches,
+                upcoming_matches,
+                recent_matches,
+                rotation_bucket,
+            )
+        elif upcoming_matches:
+            next_start = upcoming_matches[0]["start"]
+            same_start = [event for event in upcoming_matches if event["start"] == next_start]
+            selected_match_group = SportsDashboard._ewc_match_group_for_display(
+                same_start,
+                live_matches,
+                upcoming_matches,
+                recent_matches,
+                rotation_bucket,
+            )
+        elif recent_matches:
+            latest_start = recent_matches[0]["start"]
+            same_recent_start = [event for event in recent_matches if event["start"] == latest_start]
+            selected_match_group = SportsDashboard._ewc_match_group_for_display(
+                same_recent_start,
+                live_matches,
+                upcoming_matches,
+                recent_matches,
+                rotation_bucket,
+            )
+
+        main_match = None
+        group_live_matches = []
+        group_upcoming_matches = []
+        group_recent_matches = []
+        if selected_match_group:
+            group_count = max(1, int(selected_match_group.get("rotation_group_count") or 1))
+            group_bucket = rotation_bucket // group_count
+            group_live_matches = list(selected_match_group.get("live_matches") or [])
+            group_upcoming_matches = list(selected_match_group.get("upcoming_matches") or [])
+            group_recent_matches = list(selected_match_group.get("recent_matches") or [])
+            if group_live_matches:
+                main_match = SportsDashboard._ewc_rotated_choice_from_bucket(group_live_matches, group_bucket)
+            elif group_upcoming_matches:
+                next_group_start = group_upcoming_matches[0]["start"]
+                same_group_start = [event for event in group_upcoming_matches if event["start"] == next_group_start]
+                main_match = SportsDashboard._ewc_rotated_choice_from_bucket(same_group_start, group_bucket)
+            elif group_recent_matches:
+                main_match = group_recent_matches[0]
+
+        event_main = live_events[0] if live_events else (upcoming_events[0] if upcoming_events else (recent_events[0] if recent_events else None))
+        main = main_match or event_main
+        live = group_live_matches if selected_match_group else (live_matches if live_matches else live_events)
+        upcoming = group_upcoming_matches if selected_match_group else (upcoming_matches if upcoming_matches else upcoming_events)
+        recent = group_recent_matches if selected_match_group else (recent_matches if recent_matches else recent_events)
+
+        display_window_active = bool(live_matches or live_events)
+        if not display_window_active and upcoming_matches:
             window_days = max(1, int(upcoming_window_days or DEFAULT_EWC_UPCOMING_WINDOW_DAYS))
-            display_window_active = upcoming[0]["start"] - now <= timedelta(days=window_days)
-        if not display_window_active and recent:
-            display_window_active = now - recent[0].get("end", recent[0]["start"]) <= timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
+            display_window_active = upcoming_matches[0]["start"] - now <= timedelta(days=window_days)
+        if not display_window_active and upcoming_events:
+            window_days = max(1, int(upcoming_window_days or DEFAULT_EWC_UPCOMING_WINDOW_DAYS))
+            display_window_active = upcoming_events[0]["start"] - now <= timedelta(days=window_days)
+        if not display_window_active and recent_matches:
+            display_window_active = now - recent_matches[0].get("end", recent_matches[0]["start"]) <= timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
+        if not display_window_active and recent_events:
+            display_window_active = now - recent_events[0].get("end", recent_events[0]["start"]) <= timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
         return {
             "live": live,
             "upcoming": upcoming,
             "recent": recent,
             "main": main,
+            "main_match": main_match,
+            "live_matches": group_live_matches if selected_match_group else live_matches,
+            "upcoming_matches": group_upcoming_matches if selected_match_group else upcoming_matches,
+            "recent_matches": group_recent_matches if selected_match_group else recent_matches,
+            "selected_match_group": selected_match_group,
             "display_window_active": display_window_active,
         }
+    @staticmethod
+    def _is_ewc_match_item(event):
+        return str((event or {}).get("kind") or "").strip().lower() == "match" or bool(
+            (event or {}).get("team_a") and (event or {}).get("team_b")
+        )
 
+    @staticmethod
+    def _ewc_match_group_for_display(candidate_matches, live_matches, upcoming_matches, recent_matches, rotation_bucket):
+        groups = SportsDashboard._ewc_grouped_match_choices(candidate_matches)
+        if not groups:
+            return None
+        selected = groups[rotation_bucket % len(groups)]
+        key = selected["key"]
+        selected["rotation_group_count"] = len(groups)
+        selected["live_matches"] = SportsDashboard._ewc_matches_for_group(live_matches, key)
+        selected["upcoming_matches"] = SportsDashboard._ewc_matches_for_group(upcoming_matches, key)
+        selected["recent_matches"] = SportsDashboard._ewc_matches_for_group(recent_matches, key)
+        return selected
+
+    @staticmethod
+    def _ewc_grouped_match_choices(matches):
+        groups = []
+        by_key = {}
+        for match in matches or []:
+            key = SportsDashboard._ewc_match_group_key(match)
+            if not key:
+                continue
+            group = by_key.get(key)
+            if not group:
+                group = {
+                    "key": key,
+                    "slug": str((match or {}).get("slug") or "").strip().lower(),
+                    "game": str((match or {}).get("game") or "EWC").strip() or "EWC",
+                    "matches": [],
+                }
+                by_key[key] = group
+                groups.append(group)
+            group["matches"].append(match)
+        for group in groups:
+            group["matches"] = sorted(
+                group["matches"],
+                key=lambda item: (item.get("start") or datetime.max.replace(tzinfo=timezone.utc), item.get("stage") or "", item.get("team_a") or ""),
+            )
+        return sorted(
+            groups,
+            key=lambda group: (
+                group["matches"][0].get("start") if group["matches"] else datetime.max.replace(tzinfo=timezone.utc),
+                str(group.get("game") or ""),
+                str(group.get("key") or ""),
+            ),
+        )
+
+    @staticmethod
+    def _ewc_match_group_key(match):
+        match = match or {}
+        slug = str(match.get("slug") or "").strip().lower()
+        if slug:
+            return slug
+        game = re.sub(r"[^a-z0-9]+", "-", str(match.get("game") or "").strip().lower()).strip("-")
+        if game:
+            return game
+        source_url = str(match.get("source_url") or "").strip().lower()
+        if source_url:
+            return source_url
+        return str(match.get("event_id") or match.get("match_id") or "").strip().lower()
+
+    @staticmethod
+    def _ewc_matches_for_group(matches, group_key):
+        return [match for match in matches or [] if SportsDashboard._ewc_match_group_key(match) == group_key]
+
+    @staticmethod
+    def _ewc_rotation_bucket(rotation_seed=None):
+        try:
+            if isinstance(rotation_seed, datetime):
+                return int(rotation_seed.timestamp()) // 60
+            if rotation_seed is not None:
+                return int(rotation_seed)
+            return int(datetime.now(timezone.utc).timestamp()) // 60
+        except (TypeError, ValueError, OSError, OverflowError):
+            return 0
+
+    @staticmethod
+    def _ewc_rotated_choice_from_bucket(items, bucket):
+        items = list(items or [])
+        if not items:
+            return None
+        if len(items) == 1:
+            return items[0]
+        try:
+            index = int(bucket) % len(items)
+        except (TypeError, ValueError, OverflowError):
+            index = 0
+        return items[index]
+
+    @staticmethod
+    def _ewc_rotated_choice(items, rotation_seed=None):
+        return SportsDashboard._ewc_rotated_choice_from_bucket(
+            items,
+            SportsDashboard._ewc_rotation_bucket(rotation_seed),
+        )
     @staticmethod
     def _is_ewc_live_event(event, now):
         event = event or {}
@@ -615,7 +1101,7 @@ class EsportsMixin:
     @staticmethod
     def _ewc_selected_has_displayable_event(selected):
         selected = selected or {}
-        return bool(selected.get("main") and selected.get("display_window_active"))
+        return bool((selected.get("main_match") or selected.get("main")) and selected.get("display_window_active"))
 
     @staticmethod
     def _ewc_sidebar_candidate_phase(card):
@@ -634,6 +1120,59 @@ class EsportsMixin:
     def _right_sidebar_ewc_priority():
         return 2
 
+    def _ewc_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "ewc_live_state.json"
+
+    def _write_ewc_live_state(self, selected, now, source_state):
+        selected = selected or {}
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        current_utc = current.astimezone(timezone.utc)
+        live_matches = list(selected.get("live_matches") or selected.get("live") or [])
+        main_match = selected.get("main_match") or selected.get("main") or (live_matches[0] if live_matches else {})
+        event = live_matches[0] if live_matches else (main_match or {})
+        event_start = event.get("start") if isinstance(event, Mapping) else None
+        event_end = event.get("end") if isinstance(event, Mapping) else None
+        if isinstance(event_start, datetime) and event_start.tzinfo is None:
+            event_start = event_start.replace(tzinfo=current.tzinfo)
+        if isinstance(event_end, datetime) and event_end.tzinfo is None:
+            event_end = event_end.replace(tzinfo=current.tzinfo)
+        if not isinstance(event_end, datetime) and isinstance(event_start, datetime):
+            event_end = event_start + EWC_MATCH_DEFAULT_DURATION
+
+        has_live = bool(live_matches)
+        if not has_live and isinstance(event_start, datetime):
+            start_local = event_start.astimezone(current.tzinfo)
+            has_live = current <= start_local and start_local - current <= EWC_LIVE_PREGAME_WINDOW
+        live_until = event_end.astimezone(timezone.utc).isoformat() if has_live and isinstance(event_end, datetime) else None
+        selected_group = selected.get("selected_match_group") or {}
+        payload = {
+            "version": EWC_LIVE_STATE_VERSION,
+            "updated_at": current_utc.isoformat(),
+            "source_state": source_state,
+            "has_live": bool(has_live and event),
+            "live_until": live_until,
+            "group_key": selected_group.get("key") or "",
+            "game": (event or {}).get("game") or selected_group.get("game") or "",
+            "slug": (event or {}).get("slug") or selected_group.get("slug") or "",
+        }
+        if event:
+            payload.update(
+                {
+                    "event_id": event.get("event_id") or event.get("match_id") or "",
+                    "team_a": event.get("team_a") or "",
+                    "team_b": event.get("team_b") or "",
+                    "score": self._ewc_match_score_label(event),
+                    "status": event.get("status") or "",
+                    "stage": event.get("stage") or "",
+                    "started_at": event_start.astimezone(timezone.utc).isoformat() if isinstance(event_start, datetime) else None,
+                }
+            )
+        try:
+            self._write_json_file(self._ewc_live_state_path(), payload)
+        except OSError as exc:
+            logger.warning("Failed to write EWC live refresh state: %s", exc)
     @staticmethod
     def _ewc_sidebar_main_timestamp(card, default):
         selected = (card or {}).get("selected") or {}

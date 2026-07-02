@@ -51,6 +51,8 @@ class SportsDashboard(
             sources.append("lpl")
         if self._live_state_active(self._msi_live_state_path(), MSI_LIVE_STATE_VERSION, current_dt):
             sources.append("msi")
+        if self._live_state_active(self._ewc_live_state_path(), EWC_LIVE_STATE_VERSION, current_dt):
+            sources.append("ewc")
         if self._live_state_active(self._nba_live_state_path(), NBA_LIVE_STATE_VERSION, current_dt):
             sources.append("nba")
         if self._live_state_active(
@@ -71,6 +73,8 @@ class SportsDashboard(
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
         if source in {"lpl", "msi"}:
             return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
+        if source == "ewc":
+            return self._bool_setting(settings, "ewcLiveRefreshEnabled", True)
         return False
 
     def _live_image_refresh_interval(self, settings, source):
@@ -82,6 +86,8 @@ class SportsDashboard(
             return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
         if source in {"lpl", "msi"}:
             return self._int_setting(settings, "lplLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "ewc":
+            return self._int_setting(settings, "ewcLiveRefreshIntervalSeconds", DEFAULT_EWC_LIVE_REFRESH_SECONDS, 60, 900)
         return 60
 
     def _live_state_active(self, path, version, current_dt, live_status_fallback=False):
@@ -184,7 +190,7 @@ class SportsDashboard(
             kind = str(item.get("kind") or "").strip().lower()
             if kind == "lol" and phase in (0, 1):
                 return True
-            if kind == "ewc" and phase == 0:
+            if kind == "ewc" and phase in (0, 1):
                 return True
             if kind == "valve":
                 return True

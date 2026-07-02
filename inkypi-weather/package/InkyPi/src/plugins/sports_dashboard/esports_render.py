@@ -227,23 +227,45 @@ class EsportsRenderMixin:
             COLORS["muted"],
             align="center",
         )
-        live = (selected or {}).get("live") or []
-        main_event = (selected or {}).get("main") or None
-        is_live = bool(main_event and live and main_event.get("event_id") == live[0].get("event_id"))
+        selected = selected or {}
+        live_matches = list(selected.get("live_matches") or [])
+        main_match = selected.get("main_match") or None
+        live = selected.get("live") or []
+        main_event = main_match or selected.get("main") or None
+        is_live = False
+        if main_match:
+            is_live = any(main_match.get("event_id") == match.get("event_id") for match in live_matches)
+        else:
+            is_live = bool(main_event and live and main_event.get("event_id") == live[0].get("event_id"))
         self._draw_status_pill(draw, right_x + right_w - 88, header_y + 8, "LIVE" if is_live else "NEXT", is_live)
         draw.line((right_x + 14, 66, right_x + right_w - 14, 66), fill=COLORS["border"], width=1)
 
+        if main_match:
+            self._draw_ewc_match_focus_card(image, draw, right_x, right_w, 78, main_match, now, is_live)
+            main_id = main_match.get("event_id")
+            if is_live:
+                rows = [match for match in live_matches if match.get("event_id") != main_id]
+                rows.extend(match for match in (selected.get("upcoming_matches") or []) if match.get("event_id") != main_id)
+                self._draw_ewc_match_rows(image, draw, right_x, right_w, 252, "MATCHES", rows[:4], now, "No other EWC matches")
+                return
+            upcoming_matches = [match for match in (selected.get("upcoming_matches") or []) if match.get("event_id") != main_id]
+            if upcoming_matches:
+                self._draw_ewc_match_rows(image, draw, right_x, right_w, 252, "UPCOMING", upcoming_matches[:4], now, "No more EWC matches")
+                return
+            recent_matches = [match for match in (selected.get("recent_matches") or []) if match.get("event_id") != main_id]
+            self._draw_ewc_match_rows(image, draw, right_x, right_w, 252, "RECENT", recent_matches[:4], now, "No EWC match schedule")
+            return
+
         self._draw_ewc_focus_card(image, draw, right_x, right_w, 78, main_event, now, is_live)
-        upcoming = list((selected or {}).get("upcoming") or [])
+        upcoming = list(selected.get("upcoming") or [])
         if main_event:
             main_id = main_event.get("event_id")
             upcoming = [event for event in upcoming if event.get("event_id") != main_id]
         if upcoming:
             self._draw_ewc_event_rows(image, draw, right_x, right_w, 252, "UPCOMING", upcoming[:4], now, "No more EWC events")
             return
-        recent = list((selected or {}).get("recent") or [])
+        recent = list(selected.get("recent") or [])
         self._draw_ewc_event_rows(image, draw, right_x, right_w, 252, "RECENT", recent[:4], now, "No EWC schedule")
-
     def _draw_ewc_logo(self, image, draw, x, y, width, height):
         logo = self._load_local_logo(LOCAL_EWC_LOGO_PATH, (int(width), int(height)), alpha_threshold=8)
         if logo:
@@ -259,6 +281,177 @@ class EsportsRenderMixin:
         text, font = self._fit_text_ellipsis(draw, "EWC", width - 26, 18, bold=True, min_size=13)
         self._draw_centered(draw, (x + width / 2 + 4, y + height / 2), text, font, COLORS["text"])
 
+    def _draw_ewc_match_focus_card(self, image, draw, right_x, right_w, y, match, now, is_live):
+        card_x1 = right_x + 12
+        card_x2 = right_x + right_w - 12
+        card_y2 = y + 154
+        accent = COLORS["ewc_live"] if is_live else COLORS["ewc_accent"]
+        draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["ewc_shadow"])
+        draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
+        draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        if not match:
+            draw.text((card_x1 + 20, y + 58), "No EWC match", font=self._font(19, True), fill=COLORS["text"])
+            return
+
+        tag = "LIVE MATCH" if is_live else "NEXT MATCH"
+        tag_w = 108 if is_live else 108
+        tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
+        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=COLORS["ewc_live"] if is_live else COLORS["ewc_tag"], outline=COLORS["border"], width=1)
+        draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
+        time_label = self._ewc_match_time_label(match, now)
+        time_label, time_font = self._fit_text_ellipsis(draw, time_label, 88, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (card_x2 - 12, y + 14), time_label, time_font, COLORS["muted"])
+
+        self._draw_ewc_match_game_identity(image, draw, card_x1, card_x2, y + 36, match)
+
+        logo_size = 44
+        left_logo_x = card_x1 + 26
+        right_logo_x = card_x2 - 26 - logo_size
+        logo_y = y + 66
+        team_a = str(match.get("team_a") or "TBD").strip() or "TBD"
+        team_b = str(match.get("team_b") or "TBD").strip() or "TBD"
+        self._draw_team_logo(image, draw, self._ewc_team_logo_url(match, "a"), left_logo_x, logo_y, logo_size, team_a)
+        self._draw_team_logo(image, draw, self._ewc_team_logo_url(match, "b"), right_logo_x, logo_y, logo_size, team_b)
+
+        center_x = right_x + right_w / 2
+        score = self._ewc_match_score_label(match)
+        score_text, score_font = self._fit_text_ellipsis(draw, score, 64, 24, bold=True, min_size=15)
+        self._draw_centered_in_box(draw, (center_x - 34, y + 72, center_x + 34, y + 100), score_text, score_font, COLORS["text"])
+
+        left_box = (card_x1 + 15, y + 114, center_x - 10, y + 134)
+        right_box = (center_x + 10, y + 114, card_x2 - 15, y + 134)
+        team_a_text, team_a_font = self._fit_text_ellipsis(draw, team_a, left_box[2] - left_box[0], 13, bold=True, min_size=8)
+        team_b_text, team_b_font = self._fit_text_ellipsis(draw, team_b, right_box[2] - right_box[0], 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, left_box, team_a_text, team_a_font, COLORS["text"])
+        self._draw_text_in_box(draw, right_box, team_b_text, team_b_font, COLORS["text"], align="right")
+
+        stage = str(match.get("stage") or "MATCH").upper()
+        stage, stage_font = self._fit_text_ellipsis(draw, stage, card_x2 - card_x1 - 34, 9, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (card_x1 + 17, y + 136, card_x2 - 17, y + 151), stage, stage_font, accent)
+
+    def _draw_ewc_match_game_identity(self, image, draw, card_x1, card_x2, y, match):
+        logo_box = (int(card_x1 + 18), int(y), int(card_x1 + 72), int(y + 21))
+        name_box = (int(card_x1 + 78), int(y), int(card_x2 - 18), int(y + 21))
+        logo = self._load_ewc_game_logo(match, (logo_box[2] - logo_box[0] - 8, logo_box[3] - logo_box[1] - 5))
+        if logo:
+            logo_x = int(logo_box[0] + (logo_box[2] - logo_box[0] - logo.width) / 2)
+            logo_y = int(logo_box[1] + (logo_box[3] - logo_box[1] - logo.height) / 2)
+            image.paste(logo, (logo_x, logo_y), logo)
+        else:
+            fallback = str((match or {}).get("game") or "EWC").strip()[:4].upper() or "EWC"
+            fallback_text, fallback_font = self._fit_text_ellipsis(draw, fallback, logo_box[2] - logo_box[0] - 6, 9, bold=True, min_size=6)
+            self._draw_centered_in_box(draw, (logo_box[0] + 3, logo_box[1], logo_box[2] - 3, logo_box[3]), fallback_text, fallback_font, COLORS["text"])
+
+        game_name = str((match or {}).get("game") or "EWC").strip() or "EWC"
+        game_text, game_font = self._fit_text_ellipsis(draw, game_name, name_box[2] - name_box[0] - 10, 11, bold=True, min_size=7)
+        self._draw_text_in_box(
+            draw,
+            (name_box[0] + 5, name_box[1], name_box[2] - 5, name_box[3]),
+            game_text,
+            game_font,
+            COLORS["text"],
+            align="right",
+        )
+
+    def _draw_ewc_match_rows(self, image, draw, right_x, right_w, y, title, matches, now, empty_text):
+        self._draw_section_header(draw, right_x, right_w, y, title, COLORS["ewc_accent"])
+        if not matches:
+            draw.text((right_x + 18, y + 38), empty_text, font=self._font(14, True), fill=COLORS["muted"])
+            return
+        row_y = y + 30
+        for index, match in enumerate(matches[:4]):
+            self._draw_ewc_match_row(image, draw, right_x, right_w, row_y + index * 45, match, now)
+
+    def _draw_ewc_match_row(self, image, draw, right_x, right_w, y, match, now):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        draw.rounded_rectangle((row_x1, y, row_x2, y + 40), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + 39), fill=COLORS["ewc_accent"])
+        logo_size = 17
+        team_a = str((match or {}).get("team_a") or "TBD").strip() or "TBD"
+        team_b = str((match or {}).get("team_b") or "TBD").strip() or "TBD"
+        self._draw_team_logo(image, draw, self._ewc_team_logo_url(match, "a"), row_x1 + 10, y + 19, logo_size, team_a)
+        self._draw_team_logo(image, draw, self._ewc_team_logo_url(match, "b"), row_x2 - 27, y + 19, logo_size, team_b)
+
+        date_text, date_font = self._fit_text_ellipsis(draw, self._ewc_match_time_label(match, now), 62, 8, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (row_x1 + 34, y + 3, row_x2 - 34, y + 14), date_text, date_font, COLORS["muted"])
+        score = self._ewc_match_score_label(match)
+        score_text, score_font = self._fit_text_ellipsis(draw, score, 38, 11, bold=True, min_size=8)
+        self._draw_centered_in_box(draw, (row_x1 + 92, y + 17, row_x2 - 92, y + 31), score_text, score_font, COLORS["text"])
+
+        center_x = (row_x1 + row_x2) / 2
+        team_a_text, team_a_font = self._fit_text_ellipsis(draw, team_a, max(24, center_x - (row_x1 + 32) - 25), 9, bold=True, min_size=6)
+        team_b_text, team_b_font = self._fit_text_ellipsis(draw, team_b, max(24, (row_x2 - 32) - center_x - 25), 9, bold=True, min_size=6)
+        self._draw_text_in_box(draw, (row_x1 + 32, y + 18, center_x - 24, y + 32), team_a_text, team_a_font, COLORS["text"])
+        self._draw_text_in_box(draw, (center_x + 24, y + 18, row_x2 - 32, y + 32), team_b_text, team_b_font, COLORS["text"], align="right")
+        stage = str((match or {}).get("stage") or "MATCH").upper()
+        stage, stage_font = self._fit_text_ellipsis(draw, stage, row_x2 - row_x1 - 22, 6, bold=True, min_size=5)
+        self._draw_centered_in_box(draw, (row_x1 + 12, y + 31, row_x2 - 12, y + 39), stage, stage_font, COLORS["muted"])
+
+
+    @staticmethod
+    def _ewc_resized_image_url(logo_url, width=128):
+        parsed = urlparse(str(logo_url or ""))
+        host = parsed.hostname.lower() if parsed.hostname else ""
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        official_hosts = {"esportsworldcup.com", "www.esportsworldcup.com"}
+        if host.endswith(".esportsworldcup.com") or host in official_hosts:
+            if parsed.path != "/_next/image":
+                return str(logo_url)
+            query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            source_url = query.get("url")
+            if not source_url:
+                return str(logo_url)
+            query["url"] = source_url
+            query["w"] = str(int(width))
+            query["q"] = query.get("q") or "50"
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", urlencode(query), ""))
+        return urlunparse(
+            (
+                "https",
+                "www.esportsworldcup.com",
+                "/_next/image",
+                "",
+                urlencode({"url": str(logo_url), "w": str(int(width)), "q": "50"}),
+                "",
+            )
+        )
+
+    @staticmethod
+    def _ewc_team_logo_url(match, side):
+        key = "team_a_logo" if side == "a" else "team_b_logo"
+        logo_url = str((match or {}).get(key) or "").strip()
+        if not logo_url:
+            return ""
+        parsed = urlparse(logo_url)
+        host = parsed.hostname.lower() if parsed.hostname else ""
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        if host.endswith(".esportsworldcup.com") or host in {"esportsworldcup.com", "www.esportsworldcup.com"}:
+            return SportsDashboard._ewc_resized_image_url(logo_url)
+        if host == "tds-cdn.ewc.efg.gg" or host.endswith(".ewc.efg.gg"):
+            return SportsDashboard._ewc_resized_image_url(logo_url)
+        if host.endswith(".cloudfront.net"):
+            return SportsDashboard._ewc_resized_image_url(logo_url)
+        return ""
+    @staticmethod
+    def _ewc_match_score_label(match):
+        match = match or {}
+        score_a = match.get("score_a")
+        score_b = match.get("score_b")
+        if score_a is not None and score_b is not None:
+            return f"{score_a}-{score_b}"
+        return "VS"
+
+    @staticmethod
+    def _ewc_match_time_label(match, now):
+        start = (match or {}).get("start")
+        if not isinstance(start, datetime):
+            return "TBD"
+        if isinstance(now, datetime) and start.date() == now.date():
+            return start.strftime("%I:%M %p").lstrip("0")
+        return start.strftime("%b %d %H:%M").upper()
     def _draw_ewc_focus_card(self, image, draw, right_x, right_w, y, event, now, is_live):
         card_x1 = right_x + 12
         card_x2 = right_x + right_w - 12

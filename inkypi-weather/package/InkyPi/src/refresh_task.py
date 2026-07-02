@@ -104,6 +104,7 @@ class RefreshTask:
 
         self.thread = None
         self.cache_refresh_lock = threading.Lock()
+        self.manual_refresh_lock = threading.Lock()
         self.config_write_lock = threading.Lock()
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
@@ -127,6 +128,12 @@ class RefreshTask:
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.running = True
             self.thread.start()
+
+    def cache_refresh_in_progress(self):
+        return self.cache_refresh_lock.locked()
+
+    def manual_update_in_progress(self):
+        return self.manual_refresh_lock.locked()
 
     def stop(self):
         """Stops the refresh task by notifying the background thread to exit."""
@@ -227,38 +234,46 @@ class RefreshTask:
                                     background_cache_refresh = (playlist, None)
 
                     if refresh_action:
-                        plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
-                        if plugin_config is None:
-                            logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
-                            continue
-                        plugin = get_plugin_instance(plugin_config)
-                        image = refresh_action.execute(plugin, self.device_config, current_dt)
-                        image_hash = compute_image_hash(image)
+                        manual_refresh_locked = False
+                        if active_manual_request:
+                            self.manual_refresh_lock.acquire()
+                            manual_refresh_locked = True
+                        try:
+                            plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
+                            if plugin_config is None:
+                                logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
+                                continue
+                            plugin = get_plugin_instance(plugin_config)
+                            image = refresh_action.execute(plugin, self.device_config, current_dt)
+                            image_hash = compute_image_hash(image)
 
-                        refresh_info = refresh_action.get_refresh_info()
-                        refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
-                        display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
-                        # check if image is the same as current image
-                        if image_hash != latest_refresh.image_hash or display_target_changed:
-                            logger.info(f"Updating display. | refresh_info: {refresh_info}")
-                            self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
-                        else:
-                            logger.info(f"Image already displayed, skipping refresh. | refresh_info: {refresh_info}")
+                            refresh_info = refresh_action.get_refresh_info()
+                            refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
+                            display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
+                            # check if image is the same as current image
+                            if image_hash != latest_refresh.image_hash or display_target_changed:
+                                logger.info(f"Updating display. | refresh_info: {refresh_info}")
+                                self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
+                            else:
+                                logger.info(f"Image already displayed, skipping refresh. | refresh_info: {refresh_info}")
 
-                        # update latest refresh data in the device config
-                        self.device_config.refresh_info = RefreshInfo(**refresh_info)
-                        if theme_context_to_persist:
-                            self._persist_active_theme(theme_context_to_persist, current_dt)
-                        self._write_device_config()
+                            # update latest refresh data in the device config
+                            self.device_config.refresh_info = RefreshInfo(**refresh_info)
+                            if theme_context_to_persist:
+                                self._persist_active_theme(theme_context_to_persist, current_dt)
+                            self._write_device_config()
 
-                        if background_cache_refresh:
-                            playlist, displayed_plugin_instance = background_cache_refresh
-                            self._maybe_start_background_cache_refresh(
-                                playlist,
-                                displayed_plugin_instance,
-                                current_dt,
-                                background_cache_refresh_force,
-                            )
+                            if background_cache_refresh:
+                                playlist, displayed_plugin_instance = background_cache_refresh
+                                self._maybe_start_background_cache_refresh(
+                                    playlist,
+                                    displayed_plugin_instance,
+                                    current_dt,
+                                    background_cache_refresh_force,
+                                )
+                        finally:
+                            if manual_refresh_locked:
+                                self.manual_refresh_lock.release()
                     elif background_cache_refresh:
                         playlist, displayed_plugin_instance = background_cache_refresh
                         self._maybe_start_background_cache_refresh(
@@ -577,6 +592,9 @@ class RefreshTask:
         """Start a non-blocking cache refresh for due plugin instances."""
         if not self.running:
             return
+        if self.manual_update_in_progress():
+            logger.info("Due plugin cache refresh skipped while manual update is running.")
+            return
         if self._cache_refresh_under_resource_pressure(allow_high_swap=only_plugin_id is not None):
             return
         if not self.cache_refresh_lock.acquire(blocking=False):
@@ -853,6 +871,10 @@ class RefreshTask:
         rotation uses the latest cached image first, then this pass updates
         stale caches without blocking the next visible playlist tick.
         """
+        if self.manual_update_in_progress():
+            logger.info("Due plugin cache refresh pass skipped while manual update is running.")
+            return
+
         updated = False
         attempted_updates = 0
         candidates = []
@@ -872,7 +894,15 @@ class RefreshTask:
                 and self._plugin_wants_refresh_on_display(plugin_instance)
             )
             live_refresh_due = self._plugin_live_refresh_due(plugin_instance, current_dt)
-            if not force and not image_missing and not plugin_instance.should_refresh(current_dt) and not refresh_on_display and not live_refresh_due:
+            refresh_due = plugin_instance.should_refresh(current_dt)
+            if self._plugin_background_cache_refresh_disabled(plugin_instance):
+                if force or image_missing or refresh_due or refresh_on_display or live_refresh_due:
+                    logger.info(
+                        "Skipping background cache refresh for display-only plugin. | "
+                        f"plugin_instance: '{plugin_instance.name}'"
+                    )
+                continue
+            if not force and not image_missing and not refresh_due and not refresh_on_display and not live_refresh_due:
                 continue
 
             candidates.append((
@@ -891,6 +921,9 @@ class RefreshTask:
             ))
 
         for _, plugin_instance, plugin_image_path, image_missing, live_refresh_due in sorted(candidates, key=lambda item: item[0]):
+            if self.manual_update_in_progress():
+                logger.info("Due plugin cache refresh pass stopped while manual update is running.")
+                break
             if max_updates is not None and attempted_updates >= max_updates:
                 logger.info(
                     "Due plugin cache refresh pass limit reached. | "
@@ -1044,6 +1077,13 @@ class RefreshTask:
         except (TypeError, ValueError):
             return None
         return {"active": True, "interval_seconds": max(1, interval)}
+
+    def _plugin_background_cache_refresh_disabled(self, plugin_instance):
+        plugin_id = str(getattr(plugin_instance, "plugin_id", "") or "").strip()
+        if plugin_id != "sports_dashboard":
+            return False
+        settings = getattr(plugin_instance, "settings", None) or {}
+        return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled", False))
 
     def _plugin_live_refresh_due(self, plugin_instance, current_dt):
         state = self._plugin_live_refresh_state(plugin_instance, current_dt)

@@ -381,6 +381,72 @@ def test_refresh_due_plugin_instances_updates_live_hook_cache_early(monkeypatch)
     assert device_config.write_count == 1
 
 
+def test_refresh_due_plugin_instances_skips_sports_dashboard_background_by_default(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("sports-dashboard-display-only-background")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    live_plugin = FakePlugin(calls, live_state={"active": True, "interval_seconds": 60})
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports_dashboard"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+
+    assert calls == []
+    assert playlist.find_plugin("sports_dashboard", "SportsDashboard").latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert device_config.write_count == 0
+
+
+def test_refresh_due_plugin_instances_allows_sports_dashboard_background_when_enabled(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("sports-dashboard-background-enabled")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    live_plugin = FakePlugin(calls, live_state={"active": True, "interval_seconds": 60})
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "sports_dashboard",
+                "name": "SportsDashboard",
+                "plugin_settings": {"id": "sports_dashboard", "backgroundCacheRefreshEnabled": "true"},
+                "refresh": {"interval": 60},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        only_plugin_id="sports_dashboard",
+    )
+
+    assert calls == ["sports_dashboard"]
+    assert playlist.find_plugin("sports_dashboard", "SportsDashboard").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    assert device_config.write_count == 1
+
+
 def test_live_refresh_wait_seconds_uses_plugin_hook(monkeypatch):
     tmp_path = make_test_dir("live-hook-wait")
     live_plugin = FakePlugin([], live_state={"active": True, "interval_seconds": 180})
@@ -1477,6 +1543,90 @@ def test_targeted_cache_refresh_passes_swap_pressure_override(monkeypatch):
     )
 
     assert captured == [{"allow_high_swap": True}, {"allow_high_swap": False}]
+
+
+def test_cache_refresh_in_progress_reflects_background_lock():
+    tmp_path = make_test_dir("cache-refresh-in-progress")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+
+    assert task.cache_refresh_in_progress() is False
+    assert task.cache_refresh_lock.acquire(blocking=False) is True
+    try:
+        assert task.cache_refresh_in_progress() is True
+    finally:
+        task.cache_refresh_lock.release()
+
+
+def test_manual_update_in_progress_reflects_manual_refresh_lock():
+    tmp_path = make_test_dir("manual-refresh-in-progress")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+
+    assert task.manual_update_in_progress() is False
+    assert task.manual_refresh_lock.acquire(blocking=False) is True
+    try:
+        assert task.manual_update_in_progress() is True
+    finally:
+        task.manual_refresh_lock.release()
+
+
+def test_background_cache_refresh_skips_while_manual_update_running(monkeypatch):
+    tmp_path = make_test_dir("manual-refresh-skips-background-cache")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+    task.running = True
+    pressure_checks = []
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda **kwargs: pressure_checks.append(kwargs) or False)
+
+    assert task.manual_refresh_lock.acquire(blocking=False) is True
+    try:
+        task._start_due_plugin_cache_refresh(
+            playlist=None,
+            current_dt=datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+        )
+    finally:
+        task.manual_refresh_lock.release()
+
+    assert pressure_checks == []
+    assert task.cache_refresh_in_progress() is False
+
+
+def test_refresh_due_plugin_instances_stops_when_manual_update_starts(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("manual-refresh-stops-cache-pass")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "a_plugin",
+                "name": "A Plugin",
+                "plugin_settings": {"id": "a_plugin"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+            {
+                "plugin_id": "b_plugin",
+                "name": "B Plugin",
+                "plugin_settings": {"id": "b_plugin"},
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    manual_states = iter([False, False, True])
+    monkeypatch.setattr(task, "manual_update_in_progress", lambda: next(manual_states, True))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 6, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["a_plugin"]
+    assert playlist.find_plugin("a_plugin", "A Plugin").latest_refresh_time == "2026-05-26T07:06:00+00:00"
+    assert playlist.find_plugin("b_plugin", "B Plugin").latest_refresh_time == "2026-05-26T07:00:00+00:00"
 
 
 def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(monkeypatch):
