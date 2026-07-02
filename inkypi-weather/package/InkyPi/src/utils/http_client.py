@@ -19,6 +19,7 @@ Usage:
 
 import logging
 import os
+import threading
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -38,8 +39,10 @@ class TimeoutSession(requests.Session):
         return super().request(method, url, **kwargs)
 
 
-# Global session instance (singleton)
+# Global session instance (singleton); guarded so concurrent first callers
+# never see a half-configured session or construct duplicates
 _HTTP_SESSION: Optional[requests.Session] = None
+_SESSION_LOCK = threading.Lock()
 _PROXY_ENV_NAMES = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -103,31 +106,38 @@ def get_http_session() -> requests.Session:
     """
     global _HTTP_SESSION
 
-    if _HTTP_SESSION is None:
-        logger.debug("Initializing shared HTTP session with connection pooling")
-        _HTTP_SESSION = TimeoutSession()
-        _disable_dead_local_proxy(_HTTP_SESSION)
+    session = _HTTP_SESSION
+    if session is None:
+        with _SESSION_LOCK:
+            if _HTTP_SESSION is None:
+                logger.debug("Initializing shared HTTP session with connection pooling")
+                session = TimeoutSession()
+                _disable_dead_local_proxy(session)
 
-        # Set common headers for all InkyPi requests
-        _HTTP_SESSION.headers.update({
-            'User-Agent': 'InkyPi/1.0 (https://github.com/fatihak/InkyPi/)'
-        })
+                # Set common headers for all InkyPi requests
+                session.headers.update({
+                    'User-Agent': 'InkyPi/1.0 (https://github.com/fatihak/InkyPi/)'
+                })
 
-        # Configure connection pool
-        # Max 10 connections per host (reasonable for e-ink device)
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=10,
-            pool_maxsize=10,
-            max_retries=3,
-            pool_block=False
-        )
-        _HTTP_SESSION.mount('http://', adapter)
-        _HTTP_SESSION.mount('https://', adapter)
+                # Configure connection pool
+                # Max 10 connections per host (reasonable for e-ink device)
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=10,
+                    pool_maxsize=10,
+                    max_retries=3,
+                    pool_block=False
+                )
+                session.mount('http://', adapter)
+                session.mount('https://', adapter)
 
-        logger.debug("HTTP session initialized successfully")
+                logger.debug("HTTP session initialized successfully")
+                # Publish only after the session is fully configured
+                _HTTP_SESSION = session
+            else:
+                session = _HTTP_SESSION
 
-    _disable_dead_local_proxy(_HTTP_SESSION)
-    return _HTTP_SESSION
+    _disable_dead_local_proxy(session)
+    return session
 
 
 def close_http_session():
@@ -137,8 +147,9 @@ def close_http_session():
     """
     global _HTTP_SESSION
 
-    if _HTTP_SESSION is not None:
-        logger.debug("Closing shared HTTP session")
-        _HTTP_SESSION.close()
-        _HTTP_SESSION = None
+    with _SESSION_LOCK:
+        if _HTTP_SESSION is not None:
+            logger.debug("Closing shared HTTP session")
+            _HTTP_SESSION.close()
+            _HTTP_SESSION = None
 

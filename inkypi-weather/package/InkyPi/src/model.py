@@ -1,7 +1,7 @@
-import os
 import json
 import logging
 import random
+import threading
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,8 @@ class PlaylistManager:
         """Initialize PlaylistManager with a list of playlists."""
         self.playlists = list(playlists or [])
         self.active_playlist = active_playlist
+        # Serializes check-then-act mutations across web threads and the refresh thread
+        self._lock = threading.RLock()
 
     def get_playlist_names(self):
         """Returns a list of all playlist names."""
@@ -89,11 +91,12 @@ class PlaylistManager:
 
     def find_plugin(self, plugin_id, instance):
         """Searches playlists to find a plugin with the given ID and instance."""
-        for playlist in self.playlists:
-            plugin = playlist.find_plugin(plugin_id, instance)
-            if plugin:
-                return plugin
-        return None
+        with self._lock:
+            for playlist in self.playlists:
+                plugin = playlist.find_plugin(plugin_id, instance)
+                if plugin:
+                    return plugin
+            return None
 
     def determine_active_playlist(self, current_datetime):
         """Determine the active playlist based on the current time."""
@@ -117,37 +120,49 @@ class PlaylistManager:
     def add_plugin_to_playlist(self, playlist_name, plugin_data):
         """Adds a plugin to a playlist by the specified name. Returns true if successfully added,
         False if playlist doesn't exist"""
-        playlist = self.get_playlist(playlist_name)
-        if playlist:
-            if playlist.add_plugin(plugin_data):
-                return True
-        else:
-            logger.warning(f"Playlist '{playlist_name}' not found.")
-        return False
+        with self._lock:
+            playlist = self.get_playlist(playlist_name)
+            if playlist:
+                if playlist.add_plugin(plugin_data):
+                    return True
+            else:
+                logger.warning(f"Playlist '{playlist_name}' not found.")
+            return False
 
     def add_playlist(self, name, start_time=None, end_time=None):
-        """Creates and adds a new playlist with the given start and end times."""
+        """Creates and adds a new playlist with the given start and end times.
+        Returns False if a playlist with the same name already exists."""
         if not start_time:
             start_time = PlaylistManager.DEFAULT_PLAYLIST_START
         if not end_time:
             end_time = PlaylistManager.DEFAULT_PLAYLIST_END
-        self.playlists.append(Playlist(name, start_time, end_time))
-        return True
+        with self._lock:
+            if self.get_playlist(name):
+                logger.warning(f"Playlist '{name}' already exists.")
+                return False
+            self.playlists.append(Playlist(name, start_time, end_time))
+            return True
 
     def update_playlist(self, old_name, new_name, start_time, end_time):
-        """Updates an existing playlist's name, start time, and end time."""
-        playlist = self.get_playlist(old_name)
-        if playlist:
+        """Updates an existing playlist's name, start time, and end time.
+        Returns False if the playlist is missing or the new name is already taken."""
+        with self._lock:
+            playlist = self.get_playlist(old_name)
+            if not playlist:
+                logger.warning(f"Playlist '{old_name}' not found.")
+                return False
+            if new_name != old_name and self.get_playlist(new_name):
+                logger.warning(f"Cannot rename playlist '{old_name}': '{new_name}' already exists.")
+                return False
             playlist.name = new_name
             playlist.start_time = start_time
             playlist.end_time = end_time
             return True
-        logger.warning(f"Playlist '{old_name}' not found.")
-        return False
 
     def delete_playlist(self, name):
         """Deletes the playlist with the specified name."""
-        self.playlists = [p for p in self.playlists if p.name != name]
+        with self._lock:
+            self.playlists = [p for p in self.playlists if p.name != name]
 
     def to_dict(self):
         return {

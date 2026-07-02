@@ -98,3 +98,39 @@ def test_http_session_keeps_explicit_timeout(monkeypatch):
 
     assert captured["timeout"] == 5
     http_client.close_http_session()
+
+def test_concurrent_first_calls_share_single_session(monkeypatch):
+    import threading
+    import time
+
+    http_client.close_http_session()
+    constructed = []
+
+    class SlowTimeoutSession(http_client.TimeoutSession):
+        def __init__(self):
+            constructed.append(1)
+            time.sleep(0.05)
+            super().__init__()
+
+    monkeypatch.setattr(http_client, "TimeoutSession", SlowTimeoutSession)
+
+    barrier = threading.Barrier(4)
+    sessions = []
+
+    def worker():
+        barrier.wait()
+        sessions.append(http_client.get_http_session())
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    try:
+        assert len(constructed) == 1
+        assert all(session is sessions[0] for session in sessions)
+        # the published session must be fully configured
+        assert "InkyPi" in sessions[0].headers.get("User-Agent", "")
+    finally:
+        http_client.close_http_session()

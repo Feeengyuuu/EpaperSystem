@@ -101,3 +101,36 @@ def test_register_plugin_blueprints_imports_only_declared_blueprint_plugins(tmp_
     assert not lazy_marker.exists()
     assert blueprint_marker.exists()
     assert app.test_client().get("/route-plugin-test/ping").data == b"pong"
+
+
+def test_concurrent_first_render_constructs_single_instance(monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setitem(plugin_registry.PLUGIN_CONFIGS, "race_plugin", {"id": "race_plugin", "class": "Race"})
+    monkeypatch.delitem(plugin_registry.PLUGIN_CLASSES, "race_plugin", raising=False)
+    constructed = []
+
+    def slow_loader(config):
+        constructed.append(config["id"])
+        time.sleep(0.05)
+        return object()
+
+    monkeypatch.setattr(plugin_registry, "_load_plugin_instance", slow_loader)
+
+    barrier = threading.Barrier(4)
+    instances = []
+
+    def worker():
+        barrier.wait()
+        instances.append(plugin_registry.get_plugin_instance({"id": "race_plugin"}))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    plugin_registry.PLUGIN_CLASSES.pop("race_plugin", None)
+
+    assert len(constructed) == 1
+    assert all(instance is instances[0] for instance in instances)

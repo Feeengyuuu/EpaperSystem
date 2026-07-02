@@ -111,7 +111,8 @@ def create_playlist():
 
         result = playlist_manager.add_playlist(playlist_name, start_time, end_time)
         if not result:
-            return jsonify({"error": "Failed to create playlist"}), 500
+            # add_playlist is atomic; a False here means another request created it first
+            return jsonify({"error": f"Playlist with name '{playlist_name}' already exists"}), 400
 
         # save changes to device config file
         device_config.write_config()
@@ -143,7 +144,7 @@ def update_playlist(playlist_name):
 
     result = playlist_manager.update_playlist(playlist_name, new_name, start_time, end_time)
     if not result:
-        return jsonify({"error": "Failed to delete playlist"}), 500
+        return jsonify({"error": f"Could not update playlist '{playlist_name}'; the target name may already exist"}), 400
     device_config.write_config()
     _signal_config_change()
 

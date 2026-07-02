@@ -321,3 +321,64 @@ class TestPluginInstance:
 
         assert not plugin.should_refresh(datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc))
         
+
+class TestPlaylistManagerConcurrency:
+
+    def _plugin_dict(self, name="Instance"):
+        return {"plugin_id": "clock", "name": name, "plugin_settings": {}, "refresh": {"interval": 300}}
+
+    def test_add_playlist_rejects_duplicate_name(self):
+        manager = PlaylistManager()
+        assert manager.add_playlist("Morning") is True
+        assert manager.add_playlist("Morning") is False
+        assert manager.get_playlist_names() == ["Morning"]
+
+    def test_update_playlist_rejects_rename_collision(self):
+        manager = PlaylistManager()
+        manager.add_playlist("Morning")
+        manager.add_playlist("Evening")
+        assert manager.update_playlist("Morning", "Evening", "06:00", "12:00") is False
+        assert manager.get_playlist("Morning") is not None
+        # renaming to the same name is still allowed (time-only update)
+        assert manager.update_playlist("Morning", "Morning", "06:00", "12:00") is True
+
+    def test_concurrent_add_plugin_creates_single_instance(self):
+        import threading
+
+        manager = PlaylistManager()
+        manager.add_playlist("Default")
+        barrier = threading.Barrier(8)
+        results = []
+
+        def worker():
+            barrier.wait()
+            results.append(manager.add_plugin_to_playlist("Default", self._plugin_dict()))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert results.count(True) == 1
+        assert len(manager.get_playlist("Default").plugins) == 1
+
+    def test_concurrent_add_playlist_creates_single_playlist(self):
+        import threading
+
+        manager = PlaylistManager()
+        barrier = threading.Barrier(8)
+        results = []
+
+        def worker():
+            barrier.wait()
+            results.append(manager.add_playlist("Race"))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert results.count(True) == 1
+        assert manager.get_playlist_names() == ["Race"]

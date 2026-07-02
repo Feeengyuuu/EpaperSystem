@@ -2,6 +2,7 @@
 
 import importlib
 import logging
+import threading
 from pathlib import Path
 
 from utils.app_utils import resolve_path
@@ -10,6 +11,9 @@ logger = logging.getLogger(__name__)
 PLUGINS_DIR = "plugins"
 PLUGIN_CONFIGS = {}
 PLUGIN_CLASSES = {}
+# Serializes lazy plugin construction so concurrent first renders of the same
+# plugin cannot build two instances
+_REGISTRY_LOCK = threading.Lock()
 
 
 def load_plugins(plugins_config):
@@ -78,8 +82,13 @@ def get_plugin_instance(plugin_config):
     if plugin_class:
         return plugin_class
 
-    registered_config = dict(PLUGIN_CONFIGS[plugin_id])
-    registered_config.update(plugin_config)
-    plugin_class = _load_plugin_instance(registered_config)
-    PLUGIN_CLASSES[plugin_id] = plugin_class
-    return plugin_class
+    with _REGISTRY_LOCK:
+        plugin_class = PLUGIN_CLASSES.get(plugin_id)
+        if plugin_class:
+            return plugin_class
+
+        registered_config = dict(PLUGIN_CONFIGS[plugin_id])
+        registered_config.update(plugin_config)
+        plugin_class = _load_plugin_instance(registered_config)
+        PLUGIN_CLASSES[plugin_id] = plugin_class
+        return plugin_class
