@@ -23,7 +23,7 @@ def test_effective_feeds_expands_legacy_bbc_only_settings():
     urls = [url for _name, url in feeds]
 
     assert urls.count("https://feeds.bbci.co.uk/news/world/rss.xml") == 1
-    assert "https://www.news.cn/politics/news_politics.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
     assert "https://www.chinanews.com.cn/rss/china.xml" in urls
     assert "https://www.aljazeera.com/xml/rss/all.xml" in urls
     assert "https://www.france24.com/en/rss" in urls
@@ -38,9 +38,9 @@ def test_effective_feeds_expands_previous_default_feed_set():
     effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_DEFAULT_FEEDS)
     urls = {url for _name, url in plugin._parse_feeds(effective)}
 
-    assert "https://www.news.cn/politics/news_politics.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
     assert "https://www.chinanews.com.cn/rss/china.xml" in urls
-    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" not in urls
+    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" in urls
     assert "https://www.pbs.org/newshour/feeds/rss/headlines" in urls
     assert "https://abcnews.go.com/abcnews/internationalheadlines" in urls
 
@@ -51,8 +51,8 @@ def test_effective_feeds_expands_world_only_previous_default_feed_set():
     effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_WORLD_ONLY_DEFAULT_FEEDS)
     urls = {url for _name, url in plugin._parse_feeds(effective)}
 
-    assert "https://www.news.cn/politics/news_politics.xml" in urls
-    assert "https://www.people.com.cn/rss/politics.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/china.xml" in urls
     assert "https://feeds.bbci.co.uk/news/world/rss.xml" in urls
 
 
@@ -77,16 +77,81 @@ def test_effective_feeds_upgrades_saved_regional_default_with_generic_bbc_chines
 
     assert "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml" not in urls
     assert "https://feeds.bbci.co.uk/news/world/rss.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" in urls
+
+
+def test_effective_feeds_upgrades_saved_regional_default_missing_instant_mainland_feed():
+    plugin = _plugin()
+    saved_previous_default = """大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml
+大陆新闻:人民网时政|https://www.people.com.cn/rss/politics.xml
+大陆新闻:中国新闻网国内|https://www.chinanews.com.cn/rss/china.xml
+世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+世界新闻:NPR新闻|https://feeds.npr.org/1001/rss.xml
+世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+世界新闻:卫报国际|https://www.theguardian.com/world/rss
+世界新闻:半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+世界新闻:法国24|https://www.france24.com/en/rss
+世界新闻:德国之声|https://rss.dw.com/rdf/rss-en-all
+世界新闻:PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+世界新闻:ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
+
+    effective = plugin._effective_feeds_text(saved_previous_default)
+    urls = {url for _name, url in plugin._parse_feeds(effective)}
+
+    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" in urls
+
 
 def test_default_feeds_tag_mainland_and_world_sections():
     plugin = _plugin()
     feeds = plugin._parse_feeds(daily_ai_news_module.DEFAULT_FEEDS)
     sections = [plugin._feed_source_and_section(name, url) for name, url in feeds]
 
-    assert ("新华网时政", "mainland") in sections
+    assert ("中国新闻网要闻", "mainland") in sections
     assert ("中国新闻网国内", "mainland") in sections
+    assert ("中国新闻网即时", "mainland") in sections
     assert ("BBC世界", "world") in sections
     assert ("半岛电视台", "world") in sections
+
+
+def test_default_mainland_feeds_replace_dead_sources_with_fresh_desks():
+    plugin = _plugin()
+    urls = {url for _name, url in plugin._parse_feeds(daily_ai_news_module.DEFAULT_MAINLAND_FEEDS)}
+
+    # 新华网时政 froze in 2022 and 人民网时政 froze in 2025-06; both keep serving
+    # the same stale entries forever, which is what caused repeated mainland news.
+    assert "https://www.news.cn/politics/news_politics.xml" not in urls
+    assert "https://www.people.com.cn/rss/politics.xml" not in urls
+    assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/finance.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/society.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/china.xml" in urls
+    assert "https://www.chinanews.com.cn/rss/scroll-news.xml" in urls
+
+
+def test_effective_feeds_upgrades_saved_default_containing_dead_mainland_feeds():
+    plugin = _plugin()
+    saved_default_with_dead_feeds = """大陆新闻:新华网时政|https://www.news.cn/politics/news_politics.xml
+大陆新闻:人民网时政|https://www.people.com.cn/rss/politics.xml
+大陆新闻:中国新闻网国内|https://www.chinanews.com.cn/rss/china.xml
+大陆新闻:中国新闻网即时|https://www.chinanews.com.cn/rss/scroll-news.xml
+世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml
+世界新闻:NPR新闻|https://feeds.npr.org/1001/rss.xml
+世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml
+世界新闻:卫报国际|https://www.theguardian.com/world/rss
+世界新闻:半岛电视台|https://www.aljazeera.com/xml/rss/all.xml
+世界新闻:法国24|https://www.france24.com/en/rss
+世界新闻:德国之声|https://rss.dw.com/rdf/rss-en-all
+世界新闻:PBS新闻一小时|https://www.pbs.org/newshour/feeds/rss/headlines
+世界新闻:ABC国际|https://abcnews.go.com/abcnews/internationalheadlines"""
+
+    effective = plugin._effective_feeds_text(saved_default_with_dead_feeds)
+    urls = {url for _name, url in plugin._parse_feeds(effective)}
+
+    assert "https://www.news.cn/politics/news_politics.xml" not in urls
+    assert "https://www.people.com.cn/rss/politics.xml" not in urls
+    assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
+    assert "https://feeds.bbci.co.uk/news/world/rss.xml" in urls
+
 
 def test_effective_feeds_preserves_custom_non_legacy_settings():
     plugin = _plugin()
@@ -193,6 +258,122 @@ def test_rank_news_items_accepts_naive_now_with_timezone_published_date():
     ranked = plugin._rank_news_items(items, datetime(2026, 6, 17, 13, 0, 0))
 
     assert ranked == items
+
+
+def test_rank_news_items_demotes_recently_displayed_titles():
+    plugin = _plugin()
+    now = datetime(2026, 7, 5, 8, 0, 0)
+    items = [
+        {
+            "source": "中国新闻网即时",
+            "section": "mainland",
+            "title": "三门峡水库增流至三千二百立方米每秒",
+            "summary": "发布 调度 水库 防汛",
+            "published": "Sun, 05 Jul 2026 07:30:00 GMT",
+        },
+        {
+            "source": "新华网时政",
+            "section": "mainland",
+            "title": "国务院部署新能源项目审批改革",
+            "summary": "发布 政府 政策 调整",
+            "published": "Sun, 05 Jul 2026 07:00:00 GMT",
+        },
+    ]
+
+    ranked = plugin._rank_news_items(items, now, ["三门峡水库增流至三千二百立方米每秒"])
+
+    assert ranked[0]["title"] == "国务院部署新能源项目审批改革"
+
+
+def test_drop_stale_items_removes_entries_older_than_max_age():
+    plugin = _plugin()
+    now = datetime(2026, 7, 5, 8, 0, 0)
+    fresh = {
+        "source": "中国新闻网国内",
+        "section": "mainland",
+        "title": "王毅同芬兰外长瓦尔托宁会谈",
+        "summary": "",
+        "published": "Sun, 05 Jul 2026 07:30:00 GMT",
+    }
+    stale = {
+        "source": "人民网时政",
+        "section": "mainland",
+        "title": "镜观·足迹｜呵护千山万水擘画永续发展",
+        "summary": "",
+        "published": "Thu, 05 Jun 2025 10:00:00 GMT",
+    }
+    undated = {
+        "source": "新华网时政",
+        "section": "mainland",
+        "title": "微视频｜新在中国",
+        "summary": "",
+        "published": "",
+    }
+
+    kept = plugin._drop_stale_items([fresh, stale, undated], now)
+
+    assert fresh in kept
+    assert stale not in kept
+    assert undated in kept
+
+
+def test_drop_recently_shown_items_excludes_repeats_when_section_pool_is_fresh():
+    plugin = _plugin()
+    repeat = {
+        "source": "新华网时政",
+        "section": "mainland",
+        "title": "国家卫健委发布新冠病毒疫苗第二剂次加强免疫接种实施方案",
+        "summary": "",
+        "published": "",
+    }
+    fresh_items = [
+        {
+            "source": "中国新闻网国内",
+            "section": "mainland",
+            "title": f"大陆新鲜时政要闻第{index}条内容更新",
+            "summary": "",
+            "published": "Sun, 05 Jul 2026 07:30:00 GMT",
+        }
+        for index in range(1, 7)
+    ]
+
+    result = plugin._drop_recently_shown_items(
+        fresh_items + [repeat],
+        ["国家卫健委发布新冠病毒疫苗第二剂次加强免疫接种实施方案"],
+    )
+
+    assert repeat not in result
+    assert result == fresh_items
+
+
+def test_drop_recently_shown_items_keeps_repeats_when_section_pool_is_thin():
+    plugin = _plugin()
+    repeat = {
+        "source": "新华网时政",
+        "section": "mainland",
+        "title": "国家卫健委发布新冠病毒疫苗第二剂次加强免疫接种实施方案",
+        "summary": "",
+        "published": "",
+    }
+    fresh_items = [
+        {
+            "source": "中国新闻网国内",
+            "section": "mainland",
+            "title": f"大陆新鲜时政要闻第{index}条内容更新",
+            "summary": "",
+            "published": "Sun, 05 Jul 2026 07:30:00 GMT",
+        }
+        for index in range(1, 3)
+    ]
+
+    result = plugin._drop_recently_shown_items(
+        [repeat] + fresh_items,
+        ["国家卫健委发布新冠病毒疫苗第二剂次加强免疫接种实施方案"],
+    )
+
+    assert repeat in result
+    # thin pool keeps the repeat available, but fresh candidates come first
+    assert result[:2] == fresh_items
 
 
 def test_get_brief_uses_new_rss_when_api_limit_blocks_stale_cache(monkeypatch, tmp_path):
@@ -642,6 +823,50 @@ def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
     assert font_calls
     assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}
 
+def test_draw_news_items_fit_prefers_style_that_uses_available_height(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 360), "white")
+    draw = ImageDraw.Draw(image)
+    selected_sizes = []
+
+    def fake_prepare(_draw, _items, _width, font_family, style):
+        needed_by_title_size = {24: 360, 23: 150, 22: 292, 21: 230}
+        needed_total = needed_by_title_size.get(style["title"], 90)
+        headline_font = plugin._font(font_family, style["title"], "bold")
+        why_font = plugin._font(font_family, style["why"])
+        rows = [([f"title-size-{style['title']}"], [], needed_total, headline_font, why_font, style)]
+        return rows, needed_total
+
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        value = str(text)
+        if value.startswith("title-size-"):
+            selected_sizes.append(int(value.rsplit("-", 1)[-1]))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_prepare_news_rows_for_style", fake_prepare)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    plugin._draw_news_items(
+        draw,
+        [{"title": "短新闻", "why": "短正文"}],
+        0,
+        0,
+        360,
+        plugin._font("Microsoft YaHei", 18, "bold"),
+        plugin._font("Microsoft YaHei", 16),
+        (180, 120, 20),
+        (0, 0, 0),
+        (70, 70, 70),
+        max_y=300,
+        force_all=True,
+        fit_family="Microsoft YaHei",
+    )
+
+    assert selected_sizes == [22]
+
+
 def test_draw_news_items_fit_uses_larger_type_for_sparse_news(monkeypatch):
     plugin = _plugin()
     image = Image.new("RGB", (420, 220), "white")
@@ -813,6 +1038,71 @@ def test_draw_news_items_fit_keeps_four_item_news_readable_when_given_full_news_
     assert title_sizes and min(size for size in title_sizes if size is not None) >= 18
 
 
+def test_draw_news_items_fit_fills_column_when_short_titles_undershoot():
+    plugin = _plugin()
+    image = Image.new("RGB", (800, 480), "white")
+    draw = ImageDraw.Draw(image)
+    items = [
+        {"title": "王毅同芬兰外长瓦尔托宁会谈", "why": ""},
+        {"title": "中国成功发射千帆极轨15组卫星", "why": ""},
+        {"title": "四川绵竹连发三次四级以上地震", "why": ""},
+        {"title": "全国农业普查通知印发", "why": ""},
+    ]
+
+    end_y = plugin._draw_news_items_fit(
+        draw,
+        items,
+        24,
+        164,
+        388,
+        (200, 60, 40),
+        (0, 0, 0),
+        (90, 90, 90),
+        360,
+        1,
+        "Microsoft YaHei",
+        True,
+    )
+
+    assert end_y <= 360 + 4
+    # the column should end near its bottom edge instead of leaving a large void
+    assert 360 - end_y <= 16
+
+
+def test_draw_news_items_fit_fills_column_for_two_long_items():
+    plugin = _plugin()
+    image = Image.new("RGB", (800, 480), "white")
+    draw = ImageDraw.Draw(image)
+    items = [
+        {
+            "title": "河南三门峡水利枢纽开启前汛调水调沙，4小时后下泄增至3200立方米/秒",
+            "why": "报道聚焦黄河主汛前调水调沙的最新进展和水库调度水平，关系区域防汛与生态安全。",
+        },
+        {
+            "title": "新疆调研强调产业赋能与就业导向，推动中央企业援疆再出发",
+            "why": "报道中央企业在新疆产业布局与吸纳就业的具体动向和新举措，影响区域经济和民生。",
+        },
+    ]
+
+    end_y = plugin._draw_news_items_fit(
+        draw,
+        items,
+        24,
+        164,
+        388,
+        (200, 60, 40),
+        (0, 0, 0),
+        (90, 90, 90),
+        360,
+        1,
+        "Microsoft YaHei",
+        True,
+    )
+
+    assert end_y <= 360 + 4
+    assert 360 - end_y <= 16
+
+
 def test_render_keeps_market_modules_while_shrinking_dense_news(monkeypatch):
     plugin = _plugin()
     market_calls = []
@@ -893,6 +1183,35 @@ def test_render_includes_seventh_top_item_in_quick_sidebar(monkeypatch):
     assert image.size == (800, 480)
     assert news_calls[0] == ["新闻标题1", "新闻标题2", "新闻标题3"]
     assert news_calls[1] == ["新闻标题4", "新闻标题5", "新闻标题6", "新闻标题7"]
+
+
+def test_postprocess_brief_news_prefers_fresh_mainland_sources_over_recent_ai_title():
+    plugin = _plugin()
+    brief = {
+        "mainland": [
+            {"title": "三门峡水库增流至三千二百立方米每秒", "why": "连续旧标题"},
+        ],
+        "world": [],
+    }
+    items = [
+        {
+            "source": "中国新闻网即时",
+            "section": "mainland",
+            "title": "三门峡水库增流至三千二百立方米每秒",
+            "summary": "旧标题摘要",
+        },
+        {
+            "source": "新华网时政",
+            "section": "mainland",
+            "title": "国务院部署新能源项目审批改革",
+            "summary": "新标题摘要",
+        },
+    ]
+
+    result = plugin._postprocess_brief_news(brief, items, ["三门峡水库增流至三千二百立方米每秒"])
+
+    assert result["mainland"][0]["title"] == "国务院部署新能源项目审批改革"
+    assert result["mainland"][1]["title"] == "三门峡水库增流至三千二百立方米每秒"
 
 
 def test_render_news_section_items_do_not_force_backfill_when_summary_is_sparse():
