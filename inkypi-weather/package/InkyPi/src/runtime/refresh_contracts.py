@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass, field
+from enum import Enum
+from types import MappingProxyType
+from typing import Any, Mapping
+from uuid import uuid4
+import threading
+import time
+
+
+class LifecycleState(str, Enum):
+    STARTING = "starting"
+    RUNNING = "running"
+    QUIESCING = "quiescing"
+    DRAINING = "draining"
+    STOPPED = "stopped"
+    FORCED_EXIT = "forced_exit"
+
+
+class CommandKind(str, Enum):
+    DISPLAY = "display"
+    CACHE_REFRESH = "cache_refresh"
+
+
+class CommandSource(str, Enum):
+    MANUAL = "manual"
+    SCHEDULER = "scheduler"
+    LIVE = "live"
+    BACKGROUND = "background"
+
+
+class JobStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    ABANDONED = "abandoned"
+    SUPERSEDED = "superseded"
+    REJECTED = "rejected"
+
+
+def freeze_payload(value: Any) -> Any:
+    value = deepcopy(value)
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: freeze_payload(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(freeze_payload(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(freeze_payload(item) for item in value)
+    return value
+
+
+@dataclass(frozen=True)
+class RefreshCommand:
+    id: str
+    kind: CommandKind
+    source: CommandSource
+    plugin_id: str
+    instance_uuid: str | None
+    structural_generation: int | None
+    settings_revision: int | None
+    force: bool
+    priority: int
+    enqueued_monotonic: float
+    deadline_monotonic: float
+    idempotency_key: str | None
+    payload: Mapping[str, Any] = field(compare=False, repr=False)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        kind,
+        source,
+        plugin_id,
+        payload,
+        now_monotonic,
+        deadline_monotonic,
+        instance_uuid=None,
+        structural_generation=None,
+        settings_revision=None,
+        force=False,
+        priority=0,
+        idempotency_key=None,
+    ):
+        return cls(
+            id=uuid4().hex,
+            kind=kind,
+            source=source,
+            plugin_id=str(plugin_id),
+            instance_uuid=instance_uuid,
+            structural_generation=structural_generation,
+            settings_revision=settings_revision,
+            force=bool(force),
+            priority=int(priority),
+            enqueued_monotonic=float(now_monotonic),
+            deadline_monotonic=float(deadline_monotonic),
+            idempotency_key=idempotency_key,
+            payload=freeze_payload(payload or {}),
+        )
+
+
+@dataclass
+class JobRecord:
+    id: str
+    command_id: str
+    status: JobStatus
+    submitted_at: float
+    started_at: float | None = None
+    completed_at: float | None = None
+    cancel_requested_at: float | None = None
+    superseded_by: str | None = None
+    error_code: str | None = None
+    error: str | None = None
+
+    @classmethod
+    def from_command(cls, command: RefreshCommand, submitted_at: float):
+        return cls(command.id, command.id, JobStatus.QUEUED, submitted_at)
+
+    def mark_running(self, when: float) -> None:
+        if self.status is not JobStatus.QUEUED:
+            raise ValueError("Only queued jobs can start")
+        self.status = JobStatus.RUNNING
+        self.started_at = when
+
+    def request_cancel(self, when: float) -> None:
+        if self.status is JobStatus.RUNNING:
+            self.cancel_requested_at = when
+
+    def mark_succeeded(self, when: float) -> None:
+        if self.status is not JobStatus.RUNNING or self.cancel_requested_at is not None:
+            raise ValueError("Canceled or non-running jobs cannot succeed")
+        self.status = JobStatus.SUCCEEDED
+        self.completed_at = when
+
+
+@dataclass(frozen=True)
+class QueueSnapshot:
+    depth: int
+    capacity: int
+    rejected_total: int
+    superseded_total: int
+    accepting: bool
+
+
+class TaskCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class TaskContext:
+    cancel_event: threading.Event
+    deadline_monotonic: float
+    clock: Any = field(default=time.monotonic, compare=False, repr=False)
+
+    @classmethod
+    def never_cancelled(cls, *, deadline_monotonic, clock=time.monotonic):
+        return cls(threading.Event(), float(deadline_monotonic), clock)
+
+    def remaining_seconds(self):
+        return max(0.0, self.deadline_monotonic - self.clock())
+
+    def raise_if_cancelled(self):
+        if self.cancel_event.is_set():
+            raise TaskCancelled("task was canceled")
+        if self.remaining_seconds() <= 0:
+            raise TaskCancelled("task deadline expired")
