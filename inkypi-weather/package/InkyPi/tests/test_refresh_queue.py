@@ -1061,7 +1061,7 @@ def test_alias_budget_bounds_coalescing_and_target_pruning_releases_aliases():
         fake_time,
         capacity=4,
         manual_reserved=0,
-        alias_limit=5,
+        alias_limit=4,
         terminal_limit=10,
         terminal_ttl_seconds=1.0,
     )
@@ -1225,3 +1225,177 @@ def test_concurrent_submit_take_cancel_and_get_are_atomic_without_sleeps():
     assert queue.get_job(running.id).status is JobStatus.RUNNING
     assert queue.get_job(canceled.id).status is JobStatus.CANCELED
     assert queue.get_job(produced[0].id).status is JobStatus.QUEUED
+
+
+def test_alias_limit_does_not_block_older_matching_command_coalescing():
+    queue = make_queue(capacity=2, manual_reserved=0, alias_limit=1)
+    newest = command(
+        instance_uuid="alias-limit-coalesce",
+        settings_revision=2,
+        payload={"revision": 2},
+    )
+    older = command(
+        instance_uuid="alias-limit-coalesce",
+        settings_revision=1,
+        payload={"revision": 1},
+    )
+
+    actual = queue.submit(newest)
+    coalesced = queue.submit(older)
+
+    assert coalesced.id == actual.id
+    assert queue.snapshot().depth == 1
+    entry = queue.take(timeout=0)
+    assert entry.job.id == actual.id
+    assert entry.command.settings_revision == 2
+    assert entry.command.payload["revision"] == 2
+
+
+def test_keyed_metadata_full_rejection_replays_same_terminal_job():
+    queue = make_queue(capacity=2, manual_reserved=0, alias_limit=1)
+    queue.submit(
+        command(
+            instance_uuid="metadata-owner",
+            idempotency_key="metadata-owner-key",
+        )
+    )
+    rejected_request = command(
+        instance_uuid="metadata-rejected",
+        idempotency_key="metadata-rejected-key",
+        payload={"operation": "same"},
+    )
+
+    with pytest.raises(QueueFullError) as first_rejection:
+        queue.submit(rejected_request)
+
+    replay = queue.submit(
+        command(
+            instance_uuid="metadata-rejected",
+            idempotency_key="metadata-rejected-key",
+            payload={"operation": "same"},
+            now=500.0,
+            deadline=600.0,
+        )
+    )
+
+    assert replay.id == first_rejection.value.job.id
+    assert replay.status is JobStatus.REJECTED
+    assert replay.error_code == "refresh_queue_full"
+    assert queue.snapshot().rejected_total == 1
+
+
+def test_retained_terminal_command_alias_does_not_block_fresh_unkeyed_work():
+    queue = make_queue(
+        capacity=2,
+        manual_reserved=0,
+        alias_limit=1,
+        terminal_limit=10,
+        terminal_ttl_seconds=1000.0,
+    )
+    original = command(
+        instance_uuid="terminal-alias",
+        settings_revision=2,
+    )
+    absorbed = command(
+        instance_uuid="terminal-alias",
+        settings_revision=1,
+    )
+    actual = queue.submit(original)
+    assert queue.submit(absorbed).id == actual.id
+    assert queue.take(timeout=0).job.id == actual.id
+    assert queue.finish(actual.id, JobStatus.SUCCEEDED).status is JobStatus.SUCCEEDED
+    assert queue.snapshot().depth == 0
+
+    fresh = queue.submit(command(instance_uuid="fresh-after-terminal-alias"))
+
+    assert fresh.status is JobStatus.QUEUED
+    assert queue.snapshot().depth == 1
+
+
+def test_already_expired_incoming_is_canceled_without_superseding_pending_job():
+    fake_time = FakeTime(monotonic=10.0, wall=100.0)
+    queue = make_queue(fake_time, capacity=2, manual_reserved=0)
+    existing = command(
+        instance_uuid="expired-incoming",
+        settings_revision=1,
+        payload={"revision": 1},
+        deadline=100.0,
+    )
+    expired = command(
+        instance_uuid="expired-incoming",
+        settings_revision=2,
+        idempotency_key="expired-incoming-key",
+        payload={"revision": 2},
+        deadline=5.0,
+    )
+    existing_job = queue.submit(existing)
+
+    canceled = queue.submit(expired)
+
+    assert canceled.id == expired.id
+    assert canceled.status is JobStatus.CANCELED
+    assert canceled.error_code == "deadline_expired"
+    assert queue.get_job(existing_job.id).status is JobStatus.QUEUED
+    assert queue.get_job(existing_job.id).superseded_by is None
+    assert queue.snapshot().depth == 1
+
+    replay = queue.submit(
+        command(
+            instance_uuid="expired-incoming",
+            settings_revision=2,
+            idempotency_key="expired-incoming-key",
+            payload={"revision": 2},
+            now=500.0,
+            deadline=600.0,
+        )
+    )
+    assert replay.id == canceled.id
+    assert replay.status is JobStatus.CANCELED
+
+    entry = queue.take(timeout=0)
+    assert entry.job.id == existing_job.id
+    assert entry.command.settings_revision == 1
+    assert entry.command.deadline_monotonic == 100.0
+    assert entry.command.payload["revision"] == 1
+    assert queue.take(timeout=0) is None
+
+
+@pytest.mark.parametrize(
+    ("terminal_limit", "terminal_ttl_seconds"),
+    [
+        (float("inf"), float("inf")),
+        (float("nan"), float("nan")),
+        ("invalid", "invalid"),
+        (None, None),
+    ],
+)
+def test_invalid_terminal_bounds_fall_back_to_safe_hard_maximums(
+    terminal_limit, terminal_ttl_seconds
+):
+    queue = make_queue(
+        terminal_limit=terminal_limit,
+        terminal_ttl_seconds=terminal_ttl_seconds,
+    )
+
+    assert queue.terminal_limit == 256
+    assert queue.terminal_ttl_seconds == 1800.0
+
+
+def test_terminal_history_configuration_is_clamped_and_retention_never_exceeds_256():
+    queue = make_queue(
+        capacity=1,
+        manual_reserved=0,
+        terminal_limit=10_000,
+        terminal_ttl_seconds=10_000.0,
+    )
+    terminal_ids = []
+    for index in range(300):
+        submitted = queue.submit(command(instance_uuid=f"terminal-cap-{index}"))
+        terminal_ids.append(submitted.id)
+        assert queue.cancel_instance(f"terminal-cap-{index}") == 1
+
+    retained = sum(queue.get_job(job_id) is not None for job_id in terminal_ids)
+
+    assert queue.terminal_limit == 256
+    assert queue.terminal_ttl_seconds == 1800.0
+    assert retained == 256

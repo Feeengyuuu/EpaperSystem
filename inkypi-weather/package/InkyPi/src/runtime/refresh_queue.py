@@ -30,6 +30,8 @@ _SOURCE_URGENCY = {
     CommandSource.LIVE: 2,
     CommandSource.BACKGROUND: 1,
 }
+_MAX_TERMINAL_LIMIT = 256
+_MAX_TERMINAL_TTL_SECONDS = 1800.0
 
 
 @dataclass(frozen=True)
@@ -89,8 +91,10 @@ class RefreshQueue:
             0,
             min(self.capacity, int(manual_reserved)),
         )
-        self.terminal_limit = max(0, int(terminal_limit))
-        self.terminal_ttl_seconds = max(0.0, float(terminal_ttl_seconds))
+        self.terminal_limit = self._bounded_terminal_limit(terminal_limit)
+        self.terminal_ttl_seconds = self._bounded_terminal_ttl(
+            terminal_ttl_seconds
+        )
         self.alias_limit = max(1, min(4096, int(alias_limit)))
         self._clock = clock
         self._wall_clock = wall_clock
@@ -124,8 +128,7 @@ class RefreshQueue:
 
             idempotent = self._resolve_idempotency_locked(normalized, now)
             if idempotent is not None:
-                if self._has_alias_capacity_locked(normalized, include_key=False):
-                    self._register_command_identity_locked(normalized, idempotent.id)
+                self._register_command_identity_locked(normalized, idempotent.id)
                 return idempotent
 
             invalid_reason = self._invalid_command_reason(normalized)
@@ -138,6 +141,9 @@ class RefreshQueue:
                 )
                 raise InvalidRefreshCommandError(invalid_reason, rejected)
 
+            if normalized.deadline_monotonic <= now:
+                return self._cancel_expired_submission_locked(normalized, now)
+
             if not self._accepting:
                 rejected = self._reject_locked(
                     normalized,
@@ -147,22 +153,35 @@ class RefreshQueue:
                 )
                 raise QueueStoppingError("refresh service is stopping", rejected)
 
-            if not self._has_alias_capacity_locked(normalized):
+            if normalized.idempotency_key is None:
+                coalesced = self._coalesce_locked(normalized, now)
+                if coalesced is not None:
+                    self._register_command_identity_locked(
+                        normalized,
+                        coalesced.id,
+                    )
+                    self._condition.notify_all()
+                    return replace(coalesced)
+
+            if not self._has_active_idempotency_capacity_locked(normalized):
                 rejected = self._reject_locked(
                     normalized,
                     QueueFullError.error_code,
                     "refresh queue metadata is full",
                     now,
-                    register_identity=False,
                 )
                 raise QueueFullError("refresh queue metadata is full", rejected)
 
-            coalesced = self._coalesce_locked(normalized, now)
-            if coalesced is not None:
-                self._register_command_identity_locked(normalized, coalesced.id)
-                self._register_idempotency_locked(normalized, coalesced.id)
-                self._condition.notify_all()
-                return replace(coalesced)
+            if normalized.idempotency_key is not None:
+                coalesced = self._coalesce_locked(normalized, now)
+                if coalesced is not None:
+                    self._register_idempotency_locked(normalized, coalesced.id)
+                    self._register_command_identity_locked(
+                        normalized,
+                        coalesced.id,
+                    )
+                    self._condition.notify_all()
+                    return replace(coalesced)
 
             if self._at_capacity_locked(normalized):
                 rejected = self._reject_locked(
@@ -178,7 +197,6 @@ class RefreshQueue:
             self._commands[job.id] = normalized
             self._sequence += 1
             self._pending[job.id] = self._sequence
-            self._register_command_identity_locked(normalized, job.id)
             self._register_idempotency_locked(normalized, job.id)
             self._condition.notify_all()
             return replace(job)
@@ -318,6 +336,24 @@ class RefreshQueue:
     def _normalize_command(command: RefreshCommand) -> RefreshCommand:
         return replace(command, payload=freeze_payload(command.payload))
 
+    @staticmethod
+    def _bounded_terminal_limit(value: object) -> int:
+        try:
+            converted = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return _MAX_TERMINAL_LIMIT
+        return max(0, min(_MAX_TERMINAL_LIMIT, converted))
+
+    @staticmethod
+    def _bounded_terminal_ttl(value: object) -> float:
+        try:
+            converted = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return _MAX_TERMINAL_TTL_SECONDS
+        if not math.isfinite(converted):
+            return _MAX_TERMINAL_TTL_SECONDS
+        return max(0.0, min(_MAX_TERMINAL_TTL_SECONDS, converted))
+
     def _resolve_idempotency_locked(
         self,
         command: RefreshCommand,
@@ -356,10 +392,17 @@ class RefreshQueue:
         command: RefreshCommand,
         now: float,
     ) -> JobRecord | None:
-        if command.id not in self._command_targets:
+        if command.id in self._jobs:
+            requested = self._commands[command.id]
+            target_id = self._resolve_actual_job_id_locked(command.id)
+        elif command.id in self._command_targets:
+            requested = self._command_requests[command.id]
+            target_id = self._resolve_actual_job_id_locked(
+                self._command_targets[command.id]
+            )
+        else:
             return None
 
-        requested = self._command_requests[command.id]
         if not self._equivalent_command_identity(requested, command):
             rejected = self._reject_locked(
                 command,
@@ -372,15 +415,13 @@ class RefreshQueue:
                 rejected,
             )
 
-        target_id = self._resolve_actual_job_id_locked(
-            self._command_targets[command.id]
-        )
         job = self._jobs.get(target_id)
         if job is None:
-            del self._command_targets[command.id]
-            del self._command_requests[command.id]
+            self._command_targets.pop(command.id, None)
+            self._command_requests.pop(command.id, None)
             return None
-        self._command_targets[command.id] = target_id
+        if command.id in self._command_targets:
+            self._command_targets[command.id] = target_id
         return replace(job)
 
     @staticmethod
@@ -440,27 +481,49 @@ class RefreshQueue:
         self,
         command: RefreshCommand,
         actual_job_id: str,
-    ) -> None:
+    ) -> bool:
+        if command.id == actual_job_id or command.id in self._jobs:
+            return True
+        if command.id in self._command_targets:
+            return True
+        target_id = self._resolve_actual_job_id_locked(actual_job_id)
+        job = self._jobs.get(target_id)
+        if job is None or job.status not in {
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        }:
+            return False
+        if self._active_alias_count_locked() >= self.alias_limit:
+            return False
         self._command_targets[command.id] = actual_job_id
         self._command_requests[command.id] = command
+        return True
 
-    def _has_alias_capacity_locked(
+    def _has_active_idempotency_capacity_locked(
         self,
         command: RefreshCommand,
-        *,
-        include_key: bool = True,
     ) -> bool:
-        needed = int(command.id not in self._command_targets)
-        if (
-            include_key
-            and command.idempotency_key is not None
-            and command.idempotency_key not in self._idempotency_targets
-        ):
-            needed += 1
-        return self._alias_count_locked() + needed <= self.alias_limit
+        key = command.idempotency_key
+        if key is None or key in self._idempotency_targets:
+            return True
+        return self._active_alias_count_locked() < self.alias_limit
 
-    def _alias_count_locked(self) -> int:
-        return len(self._command_targets) + len(self._idempotency_targets)
+    def _active_alias_count_locked(self) -> int:
+        return sum(
+            self._target_is_active_locked(target_id)
+            for target_id in self._command_targets.values()
+        ) + sum(
+            self._target_is_active_locked(target_id)
+            for target_id in self._idempotency_targets.values()
+        )
+
+    def _target_is_active_locked(self, target_id: str) -> bool:
+        actual_id = self._resolve_actual_job_id_locked(target_id)
+        job = self._jobs.get(actual_id)
+        return job is not None and job.status in {
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+        }
 
     @staticmethod
     def _invalid_command_reason(command: RefreshCommand) -> str | None:
@@ -699,8 +762,6 @@ class RefreshQueue:
         error_code: str,
         error: str,
         now: float,
-        *,
-        register_identity: bool = True,
     ) -> JobRecord:
         if (
             command.id in self._jobs
@@ -717,18 +778,36 @@ class RefreshQueue:
         self._commands[job.id] = command
         self._rejected_total += 1
         if (
-            register_identity
-            and self._has_alias_capacity_locked(command)
+            command.idempotency_key is not None
+            and command.idempotency_key not in self._idempotency_targets
         ):
-            self._register_command_identity_locked(command, job.id)
-            if (
-                command.idempotency_key is not None
-                and command.idempotency_key not in self._idempotency_targets
-            ):
-                self._register_idempotency_locked(command, job.id)
+            self._register_idempotency_locked(command, job.id)
         result = replace(job)
         self._record_terminal_locked(job.id, now)
         self._prune_terminal_locked(now)
+        return result
+
+    def _cancel_expired_submission_locked(
+        self,
+        command: RefreshCommand,
+        now: float,
+    ) -> JobRecord:
+        job = JobRecord.from_command(command, self._wall_clock())
+        job.status = JobStatus.CANCELED
+        job.completed_at = self._wall_clock()
+        job.error_code = "deadline_expired"
+        job.error = "refresh command deadline expired"
+        self._jobs[job.id] = job
+        self._commands[job.id] = command
+        if (
+            command.idempotency_key is not None
+            and command.idempotency_key not in self._idempotency_targets
+        ):
+            self._register_idempotency_locked(command, job.id)
+        result = replace(job)
+        self._record_terminal_locked(job.id, now)
+        self._prune_terminal_locked(now)
+        self._condition.notify_all()
         return result
 
     def _select_pending_locked(self) -> str:
