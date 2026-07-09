@@ -441,6 +441,161 @@ class TestPlaylistManagerIdentity:
         assert playlist.plugin_rotation_queue == uuid_keys[1:]
         assert playlist.plugin_rotation_recent_history == [uuid_keys[0]]
 
+    def test_from_dict_detaches_snapshot_and_rotation_state_from_input(self):
+        source = {
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [{
+                    "plugin_id": "weather",
+                    "name": "Home",
+                    "plugin_settings": {"appearance": {"theme": "dark"}},
+                    "refresh": {"interval": 300, "days": ["monday"]},
+                    "instance_uuid": "home-instance",
+                }],
+                "plugin_rotation_queue": ["home-instance"],
+                "plugin_rotation_pool": ["home-instance"],
+                "plugin_rotation_recent_history": ["home-instance"],
+            }],
+        }
+        manager = PlaylistManager.from_dict(source)
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        source_playlist = source["playlists"][0]
+        source_plugin = source_playlist["plugins"][0]
+        source_plugin["plugin_settings"]["appearance"]["theme"] = "light"
+        source_plugin["refresh"]["days"].append("tuesday")
+        source_playlist["plugin_rotation_queue"].append("external")
+        source_playlist["plugin_rotation_pool"].append("external")
+        source_playlist["plugin_rotation_recent_history"].append("external")
+
+        after = manager.snapshot_instance(instance.instance_uuid)
+        live_playlist = manager.get_playlist("Default")
+        assert after.settings_revision == before.settings_revision
+        assert after == before
+        assert live_playlist.plugin_rotation_queue == ["home-instance"]
+        assert live_playlist.plugin_rotation_pool == ["home-instance"]
+        assert live_playlist.plugin_rotation_recent_history == ["home-instance"]
+
+    def test_add_plugin_detaches_snapshot_from_plugin_data(self):
+        manager = PlaylistManager.from_dict({
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [],
+            }],
+        })
+        plugin_data = {
+            "plugin_id": "weather",
+            "name": "Home",
+            "plugin_settings": {"appearance": {"theme": "dark"}},
+            "refresh": {"interval": 300, "days": ["monday"]},
+        }
+        assert manager.add_plugin_to_playlist("Default", plugin_data)
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        plugin_data["plugin_settings"]["appearance"]["theme"] = "light"
+        plugin_data["refresh"]["days"].append("tuesday")
+
+        after = manager.snapshot_instance(instance.instance_uuid)
+        assert after.settings_revision == before.settings_revision
+        assert after == before
+
+    def test_to_dict_detaches_snapshot_and_rotation_state_from_result(self):
+        manager = self._manager_with_home_plugin({
+            "appearance": {"theme": "dark"},
+        })
+        instance = manager.find_plugin("weather", "Home")
+        playlist = manager.get_playlist("Default")
+        playlist.plugin_rotation_queue = [instance.instance_uuid]
+        playlist.plugin_rotation_pool = [instance.instance_uuid]
+        playlist.plugin_rotation_recent_history = [instance.instance_uuid]
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        candidate = manager.to_dict()
+        candidate_playlist = candidate["playlists"][0]
+        candidate_plugin = candidate_playlist["plugins"][0]
+        candidate_plugin["plugin_settings"]["appearance"]["theme"] = "light"
+        candidate_plugin["refresh"]["interval"] = 600
+        candidate_playlist["plugin_rotation_queue"].append("external")
+        candidate_playlist["plugin_rotation_pool"].append("external")
+        candidate_playlist["plugin_rotation_recent_history"].append("external")
+
+        after = manager.snapshot_instance(instance.instance_uuid)
+        assert after.settings_revision == before.settings_revision
+        assert after == before
+        assert playlist.plugin_rotation_queue == [instance.instance_uuid]
+        assert playlist.plugin_rotation_pool == [instance.instance_uuid]
+        assert playlist.plugin_rotation_recent_history == [instance.instance_uuid]
+
+    def test_duplicate_uuid_on_add_rotates_new_identity_and_roundtrip_is_stable(self):
+        manager = PlaylistManager.from_dict({
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [{
+                    "plugin_id": "weather",
+                    "name": "Home",
+                    "plugin_settings": {},
+                    "refresh": {"interval": 300},
+                    "instance_uuid": "shared-instance",
+                }],
+            }],
+        })
+        plugin_data = {
+            "plugin_id": "clock",
+            "name": "Clock",
+            "plugin_settings": {},
+            "refresh": {"interval": 60},
+            "instance_uuid": "shared-instance",
+        }
+
+        assert manager.add_plugin_to_playlist("Default", plugin_data)
+        existing = manager.find_plugin("weather", "Home")
+        added = manager.find_plugin("clock", "Clock")
+        current_uuids = [existing.instance_uuid, added.instance_uuid]
+        serialized = manager.to_dict()
+        restored = PlaylistManager.from_dict(serialized)
+        restored_uuids = [
+            plugin.instance_uuid
+            for plugin in restored.get_playlist("Default").plugins
+        ]
+
+        assert existing.instance_uuid == "shared-instance"
+        assert added.instance_uuid != existing.instance_uuid
+        assert restored_uuids == current_uuids
+        assert restored.to_dict() == serialized
+
+    def test_compatibility_update_detaches_snapshot_from_updated_data(self):
+        playlist = Playlist(
+            "Default",
+            "00:00",
+            "24:00",
+            plugins=[{
+                "plugin_id": "weather",
+                "name": "Home",
+                "plugin_settings": {},
+                "refresh": {},
+            }],
+        )
+        updated_data = {
+            "settings": {"appearance": {"theme": "dark"}},
+            "refresh": {"interval": 300, "days": ["monday"]},
+        }
+        assert playlist.update_plugin("weather", "Home", updated_data)
+        instance = playlist.find_plugin("weather", "Home")
+        before = instance.snapshot()
+
+        updated_data["settings"]["appearance"]["theme"] = "light"
+        updated_data["refresh"]["days"].append("tuesday")
+
+        assert instance.snapshot() == before
+
 
 class TestRefreshInfo:
 

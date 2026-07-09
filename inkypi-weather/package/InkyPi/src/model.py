@@ -357,9 +357,9 @@ class Playlist:
         self.end_time = end_time
         self.plugins = [PluginInstance.from_dict(p) for p in (plugins or [])]
         self.current_plugin_index = current_plugin_index
-        self.plugin_rotation_queue = plugin_rotation_queue or []
-        self.plugin_rotation_pool = plugin_rotation_pool or []
-        self.plugin_rotation_recent_history = plugin_rotation_recent_history or []
+        self.plugin_rotation_queue = list(plugin_rotation_queue or [])
+        self.plugin_rotation_pool = list(plugin_rotation_pool or [])
+        self.plugin_rotation_recent_history = list(plugin_rotation_recent_history or [])
 
     def is_active(self, current_time):
         """Check if the playlist is active at the given time."""
@@ -505,9 +505,9 @@ class Playlist:
             "end_time": self.end_time,
             "plugins": [p.to_dict() for p in self.plugins],
             "current_plugin_index": self.current_plugin_index,
-            "plugin_rotation_queue": self.plugin_rotation_queue,
-            "plugin_rotation_pool": self.plugin_rotation_pool,
-            "plugin_rotation_recent_history": self.plugin_rotation_recent_history,
+            "plugin_rotation_queue": list(self.plugin_rotation_queue),
+            "plugin_rotation_pool": list(self.plugin_rotation_pool),
+            "plugin_rotation_recent_history": list(self.plugin_rotation_recent_history),
         }
 
     @classmethod
@@ -547,8 +547,8 @@ class PluginInstance:
     ):
         self.plugin_id = plugin_id
         self.name = name
-        self.settings = settings or {}
-        self.refresh = refresh or {}
+        self.settings = deepcopy(settings) if settings is not None else {}
+        self.refresh = deepcopy(refresh) if refresh is not None else {}
         self.latest_refresh_time = latest_refresh_time
         self.instance_uuid = str(instance_uuid) if instance_uuid else uuid4().hex
         self.structural_generation = self._positive_revision(structural_generation)
@@ -577,6 +577,8 @@ class PluginInstance:
     def update(self, updated_data):
         """Update attributes of the class with the dictionary values."""
         for key, value in updated_data.items():
+            if key in {"settings", "refresh"}:
+                value = deepcopy(value)
             setattr(self, key, value)
 
     def should_refresh(self, current_time):
@@ -662,8 +664,8 @@ class PluginInstance:
         return {
             "plugin_id": self.plugin_id,
             "name": self.name,
-            "plugin_settings": self.settings,
-            "refresh": self.refresh,
+            "plugin_settings": deepcopy(self.settings),
+            "refresh": deepcopy(self.refresh),
             "latest_refresh_time": self.latest_refresh_time,
             "instance_uuid": self.instance_uuid,
             "structural_generation": self.structural_generation,
