@@ -239,6 +239,209 @@ class TestPlaylistManager:
         assert PlaylistManager.should_refresh(latest_refresh, "300", current_time)
 
 
+class TestPlaylistManagerIdentity:
+
+    @staticmethod
+    def _manager_with_home_plugin(settings=None):
+        return PlaylistManager.from_dict({
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [{
+                    "plugin_id": "weather",
+                    "name": "Home",
+                    "plugin_settings": settings or {},
+                    "refresh": {"interval": 300},
+                }],
+            }],
+        })
+
+    def test_delete_and_same_name_recreate_cannot_match_old_snapshot(self):
+        manager = self._manager_with_home_plugin()
+        old = manager.find_plugin("weather", "Home")
+        old_snapshot = manager.snapshot_instance(old.instance_uuid)
+
+        removed = manager.delete_plugin_instance(old.instance_uuid)
+        assert manager.add_plugin_to_playlist("Default", {
+            "plugin_id": "weather",
+            "name": "Home",
+            "plugin_settings": {},
+            "refresh": {"interval": 300},
+        })
+        new = manager.find_plugin("weather", "Home")
+
+        assert removed.instance_uuid == old_snapshot.instance_uuid
+        assert new.instance_uuid != old_snapshot.instance_uuid
+        assert manager.snapshot_instance(old_snapshot.instance_uuid) is None
+
+    def test_snapshot_is_deeply_immutable_and_isolated_from_updates(self):
+        manager = self._manager_with_home_plugin({
+            "appearance": {"theme": "dark", "accents": ["red", "blue"]},
+        })
+        instance = manager.find_plugin("weather", "Home")
+        snapshot = manager.snapshot_instance(instance.instance_uuid)
+
+        with pytest.raises(TypeError):
+            snapshot.settings["appearance"]["theme"] = "light"
+        with pytest.raises(TypeError):
+            snapshot.settings["appearance"]["accents"][0] = "green"
+        with pytest.raises(TypeError):
+            snapshot.refresh["interval"] = 600
+
+        updated = manager.update_plugin_instance(
+            instance.instance_uuid,
+            settings={"appearance": {"theme": "light", "accents": ["green"]}},
+        )
+
+        assert updated.settings["appearance"]["theme"] == "light"
+        assert snapshot.settings["appearance"]["theme"] == "dark"
+        assert snapshot.settings["appearance"]["accents"] == ("red", "blue")
+
+    def test_snapshot_update_rejects_stale_generation(self):
+        manager = self._manager_with_home_plugin({"units": "metric"})
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        result = manager.update_plugin_instance(
+            instance.instance_uuid,
+            settings={"units": "imperial"},
+            expected_generation=before.structural_generation + 1,
+        )
+
+        assert result is None
+        assert manager.snapshot_instance(instance.instance_uuid) == before
+
+    def test_snapshot_update_rejects_stale_settings_revision(self):
+        manager = self._manager_with_home_plugin({"units": "metric"})
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        result = manager.update_plugin_instance(
+            instance.instance_uuid,
+            settings={"units": "imperial"},
+            expected_settings_revision=before.settings_revision + 1,
+        )
+
+        assert result is None
+        assert manager.snapshot_instance(instance.instance_uuid) == before
+
+    def test_snapshot_delete_rejects_stale_generation(self):
+        manager = self._manager_with_home_plugin()
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        result = manager.delete_plugin_instance(
+            instance.instance_uuid,
+            expected_generation=before.structural_generation + 1,
+        )
+
+        assert result is None
+        assert manager.snapshot_instance(instance.instance_uuid) == before
+
+    def test_snapshot_noop_update_does_not_advance_settings_revision(self):
+        manager = self._manager_with_home_plugin({"units": "metric"})
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        after = manager.update_plugin_instance(
+            instance.instance_uuid,
+            settings={"units": "metric"},
+            refresh={"interval": 300},
+            name="Home",
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+        )
+
+        assert after.settings_revision == before.settings_revision
+        assert after.structural_generation == before.structural_generation
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"settings": {"units": "imperial"}},
+            {"refresh": {"interval": 600}},
+            {"name": "Away"},
+        ],
+    )
+    def test_snapshot_effective_update_advances_settings_revision_once(self, changes):
+        manager = self._manager_with_home_plugin({"units": "metric"})
+        instance = manager.find_plugin("weather", "Home")
+        before = manager.snapshot_instance(instance.instance_uuid)
+
+        after = manager.update_plugin_instance(instance.instance_uuid, **changes)
+
+        assert after.settings_revision == before.settings_revision + 1
+        assert after.structural_generation == before.structural_generation
+
+    def test_manager_replaces_duplicate_serialized_uuids(self):
+        manager = PlaylistManager.from_dict({
+            "playlists": [
+                {
+                    "name": "Morning",
+                    "start_time": "00:00",
+                    "end_time": "12:00",
+                    "plugins": [{
+                        "plugin_id": "weather",
+                        "name": "Home",
+                        "plugin_settings": {},
+                        "refresh": {"interval": 300},
+                        "instance_uuid": "duplicate-instance-uuid",
+                    }],
+                },
+                {
+                    "name": "Evening",
+                    "start_time": "12:00",
+                    "end_time": "24:00",
+                    "plugins": [{
+                        "plugin_id": "clock",
+                        "name": "Clock",
+                        "plugin_settings": {},
+                        "refresh": {"interval": 60},
+                        "instance_uuid": "duplicate-instance-uuid",
+                    }],
+                },
+            ],
+        })
+
+        instances = [plugin for playlist in manager.playlists for plugin in playlist.plugins]
+        uuids = [plugin.instance_uuid for plugin in instances]
+        restored = PlaylistManager.from_dict(manager.to_dict())
+        restored_uuids = [
+            plugin.instance_uuid
+            for playlist in restored.playlists
+            for plugin in playlist.plugins
+        ]
+
+        assert uuids[0] == "duplicate-instance-uuid"
+        assert len(set(uuids)) == 2
+        assert restored_uuids == uuids
+
+    def test_uuid_rotation_resets_legacy_identity_bag(self, monkeypatch):
+        legacy_keys = ['["one","One"]', '["two","Two"]']
+        playlist = Playlist.from_dict({
+            "name": "Default",
+            "start_time": "00:00",
+            "end_time": "24:00",
+            "plugins": [
+                {"plugin_id": "one", "name": "One", "plugin_settings": {}, "refresh": {}},
+                {"plugin_id": "two", "name": "Two", "plugin_settings": {}, "refresh": {}},
+            ],
+            "plugin_rotation_queue": list(legacy_keys),
+            "plugin_rotation_pool": list(legacy_keys),
+            "plugin_rotation_recent_history": list(reversed(legacy_keys)),
+        })
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        selected = playlist.get_next_plugin()
+        uuid_keys = [plugin.instance_uuid for plugin in playlist.plugins]
+
+        assert selected.instance_uuid == uuid_keys[0]
+        assert playlist.plugin_rotation_pool == uuid_keys
+        assert playlist.plugin_rotation_queue == uuid_keys[1:]
+        assert playlist.plugin_rotation_recent_history == [uuid_keys[0]]
+
+
 class TestRefreshInfo:
 
     def test_from_dict_handles_missing_config(self):
@@ -254,6 +457,22 @@ class TestRefreshInfo:
 
 
 class TestPluginInstance:
+
+    def test_legacy_plugin_instance_receives_stable_uuid_and_revisions(self):
+        instance = PluginInstance.from_dict({
+            "plugin_id": "weather",
+            "name": "Home",
+            "plugin_settings": {},
+            "refresh": {"interval": 300},
+        })
+
+        serialized = instance.to_dict()
+        restored = PluginInstance.from_dict(serialized)
+
+        assert serialized["instance_uuid"] == instance.instance_uuid
+        assert restored.instance_uuid == instance.instance_uuid
+        assert restored.structural_generation == 1
+        assert restored.settings_revision == 1
 
     def test_scheduled_refresh_waits_until_scheduled_time_today(self):
         plugin = PluginInstance(

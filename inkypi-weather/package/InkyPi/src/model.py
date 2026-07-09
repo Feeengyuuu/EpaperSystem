@@ -1,10 +1,29 @@
-import json
 import logging
 import random
 import threading
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any, Mapping
+from uuid import uuid4
+
+from runtime.refresh_contracts import freeze_payload
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PluginInstanceSnapshot:
+    """An immutable point-in-time view of a playlist plugin instance."""
+
+    instance_uuid: str
+    plugin_id: str
+    name: str
+    settings: Mapping[str, Any]
+    refresh: Mapping[str, Any]
+    latest_refresh_time: str | None
+    structural_generation: int
+    settings_revision: int
 
 class RefreshInfo:
     """Keeps track of refresh metadata.
@@ -79,15 +98,19 @@ class PlaylistManager:
         self.active_playlist = active_playlist
         # Serializes check-then-act mutations across web threads and the refresh thread
         self._lock = threading.RLock()
+        with self._lock:
+            self._ensure_unique_instance_uuids()
 
     def get_playlist_names(self):
         """Returns a list of all playlist names."""
-        return [p.name for p in self.playlists]
+        with self._lock:
+            return [p.name for p in self.playlists]
 
     def add_default_playlist(self):
         """Add a default playlist to the manager, called when no playlists exist."""
-        return self.playlists.append(
-            Playlist("Default", PlaylistManager.DEFAULT_PLAYLIST_START, PlaylistManager.DEFAULT_PLAYLIST_END, []))
+        with self._lock:
+            return self.playlists.append(
+                Playlist("Default", PlaylistManager.DEFAULT_PLAYLIST_START, PlaylistManager.DEFAULT_PLAYLIST_END, []))
 
     def find_plugin(self, plugin_id, instance):
         """Searches playlists to find a plugin with the given ID and instance."""
@@ -98,24 +121,94 @@ class PlaylistManager:
                     return plugin
             return None
 
+    def snapshot_instance(self, instance_uuid):
+        """Return an immutable snapshot for an instance UUID, if it still exists."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            return match[2].snapshot() if match else None
+
+    def update_plugin_instance(
+        self,
+        instance_uuid,
+        *,
+        settings=None,
+        refresh=None,
+        name=None,
+        expected_generation=None,
+        expected_settings_revision=None,
+    ):
+        """Atomically update an instance, optionally rejecting stale callers."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+
+            instance = match[2]
+            if (
+                expected_generation is not None
+                and instance.structural_generation != expected_generation
+            ):
+                return None
+            if (
+                expected_settings_revision is not None
+                and instance.settings_revision != expected_settings_revision
+            ):
+                return None
+
+            settings_changed = settings is not None and settings != instance.settings
+            refresh_changed = refresh is not None and refresh != instance.refresh
+            updated_name = str(name) if name is not None else instance.name
+            name_changed = name is not None and updated_name != instance.name
+
+            updated_settings = deepcopy(settings) if settings_changed else instance.settings
+            updated_refresh = deepcopy(refresh) if refresh_changed else instance.refresh
+
+            if settings_changed or refresh_changed or name_changed:
+                instance.settings = updated_settings
+                instance.refresh = updated_refresh
+                instance.name = updated_name
+                instance.settings_revision += 1
+
+            return instance.snapshot()
+
+    def delete_plugin_instance(self, instance_uuid, *, expected_generation=None):
+        """Atomically delete an instance, optionally rejecting a stale generation."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+
+            playlist, index, instance = match
+            if (
+                expected_generation is not None
+                and instance.structural_generation != expected_generation
+            ):
+                return None
+
+            snapshot = instance.snapshot()
+            playlist.plugins.pop(index)
+            return snapshot
+
     def determine_active_playlist(self, current_datetime):
         """Determine the active playlist based on the current time."""
-        current_time = current_datetime.strftime("%H:%M")  # Get current time in "HH:MM" format
+        with self._lock:
+            current_time = current_datetime.strftime("%H:%M")  # Get current time in "HH:MM" format
 
-        # get active playlists that have plugins
-        active_playlists = [p for p in self.playlists if p.is_active(current_time)]
-        if not active_playlists:
-            return None
+            # get active playlists that have plugins
+            active_playlists = [p for p in self.playlists if p.is_active(current_time)]
+            if not active_playlists:
+                return None
 
-        # Sort playlists by priority
-        active_playlists.sort(key=lambda p: p.get_priority())
-        playlist = active_playlists[0]
+            # Sort playlists by priority
+            active_playlists.sort(key=lambda p: p.get_priority())
+            playlist = active_playlists[0]
 
-        return playlist
+            return playlist
 
     def get_playlist(self, playlist_name):
         """Returns the playlist with the specified name."""
-        return next((p for p in self.playlists if p.name == playlist_name), None)
+        with self._lock:
+            return next((p for p in self.playlists if p.name == playlist_name), None)
 
     def add_plugin_to_playlist(self, playlist_name, plugin_data):
         """Adds a plugin to a playlist by the specified name. Returns true if successfully added,
@@ -124,6 +217,15 @@ class PlaylistManager:
             playlist = self.get_playlist(playlist_name)
             if playlist:
                 if playlist.add_plugin(plugin_data):
+                    added_instance = playlist.plugins[-1]
+                    other_uuids = {
+                        instance.instance_uuid
+                        for current_playlist in self.playlists
+                        for instance in current_playlist.plugins
+                        if instance is not added_instance
+                    }
+                    if added_instance.instance_uuid in other_uuids:
+                        added_instance.instance_uuid = self._new_instance_uuid(other_uuids)
                     return True
             else:
                 logger.warning(f"Playlist '{playlist_name}' not found.")
@@ -165,10 +267,11 @@ class PlaylistManager:
             self.playlists = [p for p in self.playlists if p.name != name]
 
     def to_dict(self):
-        return {
-            "playlists": [p.to_dict() for p in self.playlists],
-            "active_playlist": self.active_playlist
-        }
+        with self._lock:
+            return {
+                "playlists": [p.to_dict() for p in self.playlists],
+                "active_playlist": self.active_playlist
+            }
 
     @classmethod
     def from_dict(cls, data):
@@ -178,6 +281,36 @@ class PlaylistManager:
             playlists=[Playlist.from_dict(p) for p in data.get("playlists", [])],
             active_playlist=data.get("active_playlist")
         )
+
+    def _find_instance_by_uuid(self, instance_uuid):
+        for playlist in self.playlists:
+            for index, instance in enumerate(playlist.plugins):
+                if instance.instance_uuid == instance_uuid:
+                    return playlist, index, instance
+        return None
+
+    def _ensure_unique_instance_uuids(self):
+        seen_uuids = set()
+        seen_instances = set()
+        for playlist in self.playlists:
+            for index, instance in enumerate(playlist.plugins):
+                if id(instance) in seen_instances:
+                    instance = PluginInstance.from_dict(instance.to_dict())
+                    playlist.plugins[index] = instance
+                seen_instances.add(id(instance))
+
+                instance_uuid = str(instance.instance_uuid) if instance.instance_uuid else ""
+                if not instance_uuid or instance_uuid in seen_uuids:
+                    instance_uuid = self._new_instance_uuid(seen_uuids)
+                instance.instance_uuid = instance_uuid
+                seen_uuids.add(instance_uuid)
+
+    @staticmethod
+    def _new_instance_uuid(existing_uuids):
+        instance_uuid = uuid4().hex
+        while instance_uuid in existing_uuids:
+            instance_uuid = uuid4().hex
+        return instance_uuid
 
     @staticmethod
     def should_refresh(latest_refresh, interval_seconds, current_time):
@@ -325,7 +458,7 @@ class Playlist:
         return self.plugins[self.current_plugin_index]
 
     def _plugin_rotation_key(self, plugin):
-        return json.dumps([plugin.plugin_id, plugin.name], separators=(",", ":"))
+        return plugin.instance_uuid
 
     def _recent_history_max_size(self, plugin_count):
         return min(self.RECENT_HISTORY_LIMIT, max(1, plugin_count - 1))
@@ -401,12 +534,45 @@ class PluginInstance:
         latest_refresh (str): ISO-formatted string representing the last refresh time.
     """
 
-    def __init__(self, plugin_id, name, settings=None, refresh=None, latest_refresh_time=None):
+    def __init__(
+        self,
+        plugin_id,
+        name,
+        settings=None,
+        refresh=None,
+        latest_refresh_time=None,
+        instance_uuid=None,
+        structural_generation=1,
+        settings_revision=1,
+    ):
         self.plugin_id = plugin_id
         self.name = name
         self.settings = settings or {}
         self.refresh = refresh or {}
         self.latest_refresh_time = latest_refresh_time
+        self.instance_uuid = str(instance_uuid) if instance_uuid else uuid4().hex
+        self.structural_generation = self._positive_revision(structural_generation)
+        self.settings_revision = self._positive_revision(settings_revision)
+
+    def snapshot(self):
+        """Return a deeply immutable copy of the instance's mutable state."""
+        return PluginInstanceSnapshot(
+            instance_uuid=self.instance_uuid,
+            plugin_id=self.plugin_id,
+            name=self.name,
+            settings=freeze_payload(self.settings),
+            refresh=freeze_payload(self.refresh),
+            latest_refresh_time=self.latest_refresh_time,
+            structural_generation=self.structural_generation,
+            settings_revision=self.settings_revision,
+        )
+
+    @staticmethod
+    def _positive_revision(value):
+        try:
+            return max(1, int(value or 1))
+        except (TypeError, ValueError):
+            return 1
 
     def update(self, updated_data):
         """Update attributes of the class with the dictionary values."""
@@ -499,6 +665,9 @@ class PluginInstance:
             "plugin_settings": self.settings,
             "refresh": self.refresh,
             "latest_refresh_time": self.latest_refresh_time,
+            "instance_uuid": self.instance_uuid,
+            "structural_generation": self.structural_generation,
+            "settings_revision": self.settings_revision,
         }
 
     @classmethod
@@ -509,4 +678,7 @@ class PluginInstance:
             settings=data["plugin_settings"],
             refresh=data["refresh"],
             latest_refresh_time=data.get("latest_refresh_time"),
+            instance_uuid=data.get("instance_uuid"),
+            structural_generation=data.get("structural_generation", 1),
+            settings_revision=data.get("settings_revision", 1),
         )
