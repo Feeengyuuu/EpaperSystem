@@ -1,5 +1,6 @@
 from collections import UserDict
 from dataclasses import FrozenInstanceError
+import threading
 
 import pytest
 
@@ -9,6 +10,9 @@ from src.runtime.refresh_contracts import (
     JobRecord,
     JobStatus,
     RefreshCommand,
+    TaskCancelled,
+    TaskContext,
+    TaskDeadlineExceeded,
 )
 
 
@@ -78,3 +82,49 @@ def test_cancel_requested_is_metadata_not_a_job_status():
     assert job.cancel_requested_at == 102.0
     with pytest.raises(ValueError):
         job.mark_succeeded(103.0)
+
+
+def test_task_context_classifies_event_only_as_cooperative_cancellation():
+    cancel_event = threading.Event()
+    cancel_event.set()
+    context = TaskContext(cancel_event, deadline_monotonic=11.0, clock=lambda: 10.0)
+
+    with pytest.raises(TaskCancelled) as canceled:
+        context.raise_if_cancelled()
+
+    assert type(canceled.value) is TaskCancelled
+
+
+def test_task_context_classifies_deadline_only_as_deadline_exceeded():
+    context = TaskContext(threading.Event(), deadline_monotonic=10.0, clock=lambda: 10.0)
+
+    with pytest.raises(TaskDeadlineExceeded):
+        context.raise_if_cancelled()
+
+
+def test_task_context_deadline_wins_when_event_and_deadline_are_both_set():
+    cancel_event = threading.Event()
+    cancel_event.set()
+    context = TaskContext(cancel_event, deadline_monotonic=10.0, clock=lambda: 10.0)
+
+    with pytest.raises(TaskDeadlineExceeded):
+        context.raise_if_cancelled()
+
+
+def test_task_context_samples_moving_clock_once_per_cancellation_check():
+    samples = iter((9.0, 11.0))
+    calls = []
+
+    def moving_clock():
+        calls.append(None)
+        return next(samples)
+
+    context = TaskContext(
+        threading.Event(),
+        deadline_monotonic=10.0,
+        clock=moving_clock,
+    )
+
+    context.raise_if_cancelled()
+
+    assert len(calls) == 1

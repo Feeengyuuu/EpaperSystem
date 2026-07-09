@@ -155,6 +155,10 @@ class TaskCancelled(RuntimeError):
     pass
 
 
+class TaskDeadlineExceeded(TaskCancelled):
+    pass
+
+
 @dataclass(frozen=True)
 class TaskContext:
     cancel_event: threading.Event
@@ -169,7 +173,8 @@ class TaskContext:
         return max(0.0, self.deadline_monotonic - self.clock())
 
     def raise_if_cancelled(self):
+        now = self.clock()
+        if now >= self.deadline_monotonic:
+            raise TaskDeadlineExceeded("task deadline expired")
         if self.cancel_event.is_set():
             raise TaskCancelled("task was canceled")
-        if self.remaining_seconds() <= 0:
-            raise TaskCancelled("task deadline expired")
