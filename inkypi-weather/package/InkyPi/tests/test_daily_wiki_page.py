@@ -89,10 +89,41 @@ def test_daily_wiki_defaults_to_microsoft_yahei(tmp_path):
     assert "fontFamily.value = 'Jost';" not in html
 
 
-def test_daily_wiki_cjk_font_prefers_microsoft_yahei_static_file(tmp_path):
+def test_daily_wiki_cjk_font_prefers_microsoft_yahei_static_file(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
+    plugin_dir = tmp_path / "src" / "plugins" / "daily_wiki_page"
+    static_fonts_dir = tmp_path / "src" / "static" / "fonts"
+    plugin_dir.mkdir(parents=True)
+    static_fonts_dir.mkdir(parents=True)
+    yahei_path = static_fonts_dir / "msyh.ttf"
+    noto_path = static_fonts_dir / "NotoSansSC-VF.ttf"
+    yahei_path.touch()
+    noto_path.touch()
+    monkeypatch.setattr(plugin, "get_plugin_dir", lambda: plugin_dir)
 
-    assert Path(plugin._cjk_font_path()).name == "msyh.ttf"
+    selected = plugin._cjk_font_path()
+
+    assert selected.resolve() == yahei_path.resolve()
+
+
+def test_daily_wiki_cjk_font_uses_tracked_noto_fallback_without_microsoft_yahei(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    tracked_noto_path = (
+        Path(__file__).resolve().parents[1] / "src" / "static" / "fonts" / "NotoSansSC-VF.ttf"
+    )
+    original_is_file = Path.is_file
+
+    def is_file_without_microsoft_yahei(path):
+        if path.name in {"msyh.ttf", "msyh.ttc"}:
+            return False
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", is_file_without_microsoft_yahei)
+
+    selected = plugin._cjk_font_path()
+
+    assert tracked_noto_path.is_file()
+    assert selected.resolve() == tracked_noto_path.resolve()
 
 def test_payload_uses_daily_image_and_history_only(tmp_path):
     plugin = make_plugin(tmp_path)
