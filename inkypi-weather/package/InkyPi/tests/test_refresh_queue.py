@@ -187,7 +187,9 @@ def test_cache_reuses_display_and_only_escalates_revision_force_and_deadline():
     reused = queue.submit(cache)
 
     assert reused.id == display_job.id
-    assert queue.get_job(cache.id) is None
+    absorbed_identity = queue.get_job(cache.id)
+    assert absorbed_identity.status is JobStatus.SUPERSEDED
+    assert absorbed_identity.superseded_by == display_job.id
     entry = queue.take(timeout=0)
     assert entry.command.id == display.id
     assert entry.command.kind is CommandKind.DISPLAY
@@ -256,7 +258,9 @@ def test_cache_always_reuses_display_across_revision_orderings(
     actual = queue.submit(cache)
 
     assert actual.id == display_job.id
-    assert queue.get_job(cache.id) is None
+    absorbed_identity = queue.get_job(cache.id)
+    assert absorbed_identity.status is JobStatus.SUPERSEDED
+    assert absorbed_identity.superseded_by == display_job.id
     selected = queue.take(timeout=0).command
     assert selected.kind is CommandKind.DISPLAY
     assert selected.settings_revision == max(2, cache_revision)
@@ -610,6 +614,99 @@ def test_absorbed_command_id_replays_to_actual_job():
     replay = queue.submit(absorbed)
     assert replay.id == actual.id
     assert replay.status is JobStatus.RUNNING
+
+
+def test_absorbed_identity_survives_alias_exhaustion_until_terminal_pruning():
+    fake_time = FakeTime(monotonic=0.0, wall=100.0)
+    queue = make_queue(
+        fake_time,
+        capacity=2,
+        manual_reserved=0,
+        alias_limit=1,
+        terminal_limit=10,
+        terminal_ttl_seconds=1.0,
+    )
+    original = command(
+        instance_uuid="bounded-absorbed-identity",
+        settings_revision=2,
+        idempotency_key="fills-active-alias-budget",
+        payload={"revision": 2},
+    )
+    absorbed = command(
+        instance_uuid="bounded-absorbed-identity",
+        settings_revision=1,
+        force=True,
+        payload={"revision": 1},
+    )
+
+    actual = queue.submit(original)
+    assert queue.submit(absorbed).id == actual.id
+    identity = queue.get_job(absorbed.id)
+    assert identity.status is JobStatus.SUPERSEDED
+    assert identity.superseded_by == actual.id
+    assert queue.take(timeout=0).job.id == actual.id
+
+    replay = queue.submit(absorbed)
+
+    assert replay.id == actual.id
+    assert replay.status is JobStatus.RUNNING
+    assert queue.snapshot().depth == 0
+    with pytest.raises(DuplicateCommandConflictError):
+        queue.submit(
+            replace(
+                absorbed,
+                plugin_id="conflicting-plugin",
+                payload={"revision": "conflict"},
+            )
+        )
+    assert queue.get_job(actual.id).status is JobStatus.RUNNING
+
+    fake_time.advance(2.0)
+    queue.snapshot()
+    assert queue.get_job(absorbed.id) is None
+    assert queue.get_job(actual.id).status is JobStatus.RUNNING
+
+
+def test_pruning_terminal_target_recursively_removes_identity_proxy():
+    fake_time = FakeTime(monotonic=0.0, wall=100.0)
+    queue = make_queue(
+        fake_time,
+        capacity=1,
+        manual_reserved=0,
+        terminal_limit=2,
+        terminal_ttl_seconds=1000.0,
+    )
+    original = command(
+        instance_uuid="terminal-identity-target",
+        idempotency_key="terminal-identity-key",
+        payload={"operation": "same"},
+    )
+    actual = queue.submit(original)
+    assert queue.take(timeout=0).job.id == actual.id
+    queue.finish(actual.id, JobStatus.SUCCEEDED)
+
+    replay_command = command(
+        instance_uuid="terminal-identity-target",
+        idempotency_key="terminal-identity-key",
+        payload={"operation": "same"},
+        now=500.0,
+        deadline=600.0,
+    )
+    assert queue.submit(replay_command).id == actual.id
+    proxy = queue.get_job(replay_command.id)
+    assert proxy.status is JobStatus.SUPERSEDED
+    assert proxy.superseded_by == actual.id
+
+    newest_terminal = queue.submit(command(instance_uuid="newest-terminal"))
+    assert queue.cancel_instance("newest-terminal") == 1
+
+    assert queue.get_job(actual.id) is None
+    assert queue.get_job(replay_command.id) is None
+    assert queue.get_job(newest_terminal.id).status is JobStatus.CANCELED
+    assert all(
+        job.superseded_by is None or job.superseded_by in queue._jobs
+        for job in queue._jobs.values()
+    )
 
 
 def test_idempotency_replay_registers_replay_command_id_before_later_conflict():
@@ -1061,7 +1158,7 @@ def test_alias_budget_bounds_coalescing_and_target_pruning_releases_aliases():
         fake_time,
         capacity=4,
         manual_reserved=0,
-        alias_limit=4,
+        alias_limit=2,
         terminal_limit=10,
         terminal_ttl_seconds=1.0,
     )
@@ -1399,3 +1496,102 @@ def test_terminal_history_configuration_is_clamped_and_retention_never_exceeds_2
     assert queue.terminal_limit == 256
     assert queue.terminal_ttl_seconds == 1800.0
     assert retained == 256
+
+
+def test_running_jobs_are_limited_to_capacity_and_finish_releases_a_slot():
+    queue = make_queue(capacity=1, manual_reserved=0)
+    first = queue.submit(command(instance_uuid="running-limit-first"))
+    assert queue.take(timeout=0).job.id == first.id
+
+    second = queue.submit(command(instance_uuid="running-limit-second"))
+
+    assert queue.snapshot().depth == 1
+    assert queue.take(timeout=0) is None
+    assert queue.get_job(first.id).status is JobStatus.RUNNING
+    assert queue.get_job(second.id).status is JobStatus.QUEUED
+
+    assert queue.finish(first.id, JobStatus.SUCCEEDED).status is JobStatus.SUCCEEDED
+    second_entry = queue.take(timeout=0)
+    assert second_entry.job.id == second.id
+    assert queue.get_job(second.id).status is JobStatus.RUNNING
+
+
+def test_concurrent_takes_cannot_exceed_running_job_limit():
+    queue = make_queue(capacity=2, manual_reserved=0)
+    first_batch = [
+        queue.submit(command(instance_uuid=f"running-bounded-{index}"))
+        for index in range(2)
+    ]
+    running_entries = [queue.take(timeout=0) for _ in range(2)]
+    assert {entry.job.id for entry in running_entries} == {
+        job.id for job in first_batch
+    }
+
+    second_batch = [
+        queue.submit(command(instance_uuid=f"running-waiting-{index}"))
+        for index in range(2)
+    ]
+    barrier = threading.Barrier(5)
+    results = []
+    failures = []
+
+    def take_at_limit() -> None:
+        try:
+            barrier.wait()
+            results.append(queue.take(timeout=0))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    threads = [threading.Thread(target=take_at_limit) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    assert not failures
+    assert all(not thread.is_alive() for thread in threads)
+    assert results == [None, None, None, None]
+    all_jobs = first_batch + second_batch
+    assert sum(
+        queue.get_job(job.id).status is JobStatus.RUNNING for job in all_jobs
+    ) == 2
+    assert queue.snapshot().depth == 2
+
+
+def test_quiesce_rejects_fresh_expired_submission_but_exact_replay_still_wins():
+    fake_time = FakeTime(monotonic=10.0, wall=100.0)
+    queue = make_queue(fake_time)
+    known_expired = command(
+        instance_uuid="known-expired-before-quiesce",
+        deadline=5.0,
+    )
+    known = queue.submit(known_expired)
+    assert known.status is JobStatus.CANCELED
+    assert known.error_code == "deadline_expired"
+    assert queue.begin_quiesce() == 0
+
+    exact_replay = queue.submit(known_expired)
+    assert exact_replay.id == known.id
+    assert exact_replay.status is JobStatus.CANCELED
+    assert exact_replay.error_code == "deadline_expired"
+
+    fresh_expired = command(
+        instance_uuid="fresh-expired-after-quiesce",
+        idempotency_key="fresh-expired-after-quiesce-key",
+        deadline=5.0,
+    )
+    with pytest.raises(QueueStoppingError) as stopping:
+        queue.submit(fresh_expired)
+
+    assert stopping.value.job.status is JobStatus.REJECTED
+    assert stopping.value.job.error_code == "refresh_service_stopping"
+    assert queue.get_job(stopping.value.job.id).status is JobStatus.REJECTED
+
+    invalid_fresh = replace(
+        command(instance_uuid="fresh-invalid-after-quiesce"),
+        kind="display",
+    )
+    with pytest.raises(QueueStoppingError) as invalid_stopping:
+        queue.submit(invalid_fresh)
+    assert invalid_stopping.value.job.error_code == "refresh_service_stopping"

@@ -100,10 +100,9 @@ class RefreshQueue:
         self._wall_clock = wall_clock
         self._condition = threading.Condition()
         self._pending: dict[str, int] = {}
+        self._running: set[str] = set()
         self._jobs: dict[str, JobRecord] = {}
         self._commands: dict[str, RefreshCommand] = {}
-        self._command_targets: dict[str, str] = {}
-        self._command_requests: dict[str, RefreshCommand] = {}
         self._idempotency_targets: dict[str, str] = {}
         self._idempotency_requests: dict[str, RefreshCommand] = {}
         self._terminal_order: dict[str, tuple[float, int]] = {}
@@ -128,8 +127,21 @@ class RefreshQueue:
 
             idempotent = self._resolve_idempotency_locked(normalized, now)
             if idempotent is not None:
-                self._register_command_identity_locked(normalized, idempotent.id)
+                self._record_absorbed_identity_locked(
+                    normalized,
+                    idempotent.id,
+                    now,
+                )
                 return idempotent
+
+            if not self._accepting:
+                rejected = self._reject_locked(
+                    normalized,
+                    QueueStoppingError.error_code,
+                    "refresh service is stopping",
+                    now,
+                )
+                raise QueueStoppingError("refresh service is stopping", rejected)
 
             invalid_reason = self._invalid_command_reason(normalized)
             if invalid_reason is not None:
@@ -144,21 +156,13 @@ class RefreshQueue:
             if normalized.deadline_monotonic <= now:
                 return self._cancel_expired_submission_locked(normalized, now)
 
-            if not self._accepting:
-                rejected = self._reject_locked(
-                    normalized,
-                    QueueStoppingError.error_code,
-                    "refresh service is stopping",
-                    now,
-                )
-                raise QueueStoppingError("refresh service is stopping", rejected)
-
             if normalized.idempotency_key is None:
                 coalesced = self._coalesce_locked(normalized, now)
                 if coalesced is not None:
-                    self._register_command_identity_locked(
+                    self._record_absorbed_identity_locked(
                         normalized,
                         coalesced.id,
+                        now,
                     )
                     self._condition.notify_all()
                     return replace(coalesced)
@@ -176,9 +180,10 @@ class RefreshQueue:
                 coalesced = self._coalesce_locked(normalized, now)
                 if coalesced is not None:
                     self._register_idempotency_locked(normalized, coalesced.id)
-                    self._register_command_identity_locked(
+                    self._record_absorbed_identity_locked(
                         normalized,
                         coalesced.id,
+                        now,
                     )
                     self._condition.notify_all()
                     return replace(coalesced)
@@ -213,11 +218,12 @@ class RefreshQueue:
                 now = self._clock()
                 self._prune_terminal_locked(now)
                 self._expire_pending_locked(now)
-                if self._pending:
+                if self._pending and len(self._running) < self.capacity:
                     job_id = self._select_pending_locked()
                     del self._pending[job_id]
                     job = self._jobs[job_id]
                     job.mark_running(self._wall_clock())
+                    self._running.add(job_id)
                     return QueueEntry(self._commands[job_id], replace(job))
 
                 if not self._accepting:
@@ -281,6 +287,7 @@ class RefreshQueue:
             job.completed_at = self._wall_clock()
             job.error_code = error_code
             job.error = error
+            self._running.discard(job.id)
             result = replace(job)
             self._record_terminal_locked(job.id, now)
             self._prune_terminal_locked(now)
@@ -392,16 +399,10 @@ class RefreshQueue:
         command: RefreshCommand,
         now: float,
     ) -> JobRecord | None:
-        if command.id in self._jobs:
-            requested = self._commands[command.id]
-            target_id = self._resolve_actual_job_id_locked(command.id)
-        elif command.id in self._command_targets:
-            requested = self._command_requests[command.id]
-            target_id = self._resolve_actual_job_id_locked(
-                self._command_targets[command.id]
-            )
-        else:
+        if command.id not in self._jobs:
             return None
+        requested = self._commands[command.id]
+        target_id = self._resolve_actual_job_id_locked(command.id)
 
         if not self._equivalent_command_identity(requested, command):
             rejected = self._reject_locked(
@@ -417,11 +418,7 @@ class RefreshQueue:
 
         job = self._jobs.get(target_id)
         if job is None:
-            self._command_targets.pop(command.id, None)
-            self._command_requests.pop(command.id, None)
             return None
-        if command.id in self._command_targets:
-            self._command_targets[command.id] = target_id
         return replace(job)
 
     @staticmethod
@@ -477,27 +474,25 @@ class RefreshQueue:
         self._idempotency_targets[key] = actual_job_id
         self._idempotency_requests[key] = command
 
-    def _register_command_identity_locked(
+    def _record_absorbed_identity_locked(
         self,
         command: RefreshCommand,
         actual_job_id: str,
-    ) -> bool:
+        now: float,
+    ) -> None:
         if command.id == actual_job_id or command.id in self._jobs:
-            return True
-        if command.id in self._command_targets:
-            return True
+            return
         target_id = self._resolve_actual_job_id_locked(actual_job_id)
-        job = self._jobs.get(target_id)
-        if job is None or job.status not in {
-            JobStatus.QUEUED,
-            JobStatus.RUNNING,
-        }:
-            return False
-        if self._active_alias_count_locked() >= self.alias_limit:
-            return False
-        self._command_targets[command.id] = actual_job_id
-        self._command_requests[command.id] = command
-        return True
+        if target_id not in self._jobs:
+            return
+        identity = JobRecord.from_command(command, self._wall_clock())
+        identity.status = JobStatus.SUPERSEDED
+        identity.completed_at = self._wall_clock()
+        identity.superseded_by = target_id
+        self._jobs[identity.id] = identity
+        self._commands[identity.id] = command
+        self._record_terminal_locked(identity.id, now)
+        self._prune_terminal_locked(now)
 
     def _has_active_idempotency_capacity_locked(
         self,
@@ -506,13 +501,10 @@ class RefreshQueue:
         key = command.idempotency_key
         if key is None or key in self._idempotency_targets:
             return True
-        return self._active_alias_count_locked() < self.alias_limit
+        return self._active_idempotency_count_locked() < self.alias_limit
 
-    def _active_alias_count_locked(self) -> int:
+    def _active_idempotency_count_locked(self) -> int:
         return sum(
-            self._target_is_active_locked(target_id)
-            for target_id in self._command_targets.values()
-        ) + sum(
             self._target_is_active_locked(target_id)
             for target_id in self._idempotency_targets.values()
         )
@@ -750,9 +742,6 @@ class RefreshQueue:
         for key, target_id in tuple(self._idempotency_targets.items()):
             if target_id == old_job_id:
                 self._idempotency_targets[key] = new_job.id
-        for command_id, target_id in tuple(self._command_targets.items()):
-            if target_id == old_job_id:
-                self._command_targets[command_id] = new_job.id
         self._prune_terminal_locked(now)
         return new_job
 
@@ -766,7 +755,6 @@ class RefreshQueue:
         if (
             command.id in self._jobs
             or command.id in self._commands
-            or command.id in self._command_targets
         ):
             command = replace(command, id=uuid4().hex)
         job = JobRecord.from_command(command, self._wall_clock())
@@ -923,12 +911,9 @@ class RefreshQueue:
             self._prune_terminal_job_locked(dependent_id)
 
         self._terminal_order.pop(job_id, None)
+        self._running.discard(job_id)
         self._jobs.pop(job_id, None)
         self._commands.pop(job_id, None)
-        for command_id, target_id in tuple(self._command_targets.items()):
-            if target_id == job_id:
-                del self._command_targets[command_id]
-                del self._command_requests[command_id]
         for key, target_id in tuple(self._idempotency_targets.items()):
             if target_id == job_id:
                 del self._idempotency_targets[key]
