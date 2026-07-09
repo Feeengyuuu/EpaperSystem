@@ -58,6 +58,28 @@ def freeze_payload(value: Any) -> Any:
     return deepcopy(value)
 
 
+def _copy_hashable_payload_member(value: Any) -> Any:
+    detached = deepcopy(value)
+    hash(detached)
+    return detached
+
+
+def thaw_payload(value: Any) -> Any:
+    """Return a fully detached mutable representation for plugin code."""
+    if isinstance(value, MappingABC):
+        return {
+            _copy_hashable_payload_member(key): thaw_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (str, bytes)):
+        return deepcopy(value)
+    if isinstance(value, Sequence):
+        return [thaw_payload(item) for item in value]
+    if isinstance(value, Set):
+        return {_copy_hashable_payload_member(item) for item in value}
+    return deepcopy(value)
+
+
 @dataclass(frozen=True)
 class RefreshCommand:
     id: str

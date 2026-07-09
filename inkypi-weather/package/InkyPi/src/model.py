@@ -1,4 +1,5 @@
 import logging
+import math
 import random
 import threading
 from copy import deepcopy
@@ -24,6 +25,25 @@ class PluginInstanceSnapshot:
     latest_refresh_time: str | None
     structural_generation: int
     settings_revision: int
+
+
+@dataclass(frozen=True)
+class ActivePlaylistSnapshot:
+    """An immutable view of the playlist selected by current priority."""
+
+    name: str
+    start_time: str
+    end_time: str
+    plugins: tuple[PluginInstanceSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class PlaylistSelectionSnapshot:
+    """An immutable selected instance plus its exact playlist membership."""
+
+    playlist_name: str
+    instance: PluginInstanceSnapshot
+
 
 class RefreshInfo:
     """Keeps track of refresh metadata.
@@ -127,6 +147,198 @@ class PlaylistManager:
             match = self._find_instance_by_uuid(instance_uuid)
             return match[2].snapshot() if match else None
 
+    def snapshot_active_playlist(
+        self,
+        current_datetime,
+    ) -> ActivePlaylistSnapshot | None:
+        """Return a pure immutable snapshot of the current priority winner."""
+        with self._lock:
+            playlist = self._determine_active_playlist_locked(current_datetime)
+            return self._snapshot_playlist(playlist) if playlist else None
+
+    def select_next_active_instance(
+        self,
+        current_datetime,
+        *,
+        latest_refresh,
+        interval_seconds,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Atomically choose and rotate the next due active instance."""
+        if latest_refresh is not None and not isinstance(latest_refresh, datetime):
+            raise ValueError("latest_refresh must be a datetime or None")
+        try:
+            normalized_interval = float(interval_seconds)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("interval_seconds must be finite") from exc
+        if not math.isfinite(normalized_interval):
+            raise ValueError("interval_seconds must be finite")
+
+        with self._lock:
+            playlist = self._determine_active_playlist_locked(current_datetime)
+            if playlist is None:
+                self.active_playlist = None
+                return None
+
+            self.active_playlist = playlist.name
+            if not playlist.plugins:
+                return None
+            if not self.should_refresh(
+                latest_refresh,
+                normalized_interval,
+                current_datetime,
+            ):
+                return None
+
+            instance = playlist.get_next_plugin()
+            if instance is None:
+                return None
+            return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    def select_theme_instance(
+        self,
+        current_datetime,
+        *,
+        displayed_instance_uuid=None,
+        displayed_playlist=None,
+        displayed_plugin_id=None,
+        displayed_name=None,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Select theme input, preferring an exact displayed UUID.
+
+        The three legacy display fields are consulted only when UUID is absent.
+        That compatibility path is inherently ABA-unsafe and is retained only
+        until all callers persist and provide instance UUIDs.
+        """
+        with self._lock:
+            playlist = self._determine_active_playlist_locked(current_datetime)
+            if playlist is None:
+                self.active_playlist = None
+                return None
+
+            self.active_playlist = playlist.name
+            if displayed_instance_uuid is not None:
+                displayed = next(
+                    (
+                        instance
+                        for instance in playlist.plugins
+                        if instance.instance_uuid == displayed_instance_uuid
+                    ),
+                    None,
+                )
+                if displayed is not None:
+                    return PlaylistSelectionSnapshot(
+                        playlist.name,
+                        displayed.snapshot(),
+                    )
+            elif (
+                displayed_playlist == playlist.name
+                and displayed_plugin_id is not None
+                and displayed_name is not None
+            ):
+                displayed = next(
+                    (
+                        instance
+                        for instance in playlist.plugins
+                        if instance.plugin_id == displayed_plugin_id
+                        and instance.name == displayed_name
+                    ),
+                    None,
+                )
+                if displayed is not None:
+                    return PlaylistSelectionSnapshot(
+                        playlist.name,
+                        displayed.snapshot(),
+                    )
+
+            if not playlist.plugins:
+                return None
+            fallback = playlist.get_next_plugin()
+            if fallback is None:
+                return None
+            return PlaylistSelectionSnapshot(playlist.name, fallback.snapshot())
+
+    def validate_instance_revision(
+        self,
+        instance_uuid,
+        *,
+        expected_generation,
+        expected_settings_revision,
+    ) -> PluginInstanceSnapshot | None:
+        """Return a snapshot only for an exact UUID and revision match."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+            instance = match[2]
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+            ):
+                return None
+            return instance.snapshot()
+
+    def validate_selection(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+        expected_generation,
+        expected_settings_revision,
+        current_datetime,
+        require_active=True,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Validate exact revision, membership, and commit-time priority."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+            playlist, _index, instance = match
+            if playlist.name != expected_playlist_name:
+                return None
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+            ):
+                return None
+            if require_active:
+                active = self._determine_active_playlist_locked(current_datetime)
+                if active is not playlist:
+                    return None
+            return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    def record_instance_refresh(
+        self,
+        instance_uuid,
+        *,
+        expected_generation,
+        expected_settings_revision,
+        expected_latest_refresh_time,
+        latest_refresh_time,
+    ) -> PluginInstanceSnapshot | None:
+        """CAS-update only the latest refresh timestamp for an exact instance."""
+        self._validate_refresh_timestamp(latest_refresh_time)
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+            instance = match[2]
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+                or instance.latest_refresh_time != expected_latest_refresh_time
+            ):
+                return None
+            instance.latest_refresh_time = latest_refresh_time
+            return instance.snapshot()
+
+    def first_instance_uuid(self) -> str | None:
+        """Return the first UUID in deterministic playlist/plugin order."""
+        with self._lock:
+            for playlist in self.playlists:
+                if playlist.plugins:
+                    return playlist.plugins[0].instance_uuid
+            return None
+
     def update_plugin_instance(
         self,
         instance_uuid,
@@ -192,18 +404,7 @@ class PlaylistManager:
     def determine_active_playlist(self, current_datetime):
         """Determine the active playlist based on the current time."""
         with self._lock:
-            current_time = current_datetime.strftime("%H:%M")  # Get current time in "HH:MM" format
-
-            # get active playlists that have plugins
-            active_playlists = [p for p in self.playlists if p.is_active(current_time)]
-            if not active_playlists:
-                return None
-
-            # Sort playlists by priority
-            active_playlists.sort(key=lambda p: p.get_priority())
-            playlist = active_playlists[0]
-
-            return playlist
+            return self._determine_active_playlist_locked(current_datetime)
 
     def get_playlist(self, playlist_name):
         """Returns the playlist with the specified name."""
@@ -288,6 +489,37 @@ class PlaylistManager:
                 if instance.instance_uuid == instance_uuid:
                     return playlist, index, instance
         return None
+
+    def _determine_active_playlist_locked(self, current_datetime):
+        current_time = current_datetime.strftime("%H:%M")
+        active_playlists = [
+            playlist
+            for playlist in self.playlists
+            if playlist.is_active(current_time)
+        ]
+        if not active_playlists:
+            return None
+        return min(active_playlists, key=lambda playlist: playlist.get_priority())
+
+    @staticmethod
+    def _snapshot_playlist(playlist):
+        return ActivePlaylistSnapshot(
+            name=playlist.name,
+            start_time=playlist.start_time,
+            end_time=playlist.end_time,
+            plugins=tuple(instance.snapshot() for instance in playlist.plugins),
+        )
+
+    @staticmethod
+    def _validate_refresh_timestamp(latest_refresh_time):
+        if not isinstance(latest_refresh_time, str) or not latest_refresh_time:
+            raise ValueError("latest_refresh_time must be an ISO datetime string")
+        try:
+            datetime.fromisoformat(latest_refresh_time.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "latest_refresh_time must be an ISO datetime string"
+            ) from exc
 
     def _ensure_unique_instance_uuids(self):
         seen_uuids = set()

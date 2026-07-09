@@ -1,5 +1,8 @@
+import threading
+from dataclasses import FrozenInstanceError, replace
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone
 
 from src.model import Playlist, PlaylistManager, PluginInstance, RefreshInfo
 
@@ -756,3 +759,935 @@ class TestPlaylistManagerConcurrency:
 
         assert results.count(True) == 1
         assert manager.get_playlist_names() == ["Race"]
+
+
+class TestPlaylistManagerSchedulerSnapshots:
+
+    @staticmethod
+    def _plugin(
+        name,
+        *,
+        plugin_id="clock",
+        instance_uuid=None,
+        settings=None,
+        refresh=None,
+        latest_refresh_time=None,
+    ):
+        data = {
+            "plugin_id": plugin_id,
+            "name": name,
+            "plugin_settings": settings or {},
+            "refresh": {"interval": 300} if refresh is None else refresh,
+            "latest_refresh_time": latest_refresh_time,
+        }
+        if instance_uuid is not None:
+            data["instance_uuid"] = instance_uuid
+        return data
+
+    @staticmethod
+    def _playlist(
+        name,
+        start="00:00",
+        end="24:00",
+        plugins=None,
+        **rotation,
+    ):
+        return {
+            "name": name,
+            "start_time": start,
+            "end_time": end,
+            "plugins": list(plugins or []),
+            **rotation,
+        }
+
+    @classmethod
+    def _manager(cls, *playlists, active_playlist=None):
+        return PlaylistManager.from_dict(
+            {
+                "playlists": list(playlists),
+                "active_playlist": active_playlist,
+            }
+        )
+
+    @staticmethod
+    def _rotation_state(manager):
+        return tuple(
+            (
+                playlist.current_plugin_index,
+                tuple(playlist.plugin_rotation_queue),
+                tuple(playlist.plugin_rotation_pool),
+                tuple(playlist.plugin_rotation_recent_history),
+            )
+            for playlist in manager.playlists
+        )
+
+    def test_active_playlist_snapshot_is_deeply_immutable_detached_and_pure(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="home-uuid",
+                        settings={
+                            "appearance": {
+                                "theme": "dark",
+                                "accents": ["red", "blue"],
+                            }
+                        },
+                        refresh={"interval": 300, "days": ["monday"]},
+                    )
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["home-uuid"],
+                plugin_rotation_pool=["home-uuid"],
+                plugin_rotation_recent_history=["home-uuid"],
+            ),
+            active_playlist="unchanged-sentinel",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        snapshot = manager.snapshot_active_playlist(datetime(2026, 7, 9, 12, 0))
+
+        assert snapshot.name == "Default"
+        assert isinstance(snapshot.plugins, tuple)
+        assert snapshot.plugins[0].instance_uuid == "home-uuid"
+        with pytest.raises(FrozenInstanceError):
+            snapshot.name = "Mutated"
+        with pytest.raises(TypeError):
+            snapshot.plugins[0].settings["appearance"]["theme"] = "light"
+        with pytest.raises(TypeError):
+            snapshot.plugins[0].refresh["days"][0] = "tuesday"
+
+        manager.update_plugin_instance(
+            "home-uuid",
+            settings={"appearance": {"theme": "light", "accents": ["green"]}},
+        )
+        assert snapshot.plugins[0].settings["appearance"]["theme"] == "dark"
+        assert snapshot.plugins[0].settings["appearance"]["accents"] == (
+            "red",
+            "blue",
+        )
+        assert manager.active_playlist == "unchanged-sentinel"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_active_playlist_snapshot_uses_cross_midnight_priority_and_insertion_order(
+        self,
+    ):
+        manager = self._manager(
+            self._playlist("All Day", plugins=[self._plugin("All Day")]),
+            self._playlist(
+                "First Night",
+                "21:00",
+                "03:00",
+                [self._plugin("First Night")],
+            ),
+            self._playlist(
+                "Second Night",
+                "22:00",
+                "04:00",
+                [self._plugin("Second Night")],
+            ),
+        )
+
+        snapshot = manager.snapshot_active_playlist(datetime(2026, 7, 10, 0, 30))
+
+        assert snapshot.name == "First Night"
+        assert snapshot.plugins[0].name == "First Night"
+
+    def test_select_next_active_no_active_clears_active_without_rotation(self):
+        manager = self._manager(
+            self._playlist(
+                "Morning",
+                "06:00",
+                "07:00",
+                [self._plugin("Clock", instance_uuid="morning-uuid")],
+                current_plugin_index=0,
+                plugin_rotation_queue=["morning-uuid"],
+                plugin_rotation_pool=["morning-uuid"],
+                plugin_rotation_recent_history=["morning-uuid"],
+            ),
+            active_playlist="Morning",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 9, 8, 0),
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+
+        assert selected is None
+        assert manager.active_playlist is None
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_next_active_empty_records_active_without_rotation(self):
+        manager = self._manager(
+            self._playlist(
+                "Empty",
+                plugins=[],
+                current_plugin_index=7,
+                plugin_rotation_queue=["stale-queue"],
+                plugin_rotation_pool=["stale-pool"],
+                plugin_rotation_recent_history=["stale-history"],
+            ),
+            active_playlist="old-name",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 9, 12, 0),
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+
+        assert selected is None
+        assert manager.active_playlist == "Empty"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_next_active_not_due_records_active_without_rotation(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+                current_plugin_index=0,
+                plugin_rotation_queue=["clock-uuid"],
+                plugin_rotation_pool=["clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            ),
+            active_playlist="old-name",
+        )
+        before_rotation = self._rotation_state(manager)
+        now = datetime(2026, 7, 9, 12, 0)
+
+        selected = manager.select_next_active_instance(
+            now,
+            latest_refresh=now - timedelta(seconds=10),
+            interval_seconds=300,
+        )
+
+        assert selected is None
+        assert manager.active_playlist == "Default"
+        assert self._rotation_state(manager) == before_rotation
+
+    @pytest.mark.parametrize(
+        "interval_seconds",
+        [None, "invalid", float("nan"), float("inf"), float("-inf")],
+    )
+    def test_select_next_active_rejects_invalid_or_nonfinite_interval(
+        self,
+        interval_seconds,
+    ):
+        manager = self._manager(
+            self._playlist("Default", plugins=[self._plugin("Clock")]),
+            active_playlist="sentinel",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        with pytest.raises(ValueError):
+            manager.select_next_active_instance(
+                datetime(2026, 7, 9, 12, 0),
+                latest_refresh=None,
+                interval_seconds=interval_seconds,
+            )
+
+        assert manager.active_playlist == "sentinel"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_next_active_requires_datetime_or_none_latest_refresh(self):
+        manager = self._manager(
+            self._playlist("Default", plugins=[self._plugin("Clock")])
+        )
+        before_rotation = self._rotation_state(manager)
+
+        with pytest.raises(ValueError):
+            manager.select_next_active_instance(
+                datetime(2026, 7, 9, 12, 0),
+                latest_refresh="2026-07-09T11:00:00",
+                interval_seconds=300,
+            )
+
+        assert self._rotation_state(manager) == before_rotation
+
+    @pytest.mark.parametrize("interval_seconds", [0, -1, -300.5])
+    def test_select_next_active_zero_or_negative_interval_is_due(
+        self,
+        interval_seconds,
+    ):
+        manager = self._manager(
+            self._playlist("Default", plugins=[self._plugin("Clock")])
+        )
+        now = datetime(2026, 7, 9, 12, 0)
+
+        selected = manager.select_next_active_instance(
+            now,
+            latest_refresh=now,
+            interval_seconds=interval_seconds,
+        )
+
+        assert selected.playlist_name == "Default"
+        assert selected.instance.name == "Clock"
+
+    def test_select_next_active_uses_cross_midnight_priority(self, monkeypatch):
+        manager = self._manager(
+            self._playlist("All Day", plugins=[self._plugin("All Day")]),
+            self._playlist(
+                "Night",
+                "21:00",
+                "03:00",
+                [self._plugin("Night")],
+            ),
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 10, 0, 30),
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+
+        assert selected.playlist_name == "Night"
+        assert selected.instance.name == "Night"
+        assert manager.active_playlist == "Night"
+
+    def test_select_next_active_concurrent_due_calls_choose_different_uuids(
+        self,
+        monkeypatch,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        barrier = threading.Barrier(3)
+        results = []
+        failures = []
+
+        def select_due():
+            try:
+                barrier.wait()
+                results.append(
+                    manager.select_next_active_instance(
+                        datetime(2026, 7, 9, 12, 0),
+                        latest_refresh=None,
+                        interval_seconds=300,
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        threads = [threading.Thread(target=select_due) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        assert not failures
+        assert all(not thread.is_alive() for thread in threads)
+        assert {result.instance.instance_uuid for result in results} == {
+            "one-uuid",
+            "two-uuid",
+        }
+
+    def test_select_theme_exact_uuid_is_primary_and_does_not_rotate(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["two-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid"],
+                plugin_rotation_recent_history=["one-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="two-uuid",
+            displayed_playlist="wrong-playlist",
+            displayed_plugin_id="wrong-plugin",
+            displayed_name="wrong-name",
+        )
+
+        assert selected.instance.instance_uuid == "two-uuid"
+        assert selected.playlist_name == "Default"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_stale_uuid_recreate_falls_back_exactly_once(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="old-home-uuid",
+                    )
+                ],
+            )
+        )
+        old = manager.snapshot_instance("old-home-uuid")
+        assert manager.delete_plugin_instance(old.instance_uuid) is not None
+        assert manager.add_plugin_to_playlist(
+            "Default",
+            self._plugin("Home", plugin_id="weather"),
+        )
+        recreated = manager.find_plugin("weather", "Home")
+        assert recreated.instance_uuid != old.instance_uuid
+        playlist = manager.get_playlist("Default")
+        original_get_next = playlist.get_next_plugin
+        calls = []
+
+        def counted_get_next():
+            calls.append(None)
+            return original_get_next()
+
+        playlist.get_next_plugin = counted_get_next
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid=old.instance_uuid,
+            displayed_playlist="Default",
+            displayed_plugin_id="weather",
+            displayed_name="Home",
+        )
+
+        assert selected.instance.instance_uuid == recreated.instance_uuid
+        assert len(calls) == 1
+        assert playlist.plugin_rotation_recent_history == [recreated.instance_uuid]
+
+    def test_select_theme_uuid_from_inactive_playlist_falls_back_once(self):
+        manager = self._manager(
+            self._playlist(
+                "Morning",
+                "06:00",
+                "12:00",
+                [self._plugin("Morning", instance_uuid="morning-uuid")],
+            ),
+            self._playlist(
+                "Evening",
+                "12:00",
+                "18:00",
+                [self._plugin("Evening", instance_uuid="evening-uuid")],
+            ),
+        )
+        evening = manager.get_playlist("Evening")
+        original_get_next = evening.get_next_plugin
+        calls = []
+
+        def counted_get_next():
+            calls.append(None)
+            return original_get_next()
+
+        evening.get_next_plugin = counted_get_next
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 13, 0),
+            displayed_instance_uuid="morning-uuid",
+            displayed_playlist="Morning",
+            displayed_plugin_id="clock",
+            displayed_name="Morning",
+        )
+
+        assert selected.playlist_name == "Evening"
+        assert selected.instance.instance_uuid == "evening-uuid"
+        assert len(calls) == 1
+
+    def test_select_theme_legacy_identity_reuses_only_when_uuid_is_absent(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="home-uuid",
+                    )
+                ],
+                current_plugin_index=None,
+                plugin_rotation_queue=["home-uuid"],
+                plugin_rotation_pool=["home-uuid"],
+                plugin_rotation_recent_history=[],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_playlist="Default",
+            displayed_plugin_id="weather",
+            displayed_name="Home",
+        )
+
+        assert selected.instance.instance_uuid == "home-uuid"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_validate_instance_revision_requires_exact_nonwildcard_tokens(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        snapshot = manager.snapshot_instance("clock-uuid")
+
+        exact = manager.validate_instance_revision(
+            snapshot.instance_uuid,
+            expected_generation=snapshot.structural_generation,
+            expected_settings_revision=snapshot.settings_revision,
+        )
+
+        assert exact == snapshot
+        assert manager.validate_instance_revision(
+            snapshot.instance_uuid,
+            expected_generation=None,
+            expected_settings_revision=snapshot.settings_revision,
+        ) is None
+        assert manager.validate_instance_revision(
+            snapshot.instance_uuid,
+            expected_generation=snapshot.structural_generation + 1,
+            expected_settings_revision=snapshot.settings_revision,
+        ) is None
+        assert manager.validate_instance_revision(
+            snapshot.instance_uuid,
+            expected_generation=snapshot.structural_generation,
+            expected_settings_revision=snapshot.settings_revision + 1,
+        ) is None
+
+    def test_validate_selection_accepts_exact_then_rejects_playlist_rename(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        now = datetime(2026, 7, 9, 12, 0)
+        selected = manager.select_next_active_instance(
+            now,
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+        instance = selected.instance
+
+        exact = manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name=selected.playlist_name,
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=now,
+        )
+        assert exact == selected
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name=selected.playlist_name,
+            expected_generation=None,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=now,
+        ) is None
+
+        assert manager.update_playlist("Default", "Renamed", "00:00", "24:00")
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name="Default",
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=now,
+        ) is None
+
+    def test_validate_selection_rejects_move_even_when_active_not_required(self):
+        manager = self._manager(
+            self._playlist(
+                "First",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            ),
+            self._playlist("Second", plugins=[]),
+        )
+        snapshot = manager.snapshot_instance("clock-uuid")
+        with manager._lock:
+            moved = manager.playlists[0].plugins.pop(0)
+            manager.playlists[1].plugins.append(moved)
+
+        assert manager.validate_selection(
+            snapshot.instance_uuid,
+            expected_playlist_name="First",
+            expected_generation=snapshot.structural_generation,
+            expected_settings_revision=snapshot.settings_revision,
+            current_datetime=datetime(2026, 7, 9, 12, 0),
+            require_active=False,
+        ) is None
+
+    def test_validate_selection_rechecks_commit_time_priority_and_active_window(self):
+        manager = self._manager(
+            self._playlist(
+                "All Day",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        noon = datetime(2026, 7, 9, 12, 0)
+        selected = manager.select_next_active_instance(
+            noon,
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+        instance = selected.instance
+        assert manager.add_playlist("Priority", "11:00", "13:00")
+        assert manager.add_plugin_to_playlist("Priority", self._plugin("Priority"))
+
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name="All Day",
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=noon,
+        ) is None
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name="All Day",
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=datetime(2026, 7, 10, 3, 0),
+            require_active=False,
+        ).playlist_name == "All Day"
+
+    def test_validate_selection_rejects_no_longer_active_playlist_at_commit_time(
+        self,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Morning",
+                "06:00",
+                "12:00",
+                [self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 9, 10, 0),
+            latest_refresh=None,
+            interval_seconds=300,
+        )
+        instance = selected.instance
+
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name="Morning",
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=datetime(2026, 7, 9, 13, 0),
+        ) is None
+        assert manager.validate_selection(
+            instance.instance_uuid,
+            expected_playlist_name="Morning",
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            current_datetime=datetime(2026, 7, 9, 13, 0),
+            require_active=False,
+        ).playlist_name == "Morning"
+
+    def test_record_instance_refresh_is_strict_timestamp_cas_and_changes_only_timestamp(
+        self,
+    ):
+        old_timestamp = "2026-07-09T11:00:00+00:00"
+        new_timestamp = "2026-07-09T12:00:00+00:00"
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Clock",
+                        instance_uuid="clock-uuid",
+                        settings={"nested": {"value": 1}},
+                        latest_refresh_time=old_timestamp,
+                    )
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["clock-uuid"],
+                plugin_rotation_pool=["clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            ),
+            active_playlist="Default",
+        )
+        before = manager.snapshot_instance("clock-uuid")
+        before_rotation = self._rotation_state(manager)
+
+        after = manager.record_instance_refresh(
+            before.instance_uuid,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+            expected_latest_refresh_time=old_timestamp,
+            latest_refresh_time=new_timestamp,
+        )
+
+        assert after.latest_refresh_time == new_timestamp
+        assert replace(after, latest_refresh_time=old_timestamp) == before
+        assert self._rotation_state(manager) == before_rotation
+        assert manager.active_playlist == "Default"
+        assert manager.record_instance_refresh(
+            before.instance_uuid,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+            expected_latest_refresh_time=old_timestamp,
+            latest_refresh_time="2026-07-09T12:01:00+00:00",
+        ) is None
+        assert manager.snapshot_instance("clock-uuid") == after
+
+    @pytest.mark.parametrize(
+        "invalid_timestamp",
+        [None, datetime(2026, 7, 9, 12, 0), "", "not-a-timestamp"],
+    )
+    def test_record_instance_refresh_rejects_nonserializable_or_invalid_timestamp(
+        self,
+        invalid_timestamp,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        before = manager.snapshot_instance("clock-uuid")
+
+        with pytest.raises(ValueError):
+            manager.record_instance_refresh(
+                before.instance_uuid,
+                expected_generation=before.structural_generation,
+                expected_settings_revision=before.settings_revision,
+                expected_latest_refresh_time=None,
+                latest_refresh_time=invalid_timestamp,
+            )
+
+        assert manager.snapshot_instance("clock-uuid") == before
+
+    def test_record_instance_refresh_rejects_delete_same_name_recreate_aba(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="old-home-uuid",
+                    )
+                ],
+            )
+        )
+        before = manager.snapshot_instance("old-home-uuid")
+        assert manager.delete_plugin_instance(before.instance_uuid) is not None
+        assert manager.add_plugin_to_playlist(
+            "Default",
+            self._plugin("Home", plugin_id="weather"),
+        )
+        recreated = manager.find_plugin("weather", "Home").snapshot()
+
+        result = manager.record_instance_refresh(
+            before.instance_uuid,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+            expected_latest_refresh_time=None,
+            latest_refresh_time="2026-07-09T12:00:00+00:00",
+        )
+
+        assert result is None
+        assert recreated.instance_uuid != before.instance_uuid
+        assert manager.snapshot_instance(recreated.instance_uuid).latest_refresh_time is None
+
+    @pytest.mark.parametrize(
+        ("generation_delta", "revision_delta"),
+        [(1, 0), (0, 1), (None, 0), (0, None)],
+    )
+    def test_record_instance_refresh_rejects_stale_or_wildcard_revision_tokens(
+        self,
+        generation_delta,
+        revision_delta,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+        before = manager.snapshot_instance("clock-uuid")
+        expected_generation = (
+            None
+            if generation_delta is None
+            else before.structural_generation + generation_delta
+        )
+        expected_revision = (
+            None
+            if revision_delta is None
+            else before.settings_revision + revision_delta
+        )
+
+        assert manager.record_instance_refresh(
+            before.instance_uuid,
+            expected_generation=expected_generation,
+            expected_settings_revision=expected_revision,
+            expected_latest_refresh_time=None,
+            latest_refresh_time="2026-07-09T12:00:00+00:00",
+        ) is None
+        assert manager.snapshot_instance("clock-uuid") == before
+
+    def test_record_instance_refresh_concurrent_cas_allows_one_winner(self):
+        old_timestamp = "2026-07-09T11:00:00+00:00"
+        candidates = {
+            "2026-07-09T12:00:00+00:00",
+            "2026-07-09T12:01:00+00:00",
+        }
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Clock",
+                        instance_uuid="clock-uuid",
+                        latest_refresh_time=old_timestamp,
+                    )
+                ],
+            )
+        )
+        before = manager.snapshot_instance("clock-uuid")
+        barrier = threading.Barrier(3)
+        results = []
+        failures = []
+
+        def record(timestamp):
+            try:
+                barrier.wait()
+                results.append(
+                    manager.record_instance_refresh(
+                        before.instance_uuid,
+                        expected_generation=before.structural_generation,
+                        expected_settings_revision=before.settings_revision,
+                        expected_latest_refresh_time=old_timestamp,
+                        latest_refresh_time=timestamp,
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        threads = [
+            threading.Thread(target=record, args=(timestamp,))
+            for timestamp in candidates
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        assert not failures
+        assert all(not thread.is_alive() for thread in threads)
+        assert sum(result is not None for result in results) == 1
+        assert manager.snapshot_instance("clock-uuid").latest_refresh_time in candidates
+
+    def test_first_instance_uuid_is_deterministic_skips_empty_and_is_pure(self):
+        manager = self._manager(
+            self._playlist(
+                "Empty",
+                plugins=[],
+                current_plugin_index=9,
+                plugin_rotation_queue=["stale"],
+            ),
+            self._playlist(
+                "Second",
+                plugins=[
+                    self._plugin("First", instance_uuid="first-uuid"),
+                    self._plugin("Second", instance_uuid="second-uuid"),
+                ],
+            ),
+            active_playlist="sentinel",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        assert manager.first_instance_uuid() == "first-uuid"
+        assert manager.first_instance_uuid() == "first-uuid"
+        assert manager.active_playlist == "sentinel"
+        assert self._rotation_state(manager) == before_rotation
+        assert PlaylistManager().first_instance_uuid() is None
+
+    def test_scheduler_snapshot_selection_and_update_concurrency_has_no_deadlock(
+        self,
+        monkeypatch,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        before = manager.snapshot_instance("one-uuid")
+        barrier = threading.Barrier(4)
+        completed = [threading.Event() for _ in range(3)]
+        results = {}
+        failures = []
+
+        def guarded(name, index, action):
+            try:
+                barrier.wait()
+                results[name] = action()
+            except BaseException as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+            finally:
+                completed[index].set()
+
+        actions = [
+            (
+                "selection",
+                lambda: manager.select_next_active_instance(
+                    datetime(2026, 7, 9, 12, 0),
+                    latest_refresh=None,
+                    interval_seconds=300,
+                ),
+            ),
+            (
+                "snapshot",
+                lambda: manager.snapshot_active_playlist(
+                    datetime(2026, 7, 9, 12, 0)
+                ),
+            ),
+            (
+                "update",
+                lambda: manager.update_plugin_instance(
+                    before.instance_uuid,
+                    settings={"updated": True},
+                    expected_generation=before.structural_generation,
+                    expected_settings_revision=before.settings_revision,
+                ),
+            ),
+        ]
+        threads = [
+            threading.Thread(
+                target=guarded,
+                args=(name, index, action),
+            )
+            for index, (name, action) in enumerate(actions)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        assert all(event.wait(1.0) for event in completed)
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        assert not failures
+        assert all(not thread.is_alive() for thread in threads)
+        assert results["selection"].instance.instance_uuid in {
+            "one-uuid",
+            "two-uuid",
+        }
+        assert results["snapshot"].name == "Default"
+        assert results["update"].settings["updated"] is True
