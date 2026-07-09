@@ -9,6 +9,9 @@ import time
 from .refresh_contracts import LifecycleState
 
 
+_UNSET = object()
+
+
 class InvalidLifecycleTransition(RuntimeError):
     """Raised when a lifecycle transition skips or rewrites a state."""
 
@@ -43,7 +46,8 @@ class LifecycleController:
         self._changed_at_wall = self._wall_clock()
         self._reason: str | None = None
         self._queue_cancel_affected = 0
-        self._pending_queue_cancel_affected = 0
+        self._pending_queue_cancel_affected: int | None = None
+        self._pending_quiesce_reason: object = _UNSET
         self._quiesce_in_progress = False
 
     @property
@@ -86,25 +90,31 @@ class LifecycleController:
                 self._condition.wait()
 
         try:
-            affected = self._validated_affected_count(self._refresh_queue.begin_quiesce())
             with self._condition:
-                self._pending_queue_cancel_affected = max(
-                    self._pending_queue_cancel_affected,
-                    affected,
-                )
+                needs_queue_close = self._pending_queue_cancel_affected is None
+            if needs_queue_close:
+                affected = self._validated_affected_count(self._refresh_queue.begin_quiesce())
+                with self._condition:
+                    self._pending_queue_cancel_affected = affected
+                    self._pending_quiesce_reason = reason
+            with self._condition:
+                queue_cancel_affected = self._pending_queue_cancel_affected
+                quiesce_reason = self._pending_quiesce_reason
+            if queue_cancel_affected is None or quiesce_reason is _UNSET:
+                raise RuntimeError("quiesce metadata was not prepared")
             changed_at_monotonic, changed_at_wall = self._sample_timestamps()
             self._stop_event.set()
 
             with self._condition:
-                queue_cancel_affected = self._pending_queue_cancel_affected
                 self._publish_prepared_locked(
                     LifecycleState.QUIESCING,
                     changed_at_monotonic,
                     changed_at_wall,
-                    reason=reason,
+                    reason=quiesce_reason,
                     queue_cancel_affected=queue_cancel_affected,
                 )
-                self._pending_queue_cancel_affected = 0
+                self._pending_queue_cancel_affected = None
+                self._pending_quiesce_reason = _UNSET
                 self._quiesce_in_progress = False
                 self._condition.notify_all()
                 return queue_cancel_affected
