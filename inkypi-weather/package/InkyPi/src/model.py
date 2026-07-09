@@ -425,8 +425,14 @@ class PlaylistManager:
                         for instance in current_playlist.plugins
                         if instance is not added_instance
                     }
-                    if added_instance.instance_uuid in other_uuids:
-                        added_instance.instance_uuid = self._new_instance_uuid(other_uuids)
+                    # Runtime creation is a new identity boundary. Never trust a
+                    # caller-provided UUID, even when it is not currently live:
+                    # accepting it could reopen a delete/recreate ABA window.
+                    forbidden_uuids = set(other_uuids)
+                    forbidden_uuids.add(str(added_instance.instance_uuid))
+                    added_instance.instance_uuid = self._new_instance_uuid(
+                        forbidden_uuids
+                    )
                     return True
             else:
                 logger.warning(f"Playlist '{playlist_name}' not found.")
@@ -547,19 +553,28 @@ class PlaylistManager:
     @staticmethod
     def should_refresh(latest_refresh, interval_seconds, current_time):
         """Determines whether a refresh should occur on the interval and latest refresh time."""
-        if not latest_refresh:
-            return True  # No previous refresh, so it's time to refresh
-
         try:
             interval_seconds = float(interval_seconds)
-        except (TypeError, ValueError):
-            logger.warning("Invalid refresh interval '%s'; refreshing now.", interval_seconds)
+        except (TypeError, ValueError, OverflowError):
+            logger.warning(
+                "Invalid refresh interval '%s'; refreshing now.",
+                interval_seconds,
+            )
+            return True
+        if not math.isfinite(interval_seconds):
+            logger.warning(
+                "Invalid refresh interval '%s'; refreshing now.",
+                interval_seconds,
+            )
             return True
         if interval_seconds <= 0:
             return True
+        if not latest_refresh:
+            return True  # No previous refresh, so it's time to refresh
 
         latest_refresh = PluginInstance.align_datetime_tz(latest_refresh, current_time)
-        return (current_time - latest_refresh) >= timedelta(seconds=interval_seconds)
+        elapsed_seconds = (current_time - latest_refresh).total_seconds()
+        return elapsed_seconds >= interval_seconds
 
 class Playlist:
     """Represents a playlist with a time interval.

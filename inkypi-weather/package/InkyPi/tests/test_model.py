@@ -1,10 +1,16 @@
 import threading
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from src.model import Playlist, PlaylistManager, PluginInstance, RefreshInfo
+
+
+class MutableSettingsLeaf:
+    def __init__(self, values):
+        self.values = list(values)
 
 class TestPlaylist:
 
@@ -240,6 +246,22 @@ class TestPlaylistManager:
         current_time = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
 
         assert PlaylistManager.should_refresh(latest_refresh, "300", current_time)
+
+    @pytest.mark.parametrize(
+        "interval_seconds",
+        [None, "invalid", float("nan"), float("inf"), float("-inf")],
+    )
+    def test_should_refresh_legacy_invalid_or_nonfinite_interval_is_due(
+        self,
+        interval_seconds,
+    ):
+        now = datetime(2026, 7, 9, 12, 0)
+
+        assert PlaylistManager.should_refresh(
+            now - timedelta(seconds=1),
+            interval_seconds,
+            now,
+        )
 
 
 class TestPlaylistManagerIdentity:
@@ -632,6 +654,27 @@ class TestPluginInstance:
         assert restored.structural_generation == 1
         assert restored.settings_revision == 1
 
+    @pytest.mark.parametrize("field_name", ["settings", "refresh"])
+    def test_snapshot_rejects_unsupported_custom_mutable_leaf_stably(
+        self,
+        field_name,
+    ):
+        leaf = MutableSettingsLeaf(["original"])
+        values = {"leaf": leaf}
+        instance = PluginInstance(
+            "weather",
+            "Home",
+            settings=values if field_name == "settings" else {},
+            refresh=values if field_name == "refresh" else {},
+        )
+
+        with pytest.raises(TypeError):
+            instance.snapshot()
+        with pytest.raises(TypeError):
+            instance.snapshot()
+
+        assert leaf.values == ["original"]
+
     def test_scheduled_refresh_waits_until_scheduled_time_today(self):
         plugin = PluginInstance(
             "daily_ai_news",
@@ -971,6 +1014,33 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert manager.active_playlist == "Default"
         assert self._rotation_state(manager) == before_rotation
 
+    def test_select_next_active_huge_finite_interval_is_not_due_without_rotation(
+        self,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+                current_plugin_index=0,
+                plugin_rotation_queue=["clock-uuid"],
+                plugin_rotation_pool=["clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            ),
+            active_playlist="old-name",
+        )
+        before_rotation = self._rotation_state(manager)
+        now = datetime(2026, 7, 9, 12, 0)
+
+        selected = manager.select_next_active_instance(
+            now,
+            latest_refresh=now - timedelta(days=1),
+            interval_seconds=1e308,
+        )
+
+        assert selected is None
+        assert manager.active_playlist == "Default"
+        assert self._rotation_state(manager) == before_rotation
+
     @pytest.mark.parametrize(
         "interval_seconds",
         [None, "invalid", float("nan"), float("inf"), float("-inf")],
@@ -1166,6 +1236,77 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert selected.instance.instance_uuid == recreated.instance_uuid
         assert len(calls) == 1
         assert playlist.plugin_rotation_recent_history == [recreated.instance_uuid]
+
+    def test_explicit_old_uuid_recreate_cannot_reopen_theme_validation_or_record_aba(
+        self,
+        monkeypatch,
+    ):
+        old_uuid = "stable-explicit-uuid"
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid=old_uuid,
+                    )
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=[],
+                plugin_rotation_pool=[old_uuid],
+                plugin_rotation_recent_history=[old_uuid],
+            )
+        )
+        old = manager.snapshot_instance(old_uuid)
+        assert manager.delete_plugin_instance(old_uuid) is not None
+        generated_uuids = iter((old_uuid, "fresh-manager-uuid"))
+        monkeypatch.setattr(
+            "src.model.uuid4",
+            lambda: SimpleNamespace(hex=next(generated_uuids)),
+        )
+        explicit_recreate = self._plugin(
+            "Home",
+            plugin_id="weather",
+            instance_uuid=old_uuid,
+        )
+        explicit_recreate["structural_generation"] = old.structural_generation
+        explicit_recreate["settings_revision"] = old.settings_revision
+        assert manager.add_plugin_to_playlist("Default", explicit_recreate)
+        recreated = manager.find_plugin("weather", "Home")
+
+        assert recreated.instance_uuid != old_uuid
+        themed = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid=old_uuid,
+            displayed_playlist="Default",
+            displayed_plugin_id="weather",
+            displayed_name="Home",
+        )
+        assert themed.instance.instance_uuid == recreated.instance_uuid
+        playlist = manager.get_playlist("Default")
+        assert playlist.plugin_rotation_pool == [recreated.instance_uuid]
+        assert playlist.plugin_rotation_recent_history == [recreated.instance_uuid]
+        assert manager.validate_instance_revision(
+            old_uuid,
+            expected_generation=old.structural_generation,
+            expected_settings_revision=old.settings_revision,
+        ) is None
+        assert manager.validate_selection(
+            old_uuid,
+            expected_playlist_name="Default",
+            expected_generation=old.structural_generation,
+            expected_settings_revision=old.settings_revision,
+            current_datetime=datetime(2026, 7, 9, 12, 0),
+        ) is None
+        assert manager.record_instance_refresh(
+            old_uuid,
+            expected_generation=old.structural_generation,
+            expected_settings_revision=old.settings_revision,
+            expected_latest_refresh_time=None,
+            latest_refresh_time="2026-07-09T12:00:00+00:00",
+        ) is None
+        assert manager.snapshot_instance(recreated.instance_uuid).latest_refresh_time is None
 
     def test_select_theme_uuid_from_inactive_playlist_falls_back_once(self):
         manager = self._manager(

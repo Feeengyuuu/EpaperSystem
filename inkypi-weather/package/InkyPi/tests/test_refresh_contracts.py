@@ -1,5 +1,6 @@
 from collections import UserDict, UserList
 from dataclasses import FrozenInstanceError
+from enum import Enum
 import threading
 
 import pytest
@@ -21,6 +22,10 @@ from src.runtime.refresh_contracts import (
 class MutableCustomLeaf:
     def __init__(self, values):
         self.values = list(values)
+
+
+class MutableEnumLeaf(Enum):
+    VALUE = ["mutable"]
 
 
 def test_refresh_command_is_immutable_and_freezes_nested_payload():
@@ -69,6 +74,30 @@ def test_refresh_command_payload_freezes_mapping_implementations():
         command.payload["added"] = True
     with pytest.raises(TypeError):
         command.payload["nested"]["mutable"] = 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"leaf": MutableCustomLeaf(["mutable"])},
+        {MutableCustomLeaf(["mutable-key"]): "value"},
+        {"leaf": MutableEnumLeaf.VALUE},
+    ],
+)
+def test_refresh_command_strictly_rejects_custom_mutable_payload_leaves_and_keys(
+    payload,
+):
+    with pytest.raises(TypeError):
+        RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="sports_dashboard",
+            payload=payload,
+            now_monotonic=10.0,
+            deadline_monotonic=20.0,
+        )
+    with pytest.raises(TypeError):
+        freeze_payload(payload)
 
 
 def test_cancel_requested_is_metadata_not_a_job_status():
@@ -138,6 +167,7 @@ def test_task_context_samples_moving_clock_once_per_cancellation_check():
 
 
 def test_thaw_payload_recursively_returns_mutable_detached_plugin_data():
+    leaf = MutableCustomLeaf(["original"])
     source = UserDict(
         {
             ("tuple", "key"): UserDict(
@@ -153,54 +183,58 @@ def test_thaw_payload_recursively_returns_mutable_detached_plugin_data():
             "set": {"one", "two"},
             "text": "unchanged",
             "bytes": b"unchanged",
-            "leaf": MutableCustomLeaf(["original"]),
         }
     )
     frozen = freeze_payload(source)
 
-    thawed = refresh_contracts_module.thaw_payload(frozen)
+    thawed = refresh_contracts_module.thaw_payload(
+        UserDict({"payload": frozen, "leaf": leaf})
+    )
+    payload = thawed["payload"]
 
     assert isinstance(thawed, dict)
-    assert isinstance(thawed[("tuple", "key")]["nested"], list)
-    assert isinstance(thawed[("tuple", "key")]["nested"][1]["items"], list)
-    assert isinstance(thawed["set"], set)
-    assert thawed["text"] == "unchanged"
-    assert thawed["bytes"] == b"unchanged"
-    assert ("tuple", "key") in thawed
-    assert isinstance(next(key for key in thawed if isinstance(key, tuple)), tuple)
+    assert isinstance(payload[("tuple", "key")]["nested"], list)
+    assert isinstance(payload[("tuple", "key")]["nested"][1]["items"], list)
+    assert isinstance(payload["set"], set)
+    assert payload["text"] == "unchanged"
+    assert payload["bytes"] == b"unchanged"
+    assert ("tuple", "key") in payload
+    assert isinstance(next(key for key in payload if isinstance(key, tuple)), tuple)
 
-    thawed[("tuple", "key")]["nested"][0]["value"] = "mutated"
-    thawed[("tuple", "key")]["nested"][1]["items"].append(3)
-    thawed["set"].add("three")
+    payload[("tuple", "key")]["nested"][0]["value"] = "mutated"
+    payload[("tuple", "key")]["nested"][1]["items"].append(3)
+    payload["set"].add("three")
     thawed["leaf"].values.append("mutated")
 
     assert frozen[("tuple", "key")]["nested"][0]["value"] == "original"
     assert frozen[("tuple", "key")]["nested"][1]["items"] == (1, 2)
     assert frozen["set"] == frozenset({"one", "two"})
-    assert frozen["leaf"].values == ["original"]
+    assert leaf.values == ["original"]
 
 
 def test_thaw_payload_calls_are_fully_isolated_including_custom_leaves_and_keys():
     tuple_key = ("stable", "key")
+    leaf = MutableCustomLeaf(["source"])
     frozen = freeze_payload(
         {
             tuple_key: {"values": [{"nested": [1, 2]}]},
-            "leaf": MutableCustomLeaf(["source"]),
         }
     )
+    thaw_source = {"payload": frozen, "leaf": leaf}
 
-    first = refresh_contracts_module.thaw_payload(frozen)
-    second = refresh_contracts_module.thaw_payload(frozen)
+    first = refresh_contracts_module.thaw_payload(thaw_source)
+    second = refresh_contracts_module.thaw_payload(thaw_source)
 
-    first[tuple_key]["values"][0]["nested"].append(3)
+    first["payload"][tuple_key]["values"][0]["nested"].append(3)
     first["leaf"].values.append("first-only")
 
-    assert second[tuple_key]["values"][0]["nested"] == [1, 2]
+    assert second["payload"][tuple_key]["values"][0]["nested"] == [1, 2]
     assert second["leaf"].values == ["source"]
     assert frozen[tuple_key]["values"][0]["nested"] == (1, 2)
     assert first is not second
-    assert first[tuple_key] is not second[tuple_key]
+    assert first["payload"][tuple_key] is not second["payload"][tuple_key]
     assert first["leaf"] is not second["leaf"]
+    assert leaf.values == ["source"]
 
 
 def test_thaw_payload_preserves_hashable_detached_members_inside_mutable_set():

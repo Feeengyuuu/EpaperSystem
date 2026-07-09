@@ -44,18 +44,53 @@ class JobStatus(str, Enum):
     REJECTED = "rejected"
 
 
+_IMMUTABLE_PAYLOAD_SCALAR_TYPES = {
+    type(None),
+    bool,
+    int,
+    float,
+    complex,
+    str,
+    bytes,
+}
+
+
+def _is_immutable_payload_scalar(value: Any) -> bool:
+    return type(value) in _IMMUTABLE_PAYLOAD_SCALAR_TYPES
+
+
+def _freeze_hashable_payload_member(value: Any) -> Any:
+    if _is_immutable_payload_scalar(value):
+        frozen = value
+    elif isinstance(value, tuple):
+        frozen = tuple(_freeze_hashable_payload_member(item) for item in value)
+    elif isinstance(value, frozenset):
+        frozen = frozenset(
+            _freeze_hashable_payload_member(item) for item in value
+        )
+    else:
+        raise TypeError(
+            f"unsupported mutable payload key/member: {type(value).__name__}"
+        )
+    hash(frozen)
+    return frozen
+
+
 def freeze_payload(value: Any) -> Any:
     if isinstance(value, MappingABC):
         return MappingProxyType(
-            {deepcopy(key): freeze_payload(item) for key, item in value.items()}
+            {
+                _freeze_hashable_payload_member(key): freeze_payload(item)
+                for key, item in value.items()
+            }
         )
-    if isinstance(value, (str, bytes)):
+    if _is_immutable_payload_scalar(value):
         return value
     if isinstance(value, Sequence):
         return tuple(freeze_payload(item) for item in value)
     if isinstance(value, Set):
         return frozenset(freeze_payload(item) for item in value)
-    return deepcopy(value)
+    raise TypeError(f"unsupported mutable payload leaf: {type(value).__name__}")
 
 
 def _copy_hashable_payload_member(value: Any) -> Any:
