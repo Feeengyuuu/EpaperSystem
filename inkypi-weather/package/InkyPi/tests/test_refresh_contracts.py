@@ -1,3 +1,4 @@
+from collections import UserDict
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -25,6 +26,38 @@ def test_refresh_command_is_immutable_and_freezes_nested_payload():
     assert command.payload["settings"]["refreshOnDisplay"] == "false"
     with pytest.raises(FrozenInstanceError):
         command.priority = 0
+
+
+def test_refresh_command_payload_rejects_direct_tuple_nested_mutation():
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="sports_dashboard",
+        payload={"wrapped": ({"mutable": 1},)},
+        now_monotonic=10.0,
+        deadline_monotonic=20.0,
+    )
+
+    with pytest.raises(TypeError):
+        command.payload["added"] = True
+    with pytest.raises(TypeError):
+        command.payload["wrapped"][0]["mutable"] = 2
+
+
+def test_refresh_command_payload_freezes_mapping_implementations():
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="sports_dashboard",
+        payload=UserDict({"nested": UserDict({"mutable": 1})}),
+        now_monotonic=10.0,
+        deadline_monotonic=20.0,
+    )
+
+    with pytest.raises(TypeError):
+        command.payload["added"] = True
+    with pytest.raises(TypeError):
+        command.payload["nested"]["mutable"] = 2
 
 
 def test_cancel_requested_is_metadata_not_a_job_status():

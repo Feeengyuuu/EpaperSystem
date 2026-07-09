@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
+from collections.abc import Sequence, Set
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
@@ -43,16 +45,17 @@ class JobStatus(str, Enum):
 
 
 def freeze_payload(value: Any) -> Any:
-    value = deepcopy(value)
-    if isinstance(value, dict):
+    if isinstance(value, MappingABC):
         return MappingProxyType(
-            {key: freeze_payload(item) for key, item in value.items()}
+            {deepcopy(key): freeze_payload(item) for key, item in value.items()}
         )
-    if isinstance(value, list):
+    if isinstance(value, (str, bytes)):
+        return value
+    if isinstance(value, Sequence):
         return tuple(freeze_payload(item) for item in value)
-    if isinstance(value, set):
+    if isinstance(value, Set):
         return frozenset(freeze_payload(item) for item in value)
-    return value
+    return deepcopy(value)
 
 
 @dataclass(frozen=True)
