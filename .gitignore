@@ -42,6 +42,10 @@ inkypi-weather/dist/
 
 # Local publish staging
 .github-backup-stage/
+
+# Local isolated development worktrees
+.worktrees/
+
 $known
 # Runtime/generated outputs
 .tmp_*.json
