@@ -334,6 +334,41 @@ class FailOnceQueue(RecordingQueue):
         return self.affected
 
 
+class RetryCountQueue(RecordingQueue):
+    def __init__(self, results):
+        super().__init__()
+        self._results = iter(results)
+
+    def begin_quiesce(self):
+        self.calls += 1
+        self.accepting = False
+        self.events.append("queue")
+        return next(self._results)
+
+
+class FailOnceEvent(threading.Event):
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def set(self):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("stop event failed")
+        super().set()
+
+
+class ToggleFailClock:
+    def __init__(self, value):
+        self.value = value
+        self.fail = False
+
+    def __call__(self):
+        if self.fail:
+            raise RuntimeError("clock failed")
+        return self.value
+
+
 def test_lifecycle_full_path_is_idempotent_and_preserves_metadata():
     fake_clock = FakeClock(monotonic=1.0, wall=100.0)
     stop_event = threading.Event()
@@ -535,6 +570,191 @@ def test_lifecycle_recovers_after_queue_closure_failure_without_publishing():
     assert lifecycle.snapshot().state is LifecycleState.QUIESCING
     assert lifecycle.snapshot().reason == "retry"
     assert queue.calls == 2
+
+
+def test_lifecycle_invalid_queue_count_releases_owner_and_allows_retry():
+    queue = RetryCountQueue((None, 0))
+    stop_event = threading.Event()
+    lifecycle = LifecycleController(stop_event, queue)
+    lifecycle.mark_running()
+    before = lifecycle.snapshot()
+
+    with pytest.raises(ValueError, match="affected count"):
+        lifecycle.begin_quiesce("invalid-count")
+
+    assert lifecycle.snapshot() == before
+    assert not stop_event.is_set()
+    assert lifecycle.begin_quiesce("retry") == 0
+    assert lifecycle.state is LifecycleState.QUIESCING
+    assert queue.calls == 2
+
+
+def test_lifecycle_event_failure_preserves_affected_count_for_idempotent_retry():
+    queue = RetryCountQueue((3, 0))
+    stop_event = FailOnceEvent()
+    lifecycle = LifecycleController(stop_event, queue)
+    lifecycle.mark_running()
+    before = lifecycle.snapshot()
+
+    with pytest.raises(RuntimeError, match="stop event failed"):
+        lifecycle.begin_quiesce("first")
+
+    assert lifecycle.snapshot() == before
+    assert not stop_event.is_set()
+    retry_done = threading.Event()
+    retry_results = []
+    retry_failures = []
+
+    def retry():
+        try:
+            retry_results.append(lifecycle.begin_quiesce("retry"))
+        except BaseException as error:  # pragma: no cover - asserted below
+            retry_failures.append(error)
+        finally:
+            retry_done.set()
+
+    retry_thread = threading.Thread(target=retry, daemon=True)
+    retry_thread.start()
+    assert retry_done.wait(1.0)
+    retry_thread.join(timeout=1.0)
+
+    assert not retry_thread.is_alive()
+    assert not retry_failures
+    assert retry_results == [3]
+    assert lifecycle.snapshot().queue_cancel_affected == 3
+    assert lifecycle.snapshot().reason == "retry"
+    assert stop_event.is_set()
+    assert stop_event.calls == 2
+    assert queue.calls == 2
+
+
+def test_lifecycle_event_failure_wakes_waiter_that_retries_without_deadlock():
+    class BlockingRetryCountQueue(RetryCountQueue):
+        def __init__(self):
+            super().__init__((4, 0))
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def begin_quiesce(self):
+            result = super().begin_quiesce()
+            if self.calls == 1:
+                self.entered.set()
+                if not self.release.wait(1.0):
+                    raise AssertionError("test did not release queue")
+            return result
+
+    queue = BlockingRetryCountQueue()
+    stop_event = FailOnceEvent()
+    lifecycle = LifecycleController(stop_event, queue)
+    lifecycle.mark_running()
+    waiter_started = threading.Event()
+    results = []
+    failures = []
+
+    def owner():
+        try:
+            lifecycle.begin_quiesce("owner")
+        except BaseException as error:
+            failures.append(error)
+
+    def waiter():
+        waiter_started.set()
+        try:
+            results.append(lifecycle.begin_quiesce("waiter"))
+        except BaseException as error:  # pragma: no cover - asserted below
+            failures.append(error)
+
+    owner_thread = threading.Thread(target=owner, daemon=True)
+    waiter_thread = threading.Thread(target=waiter, daemon=True)
+    owner_thread.start()
+    assert queue.entered.wait(1.0)
+    waiter_thread.start()
+    assert waiter_started.wait(1.0)
+    queue.release.set()
+    owner_thread.join(timeout=1.0)
+    waiter_thread.join(timeout=1.0)
+
+    assert not owner_thread.is_alive()
+    assert not waiter_thread.is_alive()
+    assert results == [4]
+    assert len(failures) == 1
+    assert str(failures[0]) == "stop event failed"
+    assert queue.calls == 2
+    assert lifecycle.snapshot().state is LifecycleState.QUIESCING
+    assert lifecycle.snapshot().queue_cancel_affected == 4
+    assert lifecycle.snapshot().reason == "waiter"
+
+
+def test_lifecycle_mark_running_clock_failure_leaves_snapshot_unchanged():
+    monotonic = ToggleFailClock(1.0)
+    lifecycle = LifecycleController(
+        threading.Event(),
+        RecordingQueue(),
+        clock=monotonic,
+        wall_clock=lambda: 100.0,
+    )
+    before = lifecycle.snapshot()
+    monotonic.fail = True
+
+    with pytest.raises(RuntimeError, match="clock failed"):
+        lifecycle.mark_running()
+
+    assert lifecycle.snapshot() == before
+    monotonic.fail = False
+    monotonic.value = 2.0
+    lifecycle.mark_running()
+    assert lifecycle.state is LifecycleState.RUNNING
+
+
+def test_lifecycle_quiesce_clock_failure_releases_owner_and_retries_queue():
+    monotonic = ToggleFailClock(1.0)
+    queue = RetryCountQueue((5, 0))
+    stop_event = threading.Event()
+    lifecycle = LifecycleController(
+        stop_event,
+        queue,
+        clock=monotonic,
+        wall_clock=lambda: 100.0,
+    )
+    before = lifecycle.snapshot()
+    monotonic.fail = True
+
+    with pytest.raises(RuntimeError, match="clock failed"):
+        lifecycle.begin_quiesce("first")
+
+    assert lifecycle.snapshot() == before
+    assert not stop_event.is_set()
+    monotonic.fail = False
+    monotonic.value = 2.0
+    assert lifecycle.begin_quiesce("retry") == 5
+    assert lifecycle.snapshot().queue_cancel_affected == 5
+    assert lifecycle.snapshot().reason == "retry"
+    assert queue.calls == 2
+
+
+def test_lifecycle_forced_exit_clock_failure_does_not_publish_reason_or_state():
+    monotonic = ToggleFailClock(1.0)
+    lifecycle = LifecycleController(
+        threading.Event(),
+        RecordingQueue(),
+        clock=monotonic,
+        wall_clock=lambda: 100.0,
+    )
+    lifecycle.mark_running()
+    lifecycle.begin_quiesce("shutdown")
+    lifecycle.begin_draining()
+    before = lifecycle.snapshot()
+    monotonic.fail = True
+
+    with pytest.raises(RuntimeError, match="clock failed"):
+        lifecycle.mark_forced_exit("deadline")
+
+    assert lifecycle.snapshot() == before
+    monotonic.fail = False
+    monotonic.value = 2.0
+    lifecycle.mark_forced_exit("deadline")
+    assert lifecycle.state is LifecycleState.FORCED_EXIT
+    assert lifecycle.snapshot().reason == "deadline"
 
 
 def test_lifecycle_queue_failure_wakes_waiter_for_a_new_single_owner_attempt():

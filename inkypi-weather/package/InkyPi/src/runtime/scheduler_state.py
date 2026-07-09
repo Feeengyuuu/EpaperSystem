@@ -43,6 +43,7 @@ class LifecycleController:
         self._changed_at_wall = self._wall_clock()
         self._reason: str | None = None
         self._queue_cancel_affected = 0
+        self._pending_queue_cancel_affected = 0
         self._quiesce_in_progress = False
 
     @property
@@ -60,7 +61,14 @@ class LifecycleController:
             if self._state is LifecycleState.RUNNING:
                 return
             self._require_state_locked(LifecycleState.STARTING, "mark running")
-            self._publish_locked(LifecycleState.RUNNING)
+            changed_at_monotonic, changed_at_wall = self._sample_timestamps()
+            self._publish_prepared_locked(
+                LifecycleState.RUNNING,
+                changed_at_monotonic,
+                changed_at_wall,
+                reason=self._reason,
+                queue_cancel_affected=self._queue_cancel_affected,
+            )
 
     def begin_quiesce(self, reason: str | None = None) -> int:
         while True:
@@ -78,21 +86,33 @@ class LifecycleController:
                 self._condition.wait()
 
         try:
-            affected = self._refresh_queue.begin_quiesce()
+            affected = self._validated_affected_count(self._refresh_queue.begin_quiesce())
+            with self._condition:
+                self._pending_queue_cancel_affected = max(
+                    self._pending_queue_cancel_affected,
+                    affected,
+                )
+            changed_at_monotonic, changed_at_wall = self._sample_timestamps()
+            self._stop_event.set()
+
+            with self._condition:
+                queue_cancel_affected = self._pending_queue_cancel_affected
+                self._publish_prepared_locked(
+                    LifecycleState.QUIESCING,
+                    changed_at_monotonic,
+                    changed_at_wall,
+                    reason=reason,
+                    queue_cancel_affected=queue_cancel_affected,
+                )
+                self._pending_queue_cancel_affected = 0
+                self._quiesce_in_progress = False
+                self._condition.notify_all()
+                return queue_cancel_affected
         except BaseException:
             with self._condition:
                 self._quiesce_in_progress = False
                 self._condition.notify_all()
             raise
-
-        self._stop_event.set()
-        with self._condition:
-            self._queue_cancel_affected = int(affected)
-            self._reason = reason
-            self._publish_locked(LifecycleState.QUIESCING)
-            self._quiesce_in_progress = False
-            self._condition.notify_all()
-            return self._queue_cancel_affected
 
     def begin_draining(self) -> None:
         with self._condition:
@@ -100,7 +120,14 @@ class LifecycleController:
             if self._state is LifecycleState.DRAINING:
                 return
             self._require_state_locked(LifecycleState.QUIESCING, "begin draining")
-            self._publish_locked(LifecycleState.DRAINING)
+            changed_at_monotonic, changed_at_wall = self._sample_timestamps()
+            self._publish_prepared_locked(
+                LifecycleState.DRAINING,
+                changed_at_monotonic,
+                changed_at_wall,
+                reason=self._reason,
+                queue_cancel_affected=self._queue_cancel_affected,
+            )
 
     def mark_stopped(self) -> None:
         with self._condition:
@@ -108,7 +135,14 @@ class LifecycleController:
             if self._state is LifecycleState.STOPPED:
                 return
             self._require_state_locked(LifecycleState.DRAINING, "mark stopped")
-            self._publish_locked(LifecycleState.STOPPED)
+            changed_at_monotonic, changed_at_wall = self._sample_timestamps()
+            self._publish_prepared_locked(
+                LifecycleState.STOPPED,
+                changed_at_monotonic,
+                changed_at_wall,
+                reason=self._reason,
+                queue_cancel_affected=self._queue_cancel_affected,
+            )
 
     def mark_forced_exit(self, reason: str | None = None) -> None:
         with self._condition:
@@ -116,9 +150,14 @@ class LifecycleController:
             if self._state is LifecycleState.FORCED_EXIT:
                 return
             self._require_state_locked(LifecycleState.DRAINING, "mark forced exit")
-            if reason is not None:
-                self._reason = reason
-            self._publish_locked(LifecycleState.FORCED_EXIT)
+            changed_at_monotonic, changed_at_wall = self._sample_timestamps()
+            self._publish_prepared_locked(
+                LifecycleState.FORCED_EXIT,
+                changed_at_monotonic,
+                changed_at_wall,
+                reason=reason if reason is not None else self._reason,
+                queue_cancel_affected=self._queue_cancel_affected,
+            )
 
     def _snapshot_locked(self) -> LifecycleSnapshot:
         return LifecycleSnapshot(
@@ -129,10 +168,33 @@ class LifecycleController:
             queue_cancel_affected=self._queue_cancel_affected,
         )
 
-    def _publish_locked(self, state: LifecycleState) -> None:
+    def _publish_prepared_locked(
+        self,
+        state: LifecycleState,
+        changed_at_monotonic: float,
+        changed_at_wall: float,
+        *,
+        reason: str | None,
+        queue_cancel_affected: int,
+    ) -> None:
         self._state = state
-        self._changed_at_monotonic = self._clock()
-        self._changed_at_wall = self._wall_clock()
+        self._changed_at_monotonic = changed_at_monotonic
+        self._changed_at_wall = changed_at_wall
+        self._reason = reason
+        self._queue_cancel_affected = queue_cancel_affected
+
+    def _sample_timestamps(self) -> tuple[float, float]:
+        return self._clock(), self._wall_clock()
+
+    @staticmethod
+    def _validated_affected_count(value) -> int:
+        try:
+            affected = int(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("queue affected count must be a non-negative integer") from error
+        if affected < 0:
+            raise ValueError("queue affected count must be a non-negative integer")
+        return affected
 
     def _reject_during_quiesce_locked(self) -> None:
         if self._quiesce_in_progress:
