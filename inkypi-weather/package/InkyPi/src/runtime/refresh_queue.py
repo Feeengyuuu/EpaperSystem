@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 import threading
 import time
@@ -38,6 +38,7 @@ _MAX_TERMINAL_TTL_SECONDS = 1800.0
 class QueueEntry:
     command: RefreshCommand
     job: JobRecord
+    cancel_event: threading.Event = field(compare=False, repr=False)
 
 
 class RefreshQueueError(RuntimeError):
@@ -103,6 +104,7 @@ class RefreshQueue:
         self._running: set[str] = set()
         self._jobs: dict[str, JobRecord] = {}
         self._commands: dict[str, RefreshCommand] = {}
+        self._cancel_events: dict[str, threading.Event] = {}
         self._idempotency_targets: dict[str, str] = {}
         self._idempotency_requests: dict[str, RefreshCommand] = {}
         self._terminal_order: dict[str, tuple[float, int]] = {}
@@ -113,6 +115,7 @@ class RefreshQueue:
         self._superseded_total = 0
         self._fairness_priority: int | None = None
         self._high_priority_streak = 0
+        self._change_sequence = 0
 
     def submit(self, command: RefreshCommand) -> JobRecord:
         normalized = self._normalize_command(command)
@@ -164,7 +167,7 @@ class RefreshQueue:
                         coalesced.id,
                         now,
                     )
-                    self._condition.notify_all()
+                    self._publish_change_locked()
                     return replace(coalesced)
 
             if not self._has_active_idempotency_capacity_locked(normalized):
@@ -185,7 +188,7 @@ class RefreshQueue:
                         coalesced.id,
                         now,
                     )
-                    self._condition.notify_all()
+                    self._publish_change_locked()
                     return replace(coalesced)
 
             if self._at_capacity_locked(normalized):
@@ -200,10 +203,11 @@ class RefreshQueue:
             job = JobRecord.from_command(normalized, self._wall_clock())
             self._jobs[job.id] = job
             self._commands[job.id] = normalized
+            self._cancel_events[job.id] = threading.Event()
             self._sequence += 1
             self._pending[job.id] = self._sequence
             self._register_idempotency_locked(normalized, job.id)
-            self._condition.notify_all()
+            self._publish_change_locked()
             return replace(job)
 
     def take(self, timeout: float | None = None) -> QueueEntry | None:
@@ -224,7 +228,11 @@ class RefreshQueue:
                     job = self._jobs[job_id]
                     job.mark_running(self._wall_clock())
                     self._running.add(job_id)
-                    return QueueEntry(self._commands[job_id], replace(job))
+                    return QueueEntry(
+                        self._commands[job_id],
+                        replace(job),
+                        self._cancel_events[job_id],
+                    )
 
                 if not self._accepting:
                     return None
@@ -287,11 +295,13 @@ class RefreshQueue:
             job.completed_at = self._wall_clock()
             job.error_code = error_code
             job.error = error
+            if effective_status in {JobStatus.CANCELED, JobStatus.ABANDONED}:
+                self._cancel_events[job.id].set()
             self._running.discard(job.id)
             result = replace(job)
             self._record_terminal_locked(job.id, now)
             self._prune_terminal_locked(now)
-            self._condition.notify_all()
+            self._publish_change_locked()
             return result
 
     def get_job(self, job_id: str) -> JobRecord | None:
@@ -301,6 +311,19 @@ class RefreshQueue:
             self._expire_pending_locked(now)
             job = self._jobs.get(job_id)
             return replace(job) if job is not None else None
+
+    def get_entry(self, job_id: str) -> QueueEntry | None:
+        """Return immutable command metadata with a detached job snapshot."""
+        with self._condition:
+            now = self._clock()
+            self._prune_terminal_locked(now)
+            self._expire_pending_locked(now)
+            actual_job_id = self._resolve_actual_job_id_locked(job_id)
+            job = self._jobs.get(actual_job_id)
+            command = self._commands.get(actual_job_id)
+            if job is None or command is None:
+                return None
+            return QueueEntry(command, replace(job), self._cancel_events[actual_job_id])
 
     def cancel_instance(self, instance_uuid: str) -> int:
         with self._condition:
@@ -312,7 +335,7 @@ class RefreshQueue:
                 now,
             )
             self._prune_terminal_locked(now)
-            self._condition.notify_all()
+            self._publish_change_locked()
             return affected
 
     def begin_quiesce(self) -> int:
@@ -323,8 +346,38 @@ class RefreshQueue:
             self._accepting = False
             affected = self._cancel_matching_locked(lambda _command: True, now)
             self._prune_terminal_locked(now)
-            self._condition.notify_all()
+            self._publish_change_locked()
             return affected
+
+    def change_token(self) -> int:
+        """Return a cursor for the queue's non-lossy change notification."""
+        with self._condition:
+            return self._change_sequence
+
+    def wake(self) -> int:
+        """Publish a state-change wake without adding synthetic queue work."""
+        with self._condition:
+            self._publish_change_locked()
+            return self._change_sequence
+
+    def wait_for_change(self, token: int, timeout: float | None = None) -> int:
+        """Wait until the queue changes after ``token`` and return a new cursor."""
+        timed_out = False
+        wait_deadline = None
+        if timeout is not None:
+            timeout = max(0.0, float(timeout))
+            wait_deadline = self._clock() + timeout
+
+        with self._condition:
+            while self._change_sequence == token and not timed_out:
+                if wait_deadline is None:
+                    self._condition.wait()
+                    continue
+                remaining = wait_deadline - self._clock()
+                if remaining <= 0:
+                    break
+                timed_out = not self._condition.wait(remaining)
+            return self._change_sequence
 
     def snapshot(self) -> QueueSnapshot:
         with self._condition:
@@ -338,6 +391,10 @@ class RefreshQueue:
                 superseded_total=self._superseded_total,
                 accepting=self._accepting,
             )
+
+    def _publish_change_locked(self) -> None:
+        self._change_sequence += 1
+        self._condition.notify_all()
 
     @staticmethod
     def _normalize_command(command: RefreshCommand) -> RefreshCommand:
@@ -730,6 +787,7 @@ class RefreshQueue:
         old_job.status = JobStatus.SUPERSEDED
         old_job.completed_at = self._wall_clock()
         old_job.superseded_by = new_command.id
+        self._cancel_events[old_job_id].set()
         del self._pending[old_job_id]
         self._record_terminal_locked(old_job_id, now)
         self._superseded_total += 1
@@ -737,6 +795,7 @@ class RefreshQueue:
         new_job = JobRecord.from_command(new_command, self._wall_clock())
         self._jobs[new_job.id] = new_job
         self._commands[new_job.id] = new_command
+        self._cancel_events[new_job.id] = threading.Event()
         self._sequence += 1
         self._pending[new_job.id] = self._sequence
         for key, target_id in tuple(self._idempotency_targets.items()):
@@ -764,6 +823,8 @@ class RefreshQueue:
         job.error = error
         self._jobs[job.id] = job
         self._commands[job.id] = command
+        self._cancel_events[job.id] = threading.Event()
+        self._cancel_events[job.id].set()
         self._rejected_total += 1
         if (
             command.idempotency_key is not None
@@ -787,6 +848,8 @@ class RefreshQueue:
         job.error = "refresh command deadline expired"
         self._jobs[job.id] = job
         self._commands[job.id] = command
+        self._cancel_events[job.id] = threading.Event()
+        self._cancel_events[job.id].set()
         if (
             command.idempotency_key is not None
             and command.idempotency_key not in self._idempotency_targets
@@ -795,7 +858,7 @@ class RefreshQueue:
         result = replace(job)
         self._record_terminal_locked(job.id, now)
         self._prune_terminal_locked(now)
-        self._condition.notify_all()
+        self._publish_change_locked()
         return result
 
     def _select_pending_locked(self) -> str:
@@ -844,6 +907,7 @@ class RefreshQueue:
             job.completed_at = completed_at
             job.error_code = "deadline_expired"
             job.error = "refresh command deadline expired"
+            self._cancel_events[job_id].set()
             self._record_terminal_locked(job_id, now)
         self._prune_terminal_locked(now)
 
@@ -863,6 +927,7 @@ class RefreshQueue:
             job = self._jobs[job_id]
             job.status = JobStatus.CANCELED
             job.completed_at = completed_at
+            self._cancel_events[job_id].set()
             self._record_terminal_locked(job_id, now)
             affected += 1
 
@@ -873,6 +938,7 @@ class RefreshQueue:
                 and predicate(self._commands[job_id])
             ):
                 job.request_cancel(completed_at)
+                self._cancel_events[job_id].set()
                 affected += 1
         return affected
 
@@ -914,6 +980,7 @@ class RefreshQueue:
         self._running.discard(job_id)
         self._jobs.pop(job_id, None)
         self._commands.pop(job_id, None)
+        self._cancel_events.pop(job_id, None)
         for key, target_id in tuple(self._idempotency_targets.items()):
             if target_id == job_id:
                 del self._idempotency_targets[key]

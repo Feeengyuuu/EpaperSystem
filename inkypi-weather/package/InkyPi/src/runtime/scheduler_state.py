@@ -55,6 +55,14 @@ class LifecycleController:
         with self._condition:
             return self._state
 
+    @property
+    def stop_event(self):
+        return self._stop_event
+
+    @property
+    def refresh_queue(self):
+        return self._refresh_queue
+
     def snapshot(self) -> LifecycleSnapshot:
         with self._condition:
             return self._snapshot_locked()

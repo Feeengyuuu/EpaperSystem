@@ -10,6 +10,8 @@ from src.runtime.refresh_contracts import (
     CommandSource,
     JobStatus,
     RefreshCommand,
+    TaskCancelled,
+    TaskContext,
 )
 from src.runtime.refresh_queue import (
     DuplicateCommandConflictError,
@@ -113,6 +115,88 @@ def test_submit_normalizes_direct_payload_and_returns_detached_job_copies():
 
     entry.job.status = JobStatus.FAILED
     assert queue.get_job(direct.id).status is JobStatus.RUNNING
+
+
+def test_get_entry_returns_immutable_command_and_detached_job_copy():
+    queue = make_queue()
+    submitted_command = command(
+        source=CommandSource.MANUAL,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        payload={"refresh_type": "Manual Update", "settings": {"units": "metric"}},
+    )
+    submitted = queue.submit(submitted_command)
+
+    entry = queue.get_entry(submitted.id)
+
+    assert entry is not None
+    assert entry.command == submitted_command
+    assert entry.command is not submitted_command
+    assert entry.job.status is JobStatus.QUEUED
+    assert entry.command.payload["settings"]["units"] == "metric"
+    with pytest.raises(FrozenInstanceError):
+        entry.command = submitted_command
+    entry.job.status = JobStatus.FAILED
+    assert queue.get_entry(submitted.id).job.status is JobStatus.QUEUED
+    assert queue.get_entry("missing") is None
+
+
+def test_running_entry_cancel_event_observes_instance_cancellation():
+    fake_time = FakeTime()
+    queue = make_queue(fake_time)
+    queue.submit(command(instance_uuid="cancel-me"))
+    entry = queue.take(timeout=0)
+
+    assert entry is not None
+    assert not entry.cancel_event.is_set()
+    assert queue.cancel_instance("cancel-me") == 1
+    assert entry.cancel_event.is_set()
+    with pytest.raises(TaskCancelled, match="canceled"):
+        TaskContext(
+            entry.cancel_event,
+            deadline_monotonic=1000.0,
+            clock=fake_time.monotonic,
+        ).raise_if_cancelled()
+
+
+def test_running_entry_cancel_event_observes_queue_quiesce():
+    queue = make_queue()
+    queue.submit(command(instance_uuid="quiesce-me"))
+    entry = queue.take(timeout=0)
+
+    assert entry is not None
+    assert queue.begin_quiesce() == 1
+    assert entry.cancel_event.is_set()
+
+
+def test_wait_for_change_observes_direct_submit_that_precedes_wait():
+    queue = make_queue()
+    token = queue.change_token()
+
+    queue.submit(command(instance_uuid="direct-submit"))
+
+    assert queue.wait_for_change(token, timeout=0) != token
+
+
+def test_explicit_queue_wake_unblocks_change_waiter_without_work():
+    queue = make_queue()
+    token = queue.change_token()
+    entered = threading.Event()
+    observed = []
+
+    def wait_for_wake():
+        entered.set()
+        observed.append(queue.wait_for_change(token, timeout=1.0))
+
+    waiter = threading.Thread(target=wait_for_wake)
+    waiter.start()
+    assert entered.wait(1.0)
+
+    queue.wake()
+    waiter.join(timeout=1.0)
+
+    assert not waiter.is_alive()
+    assert observed and observed[0] != token
 
 
 def test_display_supersedes_cache_and_absorbs_newest_requirements():
@@ -1229,6 +1313,8 @@ def test_terminal_count_prunes_oldest_records_but_never_active_jobs():
     assert queue.cancel_instance("terminal-3") == 1
 
     assert queue.get_job(first.id) is None
+    assert first.id not in queue._cancel_events
+    assert set(queue._cancel_events) <= set(queue._jobs)
     assert queue.get_job(second.id).status is JobStatus.CANCELED
     assert queue.get_job(third.id).status is JobStatus.CANCELED
     assert queue.get_job(running.id).status is JobStatus.RUNNING

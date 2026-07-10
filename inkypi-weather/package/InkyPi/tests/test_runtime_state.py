@@ -369,6 +369,19 @@ class ToggleFailClock:
         return self.value
 
 
+def test_lifecycle_exposes_shared_event_and_queue_by_read_only_identity():
+    stop_event = threading.Event()
+    refresh_queue = RecordingQueue()
+    lifecycle = LifecycleController(stop_event, refresh_queue)
+
+    assert lifecycle.stop_event is stop_event
+    assert lifecycle.refresh_queue is refresh_queue
+    with pytest.raises(AttributeError):
+        lifecycle.stop_event = threading.Event()
+    with pytest.raises(AttributeError):
+        lifecycle.refresh_queue = RecordingQueue()
+
+
 def test_lifecycle_full_path_is_idempotent_and_preserves_metadata():
     fake_clock = FakeClock(monotonic=1.0, wall=100.0)
     stop_event = threading.Event()
