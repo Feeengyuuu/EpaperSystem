@@ -102,6 +102,38 @@ def test_load_env_key_accepts_telegram_account_aliases(monkeypatch):
     assert config.load_env_key("TELEGRAM_SESSION_PATH") == "/tmp/telegram_account"
 
 
+@pytest.mark.parametrize(
+    ("canonical", "alias"),
+    [
+        ("OPENAI_API_KEY", "OPEN_AI_SECRET"),
+        ("TICKETMASTER_API_KEY", "TICKETMASTER_CONSUMER_KEY"),
+        ("TELEGRAM_BOT_TOKEN", "TG_BOT_TOKEN"),
+        ("BAMBU_ACCESS_CODE", "BAMBU_LAB_ACCESS_CODE"),
+    ],
+)
+def test_load_env_key_resolves_every_declared_migration_alias(
+    monkeypatch,
+    canonical,
+    alias,
+):
+    monkeypatch.delenv(canonical, raising=False)
+    monkeypatch.setenv(alias, "legacy-value")
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [])
+
+    assert config.load_env_key(canonical) == "legacy-value"
+    assert config.load_env_key(alias) == "legacy-value"
+
+
+def test_canonical_secret_name_wins_when_legacy_alias_is_also_set(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "canonical-value")
+    monkeypatch.setenv("OPEN_AI_SECRET", "legacy-value")
+    config = Config.__new__(Config)
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [])
+
+    assert config.load_env_key("OPEN_AI_SECRET") == "canonical-value"
+
+
 def test_load_env_key_picks_up_modified_env_file(monkeypatch):
     env_path = cache_dir_for("mtime_change") / ".env"
     env_path.write_text("INKYPI_TEST_MTIME_KEY=old-value\n", encoding="utf-8")

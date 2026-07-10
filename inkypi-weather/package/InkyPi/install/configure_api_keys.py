@@ -18,12 +18,20 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from secret_schema import RUNTIME_DEFAULTS, SecretSchema, json_document
+
+
 REGISTRY_PATH = SCRIPT_DIR / "api_key_registry.json"
-DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
+EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
+DEFAULT_ENV_PATH = Path(os.environ.get("INKYPI_ENV_FILE", "/etc/inkypi/inkypi.env"))
 
 COMMON_KEYS = {
     "OPEN_WEATHER_MAP_SECRET",
-    "OPEN_AI_SECRET",
+    "OPENAI_API_KEY",
     "GROQ_API_KEY",
     "NASA_SECRET",
     "UNSPLASH_ACCESS_KEY",
@@ -32,13 +40,6 @@ COMMON_KEYS = {
     "COMIC_VINE_API_KEY",
     "RIOT_API_KEY",
 }
-
-EXAMPLE_RUNTIME_DEFAULTS = [
-    ("OPENWEATHER_ONECALL_DAILY_LIMIT", "900", "Weather safety throttle."),
-    ("OPENWEATHER_ONECALL_MIN_SECONDS", "1800", "Weather safety throttle."),
-    ("OPENWEATHER_AUX_MIN_SECONDS", "1800", "Weather safety throttle."),
-    ("OPENWEATHER_LOCATION_MIN_SECONDS", "86400", "Weather safety throttle."),
-]
 
 KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -54,12 +55,8 @@ def is_zh(lang: str) -> bool:
 
 
 def load_registry() -> list[dict]:
-    with REGISTRY_PATH.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    keys = payload.get("keys", [])
-    if not isinstance(keys, list):
-        raise ValueError(f"Invalid registry format in {REGISTRY_PATH}")
-    return keys
+    """Load validated metadata from the canonical SecretSchema."""
+    return SecretSchema.load().public_registry()
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -144,13 +141,13 @@ def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
         lines.append("")
 
     lines.append("# Non-secret runtime defaults")
-    for key, default, note in EXAMPLE_RUNTIME_DEFAULTS:
+    for key, default, note in RUNTIME_DEFAULTS:
         value = values.get(key, default)
         lines.append(f"# {note}")
         lines.append(f"{key}={quote_env_value(value)}")
     lines.append("")
 
-    extras = sorted(key for key in values if key not in known and key not in {item[0] for item in EXAMPLE_RUNTIME_DEFAULTS})
+    extras = sorted(key for key in values if key not in known and key not in {item[0] for item in RUNTIME_DEFAULTS})
     if extras:
         lines.append("# Existing custom variables preserved by configure_api_keys.py")
         for key in extras:
@@ -165,9 +162,19 @@ def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
         pass
 
 
-def write_example(path: Path, registry: list[dict]) -> None:
-    placeholder_values: dict[str, str] = {}
-    write_env(path, placeholder_values, registry)
+def write_example(path: Path, schema: SecretSchema) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(schema.env_example(), encoding="utf-8", newline="\n")
+
+
+def generate_artifacts(schema: SecretSchema) -> None:
+    """Regenerate both compatibility artifacts deterministically."""
+    REGISTRY_PATH.write_text(
+        json_document(schema.registry_document()),
+        encoding="utf-8",
+        newline="\n",
+    )
+    write_example(EXAMPLE_PATH, schema)
 
 
 def print_registry(registry: list[dict], common_only: bool = False, lang: str = "en") -> None:
@@ -282,6 +289,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--common", action="store_true", help="With --list, show only common first-install keys.")
     parser.add_argument("--check", action="store_true", help="Show which optional key groups are configured.")
     parser.add_argument("--write-example", type=Path, help="Write an example .env file to this path.")
+    parser.add_argument(
+        "--generate-artifacts",
+        action="store_true",
+        help="Regenerate install/api_key_registry.json and .env.example from SecretSchema.",
+    )
     parser.add_argument("--lang", choices=("en", "zh-CN"), help="Output language. Defaults to INKYPI_LANG or system locale.")
     return parser
 
@@ -289,8 +301,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    registry = load_registry()
+    schema = SecretSchema.load()
+    registry = schema.public_registry()
     lang = detect_language(args.lang)
+
+    if args.generate_artifacts:
+        generate_artifacts(schema)
+        print(f"Generated {REGISTRY_PATH} and {EXAMPLE_PATH}")
+        return 0
 
     if args.list:
         print_registry(registry, common_only=args.common, lang=lang)
@@ -300,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         return print_check(registry, args.env_file, lang=lang)
 
     if args.write_example:
-        write_example(args.write_example, registry)
+        write_example(args.write_example, schema)
         print(f"{'已写入' if is_zh(lang) else 'Wrote'} {args.write_example}")
         return 0
 

@@ -1,287 +1,614 @@
 {
   "version": 1,
-  "updated": "2026-06-05",
-  "description": "Optional API keys used by InkyPi plugins. Missing keys should not block installation; they only disable or degrade the matching plugin features.",
+  "description": "Optional credentials and secret paths used by InkyPi plugins. Missing values never block installation; they only disable or degrade the matching plugin features.",
   "keys": [
     {
-      "key": "OPEN_AI_SECRET",
+      "key": "OPENAI_API_KEY",
       "service": "OpenAI",
-      "features": ["AI Image", "AI Text", "Daily AI News", "Epaper Pet", "AI Image Multiverse"],
+      "features": [
+        "AI Image",
+        "AI Text",
+        "Daily AI News",
+        "Epaper Pet",
+        "AI Image Multiverse"
+      ],
       "required": false,
-      "aliases": ["OPENAI_API_KEY"],
+      "aliases": [
+        "OPEN_AI_SECRET"
+      ],
       "signup_url": "https://platform.openai.com/api-keys",
-      "docs_url": "https://platform.openai.com/docs/quickstart",
-      "notes": "OpenAI account billing may be required. Keep this value secret."
+      "notes": "OpenAI account billing may be required.",
+      "value_type": "secret"
     },
     {
       "key": "GROQ_API_KEY",
       "service": "Groq",
-      "features": ["Daily AI News", "Epaper Pet", "AI Image Multiverse"],
+      "features": [
+        "Daily AI News",
+        "Epaper Pet",
+        "AI Image Multiverse"
+      ],
       "required": false,
-      "aliases": ["Groq_V2", "GROQ_KEY"],
+      "aliases": [
+        "Groq_V2",
+        "GROQ_KEY"
+      ],
       "signup_url": "https://console.groq.com/keys",
-      "docs_url": "https://console.groq.com/docs/quickstart",
-      "notes": "Used by Groq-backed LLM paths."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "NANO_BANANA_KEY",
       "service": "Google AI Studio / Gemini",
-      "features": ["AI Image Multiverse"],
+      "features": [
+        "AI Image Multiverse"
+      ],
       "required": false,
-      "aliases": ["GOOGLE_AI_API_KEY", "GEMINI_API_KEY"],
+      "aliases": [
+        "GOOGLE_AI_API_KEY",
+        "GEMINI_API_KEY"
+      ],
       "signup_url": "https://aistudio.google.com/app/apikey",
-      "docs_url": "https://ai.google.dev/gemini-api/docs/api-key",
-      "notes": "Used by Google Gemini image/text provider paths."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "AI_HORDE_KEY",
       "service": "AI Horde",
-      "features": ["AI Image Multiverse"],
+      "features": [
+        "AI Image Multiverse"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://aihorde.net/register",
-      "docs_url": "https://aihorde.net/api/",
-      "notes": "Optional community image generation provider."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "OPEN_WEATHER_MAP_SECRET",
       "service": "OpenWeather",
-      "features": ["Weather", "Mini Weather"],
+      "features": [
+        "Weather",
+        "Mini Weather"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://home.openweathermap.org/api_keys",
-      "docs_url": "https://openweathermap.org/api",
-      "notes": "One Call API 3.0 may require enabling a subscription even for the free request tier."
+      "notes": "One Call API 3.0 may require enabling a subscription.",
+      "value_type": "secret"
     },
     {
       "key": "NASA_SECRET",
       "service": "NASA Open APIs",
-      "features": ["Astronomy Picture of the Day"],
+      "features": [
+        "Astronomy Picture of the Day"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://api.nasa.gov/",
-      "docs_url": "https://api.nasa.gov/",
-      "notes": "NASA also provides a low-rate DEMO_KEY, but a personal key is recommended."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "UNSPLASH_ACCESS_KEY",
       "service": "Unsplash",
-      "features": ["Unsplash"],
+      "features": [
+        "Unsplash"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://unsplash.com/developers",
-      "docs_url": "https://unsplash.com/documentation",
-      "notes": "Create an Unsplash developer app and copy the Access Key."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "GITHUB_SECRET",
       "service": "GitHub",
-      "features": ["GitHub Contributions", "GitHub Sponsors"],
+      "features": [
+        "GitHub Contributions",
+        "GitHub Sponsors"
+      ],
       "required": false,
-      "aliases": ["GITHUB_TOKEN"],
+      "aliases": [
+        "GITHUB_TOKEN"
+      ],
       "signup_url": "https://github.com/settings/tokens",
-      "docs_url": "https://docs.github.com/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
-      "notes": "A classic token with read-only scopes is enough for public profile data."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "IMMICH_KEY",
       "service": "Immich",
-      "features": ["Image Album"],
+      "features": [
+        "Image Album"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://immich.app/docs/features/command-line-interface/",
-      "docs_url": "https://immich.app/docs/features/command-line-interface/",
-      "notes": "Create the key in your own Immich instance under Account Settings > API Keys."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "STEAM_API_KEY",
       "service": "Steam Web API",
-      "features": ["Steam Profile Dashboard"],
+      "features": [
+        "Steam Profile Dashboard"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://steamcommunity.com/dev/apikey",
-      "docs_url": "https://steamcommunity.com/dev",
-      "notes": "Requires a Steam account."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "COMIC_VINE_API_KEY",
       "service": "Comic Vine",
-      "features": ["GCD Comic Covers"],
+      "features": [
+        "GCD Comic Covers"
+      ],
       "required": false,
-      "aliases": ["COMICVINE_API_KEY", "COMIC_VINE_KEY", "COMICVINE_KEY", "COMICVINE", "COMIC_VINE"],
+      "aliases": [
+        "COMICVINE_API_KEY",
+        "COMIC_VINE_KEY",
+        "COMICVINE_KEY",
+        "COMICVINE",
+        "COMIC_VINE",
+        "Comic_Vine_Key"
+      ],
       "signup_url": "https://comicvine.gamespot.com/api/",
-      "docs_url": "https://comicvine.gamespot.com/api/documentation",
-      "notes": "Used as a fallback/metadata provider for comic cover lookup."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "RIOT_API_KEY",
       "service": "Riot Developer Portal",
-      "features": ["League of Legends Info"],
+      "features": [
+        "League of Legends Info"
+      ],
       "required": false,
-      "aliases": ["Riot_KEY", "RIOT_KEY"],
+      "aliases": [
+        "Riot_KEY",
+        "RIOT_KEY"
+      ],
       "signup_url": "https://developer.riotgames.com/",
-      "docs_url": "https://developer.riotgames.com/docs/lol",
-      "notes": "Development keys expire; use a production key for unattended displays."
+      "notes": "Development keys expire; use a production key for unattended displays.",
+      "value_type": "secret"
     },
     {
       "key": "OPENDOTA_API_KEY",
       "service": "OpenDota",
-      "features": ["Dota Profile Dashboard"],
+      "features": [
+        "Dota Profile Dashboard"
+      ],
       "required": false,
-      "aliases": ["OPENDOTA_KEY"],
+      "aliases": [
+        "OPENDOTA_KEY",
+        "OpenDota_Key"
+      ],
       "signup_url": "https://www.opendota.com/api-keys",
-      "docs_url": "https://docs.opendota.com/",
-      "notes": "Optional; public OpenDota calls may still work at lower limits."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "FLIGHTAWARE_API_KEY",
       "service": "FlightAware AeroAPI",
-      "features": ["Flight Radar"],
+      "features": [
+        "Flight Radar"
+      ],
       "required": false,
       "aliases": [],
       "signup_url": "https://flightaware.com/aeroapi/portal/",
-      "docs_url": "https://flightaware.com/aeroapi/portal/documentation",
-      "notes": "Optional paid/limited provider for flight positions."
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "OPENSKY_USERNAME",
+      "service": "OpenSky Network username",
+      "features": [
+        "Flight Radar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://opensky-network.org/",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "OPENSKY_PASSWORD",
+      "service": "OpenSky Network password",
+      "features": [
+        "Flight Radar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://opensky-network.org/",
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "RAPIDAPI_KEY",
       "service": "RapidAPI",
-      "features": ["Flight Radar", "Daily Knowledge"],
+      "features": [
+        "Flight Radar",
+        "Daily Knowledge"
+      ],
       "required": false,
-      "aliases": ["X_RAPIDAPI_KEY", "WORLD_FUN_FACTS_API_KEY", "WORLD_FUN_FACTS_KEY", "Fun_Fact", "FUN_FACT"],
+      "aliases": [
+        "X_RAPIDAPI_KEY",
+        "WORLD_FUN_FACTS_API_KEY",
+        "WORLD_FUN_FACTS_KEY",
+        "Fun_Fact",
+        "FUN_FACT"
+      ],
       "signup_url": "https://rapidapi.com/hub",
-      "docs_url": "https://docs.rapidapi.com/",
-      "notes": "Used by optional RapidAPI-backed providers. Subscribe to the specific API used by a plugin."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "GOOGLE_MAPS_API_KEY",
       "service": "Google Maps Platform",
-      "features": ["Flight Radar map background"],
+      "features": [
+        "Flight Radar map background"
+      ],
       "required": false,
-      "aliases": ["Google_KEY", "GOOGLE_KEY"],
+      "aliases": [
+        "Google_KEY",
+        "GOOGLE_KEY"
+      ],
       "signup_url": "https://console.cloud.google.com/google/maps-apis/credentials",
-      "docs_url": "https://developers.google.com/maps/documentation/static-maps/get-api-key",
-      "notes": "Enable Static Maps API in the same Google Cloud project."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "EUROPEANA_API_KEY",
       "service": "Europeana",
-      "features": ["Daily Art"],
+      "features": [
+        "Daily Art"
+      ],
       "required": false,
-      "aliases": ["EUROPEANA_KEY", "EUROPEANA_WSKEY", "EUROPEANA_APIKEY", "EUROPEANA_PERSONAL_API_KEY", "Europeana_API_Key", "Europeana_Key", "EuropeanaApiKey", "EUROPEANA"],
+      "aliases": [
+        "EUROPEANA_KEY",
+        "EUROPEANA_WSKEY",
+        "EUROPEANA_APIKEY",
+        "EUROPEANA_PERSONAL_API_KEY",
+        "Europeana_API_Key",
+        "Europeana_Key",
+        "EuropeanaApiKey",
+        "EUROPEANA"
+      ],
       "signup_url": "https://pro.europeana.eu/page/get-api",
-      "docs_url": "https://pro.europeana.eu/page/apis",
-      "notes": "Optional keyed art source."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "HARVARD_ART_MUSEUMS_API_KEY",
       "service": "Harvard Art Museums",
-      "features": ["Daily Art"],
+      "features": [
+        "Daily Art"
+      ],
       "required": false,
-      "aliases": ["HARVARD_ART_MUSEUM_API_KEY", "HARVARD_ART_MUSEUMS_KEY", "HARVARD_ART_API_KEY", "HARVARD_API_KEY", "HAM_API_KEY", "Harvard_Art_Museums_Key", "Harvard_Art_Museum_Key", "Harvard_Art_Key", "HARVARD"],
+      "aliases": [
+        "HARVARD_ART_MUSEUM_API_KEY",
+        "HARVARD_ART_MUSEUMS_KEY",
+        "HARVARD_ART_MUSEUM_KEY",
+        "HARVARD_ART_API_KEY",
+        "HARVARD_API_KEY",
+        "HAM_API_KEY",
+        "Harvard_Art_Museums_Key",
+        "Harvard_Art_Museum_Key",
+        "Harvard_Art_Museums_API_Key",
+        "Harvard_Art_Museum_API_Key",
+        "Harvard_Art_Key",
+        "Harverd_Key",
+        "HARVARD"
+      ],
       "signup_url": "https://harvardartmuseums.org/collections/api",
-      "docs_url": "https://github.com/harvardartmuseums/api-docs",
-      "notes": "Optional keyed art source."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "TMDB_BEARER_TOKEN",
       "service": "The Movie Database",
-      "features": ["Box Office Top Movies"],
+      "features": [
+        "Box Office Top Movies"
+      ],
       "required": false,
-      "aliases": ["TMDB_READ_ACCESS_TOKEN", "TMDB_ACCESS_TOKEN", "TMDB_Access_Token", "THEMOVIEDB_BEARER_TOKEN", "TMDB_API_KEY", "THEMOVIEDB_API_KEY"],
+      "aliases": [
+        "TMDB_READ_ACCESS_TOKEN",
+        "TMDB_ACCESS_TOKEN",
+        "TMDB_Access_Token",
+        "THEMOVIEDB_BEARER_TOKEN",
+        "TMDB_API_KEY",
+        "THEMOVIEDB_API_KEY"
+      ],
       "signup_url": "https://www.themoviedb.org/settings/api",
-      "docs_url": "https://developer.themoviedb.org/docs/getting-started",
-      "notes": "TMDB v4 read access token is preferred; v3 API key is also accepted by the plugin."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "MASSIVE_API_KEY",
       "service": "Massive",
-      "features": ["Stock Tracker", "Daily AI News market context"],
+      "features": [
+        "Stock Tracker",
+        "Daily AI News market context"
+      ],
       "required": false,
-      "aliases": ["MASSIVE_ECONOMIC_KEY", "MASSIVE_ECNOMIC_KEY", "Massive_Ecnomic_Key"],
+      "aliases": [
+        "MASSIVE_ECONOMIC_KEY",
+        "MASSIVE_ECNOMIC_KEY",
+        "Massive_Ecnomic_Key"
+      ],
       "signup_url": "https://massive.com/",
-      "docs_url": "https://massive.com/docs/",
-      "notes": "Optional market data provider. Stock Tracker can fall back to yfinance when this is missing."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "FOOTBALL_DATA_API_KEY",
       "service": "football-data.org",
-      "features": ["Sports Dashboard"],
+      "features": [
+        "Sports Dashboard"
+      ],
       "required": false,
-      "aliases": ["FOOTBALL_DATA", "FOOTBALL_DATA_KEY", "FOOTBALL_DATA_TOKEN", "FOOTBALLDATA_KEY", "FOOTBALLDATA_TOKEN"],
+      "aliases": [
+        "FOOTBALL_DATA",
+        "FOOTBALL_DATA_KEY",
+        "FOOTBALL_DATA_TOKEN",
+        "FOOTBALLDATA_KEY",
+        "FOOTBALLDATA_TOKEN"
+      ],
       "signup_url": "https://www.football-data.org/client/register",
-      "docs_url": "https://www.football-data.org/documentation/quickstart",
-      "notes": "Optional World Cup schedule data source."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "API_SPORTS_KEY",
       "service": "API-SPORTS / API-Football",
-      "features": ["Sports Dashboard"],
+      "features": [
+        "Sports Dashboard"
+      ],
       "required": false,
-      "aliases": ["APISPORTS_KEY", "API_FOOTBALL_KEY", "X_APISPORTS_KEY", "WORLD_CUP_API_KEY"],
+      "aliases": [
+        "APISPORTS_KEY",
+        "API_FOOTBALL_KEY",
+        "API_FPPTBALL_KEY",
+        "X_APISPORTS_KEY",
+        "WORLD_CUP_API_KEY"
+      ],
       "signup_url": "https://dashboard.api-football.com/register",
-      "docs_url": "https://www.api-football.com/documentation-v3",
-      "notes": "Optional World Cup fixture provider."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "THE_ODDS_API_KEY",
       "service": "The Odds API",
-      "features": ["Sports Dashboard odds"],
+      "features": [
+        "Sports Dashboard odds"
+      ],
       "required": false,
-      "aliases": ["ODDS_API_KEY", "WORLD_CUP_ODDS_API_KEY"],
+      "aliases": [
+        "ODDS_API_KEY",
+        "WORLD_CUP_ODDS_API_KEY",
+        "NBA_THE_ODDS_API_KEY",
+        "NBA_ODDS_API_KEY"
+      ],
       "signup_url": "https://the-odds-api.com/#get-access",
-      "docs_url": "https://the-odds-api.com/liveapi/guides/v4/",
-      "notes": "Optional odds provider."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "ODDS_API_IO_KEY",
       "service": "Odds-API.io",
-      "features": ["Sports Dashboard odds"],
+      "features": [
+        "Sports Dashboard odds"
+      ],
       "required": false,
-      "aliases": ["Odds_API_IO_KEY", "ODDSAPI_IO_KEY", "WORLD_CUP_ODDS_API_IO_KEY"],
+      "aliases": [
+        "Odds_API_IO_KEY",
+        "ODDSAPI_IO_KEY",
+        "WORLD_CUP_ODDS_API_IO_KEY",
+        "NBA_ODDS_API_IO_KEY",
+        "NBA_ODDSAPI_IO_KEY"
+      ],
       "signup_url": "https://odds-api.io/",
-      "docs_url": "https://docs.odds-api.io/",
-      "notes": "Optional odds provider, including LPL odds mode."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "PIXIV_PHPSESSID",
       "service": "Pixiv",
-      "features": ["Pixiv R-18 Ranking"],
+      "features": [
+        "Pixiv R-18 Ranking"
+      ],
       "required": false,
-      "aliases": ["PIXIV_COOKIE", "PIXIV_SESSION"],
+      "aliases": [
+        "PIXIV_COOKIE",
+        "PIXIV_SESSION"
+      ],
       "signup_url": "https://www.pixiv.net/settings/viewing",
-      "docs_url": "https://www.pixiv.net/",
-      "notes": "Browser PHPSESSID cookie from a logged-in pixiv.net session with R-18 display enabled. Only needed for R-18 ranking modes; SFW rankings work without it. Keep this value secret."
+      "notes": "Use the PHPSESSID cookie from a logged-in Pixiv session.",
+      "value_type": "secret"
     },
     {
       "key": "BLIZZARD_CLIENT_ID",
       "service": "Battle.net Developer Portal",
-      "features": ["WoW Profile Dashboard"],
+      "features": [
+        "WoW Profile Dashboard"
+      ],
       "required": false,
-      "aliases": ["BNET_CLIENT_ID", "BATTLE_NET_CLIENT_ID", "WOW_CLIENT_ID", "WOW_KEY", "WoW_Key"],
+      "aliases": [
+        "BNET_CLIENT_ID",
+        "BATTLE_NET_CLIENT_ID",
+        "WOW_CLIENT_ID",
+        "WOW_KEY",
+        "WoW_Key"
+      ],
       "signup_url": "https://develop.battle.net/access/clients",
-      "docs_url": "https://develop.battle.net/documentation/guides/getting-started",
-      "notes": "Use with BLIZZARD_CLIENT_SECRET for public WoW profile data."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "BLIZZARD_CLIENT_SECRET",
       "service": "Battle.net Developer Portal",
-      "features": ["WoW Profile Dashboard"],
+      "features": [
+        "WoW Profile Dashboard"
+      ],
       "required": false,
-      "aliases": ["BNET_CLIENT_SECRET", "BATTLE_NET_CLIENT_SECRET", "WOW_CLIENT_SECRET"],
+      "aliases": [
+        "BNET_CLIENT_SECRET",
+        "BATTLE_NET_CLIENT_SECRET",
+        "WOW_CLIENT_SECRET"
+      ],
       "signup_url": "https://develop.battle.net/access/clients",
-      "docs_url": "https://develop.battle.net/documentation/guides/getting-started",
-      "notes": "Use with BLIZZARD_CLIENT_ID for public WoW profile data."
+      "notes": "",
+      "value_type": "secret"
     },
     {
       "key": "BLIZZARD_USER_ACCESS_TOKEN",
       "service": "Battle.net OAuth",
-      "features": ["WoW Profile Dashboard account mode"],
+      "features": [
+        "WoW Profile Dashboard account mode"
+      ],
       "required": false,
-      "aliases": ["BNET_USER_ACCESS_TOKEN", "BATTLE_NET_USER_ACCESS_TOKEN", "WOW_PROFILE_ACCESS_TOKEN", "BLIZZARD_ACCESS_TOKEN", "BNET_ACCESS_TOKEN", "BATTLE_NET_ACCESS_TOKEN", "WOW_ACCESS_TOKEN"],
+      "aliases": [
+        "BNET_USER_ACCESS_TOKEN",
+        "BATTLE_NET_USER_ACCESS_TOKEN",
+        "WOW_PROFILE_ACCESS_TOKEN",
+        "BLIZZARD_ACCESS_TOKEN",
+        "BNET_ACCESS_TOKEN",
+        "BATTLE_NET_ACCESS_TOKEN",
+        "WOW_ACCESS_TOKEN"
+      ],
       "signup_url": "https://develop.battle.net/documentation/guides/using-oauth",
-      "docs_url": "https://develop.battle.net/documentation/guides/using-oauth",
-      "notes": "Advanced/temporary OAuth token path; most users should start with client credentials."
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TICKETMASTER_API_KEY",
+      "service": "Ticketmaster Discovery API",
+      "features": [
+        "Ticketmaster events"
+      ],
+      "required": false,
+      "aliases": [
+        "TICKETMASTER_CONSUMER_KEY"
+      ],
+      "signup_url": "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TELEGRAM_BOT_TOKEN",
+      "service": "Telegram Bot API",
+      "features": [
+        "Telegram Digest bot mode"
+      ],
+      "required": false,
+      "aliases": [
+        "TG_BOT_TOKEN",
+        "TELEGRAM_TOKEN",
+        "TELEGRAM_DIGEST_BOT_TOKEN"
+      ],
+      "signup_url": "https://core.telegram.org/bots/tutorial",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TELEGRAM_API_ID",
+      "service": "Telegram API ID",
+      "features": [
+        "Telegram Digest account mode"
+      ],
+      "required": false,
+      "aliases": [
+        "TG_API_ID",
+        "TELEGRAM_APP_ID",
+        "TELEGRAM_DIGEST_API_ID"
+      ],
+      "signup_url": "https://my.telegram.org/apps",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TELEGRAM_API_HASH",
+      "service": "Telegram API hash",
+      "features": [
+        "Telegram Digest account mode"
+      ],
+      "required": false,
+      "aliases": [
+        "TG_API_HASH",
+        "TELEGRAM_APP_HASH",
+        "TELEGRAM_DIGEST_API_HASH"
+      ],
+      "signup_url": "https://my.telegram.org/apps",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TELEGRAM_SESSION_PATH",
+      "service": "Telegram session file",
+      "features": [
+        "Telegram Digest account mode"
+      ],
+      "required": false,
+      "aliases": [
+        "TG_SESSION_PATH",
+        "TELEGRAM_ACCOUNT_SESSION",
+        "TELEGRAM_DIGEST_SESSION_PATH"
+      ],
+      "signup_url": "https://docs.telethon.dev/en/stable/concepts/sessions.html",
+      "notes": "",
+      "value_type": "path"
+    },
+    {
+      "key": "BAMBU_ACCESS_CODE",
+      "service": "Bambu Lab printer",
+      "features": [
+        "Bambu Monitor"
+      ],
+      "required": false,
+      "aliases": [
+        "BAMBU_LAB_ACCESS_CODE"
+      ],
+      "signup_url": "https://wiki.bambulab.com/en/general/find-sn",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "REDDIT_CLIENT_ID",
+      "service": "Reddit OAuth client ID",
+      "features": [
+        "Reddit Rule34 Hot"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://www.reddit.com/prefs/apps",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "REDDIT_CLIENT_SECRET",
+      "service": "Reddit OAuth client secret",
+      "features": [
+        "Reddit Rule34 Hot"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://www.reddit.com/prefs/apps",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "REDDIT_REFRESH_TOKEN",
+      "service": "Reddit OAuth refresh token",
+      "features": [
+        "Reddit Rule34 Hot"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://github.com/reddit-archive/reddit/wiki/OAuth2",
+      "notes": "",
+      "value_type": "secret"
     }
   ]
 }

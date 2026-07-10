@@ -8,12 +8,14 @@ from dotenv import load_dotenv
 from config_store import ConfigConflictError, ConfigStore, ConfigStoreError
 from model import PlaylistManager, RefreshInfo
 from plugins.plugin_manifest import CapabilityCache, PluginManifest
+from secret_schema import SecretSchema
 
 logger = logging.getLogger(__name__)
 
 _MODEL_CONFIG_FIELDS = ("playlist_config", "refresh_info")
 _MISSING_CONFIG_VALUE = object()
 _UNSET_MODEL_BASELINE = object()
+_SECRET_SCHEMA = SecretSchema.load()
 
 
 class ConfigLoadError(ConfigStoreError):
@@ -28,20 +30,6 @@ def _detach_json(value):
     if isinstance(value, (tuple, list)):
         return [_detach_json(item) for item in value]
     return value
-
-
-ENV_KEY_ALIASES = {
-    "GROQ_API_KEY": ("Groq_V2", "GROQ_KEY"),
-    "BLIZZARD_CLIENT_ID": ("BNET_CLIENT_ID", "BATTLE_NET_CLIENT_ID", "WOW_CLIENT_ID", "WOW_KEY", "WoW_Key"),
-    "BLIZZARD_CLIENT_SECRET": ("BNET_CLIENT_SECRET", "BATTLE_NET_CLIENT_SECRET", "WOW_CLIENT_SECRET"),
-    "BLIZZARD_ACCESS_TOKEN": ("BNET_ACCESS_TOKEN", "BATTLE_NET_ACCESS_TOKEN", "WOW_ACCESS_TOKEN"),
-    "BLIZZARD_USER_ACCESS_TOKEN": ("BNET_USER_ACCESS_TOKEN", "BATTLE_NET_USER_ACCESS_TOKEN", "WOW_PROFILE_ACCESS_TOKEN"),
-    "PIXIV_PHPSESSID": ("PIXIV_COOKIE", "PIXIV_SESSION"),
-    "TELEGRAM_BOT_TOKEN": ("TG_BOT_TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_DIGEST_BOT_TOKEN"),
-    "TELEGRAM_API_ID": ("TG_API_ID", "TELEGRAM_APP_ID", "TELEGRAM_DIGEST_API_ID"),
-    "TELEGRAM_API_HASH": ("TG_API_HASH", "TELEGRAM_APP_HASH", "TELEGRAM_DIGEST_API_HASH"),
-    "TELEGRAM_SESSION_PATH": ("TG_SESSION_PATH", "TELEGRAM_ACCOUNT_SESSION", "TELEGRAM_DIGEST_SESSION_PATH"),
-}
 
 
 class Config:
@@ -333,7 +321,10 @@ class Config:
 
     def _env_key_candidates(self, key):
         """Returns accepted names for a logical environment key."""
-        return (key, *ENV_KEY_ALIASES.get(key, ()))
+        try:
+            return _SECRET_SCHEMA.resolve_names(key)
+        except KeyError:
+            return (key,)
 
     def _env_file_candidates(self):
         runtime_paths = getattr(self, "runtime_paths", None)

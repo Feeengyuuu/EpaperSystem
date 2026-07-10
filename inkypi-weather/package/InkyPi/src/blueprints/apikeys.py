@@ -1,13 +1,14 @@
 from flask import Blueprint, request, jsonify, current_app, has_app_context, render_template
 from dotenv import dotenv_values
-import json
 import os
 import re
 import tempfile
 import logging
+from secret_schema import SecretSchema
 
 logger = logging.getLogger(__name__)
 apikeys_bp = Blueprint("apikeys", __name__)
+_SECRET_SCHEMA = SecretSchema.load()
 
 # Path to .env file
 def get_env_path():
@@ -21,19 +22,8 @@ def get_env_path():
 
 
 def get_api_key_registry():
-    """Load optional API key metadata used by the installer and web UI."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    registry_path = os.path.join(base_dir, "install", "api_key_registry.json")
-    try:
-        with open(registry_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        keys = payload.get("keys", [])
-        if not isinstance(keys, list):
-            return []
-        return keys
-    except Exception as e:
-        logger.warning("Could not load API key registry: %s", e)
-        return []
+    """Return validated API key metadata from the canonical SecretSchema."""
+    return _SECRET_SCHEMA.public_registry()
 
 
 def parse_env_file(filepath):
