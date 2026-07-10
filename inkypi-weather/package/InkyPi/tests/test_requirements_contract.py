@@ -96,6 +96,16 @@ def test_ci_actions_are_sha_pinned_and_jobs_are_bounded():
     assert (REPO_ROOT / "tools/run_simulated_soak.py").is_file()
 
 
+def test_ci_whitespace_gate_checks_committed_changes():
+    workflow = (REPO_ROOT / ".github/workflows/test.yml").read_text(encoding="utf-8")
+
+    assert "fetch-depth: 0" in workflow
+    assert "EVENT_BEFORE: ${{ github.event.before }}" in workflow
+    assert 'GITHUB_BASE_REF' in workflow
+    assert 'git diff --check "$base" HEAD' in workflow
+    assert "run: git diff --check\n" not in workflow
+
+
 def test_release_scripts_and_services_are_forced_to_lf():
     attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "*.service text eol=lf" in attributes
