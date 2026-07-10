@@ -1938,10 +1938,14 @@ def test_refresh_due_plugin_instances_limits_background_pass(monkeypatch):
     assert device_config.write_count == 1
 
 
-def test_failed_due_cache_refresh_marks_attempt_to_avoid_immediate_retry(monkeypatch):
+def test_failed_due_cache_refresh_records_failure_without_advancing_success(monkeypatch):
     tmp_path = make_test_dir("due-cache-failure-cooldown")
     device_config = FakeDeviceConfig(tmp_path)
-    task = RefreshTask(device_config, display_manager=None)
+    task = RefreshTask(
+        device_config,
+        display_manager=None,
+        retry_registry=RetryRegistry(jitter=lambda delay: delay),
+    )
     playlist = Playlist(
         "DailyDoseOfDay",
         "00:00",
@@ -1957,10 +1961,13 @@ def test_failed_due_cache_refresh_marks_attempt_to_avoid_immediate_retry(monkeyp
         ],
     )
 
-    monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
-        lambda config: FailingPlugin(),
-    )
+    attempts = []
+
+    def failing_plugin(_config):
+        attempts.append("attempt")
+        return FailingPlugin()
+
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", failing_plugin)
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -1968,9 +1975,30 @@ def test_failed_due_cache_refresh_marks_attempt_to_avoid_immediate_retry(monkeyp
         max_updates=1,
     )
 
-    assert playlist.find_plugin("bad", "Bad Plugin").latest_refresh_time == "2026-05-26T07:05:00+00:00"
+    instance = playlist.find_plugin("bad", "Bad Plugin")
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+    assert state.last_success_at is None
+    assert state.last_failure_at == "2026-05-26T07:05:00+00:00"
+    assert state.next_retry_at == "2026-05-26T07:05:30+00:00"
     assert not (tmp_path / "bad_Bad_Plugin.png").exists()
-    assert device_config.write_count == 1
+    assert device_config.write_count == 0
+    attempts_before_cooldown_probe = list(attempts)
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, 10, tzinfo=timezone.utc),
+        max_updates=1,
+    )
+    assert attempts == attempts_before_cooldown_probe
+
+    attempts_before_retry = len(attempts)
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 5, 31, tzinfo=timezone.utc),
+        max_updates=1,
+    )
+    assert len(attempts) > attempts_before_retry
 
 
 def test_memory_maintenance_collects_and_trims_when_forced(monkeypatch):
@@ -3154,7 +3182,7 @@ def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
     events = []
     manager = device_config.playlist_manager
     original_validate = manager.validate_selection
-    original_record = manager.record_instance_refresh
+    original_record = task.runtime_state.record_success
     original_replace = __import__("os").replace
     inner_arbiter = task.render_arbiter
     lease_depth = 0
@@ -3181,12 +3209,13 @@ def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
         return original_record(*args, **kwargs)
 
     def replace(source, destination):
-        assert lease_depth == 1
-        events.append("cache")
+        if Path(destination) == cache_path:
+            assert lease_depth == 1
+            events.append("cache")
         return original_replace(source, destination)
 
     manager.validate_selection = validate
-    manager.record_instance_refresh = record
+    task.runtime_state.record_success = record
     task.display_manager.display_image = lambda image, image_settings=None: events.append("display")
     device_config.write_config = lambda: events.append("config")
     monkeypatch.setattr("src.refresh_task.os.replace", replace)
@@ -3812,3 +3841,171 @@ def test_playlist_uuid_submission_propagates_queue_stopping_error():
 
     with pytest.raises(QueueStoppingError):
         task.submit_playlist_display(instance_uuid)
+
+
+def test_runtime_success_state_takes_precedence_over_legacy_refresh_time():
+    tmp_path = make_test_dir("runtime-success-precedes-legacy")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time="2026-05-26T07:00:00+00:00")
+    )
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = playlist.plugins[0].snapshot()
+
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        "2026-05-26T07:05:00+00:00",
+    )
+    task.runtime_state.record_failure(
+        instance.instance_uuid,
+        "2026-05-26T07:06:00+00:00",
+        "offline",
+        "2026-05-26T07:06:30+00:00",
+    )
+
+    assert task._snapshot_latest_refresh_dt(instance) == datetime(
+        2026,
+        5,
+        26,
+        7,
+        5,
+        tzinfo=timezone.utc,
+    )
+
+
+def test_config_change_prunes_deleted_runtime_instance_to_a_tombstone():
+    tmp_path = make_test_dir("runtime-config-change-tombstone")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    manager = device_config.playlist_manager
+    removed_uuid = playlist.plugins[0].instance_uuid
+    current_uuid = playlist.plugins[1].instance_uuid
+    task.runtime_state.record_success(
+        removed_uuid,
+        "2026-05-26T07:05:00+00:00",
+    )
+    task.runtime_state.record_success(
+        current_uuid,
+        "2026-05-26T07:05:00+00:00",
+    )
+
+    assert manager.delete_plugin_instance(removed_uuid)
+    task.signal_config_change()
+
+    snapshot = task.runtime_state.snapshot()
+    assert snapshot.instances[removed_uuid].tombstoned_at is not None
+    assert snapshot.instances[current_uuid].tombstoned_at is None
+
+
+def test_background_selection_waits_for_runtime_retry_deadline():
+    tmp_path = make_test_dir("runtime-background-retry-deadline")
+    playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time=None))
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    task.runtime_state.record_failure(
+        instance.instance_uuid,
+        "2026-05-26T07:05:00+00:00",
+        "offline",
+        "2026-05-26T07:05:30+00:00",
+    )
+
+    delayed = task._select_background_commands(
+        datetime(2026, 5, 26, 7, 5, 10, tzinfo=timezone.utc)
+    )
+    due = task._select_background_commands(
+        datetime(2026, 5, 26, 7, 5, 31, tzinfo=timezone.utc)
+    )
+
+    assert delayed == ()
+    assert len(due) == 1
+    assert due[0].instance_uuid == instance.instance_uuid
+
+
+def test_runtime_worker_records_attempt_failure_without_advancing_legacy_success(
+    monkeypatch,
+):
+    class ExplodingPlugin:
+        config = {}
+
+        def generate_image(self, settings, device_config):
+            raise RuntimeError("offline")
+
+    tmp_path = make_test_dir("runtime-attempt-failure-state")
+    legacy_success = "2026-05-26T07:00:00+00:00"
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time=legacy_success)
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: ExplodingPlugin())
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(instance.instance_uuid, force=True)
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+        assert result["status"] == "failed"
+        assert state.last_attempt_at is not None
+        assert state.last_failure_at is not None
+        assert state.last_success_at is None
+        assert device_config.playlist_manager.snapshot_instance(
+            instance.instance_uuid
+        ).latest_refresh_time == legacy_success
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_generated_cache_success_uses_runtime_state_not_user_config(monkeypatch):
+    tmp_path = make_test_dir("runtime-cache-success-state")
+    legacy_success = "2026-05-26T07:00:00+00:00"
+    current_dt = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time=legacy_success)
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: CapturePlugin([]))
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(instance.instance_uuid, force=True)
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+        assert result["status"] == "completed"
+        assert state.last_success_at == current_dt.isoformat()
+        assert device_config.playlist_manager.snapshot_instance(
+            instance.instance_uuid
+        ).latest_refresh_time == legacy_success
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_stop_flushes_runtime_state_synchronously_after_entering_drain():
+    states = []
+    holder = {}
+
+    class RecordingRuntimeState:
+        def flush(self):
+            states.append(holder["task"].lifecycle.state)
+            return True
+
+    tmp_path = make_test_dir("runtime-state-drain-flush")
+    task = RefreshTask(
+        RuntimeDeviceConfig(tmp_path),
+        RecordingDisplayManager(),
+        runtime_state_store=RecordingRuntimeState(),
+    )
+    holder["task"] = task
+
+    assert task.stop(join_timeout=0) is True
+    assert states == [LifecycleState.DRAINING]

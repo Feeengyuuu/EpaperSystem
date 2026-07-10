@@ -27,6 +27,7 @@ from runtime.refresh_contracts import (
 )
 from runtime.refresh_queue import QueueEntry, RefreshQueue
 from runtime.render_arbiter import RenderArbiter
+from runtime.runtime_state import RuntimeStateStore
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 from PIL import Image, ImageDraw, ImageFont
 
@@ -222,6 +223,7 @@ class RefreshTask:
         lifecycle=None,
         retry_registry=None,
         scheduler_state=None,
+        runtime_state_store=None,
     ):
         self.device_config = device_config
         self.display_manager = display_manager
@@ -262,6 +264,15 @@ class RefreshTask:
             if scheduler_state is not None
             else SchedulerState(self.retry_registry, clock=clock, wall_clock=wall_clock)
         )
+        self.runtime_state = (
+            runtime_state_store
+            if runtime_state_store is not None
+            else RuntimeStateStore(
+                self._runtime_state_path(device_config),
+                clock=clock,
+                wall_clock=wall_clock,
+            )
+        )
 
         self.thread = None
         self._start_lock = threading.Lock()
@@ -293,6 +304,16 @@ class RefreshTask:
         except (TypeError, ValueError, OverflowError):
             value = default
         return max(minimum, min(maximum, value))
+
+    @staticmethod
+    def _runtime_state_path(device_config):
+        data_dir = getattr(device_config, "data_dir", None)
+        if data_dir is not None:
+            return os.path.join(os.fspath(data_dir), "runtime_state.json")
+        return os.path.join(
+            os.fspath(device_config.plugin_image_dir),
+            ".runtime-state.json",
+        )
 
     @property
     def running(self):
@@ -338,6 +359,7 @@ class RefreshTask:
                 return
             if self.lifecycle.state is not LifecycleState.STARTING:
                 raise RuntimeError(f"refresh task cannot start from {self.lifecycle.state.value}")
+            self._prune_runtime_state()
             logger.info("Starting refresh task")
             self.thread = threading.Thread(
                 target=self._run,
@@ -379,15 +401,23 @@ class RefreshTask:
             if thread and thread.is_alive():
                 if self.lifecycle.state is LifecycleState.QUIESCING:
                     self.lifecycle.begin_draining()
+                self._flush_runtime_state()
                 if self.lifecycle.state is LifecycleState.DRAINING:
                     self.lifecycle.mark_forced_exit("refresh worker did not stop")
                 return False
             self._cleanup_all_transient_uploads()
             if self.lifecycle.state is LifecycleState.QUIESCING:
                 self.lifecycle.begin_draining()
+            self._flush_runtime_state()
             if self.lifecycle.state is LifecycleState.DRAINING:
                 self.lifecycle.mark_stopped()
             return self.lifecycle.state is LifecycleState.STOPPED
+
+    def _flush_runtime_state(self):
+        try:
+            self.runtime_state.flush()
+        except Exception:
+            logger.exception("Runtime state could not be flushed during lifecycle drain")
 
     def _run(self):
         """Coordinate scheduled and queued refresh commands on one worker."""
@@ -494,7 +524,9 @@ class RefreshTask:
         latest_refresh = self.device_config.get_refresh_info()
         theme_context = get_theme_context(self.device_config, now=current_dt)
         if self._has_theme_changed(theme_context, current_dt):
-            displayed_uuid = self._get_config_value("displayed_instance_uuid", None)
+            displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+            if displayed_uuid is None:
+                displayed_uuid = self._get_config_value("displayed_instance_uuid", None)
             selection = manager.select_theme_instance(
                 current_dt,
                 displayed_instance_uuid=displayed_uuid,
@@ -572,6 +604,8 @@ class RefreshTask:
         candidates = []
         for instance in active.plugins:
             if instance.instance_uuid == skip_instance_uuid:
+                continue
+            if self._snapshot_retry_delayed(instance, current_dt):
                 continue
             if self._snapshot_background_cache_disabled(instance):
                 continue
@@ -659,7 +693,20 @@ class RefreshTask:
         return False
 
     def _snapshot_latest_refresh_dt(self, instance):
+        state = self.runtime_state.snapshot().instances.get(instance.instance_uuid)
+        if state is not None and state.last_success_at is not None:
+            return self._parse_iso_datetime(state.last_success_at)
         return self._parse_iso_datetime(instance.latest_refresh_time)
+
+    def _snapshot_retry_delayed(self, instance, current_dt):
+        state = self.runtime_state.snapshot().instances.get(instance.instance_uuid)
+        if state is None or state.next_retry_at is None:
+            return False
+        next_retry = self._parse_iso_datetime(state.next_retry_at)
+        if next_retry is None:
+            return False
+        next_retry = self._align_datetime_tz(next_retry, current_dt)
+        return current_dt < next_retry
 
     @staticmethod
     def _snapshot_background_cache_disabled(instance):
@@ -675,7 +722,11 @@ class RefreshTask:
             return None
         if require_live_refresh and not plugin_supports_live_refresh(plugin_config):
             return None
-        return get_plugin_instance(plugin_config)
+        try:
+            return get_plugin_instance(plugin_config)
+        except Exception:
+            logger.exception("Plugin '%s' could not be loaded.", instance.plugin_id)
+            return None
 
     def _snapshot_cache_path(self, instance):
         """Return the authoritative cache path for one immutable revision.
@@ -736,6 +787,7 @@ class RefreshTask:
         if busy_lock is not None:
             busy_lock.acquire()
         try:
+            self._record_runtime_attempt(command)
             try:
                 self._execute_command(command)
             except TaskDeadlineExceeded as error:
@@ -825,6 +877,70 @@ class RefreshTask:
             deadline_monotonic=command.deadline_monotonic,
             clock=self._clock,
         )
+
+    def _runtime_now_iso(self, *, offset_seconds=0.0):
+        return datetime.fromtimestamp(
+            float(self._wall_clock()) + float(offset_seconds),
+            tz=timezone.utc,
+        ).isoformat()
+
+    def _record_runtime_attempt(self, command):
+        if command.instance_uuid is None:
+            return
+        try:
+            self.runtime_state.record_attempt(
+                command.instance_uuid,
+                self._runtime_now_iso(),
+            )
+        except Exception:
+            logger.exception(
+                "Runtime refresh attempt state could not be recorded. | instance_uuid: %s",
+                command.instance_uuid,
+            )
+
+    def _record_runtime_success(self, instance_uuid, succeeded_at):
+        try:
+            self.runtime_state.record_success(instance_uuid, succeeded_at)
+        except Exception:
+            logger.exception(
+                "Runtime refresh success state could not be recorded. | instance_uuid: %s",
+                instance_uuid,
+            )
+
+    def _record_runtime_failure(self, command, error, retry_delay):
+        if command.instance_uuid is None:
+            return
+        try:
+            self.runtime_state.record_failure(
+                command.instance_uuid,
+                self._runtime_now_iso(),
+                error,
+                self._runtime_now_iso(offset_seconds=retry_delay),
+            )
+        except Exception:
+            logger.exception(
+                "Runtime refresh failure state could not be recorded. | instance_uuid: %s",
+                command.instance_uuid,
+            )
+
+    def _record_runtime_display_state(
+        self,
+        state,
+        *,
+        instance_uuid=None,
+        changed_at=None,
+    ):
+        try:
+            self.runtime_state.set_display_state(
+                state,
+                instance_uuid=instance_uuid,
+                changed_at=changed_at,
+            )
+        except Exception:
+            logger.exception(
+                "Runtime display state could not be recorded. | state: %s",
+                state,
+            )
 
     def make_cleanup_context(self, timeout_seconds=30.0):
         """Return a bounded public context for cleanup under the shared arbiter."""
@@ -1111,6 +1227,11 @@ class RefreshTask:
                             os.remove(stage_path)
                         except OSError:
                             logger.warning("Could not remove stale staged cache: %s", stage_path)
+                self._require_fresh_selection(command, context)
+                self._record_runtime_success(
+                    instance.instance_uuid,
+                    current_dt.isoformat(),
+                )
 
             image_hash = compute_image_hash(image)
             latest_refresh = self.device_config.get_refresh_info()
@@ -1133,33 +1254,24 @@ class RefreshTask:
                         image_settings=getattr(self._execution_local, "image_settings", []),
                     )
 
-            if generated and cacheable:
-                self._require_fresh_selection(command, context)
-                recorded = self.device_config.get_playlist_manager().record_instance_refresh(
-                    instance.instance_uuid,
-                    expected_generation=instance.structural_generation,
-                    expected_settings_revision=instance.settings_revision,
-                    expected_latest_refresh_time=instance.latest_refresh_time,
-                    latest_refresh_time=current_dt.isoformat(),
-                )
-                if recorded is None:
-                    raise _StaleSelection("playlist refresh timestamp CAS failed")
-
             if command.kind is CommandKind.DISPLAY:
                 self._require_fresh_selection(command, context)
                 if theme_context:
                     self._require_fresh_selection(command, context)
 
-            if command.kind is CommandKind.DISPLAY or (generated and cacheable):
+            if command.kind is CommandKind.DISPLAY:
                 self._require_fresh_selection(command, context)
                 # The final validation is the config commit linearization point.
                 # Do not observe cancellation again after shared state is mutated.
-                if command.kind is CommandKind.DISPLAY:
-                    self.device_config.refresh_info = refresh_record
-                    self._set_config_value("displayed_instance_uuid", instance.instance_uuid)
-                    if thawed_theme_context:
-                        self._persist_active_theme(thawed_theme_context, current_dt)
+                self.device_config.refresh_info = refresh_record
+                if thawed_theme_context:
+                    self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_device_config()
+                self._record_runtime_display_state(
+                    "committed",
+                    instance_uuid=instance.instance_uuid,
+                    changed_at=current_dt.isoformat(),
+                )
             return image
 
         image_hash = compute_image_hash(image)
@@ -1183,6 +1295,11 @@ class RefreshTask:
         # write the candidate without another cancellation check in between.
         self.device_config.refresh_info = refresh_record
         self._write_device_config()
+        self._record_runtime_display_state(
+            "committed",
+            instance_uuid=None,
+            changed_at=current_dt.isoformat(),
+        )
         return image
 
     @staticmethod
@@ -1221,6 +1338,7 @@ class RefreshTask:
         self.scheduler_state.record_failure(error)
         key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
         delay = self.retry_registry.mark_failure(key, self._clock())
+        self._record_runtime_failure(command, error, delay)
         self.scheduler_state.set_next_attempt(self._clock() + delay)
 
     def _signal_completion(self, actual_job_id):
@@ -1616,9 +1734,26 @@ class RefreshTask:
 
     def signal_config_change(self):
         """Force a fresh scheduler probe and publish a non-lossy queue wake."""
+        self._prune_runtime_state()
         if self.running:
             self.scheduler_state.set_next_attempt(self._clock())
             self.refresh_queue.wake()
+
+    def _prune_runtime_state(self):
+        get_manager = getattr(self.device_config, "get_playlist_manager", None)
+        if not callable(get_manager):
+            return
+        try:
+            payload = get_manager().to_dict()
+            current_instance_uuids = {
+                plugin["instance_uuid"]
+                for playlist in payload.get("playlists", [])
+                for plugin in playlist.get("plugins", [])
+                if plugin.get("instance_uuid")
+            }
+            self.runtime_state.prune(current_instance_uuids)
+        except Exception:
+            logger.exception("Runtime instance tombstones could not be pruned")
 
     def _get_current_datetime(self):
         """Retrieves the current datetime based on the device's configured timezone."""
@@ -2100,6 +2235,8 @@ class RefreshTask:
                 continue
             if self._is_same_plugin_instance(plugin_instance, skip_plugin_instance):
                 continue
+            if self._snapshot_retry_delayed(plugin_instance, current_dt):
+                continue
 
             plugin_image_path = os.path.join(
                 self.device_config.plugin_image_dir,
@@ -2156,6 +2293,18 @@ class RefreshTask:
             attempted_updates += 1
 
             try:
+                self.runtime_state.record_attempt(
+                    plugin_instance.instance_uuid,
+                    current_dt.isoformat(),
+                )
+            except Exception:
+                logger.exception(
+                    "Runtime background attempt state could not be recorded. | "
+                    "plugin_instance: '%s'",
+                    plugin_instance.name,
+                )
+
+            try:
                 if image_missing:
                     logger.info(
                         "Plugin instance image missing during cache refresh. | "
@@ -2183,23 +2332,39 @@ class RefreshTask:
                 if _image_allows_cache(image):
                     _save_image_atomic(image, plugin_image_path)
                     plugin_instance.latest_refresh_time = current_dt.isoformat()
+                    self._record_runtime_success(
+                        plugin_instance.instance_uuid,
+                        current_dt.isoformat(),
+                    )
+                    self.retry_registry.mark_success(plugin_instance.instance_uuid)
                     updated = True
                 else:
                     logger.warning(
                         "Plugin instance generated a non-cacheable image; leaving previous cache in place. | "
                         f"plugin_instance: '{plugin_instance.name}'"
                     )
-            except Exception:
+            except Exception as error:
                 logger.exception(
                     "Exception during due plugin instance cache refresh. | "
                     f"plugin_instance: '{plugin_instance.name}'"
                 )
-                plugin_instance.latest_refresh_time = current_dt.isoformat()
-                updated = True
-                logger.info(
-                    "Marked failed cache refresh attempt to avoid immediate retry. | "
-                    f"plugin_instance: '{plugin_instance.name}'"
-                )
+                try:
+                    delay = self.retry_registry.mark_failure(
+                        plugin_instance.instance_uuid,
+                        self._clock(),
+                    )
+                    self.runtime_state.record_failure(
+                        plugin_instance.instance_uuid,
+                        current_dt.isoformat(),
+                        error,
+                        (current_dt + timedelta(seconds=delay)).isoformat(),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Runtime background failure state could not be recorded. | "
+                        "plugin_instance: '%s'",
+                        plugin_instance.name,
+                    )
             finally:
                 self._run_memory_maintenance("background-cache")
 
