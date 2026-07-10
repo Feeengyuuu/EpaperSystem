@@ -261,3 +261,33 @@ def test_health_collector_start_never_waits_for_core_component_lock(tmp_path):
 
     assert elapsed < 0.2
     collector.stop(join_timeout=1.0)
+
+
+def test_health_collection_triggers_only_lightweight_due_cache_maintenance(tmp_path):
+    calls = []
+    cache_manager = SimpleNamespace(
+        maintenance_if_due=lambda: calls.append("maintenance") or False,
+    )
+    refresh_task = SimpleNamespace(
+        lifecycle=SimpleNamespace(
+            snapshot=lambda: (_ for _ in ()).throw(RuntimeError("unavailable"))
+        ),
+    )
+    collector = HealthCollector(
+        HealthPublisher(release_id="release-test"),
+        refresh_task=refresh_task,
+        device_config=SimpleNamespace(
+            _config_store=SimpleNamespace(
+                current=lambda: (_ for _ in ()).throw(RuntimeError("unavailable"))
+            ),
+            get_config=lambda _key, default=None: default,
+        ),
+        runtime_paths=SimpleNamespace(data_dir=Path(tmp_path)),
+        dev_mode=True,
+        startup_state=lambda: {"degraded": False, "reasons": {}},
+        cache_manager=cache_manager,
+    )
+
+    collector.collect_once()
+
+    assert calls == ["maintenance"]

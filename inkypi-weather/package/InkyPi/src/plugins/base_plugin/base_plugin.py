@@ -3,6 +3,11 @@ import os
 from plugins.plugin_settings import resolve_refresh_on_display
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.browser_renderer import get_browser_renderer
+from utils.cache_manager import (
+    CacheBudget,
+    DEFAULT_CACHE_BUDGET,
+    cache_namespace_for_directory,
+)
 from utils.image_loader import AdaptiveImageLoader
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
@@ -117,6 +122,15 @@ class BasePlugin:
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def managed_cache_namespace(
+        self,
+        directory,
+        budget: CacheBudget = DEFAULT_CACHE_BUDGET,
+    ):
+        """Return a budgeted namespace owning exactly ``directory``."""
+
+        return cache_namespace_for_directory(directory, budget)
 
     def data_dir(
         self,

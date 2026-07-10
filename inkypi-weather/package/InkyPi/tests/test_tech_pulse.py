@@ -316,6 +316,19 @@ def test_hn_story_preview_captures_story_target_page_and_caches(tmp_path, monkey
     assert plugin._story_preview_cache_path(story_url).is_file()
 
 
+def test_story_preview_cache_uses_managed_namespace(tmp_path):
+    from utils.cache_manager import CacheNamespace
+
+    plugin = _plugin(tmp_path)
+
+    namespace = plugin._story_preview_namespace()
+
+    assert isinstance(namespace, CacheNamespace)
+    assert namespace.root == tmp_path / "story_preview"
+    assert namespace.budget.max_files == 256
+    assert namespace.budget.max_bytes == 50 * 1024 * 1024
+
+
 def test_hn_story_preview_falls_back_to_hn_homepage_when_target_fails(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     story_url = "https://example.com/dead"

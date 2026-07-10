@@ -308,6 +308,7 @@ class HealthCollector:
         runtime_paths,
         dev_mode,
         startup_state,
+        cache_manager=None,
         clock=time.monotonic,
         interval_seconds=1.0,
     ):
@@ -317,6 +318,7 @@ class HealthCollector:
         self.runtime_paths = runtime_paths
         self.dev_mode = bool(dev_mode)
         self.startup_state = startup_state
+        self.cache_manager = cache_manager
         self._clock = clock
         self.interval_seconds = max(0.1, float(interval_seconds))
         self._queue_full_since = None
@@ -326,6 +328,11 @@ class HealthCollector:
 
     def collect_once(self):
         now = float(self._clock())
+        if self.cache_manager is not None:
+            try:
+                self.cache_manager.maintenance_if_due()
+            except Exception:
+                logger.exception("Managed cache maintenance failed")
         components = {
             "runtime": {"dev_mode": self.dev_mode},
             "lifecycle": self._lifecycle_component(),

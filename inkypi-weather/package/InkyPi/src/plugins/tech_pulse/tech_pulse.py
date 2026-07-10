@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from io import BytesIO
 import json
 import logging
 import math
@@ -17,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names, get_font
+from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
 from utils.image_utils import take_screenshot, text_width
 from utils.safe_image import safe_open_image
@@ -38,6 +41,11 @@ STORY_PREVIEW_CAPTURE_SIZE = (1100, 720)
 STORY_PREVIEW_TIMEOUT_MS = 15000
 STORY_PREVIEW_CROP_TOP = 0
 STORY_PREVIEW_CROP_HEIGHT = 520
+STORY_PREVIEW_CACHE_BUDGET = CacheBudget(
+    30 * 24 * 60 * 60,
+    256,
+    50 * 1024 * 1024,
+)
 REQUEST_TIMEOUT = (4, 12)
 FEED_ENDPOINTS = {
     "topstories": f"{HN_BASE_URL}/topstories.json",
@@ -472,8 +480,13 @@ class TechPulse(BasePlugin):
                 continue
             prepared = self._prepare_story_screenshot(captured)
             try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                prepared.save(cache_path)
+                output = BytesIO()
+                prepared.save(output, format="PNG", optimize=True)
+                self._story_preview_namespace().put_bytes(
+                    cache_path.stem,
+                    output.getvalue(),
+                    suffix=cache_path.suffix,
+                )
             except Exception as exc:
                 logger.debug("Could not cache story preview %s: %s", cache_path, exc)
             return prepared
@@ -498,8 +511,12 @@ class TechPulse(BasePlugin):
 
     def _load_story_preview_cache(self, path):
         try:
-            if path.is_file():
-                return safe_open_image(path).convert("RGB")
+            data = self._story_preview_namespace().get_bytes(
+                path.stem,
+                suffix=path.suffix,
+            )
+            if data is not None:
+                return safe_open_image(data).convert("RGB")
         except Exception as exc:
             logger.debug("Could not load story preview cache %s: %s", path, exc)
         return None
@@ -511,7 +528,15 @@ class TechPulse(BasePlugin):
         if parsed.query:
             key = f"{key}-{parsed.query}"
         slug = re.sub(r"[^A-Za-z0-9._-]+", "-", key.strip("/")).strip("-").lower() or "story-preview"
-        return self._cache_dir() / "story_preview" / f"{slug}-{STORY_PREVIEW_CACHE_VERSION}.png"
+        digest = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
+        cache_key = f"{slug[:120]}-{digest}-{STORY_PREVIEW_CACHE_VERSION}"
+        return self._story_preview_namespace().path(cache_key, ".png")
+
+    def _story_preview_namespace(self):
+        return self.managed_cache_namespace(
+            self._cache_dir() / "story_preview",
+            STORY_PREVIEW_CACHE_BUDGET,
+        )
 
     def _fallback_story_preview(self, size, palette, scale, story=None):
         width, height = [max(1, int(value)) for value in size]

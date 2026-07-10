@@ -34,6 +34,7 @@ from security.request_limits import (
 )
 from utils.app_utils import generate_startup_image
 from utils.browser_renderer import close_browser_renderer
+from utils.cache_manager import configure_cache_manager
 from utils.http_client import close_http_session, sanitize_dead_local_proxy_environment
 from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
 from utils.secret_key import load_or_create_secret_key
@@ -122,6 +123,16 @@ def build_application(
     if display_init_error is not None:
         _mark_startup_degraded(app, "display_init", display_init_error)
     health_publisher = HealthPublisher(release_id=paths.release_id)
+    try:
+        cache_manager = configure_cache_manager(
+            paths,
+            health_publisher=health_publisher,
+        )
+    except Exception as error:
+        logger.exception("Managed plugin cache could not be initialized")
+        _mark_startup_degraded(app, "cache_manager", error)
+        cache_manager = None
+    app.config["CACHE_MANAGER"] = cache_manager
     health_collector = HealthCollector(
         health_publisher,
         refresh_task=refresh_task,
@@ -132,6 +143,7 @@ def build_application(
             "degraded": app.config.get("STARTUP_DEGRADED", False),
             "reasons": app.config.get("STARTUP_DEGRADED_REASONS", {}),
         },
+        cache_manager=cache_manager,
     )
     app.config["HEALTH_PUBLISHER"] = health_publisher
     app.config["HEALTH_COLLECTOR"] = health_collector

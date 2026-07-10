@@ -13239,6 +13239,19 @@ def test_remote_team_logo_loader_uses_disk_cache(monkeypatch, tmp_path):
     assert len(list(tmp_path.iterdir())) == 1
 
 
+def test_sports_image_caches_are_lru_bounded_after_one_thousand_misses():
+    from utils.cache_manager import ImageLRUCache
+
+    assert isinstance(TEAM_LOGO_CACHE, ImageLRUCache)
+    assert isinstance(FLAG_IMAGE_CACHE, ImageLRUCache)
+    TEAM_LOGO_CACHE.clear()
+
+    for index in range(1000):
+        TEAM_LOGO_CACHE[(f"missing-{index}", 24)] = None
+
+    assert len(TEAM_LOGO_CACHE) <= 128
+
+
 def test_remote_team_logo_loader_replaces_oversized_disk_cache(monkeypatch, tmp_path):
     logo_url = "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497296400384/LOGO_LIGHT.png"
     TEAM_LOGO_CACHE.clear()

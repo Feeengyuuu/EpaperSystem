@@ -17,6 +17,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from utils.app_utils import resolve_path
+from utils.cache_manager import (
+    CacheBudget,
+    CacheError,
+    ImageLRUCache,
+    cache_namespace_for_directory,
+)
 from utils.safe_image import ImageLimits, read_limited_response_bytes, safe_open_image
 
 try:
@@ -133,6 +139,11 @@ TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
     max_width=TEAM_LOGO_DISK_CACHE_MAX_SIDE,
     max_height=TEAM_LOGO_DISK_CACHE_MAX_SIDE,
     max_pixels=TEAM_LOGO_DISK_CACHE_MAX_PIXELS,
+)
+TEAM_LOGO_DISK_CACHE_BUDGET = CacheBudget(
+    30 * 24 * 60 * 60,
+    256,
+    50 * 1024 * 1024,
 )
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
@@ -300,8 +311,8 @@ LOLESPORTS_LIVE_URL = "https://esports-api.lolesports.com/persisted/gw/getLive?h
 LOLESPORTS_EVENT_DETAILS_URL = "https://esports-api.lolesports.com/persisted/gw/getEventDetails?hl=en-US&id={event_id}"
 LOLESPORTS_LIVE_STATS_WINDOW_URL = "https://feed.lolesports.com/livestats/v1/window/{game_id}"
 BO3_API_BASE_URL = "https://api.bo3.gg/api/v1"
-TEAM_LOGO_CACHE = {}
-FLAG_IMAGE_CACHE = {}
+TEAM_LOGO_CACHE = ImageLRUCache(max_entries=128, max_bytes=20 * 1024 * 1024)
+FLAG_IMAGE_CACHE = ImageLRUCache(max_entries=128, max_bytes=20 * 1024 * 1024)
 
 EWC_MONTHS = {
     "JAN": 1,
@@ -2715,10 +2726,11 @@ class SportsDashboardCommonMixin:
 
     def _team_logo_disk_cache_dir(self):
         try:
-            cache_dir = self._sports_dashboard_cache_dir() / "team_logos"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            return cache_dir
-        except OSError as exc:
+            return self.managed_cache_namespace(
+                self._sports_dashboard_cache_dir() / "team_logos",
+                TEAM_LOGO_DISK_CACHE_BUDGET,
+            ).root
+        except (OSError, CacheError) as exc:
             logger.warning("Failed to prepare team logo disk cache: %s", exc)
             return None
 
@@ -2847,9 +2859,11 @@ class SportsDashboardCommonMixin:
         if cache_dir is None:
             return None
         try:
-            cache_dir = Path(cache_dir)
-            cache_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
+            namespace = cache_namespace_for_directory(
+                Path(cache_dir),
+                TEAM_LOGO_DISK_CACHE_BUDGET,
+            )
+        except (OSError, CacheError) as exc:
             logger.warning("Failed to prepare team logo disk cache %s: %s", cache_dir, exc)
             return None
         parsed = urlparse(str(logo_url or ""))
@@ -2857,21 +2871,25 @@ class SportsDashboardCommonMixin:
         if suffix not in {".png", ".webp", ".jpg", ".jpeg", ".gif"}:
             suffix = ".img"
         digest = hashlib.sha1(str(logo_url).encode("utf-8")).hexdigest()
-        return cache_dir / f"{digest}{suffix}"
+        return namespace.path(digest, suffix)
 
     @staticmethod
     def _read_team_logo_disk_cache(path):
         if path is None or not path.exists():
             return None
         try:
-            data = path.read_bytes()
-        except OSError as exc:
+            namespace = cache_namespace_for_directory(
+                path.parent,
+                TEAM_LOGO_DISK_CACHE_BUDGET,
+            )
+            data = namespace.get_bytes(path.stem, suffix=path.suffix)
+        except (OSError, CacheError) as exc:
             logger.warning("Failed to read team logo disk cache %s: %s", path, exc)
             return None
         if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
             try:
-                path.unlink()
-            except OSError as exc:
+                namespace.remove(path.stem, suffix=path.suffix)
+            except (OSError, CacheError) as exc:
                 logger.warning("Failed to remove oversized team logo disk cache %s: %s", path, exc)
             return None
         return data
@@ -2881,8 +2899,12 @@ class SportsDashboardCommonMixin:
         if path is None or not SportsDashboard._team_logo_data_is_safe_to_decode(data):
             return
         try:
-            path.write_bytes(data)
-        except OSError as exc:
+            namespace = cache_namespace_for_directory(
+                path.parent,
+                TEAM_LOGO_DISK_CACHE_BUDGET,
+            )
+            namespace.put_bytes(path.stem, data, suffix=path.suffix)
+        except (OSError, CacheError) as exc:
             logger.warning("Failed to write team logo disk cache %s: %s", path, exc)
 
     @staticmethod
