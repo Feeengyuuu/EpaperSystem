@@ -1,9 +1,9 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 
-from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from utils.app_utils import get_font
 from utils.image_utils import text_width
+from utils.safe_image import ImageLimits, safe_open_image
 from datetime import datetime
 import colorsys
 import json
@@ -362,8 +362,7 @@ class BambuMonitor(BasePlugin):
             frame = BambuCameraClient(host, camera_port, access_code, timeout).capture_frame()
             path = self._camera_file(host, status.get("serial") or "printer")
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with Image.open(BytesIO(frame)) as img:
-                img.verify()
+            safe_open_image(frame, limits=ImageLimits(max_bytes=4 * 1024 * 1024))
             with open(path, "wb") as f:
                 f.write(frame)
             status["camera_path"] = path
@@ -717,11 +716,11 @@ class BambuMonitor(BasePlugin):
 
     def _cache_file(self, host, serial):
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in f"{host}_{serial}")
-        return os.path.join(self.get_plugin_dir("cache"), f"{safe}.json")
+        return str(self.cache_dir(leaf="cache") / f"{safe}.json")
 
     def _camera_file(self, host, serial):
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in f"{host}_{serial}")
-        return os.path.join(self.get_plugin_dir("cache"), f"{safe}_camera.jpg")
+        return str(self.cache_dir(leaf="cache") / f"{safe}_camera.jpg")
 
     def _camera_waiting_file(self):
         return os.path.join(os.path.dirname(__file__), "camera_waiting.png")

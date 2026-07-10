@@ -7,8 +7,8 @@ and high-performance strategies on capable devices (Pi 3/4).
 """
 
 from PIL import Image, ImageFilter, ImageOps, ImageStat
-from io import BytesIO
 from utils.http_client import get_http_session
+from utils.safe_image import ImageLimits, safe_open_image
 import logging
 import gc
 import psutil
@@ -18,6 +18,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES = 25 * 1024 * 1024
+SPOOL_MEMORY_BYTES = 1024 * 1024
 
 
 def _is_low_resource_device():
@@ -73,7 +74,8 @@ class AdaptiveImageLoader:
             resize: Whether to resize the image (default True)
             headers: Optional dict of HTTP headers to include in request
             focus_crop: Bias cover-crop toward the most detailed area
-            max_bytes: Optional response body limit. Non-positive values disable the limit.
+            max_bytes: Optional positive response body limit. Invalid or non-positive
+                values fall back to the safe default.
 
         Returns:
             PIL Image object resized to dimensions, or None on error
@@ -130,20 +132,13 @@ class AdaptiveImageLoader:
         logger.debug("Loading image from BytesIO")
 
         try:
-            img = Image.open(data)
-            original_size = img.size
-            original_pixels = original_size[0] * original_size[1]
-            logger.info(f"Loaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
-
-            if resize:
-                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
-            else:
-                # Even without resizing, apply EXIF orientation correction
-                img = ImageOps.exif_transpose(img)
-                if img.size != original_size:
-                    logger.debug(f"EXIF orientation applied: {original_size[0]}x{original_size[1]} -> {img.size[0]}x{img.size[1]}")
-
-            return img
+            return self._decode_and_process(
+                data,
+                dimensions,
+                resize,
+                focus_crop,
+                low_memory=self.is_low_resource,
+            )
         except Exception as e:
             logger.error(f"Error loading image from BytesIO: {e}")
             return None
@@ -151,75 +146,28 @@ class AdaptiveImageLoader:
     # ========== LOW-RESOURCE IMPLEMENTATIONS ==========
 
     def _load_from_url_lowmem(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False, max_bytes=None):
-        """Low-memory URL loading using temp file + draft mode."""
-        tmp_path = None
-
-        try:
-            logger.debug("Using disk-based streaming (low-resource mode)")
-
-            # Merge provided headers with defaults
-            request_headers = {**self.DEFAULT_HEADERS, **(headers or {})}
-
-            # Create temp file and stream download
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-                tmp_path = tmp.name
-
-                session = get_http_session()
-                response = session.get(url, timeout=timeout_ms / 1000, stream=True, headers=request_headers)
-                response.raise_for_status()
-
-                downloaded_bytes = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        tmp.write(chunk)
-                        downloaded_bytes += len(chunk)
-                        self._raise_if_download_too_large(url, downloaded_bytes, max_bytes)
-
-                logger.debug(f"Downloaded {downloaded_bytes / 1024:.1f}KB to temp file")
-
-            # Load from temp file with draft mode
-            return self._load_from_file_lowmem(tmp_path, dimensions, resize, focus_crop)
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading image from {url}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error processing image from {url}: {e}")
-            return None
-        finally:
-            # Clean up temp file
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                    logger.debug(f"Cleaned up temp file: {tmp_path}")
-                except Exception as e:
-                    logger.warning(f"Could not delete temp file {tmp_path}: {e}")
+        """Low-memory URL loading through one bounded spooled stream."""
+        return self._load_from_url_streamed(
+            url,
+            dimensions,
+            timeout_ms,
+            resize,
+            headers,
+            focus_crop,
+            max_bytes,
+            low_memory=True,
+        )
 
     def _load_from_file_lowmem(self, path, dimensions, resize, focus_crop=False):
-        """Low-memory file loading using draft mode."""
+        """Low-memory file loading through the shared bounded decoder."""
         try:
-            img = Image.open(path)
-            original_size = img.size
-            original_pixels = original_size[0] * original_size[1]
-            logger.info(f"Loaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
-
-            if resize:
-                # Apply draft mode for massive memory savings during decode
-                img.draft('RGB', (dimensions[0] * 2, dimensions[1] * 2))
-                logger.debug(f"Draft mode applied - PIL will decode at reduced resolution")
-
-                # Force load with draft mode
-                img.load()
-                logger.debug(f"Image decoded: {img.size[0]}x{img.size[1]} (draft mode reduced from {original_size[0]}x{original_size[1]})")
-
-                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
-            else:
-                # Even without resizing, apply EXIF orientation correction
-                img = ImageOps.exif_transpose(img)
-                if img.size != original_size:
-                    logger.debug(f"EXIF orientation applied: {original_size[0]}x{original_size[1]} -> {img.size[0]}x{img.size[1]}")
-
-            return img
+            return self._decode_and_process(
+                path,
+                dimensions,
+                resize,
+                focus_crop,
+                low_memory=True,
+            )
 
         except MemoryError as e:
             logger.error(f"Out of memory while loading {path}: {e}")
@@ -233,32 +181,64 @@ class AdaptiveImageLoader:
     # ========== HIGH-PERFORMANCE IMPLEMENTATIONS ==========
 
     def _load_from_url_fast(self, url, dimensions, timeout_ms, resize, headers=None, focus_crop=False, max_bytes=None):
-        """High-performance URL loading using in-memory processing."""
+        """High-performance URL loading through one bounded spooled stream."""
+        return self._load_from_url_streamed(
+            url,
+            dimensions,
+            timeout_ms,
+            resize,
+            headers,
+            focus_crop,
+            max_bytes,
+            low_memory=False,
+        )
+
+    def _load_from_url_streamed(
+        self,
+        url,
+        dimensions,
+        timeout_ms,
+        resize,
+        headers,
+        focus_crop,
+        max_bytes,
+        *,
+        low_memory,
+    ):
         try:
-            logger.debug("Using in-memory processing (high-performance mode)")
-
-            # Merge provided headers with defaults
+            logger.debug("Using bounded spooled image download")
             request_headers = {**self.DEFAULT_HEADERS, **(headers or {})}
-
             session = get_http_session()
-            response = session.get(url, timeout=timeout_ms / 1000, stream=True, headers=request_headers)
-            response.raise_for_status()
-
-            img = Image.open(BytesIO(self._response_content(response, url, max_bytes)))
-            original_size = img.size
-            original_pixels = original_size[0] * original_size[1]
-            logger.info(f"Downloaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
-
-            if resize:
-                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
-            else:
-                # Even without resizing, apply EXIF orientation correction
-                img = ImageOps.exif_transpose(img)
-                if img.size != original_size:
-                    logger.debug(f"EXIF orientation applied: {original_size[0]}x{original_size[1]} -> {img.size[0]}x{img.size[1]}")
-
-            return img
-
+            with session.get(
+                url,
+                timeout=timeout_ms / 1000,
+                stream=True,
+                headers=request_headers,
+            ) as response:
+                response.raise_for_status()
+                with tempfile.SpooledTemporaryFile(
+                    max_size=SPOOL_MEMORY_BYTES,
+                    mode="w+b",
+                ) as spool:
+                    downloaded_bytes = self._stream_response(
+                        response,
+                        spool,
+                        url,
+                        max_bytes,
+                    )
+                    logger.debug(
+                        "Downloaded %.1fKB to bounded spooled file",
+                        downloaded_bytes / 1024,
+                    )
+                    spool.seek(0)
+                    return self._decode_and_process(
+                        spool,
+                        dimensions,
+                        resize,
+                        focus_crop,
+                        max_bytes=max_bytes,
+                        low_memory=low_memory,
+                    )
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading image from {url}: {e}")
             return None
@@ -278,18 +258,24 @@ class AdaptiveImageLoader:
                 DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES,
             )
             max_bytes = DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES
-        return max_bytes if max_bytes > 0 else None
+        if max_bytes <= 0:
+            logger.warning(
+                "Non-positive image download limit '%s'; using %s",
+                max_bytes,
+                DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES,
+            )
+            return DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES
+        return max_bytes
 
-    def _response_content(self, response, url, max_bytes):
-        chunks = []
+    def _stream_response(self, response, target, url, max_bytes):
         downloaded_bytes = 0
         for chunk in response.iter_content(chunk_size=8192):
             if not chunk:
                 continue
-            chunks.append(chunk)
             downloaded_bytes += len(chunk)
             self._raise_if_download_too_large(url, downloaded_bytes, max_bytes)
-        return b"".join(chunks)
+            target.write(chunk)
+        return downloaded_bytes
 
     def _raise_if_download_too_large(self, url, downloaded_bytes, max_bytes):
         if max_bytes is not None and downloaded_bytes > max_bytes:
@@ -299,26 +285,46 @@ class AdaptiveImageLoader:
             )
 
     def _load_from_file_fast(self, path, dimensions, resize, focus_crop=False):
-        """High-performance file loading using in-memory processing."""
+        """High-performance file loading through the shared bounded decoder."""
         try:
-            img = Image.open(path)
-            original_size = img.size
-            original_pixels = original_size[0] * original_size[1]
-            logger.info(f"Loaded image: {original_size[0]}x{original_size[1]} ({img.mode} mode, {original_pixels/1_000_000:.1f}MP)")
-
-            if resize:
-                img = self._process_and_resize(img, dimensions, original_size, focus_crop)
-            else:
-                # Even without resizing, apply EXIF orientation correction
-                img = ImageOps.exif_transpose(img)
-                if img.size != original_size:
-                    logger.debug(f"EXIF orientation applied: {original_size[0]}x{original_size[1]} -> {img.size[0]}x{img.size[1]}")
-
-            return img
+            return self._decode_and_process(path, dimensions, resize, focus_crop)
 
         except Exception as e:
             logger.error(f"Error loading image from {path}: {e}")
             return None
+
+    def _decode_and_process(
+        self,
+        source,
+        dimensions,
+        resize,
+        focus_crop=False,
+        max_bytes=None,
+        *,
+        low_memory=False,
+    ):
+        limits = ImageLimits(
+            max_bytes=max_bytes or DEFAULT_MAX_IMAGE_DOWNLOAD_BYTES,
+        )
+        draft_size = None
+        if low_memory and resize:
+            draft_size = (
+                max(1, int(dimensions[0]) * 2),
+                max(1, int(dimensions[1]) * 2),
+            )
+        img = safe_open_image(source, limits=limits, draft_size=draft_size)
+        original_size = img.size
+        original_pixels = original_size[0] * original_size[1]
+        logger.info(
+            "Loaded image: %sx%s (%s mode, %.1fMP)",
+            original_size[0],
+            original_size[1],
+            img.mode,
+            original_pixels / 1_000_000,
+        )
+        if resize:
+            return self._process_and_resize(img, dimensions, original_size, focus_crop)
+        return img
 
     # ========== SHARED PROCESSING LOGIC ==========
 

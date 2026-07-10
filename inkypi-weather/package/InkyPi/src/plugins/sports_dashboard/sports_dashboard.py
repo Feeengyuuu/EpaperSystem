@@ -20,6 +20,7 @@ from .esports_render import EsportsRenderMixin
 from .f1 import F1Mixin
 from .offseason_hub import OffseasonHubMixin
 from .offseason_render import OffseasonRenderMixin
+from utils.safe_image import safe_open_image
 
 
 class SportsDashboard(
@@ -1270,9 +1271,9 @@ class SportsDashboard(
             return local_flag
         try:
             data = SportsDashboard._fetch_remote_image_bytes(flag_url, 4)
-            with Image.open(BytesIO(data)) as source:
-                flag = SportsDashboard._trim_transparent_flag(source.convert("RGBA"))
-                flag = ImageOps.contain(flag, size, Image.LANCZOS)
+            source = safe_open_image(data)
+            flag = SportsDashboard._trim_transparent_flag(source.convert("RGBA"))
+            flag = ImageOps.contain(flag, size, Image.LANCZOS)
             FLAG_IMAGE_CACHE[cache_key] = flag
             return flag
         except Exception as exc:

@@ -7,7 +7,6 @@ import math
 import os
 import time
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class DotaProfileDashboard(BasePlugin):
             and Path(cache["image_path"]).exists()
         ):
             self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-            return Image.open(cache["image_path"]).convert("RGB")
+            return safe_open_image(cache["image_path"]).convert("RGB")
 
         try:
             data = self._sample_payload(account_id) if self._enabled(settings.get("useMockData"), default=False) else self._fetch_dashboard_data(account_id, settings, device_config)
@@ -110,7 +110,7 @@ class DotaProfileDashboard(BasePlugin):
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 logger.warning("Using stale Dota profile dashboard cache.")
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-                return Image.open(cache["image_path"]).convert("RGB")
+                return safe_open_image(cache["image_path"]).convert("RGB")
             raise RuntimeError(f"Dota 个人信息页生成失败：{exc}")
 
     def _fetch_dashboard_data(self, account_id, settings, device_config):
@@ -518,12 +518,10 @@ class DotaProfileDashboard(BasePlugin):
             cache_path = self._image_cache_path(url)
             try:
                 if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60:
-                    raw = Image.open(cache_path)
+                    raw = safe_open_image(cache_path)
                 else:
-                    response = get_http_session().get(url, timeout=20)
-                    response.raise_for_status()
-                    raw = Image.open(BytesIO(response.content))
-                    raw = ImageOps.exif_transpose(raw)
+                    response = get_http_session().get(url, timeout=20, stream=True)
+                    raw = safe_open_image_response(response)
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
                     raw.save(cache_path)
                 return self._square_icon(raw, size)
@@ -555,12 +553,10 @@ class DotaProfileDashboard(BasePlugin):
             cache_path = self._image_cache_path(url)
             try:
                 if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 14 * 24 * 60 * 60:
-                    raw = Image.open(cache_path).convert("RGB")
+                    raw = safe_open_image(cache_path).convert("RGB")
                 else:
-                    response = get_http_session().get(url, timeout=20)
-                    response.raise_for_status()
-                    raw = Image.open(BytesIO(response.content)).convert("RGB")
-                    raw = ImageOps.exif_transpose(raw)
+                    response = get_http_session().get(url, timeout=20, stream=True)
+                    raw = safe_open_image_response(response).convert("RGB")
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
                     raw.save(cache_path)
                 icon = ImageOps.fit(raw, (size, size), method=Image.Resampling.LANCZOS)

@@ -2,7 +2,6 @@ from collections.abc import Mapping, MutableMapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 import html as html_lib
-from io import BytesIO
 import hashlib
 import json
 import re
@@ -18,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from utils.app_utils import resolve_path
+from utils.safe_image import ImageLimits, read_limited_response_bytes, safe_open_image
 
 try:
     from utils.app_utils import resolve_dimensions as _resolve_dimensions
@@ -128,6 +128,12 @@ TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
 TEAM_LOGO_DISK_CACHE_MAX_BYTES = 2 * 1024 * 1024
 TEAM_LOGO_DISK_CACHE_MAX_SIDE = 2048
 TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
+TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
+    max_bytes=TEAM_LOGO_DISK_CACHE_MAX_BYTES,
+    max_width=TEAM_LOGO_DISK_CACHE_MAX_SIDE,
+    max_height=TEAM_LOGO_DISK_CACHE_MAX_SIDE,
+    max_pixels=TEAM_LOGO_DISK_CACHE_MAX_PIXELS,
+)
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
 # correct on every matchday regardless of the scoreboard date window. Note: apis/v2
@@ -2410,6 +2416,8 @@ class SportsDashboardCommonMixin:
         return False
 
     def _sports_dashboard_cache_dir(self):
+        if os.getenv("INKYPI_CACHE_DIR", "").strip():
+            return self.cache_dir(leaf="cache")
         cache_dir = Path(self.get_plugin_dir("cache"))
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir
@@ -2791,9 +2799,9 @@ class SportsDashboardCommonMixin:
             url,
             headers={"User-Agent": "InkyPi/1.0"},
             timeout=timeout,
+            stream=True,
         )
-        response.raise_for_status()
-        return response.content
+        return read_limited_response_bytes(response, max_bytes=TEAM_LOGO_IMAGE_LIMITS.max_bytes)
 
     @staticmethod
     def _load_team_logo(logo_url, size, cache_dir=None):
@@ -2822,14 +2830,17 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _team_logo_from_bytes(data, size):
-        if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+        if not data:
             return None
-        with Image.open(BytesIO(data)) as source:
-            logo = SportsDashboard._logo_with_transparent_background(source)
-            bbox = logo.getbbox()
-            if bbox:
-                logo = logo.crop(bbox)
-            return ImageOps.contain(logo, (size, size), Image.LANCZOS)
+        try:
+            source = safe_open_image(data, limits=TEAM_LOGO_IMAGE_LIMITS)
+        except Exception:
+            return None
+        logo = SportsDashboard._logo_with_transparent_background(source)
+        bbox = logo.getbbox()
+        if bbox:
+            logo = logo.crop(bbox)
+        return ImageOps.contain(logo, (size, size), Image.LANCZOS)
 
     @staticmethod
     def _team_logo_disk_cache_path(cache_dir, logo_url):
@@ -2879,8 +2890,8 @@ class SportsDashboardCommonMixin:
         if not data or len(data) > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
             return False
         try:
-            with Image.open(BytesIO(data)) as source:
-                width, height = source.size
+            source = safe_open_image(data, limits=TEAM_LOGO_IMAGE_LIMITS)
+            width, height = source.size
         except Exception:
             return False
         if width <= 0 or height <= 0:

@@ -19,6 +19,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_available_font_names, get_font
 from utils.image_utils import text_width
+from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class DailyArt(BasePlugin):
             if image_path and Path(image_path).is_file():
                 logger.info("Using cached DailyArt image for %s: %s", rotation_key, image_path)
                 self._write_art_context(cache.get("artworks") or cache.get("artwork") or {}, now, settings)
-                return Image.open(image_path).convert("RGB")
+                return safe_open_image(image_path).convert("RGB")
 
         self._prune_cache_files()
         state = self._read_state()
@@ -226,7 +227,7 @@ class DailyArt(BasePlugin):
         if stale_image and Path(stale_image).is_file():
             logger.warning("DailyArt using stale cached image after candidate failures: %s", "; ".join(errors[-4:]))
             self._write_art_context(cache.get("artworks") or cache.get("artwork") or {}, now, settings)
-            return Image.open(stale_image).convert("RGB")
+            return safe_open_image(stale_image).convert("RGB")
 
         logger.warning("DailyArt failed without usable stale cache: %s", "; ".join(errors[-4:]))
         return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
@@ -572,10 +573,11 @@ class DailyArt(BasePlugin):
                             raise RuntimeError(f"image exceeded {max_bytes} bytes")
                         handle.write(chunk)
 
-            image = Image.open(tmp_path)
-            image.draft("RGB", (dimensions[0] * 3, dimensions[1] * 3))
-            image.load()
-            image = ImageOps.exif_transpose(image).convert("RGB")
+            image = safe_open_image(
+                tmp_path,
+                limits=ImageLimits(max_bytes=max_bytes),
+                draft_size=(dimensions[0] * 3, dimensions[1] * 3),
+            ).convert("RGB")
             image.thumbnail((dimensions[0] * 3, dimensions[1] * 3), RESAMPLE)
             return image
         finally:

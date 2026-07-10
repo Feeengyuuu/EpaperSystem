@@ -241,13 +241,21 @@ def test_worldcup_flag_loader_preserves_source_ratio(monkeypatch):
     calls = []
 
     class FakeResponse:
-        content = data
+        headers = {}
 
         def raise_for_status(self):
             return None
 
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield data
+
+        def close(self):
+            return None
+
     class FakeSession:
-        def get(self, url, headers=None, timeout=None):
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
             calls.append((url, headers, timeout))
             return FakeResponse()
 
@@ -13138,7 +13146,8 @@ def test_remote_team_logo_loader_uses_short_timeout_and_failure_cache(monkeypatc
     calls = []
 
     class FakeSession:
-        def get(self, url, headers=None, timeout=None):
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
             calls.append((url, timeout))
             raise OSError("offline")
 
@@ -13162,13 +13171,21 @@ def test_remote_team_logo_uses_shared_http_session(monkeypatch):
     calls = []
 
     class FakeResponse:
-        content = data
+        headers = {}
 
         def raise_for_status(self):
             return None
 
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield data
+
+        def close(self):
+            return None
+
     class FakeSession:
-        def get(self, url, headers=None, timeout=None):
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
             calls.append((url, headers, timeout))
             return FakeResponse()
 
@@ -13192,13 +13209,21 @@ def test_remote_team_logo_loader_uses_disk_cache(monkeypatch, tmp_path):
     calls = []
 
     class FakeResponse:
-        content = data
+        headers = {}
 
         def raise_for_status(self):
             return None
 
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield data
+
+        def close(self):
+            return None
+
     class FakeSession:
-        def get(self, url, headers=None, timeout=None):
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
             calls.append((url, timeout))
             return FakeResponse()
 
@@ -13226,13 +13251,21 @@ def test_remote_team_logo_loader_replaces_oversized_disk_cache(monkeypatch, tmp_
     calls = []
 
     class FakeResponse:
-        content = data
+        headers = {}
 
         def raise_for_status(self):
             return None
 
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield data
+
+        def close(self):
+            return None
+
     class FakeSession:
-        def get(self, url, headers=None, timeout=None):
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
             calls.append((url, timeout))
             return FakeResponse()
 

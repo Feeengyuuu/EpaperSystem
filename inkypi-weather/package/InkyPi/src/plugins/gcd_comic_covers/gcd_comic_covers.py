@@ -7,7 +7,6 @@ import logging
 import os
 import random
 import re
-from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -18,6 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.safe_image import safe_open_image_response
 
 try:
     import pytz
@@ -670,18 +670,17 @@ class GcdComicCovers(BasePlugin):
                 cover_url,
                 timeout=(GCD_COVER_CONNECT_TIMEOUT_SECONDS, GCD_COVER_READ_TIMEOUT_SECONDS),
                 headers=IMAGE_HEADERS,
+                stream=True,
             )
             if response.status_code in {403, 429}:
+                response.close()
                 raise GcdCoverImageUnavailable(
                     f"cover image blocked by source ({response.status_code})",
                     candidate,
                     detail,
                     cover_url,
                 )
-            response.raise_for_status()
-            image = Image.open(BytesIO(response.content))
-            image.load()
-            return ImageOps.exif_transpose(image)
+            return safe_open_image_response(response)
         except GcdCoverImageUnavailable:
             raise
         except requests.exceptions.RequestException as exc:

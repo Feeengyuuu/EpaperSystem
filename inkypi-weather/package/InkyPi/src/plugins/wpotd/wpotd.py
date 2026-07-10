@@ -23,8 +23,8 @@ Flow:
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from PIL import Image, UnidentifiedImageError
-from io import BytesIO
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image_response
 import logging
 from random import randint
 from datetime import datetime, timedelta, date
@@ -172,9 +172,8 @@ class Wpotd(BasePlugin):
             else:
                 # Original behavior: download without resizing
                 session = get_http_session()
-                response = session.get(url, headers=self.HEADERS, timeout=10)
-            response.raise_for_status()
-            return Image.open(BytesIO(response.content))
+                response = session.get(url, headers=self.HEADERS, timeout=10, stream=True)
+            return safe_open_image_response(response)
 
         except UnidentifiedImageError as e:
             logger.error(f"Unsupported image format at {url}: {str(e)}")

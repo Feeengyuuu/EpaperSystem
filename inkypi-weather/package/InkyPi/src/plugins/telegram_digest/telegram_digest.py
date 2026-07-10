@@ -9,9 +9,7 @@ import math
 import os
 import re
 import sys
-import tempfile
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
@@ -19,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.app_utils import bounded_int, coerce_bool, get_font, resolve_path
 from utils.http_client import get_http_session
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ DISPLAY_READ_KEY_LIMIT = 1000
 ACCOUNT_SCAN_LIMIT_CAP = 100
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 REQUEST_TIMEOUT = (4, 18)
-DOWNLOAD_CHUNK_SIZE = 8192
+TELEGRAM_MEDIA_IMAGE_LIMITS = ImageLimits(max_bytes=25 * 1024 * 1024)
 MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
@@ -385,9 +384,13 @@ class TelegramDigest(BasePlugin):
         api_id = self._setting_or_env(settings, ("telegramApiId", "apiId"), device_config, "TELEGRAM_API_ID")
         api_hash = self._setting_or_env(settings, ("telegramApiHash", "apiHash"), device_config, "TELEGRAM_API_HASH")
         session_path = self._setting_or_env(settings, ("telegramSessionPath", "sessionPath"), device_config, "TELEGRAM_SESSION_PATH")
-        if not session_path:
-            session_path = str(self._cache_dir() / "telegram_account")
+        session_path = self._resolve_session_path(session_path)
         session_file = self._session_file_for(session_path)
+        if session_file.is_file():
+            try:
+                session_file.chmod(0o600)
+            except OSError as exc:
+                logger.warning("Could not restrict Telegram session permissions: %s", exc)
         return {
             "api_id": self._optional_int(api_id),
             "api_hash": str(api_hash or "").strip(),
@@ -395,6 +398,20 @@ class TelegramDigest(BasePlugin):
             "session_file": str(session_file),
             "session_ready": session_file.is_file(),
         }
+
+    def _resolve_session_path(self, configured_path):
+        if configured_path:
+            path = Path(str(configured_path)).expanduser()
+            if not path.is_absolute() and os.getenv("INKYPI_DATA_DIR", "").strip():
+                path = self.data_dir() / path
+        else:
+            path = self.data_dir(
+                leaf="telegram_account",
+                legacy_leaf=Path("cache") / "telegram_account",
+                create=False,
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _access_mode(self, settings, device_config):
         explicit = str(settings.get("accessMode") or settings.get("authMode") or "").strip().casefold()
@@ -512,24 +529,20 @@ class TelegramDigest(BasePlugin):
         if isinstance(data, str):
             data_path = Path(data)
             if data_path.is_file():
-                with Image.open(data_path) as source:
-                    image = ImageOps.exif_transpose(source).convert("RGB")
-                    image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
-                    image.save(target, format="JPEG", quality=88)
+                image = safe_open_image(data_path, limits=TELEGRAM_MEDIA_IMAGE_LIMITS).convert("RGB")
+                image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
+                image.save(target, format="JPEG", quality=88)
                 return target
             return ""
-        if isinstance(data, bytearray):
-            data = bytes(data)
-        if not isinstance(data, bytes):
+        if not isinstance(data, (bytes, bytearray, memoryview)):
             return ""
         self._cache_image_bytes(data, target)
         return target
 
     def _cache_image_bytes(self, data, target):
-        with Image.open(BytesIO(data)) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
-            image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
-            image.save(target, format="JPEG", quality=88)
+        image = safe_open_image(data, limits=TELEGRAM_MEDIA_IMAGE_LIMITS).convert("RGB")
+        image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
+        image.save(target, format="JPEG", quality=88)
 
     def _message_timestamp(self, value):
         if isinstance(value, datetime):
@@ -674,33 +687,15 @@ class TelegramDigest(BasePlugin):
         if not file_path:
             raise RuntimeError("Telegram getFile did not return file_path")
 
-        tmp_path = self._download_to_temp(self._file_url(token, file_path), Path(file_path).suffix or ".img")
-        try:
-            with Image.open(tmp_path) as source:
-                image = ImageOps.exif_transpose(source).convert("RGB")
-                image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
-                image.save(target, format="JPEG", quality=88)
-            return target
-        finally:
-            try:
-                Path(tmp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def _download_to_temp(self, url, suffix):
-        response = get_http_session().get(url, timeout=REQUEST_TIMEOUT, stream=True)
-        response.raise_for_status()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp_path = Path(temp_file.name)
-        try:
-            with temp_file:
-                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    if chunk:
-                        temp_file.write(chunk)
-            return tmp_path
-        except Exception:
-            tmp_path.unlink(missing_ok=True)
-            raise
+        response = get_http_session().get(
+            self._file_url(token, file_path),
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+        )
+        image = safe_open_image_response(response, limits=TELEGRAM_MEDIA_IMAGE_LIMITS).convert("RGB")
+        image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
+        image.save(target, format="JPEG", quality=88)
+        return target
 
     def _build_payload(
         self,

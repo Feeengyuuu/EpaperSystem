@@ -7,7 +7,6 @@ import os
 import re
 import time
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
+from utils.safe_image import safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class WowProfileDashboard(BasePlugin):
             and Path(cache["image_path"]).exists()
         ):
             self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-            return Image.open(cache["image_path"]).convert("RGB")
+            return safe_open_image(cache["image_path"]).convert("RGB")
 
         data: dict[str, Any]
         try:
@@ -102,7 +102,7 @@ class WowProfileDashboard(BasePlugin):
             logger.warning("WoW profile dashboard fetch failed: %s", exc)
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-                return Image.open(cache["image_path"]).convert("RGB")
+                return safe_open_image(cache["image_path"]).convert("RGB")
             data = self._status_payload(
                 "Fetch failed",
                 str(exc),
@@ -778,10 +778,9 @@ class WowProfileDashboard(BasePlugin):
         if not url:
             return None
         try:
-            response = get_http_session().get(url, timeout=20)
-            response.raise_for_status()
-            image = Image.open(BytesIO(response.content))
-            return ImageOps.fit(ImageOps.exif_transpose(image).convert("RGB"), size, method=Image.Resampling.LANCZOS)
+            response = get_http_session().get(url, timeout=20, stream=True)
+            image = safe_open_image_response(response).convert("RGB")
+            return ImageOps.fit(image, size, method=Image.Resampling.LANCZOS)
         except Exception as exc:
             logger.info("Could not load WoW media image: %s", exc)
             return None

@@ -9,7 +9,6 @@ import random
 import re
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -18,6 +17,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -405,11 +405,8 @@ class NatGeoPhotoOfTheDay(BasePlugin):
         return score
 
     def _download_image(self, url, dimensions, headers=IMAGE_HEADERS):
-        response = get_http_session().get(url, timeout=35, headers=headers)
-        response.raise_for_status()
-        with Image.open(BytesIO(response.content)) as image:
-            loaded = ImageOps.exif_transpose(image).convert("RGB")
-        return loaded
+        response = get_http_session().get(url, timeout=35, headers=headers, stream=True)
+        return safe_open_image_response(response).convert("RGB")
 
     def _looks_usable(self, image):
         width, height = image.size
@@ -547,8 +544,7 @@ class NatGeoPhotoOfTheDay(BasePlugin):
             image_path = Path(meta.get("image_path") or "")
             if not image_path.is_file():
                 return None
-            with Image.open(image_path) as image:
-                loaded = ImageOps.exif_transpose(image).convert("RGB")
+            loaded = safe_open_image(image_path).convert("RGB")
             return {
                 "source": meta.get("source") or source,
                 "image": loaded,

@@ -1,9 +1,9 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context, get_theme_palette
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from io import BytesIO
 from datetime import datetime, timezone
 import hashlib
 import html
@@ -100,7 +100,7 @@ class SteamProfileDashboard(BasePlugin):
             if image_path and os.path.exists(image_path):
                 logger.info("Using cached Steam profile dashboard.")
                 self._write_steam_profile_context(cache_entry.get("data") or {}, now)
-                return Image.open(image_path).convert("RGB")
+                return safe_open_image(image_path).convert("RGB")
 
         try:
             data = self._get_dashboard_data(
@@ -132,7 +132,7 @@ class SteamProfileDashboard(BasePlugin):
             if cache_entry and cache_entry.get("image_path") and os.path.exists(cache_entry["image_path"]):
                 logger.warning("Using stale Steam profile dashboard cache.")
                 self._write_steam_profile_context(cache_entry.get("data") or {}, now)
-                return Image.open(cache_entry["image_path"]).convert("RGB")
+                return safe_open_image(cache_entry["image_path"]).convert("RGB")
             raise RuntimeError(f"Steam 个人资料看板生成失败：{str(e)}")
 
     def _write_steam_profile_context(self, data, generated_at):
@@ -1161,13 +1161,11 @@ class SteamProfileDashboard(BasePlugin):
         icon_cache_path = self._badge_icon_cache_path(url)
         try:
             if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 30 * 24 * 60 * 60:
-                icon = Image.open(icon_cache_path).convert("RGBA")
+                icon = safe_open_image(icon_cache_path).convert("RGBA")
             else:
                 session = get_http_session()
-                response = session.get(url, timeout=25)
-                response.raise_for_status()
-                icon = Image.open(BytesIO(response.content)).convert("RGBA")
-                icon = ImageOps.exif_transpose(icon)
+                response = session.get(url, timeout=25, stream=True)
+                icon = safe_open_image_response(response).convert("RGBA")
                 os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
                 icon.save(icon_cache_path)
         except Exception as e:
@@ -1509,13 +1507,11 @@ class SteamProfileDashboard(BasePlugin):
         icon_cache_path = self._game_icon_cache_path(url)
         try:
             if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 14 * 24 * 60 * 60:
-                icon = Image.open(icon_cache_path).convert("RGB")
+                icon = safe_open_image(icon_cache_path).convert("RGB")
             else:
                 session = get_http_session()
-                response = session.get(url, timeout=25)
-                response.raise_for_status()
-                icon = Image.open(BytesIO(response.content)).convert("RGB")
-                icon = ImageOps.exif_transpose(icon)
+                response = session.get(url, timeout=25, stream=True)
+                icon = safe_open_image_response(response).convert("RGB")
                 os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
                 icon.save(icon_cache_path)
         except Exception as e:
@@ -1565,13 +1561,11 @@ class SteamProfileDashboard(BasePlugin):
             avatar_cache_path = self._avatar_cache_path(url)
             try:
                 if os.path.exists(avatar_cache_path) and time.time() - os.path.getmtime(avatar_cache_path) < 7 * 24 * 60 * 60:
-                    avatar = Image.open(avatar_cache_path).convert("RGB")
+                    avatar = safe_open_image(avatar_cache_path).convert("RGB")
                 else:
                     session = get_http_session()
-                    response = session.get(url, timeout=25)
-                    response.raise_for_status()
-                    avatar = Image.open(BytesIO(response.content)).convert("RGB")
-                    avatar = ImageOps.exif_transpose(avatar)
+                    response = session.get(url, timeout=25, stream=True)
+                    avatar = safe_open_image_response(response).convert("RGB")
                     os.makedirs(os.path.dirname(avatar_cache_path), exist_ok=True)
                     avatar.save(avatar_cache_path)
             except Exception as e:

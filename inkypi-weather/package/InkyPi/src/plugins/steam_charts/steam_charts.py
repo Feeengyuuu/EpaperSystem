@@ -3,6 +3,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import get_font
 from utils.http_client import DEFAULT_TIMEOUT_SECONDS, get_http_session
 from utils.draw_utils import fit_text as fit_text_to_width
+from utils.safe_image import ImageLimits, read_limited_response_bytes, safe_open_base64_image
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
 import concurrent.futures
@@ -28,6 +29,7 @@ SPARKLINE_INK = (6, 78, 59)
 LINE_SPARKLINE_AMPLIFICATION = 1.55
 LINE_SPARKLINE_EDGE_PADDING = 2.0
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
+STEAM_CAPSULE_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
 BOLD_SAFE_MIDDLE_DOT = "\u2027"
 MIDDLE_DOT_DISPLAY_TRANSLATION = str.maketrans({
     "\u00b7": BOLD_SAFE_MIDDLE_DOT,
@@ -1292,8 +1294,10 @@ class SteamCharts(BasePlugin):
         if not data_uri or not str(data_uri).startswith("data:image/"):
             return None
         try:
-            _prefix, encoded = str(data_uri).split(",", 1)
-            return Image.open(BytesIO(base64.b64decode(encoded)))
+            return safe_open_base64_image(
+                str(data_uri),
+                limits=STEAM_CAPSULE_IMAGE_LIMITS,
+            )
         except Exception:
             return None
 
@@ -1713,9 +1717,12 @@ class SteamCharts(BasePlugin):
         if not image_url:
             return ""
         session = get_http_session()
-        resp = session.get(image_url, timeout=STEAM_CAPSULE_TIMEOUT)
-        resp.raise_for_status()
-        encoded_image = base64.b64encode(resp.content).decode("ascii")
+        resp = session.get(image_url, timeout=STEAM_CAPSULE_TIMEOUT, stream=True)
+        image_bytes = read_limited_response_bytes(
+            resp,
+            max_bytes=STEAM_CAPSULE_IMAGE_LIMITS.max_bytes,
+        )
+        encoded_image = base64.b64encode(image_bytes).decode("ascii")
         return f"data:image/jpeg;base64,{encoded_image}"
 
     @staticmethod

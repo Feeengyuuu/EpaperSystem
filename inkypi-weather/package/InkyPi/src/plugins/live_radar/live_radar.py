@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from io import BytesIO
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -20,6 +19,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
 from utils.http_client import get_http_session
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context
 
 logger = logging.getLogger(__name__)
@@ -2093,15 +2093,11 @@ class LiveRadar(BasePlugin):
 
         try:
             session = get_http_session()
-            response = session.get(url, timeout=12, headers=self._cover_headers(url))
-            response.raise_for_status()
-            content = response.content
-            if len(content) > COVER_MAX_BYTES:
-                raise RuntimeError(f"cover image too large: {len(content)} bytes")
-
-            cover = Image.open(BytesIO(content))
-            cover.load()
-            cover = ImageOps.exif_transpose(cover).convert("RGB")
+            response = session.get(url, timeout=12, headers=self._cover_headers(url), stream=True)
+            cover = safe_open_image_response(
+                response,
+                limits=ImageLimits(max_bytes=COVER_MAX_BYTES),
+            ).convert("RGB")
             cover.thumbnail(COVER_MAX_SIZE, self._resampling_filter())
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             cover.save(cache_path, "PNG")
@@ -2122,15 +2118,11 @@ class LiveRadar(BasePlugin):
 
         try:
             session = get_http_session()
-            response = session.get(url, timeout=12, headers=self._cover_headers(url))
-            response.raise_for_status()
-            content = response.content
-            if len(content) > AVATAR_MAX_BYTES:
-                raise RuntimeError(f"avatar image too large: {len(content)} bytes")
-
-            avatar = Image.open(BytesIO(content))
-            avatar.load()
-            avatar = ImageOps.exif_transpose(avatar).convert("RGB")
+            response = session.get(url, timeout=12, headers=self._cover_headers(url), stream=True)
+            avatar = safe_open_image_response(
+                response,
+                limits=ImageLimits(max_bytes=AVATAR_MAX_BYTES),
+            ).convert("RGB")
             avatar.thumbnail(AVATAR_MAX_SIZE, self._resampling_filter())
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             avatar.save(cache_path, "PNG")
@@ -2142,7 +2134,7 @@ class LiveRadar(BasePlugin):
     @staticmethod
     def _open_cached_cover(path):
         try:
-            return Image.open(path).convert("RGB")
+            return safe_open_image(path, limits=ImageLimits(max_bytes=COVER_MAX_BYTES)).convert("RGB")
         except Exception as exc:
             logger.warning("Could not read LiveRadar cover cache %s: %s", path, exc)
             return None
@@ -2150,7 +2142,7 @@ class LiveRadar(BasePlugin):
     @staticmethod
     def _open_cached_avatar(path):
         try:
-            return Image.open(path).convert("RGB")
+            return safe_open_image(path, limits=ImageLimits(max_bytes=AVATAR_MAX_BYTES)).convert("RGB")
         except Exception as exc:
             logger.warning("Could not read LiveRadar avatar cache %s: %s", path, exc)
             return None

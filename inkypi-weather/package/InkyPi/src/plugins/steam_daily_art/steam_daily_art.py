@@ -1,7 +1,7 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image, safe_open_image_response
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
-from io import BytesIO
 from datetime import datetime
 import hashlib
 import json
@@ -38,7 +38,7 @@ class SteamDailyArt(BasePlugin):
             if cached_image and os.path.exists(cached_image):
                 logger.info(f"Using cached Steam daily art for {rotation_key}: {cached_image}")
                 self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
-                return Image.open(cached_image).convert("RGB")
+                return safe_open_image(cached_image).convert("RGB")
 
         try:
             item = self._select_item(settings, rotation_key)
@@ -77,7 +77,7 @@ class SteamDailyArt(BasePlugin):
             if stale_image and os.path.exists(stale_image):
                 logger.warning("Using stale Steam daily art cache.")
                 self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
-                return Image.open(stale_image).convert("RGB")
+                return safe_open_image(stale_image).convert("RGB")
             raise RuntimeError(f"Steam Daily Art failed: {str(e)}")
 
     def _write_daily_art_context(self, entry, settings, generated_at):
@@ -456,19 +456,13 @@ class SteamDailyArt(BasePlugin):
 
     def _download_image(self, url):
         session = get_http_session()
-        response = session.get(url, timeout=40)
-        response.raise_for_status()
-        image = Image.open(BytesIO(response.content))
-        image = ImageOps.exif_transpose(image)
-        return image.convert("RGB")
+        response = session.get(url, timeout=40, stream=True)
+        return safe_open_image_response(response).convert("RGB")
 
     def _download_logo(self, url):
         session = get_http_session()
-        response = session.get(url)
-        response.raise_for_status()
-        logo = Image.open(BytesIO(response.content))
-        logo = ImageOps.exif_transpose(logo)
-        return logo.convert("RGBA")
+        response = session.get(url, stream=True)
+        return safe_open_image_response(response).convert("RGBA")
 
     def _smart_cover(self, image, dimensions):
         target_width, target_height = dimensions

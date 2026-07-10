@@ -396,17 +396,29 @@ def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tm
     calls = []
 
     class FakeResponse:
-        content = buffer.getvalue()
+        headers = {}
+
+        def __init__(self):
+            self.closed = False
 
         def raise_for_status(self):
             return None
 
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield buffer.getvalue()
+
+        def close(self):
+            self.closed = True
+
+    response = FakeResponse()
+
     class FakeSession:
         trust_env = False
 
-        def get(self, url, timeout, headers):
-            calls.append({"url": url, "timeout": timeout, "headers": headers})
-            return FakeResponse()
+        def get(self, url, timeout, headers, stream=False):
+            calls.append({"url": url, "timeout": timeout, "headers": headers, "stream": stream})
+            return response
 
     session = FakeSession()
     monkeypatch.setattr(live_radar_module, "get_http_session", lambda: session)
@@ -420,8 +432,10 @@ def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tm
             "url": "https://i0.hdslb.com/bfs/live/test.jpg",
             "timeout": 12,
             "headers": plugin._cover_headers("https://i0.hdslb.com/bfs/live/test.jpg"),
+            "stream": True,
         }
     ]
+    assert response.closed is True
     assert calls[0]["headers"]["Referer"] == "https://live.bilibili.com/"
     assert list(tmp_path.glob("cover_*.png"))
 

@@ -23,6 +23,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
+from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -616,7 +617,7 @@ class TechPulse(BasePlugin):
     def _load_story_preview_cache(self, path):
         try:
             if path.is_file():
-                return Image.open(path).convert("RGB")
+                return safe_open_image(path).convert("RGB")
         except Exception as exc:
             logger.debug("Could not load story preview cache %s: %s", path, exc)
         return None

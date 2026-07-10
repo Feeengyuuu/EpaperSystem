@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from html.parser import HTMLParser
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -20,6 +19,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import bounded_int
 from utils.http_client import get_http_session
+from utils.safe_image import safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -671,9 +671,13 @@ class BoxOfficeTopMovies(BasePlugin):
                 if path.is_file() and path.stat().st_size > 0:
                     movie.poster_path = str(path)
                     continue
-                response = get_http_session().get(movie.poster_url, timeout=18, headers=IMAGE_HEADERS)
-                response.raise_for_status()
-                image = Image.open(BytesIO(response.content)).convert("RGB")
+                response = get_http_session().get(
+                    movie.poster_url,
+                    timeout=18,
+                    headers=IMAGE_HEADERS,
+                    stream=True,
+                )
+                image = safe_open_image_response(response).convert("RGB")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 image.save(path, format="JPEG", quality=88)
                 movie.poster_path = str(path)

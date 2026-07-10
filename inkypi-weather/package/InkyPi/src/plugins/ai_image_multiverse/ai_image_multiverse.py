@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 # ---- standard library ----
-import base64
-from io import BytesIO
 import json
 import logging
 import os
@@ -32,6 +30,7 @@ import requests
 from blueprints.plugin import plugin_bp
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.image_utils import pad_image_blur
+from utils.safe_image import safe_open_base64_image, safe_open_image, safe_open_image_response
 
 from .e_ink_prompt import e_ink_prompt
 from .randomizer import randomizer
@@ -315,11 +314,10 @@ def generate_openai_image(settings, device_config, final_prompt: str) -> Image.I
         raise RuntimeError("OpenAI returned no image data.")
 
     if getattr(img0, "b64_json", None):
-        img = Image.open(BytesIO(base64.b64decode(img0.b64_json))).convert("RGB")
+        img = safe_open_base64_image(img0.b64_json).convert("RGB")
     elif getattr(img0, "url", None):
-        r = requests.get(img0.url, timeout=20)
-        r.raise_for_status()
-        img = Image.open(BytesIO(r.content)).convert("RGB")
+        r = requests.get(img0.url, timeout=20, stream=True)
+        img = safe_open_image_response(r).convert("RGB")
     else:
         raise RuntimeError("OpenAI returned neither b64_json nor url.")
 
@@ -338,11 +336,11 @@ def generate_gemini_image(settings, device_config, final_prompt: str) -> Image.I
         # 2) google.genai.types.Image (has image_bytes)
         b = getattr(obj, "image_bytes", None)
         if isinstance(b, (bytes, bytearray)):
-            return Image.open(BytesIO(b)).convert("RGB")
+            return safe_open_image(b).convert("RGB")
 
         # 3) Raw bytes
         if isinstance(obj, (bytes, bytearray)):
-            return Image.open(BytesIO(obj)).convert("RGB")
+            return safe_open_image(obj).convert("RGB")
 
         raise RuntimeError(f"Unsupported image type from Gemini: {type(obj)}")
 
@@ -611,13 +609,12 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
 
                 if isinstance(img_data, str) and img_data.startswith("http"):
                     logger.info("Downloading image from Horde URL...")
-                    img_res = requests.get(img_data, timeout=20)
-                    img_res.raise_for_status()
-                    img = Image.open(BytesIO(img_res.content)).convert("RGB")
+                    img_res = requests.get(img_data, timeout=20, stream=True)
+                    img = safe_open_image_response(img_res).convert("RGB")
                 else:
                     if isinstance(img_data, str) and "base64," in img_data:
                         img_data = img_data.split("base64,", 1)[1]
-                    img = Image.open(BytesIO(base64.b64decode(img_data))).convert("RGB")
+                    img = safe_open_base64_image(img_data).convert("RGB")
 
                 _, w, h = _get_target_dims(device_config)
 
@@ -656,7 +653,21 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
 
 # Presets
 
-PRESETS_FILE = Path(__file__).parent / "presets.json"
+LEGACY_PRESETS_FILE = Path(__file__).parent / "presets.json"
+
+
+def _presets_file() -> Path:
+    data_root_raw = os.getenv("INKYPI_DATA_DIR", "").strip()
+    data_root = Path(data_root_raw).expanduser() if data_root_raw else None
+    override = os.getenv("INKYPI_AI_MULTIVERSE_PRESETS_FILE", "").strip()
+    if override:
+        path = Path(override).expanduser()
+        if data_root is not None and not path.is_absolute():
+            path = data_root / "plugins" / "ai_image_multiverse" / path
+        return path
+    if data_root is not None:
+        return data_root / "plugins" / "ai_image_multiverse" / "presets.json"
+    return LEGACY_PRESETS_FILE
 
 def _atomic_write_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -677,11 +688,12 @@ def _slugify(label: str) -> str:
     return s or "preset"
 
 def _read_presets() -> list:
+    presets_file = _presets_file()
     try:
-        if not PRESETS_FILE.exists():
-            _atomic_write_json(PRESETS_FILE, [])
+        if not presets_file.exists():
+            _atomic_write_json(presets_file, [])
             return []
-        data = json.loads(PRESETS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(presets_file.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
     except Exception:
         return []
@@ -741,7 +753,7 @@ def presets_add(plugin_id):
     presets.append({"id": preset_id, "label": label, "prompt": prompt})
     presets = _sorted_presets(presets)
 
-    _atomic_write_json(PRESETS_FILE, presets)
+    _atomic_write_json(_presets_file(), presets)
     return jsonify({"ok": True, "presets": presets, "added_id": preset_id})
 
 @plugin_bp.post("/plugin/<plugin_id>/presets/delete")
@@ -761,7 +773,7 @@ def presets_delete(plugin_id):
     ]
     presets = _sorted_presets(presets)
 
-    _atomic_write_json(PRESETS_FILE, presets)
+    _atomic_write_json(_presets_file(), presets)
     return jsonify({"ok": True, "presets": presets, "deleted_id": preset_id})
 
 class AIImageMultiverse(BasePlugin):

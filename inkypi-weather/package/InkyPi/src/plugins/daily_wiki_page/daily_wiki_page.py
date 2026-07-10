@@ -7,7 +7,6 @@ import logging
 import re
 from datetime import datetime
 from html.parser import HTMLParser
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -19,6 +18,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool, get_available_font_names, get_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
+from utils.safe_image import ImageLimits, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -858,18 +858,11 @@ class DailyWikiPage(BasePlugin):
                 timeout=(5, self._int(settings.get("imageTimeoutSeconds"), 12, 4, 30)),
                 stream=True,
             )
-            response.raise_for_status()
-            data = bytearray()
-            for chunk in response.iter_content(chunk_size=8192):
-                if not chunk:
-                    continue
-                data.extend(chunk)
-                if len(data) > max_bytes:
-                    raise RuntimeError("Wikimedia image exceeded maximum size")
-            loaded = Image.open(BytesIO(bytes(data)))
-            loaded.draft("RGB", (target_size[0] * 3, target_size[1] * 3))
-            loaded.load()
-            loaded = ImageOps.exif_transpose(loaded).convert("RGB")
+            loaded = safe_open_image_response(
+                response,
+                limits=ImageLimits(max_bytes=max_bytes),
+                draft_size=(target_size[0] * 3, target_size[1] * 3),
+            ).convert("RGB")
             loaded.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
             return loaded
         except Exception as exc:

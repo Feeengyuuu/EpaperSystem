@@ -58,8 +58,8 @@ def test_ai_image_download_uses_shared_session_and_http_errors(monkeypatch):
     calls = []
 
     class Session:
-        def get(self, url, timeout=None):
-            calls.append({"url": url, "timeout": timeout})
+        def get(self, url, timeout=None, stream=False):
+            calls.append({"url": url, "timeout": timeout, "stream": stream})
             return FakeResponse(status_code=500, text="server error")
 
     class Images:
@@ -74,7 +74,13 @@ def test_ai_image_download_uses_shared_session_and_http_errors(monkeypatch):
     with pytest.raises(requests.exceptions.HTTPError):
         plugin.fetch_image(type("Client", (), {"images": Images()})(), "prompt")
 
-    assert calls == [{"url": "https://example.test/generated.png", "timeout": None}]
+    assert calls == [
+        {
+            "url": "https://example.test/generated.png",
+            "timeout": None,
+            "stream": True,
+        }
+    ]
 
 
 def test_apod_http_500_fails_fast_with_timeout(monkeypatch):
@@ -165,5 +171,4 @@ def test_image_album_missing_api_key_fails_before_provider():
 
     with pytest.raises(RuntimeError, match="Immich API Key not configured"):
         ImageAlbum({"id": "image_album"}).generate_image(settings, FakeDeviceConfig())
-
 

@@ -10,7 +10,6 @@ import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlencode
 try:
@@ -23,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool, get_available_font_names, get_font
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 
@@ -1518,10 +1518,8 @@ LIMIT 8
         if not url:
             return None
         try:
-            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(5, 20))
-            response.raise_for_status()
-            with Image.open(BytesIO(response.content)) as image:
-                return ImageOps.exif_transpose(image).convert("RGB")
+            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(5, 20), stream=True)
+            return safe_open_image_response(response).convert("RGB")
         except Exception as exc:
             logger.warning("Could not download SpeciesRadar image %s: %s", url, exc)
             return None
@@ -1538,19 +1536,20 @@ LIMIT 8
         cache_file = self._map_cache_file(url)
         try:
             if cache_file.is_file() and time.time() - cache_file.stat().st_mtime < cache_hours * 3600:
-                with Image.open(cache_file) as image:
-                    return image.convert("RGB")
+                return safe_open_image(
+                    cache_file,
+                    limits=ImageLimits(max_bytes=3 * 1024 * 1024),
+                ).convert("RGB")
         except Exception as exc:
             logger.debug("Could not use cached SpeciesRadar observation map: %s", exc)
 
         timeout = self._int(settings.get("mapTimeoutSeconds"), 8, 3, 15)
         try:
-            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(4, timeout))
-            response.raise_for_status()
-            if len(response.content) > 3 * 1024 * 1024:
-                raise RuntimeError("map image too large")
-            with Image.open(BytesIO(response.content)) as image:
-                loaded = ImageOps.exif_transpose(image).convert("RGB")
+            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(4, timeout), stream=True)
+            loaded = safe_open_image_response(
+                response,
+                limits=ImageLimits(max_bytes=3 * 1024 * 1024),
+            ).convert("RGB")
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             loaded.save(cache_file)
             return loaded

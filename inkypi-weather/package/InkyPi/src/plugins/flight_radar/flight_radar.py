@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -21,11 +20,19 @@ from PIL import Image, ImageDraw, ImageFont
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 CACHE_SCHEMA_VERSION = "flight-radar-multisource-v1"
+
+
+def _runtime_cache_dir() -> Path:
+    root = os.getenv("INKYPI_CACHE_DIR", "").strip()
+    if root:
+        return Path(root).expanduser() / "plugins" / "flight_radar"
+    return PLUGIN_DIR / "cache"
 
 DEFAULT_LATITUDE = 37.6213
 DEFAULT_LONGITUDE = -122.3790
@@ -34,6 +41,7 @@ DEFAULT_RADIUS_NM = 160
 DEFAULT_DISPLAY_RADIUS_NM = 20
 DEFAULT_MAX_AIRCRAFT = 90
 DEFAULT_LOCAL_MAP_IMAGE = "sfo_bay_map_crop.png"
+MAP_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
 DEFAULT_ROUTE_CACHE_SECONDS = 1800
 DEFAULT_ROUTE_LOOKUP_LIMIT = 12
 ROUTE_CACHE_SCHEMA_VERSION = "flight-radar-routes-v2"
@@ -1246,7 +1254,7 @@ class FlightRadar(BasePlugin):
         try:
             if not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
                 return None
-            return Image.open(path).convert("RGB")
+            return safe_open_image(path, limits=MAP_IMAGE_LIMITS).convert("RGB")
         except Exception as exc:
             logger.warning("FlightRadar local map image load failed: %s", exc)
             return None
@@ -1274,17 +1282,14 @@ class FlightRadar(BasePlugin):
         cache_file = self._map_cache_file(url)
         try:
             if cache_file.is_file() and time.time() - cache_file.stat().st_mtime < cache_hours * 3600:
-                return Image.open(cache_file).convert("RGB")
+                return safe_open_image(cache_file, limits=MAP_IMAGE_LIMITS).convert("RGB")
         except Exception as exc:
             logger.debug("Could not use cached FlightRadar map image: %s", exc)
 
         timeout = self._int_setting(settings, "mapTimeoutSeconds", 6, 3, 12)
         try:
-            response = self._session().get(url, headers=HTTP_HEADERS, timeout=(4, timeout))
-            response.raise_for_status()
-            if len(response.content) > 4 * 1024 * 1024:
-                raise RuntimeError("map image too large")
-            image = Image.open(BytesIO(response.content)).convert("RGB")
+            response = self._session().get(url, headers=HTTP_HEADERS, timeout=(4, timeout), stream=True)
+            image = safe_open_image_response(response, limits=MAP_IMAGE_LIMITS).convert("RGB")
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             image.save(cache_file)
             return image
@@ -1364,7 +1369,7 @@ class FlightRadar(BasePlugin):
     @staticmethod
     def _map_cache_file(url):
         digest = hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:18]
-        return PLUGIN_DIR / "cache" / f"map_{digest}.png"
+        return _runtime_cache_dir() / f"map_{digest}.png"
 
     def _draw_radar_grid(self, draw, cx, cy, radius_px, radius_nm, theme):
         for fraction in (0.25, 0.5, 0.75, 1.0):
@@ -1618,11 +1623,11 @@ class FlightRadar(BasePlugin):
 
     @staticmethod
     def _route_cache_file():
-        return PLUGIN_DIR / "cache" / "routes_v2.json"
+        return _runtime_cache_dir() / "routes_v2.json"
 
     @staticmethod
     def _track_history_file():
-        return PLUGIN_DIR / "cache" / "tracks_v1.json"
+        return _runtime_cache_dir() / "tracks_v1.json"
 
     @staticmethod
     def _route_source_order(settings):
@@ -2183,7 +2188,7 @@ class FlightRadar(BasePlugin):
 
     @staticmethod
     def _cache_file(cache_key):
-        return PLUGIN_DIR / "cache" / f"{cache_key}.json"
+        return _runtime_cache_dir() / f"{cache_key}.json"
 
     @staticmethod
     def _read_json(path: Path):
