@@ -108,13 +108,23 @@ def test_ci_whitespace_gate_checks_committed_changes():
 
 def test_release_scripts_and_services_are_forced_to_lf():
     attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.sh text eol=lf" in attributes
     assert "*.service text eol=lf" in attributes
+    assert "*.socket text eol=lf" in attributes
     for relative in (
         "inkypi-weather/package/InkyPi/install/inkypi",
         "inkypi-weather/package/InkyPi/install/inkypi-update",
         "inkypi-weather/package/InkyPi/install/cli/inkypi-plugin",
     ):
         assert f"{relative} text eol=lf" in attributes
+
+    for relative in (
+        "inkypi-weather/package/InkyPi/install/update_vendors.sh",
+        "inkypi-weather/package/InkyPi/install/inkypi",
+        "inkypi-weather/package/InkyPi/install/inkypi-update",
+        "inkypi-weather/package/InkyPi/install/cli/inkypi-plugin",
+        "inkypi-weather/package/InkyPi/install/privileged/inkypi-privileged.socket",
+    ):
         assert b"\r" not in (REPO_ROOT / relative).read_bytes()
     assert b"\r" not in (PROJECT_ROOT / "install/inkypi.service").read_bytes()
 
