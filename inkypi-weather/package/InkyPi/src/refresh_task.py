@@ -7,6 +7,7 @@ import gc
 import hashlib
 import psutil
 import pytz
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import get_plugin_instance, plugin_supports_live_refresh
@@ -47,6 +48,17 @@ DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+
+
+@dataclass(frozen=True)
+class ActiveOperationSnapshot:
+    command_id: str
+    kind: str
+    source: str
+    plugin_id: str
+    instance_uuid: str | None
+    started_monotonic: float
+    deadline_monotonic: float
 
 
 class _StaleSelection(TaskCancelled):
@@ -285,6 +297,7 @@ class RefreshTask:
         self._running = False
         self._waiting_event = threading.Event()
         self._execution_local = threading.local()
+        self._active_operation = None
         self._attempt_count = 0
         self._completion_lock = threading.Lock()
         self._completion_events = {}
@@ -352,6 +365,11 @@ class RefreshTask:
 
     def scheduler_snapshot(self):
         return self.scheduler_state.snapshot()
+
+    def active_operation_snapshot(self):
+        """Return the current immutable command deadline without taking a lock."""
+
+        return self._active_operation
 
     @property
     def restart_request(self):
@@ -791,6 +809,15 @@ class RefreshTask:
             self._clock,
         )
         self._execution_local.context = context
+        self._active_operation = ActiveOperationSnapshot(
+            command_id=command.id,
+            kind=command.kind.value,
+            source=command.source.value,
+            plugin_id=command.plugin_id,
+            instance_uuid=command.instance_uuid,
+            started_monotonic=self._clock(),
+            deadline_monotonic=command.deadline_monotonic,
+        )
         busy_lock = None
         if command.source is CommandSource.MANUAL:
             busy_lock = self.manual_refresh_lock
@@ -876,6 +903,7 @@ class RefreshTask:
             if busy_lock is not None:
                 busy_lock.release()
             self._execution_local.context = None
+            self._active_operation = None
             try:
                 self._run_memory_maintenance("refresh-command-finally")
             except Exception:

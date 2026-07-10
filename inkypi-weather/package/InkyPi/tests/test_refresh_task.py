@@ -3527,6 +3527,40 @@ def test_deadline_crossed_after_execute_is_abandoned_before_success(monkeypatch)
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.ABANDONED
 
 
+def test_active_operation_snapshot_publishes_command_deadline_then_clears(monkeypatch):
+    tmp_path = make_test_dir("runtime-active-operation-snapshot")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        clock=clock,
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="active_plugin",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 90,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    observed = []
+
+    def capture_active(_command):
+        observed.append(task.active_operation_snapshot())
+
+    monkeypatch.setattr(task, "_execute_command", capture_active)
+
+    task._process_queue_entry(entry)
+
+    assert len(observed) == 1
+    assert observed[0].command_id == submitted.id
+    assert observed[0].plugin_id == "active_plugin"
+    assert observed[0].deadline_monotonic == command.deadline_monotonic
+    assert task.active_operation_snapshot() is None
+
+
 def test_failure_bookkeeping_error_cannot_leave_queue_job_running(monkeypatch):
     tmp_path = make_test_dir("runtime-failure-bookkeeping")
     task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], clock=RuntimeClock())

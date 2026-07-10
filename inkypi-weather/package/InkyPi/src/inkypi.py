@@ -15,12 +15,14 @@ from flask import Flask
 from jinja2 import ChoiceLoader, FileSystemLoader
 
 from blueprints.apikeys import apikeys_bp
+from blueprints.health import health_bp
 from blueprints.main import main_bp
 from blueprints.playlist import playlist_bp
 from blueprints.plugin import plugin_bp
 from blueprints.settings import settings_bp
 from config import Config
 from display.display_manager import DisplayManager
+from health import HealthCollector, HealthPublisher, ReadinessEvaluator
 from plugins.plugin_registry import load_plugins, register_plugin_blueprints
 from refresh_task import RefreshTask
 from runtime_paths import RuntimePaths
@@ -116,10 +118,26 @@ def build_application(
     display_init_error = getattr(display_manager, "initialization_error", None)
     if display_init_error is not None:
         _mark_startup_degraded(app, "display_init", display_init_error)
+    health_publisher = HealthPublisher(release_id=paths.release_id)
+    health_collector = HealthCollector(
+        health_publisher,
+        refresh_task=refresh_task,
+        device_config=device_config,
+        runtime_paths=paths,
+        dev_mode=dev_mode,
+        startup_state=lambda: {
+            "degraded": app.config.get("STARTUP_DEGRADED", False),
+            "reasons": app.config.get("STARTUP_DEGRADED_REASONS", {}),
+        },
+    )
+    app.config["HEALTH_PUBLISHER"] = health_publisher
+    app.config["HEALTH_COLLECTOR"] = health_collector
+    app.config["READINESS_EVALUATOR"] = ReadinessEvaluator()
     configure_request_limits(app)
     app.secret_key = load_or_create_secret_key(paths.flask_secret_file)
 
     app.register_blueprint(main_bp)
+    app.register_blueprint(health_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(plugin_bp)
     app.register_blueprint(playlist_bp)
@@ -160,8 +178,15 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
 
     device_config = app.config["DEVICE_CONFIG"]
     refresh_task = app.config["REFRESH_TASK"]
+    health_collector = app.config.get("HEALTH_COLLECTOR")
 
     try:
+        if health_collector is not None:
+            try:
+                health_collector.start()
+            except Exception as error:
+                logger.exception("Health collector failed to start")
+                _mark_startup_degraded(app, "health_collector", error)
         try:
             refresh_task.start()
         except Exception as error:
@@ -184,7 +209,11 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
         )
         return 0
     finally:
-        refresh_task.stop()
+        try:
+            refresh_task.stop()
+        finally:
+            if health_collector is not None:
+                health_collector.stop()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
