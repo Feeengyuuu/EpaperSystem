@@ -1,4 +1,6 @@
 {
+  "schema_version": 2,
+  "capabilities": {"supports_live_refresh": false},
   "display_name": "GCD Comic Covers",
   "id": "gcd_comic_covers",
   "class": "GcdComicCovers",

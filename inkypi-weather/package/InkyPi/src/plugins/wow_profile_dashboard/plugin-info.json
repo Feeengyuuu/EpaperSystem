@@ -1,4 +1,6 @@
 {
+  "schema_version": 2,
+  "capabilities": {"supports_live_refresh": false},
   "display_name": "WoW Profile Dashboard",
   "id": "wow_profile_dashboard",
   "class": "WowProfileDashboard",

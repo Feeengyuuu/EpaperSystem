@@ -8,6 +8,10 @@ from flask import Flask
 
 import plugins  # noqa: E402
 from plugins import plugin_registry  # noqa: E402
+from plugins.plugin_manifest import (  # noqa: E402
+    PluginCapabilities,
+    PluginManifest,
+)
 
 
 def _activate_plugin_root(src_root, *plugin_ids):
@@ -55,6 +59,48 @@ def test_load_plugins_registers_metadata_without_importing_modules(tmp_path, mon
     assert marker.exists()
     assert instance is plugin_registry.get_plugin_instance(plugin_config)
     assert instance.config["id"] == "lazy_plugin"
+
+
+def test_load_plugins_preserves_lazy_manifest_metadata(tmp_path, monkeypatch):
+    src_root = tmp_path / "src"
+    plugin_config = _write_plugin(
+        src_root,
+        "manifest_plugin",
+        "ManifestPlugin",
+        "class ManifestPlugin:\n"
+        "    def __init__(self, config):\n"
+        "        self.config = config\n",
+    )
+    manifest_path = src_root / "plugins" / "manifest_plugin" / "plugin-info.json"
+    manifest_path.write_text(
+        '{"schema_version": 2, "display_name": "Manifest", '
+        '"id": "manifest_plugin", "class": "ManifestPlugin", '
+        '"capabilities": {"supports_live_refresh": false}}',
+        encoding="utf-8",
+    )
+    manifest = PluginManifest.from_path(manifest_path)
+    plugin_config["_manifest"] = manifest
+    monkeypatch.setenv("SRC_DIR", str(src_root))
+
+    plugin_registry.load_plugins([plugin_config])
+
+    assert plugin_registry.PLUGIN_CONFIGS["manifest_plugin"]["_manifest"] is manifest
+    assert "manifest_plugin" not in plugin_registry.PLUGIN_CLASSES
+
+
+def test_manifest_live_refresh_capability_is_read_without_loading_plugin():
+    manifest = PluginManifest(
+        schema_version=2,
+        id="ordinary_plugin",
+        class_name="OrdinaryPlugin",
+        display_name="Ordinary Plugin",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=False),
+        raw={},
+    )
+
+    assert plugin_registry.plugin_supports_live_refresh({"_manifest": manifest}) is False
+    assert plugin_registry.plugin_supports_live_refresh({"id": "legacy-caller"}) is True
 
 
 def test_register_plugin_blueprints_imports_only_declared_blueprint_plugins(tmp_path, monkeypatch):

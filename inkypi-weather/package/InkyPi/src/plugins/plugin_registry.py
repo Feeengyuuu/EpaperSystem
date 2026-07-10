@@ -16,6 +16,20 @@ PLUGIN_CLASSES = {}
 _REGISTRY_LOCK = threading.Lock()
 
 
+def plugin_supports_live_refresh(plugin_config):
+    """Read live-refresh capability metadata without importing plugin code.
+
+    Config attaches ``_manifest`` to every discovered manifest. Metadata-free
+    dictionaries remain opt-in compatible for legacy callers that construct
+    plugin configs directly.
+    """
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    if manifest is None:
+        return True
+    capabilities = getattr(manifest, "capabilities", None)
+    return bool(getattr(capabilities, "supports_live_refresh", False))
+
+
 def load_plugins(plugins_config):
     """Register plugin metadata without importing plugin modules."""
     PLUGIN_CONFIGS.clear()

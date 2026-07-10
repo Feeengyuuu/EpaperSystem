@@ -1,4 +1,6 @@
 {
+    "schema_version": 2,
+    "capabilities": {"supports_live_refresh": false},
     "display_name": "AI Image",
     "id": "ai_image",
     "class": "AIImage"

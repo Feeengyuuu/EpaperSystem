@@ -5,6 +5,7 @@ import tempfile
 import threading
 from dotenv import load_dotenv
 from model import PlaylistManager, RefreshInfo
+from plugins.plugin_manifest import CapabilityCache, PluginManifest
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,10 @@ class Config:
         """Reads the plugin-info.json config JSON from each plugin folder. Excludes the base plugin."""
         # Iterate over all plugin folders
         plugins_list = []
+        capability_cache = getattr(self, "_plugin_capability_cache", None)
+        if capability_cache is None:
+            capability_cache = CapabilityCache()
+            self._plugin_capability_cache = capability_cache
         for plugin in sorted(os.listdir(os.path.join(self.BASE_DIR, "plugins"))):
             plugin_path = os.path.join(self.BASE_DIR, "plugins", plugin)
             if os.path.isdir(plugin_path) and plugin != "__pycache__":
@@ -85,14 +90,15 @@ class Config:
                 if os.path.isfile(plugin_info_file):
                     logger.debug(f"Reading plugin info from {plugin_info_file}")
                     try:
-                        with open(plugin_info_file, encoding="utf-8") as f:
-                            plugin_info = json.load(f)
-                    except (OSError, json.JSONDecodeError):
+                        manifest = PluginManifest.from_path(
+                            plugin_info_file,
+                            capability_cache=capability_cache,
+                        )
+                    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                         logger.exception("Skipping unreadable plugin info: %s", plugin_info_file)
                         continue
-                    if not isinstance(plugin_info, dict):
-                        logger.warning("Skipping plugin info with non-object root: %s", plugin_info_file)
-                        continue
+                    plugin_info = dict(manifest.raw)
+                    plugin_info["_manifest"] = manifest
                     plugins_list.append(plugin_info)
 
         return plugins_list
@@ -146,11 +152,25 @@ class Config:
         return self.config
 
     def get_plugins(self):
-        """Returns the list of plugin configurations, sorted by custom order if set."""
+        """Return JSON-safe plugin configurations in the configured order."""
+
+        return [
+            {key: value for key, value in plugin.items() if key != "_manifest"}
+            for plugin in self._ordered_plugins()
+        ]
+
+    def get_runtime_plugins(self):
+        """Return ordered plugin configurations with internal manifest metadata."""
+
+        return self._ordered_plugins()
+
+    def _ordered_plugins(self):
+        """Return the internal plugin configurations in the configured order."""
+
         plugin_order = self.config.get('plugin_order', [])
 
         if not plugin_order:
-            return self.plugins_list
+            return list(self.plugins_list)
 
         # Create a dict for quick lookup
         plugins_dict = {p['id']: p for p in self.plugins_list}

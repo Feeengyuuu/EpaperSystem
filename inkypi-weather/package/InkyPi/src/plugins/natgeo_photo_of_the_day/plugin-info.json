@@ -1,4 +1,6 @@
 {
+    "schema_version": 2,
+    "capabilities": {"supports_live_refresh": false},
     "display_name": "NatGeo & Discovery Daily Photos",
     "id": "natgeo_photo_of_the_day",
     "class": "NatGeoPhotoOfTheDay"

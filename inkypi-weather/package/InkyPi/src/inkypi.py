@@ -70,7 +70,12 @@ def build_application(
     device_config = Config(runtime_paths=paths)
     display_manager = DisplayManager(device_config)
     refresh_task = RefreshTask(device_config, display_manager)
-    load_plugins(device_config.get_plugins())
+    runtime_plugins = getattr(
+        device_config,
+        "get_runtime_plugins",
+        device_config.get_plugins,
+    )()
+    load_plugins(runtime_plugins)
 
     app.config["RUNTIME_PATHS"] = paths
     app.config["DEV_MODE"] = dev_mode

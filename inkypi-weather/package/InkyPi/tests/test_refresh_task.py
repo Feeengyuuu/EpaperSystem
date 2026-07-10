@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 from src.model import Playlist, PlaylistManager, RefreshInfo
+from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest
 from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
 from runtime.refresh_contracts import (
     CommandKind,
@@ -715,6 +716,56 @@ def test_live_refresh_is_not_due_without_active_hook(monkeypatch):
 
     assert live_due is False
     assert wait_seconds is None
+
+
+def test_live_refresh_scan_skips_plugin_without_manifest_capability(monkeypatch):
+    tmp_path = make_test_dir("manifest-live-scan-lazy")
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "ordinary_plugin",
+                "name": "Ordinary Plugin",
+                "plugin_settings": {"id": "ordinary"},
+                "refresh": {"interval": 3600},
+                "latest_refresh_time": "2026-05-26T07:00:00+00:00",
+            },
+        ],
+    )
+    device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    manifest = PluginManifest(
+        schema_version=2,
+        id="ordinary_plugin",
+        class_name="OrdinaryPlugin",
+        display_name="Ordinary Plugin",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=False),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": manifest,
+    }
+    loaded = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: loaded.append(config) or FakePlugin([], live_state=None),
+    )
+    task = RefreshTask(device_config, display_manager=None)
+
+    wait_seconds = task._live_refresh_wait_seconds(
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
+    )
+    snapshot_due = task._snapshot_live_refresh_due(
+        playlist.plugins[0].snapshot(),
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert wait_seconds is None
+    assert snapshot_due is False
+    assert loaded == []
 
 
 def test_playlist_refresh_uses_cached_image_without_generating_for_scheduled_display():
@@ -2227,6 +2278,57 @@ def _wait_for_legacy_job(task, job_id, timeout=1.0):
             return job
         time.sleep(0.01)
     return task.get_manual_update_job(job_id)
+
+
+def test_runtime_render_skips_live_hook_without_manifest_capability(monkeypatch):
+    tmp_path = make_test_dir("runtime-manifest-live-render-gate")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("ordinary_plugin", "Ordinary Plugin")
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    manifest = PluginManifest(
+        schema_version=2,
+        id="ordinary_plugin",
+        class_name="OrdinaryPlugin",
+        display_name="Ordinary Plugin",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=False),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": manifest,
+    }
+    hook_calls = []
+    plugin = FakePlugin(
+        [],
+        live_state=lambda *_args: hook_calls.append("called")
+        or {"active": True, "interval_seconds": 1},
+    )
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(
+            instance.instance_uuid,
+            force=False,
+            display_cached_only=True,
+            expected_playlist_name=playlist.name,
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+        )
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert hook_calls == []
+    finally:
+        task.stop(join_timeout=1.0)
 
 
 def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(

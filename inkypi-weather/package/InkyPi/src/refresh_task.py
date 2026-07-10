@@ -9,7 +9,7 @@ import psutil
 import pytz
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from plugins.plugin_registry import get_plugin_instance
+from plugins.plugin_registry import get_plugin_instance, plugin_supports_live_refresh
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
@@ -599,7 +599,10 @@ class RefreshTask:
         )
 
     def _snapshot_live_refresh_state(self, instance, current_dt, plugin=None):
-        plugin = plugin or self._get_plugin_for_snapshot(instance)
+        plugin = plugin or self._get_plugin_for_snapshot(
+            instance,
+            require_live_refresh=True,
+        )
         if plugin is None:
             return None
         context = TaskContext(
@@ -664,10 +667,12 @@ class RefreshTask:
         settings = instance.settings or {}
         return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled", False))
 
-    def _get_plugin_for_snapshot(self, instance):
+    def _get_plugin_for_snapshot(self, instance, *, require_live_refresh=False):
         plugin_config = self.device_config.get_plugin(instance.plugin_id)
         if plugin_config is None:
             logger.error("Plugin config not found for '%s'.", instance.plugin_id)
+            return None
+        if require_live_refresh and not plugin_supports_live_refresh(plugin_config):
             return None
         return get_plugin_instance(plugin_config)
 
@@ -908,12 +913,14 @@ class RefreshTask:
                             "Plugin '%s' refresh-on-display hook failed.",
                             command.plugin_id,
                         )
-                live_state = _plugin_live_refresh_state(
-                    plugin,
-                    settings,
-                    current_dt,
-                    plugin_id=command.plugin_id,
-                )
+                live_state = None
+                if plugin_supports_live_refresh(plugin_config):
+                    live_state = _plugin_live_refresh_state(
+                        plugin,
+                        settings,
+                        current_dt,
+                        plugin_id=command.plugin_id,
+                    )
                 live_due = self._snapshot_live_state_due(instance, live_state, current_dt)
                 refresh_due = self._snapshot_should_refresh(instance, current_dt)
                 sports_due = command.plugin_id == "sports_dashboard" and refresh_due
@@ -2266,10 +2273,12 @@ class RefreshTask:
 
         return (-priority, latest_timestamp, plugin_instance.plugin_id, plugin_instance.name)
 
-    def _get_plugin_for_instance(self, plugin_instance):
+    def _get_plugin_for_instance(self, plugin_instance, *, require_live_refresh=False):
         plugin_config = self.device_config.get_plugin(plugin_instance.plugin_id)
         if plugin_config is None:
             logger.error(f"Plugin config not found for '{plugin_instance.plugin_id}'.")
+            return None
+        if require_live_refresh and not plugin_supports_live_refresh(plugin_config):
             return None
         try:
             return get_plugin_instance(plugin_config)
@@ -2291,7 +2300,10 @@ class RefreshTask:
             return False
 
     def _plugin_live_refresh_state(self, plugin_instance, current_dt, plugin=None):
-        plugin = plugin or self._get_plugin_for_instance(plugin_instance)
+        plugin = plugin or self._get_plugin_for_instance(
+            plugin_instance,
+            require_live_refresh=True,
+        )
         if plugin is None:
             return None
         return _plugin_live_refresh_state(

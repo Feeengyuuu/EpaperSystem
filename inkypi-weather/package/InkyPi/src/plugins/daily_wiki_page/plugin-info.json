@@ -1,4 +1,6 @@
 {
+  "schema_version": 2,
+  "capabilities": {"supports_live_refresh": false},
   "display_name": "Daily Wiki Page",
   "id": "daily_wiki_page",
   "class": "DailyWikiPage",

@@ -1,4 +1,6 @@
 {
+  "schema_version": 2,
+  "capabilities": {"supports_live_refresh": false},
   "display_name": "Steam 个人资料看板",
   "id": "steam_profile_dashboard",
   "class": "SteamProfileDashboard"
