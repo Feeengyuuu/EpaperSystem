@@ -67,4 +67,3 @@ def wait_while_busy(
         if now >= deadline:
             raise DisplayBusyTimeout(stage.strip(), timeout)
         sleeper(min(poll_interval, deadline - now))
-
