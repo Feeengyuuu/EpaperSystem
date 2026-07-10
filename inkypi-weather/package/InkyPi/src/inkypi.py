@@ -24,6 +24,10 @@ from display.display_manager import DisplayManager
 from plugins.plugin_registry import load_plugins, register_plugin_blueprints
 from refresh_task import RefreshTask
 from runtime_paths import RuntimePaths
+from security.request_limits import (
+    WAITRESS_MAX_REQUEST_BODY_BYTES,
+    configure_request_limits,
+)
 from utils.app_utils import generate_startup_image
 from utils.http_client import sanitize_dead_local_proxy_environment
 from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
@@ -82,7 +86,7 @@ def build_application(
     app.config["DEVICE_CONFIG"] = device_config
     app.config["DISPLAY_MANAGER"] = display_manager
     app.config["REFRESH_TASK"] = refresh_task
-    app.config["MAX_FORM_PARTS"] = 10_000
+    configure_request_limits(app)
     app.secret_key = load_or_create_secret_key(paths.flask_secret_file)
 
     app.register_blueprint(main_bp)
@@ -161,6 +165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             host="0.0.0.0",
             port=port,
             threads=_web_server_threads(device_config),
+            max_request_body_size=WAITRESS_MAX_REQUEST_BODY_BYTES,
         )
         return 0
     finally:

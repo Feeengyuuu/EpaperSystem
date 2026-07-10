@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 
 from flask import Flask
+from PIL import Image
 import pytest
 
 import blueprints.plugin as plugin_blueprint
@@ -17,6 +18,7 @@ from model import PlaylistManager
 from runtime.refresh_contracts import JobRecord, JobStatus, TaskContext
 from runtime.refresh_queue import QueueFullError, QueueStoppingError
 from runtime.render_arbiter import RenderArbiter
+from security.request_limits import UploadTooLarge, configure_request_limits
 
 
 INVALID_REFRESH_SETTINGS = [
@@ -31,6 +33,12 @@ INVALID_REFRESH_SETTINGS = [
     json.dumps({"refreshType": "scheduled", "refreshTime": "24:00"}),
     json.dumps({"refreshType": "scheduled", "refreshTime": "not-a-time"}),
 ]
+
+
+def _png_bytes():
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _playlist_manager():
@@ -226,6 +234,7 @@ def plugin_env(tmp_path):
         REFRESH_TASK=task,
         DISPLAY_MANAGER=ForbiddenDisplayManager(),
     )
+    configure_request_limits(app)
     app.register_blueprint(plugin_blueprint.plugin_bp)
     return SimpleNamespace(
         app=app,
@@ -882,6 +891,150 @@ def test_mutation_routes_have_no_live_field_writes_or_direct_render_bypass():
     assert ".display_image(" not in source
 
 
+@pytest.mark.parametrize(
+    ("path", "method", "data"),
+    [
+        (
+            "/update_plugin_instance/Home",
+            "put",
+            {
+                "plugin_id": "weather",
+                "refresh_settings": json.dumps({
+                    "refreshType": "interval",
+                    "unit": "minute",
+                    "interval": "10",
+                }),
+            },
+        ),
+        ("/update_now", "post", {"plugin_id": "weather"}),
+        (
+            "/add_plugin",
+            "post",
+            {
+                "plugin_id": "weather",
+                "refresh_settings": json.dumps({
+                    "refreshType": "interval",
+                    "unit": "minute",
+                    "interval": "5",
+                    "playlist": "Default",
+                    "instance_name": "Office",
+                }),
+            },
+        ),
+    ],
+)
+def test_all_upload_entrypoints_reject_invalid_content_without_partial_files(
+    plugin_env,
+    monkeypatch,
+    path,
+    method,
+    data,
+):
+    if path == "/add_plugin":
+        plugin_env.app.register_blueprint(playlist_blueprint.playlist_bp)
+    saved = plugin_env.tmp_path / "saved"
+    saved.mkdir()
+    monkeypatch.setattr(app_utils, "resolve_path", lambda _path: str(saved))
+    data["imageFile"] = (BytesIO(b"not-a-png"), "image.png", "image/png")
+
+    response = getattr(plugin_env.client, method)(
+        path,
+        data=data,
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error_code"] == "upload_content_mismatch"
+    assert list(saved.iterdir()) == []
+    assert not any(event[0] in {"mutation", "submit_manual", "write"} for event in plugin_env.events)
+
+
+@pytest.mark.parametrize(
+    ("path", "method", "data"),
+    [
+        (
+            "/update_plugin_instance/Home",
+            "put",
+            {
+                "plugin_id": "weather",
+                "refresh_settings": json.dumps({
+                    "refreshType": "interval",
+                    "unit": "minute",
+                    "interval": "10",
+                }),
+            },
+        ),
+        ("/update_now", "post", {"plugin_id": "weather"}),
+        (
+            "/add_plugin",
+            "post",
+            {
+                "plugin_id": "weather",
+                "refresh_settings": json.dumps({
+                    "refreshType": "interval",
+                    "unit": "minute",
+                    "interval": "5",
+                    "playlist": "Default",
+                    "instance_name": "Office",
+                }),
+            },
+        ),
+    ],
+)
+def test_all_upload_entrypoints_preserve_upload_error_contract_from_route_processing(
+    plugin_env,
+    monkeypatch,
+    path,
+    method,
+    data,
+):
+    target_module = plugin_blueprint
+    if path == "/add_plugin":
+        plugin_env.app.register_blueprint(playlist_blueprint.playlist_bp)
+        target_module = playlist_blueprint
+
+    def reject_upload(*_args, **_kwargs):
+        raise UploadTooLarge("normalized upload exceeds the configured limit")
+
+    monkeypatch.setattr(target_module, "prepare_request_files", reject_upload)
+
+    response = getattr(plugin_env.client, method)(path, data=data)
+
+    assert response.status_code == 413
+    assert response.get_json()["error_code"] == "upload_too_large"
+    assert not any(
+        event[0] in {"mutation", "submit_manual", "write"}
+        for event in plugin_env.events
+    )
+
+
+def test_update_now_rejects_file_over_five_mib_without_partial_files(
+    plugin_env,
+    monkeypatch,
+):
+    saved = plugin_env.tmp_path / "saved"
+    saved.mkdir()
+    monkeypatch.setattr(app_utils, "resolve_path", lambda _path: str(saved))
+
+    response = plugin_env.client.post(
+        "/update_now",
+        data={
+            "plugin_id": "weather",
+            "dataFile": (
+                BytesIO(b"x" * (5 * 1024 * 1024 + 1)),
+                "data.csv",
+                "text/csv",
+            ),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 413
+    assert response.get_json()["error_code"] == "upload_too_large"
+    assert list(saved.iterdir()) == []
+    assert not any(event[0] == "submit_manual" for event in plugin_env.events)
+
+
 def test_stale_update_upload_never_overwrites_existing_file(
     plugin_env,
     monkeypatch,
@@ -907,7 +1060,7 @@ def test_stale_update_upload_never_overwrites_existing_file(
                 "unit": "minute",
                 "interval": "10",
             }),
-            "imageFile": (BytesIO(b"new-content"), "victim.png"),
+            "imageFile": (BytesIO(_png_bytes()), "victim.png"),
         },
         content_type="multipart/form-data",
     )
@@ -929,7 +1082,7 @@ def test_queue_rejected_manual_upload_is_rolled_back(plugin_env, monkeypatch):
         "/update_now",
         data={
             "plugin_id": "weather",
-            "imageFile": (BytesIO(b"new-content"), "victim.png"),
+            "imageFile": (BytesIO(_png_bytes()), "victim.png"),
         },
         content_type="multipart/form-data",
     )
@@ -958,7 +1111,7 @@ def test_update_write_failure_keeps_live_model_upload_owned(
                 "unit": "minute",
                 "interval": "10",
             }),
-            "imageFile": (BytesIO(b"new-content"), "replacement.png"),
+            "imageFile": (BytesIO(_png_bytes()), "replacement.png"),
         },
         content_type="multipart/form-data",
     )
@@ -967,7 +1120,7 @@ def test_update_write_failure_keeps_live_model_upload_owned(
     current = plugin_env.inner_manager.snapshot_instance("home-uuid")
     assert current.settings_revision == before.settings_revision + 1
     referenced = Path(current.settings["imageFile"])
-    assert referenced.read_bytes() == b"new-content"
+    assert referenced.read_bytes() == _png_bytes()
     assert not list(saved.glob(".*.pending-*"))
     assert not any(event[0] == "signal" for event in plugin_env.events)
 
@@ -984,7 +1137,7 @@ def test_manual_preview_transfers_upload_to_job_lifecycle(
         "/update_now",
         data={
             "plugin_id": "weather",
-            "imageFile": (BytesIO(b"preview"), "preview.png"),
+            "imageFile": (BytesIO(_png_bytes()), "preview.png"),
         },
         content_type="multipart/form-data",
     )
@@ -992,7 +1145,7 @@ def test_manual_preview_transfers_upload_to_job_lifecycle(
     assert response.status_code == 202
     assert len(plugin_env.task.transient_paths) == 1
     owned = Path(plugin_env.task.transient_paths[0])
-    assert owned.read_bytes() == b"preview"
+    assert owned.read_bytes() == _png_bytes()
     assert not list(saved.glob(".*.pending-*"))
 
 

@@ -6,6 +6,7 @@ import threading
 from types import SimpleNamespace
 
 from flask import Flask
+from PIL import Image
 import pytest
 
 import blueprints.playlist as playlist_blueprint
@@ -26,6 +27,12 @@ INVALID_REFRESH_SETTINGS = [
     json.dumps({"refreshType": "scheduled", "refreshTime": "24:00"}),
     json.dumps({"refreshType": "scheduled", "refreshTime": "not-a-time"}),
 ]
+
+
+def _png_bytes():
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _plugin(plugin_id, name, instance_uuid):
@@ -533,7 +540,7 @@ def test_duplicate_add_upload_never_overwrites_existing_file(
                 "playlist": "Default",
                 "instance_name": "Home",
             }),
-            "imageFile": (BytesIO(b"new-content"), "victim.png"),
+            "imageFile": (BytesIO(_png_bytes()), "victim.png"),
         },
         content_type="multipart/form-data",
     )
@@ -563,7 +570,7 @@ def test_add_write_failure_keeps_live_model_upload_owned(
                 "playlist": "Other",
                 "instance_name": "Headlines",
             }),
-            "imageFile": (BytesIO(b"new-content"), "headline.png"),
+            "imageFile": (BytesIO(_png_bytes()), "headline.png"),
         },
         content_type="multipart/form-data",
     )
@@ -575,6 +582,6 @@ def test_add_write_failure_keeps_live_model_upload_owned(
         "Headlines",
     ).instance
     referenced = Path(added.settings["imageFile"])
-    assert referenced.read_bytes() == b"new-content"
+    assert referenced.read_bytes() == _png_bytes()
     assert not list(saved.glob(".*.pending-*"))
     assert not any(event[0] == "signal" for event in playlist_env.events)

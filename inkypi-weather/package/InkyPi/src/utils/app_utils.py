@@ -6,7 +6,16 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from pathlib import Path
+from flask import current_app, has_app_context
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+from security.request_limits import (
+    UploadPolicy,
+    UploadTooLarge,
+    UploadTotalTooLarge,
+    copy_limited_upload,
+    is_empty_upload_placeholder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +285,7 @@ class PreparedRequestFiles:
                 os.replace(temporary, final)
                 self.pending.pop(0)
                 self.promoted.append(final)
+                _fsync_upload_directory(Path(final).parent)
         except BaseException:
             self.rollback()
             raise
@@ -302,14 +312,68 @@ class PreparedRequestFiles:
         self.promoted.clear()
 
 
-def prepare_request_files(request_files, form_data=None):
+def _fsync_upload_directory(directory):
+    if os.name == "nt":
+        return
+    descriptor = os.open(
+        directory,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _request_upload_directory():
+    if has_app_context():
+        runtime_paths = current_app.config.get("RUNTIME_PATHS")
+        if runtime_paths is not None:
+            return Path(runtime_paths.data_dir) / "uploads"
+    return Path(resolve_path(os.path.join("static", "images", "saved")))
+
+
+def _request_upload_policy(policy):
+    if policy is not None:
+        if not isinstance(policy, UploadPolicy):
+            raise TypeError("policy must be an UploadPolicy")
+        return policy
+    if has_app_context():
+        configured = current_app.config.get("UPLOAD_POLICY")
+        if configured is not None:
+            if not isinstance(configured, UploadPolicy):
+                raise TypeError("UPLOAD_POLICY must be an UploadPolicy")
+            return configured
+    return UploadPolicy()
+
+
+def _normalize_jpeg_upload(path):
+    """Preserve the established EXIF-orientation normalization atomically."""
+    normalized_path = path.with_name(f".{uuid4().hex}.normalized-{path.name}")
+    try:
+        with Image.open(path) as image:
+            ImageOps.exif_transpose(image, in_place=True)
+            image.save(normalized_path, format="JPEG")
+        with normalized_path.open("r+b") as normalized:
+            os.fsync(normalized.fileno())
+        os.replace(normalized_path, path)
+        _fsync_upload_directory(path.parent)
+    except Exception as error:
+        logger.warning("EXIF processing error for %s: %s", path.name, error)
+    finally:
+        try:
+            normalized_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def prepare_request_files(request_files, form_data=None, policy=None):
     """Stage uploads under unique names without touching existing user files."""
     form_data = form_data or {}
-    allowed_file_extensions = {
-        'pdf', 'png', 'avif', 'jpg', 'jpeg', 'gif', 'webp', 'heif', 'heic', 'csv'
-    }
+    policy = _request_upload_policy(policy)
     file_location_map = {}
     prepared = PreparedRequestFiles(file_location_map)
+    total_written = 0
 
     for key in set(request_files.keys()):
         is_list = key.endswith('[]')
@@ -319,44 +383,46 @@ def prepare_request_files(request_files, form_data=None):
     try:
         for key, file in request_files.items(multi=True):
             is_list = key.endswith('[]')
+            if is_empty_upload_placeholder(file):
+                continue
             original_name = os.path.basename(file.filename or "")
-            if not original_name:
-                continue
-            extension = os.path.splitext(original_name)[1].lstrip('.').lower()
-            if extension not in allowed_file_extensions:
-                continue
 
-            file_save_dir = resolve_path(os.path.join("static", "images", "saved"))
-            os.makedirs(file_save_dir, exist_ok=True)
+            file_save_dir = _request_upload_directory()
+            file_save_dir.mkdir(parents=True, exist_ok=True)
             token = uuid4().hex
-            final_name = f"{token}-{original_name}"
-            temporary_name = f".{token}.pending-{original_name}"
-            final_path = os.path.join(file_save_dir, final_name)
-            temporary_path = os.path.join(file_save_dir, temporary_name)
+            extension = Path(original_name).suffix.lower()
+            final_name = f"{token}{extension}"
+            temporary_name = f".{token}.pending{extension}"
+            final_path = file_save_dir / final_name
+            temporary_path = file_save_dir / temporary_name
 
             # Register ownership before writing so even a partial save is
             # discoverable and removable by the outer rollback path.
-            prepared.pending.append((temporary_path, final_path))
-
-            if extension in {'jpg', 'jpeg'}:
-                try:
-                    with Image.open(file) as image:
-                        ImageOps.exif_transpose(image).save(temporary_path)
-                except Exception as error:
-                    logger.warning("EXIF processing error for %s: %s", original_name, error)
-                    try:
-                        file.stream.seek(0)
-                    except (AttributeError, OSError):
-                        pass
-                    file.save(temporary_path)
-            else:
-                file.save(temporary_path)
+            prepared.pending.append((str(temporary_path), str(final_path)))
+            written = copy_limited_upload(
+                file,
+                temporary_path,
+                policy,
+                bytes_already_written=total_written,
+            )
+            if Path(original_name).suffix.lower() in {".jpg", ".jpeg"}:
+                _normalize_jpeg_upload(temporary_path)
+                written = max(written, temporary_path.stat().st_size)
+                if written > policy.max_file_bytes:
+                    raise UploadTooLarge(
+                        "The normalized image exceeds the per-file limit"
+                    )
+                if total_written + written > policy.max_total_bytes:
+                    raise UploadTotalTooLarge(
+                        "The normalized images exceed the total upload limit"
+                    )
+            total_written += written
 
             if is_list:
                 file_location_map.setdefault(key, [])
-                file_location_map[key].append(final_path)
+                file_location_map[key].append(str(final_path))
             else:
-                file_location_map[key] = final_path
+                file_location_map[key] = str(final_path)
     except BaseException:
         prepared.rollback()
         raise
@@ -364,46 +430,13 @@ def prepare_request_files(request_files, form_data=None):
     return prepared
 
 
-def handle_request_files(request_files, form_data={}):
-    allowed_file_extensions = {'pdf', 'png', 'avif', 'jpg', 'jpeg', 'gif', 'webp', 'heif', 'heic', 'csv'}
-    file_location_map = {}
-    # handle existing file locations being provided as part of the form data
-    for key in set(request_files.keys()):
-        is_list = key.endswith('[]')
-        if key in form_data:
-            file_location_map[key] = form_data.getlist(key) if is_list else form_data.get(key)
-    # add new files in the request
-    for key, file in request_files.items(multi=True):
-        is_list = key.endswith('[]')
-        file_name = file.filename
-        if not file_name:
-            continue
-
-        extension = os.path.splitext(file_name)[1].replace('.', '')
-        if not extension or extension.lower() not in allowed_file_extensions:
-            continue
-
-        file_name = os.path.basename(file_name)
-
-        file_save_dir = resolve_path(os.path.join("static", "images", "saved"))
-        file_path = os.path.join(file_save_dir, file_name)
-
-        # Open the image and apply EXIF transformation before saving
-        if extension in {'jpg', 'jpeg'}:
-            try:
-                with Image.open(file) as img:
-                    img = ImageOps.exif_transpose(img)
-                    img.save(file_path)
-            except Exception as e:
-                logger.warning(f"EXIF processing error for {file_name}: {e}")
-                file.save(file_path)
-        else:
-            # Directly save non-JPEG files
-            file.save(file_path)
-
-        if is_list:
-            file_location_map.setdefault(key, [])
-            file_location_map[key].append(file_path)
-        else:
-            file_location_map[key] = file_path
-    return file_location_map
+def handle_request_files(request_files, form_data=None, policy=None):
+    """Compatibility wrapper that publishes uploads under unique names."""
+    prepared = prepare_request_files(request_files, form_data, policy)
+    try:
+        locations = prepared.promote()
+        prepared.accept()
+        return locations
+    except BaseException:
+        prepared.rollback()
+        raise

@@ -240,11 +240,21 @@ def test_main_modes_start_serve_and_stop_in_order(
     monkeypatch.setattr(
         waitress,
         "serve",
-        lambda _app, **kwargs: events.append(("serve", kwargs["port"])),
+        lambda _app, **kwargs: events.append(
+            (
+                "serve",
+                kwargs["port"],
+                kwargs["max_request_body_size"],
+            )
+        ),
     )
 
     assert inkypi.main(argv) == 0
-    assert events[-3:] == ["start", ("serve", expected_port), "stop"]
+    assert events[-3:] == [
+        "start",
+        ("serve", expected_port, 8 * 1024 * 1024 + 64 * 1024),
+        "stop",
+    ]
     assert ("wifi_disable" in events) is expect_wifi
     assert ("wifi_watchdog" in events) is expect_wifi
 

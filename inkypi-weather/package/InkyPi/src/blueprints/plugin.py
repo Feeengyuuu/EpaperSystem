@@ -9,6 +9,7 @@ from plugins.plugin_registry import get_plugin_instance
 from refresh_task import ManualRefresh
 from runtime.refresh_contracts import JobRecord, thaw_payload
 from runtime.refresh_queue import QueueFullError, QueueStoppingError
+from security.request_limits import UploadError
 from utils.app_utils import (
     RequestFileReferenceError,
     parse_form,
@@ -434,6 +435,10 @@ def update_plugin_instance(instance_name):
         if prepared_files is not None:
             prepared_files.rollback()
         return _legacy_lookup_error(str(error))
+    except UploadError:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        raise
     except Exception as error:
         if prepared_files is not None:
             prepared_files.rollback()
@@ -531,6 +536,10 @@ def update_now():
         if prepared_files is not None:
             prepared_files.rollback()
         return _legacy_lookup_error(str(error))
+    except UploadError:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        raise
     except Exception as error:
         if prepared_files is not None:
             prepared_files.rollback()

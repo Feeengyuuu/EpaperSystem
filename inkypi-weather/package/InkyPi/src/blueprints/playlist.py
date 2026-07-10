@@ -8,6 +8,7 @@ from blueprints.plugin import (
     _cleanup_plugin_instance_snapshot,
     _discard_instance_retry,
 )
+from security.request_limits import UploadError
 from utils.app_utils import (
     RequestFileReferenceError,
     parse_form,
@@ -87,6 +88,10 @@ def add_plugin():
         if prepared_files is not None:
             prepared_files.rollback()
         return jsonify({"error": str(error)}), 400
+    except UploadError:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        raise
     except Exception as error:
         if prepared_files is not None:
             prepared_files.rollback()
