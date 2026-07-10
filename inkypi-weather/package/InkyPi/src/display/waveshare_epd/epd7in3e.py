@@ -31,6 +31,10 @@
 import logging
 import os
 import time
+
+from display.busy_wait import DEFAULT_BUSY_TIMEOUT_SECONDS, wait_while_busy
+from runtime.refresh_contracts import TaskContext
+
 from . import epdconfig
 
 import PIL
@@ -42,7 +46,19 @@ EPD_WIDTH       = 800
 EPD_HEIGHT      = 480
 
 logger = logging.getLogger(__name__)
-BUSY_TIMEOUT_SECONDS = float(os.environ.get("EPAPER_BUSY_TIMEOUT_SECONDS", "90"))
+
+
+def _busy_timeout_seconds():
+    try:
+        timeout = float(
+            os.environ.get(
+                "EPAPER_BUSY_TIMEOUT_SECONDS",
+                DEFAULT_BUSY_TIMEOUT_SECONDS,
+            )
+        )
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_BUSY_TIMEOUT_SECONDS
+    return max(0.1, min(600.0, timeout))
 
 class EPD:
     def __init__(self):
@@ -91,15 +107,19 @@ class EPD:
 
     def ReadBusyH(self):
         logger.debug("e-Paper busy H")
-        start = time.monotonic()
-        while(epdconfig.digital_read(self.busy_pin) == 0):      # 0: busy, 1: idle
-            if time.monotonic() - start > BUSY_TIMEOUT_SECONDS:
-                raise TimeoutError(
-                    "epd7in3e BUSY pin stayed low for %.0f seconds. "
-                    "Check panel FPC orientation, connector latch, HAT seating, and power."
-                    % BUSY_TIMEOUT_SECONDS
-                )
-            epdconfig.delay_ms(5)
+        timeout = _busy_timeout_seconds()
+        task_context = getattr(self, "_inkypi_task_context", None)
+        if task_context is None:
+            task_context = TaskContext.never_cancelled(
+                deadline_monotonic=time.monotonic() + timeout,
+            )
+        wait_while_busy(
+            lambda: epdconfig.digital_read(self.busy_pin),
+            task_context=task_context,
+            stage=getattr(self, "_inkypi_busy_stage", "epd7in3e.busy"),
+            timeout_seconds=timeout,
+            poll_interval_seconds=0.005,
+        )
         logger.debug("e-Paper busy H release")
 
     def TurnOnDisplay(self):

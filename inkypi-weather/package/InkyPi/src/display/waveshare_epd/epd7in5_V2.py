@@ -29,6 +29,12 @@
 
 
 import logging
+import os
+import time
+
+from display.busy_wait import DEFAULT_BUSY_TIMEOUT_SECONDS, wait_while_busy
+from runtime.refresh_contracts import TaskContext
+
 from . import epdconfig
 
 # Display resolution
@@ -41,6 +47,19 @@ GRAY3  = 0x80 #gray
 GRAY4  = 0x00 #Blackest
 
 logger = logging.getLogger(__name__)
+
+
+def _busy_timeout_seconds():
+    try:
+        timeout = float(
+            os.environ.get(
+                "EPAPER_BUSY_TIMEOUT_SECONDS",
+                DEFAULT_BUSY_TIMEOUT_SECONDS,
+            )
+        )
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_BUSY_TIMEOUT_SECONDS
+    return max(0.1, min(600.0, timeout))
 
 class EPD:
     def __init__(self):
@@ -84,11 +103,23 @@ class EPD:
 
     def ReadBusy(self):
         logger.debug("e-Paper busy")
-        self.send_command(0x71)
-        busy = epdconfig.digital_read(self.busy_pin)
-        while(busy == 0):
+        timeout = _busy_timeout_seconds()
+        task_context = getattr(self, "_inkypi_task_context", None)
+        if task_context is None:
+            task_context = TaskContext.never_cancelled(
+                deadline_monotonic=time.monotonic() + timeout,
+            )
+
+        def read_busy():
             self.send_command(0x71)
-            busy = epdconfig.digital_read(self.busy_pin)
+            return epdconfig.digital_read(self.busy_pin)
+
+        wait_while_busy(
+            read_busy,
+            task_context=task_context,
+            stage=getattr(self, "_inkypi_busy_stage", "epd7in5.busy"),
+            timeout_seconds=timeout,
+        )
         epdconfig.delay_ms(20)
         logger.debug("e-Paper busy release")
         

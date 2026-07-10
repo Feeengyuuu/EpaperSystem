@@ -156,6 +156,40 @@ def test_factory_constructs_runtime_paths_exactly_once_when_not_injected(tmp_pat
     assert app.config["DEVICE_CONFIG"].runtime_paths is paths
 
 
+def test_factory_marks_hardware_initialization_failure_degraded(tmp_path, monkeypatch):
+    import inkypi
+
+    monkeypatch.setenv("INKYPI_DEV_ROOT", str(tmp_path / "src"))
+    paths = RuntimePaths.from_environment(dev_mode=True)
+
+    class FakeConfig:
+        def __init__(self, *, runtime_paths):
+            self.runtime_paths = runtime_paths
+
+        def get_plugins(self):
+            return []
+
+    class DegradedDisplayManager:
+        def __init__(self, _device_config):
+            self.initialization_error = OSError("panel unavailable")
+
+    class FakeRefreshTask:
+        def __init__(self, _device_config, _display_manager):
+            pass
+
+    monkeypatch.setattr(inkypi, "Config", FakeConfig)
+    monkeypatch.setattr(inkypi, "DisplayManager", DegradedDisplayManager)
+    monkeypatch.setattr(inkypi, "RefreshTask", FakeRefreshTask)
+    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins: None)
+    monkeypatch.setattr(inkypi, "register_plugin_blueprints", lambda _app: None)
+    monkeypatch.setattr(inkypi, "load_or_create_secret_key", lambda _path: "secret")
+
+    app = inkypi.build_application(dev_mode=True, runtime_paths=paths)
+
+    assert app.config["STARTUP_DEGRADED"] is True
+    assert "display_init" in app.config["STARTUP_DEGRADED_REASONS"]
+
+
 def test_main_stops_refresh_task_when_start_raises(monkeypatch):
     import inkypi
 
@@ -182,10 +216,80 @@ def test_main_stops_refresh_task_when_start_raises(monkeypatch):
     monkeypatch.setattr(inkypi, "_configure_process_logging", lambda: None)
     monkeypatch.setattr(inkypi, "build_application", lambda **_kwargs: app)
 
-    with pytest.raises(RuntimeError, match="partial start failed"):
-        inkypi.main(["--dev"])
+    served = []
+    monkeypatch.setattr(
+        "waitress.serve",
+        lambda *_args, **_kwargs: served.append(True),
+    )
+
+    assert inkypi.main(["--dev"]) == 0
 
     assert events == ["start", "stop"]
+    assert served == [True]
+    assert app.config["STARTUP_DEGRADED"] is True
+    assert "refresh_task" in app.config["STARTUP_DEGRADED_REASONS"]
+
+
+def test_startup_image_failure_is_degraded_and_still_serves(monkeypatch):
+    import inkypi
+
+    events = []
+
+    class FakeConfig:
+        def get_config(self, key, default=None):
+            if key == "startup":
+                return True
+            return default
+
+        def get_resolution(self):
+            return (800, 480)
+
+        def update_value(self, *_args, **_kwargs):
+            events.append("startup-cleared")
+
+    class RefreshTask:
+        def start(self):
+            events.append("start")
+
+        def stop(self):
+            events.append("stop")
+
+    app = Flask(__name__)
+    app.config.update(
+        DEVICE_CONFIG=FakeConfig(),
+        DISPLAY_MANAGER=object(),
+        REFRESH_TASK=RefreshTask(),
+    )
+    monkeypatch.setattr(inkypi, "_configure_process_logging", lambda: None)
+    monkeypatch.setattr(inkypi, "build_application", lambda **_kwargs: app)
+    monkeypatch.setattr(inkypi, "_log_development_url", lambda _port: None)
+    monkeypatch.setattr(
+        inkypi,
+        "generate_startup_image",
+        lambda _resolution: (_ for _ in ()).throw(OSError("network offline")),
+    )
+    monkeypatch.setattr(
+        "waitress.serve",
+        lambda *_args, **_kwargs: events.append("serve"),
+    )
+
+    assert inkypi.main(["--dev"]) == 0
+
+    assert events == ["start", "serve", "stop"]
+    assert app.config["STARTUP_DEGRADED"] is True
+    assert "startup_image" in app.config["STARTUP_DEGRADED_REASONS"]
+
+
+def test_get_ip_address_returns_default_when_offline(monkeypatch):
+    from utils import app_utils
+
+    monkeypatch.setattr(
+        app_utils.socket,
+        "socket",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")),
+    )
+
+    assert app_utils.get_ip_address(default="Unknown") == "Unknown"
 
 
 @pytest.mark.parametrize(

@@ -2,11 +2,14 @@ import inspect
 import importlib
 import logging
 import sys
+import time
+from contextlib import contextmanager
 
 from display.abstract_display import AbstractDisplay
 from PIL import Image
 from pathlib import Path
 from plugins.plugin_registry import get_plugin_instance
+from runtime.refresh_contracts import TaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,50 @@ class WaveshareDisplay(AbstractDisplay):
 
     The module drivers are in display.waveshare_epd.
     """
+
+    def _hardware_context(self, task_context=None):
+        if task_context is not None:
+            return task_context
+        try:
+            timeout = float(
+                self.device_config.get_config(
+                    "display_busy_timeout_seconds",
+                    default=90,
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            timeout = 90.0
+        timeout = max(1.0, min(600.0, timeout))
+        return TaskContext.never_cancelled(
+            deadline_monotonic=time.monotonic() + timeout,
+        )
+
+    @contextmanager
+    def _driver_context(self, task_context, stage):
+        missing = object()
+        previous_context = getattr(
+            self.epd_display,
+            "_inkypi_task_context",
+            missing,
+        )
+        previous_stage = getattr(
+            self.epd_display,
+            "_inkypi_busy_stage",
+            missing,
+        )
+        self.epd_display._inkypi_task_context = task_context
+        self.epd_display._inkypi_busy_stage = stage
+        try:
+            yield
+        finally:
+            if previous_context is missing:
+                delattr(self.epd_display, "_inkypi_task_context")
+            else:
+                self.epd_display._inkypi_task_context = previous_context
+            if previous_stage is missing:
+                delattr(self.epd_display, "_inkypi_busy_stage")
+            else:
+                self.epd_display._inkypi_busy_stage = previous_stage
 
     def initialize_display(self):
         
@@ -80,7 +127,17 @@ class WaveshareDisplay(AbstractDisplay):
             if not callable(self.epd_display_init):
                 raise AttributeError("No Init/init method found")
 
-            self.epd_display_init()
+            task_context = self._hardware_context()
+            with self._driver_context(
+                task_context,
+                f"{display_type}.init",
+            ):
+                task_context.raise_if_cancelled()
+                init_result = self.epd_display_init()
+            if init_result not in {None, 0}:
+                raise OSError(
+                    f"Waveshare display initialization failed: {display_type}"
+                )
 
             display_args_spec = inspect.getfullargspec(self.epd_display.display)
         except ModuleNotFoundError:
@@ -100,7 +157,16 @@ class WaveshareDisplay(AbstractDisplay):
                 write=True)
 
 
-    def display_image(self, image, image_settings=[]):
+    def display_image(self, image, image_settings=()):
+        return self.display_image_with_context(image, image_settings)
+
+    def display_image_with_context(
+        self,
+        image,
+        image_settings=(),
+        *,
+        task_context=None,
+    ):
         
         """
         Displays an image on the Waveshare display.
@@ -120,23 +186,38 @@ class WaveshareDisplay(AbstractDisplay):
         if not image:
             raise ValueError(f"No image provided.")
 
-        # Assume device was in sleep mode.
-        self.epd_display_init()
+        task_context = self._hardware_context(task_context)
+        display_type = getattr(self, "device_config", None)
+        display_type = (
+            display_type.get_config("display_type")
+            if display_type is not None
+            else "waveshare"
+        )
+        with self._driver_context(
+            task_context,
+            f"{display_type}.display",
+        ):
+            task_context.raise_if_cancelled()
 
-        # Clear residual pixels before updating the image.
-        self.epd_display.Clear()
+            # Assume device was in sleep mode.
+            self.epd_display_init()
+            task_context.raise_if_cancelled()
 
-        # Display the image on the WS display.
-        if not self.bi_color_display:
-            self.epd_display.display(self.epd_display.getbuffer(image))
-        else:
-            black_layer, red_layer = split_image_for_bi_color_epd(image)
+            # Clear residual pixels before updating the image.
+            self.epd_display.Clear()
+            task_context.raise_if_cancelled()
 
-            self.epd_display.display(
-                self.epd_display.getbuffer(black_layer),
-                self.epd_display.getbuffer(red_layer),
-            )
+            # Display the image on the WS display.
+            if not self.bi_color_display:
+                self.epd_display.display(self.epd_display.getbuffer(image))
+            else:
+                black_layer, red_layer = split_image_for_bi_color_epd(image)
 
-        # Put device into low power mode (EPD displays maintain image when powered off)
-        logger.info("Putting Waveshare display into sleep mode for power saving.")
-        self.epd_display.sleep()
+                self.epd_display.display(
+                    self.epd_display.getbuffer(black_layer),
+                    self.epd_display.getbuffer(red_layer),
+                )
+
+            # Put device into low power mode (EPD displays maintain image when powered off)
+            logger.info("Putting Waveshare display into sleep mode for power saving.")
+            self.epd_display.sleep()

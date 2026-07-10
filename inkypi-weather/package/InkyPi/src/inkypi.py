@@ -44,6 +44,31 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _mark_startup_degraded(app: Flask, stage: str, error: Exception) -> None:
+    reasons = dict(app.config.get("STARTUP_DEGRADED_REASONS") or {})
+    reasons[stage] = f"{type(error).__name__}: {error}"[:512]
+    app.config["STARTUP_DEGRADED"] = True
+    app.config["STARTUP_DEGRADED_REASONS"] = reasons
+
+
+def display_startup_image_best_effort(app: Flask) -> bool:
+    """Attempt the one-shot startup image without blocking the control plane."""
+
+    device_config = app.config["DEVICE_CONFIG"]
+    if device_config.get_config("startup") is not True:
+        return True
+    try:
+        logger.info("Startup flag is set, displaying startup image")
+        image = generate_startup_image(device_config.get_resolution())
+        app.config["DISPLAY_MANAGER"].display_image(image)
+        device_config.update_value("startup", False, write=True)
+    except Exception as error:
+        logger.exception("Startup image could not be displayed; continuing degraded")
+        _mark_startup_degraded(app, "startup_image", error)
+        return False
+    return True
+
+
 def _configure_process_logging() -> None:
     logging.config.fileConfig(os.path.join(os.path.dirname(__file__), "config", "logging.conf"))
     logging.getLogger("waitress.queue").setLevel(logging.ERROR)
@@ -86,6 +111,11 @@ def build_application(
     app.config["DEVICE_CONFIG"] = device_config
     app.config["DISPLAY_MANAGER"] = display_manager
     app.config["REFRESH_TASK"] = refresh_task
+    app.config["STARTUP_DEGRADED"] = False
+    app.config["STARTUP_DEGRADED_REASONS"] = {}
+    display_init_error = getattr(display_manager, "initialization_error", None)
+    if display_init_error is not None:
+        _mark_startup_degraded(app, "display_init", display_init_error)
     configure_request_limits(app)
     app.secret_key = load_or_create_secret_key(paths.flask_secret_file)
 
@@ -125,6 +155,38 @@ def _log_development_url(port: int) -> None:
         pass
 
 
+def run(app: Flask, *, dev_mode: bool, port: int) -> int:
+    """Run background work and HTTP serving while preserving degraded access."""
+
+    device_config = app.config["DEVICE_CONFIG"]
+    refresh_task = app.config["REFRESH_TASK"]
+
+    try:
+        try:
+            refresh_task.start()
+        except Exception as error:
+            logger.exception("Refresh task failed to start; continuing degraded")
+            _mark_startup_degraded(app, "refresh_task", error)
+
+        display_startup_image_best_effort(app)
+
+        if dev_mode:
+            _log_development_url(port)
+
+        from waitress import serve
+
+        serve(
+            app,
+            host="0.0.0.0",
+            port=port,
+            threads=_web_server_threads(device_config),
+            max_request_body_size=WAITRESS_MAX_REQUEST_BODY_BYTES,
+        )
+        return 0
+    finally:
+        refresh_task.stop()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the InkyPi service and return its process exit status."""
 
@@ -143,33 +205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         start_wifi_reconnect_watchdog()
 
     app = build_application(dev_mode=dev_mode)
-    device_config = app.config["DEVICE_CONFIG"]
-    display_manager = app.config["DISPLAY_MANAGER"]
-    refresh_task = app.config["REFRESH_TASK"]
-
-    try:
-        refresh_task.start()
-        if device_config.get_config("startup") is True:
-            logger.info("Startup flag is set, displaying startup image")
-            image = generate_startup_image(device_config.get_resolution())
-            display_manager.display_image(image)
-            device_config.update_value("startup", False, write=True)
-
-        if dev_mode:
-            _log_development_url(port)
-
-        from waitress import serve
-
-        serve(
-            app,
-            host="0.0.0.0",
-            port=port,
-            threads=_web_server_threads(device_config),
-            max_request_body_size=WAITRESS_MAX_REQUEST_BODY_BYTES,
-        )
-        return 0
-    finally:
-        refresh_task.stop()
+    return run(app, dev_mode=dev_mode, port=port)
 
 
 if __name__ == "__main__":

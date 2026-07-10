@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src.display.display_manager import DisplayManager
+from src.display import display_manager as display_manager_module
+from src.display.display_manager import DisplayManager, DisplayUnavailableError
 from src.runtime.refresh_contracts import TaskCancelled, TaskContext
 from src.runtime.runtime_state import RuntimeStateStore
 
@@ -125,3 +126,24 @@ def test_successful_hardware_write_is_the_commit_linearization_point(tmp_path):
     assert context.checks == 2
     assert commit.hardware_written is True
     assert manager.transaction.current().commit_id == commit.commit_id
+
+
+def test_hardware_initialization_failure_creates_degraded_manager(tmp_path, monkeypatch):
+    config = FakeDeviceConfig(tmp_path)
+    config.values["display_type"] = "epd7in5_V2"
+
+    class FailingWaveshareDisplay:
+        def __init__(self, _device_config):
+            raise OSError("display HAT unavailable")
+
+    monkeypatch.setattr(
+        display_manager_module,
+        "WaveshareDisplay",
+        FailingWaveshareDisplay,
+    )
+
+    manager = DisplayManager(config)
+
+    assert isinstance(manager.initialization_error, OSError)
+    with pytest.raises(DisplayUnavailableError, match="display HAT unavailable"):
+        manager.display.display_image(Image.new("RGB", (8, 6), "white"))

@@ -14,15 +14,31 @@ from runtime.runtime_state import RuntimeStateStore
 
 logger = logging.getLogger(__name__)
 
+
+class DisplayUnavailableError(RuntimeError):
+    """The configured display driver could not be initialized."""
+
+
+class _UnavailableDisplay:
+    def __init__(self, error):
+        self.error = error
+
+    def display_image(self, _image, _image_settings=()):
+        raise DisplayUnavailableError(
+            f"display unavailable: {self.error}"
+        ) from self.error
+
 # Try to import hardware displays, but don't fail if they're not available
 try:
     from display.inky_display import InkyDisplay
 except ImportError:
+    InkyDisplay = None
     logger.info("Inky display not available, hardware support disabled")
 
 try:
     from display.waveshare_display import WaveshareDisplay
 except ImportError:
+    WaveshareDisplay = None
     logger.info("Waveshare display not available, hardware support disabled")
 
 class DisplayManager:
@@ -45,23 +61,37 @@ class DisplayManager:
         self.device_config = device_config
         self.runtime_state_store = None
         self.transaction = None
+        self.initialization_error = None
      
         display_type = device_config.get_config("display_type", default="inky")
 
         if display_type == "mock":
-            self.display = MockDisplay(device_config)
+            display_factory = MockDisplay
         elif display_type == "inky":
-            self.display = InkyDisplay(device_config)
-        elif fnmatch.fnmatch(display_type, "epd*in*"):  
+            display_factory = InkyDisplay
+        elif fnmatch.fnmatch(display_type, "epd*in*"):
             # derived from waveshare epd - we assume here that will be consistent
             # otherwise we will have to enshring the manufacturer in the 
             # display_type and then have a display_model parameter.  Will leave
             # that for future use if the need arises.
             #
             # see https://github.com/waveshareteam/e-Paper
-            self.display = WaveshareDisplay(device_config)
+            display_factory = WaveshareDisplay
         else:
             raise ValueError(f"Unsupported display type: {display_type}")
+
+        try:
+            if display_factory is None:
+                raise ImportError(
+                    f"display driver dependencies are unavailable: {display_type}"
+                )
+            self.display = display_factory(device_config)
+        except Exception as error:
+            logger.exception(
+                "Display initialization failed; control plane will start degraded"
+            )
+            self.initialization_error = error
+            self.display = _UnavailableDisplay(error)
 
         if runtime_state_store is not None:
             self.bind_runtime_state(runtime_state_store)
@@ -155,7 +185,19 @@ class DisplayManager:
         task_context.raise_if_cancelled()
         if not hasattr(self, "display"):
             raise ValueError("No valid display instance initialized.")
-        self.display.display_image(image, image_settings)
+        contextual_display = getattr(
+            self.display,
+            "display_image_with_context",
+            None,
+        )
+        if callable(contextual_display):
+            contextual_display(
+                image,
+                image_settings,
+                task_context=task_context,
+            )
+        else:
+            self.display.display_image(image, image_settings)
 
     def write_hardware_path(self, image_path, *, image_settings=(), task_context):
         image = safe_open_image(image_path)
