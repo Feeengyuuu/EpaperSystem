@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
 
 SOURCE=${BASH_SOURCE[0]}
 while [ -h "$SOURCE" ]; do
@@ -247,8 +247,8 @@ configure_keys() {
 restart_service() {
   echo
   say "Starting InkyPi service..." "正在启动 InkyPi 服务..."
-  systemctl daemon-reload || true
-  systemctl restart inkypi || true
+  systemctl daemon-reload
+  systemctl restart inkypi
   sleep 3
 }
 
@@ -279,5 +279,5 @@ run_install
 ensure_env_file
 configure_keys
 restart_service
-bash "$SCRIPT_DIR/healthcheck.sh" --lang "$LANG_MODE" || true
+bash "$SCRIPT_DIR/healthcheck.sh" --lang "$LANG_MODE"
 show_access_info

@@ -1,130 +1,80 @@
-#!/bin/bash
-
-# Formatting stuff
-bold=$(tput bold)
-normal=$(tput sgr0)
-green=$(tput setaf 2)
-red=$(tput setaf 1)
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
 SOURCE=${BASH_SOURCE[0]}
-while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
-  DIR=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
+while [[ -h "$SOURCE" ]]; do
+  DIR=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
   SOURCE=$(readlink "$SOURCE")
   [[ $SOURCE != /* ]] && SOURCE=$DIR/$SOURCE
 done
-SCRIPT_DIR=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
+SCRIPT_DIR=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+PROJECT_DIR=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 
-APPNAME="inkypi"
-INSTALL_PATH="/usr/local/$APPNAME"
-BINPATH="/usr/local/bin"
-VENV_PATH="$INSTALL_PATH/venv_$APPNAME"
+RELEASE_ID=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release-id)
+      [[ $# -ge 2 ]] || { echo "--release-id requires a value" >&2; exit 1; }
+      RELEASE_ID="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: sudo bash install/update.sh [--release-id SAFE_ID]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
 
-SERVICE_FILE="$APPNAME.service"
-SERVICE_FILE_SOURCE="$SCRIPT_DIR/$SERVICE_FILE"
-SERVICE_FILE_TARGET="/etc/systemd/system/$SERVICE_FILE"
-
-APT_REQUIREMENTS_FILE="$SCRIPT_DIR/debian-requirements.txt"
-PIP_REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
-
-echo_success() {
-  echo -e "$1 [\e[32m\xE2\x9C\x94\e[0m]"
-}
-
-echo_error() {
-  echo -e "$1 [\e[31m\xE2\x9C\x98\e[0m]\n"
-}
-
-setup_zramswap_service() {
-  echo "Enabling and starting zramswap service."
-  sudo apt-get install -y zram-tools > /dev/null
-  echo -e "ALGO=zstd\nPERCENT=60" | sudo tee /etc/default/zramswap > /dev/null
-  sudo systemctl enable --now zramswap
-}
-
-setup_earlyoom_service() {
-  echo "Enabling and starting earlyoom service."
-  sudo apt-get install -y earlyoom > /dev/null
-  sudo systemctl enable --now earlyoom
-}
-
-update_app_service() {
-  echo "Updating $APPNAME systemd service."
-  if [ -f "$SERVICE_FILE_SOURCE" ]; then
-    cp "$SERVICE_FILE_SOURCE" "$SERVICE_FILE_TARGET"
-    echo "Restarting $APPNAME service."
-    sudo systemctl daemon-reload
-    sudo systemctl restart $SERVICE_FILE
-  else
-    echo_error "ERROR: Service file $SERVICE_FILE_SOURCE not found!"
-    exit 1
-  fi
-}
-
-update_cli() {
-  cp -r "$SCRIPT_DIR/cli" "$INSTALL_PATH/"
-  sudo chmod +x "$INSTALL_PATH/cli/"*
-}
-
-# Get OS release number, e.g. 11=Bullseye, 12=Bookworm, 13=Trixe
-get_os_version() {
-  echo "$(lsb_release -sr)"
-}
-
-
-# Ensure script is run with sudo
-if [ "$EUID" -ne 0 ]; then
-  echo_error "ERROR: This script requires root privileges. Please run it with sudo."
+[[ "$EUID" -eq 0 ]] || { echo "update.sh must run as root" >&2; exit 1; }
+if [[ -n "$RELEASE_ID" && ! "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+  echo "Unsafe release id: $RELEASE_ID" >&2
   exit 1
 fi
 
-apt-get update -y > /dev/null &
-if [ -f "$APT_REQUIREMENTS_FILE" ]; then
-  echo "Installing system dependencies... "
-  xargs -a "$APT_REQUIREMENTS_FILE" sudo apt-get install -y > /dev/null && echo_success "Installed system dependencies."
-else
-  echo_error "ERROR: System dependencies file $APT_REQUIREMENTS_FILE not found!"
-  exit 1
+TEMP_ROOT=$(mktemp -d /tmp/inkypi-update.XXXXXX)
+cleanup() {
+  rm -rf "$TEMP_ROOT"
+}
+trap cleanup EXIT
+ARTIFACT="$TEMP_ROOT/inkypi-release.zip"
+
+python3 - "$PROJECT_DIR" "$ARTIFACT" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+root = Path(sys.argv[1]).resolve()
+artifact = Path(sys.argv[2])
+excluded_names = {
+    ".git", ".pytest_cache", ".tmp", ".venv", ".venv-test",
+    ".venv-codex", ".venv-local", "__pycache__", "tmp",
+}
+with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if any(part in excluded_names for part in relative.parts):
+            continue
+        if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
+            continue
+        archive.write(path, relative.as_posix())
+PY
+
+SHA256=$(sha256sum "$ARTIFACT" | awk '{print $1}')
+if [[ -z "$RELEASE_ID" ]]; then
+  RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)-${SHA256:0:12}"
 fi
 
-# check OS version for Bookworm to setup zramswap
-if [[ $(get_os_version) = "12" ]] ; then
-  echo "OS version is Bookworm - setting up zramswap"
-  setup_zramswap_service
-else
-  echo "OS version is not Bookworm - skipping zramswap setup."
+UPDATER="/usr/local/sbin/inkypi-update"
+if [[ ! -x "$UPDATER" ]]; then
+  UPDATER="$SCRIPT_DIR/inkypi-update"
 fi
-setup_earlyoom_service
+python3 "$UPDATER" \
+  --artifact "$ARTIFACT" \
+  --sha256 "$SHA256" \
+  --release-id "$RELEASE_ID"
 
-# Check if virtual environment exists
-if [ ! -d "$VENV_PATH" ]; then
-  echo_error "ERROR: Virtual environment not found at $VENV_PATH. Run the installation script first."
-  exit 1
-fi
-
-# Activate the virtual environment
-source "$VENV_PATH/bin/activate"
-
-# Upgrade pip
-echo "Upgrading pip..."
-$VENV_PATH/bin/python -m pip install --upgrade pip setuptools wheel > /dev/null && echo_success "Pip upgraded successfully."
-
-# Install or update Python dependencies
-if [ -f "$PIP_REQUIREMENTS_FILE" ]; then
-  echo "Updating Python dependencies..."
-  $VENV_PATH/bin/python -m pip install --upgrade -r "$PIP_REQUIREMENTS_FILE" -qq > /dev/null && echo_success "Dependencies updated successfully."
-else
-  echo_error "ERROR: Requirements file $PIP_REQUIREMENTS_FILE not found!"
-  exit 1
-fi
-
-echo "Updating executable in ${BINPATH}/$APPNAME"
-cp $SCRIPT_DIR/inkypi $BINPATH/
-sudo chmod +x $BINPATH/$APPNAME
-
-echo "Update JS and CSS files"
-bash $SCRIPT_DIR/update_vendors.sh > /dev/null
-
-update_app_service
-update_cli
-
-echo_success "Update completed."
+echo "Update committed: $RELEASE_ID"

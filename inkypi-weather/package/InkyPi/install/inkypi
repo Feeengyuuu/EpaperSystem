@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail
 
 # entry script to launch the service
 
@@ -11,8 +12,22 @@ export INKYPI_DATA_DIR=/var/lib/inkypi/data
 export PROJECT_DIR="$PROGRAM_PATH"
 export SRC_DIR="$PROGRAM_PATH/src"
 
+RELEASE_ID_FILE="$PROGRAM_PATH/.release-id"
+if [[ ! -f "$RELEASE_ID_FILE" ]]; then
+    echo "InkyPi release identity is missing: $RELEASE_ID_FILE" >&2
+    exit 1
+fi
+IFS= read -r INKYPI_RELEASE_ID < "$RELEASE_ID_FILE"
+if [[ ! "$INKYPI_RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "InkyPi release identity is invalid" >&2
+    exit 1
+fi
+export INKYPI_RELEASE_ID
+
 command="${1:-}"
-shift || true
+if [[ $# -gt 0 ]]; then
+    shift
+fi
 
 usage() {
     echo ""
@@ -21,6 +36,7 @@ usage() {
     echo "  inkypi plugin <subcommand> [args]"
     echo "  inkypi admin bootstrap"
     echo "  inkypi admin recover"
+    echo "  sudo inkypi update --artifact <zip> --sha256 <hash> --release-id <id>"
     echo ""
 }
 
@@ -47,6 +63,10 @@ run_admin_cli() {
     esac
 }
 
+run_update_cli() {
+    exec /usr/local/sbin/inkypi-update "$@"
+}
+
 case "$command" in
     run)
         run_app
@@ -56,6 +76,9 @@ case "$command" in
         ;;
     admin)
         run_admin_cli "$@"
+        ;;
+    update)
+        run_update_cli "$@"
         ;;
     ""|-h|--help|help)
         usage

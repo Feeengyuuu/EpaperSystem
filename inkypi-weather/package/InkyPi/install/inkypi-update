@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Install a verified InkyPi ZIP release and roll back unless readyz commits it."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import sys
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+LIB_CANDIDATES = (
+    SCRIPT_DIR / "lib",
+    Path(os.getenv("INKYPI_INSTALL_ROOT", "/opt/inkypi"))
+    / "current"
+    / "install"
+    / "lib",
+)
+LIB_DIR = next((candidate for candidate in LIB_CANDIDATES if candidate.is_dir()), None)
+if LIB_DIR is None:
+    raise SystemExit("InkyPi updater library is unavailable")
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from release_state import (  # noqa: E402
+    RecoveryAction,
+    ReleaseLayout,
+    UpdateJournal,
+    UpdatePhase,
+)
+from update_engine import (  # noqa: E402
+    ArtifactPreparer,
+    ManagedFile,
+    SystemdService,
+    UpdateCoordinator,
+    UpdateLock,
+    archive_journal,
+    inspect_artifact,
+    prune_releases,
+)
+
+
+def _managed_files(args):
+    return (
+        ManagedFile(
+            "install/inkypi.service",
+            Path(args.unit_target),
+            0o644,
+        ),
+        ManagedFile(
+            "install/inkypi",
+            Path(args.launcher_target),
+            0o755,
+        ),
+        ManagedFile(
+            "install/inkypi-update",
+            Path(args.updater_target),
+            0o755,
+        ),
+    )
+
+
+def _recover_existing(layout, coordinator):
+    if not layout.journal_path.exists():
+        return
+    journal = UpdateJournal.load(layout.journal_path)
+    action = coordinator.recover(journal)
+    if action is RecoveryAction.MANUAL_INTERVENTION:
+        raise RuntimeError("previous rollback requires manual intervention")
+    coordinator.cleanup_candidate(journal)
+    coordinator.cleanup_backups(journal)
+    archive_journal(layout, journal)
+    print(
+        f"Recovered prior update {journal.release_id}: {action.value}",
+        file=sys.stderr,
+    )
+
+
+def _record_pre_switch_failure(layout, coordinator, journal, error):
+    try:
+        journal.update_metadata(
+            failure_type=type(error).__name__,
+            failure_message=str(error)[:512],
+        )
+    except Exception:
+        pass
+    if journal.phase in {
+        UpdatePhase.CREATED,
+        UpdatePhase.DOWNLOADED,
+        UpdatePhase.PREFLIGHTED,
+    }:
+        try:
+            coordinator.recover(journal)
+            archive_journal(layout, journal)
+        except Exception:
+            # Leave the durable journal in place for the next invocation.
+            pass
+    elif journal.phase is UpdatePhase.ROLLED_BACK:
+        try:
+            coordinator.cleanup_candidate(journal)
+        except Exception:
+            pass
+
+
+def run_update(args) -> int:
+    layout = ReleaseLayout(args.install_root, args.state_root)
+    layout.ensure()
+    service = SystemdService(
+        service_name=args.service_name,
+        systemctl=args.systemctl,
+        health_url=args.health_url,
+        health_timeout_seconds=args.health_timeout,
+    )
+    coordinator = UpdateCoordinator(
+        layout,
+        service,
+        managed_files=_managed_files(args),
+        fallback_release=args.legacy_root,
+    )
+    preparer = ArtifactPreparer(
+        layout,
+        config_path=args.config,
+        python_executable=args.python,
+    )
+    journal = None
+    with UpdateLock(layout.lock_path):
+        _recover_existing(layout, coordinator)
+        inspection = inspect_artifact(args.artifact, args.sha256)
+        target = layout.release_path(args.release_id)
+        journal = UpdateJournal.create(
+            layout.journal_path,
+            release_id=args.release_id,
+            metadata={
+                "artifact": str(Path(args.artifact).resolve()),
+                "artifact_sha256": inspection.sha256,
+                "staging_path": str(layout.staging_path(args.release_id)),
+                "target_path": str(target),
+            },
+        )
+        try:
+            journal.transition(UpdatePhase.DOWNLOADED)
+            release = preparer.prepare(inspection, args.release_id, journal)
+            journal.transition(UpdatePhase.PREFLIGHTED)
+            preparer.ensure_bootstrap_token(release)
+            coordinator.activate(journal, release)
+        except BaseException as error:
+            if isinstance(error, (KeyboardInterrupt, SystemExit)):
+                raise
+            _record_pre_switch_failure(layout, coordinator, journal, error)
+            print(f"InkyPi update failed: {error}", file=sys.stderr)
+            return 1
+
+        try:
+            prune_releases(layout, coordinator.links)
+        except Exception as error:
+            print(f"Release pruning warning: {error}", file=sys.stderr)
+
+    print(f"InkyPi release committed: {args.release_id}")
+    return 0
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--sha256", required=True)
+    parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--install-root",
+        type=Path,
+        default=Path(os.getenv("INKYPI_INSTALL_ROOT", "/opt/inkypi")),
+    )
+    parser.add_argument(
+        "--state-root",
+        type=Path,
+        default=Path(os.getenv("INKYPI_UPDATE_STATE_ROOT", "/var/lib/inkypi/update")),
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(os.getenv("INKYPI_CONFIG_FILE", "/var/lib/inkypi/config/device.json")),
+    )
+    parser.add_argument("--service-name", default="inkypi.service")
+    parser.add_argument("--systemctl", default="/usr/bin/systemctl")
+    parser.add_argument("--health-url", default="http://127.0.0.1/readyz")
+    parser.add_argument("--health-timeout", type=float, default=120.0)
+    parser.add_argument("--python", default="/usr/bin/python3")
+    parser.add_argument("--unit-target", default="/etc/systemd/system/inkypi.service")
+    parser.add_argument("--launcher-target", default="/usr/local/bin/inkypi")
+    parser.add_argument("--updater-target", default="/usr/local/sbin/inkypi-update")
+    parser.add_argument(
+        "--legacy-root",
+        type=Path,
+        default=Path(os.getenv("INKYPI_LEGACY_ROOT", "/usr/local/inkypi")),
+    )
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if os.name != "nt" and os.geteuid() != 0:
+        parser.error("inkypi-update must run as root")
+    try:
+        return run_update(args)
+    except Exception as error:
+        print(f"InkyPi update could not start: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

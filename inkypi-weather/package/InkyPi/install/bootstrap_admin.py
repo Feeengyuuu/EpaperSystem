@@ -23,7 +23,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("bootstrap", "recover"),
+        choices=("bootstrap", "recover", "ensure-bootstrap"),
         help="create an initial pairing token or an administrator recovery token",
     )
     parser.add_argument(
@@ -40,7 +40,10 @@ def main(argv=None):
 
     store = CredentialStore(SimpleNamespace(data_dir=Path(args.data_dir)))
     try:
-        if args.command == "bootstrap":
+        if args.command == "ensure-bootstrap" and store.has_admin():
+            print("InkyPi administrator is already configured")
+            return 0
+        if args.command in {"bootstrap", "ensure-bootstrap"}:
             store.create_bootstrap_token()
             path = store.bootstrap_plaintext_path
         else:
