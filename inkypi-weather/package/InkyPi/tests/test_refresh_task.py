@@ -5,10 +5,22 @@ import threading
 import time
 import uuid
 
+import pytest
 from PIL import Image
 
 from src.model import Playlist, PlaylistManager, RefreshInfo
 from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
+from runtime.refresh_contracts import (
+    CommandKind,
+    CommandSource,
+    JobStatus,
+    LifecycleState,
+    RefreshCommand,
+    TaskCancelled,
+)
+from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
+from runtime.render_arbiter import RenderArbiter
+from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
@@ -1615,6 +1627,40 @@ def test_playlist_refresh_uses_previous_cache_for_non_cacheable_display_image():
         assert saved.getpixel((0, 0)) == (0, 0, 0)
 
 
+def test_playlist_worker_uses_previous_cache_for_non_cacheable_display(monkeypatch):
+    tmp_path = make_test_dir("non-cacheable-worker-display")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "bambu_monitor",
+            "Bambu",
+            latest_refresh_time="2999-01-01T00:00:00+00:00",
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    cache_path = tmp_path / playlist.plugins[0].get_image_path()
+    Image.new("RGB", (2, 1), "black").save(cache_path)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: NonCacheablePlugin([]),
+    )
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(device_config.playlist_manager.first_instance_uuid())
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        displayed = task.display_manager.calls[0][0]
+        assert displayed.size == (2, 1)
+        assert displayed.getpixel((0, 0)) == (0, 0, 0)
+    finally:
+        task.stop(join_timeout=1.0)
+    with Image.open(cache_path) as saved:
+        assert saved.size == (2, 1)
+        assert saved.getpixel((0, 0)) == (0, 0, 0)
+
+
 class FailingPlugin:
     def generate_image(self, settings, device_config):
         raise RuntimeError("boom")
@@ -1752,6 +1798,25 @@ def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
     assert captured[0][0]["swap_percent"] == 99.0
     assert captured[0][1:] == (70.0, 98.0)
     assert float((tmp_path / ".memory_watchdog_last_restart").read_text(encoding="utf-8")) == 2000.0
+
+
+def test_memory_restart_request_never_exits_from_refresh_worker(monkeypatch):
+    tmp_path = make_test_dir("memory-restart-request")
+    task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
+    exits = []
+    monkeypatch.setattr("src.refresh_task.os._exit", lambda code: exits.append(code))
+    stats = {"available_mb": 40.0, "swap_percent": 90.0}
+
+    task._restart_process_for_memory_pressure(stats, 70.0, 75.0)
+
+    assert exits == []
+    assert task.restart_request == {
+        "reason": "memory_pressure",
+        "available_mb": 40.0,
+        "min_available_mb": 70.0,
+        "swap_percent": 90.0,
+        "max_swap_percent": 75.0,
+    }
 
 
 def test_memory_watchdog_default_restarts_before_kernel_oom_swap_pressure(monkeypatch):
@@ -2039,3 +2104,1298 @@ def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(m
     finally:
         display_manager.release_first_display.set()
         task.stop()
+
+
+class RuntimeClock:
+    def __init__(self, monotonic=0.0, wall=1000.0):
+        self.monotonic_value = float(monotonic)
+        self.wall_value = float(wall)
+
+    def monotonic(self):
+        return self.monotonic_value
+
+    def wall_time(self):
+        return self.wall_value
+
+    def advance(self, seconds):
+        self.monotonic_value += seconds
+        self.wall_value += seconds
+
+
+class RuntimeDeviceConfig(FakeDeviceConfig):
+    def __init__(self, plugin_image_dir, playlists=(), refresh_info=None):
+        super().__init__(plugin_image_dir)
+        self.playlist_manager = PlaylistManager(list(playlists))
+        self.refresh_info = refresh_info or RefreshInfo(
+            refresh_time="2999-01-01T00:00:00+00:00",
+            image_hash="current",
+        )
+
+    def get_playlist_manager(self):
+        return self.playlist_manager
+
+    def get_refresh_info(self):
+        return self.refresh_info
+
+    def get_resolution(self):
+        return (32, 16)
+
+
+class RecordingDisplayManager:
+    def __init__(self):
+        self.calls = []
+
+    def display_image(self, image, image_settings=None):
+        self.calls.append((image.copy(), list(image_settings or [])))
+
+
+class BlockingRuntimePlugin:
+    def __init__(self, render_started, allow_render, calls=None, fail_first=False):
+        self.render_started = render_started
+        self.allow_render = allow_render
+        self.calls = [] if calls is None else calls
+        self.fail_first = fail_first
+        self.config = {}
+
+    def generate_image(self, settings, device_config):
+        self.calls.append(dict(settings))
+        self.render_started.set()
+        assert self.allow_render.wait(1.0)
+        if self.fail_first and len(self.calls) == 1:
+            raise RuntimeError("theme render failed")
+        return Image.new("RGB", (2, 1), "white")
+
+
+class FalseyRefreshQueue(RefreshQueue):
+    def __bool__(self):
+        return False
+
+
+def _runtime_playlist(*plugins, name="DailyDoseOfDay", start="00:00", end="24:00"):
+    return Playlist(name, start, end, plugins=list(plugins))
+
+
+def _runtime_plugin_data(
+    plugin_id="runtime_plugin",
+    name="Runtime Plugin",
+    *,
+    latest_refresh_time="2999-01-01T00:00:00+00:00",
+    interval=3600,
+):
+    data = {
+        "plugin_id": plugin_id,
+        "name": name,
+        "plugin_settings": {"id": plugin_id},
+        "refresh": {"interval": interval},
+    }
+    if latest_refresh_time is not None:
+        data["latest_refresh_time"] = latest_refresh_time
+    return data
+
+
+def _make_runtime_task(tmp_path, *, playlists=(), clock=None, cycle_seconds=300):
+    clock = clock or RuntimeClock()
+    device_config = RuntimeDeviceConfig(tmp_path, playlists)
+    device_config.config["plugin_cycle_interval_seconds"] = cycle_seconds
+    task = RefreshTask(
+        device_config,
+        RecordingDisplayManager(),
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    return task, device_config, clock
+
+
+def _wait_for_legacy_job(task, job_id, timeout=1.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = task.get_manual_update_job(job_id)
+        if job and job["status"] not in {"queued", "running"}:
+            return job
+        time.sleep(0.01)
+    return task.get_manual_update_job(job_id)
+
+
+def test_playlist_refresh_rerenders_non_sports_live_due_before_ordinary_interval():
+    calls = []
+    tmp_path = make_test_dir("scheduled-non-sports-live-refresh")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["display_refresh_resource_guard_enabled"] = False
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "live_plugin",
+            "Live Plugin",
+            latest_refresh_time="2026-05-26T07:00:00+00:00",
+            interval=3600,
+        )
+    )
+    plugin_instance = playlist.plugins[0]
+    Image.new("RGB", (2, 1), "black").save(tmp_path / plugin_instance.get_image_path())
+
+    image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
+        FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
+        device_config,
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["live_plugin"]
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_background_cache_rechecks_pressure_before_second_candidate(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("background-pressure-recheck")
+    device_config = FakeDeviceConfig(tmp_path)
+    task = RefreshTask(device_config, display_manager=None)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("a_plugin", "A Plugin", latest_refresh_time="2026-05-26T07:00:00+00:00", interval=60),
+        _runtime_plugin_data("b_plugin", "B Plugin", latest_refresh_time="2026-05-26T07:00:00+00:00", interval=60),
+    )
+    for instance in playlist.plugins:
+        Image.new("RGB", (1, 1), "black").save(tmp_path / instance.get_image_path())
+    pressure = iter([False, True])
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: next(pressure))
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
+
+    task._refresh_due_plugin_instances(
+        playlist,
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["a_plugin"]
+    assert playlist.plugins[0].latest_refresh_time == "2026-05-26T07:02:00+00:00"
+    assert playlist.plugins[1].latest_refresh_time == "2026-05-26T07:00:00+00:00"
+
+
+def test_default_display_pressure_trips_below_150_mib_with_safe_swap(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("display-pressure-default-memory")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("live_plugin", "Live Plugin", latest_refresh_time="2026-05-26T07:00:00+00:00")
+    )
+    instance = playlist.plugins[0]
+    Image.new("RGB", (2, 1), "black").save(tmp_path / instance.get_image_path())
+    memory = type("Memory", (), {"available": 149 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 0.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
+        FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
+        device_config,
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_default_display_pressure_trips_at_30_percent_swap_with_safe_memory(monkeypatch):
+    calls = []
+    tmp_path = make_test_dir("display-pressure-default-swap")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("live_plugin", "Live Plugin", latest_refresh_time="2026-05-26T07:00:00+00:00")
+    )
+    instance = playlist.plugins[0]
+    Image.new("RGB", (2, 1), "black").save(tmp_path / instance.get_image_path())
+    memory = type("Memory", (), {"available": 512 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 30.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
+        FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
+        device_config,
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_theme_refresh_failure_default_retry_cooldown_is_600_seconds():
+    tmp_path = make_test_dir("theme-default-cooldown")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["active_theme"] = "day"
+    task = RefreshTask(device_config, display_manager=None)
+    failed_at = datetime(2026, 5, 26, 22, 8, tzinfo=timezone.utc)
+    theme = {"mode": "night", "source": "weather", "reason": "sunset"}
+
+    task._mark_theme_refresh_failed(theme, failed_at, RuntimeError("render failed"))
+
+    failure = device_config.config["active_theme_refresh_failure"]
+    retry_after = datetime.fromisoformat(failure["retry_after"])
+    assert (retry_after - failed_at).total_seconds() == 600
+    assert not task._has_theme_changed(theme, failed_at + timedelta(seconds=599))
+    assert task._has_theme_changed(theme, failed_at + timedelta(seconds=600))
+
+
+@pytest.mark.parametrize("cache_state", ["missing", "corrupt"])
+def test_display_pressure_missing_or_corrupt_cache_uses_placeholder_without_render(monkeypatch, cache_state):
+    calls = []
+    tmp_path = make_test_dir(f"display-pressure-{cache_state}-cache")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("live_plugin", "Live Plugin", latest_refresh_time="2026-05-26T07:00:00+00:00")
+    )
+    instance = playlist.plugins[0]
+    cache_path = tmp_path / instance.get_image_path()
+    if cache_state == "corrupt":
+        cache_path.write_bytes(b"not an image")
+    memory = type("Memory", (), {"available": 149 * 1024 * 1024})()
+    swap = type("Swap", (), {"percent": 0.0})()
+    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+
+    image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
+        FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
+        device_config,
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.size == (800, 480)
+
+
+def test_overdue_empty_playlist_advances_monotonic_attempt_deadline():
+    tmp_path = make_test_dir("runtime-empty-deadline")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+
+    task._run_one_iteration_for_test()
+    first = task.scheduler_snapshot().next_attempt_monotonic
+    task._run_one_iteration_for_test()
+
+    assert first >= 30.0
+    assert task.attempt_count == 1
+
+
+def test_memory_watchdog_error_advances_deadline_without_killing_scheduler(monkeypatch):
+    tmp_path = make_test_dir("runtime-watchdog-deadline")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    monkeypatch.setattr(
+        task,
+        "_memory_watchdog_should_restart",
+        lambda: (_ for _ in ()).throw(RuntimeError("watchdog")),
+    )
+
+    task._run_one_iteration_for_test()
+
+    assert task.scheduler_snapshot().next_attempt_monotonic >= 30.0
+    assert task.attempt_count == 1
+
+
+def test_start_registers_one_non_daemon_worker():
+    tmp_path = make_test_dir("runtime-single-worker")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], cycle_seconds=300)
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        first_thread = task.thread
+        task.start()
+
+        assert task.thread is first_thread
+        assert task.thread.daemon is False
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_stop_wakes_waiting_refresh_thread_without_cycle_delay():
+    tmp_path = make_test_dir("runtime-stop-wake")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], cycle_seconds=300)
+    task.start()
+    assert task.wait_until_waiting(timeout=1.0)
+
+    assert task.stop(join_timeout=1.0) is True
+    assert not task.thread.is_alive()
+    assert task.lifecycle.state is LifecycleState.STOPPED
+
+
+def test_stop_serializes_with_the_start_critical_section():
+    tmp_path = make_test_dir("runtime-start-stop-serialization")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    stop_attempted = threading.Event()
+    results = []
+
+    def stop_task():
+        stop_attempted.set()
+        results.append(task.stop(join_timeout=1.0))
+
+    task._start_lock.acquire()
+    stop_thread = threading.Thread(target=stop_task)
+    try:
+        stop_thread.start()
+        assert stop_attempted.wait(1.0)
+        assert not task.stop_event.wait(0.1)
+    finally:
+        task._start_lock.release()
+        stop_thread.join(timeout=1.0)
+
+    assert not stop_thread.is_alive()
+    assert results == [True]
+    assert task.lifecycle.state is LifecycleState.STOPPED
+
+
+def test_worker_exit_clears_running_state_when_queue_closes():
+    tmp_path = make_test_dir("runtime-worker-running-state")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], cycle_seconds=300)
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        task.refresh_queue.begin_quiesce()
+        task.thread.join(timeout=1.0)
+
+        assert not task.thread.is_alive()
+        assert task.running is False
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_constructor_adopts_falsey_injected_collaborators_by_identity():
+    tmp_path = make_test_dir("runtime-injected-collaborators")
+    device_config = RuntimeDeviceConfig(tmp_path)
+    clock = RuntimeClock()
+    queue = FalseyRefreshQueue(clock=clock.monotonic, wall_clock=clock.wall_time)
+    stop_event = threading.Event()
+    lifecycle = LifecycleController(
+        stop_event,
+        queue,
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    arbiter = RenderArbiter()
+    retries = RetryRegistry(jitter=lambda value: value)
+    scheduler = SchedulerState(retries, clock=clock.monotonic, wall_clock=clock.wall_time)
+
+    task = RefreshTask(
+        device_config,
+        RecordingDisplayManager(),
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+        stop_event=stop_event,
+        refresh_queue=queue,
+        render_arbiter=arbiter,
+        lifecycle=lifecycle,
+        retry_registry=retries,
+        scheduler_state=scheduler,
+    )
+
+    assert task.stop_event is stop_event
+    assert task.refresh_queue is queue
+    assert task.render_arbiter is arbiter
+    assert task.lifecycle is lifecycle
+    assert task.retry_registry is retries
+    assert task.scheduler_state is scheduler
+
+
+def test_constructor_rejects_lifecycle_with_different_queue_or_event():
+    tmp_path = make_test_dir("runtime-inconsistent-collaborators")
+    device_config = RuntimeDeviceConfig(tmp_path)
+    lifecycle_queue = RefreshQueue()
+    lifecycle_event = threading.Event()
+    lifecycle = LifecycleController(lifecycle_event, lifecycle_queue)
+
+    with pytest.raises(ValueError, match="lifecycle"):
+        RefreshTask(
+            device_config,
+            RecordingDisplayManager(),
+            stop_event=threading.Event(),
+            refresh_queue=RefreshQueue(),
+            lifecycle=lifecycle,
+        )
+
+
+def test_direct_queue_submission_wakes_idle_worker(monkeypatch):
+    tmp_path = make_test_dir("runtime-direct-queue-wake")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], cycle_seconds=300)
+    calls = []
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        command = RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="direct_plugin",
+            payload={"refresh_type": "Manual Update", "settings": {"id": "direct"}},
+            now_monotonic=clock.monotonic(),
+            deadline_monotonic=clock.monotonic() + 60,
+            force=True,
+            priority=100,
+        )
+
+        job = task.refresh_queue.submit(command)
+        result = task.wait_for_job(job.id, timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert calls == [{"id": "direct", "forceRefresh": True, "force_refresh": True, "_inkypiDisplayRender": True}]
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_manual_worker_preserves_plugin_image_settings(monkeypatch):
+    tmp_path = make_test_dir("runtime-manual-image-settings")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    plugin = CapturePlugin([])
+    plugin.config = {"image_settings": ["rotate-180"]}
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    task.start()
+    try:
+        job = task.submit_manual_update(ManualRefresh("manual", {"id": "manual"}))
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert task.display_manager.calls[0][1] == ["rotate-180"]
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_manual_wait_reports_pruned_terminal_result_without_timing_out(monkeypatch):
+    tmp_path = make_test_dir("runtime-manual-pruned-result")
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    task.refresh_queue.terminal_limit = 0
+    device_config.config["manual_update_timeout_seconds"] = 0.1
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+    task.start()
+    try:
+        with pytest.raises(RuntimeError, match="no longer available"):
+            task.manual_update(ManualRefresh("manual", {"id": "manual"}))
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_signal_config_change_wakes_and_reprobes_scheduled_selection(monkeypatch):
+    tmp_path = make_test_dir("runtime-config-wake")
+    empty_playlist = _runtime_playlist()
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[empty_playlist],
+        cycle_seconds=300,
+    )
+    device_config.refresh_info = RefreshInfo(refresh_time="2000-01-01T00:00:00+00:00", image_hash="old")
+    calls = []
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        assert device_config.playlist_manager.add_plugin_to_playlist(
+            "DailyDoseOfDay",
+            _runtime_plugin_data("new_plugin", "New Plugin", latest_refresh_time=None),
+        )
+
+        task.signal_config_change()
+
+        deadline = time.monotonic() + 1.0
+        while not task.display_manager.calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert task.display_manager.calls
+        assert calls
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def _make_blocked_playlist_task(monkeypatch, name):
+    tmp_path = make_test_dir(name)
+    playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00"))
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist], cycle_seconds=300)
+    device_config.config["theme_mode"] = "day"
+    device_config.config["active_theme"] = "day"
+    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    render_started = threading.Event()
+    allow_render = threading.Event()
+    plugin = BlockingRuntimePlugin(render_started, allow_render)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    task.start()
+    assert task.wait_until_waiting(timeout=1.0)
+    return task, device_config.playlist_manager, render_started, allow_render, plugin, tmp_path
+
+
+def test_deleted_instance_result_is_discarded_after_render(monkeypatch):
+    task, manager, render_started, allow_render, _plugin, tmp_path = _make_blocked_playlist_task(
+        monkeypatch,
+        "runtime-stale-delete",
+    )
+    try:
+        instance_uuid = manager.first_instance_uuid()
+        cache_path = tmp_path / "runtime_plugin_Runtime_Plugin.png"
+        original_cache = cache_path.read_bytes()
+        job = task.submit_playlist_display(instance_uuid)
+        assert render_started.wait(1.0)
+
+        manager.delete_plugin_instance(instance_uuid)
+        allow_render.set()
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "canceled"
+        assert result["error_code"] == "stale_selection"
+        assert not task.display_manager.calls
+        assert task.device_config.write_count == 0
+        assert cache_path.read_bytes() == original_cache
+    finally:
+        allow_render.set()
+        task.stop(join_timeout=1.0)
+
+
+def test_settings_revision_changed_during_render_discards_all_side_effects(monkeypatch):
+    task, manager, render_started, allow_render, _plugin, tmp_path = _make_blocked_playlist_task(
+        monkeypatch,
+        "runtime-stale-settings",
+    )
+    try:
+        instance_uuid = manager.first_instance_uuid()
+        before = manager.snapshot_instance(instance_uuid)
+        cache_path = tmp_path / "runtime_plugin_Runtime_Plugin.png"
+        original_cache = cache_path.read_bytes()
+        job = task.submit_playlist_display(instance_uuid)
+        assert render_started.wait(1.0)
+
+        manager.update_plugin_instance(
+            instance_uuid,
+            settings={"id": "changed"},
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+        )
+        allow_render.set()
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "canceled"
+        assert not task.display_manager.calls
+        assert task.device_config.write_count == 0
+        assert cache_path.read_bytes() == original_cache
+        assert manager.snapshot_instance(instance_uuid).latest_refresh_time == before.latest_refresh_time
+    finally:
+        allow_render.set()
+        task.stop(join_timeout=1.0)
+
+
+def test_render_failure_after_instance_deletion_is_stale_without_theme_write(monkeypatch):
+    task, manager, render_started, allow_render, plugin, _tmp_path = _make_blocked_playlist_task(
+        monkeypatch,
+        "runtime-stale-failure",
+    )
+    plugin.fail_first = True
+    try:
+        instance_uuid = manager.first_instance_uuid()
+        instance = manager.snapshot_instance(instance_uuid)
+        command = task._playlist_command(
+            "DailyDoseOfDay",
+            instance,
+            source=CommandSource.SCHEDULER,
+            force=True,
+            display_cached_only=False,
+            theme_context={"mode": "night", "source": "weather", "reason": "sunset"},
+        )
+        submitted = task.refresh_queue.submit(command)
+        assert render_started.wait(1.0)
+
+        assert manager.delete_plugin_instance(instance_uuid)
+        allow_render.set()
+        result = task.wait_for_job(submitted.id, timeout=1.0)
+
+        assert result["status"] == "canceled"
+        assert result["error_code"] == "stale_selection"
+        assert "active_theme_refresh_failure" not in task.device_config.config
+        assert task.device_config.write_count == 0
+    finally:
+        allow_render.set()
+        task.stop(join_timeout=1.0)
+
+
+def test_theme_render_exception_in_run_records_cooldown_then_success_clears(monkeypatch):
+    tmp_path = make_test_dir("runtime-theme-run-cooldown")
+    playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00"))
+    clock = RuntimeClock()
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist], clock=clock)
+    device_config.config["active_theme"] = "day"
+    current_dt = [datetime(2026, 5, 26, 22, 8, tzinfo=timezone.utc)]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt[0])
+    monkeypatch.setattr(
+        "src.refresh_task.get_theme_context",
+        lambda config, now: {"mode": "night", "source": "weather", "reason": "sunset"},
+    )
+    render_started = threading.Event()
+    allow_render = threading.Event()
+    allow_render.set()
+    plugin = BlockingRuntimePlugin(render_started, allow_render, fail_first=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+
+    task._run_one_iteration_for_test()
+    failure = device_config.config["active_theme_refresh_failure"]
+    assert datetime.fromisoformat(failure["retry_after"]) - current_dt[0] == timedelta(seconds=600)
+
+    clock.advance(31)
+    current_dt[0] += timedelta(seconds=31)
+    task._run_one_iteration_for_test()
+    assert len(plugin.calls) == 1
+
+    clock.advance(570)
+    current_dt[0] += timedelta(seconds=570)
+    task._run_one_iteration_for_test()
+
+    assert len(plugin.calls) == 2
+    assert device_config.config["active_theme"] == "night"
+    assert device_config.config["active_theme_refresh_failure"] is None
+
+
+def test_shared_plugin_singleton_never_executes_concurrently(monkeypatch):
+    tmp_path = make_test_dir("runtime-singleton")
+    device_config = RuntimeDeviceConfig(tmp_path)
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    task = RefreshTask(device_config, RecordingDisplayManager())
+    entered = threading.Event()
+    release = threading.Event()
+    guard = threading.Lock()
+    active = 0
+    maximum = 0
+
+    class SingletonPlugin:
+        config = {}
+
+        def generate_image(self, settings, config):
+            nonlocal active, maximum
+            with guard:
+                active += 1
+                maximum = max(maximum, active)
+            entered.set()
+            if settings["id"] == "first":
+                assert release.wait(1.0)
+            with guard:
+                active -= 1
+            return Image.new("RGB", (1, 1), "white")
+
+    plugin = SingletonPlugin()
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    task.start()
+    try:
+        first = task.submit_manual_update(ManualRefresh("singleton", {"id": "first"}))
+        second = task.submit_manual_update(ManualRefresh("singleton", {"id": "second"}))
+        assert entered.wait(1.0)
+        assert maximum == 1
+        release.set()
+
+        assert _wait_for_legacy_job(task, first["id"])["status"] == "completed"
+        assert _wait_for_legacy_job(task, second["id"])["status"] == "completed"
+        assert maximum == 1
+    finally:
+        release.set()
+        task.stop()
+
+
+def test_bounded_stop_marks_forced_exit_when_render_does_not_cooperate(monkeypatch):
+    tmp_path = make_test_dir("runtime-bounded-stop")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    render_started = threading.Event()
+    allow_render = threading.Event()
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: BlockingRuntimePlugin(render_started, allow_render),
+    )
+    task.start()
+    try:
+        task.submit_manual_update(ManualRefresh("blocked", {"id": "blocked"}))
+        assert render_started.wait(1.0)
+
+        assert task.stop(join_timeout=0.01) is False
+        assert task.lifecycle.state is LifecycleState.FORCED_EXIT
+    finally:
+        allow_render.set()
+        task.thread.join(timeout=1.0)
+
+
+def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
+    tmp_path = make_test_dir("runtime-validation-before-side-effects")
+    playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00"))
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    cache_path = tmp_path / playlist.plugins[0].get_image_path()
+    Image.new("RGB", (1, 1), "black").save(cache_path)
+    events = []
+    manager = device_config.playlist_manager
+    original_validate = manager.validate_selection
+    original_record = manager.record_instance_refresh
+    original_replace = __import__("os").replace
+
+    def validate(*args, **kwargs):
+        events.append("validate")
+        return original_validate(*args, **kwargs)
+
+    def record(*args, **kwargs):
+        events.append("timestamp")
+        return original_record(*args, **kwargs)
+
+    def replace(source, destination):
+        events.append("cache")
+        return original_replace(source, destination)
+
+    manager.validate_selection = validate
+    manager.record_instance_refresh = record
+    task.display_manager.display_image = lambda image, image_settings=None: events.append("display")
+    device_config.write_config = lambda: events.append("config")
+    monkeypatch.setattr("src.refresh_task.os.replace", replace)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(manager.first_instance_uuid())
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        for side_effect in ("cache", "display", "timestamp", "config"):
+            index = events.index(side_effect)
+            assert events[index - 1] == "validate"
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeypatch):
+    tmp_path = make_test_dir("runtime-final-config-validation")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00")
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+    original_require = task._require_fresh_selection
+    checks = []
+
+    def fail_final_validation(command, context):
+        checks.append(command.id)
+        if len(checks) == 4:
+            raise TaskCancelled("selection changed at final config check")
+        return original_require(command, context)
+
+    monkeypatch.setattr(task, "_require_fresh_selection", fail_final_validation)
+    before_refresh = device_config.refresh_info.to_dict()
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        force=False,
+        display_cached_only=True,
+        theme_context={"mode": "night", "source": "weather", "reason": "sunset"},
+    )
+    task.start()
+    try:
+        submitted = task.refresh_queue.submit(command)
+        result = task.wait_for_job(submitted.id, timeout=1.0)
+
+        assert result["status"] == "canceled"
+        assert len(checks) == 4
+        assert device_config.refresh_info.to_dict() == before_refresh
+        assert "displayed_instance_uuid" not in device_config.config
+        assert device_config.config["active_theme"] == "day"
+        assert "active_theme_info" not in device_config.config
+        assert device_config.write_count == 0
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_final_manual_context_failure_does_not_mutate_shared_refresh_info(monkeypatch):
+    tmp_path = make_test_dir("runtime-final-manual-context")
+    task, device_config, clock = _make_runtime_task(tmp_path, playlists=[])
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="manual",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+    )
+
+    class CancelOnFourthCheck:
+        def __init__(self):
+            self.checks = 0
+
+        def raise_if_cancelled(self):
+            self.checks += 1
+            if self.checks == 4:
+                raise TaskCancelled("cancel at final config check")
+
+    context = CancelOnFourthCheck()
+    monkeypatch.setattr(task, "_current_task_context", lambda _command: context)
+    before_refresh = device_config.refresh_info.to_dict()
+
+    with pytest.raises(TaskCancelled, match="final config check"):
+        task._commit_command_result(
+            command,
+            None,
+            Image.new("RGB", (1, 1), "white"),
+            datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc),
+        )
+
+    assert context.checks == 4
+    assert device_config.refresh_info.to_dict() == before_refresh
+    assert device_config.write_count == 0
+
+
+def test_running_playlist_cancel_finishes_canceled_not_succeeded(monkeypatch):
+    task, manager, render_started, allow_render, _plugin, _tmp_path = _make_blocked_playlist_task(
+        monkeypatch,
+        "runtime-running-cancel",
+    )
+    try:
+        instance_uuid = manager.first_instance_uuid()
+        job = task.submit_playlist_display(instance_uuid)
+        assert render_started.wait(1.0)
+
+        assert task.refresh_queue.cancel_instance(instance_uuid) == 1
+        allow_render.set()
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "canceled"
+        assert task.refresh_queue.get_entry(job["id"]).job.status is JobStatus.CANCELED
+        assert not task.display_manager.calls
+    finally:
+        allow_render.set()
+        task.stop(join_timeout=1.0)
+
+
+def test_cancel_requested_after_execute_cannot_kill_worker_or_finish_succeeded(monkeypatch):
+    tmp_path = make_test_dir("runtime-cancel-before-finish")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+
+    def execute_then_cancel(_command):
+        assert task.refresh_queue.cancel_instance(instance.instance_uuid) == 1
+
+    monkeypatch.setattr(task, "_execute_command", execute_then_cancel)
+
+    task._process_queue_entry(entry)
+
+    result = task.get_manual_update_job(submitted.id)
+    assert result["status"] == "canceled"
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.CANCELED
+
+
+def test_running_command_deadline_finishes_abandoned(monkeypatch):
+    tmp_path = make_test_dir("runtime-running-deadline")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
+    render_started = threading.Event()
+    allow_render = threading.Event()
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: BlockingRuntimePlugin(render_started, allow_render),
+    )
+    task.start()
+    try:
+        command = RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="deadline_plugin",
+            payload={"refresh_type": "Manual Update", "settings": {"id": "deadline"}},
+            now_monotonic=clock.monotonic(),
+            deadline_monotonic=clock.monotonic() + 5,
+            force=True,
+            priority=100,
+        )
+        job = task.refresh_queue.submit(command)
+        assert render_started.wait(1.0)
+
+        clock.advance(5)
+        allow_render.set()
+        result = task.wait_for_job(job.id, timeout=1.0)
+
+        assert result["status"] == "timed_out"
+        assert task.refresh_queue.get_entry(job.id).job.status is JobStatus.ABANDONED
+        assert not task.display_manager.calls
+    finally:
+        allow_render.set()
+        task.stop(join_timeout=1.0)
+
+
+def test_deadline_crossed_after_execute_is_abandoned_before_success(monkeypatch):
+    tmp_path = make_test_dir("runtime-deadline-before-finish")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="deadline_plugin",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 5,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: clock.advance(5))
+
+    task._process_queue_entry(entry)
+
+    result = task.get_manual_update_job(submitted.id)
+    assert result["status"] == "timed_out"
+    assert result["error_code"] == "deadline_expired"
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.ABANDONED
+
+
+def test_failure_bookkeeping_error_cannot_leave_queue_job_running(monkeypatch):
+    tmp_path = make_test_dir("runtime-failure-bookkeeping")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], clock=RuntimeClock())
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="failing",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: (_ for _ in ()).throw(RuntimeError("render")))
+    monkeypatch.setattr(task, "_record_command_failure", lambda *_args: (_ for _ in ()).throw(RuntimeError("bookkeeping")))
+
+    task._process_queue_entry(entry)
+
+    finished = task.refresh_queue.get_entry(submitted.id).job
+    assert finished.status is JobStatus.FAILED
+    assert finished.error == "render"
+
+
+def test_cancel_arriving_during_failure_bookkeeping_finishes_canceled(monkeypatch):
+    tmp_path = make_test_dir("runtime-failure-bookkeeping-cancel")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(RuntimeError("render")),
+    )
+
+    def cancel_during_bookkeeping(*_args):
+        assert task.refresh_queue.cancel_instance(instance.instance_uuid) == 1
+
+    monkeypatch.setattr(task, "_record_command_failure", cancel_during_bookkeeping)
+
+    task._process_queue_entry(entry)
+
+    finished = task.refresh_queue.get_entry(submitted.id).job
+    assert finished.status is JobStatus.CANCELED
+    assert finished.error_code == "task_canceled"
+
+
+def test_deadline_arriving_during_failure_bookkeeping_finishes_abandoned(monkeypatch):
+    tmp_path = make_test_dir("runtime-failure-bookkeeping-deadline")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="deadline",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 5,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(RuntimeError("render")),
+    )
+    monkeypatch.setattr(task, "_record_command_failure", lambda *_args: clock.advance(5))
+
+    task._process_queue_entry(entry)
+
+    finished = task.refresh_queue.get_entry(submitted.id).job
+    assert finished.status is JobStatus.ABANDONED
+    assert finished.error_code == "deadline_expired"
+
+
+def test_manual_failure_then_success_clears_global_retry_streak(monkeypatch):
+    tmp_path = make_test_dir("runtime-manual-retry-success")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
+
+    def manual_command():
+        return RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="manual",
+            payload={"refresh_type": "Manual Update", "settings": {}},
+            now_monotonic=clock.monotonic(),
+            deadline_monotonic=clock.monotonic() + 60,
+        )
+
+    first = task.refresh_queue.submit(manual_command())
+    first_entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(RuntimeError("render")),
+    )
+    task._process_queue_entry(first_entry)
+    assert task.refresh_queue.get_entry(first.id).job.status is JobStatus.FAILED
+    assert [entry.key for entry in task.retry_registry.snapshot()] == [RetryRegistry.GLOBAL_KEY]
+
+    second = task.refresh_queue.submit(manual_command())
+    second_entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    task._process_queue_entry(second_entry)
+
+    assert task.refresh_queue.get_entry(second.id).job.status is JobStatus.SUCCEEDED
+    assert task.retry_registry.snapshot() == ()
+
+
+def test_instance_success_clears_prior_global_selection_retry(monkeypatch):
+    tmp_path = make_test_dir("runtime-global-retry-success")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    monkeypatch.setattr(
+        task,
+        "_select_scheduled_command",
+        lambda _current_dt: (_ for _ in ()).throw(RuntimeError("selection")),
+    )
+
+    task._run_one_iteration_for_test()
+    assert [entry.key for entry in task.retry_registry.snapshot()] == [RetryRegistry.GLOBAL_KEY]
+
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        kind=CommandKind.CACHE_REFRESH,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    task._process_queue_entry(entry)
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert task.retry_registry.snapshot() == ()
+
+
+def test_success_bookkeeping_error_cannot_kill_worker_after_terminalization(monkeypatch):
+    tmp_path = make_test_dir("runtime-success-bookkeeping")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], clock=RuntimeClock())
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="success",
+        payload={"refresh_type": "Playlist", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    monkeypatch.setattr(
+        task.scheduler_state,
+        "record_success",
+        lambda: (_ for _ in ()).throw(RuntimeError("bookkeeping")),
+    )
+
+    task._process_queue_entry(entry)
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+
+
+def test_memory_maintenance_error_cannot_kill_worker_after_terminalization(monkeypatch):
+    tmp_path = make_test_dir("runtime-maintenance-bookkeeping")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], clock=RuntimeClock())
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="success",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("maintenance")),
+    )
+
+    task._process_queue_entry(entry)
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+
+
+def test_blocking_manual_completion_map_holds_only_events_and_is_removed(monkeypatch):
+    tmp_path = make_test_dir("runtime-completion-event-map")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    render_started = threading.Event()
+    allow_render = threading.Event()
+    errors = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: BlockingRuntimePlugin(render_started, allow_render),
+    )
+    task.start()
+    caller = threading.Thread(
+        target=lambda: _capture_manual_error(
+            task,
+            ManualRefresh("blocking_manual", {"id": "blocking"}),
+            errors,
+        )
+    )
+    caller.start()
+    try:
+        assert render_started.wait(1.0)
+        assert task._completion_events
+        assert all(type(event) is threading.Event for event in task._completion_events.values())
+        allow_render.set()
+        caller.join(timeout=1.0)
+
+        assert not caller.is_alive()
+        assert errors == []
+        assert task._completion_events == {}
+    finally:
+        allow_render.set()
+        caller.join(timeout=1.0)
+        task.stop(join_timeout=1.0)
+
+
+def _capture_manual_error(task, action, errors):
+    try:
+        task.manual_update(action)
+    except Exception as error:
+        errors.append(error)
+
+
+def test_background_candidates_are_individual_cache_commands(monkeypatch):
+    tmp_path = make_test_dir("runtime-background-command-per-candidate")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None),
+        _runtime_plugin_data("two", "Two", latest_refresh_time=None),
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin([]))
+
+    commands = task._select_background_commands(
+        datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
+    )
+
+    assert len(commands) == 2
+    assert all(command.kind is CommandKind.CACHE_REFRESH for command in commands)
+    assert {command.instance_uuid for command in commands} == {
+        instance.instance_uuid for instance in playlist.plugins
+    }
+
+
+def test_legacy_background_trigger_executes_on_single_command_worker(monkeypatch):
+    tmp_path = make_test_dir("runtime-background-single-worker")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    called = threading.Event()
+    thread_ids = []
+
+    class ThreadRecordingPlugin(FakePlugin):
+        def generate_image(self, settings, config):
+            thread_ids.append(threading.get_ident())
+            called.set()
+            return super().generate_image(settings, config)
+
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: ThreadRecordingPlugin([]),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda **kwargs: False)
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        task._start_due_plugin_cache_refresh(
+            playlist,
+            datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc),
+            force=True,
+        )
+
+        assert called.wait(1.0)
+        assert thread_ids == [task.thread.ident]
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_cleanup_context_and_managed_cache_paths_are_bounded_public_contracts():
+    tmp_path = make_test_dir("runtime-cleanup-contracts")
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
+    staging = tmp_path / ".refresh-staging"
+    staging.mkdir()
+    expected_stage = staging / "target-1-2.png"
+    expected_stage.write_bytes(b"stage")
+    (staging / "other-1-2.png").write_bytes(b"other")
+
+    context = task.make_cleanup_context(timeout_seconds=12)
+    paths = task.managed_cache_paths(
+        "target",
+        plugin_id="weather",
+        instance_name="Main View",
+    )
+
+    assert context.cancel_event is task.stop_event
+    assert context.deadline_monotonic == 12.0
+    assert paths == tuple(sorted((
+        str(expected_stage),
+        str(tmp_path / "weather_Main_View.png"),
+    )))
+    task.stop(join_timeout=0)
+    with pytest.raises(TaskCancelled):
+        context.raise_if_cancelled()
+
+
+def test_manual_submission_propagates_queue_full_and_stopping_errors():
+    tmp_path = make_test_dir("runtime-queue-errors")
+    queue = RefreshQueue(capacity=1, manual_reserved=0)
+    task = RefreshTask(
+        RuntimeDeviceConfig(tmp_path),
+        RecordingDisplayManager(),
+        refresh_queue=queue,
+    )
+    task.running = True
+    task.submit_manual_update(ManualRefresh("one", {"id": "one"}))
+
+    with pytest.raises(QueueFullError):
+        task.submit_manual_update(ManualRefresh("two", {"id": "two"}))
+
+    task.stop(join_timeout=0)
+    with pytest.raises(QueueStoppingError):
+        task.submit_manual_update(ManualRefresh("three", {"id": "three"}))
+
+
+def test_playlist_uuid_submission_propagates_queue_stopping_error():
+    tmp_path = make_test_dir("runtime-playlist-stopping-error")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance_uuid = device_config.playlist_manager.first_instance_uuid()
+    task.stop(join_timeout=0)
+
+    with pytest.raises(QueueStoppingError):
+        task.submit_playlist_display(instance_uuid)

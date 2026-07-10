@@ -6,13 +6,26 @@ import ctypes
 import gc
 import psutil
 import pytz
-from collections import deque
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import get_plugin_instance
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
+from runtime.refresh_contracts import (
+    CommandKind,
+    CommandSource,
+    JobStatus,
+    LifecycleState,
+    RefreshCommand,
+    TaskCancelled,
+    TaskContext,
+    TaskDeadlineExceeded,
+    thaw_payload,
+)
+from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.render_arbiter import RenderArbiter
+from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
@@ -31,6 +44,10 @@ DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+
+
+class _StaleSelection(TaskCancelled):
+    """A rendered playlist result no longer matches its immutable selection."""
 
 
 def _setting_enabled(value):
@@ -190,20 +207,72 @@ def _image_allows_cache(image):
 class RefreshTask:
     """Handles the logic for refreshing the display using a background thread."""
 
-    def __init__(self, device_config, display_manager):
+    def __init__(
+        self,
+        device_config,
+        display_manager,
+        *,
+        clock=time.monotonic,
+        wall_clock=time.time,
+        stop_event=None,
+        refresh_queue=None,
+        render_arbiter=None,
+        lifecycle=None,
+        retry_registry=None,
+        scheduler_state=None,
+    ):
         self.device_config = device_config
         self.display_manager = display_manager
+        self._clock = clock
+        self._wall_clock = wall_clock
+
+        if lifecycle is not None:
+            if stop_event is not None and lifecycle.stop_event is not stop_event:
+                raise ValueError("lifecycle stop_event does not match injected stop_event")
+            if refresh_queue is not None and lifecycle.refresh_queue is not refresh_queue:
+                raise ValueError("lifecycle refresh_queue does not match injected refresh_queue")
+            stop_event = lifecycle.stop_event
+            refresh_queue = lifecycle.refresh_queue
+        else:
+            if stop_event is None:
+                stop_event = threading.Event()
+            if refresh_queue is None:
+                refresh_queue = RefreshQueue(
+                    capacity=self._config_int("manual_update_queue_capacity", 32, 1, 128),
+                    manual_reserved=4,
+                    clock=clock,
+                    wall_clock=wall_clock,
+                )
+            lifecycle = LifecycleController(
+                stop_event,
+                refresh_queue,
+                clock=clock,
+                wall_clock=wall_clock,
+            )
+
+        self.stop_event = stop_event
+        self.refresh_queue = refresh_queue
+        self.render_arbiter = render_arbiter if render_arbiter is not None else RenderArbiter()
+        self.retry_registry = retry_registry if retry_registry is not None else RetryRegistry()
+        self.lifecycle = lifecycle
+        self.scheduler_state = (
+            scheduler_state
+            if scheduler_state is not None
+            else SchedulerState(self.retry_registry, clock=clock, wall_clock=wall_clock)
+        )
 
         self.thread = None
+        self._start_lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self._running = False
+        self._waiting_event = threading.Event()
+        self._execution_local = threading.local()
+        self._attempt_count = 0
+        self._completion_lock = threading.Lock()
+        self._completion_events = {}
         self.cache_refresh_lock = threading.Lock()
         self.manual_refresh_lock = threading.Lock()
         self.config_write_lock = threading.Lock()
-        self.lock = threading.Lock()
-        self.condition = threading.Condition(self.lock)
-        self.running = False
-        self.manual_update_request = ()
-        self.manual_update_requests = deque()
-        self.manual_update_jobs = {}
 
         self.refresh_event = threading.Event()
         self.refresh_event.set()
@@ -212,14 +281,68 @@ class RefreshTask:
         self._last_memory_maintenance_monotonic = 0.0
         self._last_memory_pressure_restart_monotonic = 0.0
         self._libc = None
+        self._restart_request = None
+
+    def _config_int(self, key, default, minimum, maximum):
+        try:
+            value = int(self.device_config.get_config(key, default=default))
+        except (TypeError, ValueError, OverflowError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    @property
+    def running(self):
+        return self._running
+
+    @running.setter
+    def running(self, value):
+        self._running = bool(value)
+
+    @property
+    def manual_update_requests(self):
+        with self._completion_lock:
+            return tuple(self._completion_events)
+
+    @property
+    def manual_update_request(self):
+        requests = self.manual_update_requests
+        return requests[0] if requests else ()
+
+    @property
+    def manual_update_jobs(self):
+        return {
+            job_id: payload
+            for job_id in self.manual_update_requests
+            if (payload := self.get_manual_update_job(job_id)) is not None
+        }
+
+    @property
+    def attempt_count(self):
+        return self._attempt_count
+
+    def scheduler_snapshot(self):
+        return self.scheduler_state.snapshot()
+
+    @property
+    def restart_request(self):
+        return None if self._restart_request is None else dict(self._restart_request)
 
     def start(self):
-        """Starts the background thread for refreshing the display."""
-        if not self.thread or not self.thread.is_alive():
+        """Start exactly one non-daemon command worker."""
+        with self._start_lock:
+            if self.thread and self.thread.is_alive():
+                return
+            if self.lifecycle.state is not LifecycleState.STARTING:
+                raise RuntimeError(f"refresh task cannot start from {self.lifecycle.state.value}")
             logger.info("Starting refresh task")
-            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread = threading.Thread(
+                target=self._run,
+                name="inkypi-refresh-worker",
+                daemon=False,
+            )
             self.running = True
             self.thread.start()
+            self.lifecycle.mark_running()
 
     def cache_refresh_in_progress(self):
         return self.cache_refresh_lock.locked()
@@ -227,324 +350,829 @@ class RefreshTask:
     def manual_update_in_progress(self):
         return self.manual_refresh_lock.locked()
 
-    def stop(self):
-        """Stops the refresh task by notifying the background thread to exit."""
-        with self.condition:
+    def stop(self, join_timeout=None):
+        """Quiesce admission and join the command worker within a bounded time."""
+        with self._stop_lock:
+            with self._start_lock:
+                state = self.lifecycle.state
+                if state is LifecycleState.STOPPED:
+                    self.running = False
+                    return True
+                if state is LifecycleState.FORCED_EXIT:
+                    self.running = False
+                    return False
+                if state in {LifecycleState.STARTING, LifecycleState.RUNNING}:
+                    self.lifecycle.begin_quiesce(reason="refresh task stopping")
+                self.refresh_queue.wake()
+                thread = self.thread
+
+            if thread:
+                logger.info("Stopping refresh task")
+                timeout = 210.0 if join_timeout is None else max(0.0, float(join_timeout))
+                thread.join(timeout=timeout)
             self.running = False
-            self.condition.notify_all()  # Wake the thread to let it exit
-        if self.thread:
-            logger.info("Stopping refresh task")
-            self.thread.join()
+            if thread and thread.is_alive():
+                if self.lifecycle.state is LifecycleState.QUIESCING:
+                    self.lifecycle.begin_draining()
+                if self.lifecycle.state is LifecycleState.DRAINING:
+                    self.lifecycle.mark_forced_exit("refresh worker did not stop")
+                return False
+            if self.lifecycle.state is LifecycleState.QUIESCING:
+                self.lifecycle.begin_draining()
+            if self.lifecycle.state is LifecycleState.DRAINING:
+                self.lifecycle.mark_stopped()
+            return self.lifecycle.state is LifecycleState.STOPPED
 
     def _run(self):
-        """Background task that manages the periodic refresh of the display.
-
-        This function runs in a loop, sleeping for a configured duration (`plugin_cycle_interval_seconds`) or until
-        manually triggered via `manual_update()`. Determines the next plugin to refresh based on active playlists and
-        updates the display accordingly.
-
-        Workflow:
-        1. Waits for the configured sleep duration or until notified of a manual update.
-        2. Checks if a manual update has been requested:
-        - If so, refreshes the specified plugin immediately.
-        3. Otherwise, determines the next plugin to refresh based on the active playlist and generates an image.
-        4. Compares the image hash with the last displayed image hash.
-        - If the image has changed, updates the display.
-        - If the image is the same, skips the refresh.
-        5. Updates the refresh metadata in the device configuration.
-        6. Repeats the process until `stop()` is called.
-
-        Handles any exceptions that occur during the refresh process and ensures the refresh event is set 
-        to indicate completion.
-
-        Exceptions:
-        - Captures and logs any unexpected errors during execution to prevent the thread from exiting.
-        """
-        while True:
-            active_manual_request = None
-            current_dt = None
-            theme_context_to_persist = None
-            try:
-                with self.condition:
-                    if not self.manual_update_requests:
-                        sleep_time = self._get_refresh_wait_seconds()
-                        # Wait for sleep_time or until notified.
-                        self.condition.wait(timeout=sleep_time)
-                    self.refresh_result = {}
-                    self.refresh_event.clear()
-
-                    # Exit if `stop()` is called
-                    if not self.running:
+        """Coordinate scheduled and queued refresh commands on one worker."""
+        try:
+            while not self.stop_event.is_set():
+                entry = self._wait_for_work()
+                if entry is None:
+                    if self.stop_event.is_set() or not self.refresh_queue.snapshot().accepting:
                         break
+                    continue
+                self._process_queue_entry(entry)
+        finally:
+            self.running = False
+            self._waiting_event.clear()
+            self.refresh_event.set()
 
-                    playlist_manager = self.device_config.get_playlist_manager()
-                    latest_refresh = self.device_config.get_refresh_info()
-                    current_dt = self._get_current_datetime()
-                    self._run_memory_maintenance("refresh-loop")
-
-                    refresh_action = None
-                    background_cache_refresh = None
-                    background_cache_refresh_force = False
-                    if self.manual_update_requests:
-                        # handle immediate update request
-                        logger.info("Manual update requested")
-                        active_manual_request = self.manual_update_requests.popleft()
-                        refresh_action = active_manual_request["action"]
-                        self.manual_update_request = self.manual_update_requests[0] if self.manual_update_requests else ()
-                        self._mark_manual_update_job_locked(active_manual_request, "running", "started_at")
-                    else:
-
-                        if self.device_config.get_config("log_system_stats"):
-                            self.log_system_stats()
-                        if self._memory_watchdog_should_restart():
-                            continue
-
-                        # handle refresh based on playlists
-                        logger.info(f"Running interval refresh check. | current_time: {current_dt.strftime('%Y-%m-%d %H:%M:%S')}")
-                        theme_context = get_theme_context(self.device_config, now=current_dt)
-                        if self._has_theme_changed(theme_context, current_dt):
-                            playlist, plugin_instance = self._determine_theme_refresh_plugin(playlist_manager, latest_refresh, current_dt)
-                            if plugin_instance:
-                                logger.info(
-                                    "Theme changed; forcing display refresh. | "
-                                    f"active_theme: {theme_context.get('mode')} | "
-                                    f"source: {theme_context.get('source')}"
-                                )
-                                refresh_action = PlaylistRefresh(playlist, plugin_instance, force=True)
-                                background_cache_refresh = (playlist, plugin_instance)
-                                background_cache_refresh_force = True
-                                theme_context_to_persist = theme_context
-                        else:
-                            playlist, plugin_instance = self._determine_next_plugin(playlist_manager, latest_refresh, current_dt)
-                            if plugin_instance:
-                                refresh_action = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True)
-                                background_cache_refresh = (playlist, plugin_instance)
-                            else:
-                                playlist = playlist_manager.determine_active_playlist(current_dt)
-                                if playlist and self._playlist_has_cache_refresh_due(playlist, current_dt):
-                                    if self._playlist_has_live_refresh_due(playlist, current_dt):
-                                        logger.info("Live plugin cache refresh due before playlist display tick.")
-                                    background_cache_refresh = (playlist, None)
-
-                    if refresh_action:
-                        manual_refresh_locked = False
-                        if active_manual_request:
-                            self.manual_refresh_lock.acquire()
-                            manual_refresh_locked = True
-                        try:
-                            plugin_config = self.device_config.get_plugin(refresh_action.get_plugin_id())
-                            if plugin_config is None:
-                                logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
-                                continue
-                            plugin = get_plugin_instance(plugin_config)
-                            image = refresh_action.execute(plugin, self.device_config, current_dt)
-                            image_hash = compute_image_hash(image)
-
-                            refresh_info = refresh_action.get_refresh_info()
-                            refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
-                            display_target_changed = self._display_target_changed(latest_refresh, refresh_info)
-                            # check if image is the same as current image
-                            if image_hash != latest_refresh.image_hash or display_target_changed:
-                                logger.info(f"Updating display. | refresh_info: {refresh_info}")
-                                self.display_manager.display_image(image, image_settings=plugin.config.get("image_settings", []))
-                            else:
-                                logger.info(f"Image already displayed, skipping refresh. | refresh_info: {refresh_info}")
-
-                            # update latest refresh data in the device config
-                            self.device_config.refresh_info = RefreshInfo(**refresh_info)
-                            if theme_context_to_persist:
-                                self._persist_active_theme(theme_context_to_persist, current_dt)
-                            self._write_device_config()
-
-                            if background_cache_refresh:
-                                playlist, displayed_plugin_instance = background_cache_refresh
-                                self._maybe_start_background_cache_refresh(
-                                    playlist,
-                                    displayed_plugin_instance,
-                                    current_dt,
-                                    background_cache_refresh_force,
-                                )
-                        finally:
-                            if manual_refresh_locked:
-                                self.manual_refresh_lock.release()
-                    elif background_cache_refresh:
-                        playlist, displayed_plugin_instance = background_cache_refresh
-                        self._maybe_start_background_cache_refresh(
-                            playlist,
-                            displayed_plugin_instance,
-                            current_dt,
-                            False,
-                        )
-
-            except Exception as e:
-                logger.exception('Exception during refresh')
-                if active_manual_request:
-                    active_manual_request["result"]["exception"] = e
-                elif theme_context_to_persist:
-                    self._mark_theme_refresh_failed(theme_context_to_persist, current_dt or self._get_current_datetime(), e)
-                    self.refresh_result["exception"] = e
-                else:
-                    self.refresh_result["exception"] = e  # Capture exception
-            finally:
-                self._run_memory_maintenance("refresh-loop-finally")
-                if active_manual_request:
-                    with self.condition:
-                        if active_manual_request["result"].get("exception"):
-                            self._mark_manual_update_job_locked(
-                                active_manual_request,
-                                "failed",
-                                "completed_at",
-                                error=str(active_manual_request["result"].get("exception")),
-                            )
-                        else:
-                            self._mark_manual_update_job_locked(active_manual_request, "completed", "completed_at")
-                    active_manual_request["event"].set()
-                else:
-                    self.refresh_event.set()
-
-    def manual_update(self, refresh_action):
-        """Manually triggers an update for the specified plugin id and plugin settings by notifying the background process."""
-        if self.running:
-            request = self._queue_manual_update(refresh_action)
-
-            timeout = self._manual_update_timeout_seconds()
-            completed = request["event"].wait(timeout=timeout)
-            if not completed:
-                with self.condition:
-                    try:
-                        self.manual_update_requests.remove(request)
-                    except ValueError:
-                        pass
-                    if self.manual_update_request is request:
-                        self.manual_update_request = self.manual_update_requests[0] if self.manual_update_requests else ()
-                    self._mark_manual_update_job_locked(request, "timed_out", "completed_at")
-                raise TimeoutError(f"Manual update timed out after {timeout:.0f} seconds")
-            if request["result"].get("exception"):
-                raise request["result"].get("exception")
-        else:
-            logger.warning("Background refresh task is not running, unable to do a manual update")
-
-    def submit_manual_update(self, refresh_action):
-        """Queue a manual refresh and return immediately with a job status payload."""
-        if not self.running:
-            job = {
-                "id": uuid4().hex,
-                "status": "rejected",
-                "plugin_id": self._manual_update_plugin_id(refresh_action),
-                "refresh_type": type(refresh_action).__name__,
-                "submitted_at": time.time(),
-                "completed_at": time.time(),
-                "error": "Background refresh task is not running",
-            }
-            with self.condition:
-                self.manual_update_jobs[job["id"]] = job
-                self._trim_manual_update_jobs_locked()
-            logger.warning("Background refresh task is not running, unable to queue a manual update")
-            return self._manual_update_job_payload(job)
-
-        request = self._make_manual_update_request(refresh_action)
-        if self.condition.acquire(blocking=False):
-            try:
-                self._append_manual_update_request(request)
-                self.condition.notify_all()
-            finally:
-                self.condition.release()
-        else:
-            self._append_manual_update_request(request)
-        return self._manual_update_job_payload(request["job"])
-
-    def get_manual_update_job(self, job_id):
-        if self.condition.acquire(blocking=False):
-            try:
-                job = self.manual_update_jobs.get(job_id)
-                if not job:
-                    return None
-                return self._manual_update_job_payload(job)
-            finally:
-                self.condition.release()
-        job = self.manual_update_jobs.get(job_id)
-        if not job:
+    def _wait_for_work(self) -> QueueEntry | None:
+        """Probe, schedule, reprobe, then wait on a non-lossy queue cursor."""
+        token = self.refresh_queue.change_token()
+        entry = self.refresh_queue.take(timeout=0)
+        if entry is not None:
+            return entry
+        if not self.refresh_queue.snapshot().accepting:
             return None
-        return self._manual_update_job_payload(job)
 
-    def _queue_manual_update(self, refresh_action):
-        request = self._make_manual_update_request(refresh_action)
-        with self.condition:
-            self._append_manual_update_request(request)
-            self.condition.notify_all()  # Wake the thread to process manual update
-        return request
+        self._schedule_if_due()
+        entry = self.refresh_queue.take(timeout=0)
+        if entry is not None:
+            return entry
+        if not self.refresh_queue.snapshot().accepting:
+            return None
 
-    def _make_manual_update_request(self, refresh_action):
-        return {
-            "action": refresh_action,
-            "event": threading.Event(),
-            "result": {},
-            "job": {
-                "id": uuid4().hex,
-                "status": "queued",
-                "plugin_id": self._manual_update_plugin_id(refresh_action),
-                "refresh_type": type(refresh_action).__name__,
-                "submitted_at": time.time(),
-            },
-        }
-
-    def _append_manual_update_request(self, request):
-        self.manual_update_requests.append(request)
-        self.manual_update_request = self.manual_update_requests[0]
-        self.manual_update_jobs[request["job"]["id"]] = request["job"]
-        self._trim_manual_update_jobs_locked()
-        self.refresh_result = {}
-
-    def _manual_update_plugin_id(self, refresh_action):
+        scheduler = self.scheduler_state.snapshot()
+        if scheduler.next_attempt_monotonic is None:
+            timeout = 30.0
+        else:
+            timeout = max(0.0, scheduler.next_attempt_monotonic - self._clock())
+        self._waiting_event.set()
         try:
-            return refresh_action.get_plugin_id()
-        except Exception:
+            self.refresh_queue.wait_for_change(token, timeout=timeout)
+        finally:
+            self._waiting_event.clear()
+        return self.refresh_queue.take(timeout=0)
+
+    def wait_until_waiting(self, timeout=1.0):
+        return self._waiting_event.wait(timeout=max(0.0, float(timeout)))
+
+    def _run_one_iteration_for_test(self):
+        """Run one non-blocking scheduler/worker turn for deterministic tests."""
+        self._schedule_if_due()
+        entry = self.refresh_queue.take(timeout=0)
+        if entry is not None:
+            self._process_queue_entry(entry)
+        return entry
+
+    def _schedule_if_due(self):
+        now = self._clock()
+        scheduler = self.scheduler_state.snapshot()
+        if (
+            scheduler.next_attempt_monotonic is not None
+            and now < scheduler.next_attempt_monotonic
+        ):
             return None
 
-    def _manual_update_job_payload(self, job):
-        return dict(job)
+        try:
+            self.scheduler_state.record_attempt()
+            self._attempt_count += 1
+            if self._memory_watchdog_should_restart():
+                self.scheduler_state.set_next_attempt(now + 30.0)
+                return None
+            current_dt = self._get_current_datetime()
+            command = self._select_scheduled_command(current_dt)
+            if command is not None:
+                self.refresh_queue.submit(command)
+            skip_uuid = command.instance_uuid if command is not None else None
+            for background_command in self._select_background_commands(
+                current_dt,
+                skip_instance_uuid=skip_uuid,
+            ):
+                self.refresh_queue.submit(background_command)
+            self.scheduler_state.set_next_attempt(now + self._scheduler_poll_seconds())
+            return command
+        except Exception as error:
+            self.scheduler_state.record_failure(error)
+            delay = self.retry_registry.mark_failure(RetryRegistry.GLOBAL_KEY, now)
+            self.scheduler_state.set_next_attempt(now + max(30.0, delay))
+            logger.exception("Scheduled refresh selection failed")
+            return None
 
-    def _mark_manual_update_job_locked(self, request, status, timestamp_key, error=None):
-        job = request.get("job")
-        if not job:
-            return
-        if job.get("status") in {"timed_out"} and status == "completed":
-            return
-        job["status"] = status
-        job[timestamp_key] = time.time()
-        if error:
-            job["error"] = error
-        elif status in {"completed", "running"}:
-            job.pop("error", None)
-
-    def _trim_manual_update_jobs_locked(self):
-        if len(self.manual_update_jobs) <= DEFAULT_MANUAL_UPDATE_JOB_RETENTION:
-            return
-        removable_statuses = {"completed", "failed", "timed_out", "rejected"}
-        overflow = len(self.manual_update_jobs) - DEFAULT_MANUAL_UPDATE_JOB_RETENTION
-        for job_id, job in list(self.manual_update_jobs.items()):
-            if overflow <= 0:
-                break
-            if job.get("status") in removable_statuses:
-                self.manual_update_jobs.pop(job_id, None)
-                overflow -= 1
-
-    def _manual_update_timeout_seconds(self):
-        raw_value = self.device_config.get_config(
-            "manual_update_timeout_seconds",
-            default=DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS,
+    def _scheduler_poll_seconds(self):
+        interval = self._config_float(
+            "plugin_cycle_interval_seconds",
+            DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
         )
-        try:
-            value = float(raw_value)
-        except (TypeError, ValueError):
-            value = DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS
-        return max(0.01, min(600.0, value))
+        if interval <= 0:
+            interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+        return max(1.0, min(30.0, interval))
 
-    def signal_config_change(self):
-        """Notify the background thread that config has changed (e.g., interval updated)."""
-        if self.running:
-            with self.condition:
-                self.condition.notify_all()
+    def _select_scheduled_command(self, current_dt) -> RefreshCommand | None:
+        """Select display work using only immutable PlaylistManager APIs."""
+        manager = self.device_config.get_playlist_manager()
+        latest_refresh = self.device_config.get_refresh_info()
+        theme_context = get_theme_context(self.device_config, now=current_dt)
+        if self._has_theme_changed(theme_context, current_dt):
+            displayed_uuid = self._get_config_value("displayed_instance_uuid", None)
+            selection = manager.select_theme_instance(
+                current_dt,
+                displayed_instance_uuid=displayed_uuid,
+                displayed_playlist=None if displayed_uuid is not None else latest_refresh.playlist,
+                displayed_plugin_id=None if displayed_uuid is not None else latest_refresh.plugin_id,
+                displayed_name=None if displayed_uuid is not None else latest_refresh.plugin_instance,
+            )
+            if selection is not None:
+                return self._playlist_command(
+                    selection.playlist_name,
+                    selection.instance,
+                    source=CommandSource.SCHEDULER,
+                    force=True,
+                    display_cached_only=False,
+                    priority=80,
+                    theme_context=theme_context,
+                )
+
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is not None:
+            for instance in active.plugins:
+                if self._snapshot_live_refresh_due(instance, current_dt):
+                    return self._playlist_command(
+                        active.name,
+                        instance,
+                        source=CommandSource.LIVE,
+                        display_cached_only=True,
+                        priority=70,
+                    )
+            for instance in active.plugins:
+                if instance.plugin_id == "sports_dashboard" and self._snapshot_should_refresh(instance, current_dt):
+                    return self._playlist_command(
+                        active.name,
+                        instance,
+                        source=CommandSource.SCHEDULER,
+                        display_cached_only=True,
+                        priority=60,
+                    )
+
+        try:
+            interval = float(self.device_config.get_config(
+                "plugin_cycle_interval_seconds",
+                default=DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+            ))
+        except (TypeError, ValueError, OverflowError):
+            interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+        selection = manager.select_next_active_instance(
+            current_dt,
+            latest_refresh=latest_refresh.get_refresh_datetime(),
+            interval_seconds=interval,
+        )
+        if selection is None:
+            return None
+        return self._playlist_command(
+            selection.playlist_name,
+            selection.instance,
+            source=CommandSource.SCHEDULER,
+            display_cached_only=True,
+            priority=50,
+        )
+
+    def _select_background_commands(self, current_dt, *, skip_instance_uuid=None):
+        theme_context = get_theme_context(self.device_config, now=current_dt)
+        current_mode = (theme_context or {}).get("mode")
+        if (
+            current_mode
+            and self._get_config_value("active_theme", None) != current_mode
+            and self._theme_refresh_retry_delayed(theme_context, current_dt)
+        ):
+            return ()
+        manager = self.device_config.get_playlist_manager()
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is None:
+            return ()
+        candidates = []
+        for instance in active.plugins:
+            if instance.instance_uuid == skip_instance_uuid:
+                continue
+            if self._snapshot_background_cache_disabled(instance):
+                continue
+            cache_path = self._snapshot_cache_path(instance)
+            missing = not os.path.exists(cache_path)
+            due = self._snapshot_should_refresh(instance, current_dt)
+            live_due = self._snapshot_live_refresh_due(instance, current_dt)
+            if not missing and not due and not live_due:
+                continue
+            latest = self._snapshot_latest_refresh_dt(instance)
+            latest_timestamp = float("-inf") if latest is None else latest.timestamp()
+            candidates.append((not missing, latest_timestamp, instance.plugin_id, instance.name, instance))
+
+        limit = self._background_cache_refresh_max_per_pass()
+        selected = sorted(candidates, key=lambda item: item[:4])[:limit]
+        return tuple(
+            self._playlist_command(
+                active.name,
+                item[4],
+                source=CommandSource.BACKGROUND,
+                display_cached_only=False,
+                priority=10,
+                kind=CommandKind.CACHE_REFRESH,
+            )
+            for item in selected
+        )
+
+    def _snapshot_live_refresh_state(self, instance, current_dt, plugin=None):
+        plugin = plugin or self._get_plugin_for_snapshot(instance)
+        if plugin is None:
+            return None
+        context = TaskContext(
+            self.stop_event,
+            self._clock() + 5.0,
+            self._clock,
+        )
+        with self.render_arbiter.lease(instance.plugin_id, context):
+            return _plugin_live_refresh_state(
+                plugin,
+                thaw_payload(instance.settings),
+                current_dt,
+                plugin_id=instance.plugin_id,
+            )
+
+    def _snapshot_live_refresh_due(self, instance, current_dt, plugin=None):
+        state = self._snapshot_live_refresh_state(instance, current_dt, plugin=plugin)
+        if not state:
+            return False
+        latest = self._snapshot_latest_refresh_dt(instance)
+        if latest is None:
+            return True
+        latest = self._align_datetime_tz(latest, current_dt)
+        return (current_dt - latest) >= timedelta(seconds=state["interval_seconds"])
+
+    def _snapshot_should_refresh(self, instance, current_dt):
+        latest = self._snapshot_latest_refresh_dt(instance)
+        if latest is None:
+            return True
+        latest = self._align_datetime_tz(latest, current_dt)
+        refresh = instance.refresh or {}
+        if "interval" in refresh:
+            try:
+                interval = float(refresh.get("interval"))
+            except (TypeError, ValueError, OverflowError):
+                interval = None
+            if interval and (current_dt - latest) >= timedelta(seconds=interval):
+                return True
+        if "scheduled" in refresh:
+            try:
+                scheduled_time = datetime.strptime(str(refresh.get("scheduled")), "%H:%M").time()
+            except (TypeError, ValueError):
+                return False
+            scheduled_dt = current_dt.replace(
+                hour=scheduled_time.hour,
+                minute=scheduled_time.minute,
+                second=0,
+                microsecond=0,
+            )
+            if current_dt < scheduled_dt:
+                scheduled_dt -= timedelta(days=1)
+            return latest < scheduled_dt <= current_dt
+        return False
+
+    def _snapshot_latest_refresh_dt(self, instance):
+        return self._parse_iso_datetime(instance.latest_refresh_time)
+
+    @staticmethod
+    def _snapshot_background_cache_disabled(instance):
+        if str(instance.plugin_id).strip() != "sports_dashboard":
+            return False
+        settings = instance.settings or {}
+        return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled", False))
+
+    def _get_plugin_for_snapshot(self, instance):
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        if plugin_config is None:
+            logger.error("Plugin config not found for '%s'.", instance.plugin_id)
+            return None
+        return get_plugin_instance(plugin_config)
+
+    def _snapshot_cache_path(self, instance):
+        return os.path.join(
+            self.device_config.plugin_image_dir,
+            f"{instance.plugin_id}_{instance.name.replace(' ', '_')}.png",
+        )
+
+    def _process_queue_entry(self, entry: QueueEntry):
+        command = entry.command
+        context = TaskContext(
+            entry.cancel_event,
+            command.deadline_monotonic,
+            self._clock,
+        )
+        self._execution_local.context = context
+        busy_lock = None
+        if command.source is CommandSource.MANUAL:
+            busy_lock = self.manual_refresh_lock
+        elif command.kind is CommandKind.CACHE_REFRESH:
+            busy_lock = self.cache_refresh_lock
+        if busy_lock is not None:
+            busy_lock.acquire()
+        try:
+            try:
+                self._execute_command(command)
+            except TaskDeadlineExceeded as error:
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.ABANDONED,
+                    error_code="deadline_expired",
+                    error=str(error),
+                )
+            except _StaleSelection as error:
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="stale_selection",
+                    error=str(error),
+                )
+            except TaskCancelled as error:
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="task_canceled",
+                    error=str(error),
+                )
+            except Exception as error:
+                abort = self._classify_command_abort(command, context)
+                if abort is None:
+                    try:
+                        self._record_command_failure(command, error)
+                    except (TaskDeadlineExceeded, _StaleSelection, TaskCancelled) as abort_error:
+                        abort = self._abort_details(abort_error)
+                    except Exception:
+                        logger.exception("Refresh failure bookkeeping also failed")
+                if abort is None:
+                    abort = self._classify_command_abort(command, context)
+                if abort is None:
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.FAILED,
+                        error_code="refresh_failed",
+                        error=str(error),
+                    )
+                else:
+                    status, error_code, abort_error = abort
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        status,
+                        error_code=error_code,
+                        error=abort_error,
+                    )
+            else:
+                try:
+                    context.raise_if_cancelled()
+                except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
+                    status, error_code, abort_message = self._abort_details(abort_error)
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        status,
+                        error_code=error_code,
+                        error=abort_message,
+                    )
+                else:
+                    finished = self.refresh_queue.finish(entry.job.id, JobStatus.SUCCEEDED)
+                    try:
+                        retry_key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
+                        self.retry_registry.mark_success(retry_key)
+                        if retry_key != RetryRegistry.GLOBAL_KEY:
+                            self.retry_registry.mark_success(RetryRegistry.GLOBAL_KEY)
+                        self.scheduler_state.record_success()
+                    except Exception:
+                        logger.exception("Refresh success bookkeeping failed")
+            self._signal_completion(finished.id)
+        finally:
+            if busy_lock is not None:
+                busy_lock.release()
+            self._execution_local.context = None
+            try:
+                self._run_memory_maintenance("refresh-command-finally")
+            except Exception:
+                logger.exception("Refresh memory maintenance failed")
+
+    def _current_task_context(self, command):
+        context = getattr(self._execution_local, "context", None)
+        if context is not None:
+            return context
+        return TaskContext.never_cancelled(
+            deadline_monotonic=command.deadline_monotonic,
+            clock=self._clock,
+        )
+
+    def make_cleanup_context(self, timeout_seconds=30.0):
+        """Return a bounded public context for cleanup under the shared arbiter."""
+        try:
+            timeout = float(timeout_seconds)
+        except (TypeError, ValueError, OverflowError):
+            timeout = 30.0
+        timeout = max(0.01, min(210.0, timeout))
+        return TaskContext(self.stop_event, self._clock() + timeout, self._clock)
+
+    def _execute_command(self, command: RefreshCommand):
+        context = self._current_task_context(command)
+        context.raise_if_cancelled()
+        if command.instance_uuid is not None:
+            resolved = self._resolve_playlist_command(command)
+            if resolved is None:
+                raise _StaleSelection("playlist selection is stale")
+            image = self._render_playlist_command(command, resolved, context)
+            return self._commit_command_result(
+                command,
+                resolved,
+                image,
+                self._get_current_datetime(),
+            )
+
+        plugin_config = self.device_config.get_plugin(command.plugin_id)
+        if plugin_config is None:
+            raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
+        plugin = get_plugin_instance(plugin_config)
+        settings = thaw_payload(command.payload.get("settings", {}))
+        with self.render_arbiter.lease(command.plugin_id, context):
+            context.raise_if_cancelled()
+            image = plugin.generate_image(
+                _settings_with_force_refresh(
+                    settings,
+                    command.force,
+                    display_render=command.kind is CommandKind.DISPLAY,
+                ),
+                self.device_config,
+            )
+            context.raise_if_cancelled()
+        self._set_render_metadata(True, False, getattr(plugin, "config", plugin_config))
+        return self._commit_command_result(command, None, image, self._get_current_datetime())
+
+    def _render_playlist_command(self, command, resolved, context):
+        instance = resolved.instance
+        plugin_config = self.device_config.get_plugin(command.plugin_id)
+        if plugin_config is None:
+            raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
+        plugin = get_plugin_instance(plugin_config)
+        settings = thaw_payload(instance.settings)
+        current_dt = self._get_current_datetime()
+        cache_path = self._snapshot_cache_path(instance)
+        image_missing = not os.path.exists(cache_path)
+        display_cached_only = bool(command.payload.get("display_cached_only", True))
+        generated = False
+        cacheable = False
+
+        with self.render_arbiter.lease(command.plugin_id, context):
+            context.raise_if_cancelled()
+            if (
+                command.kind is CommandKind.DISPLAY
+                and display_cached_only
+                and not command.force
+                and _display_refresh_under_resource_pressure(self.device_config)
+            ):
+                image = self._load_snapshot_cache_or_placeholder(instance, cache_path)
+            else:
+                if (
+                    command.kind is CommandKind.CACHE_REFRESH
+                    and self._cache_refresh_under_resource_pressure()
+                ):
+                    self._set_render_metadata(False, False, plugin_config)
+                    return None
+
+                refresh_on_display = False
+                refresh_hook = getattr(plugin, "wants_refresh_on_display", None)
+                if callable(refresh_hook):
+                    try:
+                        refresh_on_display = bool(refresh_hook(settings))
+                    except Exception:
+                        logger.exception(
+                            "Plugin '%s' refresh-on-display hook failed.",
+                            command.plugin_id,
+                        )
+                live_state = _plugin_live_refresh_state(
+                    plugin,
+                    settings,
+                    current_dt,
+                    plugin_id=command.plugin_id,
+                )
+                live_due = self._snapshot_live_state_due(instance, live_state, current_dt)
+                refresh_due = self._snapshot_should_refresh(instance, current_dt)
+                sports_due = command.plugin_id == "sports_dashboard" and refresh_due
+                should_generate = (
+                    command.force
+                    or image_missing
+                    or refresh_on_display
+                    or live_due
+                    or sports_due
+                    or command.kind is CommandKind.CACHE_REFRESH
+                )
+
+                if display_cached_only and not should_generate:
+                    try:
+                        image = _load_image_copy(cache_path)
+                    except Exception:
+                        logger.exception(
+                            "Cached plugin image could not be loaded; refreshing synchronously. | "
+                            "plugin_instance: '%s'",
+                            instance.name,
+                        )
+                        try:
+                            image = plugin.generate_image(
+                                _settings_with_force_refresh(
+                                    settings,
+                                    command.force,
+                                    display_render=True,
+                                ),
+                                self.device_config,
+                            )
+                            generated = True
+                        except Exception:
+                            logger.exception(
+                                "Plugin instance could not refresh for scheduled display; using placeholder. | "
+                                "plugin_instance: '%s'",
+                                instance.name,
+                            )
+                            image = self._placeholder_for_snapshot(instance)
+                elif should_generate:
+                    image = plugin.generate_image(
+                        _settings_with_force_refresh(
+                            settings,
+                            command.force,
+                            display_render=command.kind is CommandKind.DISPLAY,
+                        ),
+                        self.device_config,
+                    )
+                    generated = True
+                else:
+                    image = _load_image_copy(cache_path)
+                cacheable = generated and _image_allows_cache(image)
+                if (
+                    command.kind is CommandKind.DISPLAY
+                    and generated
+                    and not cacheable
+                    and os.path.exists(cache_path)
+                ):
+                    try:
+                        image = _load_image_copy(cache_path)
+                    except Exception:
+                        logger.exception(
+                            "Previous cached plugin image could not be loaded after a "
+                            "non-cacheable refresh; displaying the generated image. | "
+                            "plugin_instance: '%s'",
+                            instance.name,
+                        )
+            context.raise_if_cancelled()
+
+        self._set_render_metadata(generated, cacheable, getattr(plugin, "config", plugin_config))
+        return image
+
+    def _set_render_metadata(self, generated, cacheable, plugin_config):
+        self._execution_local.render_generated = bool(generated)
+        self._execution_local.render_cacheable = bool(cacheable)
+        self._execution_local.image_settings = list((plugin_config or {}).get("image_settings", []))
+
+    def _snapshot_live_state_due(self, instance, state, current_dt):
+        if not state:
+            return False
+        latest = self._snapshot_latest_refresh_dt(instance)
+        if latest is None:
+            return True
+        latest = self._align_datetime_tz(latest, current_dt)
+        return (current_dt - latest) >= timedelta(seconds=state["interval_seconds"])
+
+    def _load_snapshot_cache_or_placeholder(self, instance, cache_path):
+        if os.path.exists(cache_path):
+            try:
+                return _load_image_copy(cache_path)
+            except Exception:
+                logger.exception(
+                    "Cached plugin image could not be loaded under resource pressure; using placeholder. | "
+                    "plugin_instance: '%s'",
+                    instance.name,
+                )
+        logger.warning(
+            "Plugin instance image unavailable for scheduled display under resource pressure; using placeholder. | "
+            "plugin_instance: '%s'",
+            instance.name,
+        )
+        return self._placeholder_for_snapshot(instance)
+
+    def _placeholder_for_snapshot(self, instance):
+        return PlaylistRefresh(None, instance)._placeholder_image(self.device_config)
+
+    def _resolve_playlist_command(self, command: RefreshCommand):
+        playlist_name = command.payload.get("playlist_name")
+        if not playlist_name:
+            return None
+        return self.device_config.get_playlist_manager().validate_selection(
+            command.instance_uuid,
+            expected_playlist_name=playlist_name,
+            expected_generation=command.structural_generation,
+            expected_settings_revision=command.settings_revision,
+            current_datetime=self._get_current_datetime(),
+            require_active=True,
+        )
+
+    def _require_fresh_selection(self, command, context):
+        context.raise_if_cancelled()
+        selection = self.device_config.get_playlist_manager().validate_selection(
+            command.instance_uuid,
+            expected_playlist_name=command.payload.get("playlist_name"),
+            expected_generation=command.structural_generation,
+            expected_settings_revision=command.settings_revision,
+            current_datetime=self._get_current_datetime(),
+            require_active=True,
+        )
+        if selection is None:
+            raise _StaleSelection("playlist selection changed before commit")
+        return selection
+
+    def _staging_cache_path(self, instance):
+        directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
+        filename = (
+            f"{instance.instance_uuid}-{instance.structural_generation}-"
+            f"{instance.settings_revision}.png"
+        )
+        return os.path.join(directory, filename)
+
+    def managed_cache_paths(self, instance_uuid, *, plugin_id=None, instance_name=None):
+        """Return Task-5-owned cache paths for bounded cleanup by Task 6."""
+        directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
+        paths = []
+        prefix = f"{instance_uuid}-"
+        try:
+            paths.extend(
+                os.path.join(directory, name)
+                for name in os.listdir(directory)
+                if name.startswith(prefix)
+            )
+        except FileNotFoundError:
+            pass
+        if plugin_id is not None and instance_name is not None:
+            paths.append(os.path.join(
+                self.device_config.plugin_image_dir,
+                f"{plugin_id}_{str(instance_name).replace(' ', '_')}.png",
+            ))
+        return tuple(sorted(set(paths)))
+
+    def _commit_command_result(self, command, resolved_snapshot, image, current_dt):
+        context = self._current_task_context(command)
+        context.raise_if_cancelled()
+        if resolved_snapshot is not None:
+            if image is None:
+                return None
+            instance = resolved_snapshot.instance
+            generated = bool(getattr(self._execution_local, "render_generated", False))
+            cacheable = bool(getattr(self._execution_local, "render_cacheable", False))
+            stage_path = None
+            if generated and cacheable:
+                stage_path = self._staging_cache_path(instance)
+                _save_image_atomic(image, stage_path)
+                try:
+                    self._require_fresh_selection(command, context)
+                    canonical_path = self._snapshot_cache_path(instance)
+                    os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
+                    os.replace(stage_path, canonical_path)
+                    stage_path = None
+                finally:
+                    if stage_path and os.path.exists(stage_path):
+                        try:
+                            os.remove(stage_path)
+                        except OSError:
+                            logger.warning("Could not remove stale staged cache: %s", stage_path)
+
+            image_hash = compute_image_hash(image)
+            latest_refresh = self.device_config.get_refresh_info()
+            refresh_info = {
+                "refresh_type": "Playlist",
+                "playlist": resolved_snapshot.playlist_name,
+                "plugin_id": instance.plugin_id,
+                "plugin_instance": instance.name,
+                "refresh_time": current_dt.isoformat(),
+                "image_hash": image_hash,
+            }
+            refresh_record = RefreshInfo(**refresh_info)
+            theme_context = command.payload.get("theme_context")
+            thawed_theme_context = thaw_payload(theme_context) if theme_context else None
+            if command.kind is CommandKind.DISPLAY:
+                self._require_fresh_selection(command, context)
+                if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
+                    self.display_manager.display_image(
+                        image,
+                        image_settings=getattr(self._execution_local, "image_settings", []),
+                    )
+
+            if generated and cacheable:
+                self._require_fresh_selection(command, context)
+                recorded = self.device_config.get_playlist_manager().record_instance_refresh(
+                    instance.instance_uuid,
+                    expected_generation=instance.structural_generation,
+                    expected_settings_revision=instance.settings_revision,
+                    expected_latest_refresh_time=instance.latest_refresh_time,
+                    latest_refresh_time=current_dt.isoformat(),
+                )
+                if recorded is None:
+                    raise _StaleSelection("playlist refresh timestamp CAS failed")
+
+            if command.kind is CommandKind.DISPLAY:
+                self._require_fresh_selection(command, context)
+                if theme_context:
+                    self._require_fresh_selection(command, context)
+
+            if command.kind is CommandKind.DISPLAY or (generated and cacheable):
+                self._require_fresh_selection(command, context)
+                # The final validation is the config commit linearization point.
+                # Do not observe cancellation again after shared state is mutated.
+                if command.kind is CommandKind.DISPLAY:
+                    self.device_config.refresh_info = refresh_record
+                    self._set_config_value("displayed_instance_uuid", instance.instance_uuid)
+                    if thawed_theme_context:
+                        self._persist_active_theme(thawed_theme_context, current_dt)
+                self._write_device_config()
+            return image
+
+        image_hash = compute_image_hash(image)
+        latest_refresh = self.device_config.get_refresh_info()
+        refresh_info = {
+            "refresh_type": str(command.payload.get("refresh_type") or "Manual Update"),
+            "plugin_id": command.plugin_id,
+            "refresh_time": current_dt.isoformat(),
+            "image_hash": image_hash,
+        }
+        refresh_record = RefreshInfo(**refresh_info)
+        if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
+            context.raise_if_cancelled()
+            self.display_manager.display_image(
+                image,
+                image_settings=getattr(self._execution_local, "image_settings", []),
+            )
+        context.raise_if_cancelled()
+        context.raise_if_cancelled()
+        # This is the manual config commit linearization point. Once crossed,
+        # write the candidate without another cancellation check in between.
+        self.device_config.refresh_info = refresh_record
+        self._write_device_config()
+        return image
+
+    @staticmethod
+    def _abort_details(error):
+        if isinstance(error, TaskDeadlineExceeded):
+            return JobStatus.ABANDONED, "deadline_expired", str(error)
+        if isinstance(error, _StaleSelection):
+            return JobStatus.CANCELED, "stale_selection", str(error)
+        if isinstance(error, TaskCancelled):
+            return JobStatus.CANCELED, "task_canceled", str(error)
+        return None
+
+    def _classify_command_abort(self, command, context):
+        try:
+            if command.instance_uuid is None:
+                context.raise_if_cancelled()
+            else:
+                self._require_fresh_selection(command, context)
+        except (TaskDeadlineExceeded, _StaleSelection, TaskCancelled) as error:
+            return self._abort_details(error)
+        return None
+
+    def _record_command_failure(self, command, error):
+        theme_context = command.payload.get("theme_context")
+        if theme_context:
+            context = self._current_task_context(command)
+            if command.instance_uuid is None:
+                context.raise_if_cancelled()
+            else:
+                self._require_fresh_selection(command, context)
+            self._mark_theme_refresh_failed(
+                thaw_payload(theme_context),
+                self._get_current_datetime(),
+                error,
+            )
+        self.scheduler_state.record_failure(error)
+        key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
+        delay = self.retry_registry.mark_failure(key, self._clock())
+        self.scheduler_state.set_next_attempt(self._clock() + delay)
+
+    def _signal_completion(self, actual_job_id):
+        ready = []
+        with self._completion_lock:
+            for requested_id, event in tuple(self._completion_events.items()):
+                entry = self.refresh_queue.get_entry(requested_id)
+                if entry is None or entry.job.id == actual_job_id:
+                    ready.append((requested_id, event))
+            for requested_id, _event in ready:
+                self._completion_events.pop(requested_id, None)
+        for _requested_id, event in ready:
+            event.set()
 
     def _get_refresh_wait_seconds(self):
         """Return time until the next playlist tick, aligned to the latest refresh time."""
@@ -580,6 +1208,231 @@ class RefreshTask:
             else:
                 wait_seconds = min(wait_seconds, max(0, live_wait_seconds))
         return wait_seconds
+
+    def _command_from_refresh_action(self, refresh_action):
+        now = self._clock()
+        deadline = now + self._manual_update_timeout_seconds()
+        if isinstance(refresh_action, ManualRefresh):
+            return RefreshCommand.create(
+                kind=CommandKind.DISPLAY,
+                source=CommandSource.MANUAL,
+                plugin_id=refresh_action.plugin_id,
+                payload={
+                    "refresh_type": "Manual Update",
+                    "settings": refresh_action.plugin_settings,
+                },
+                now_monotonic=now,
+                deadline_monotonic=deadline,
+                force=True,
+                priority=100,
+            )
+        if isinstance(refresh_action, PlaylistRefresh):
+            snapshot = refresh_action.plugin_instance.snapshot()
+            return self._playlist_command(
+                refresh_action.playlist.name,
+                snapshot,
+                source=CommandSource.MANUAL,
+                force=refresh_action.force,
+                display_cached_only=refresh_action.display_cached_only,
+                priority=100,
+                deadline_monotonic=deadline,
+            )
+        raise TypeError(f"Unsupported refresh action: {type(refresh_action).__name__}")
+
+    def _manual_update_plugin_id(self, refresh_action):
+        try:
+            return refresh_action.get_plugin_id()
+        except Exception:
+            return None
+
+    def _manual_update_timeout_seconds(self):
+        raw_value = self.device_config.get_config(
+            "manual_update_timeout_seconds",
+            default=DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS,
+        )
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            value = DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS
+        return max(0.01, min(600.0, value))
+
+    def _playlist_command(
+        self,
+        playlist_name,
+        instance,
+        *,
+        source,
+        force=False,
+        display_cached_only=True,
+        priority=50,
+        deadline_monotonic=None,
+        kind=CommandKind.DISPLAY,
+        theme_context=None,
+    ):
+        now = self._clock()
+        if deadline_monotonic is None:
+            deadline_monotonic = now + self._manual_update_timeout_seconds()
+        payload = {
+            "refresh_type": "Playlist",
+            "playlist_name": playlist_name,
+            "instance_name": instance.name,
+            "settings": instance.settings,
+            "refresh": instance.refresh,
+            "latest_refresh_time": instance.latest_refresh_time,
+            "display_cached_only": bool(display_cached_only),
+        }
+        if theme_context:
+            payload["theme_context"] = theme_context
+        return RefreshCommand.create(
+            kind=kind,
+            source=source,
+            plugin_id=instance.plugin_id,
+            instance_uuid=instance.instance_uuid,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            payload=payload,
+            now_monotonic=now,
+            deadline_monotonic=deadline_monotonic,
+            force=force,
+            priority=priority,
+        )
+
+    def _rejected_manual_job(self, refresh_action, error):
+        now = self._wall_clock()
+        return {
+            "id": uuid4().hex,
+            "status": "rejected",
+            "plugin_id": self._manual_update_plugin_id(refresh_action),
+            "refresh_type": type(refresh_action).__name__,
+            "submitted_at": now,
+            "completed_at": now,
+            "error": error,
+        }
+
+    def manual_update(self, refresh_action):
+        """Submit a bounded queue command and wait without owning job history."""
+        if not self.running:
+            logger.warning("Background refresh task is not running, unable to do a manual update")
+            return None
+        command = self._command_from_refresh_action(refresh_action)
+        completion = threading.Event()
+        with self._completion_lock:
+            self._completion_events[command.id] = completion
+        try:
+            self.refresh_queue.submit(command)
+        except Exception:
+            with self._completion_lock:
+                self._completion_events.pop(command.id, None)
+            raise
+
+        timeout = self._manual_update_timeout_seconds()
+        deadline = time.monotonic() + timeout
+        while True:
+            job = self.get_manual_update_job(command.id)
+            if job is not None and job["status"] not in {"queued", "running"}:
+                break
+            if job is None:
+                with self._completion_lock:
+                    self._completion_events.pop(command.id, None)
+                raise RuntimeError("Manual update result is no longer available")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with self._completion_lock:
+                    self._completion_events.pop(command.id, None)
+                raise TimeoutError(f"Manual update timed out after {timeout:.0f} seconds")
+            completion.wait(timeout=min(0.05, remaining))
+
+        with self._completion_lock:
+            self._completion_events.pop(command.id, None)
+        if job["status"] == "failed":
+            raise RuntimeError(job.get("error") or "Manual update failed")
+        if job["status"] == "timed_out" or job.get("error_code") == "deadline_expired":
+            raise TimeoutError(f"Manual update timed out after {timeout:.0f} seconds")
+        if job["status"] == "canceled":
+            raise TaskCancelled(job.get("error") or "Manual update canceled")
+        return job
+
+    def submit_manual_update(self, refresh_action):
+        """Queue a manual refresh and return the bounded queue job payload."""
+        if not self.running and self.refresh_queue.snapshot().accepting:
+            logger.warning("Background refresh task is not running, unable to queue a manual update")
+            return self._rejected_manual_job(refresh_action, "Background refresh task is not running")
+        command = self._command_from_refresh_action(refresh_action)
+        job = self.refresh_queue.submit(command)
+        return self._job_payload(self.refresh_queue.get_entry(job.id))
+
+    def submit_playlist_display(self, instance_uuid, *, force=True, display_cached_only=False):
+        """Queue an immutable active-playlist display command by UUID."""
+        if not self.running and self.refresh_queue.snapshot().accepting:
+            raise RuntimeError("Background refresh task is not running")
+        current_dt = self._get_current_datetime()
+        active = self.device_config.get_playlist_manager().snapshot_active_playlist(current_dt)
+        instance = None if active is None else next(
+            (candidate for candidate in active.plugins if candidate.instance_uuid == instance_uuid),
+            None,
+        )
+        if instance is None:
+            raise ValueError(f"Active playlist instance not found: {instance_uuid}")
+        command = self._playlist_command(
+            active.name,
+            instance,
+            source=CommandSource.MANUAL,
+            force=force,
+            display_cached_only=display_cached_only,
+            priority=100,
+        )
+        job = self.refresh_queue.submit(command)
+        return self._job_payload(self.refresh_queue.get_entry(job.id))
+
+    @staticmethod
+    def _legacy_job_status(status):
+        return {
+            JobStatus.SUCCEEDED: "completed",
+            JobStatus.ABANDONED: "timed_out",
+        }.get(status, status.value)
+
+    def _job_payload(self, entry):
+        if entry is None:
+            return None
+        command = entry.command
+        job = entry.job
+        payload = {
+            "id": job.id,
+            "status": self._legacy_job_status(job.status),
+            "plugin_id": command.plugin_id,
+            "refresh_type": str(command.payload.get("refresh_type") or command.kind.value),
+            "submitted_at": job.submitted_at,
+        }
+        if command.instance_uuid is not None:
+            payload["instance_uuid"] = command.instance_uuid
+        for key in ("started_at", "completed_at", "cancel_requested_at", "superseded_by", "error_code", "error"):
+            value = getattr(job, key)
+            if value is not None:
+                payload[key] = value
+        return payload
+
+    def get_manual_update_job(self, job_id):
+        return self._job_payload(self.refresh_queue.get_entry(job_id))
+
+    def wait_for_job(self, job_id, timeout=1.0):
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while True:
+            job = self.get_manual_update_job(job_id)
+            if job is None or job["status"] not in {"queued", "running"}:
+                return job
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return job
+            self.refresh_queue.wait_for_change(
+                self.refresh_queue.change_token(),
+                timeout=min(0.05, remaining),
+            )
+
+    def signal_config_change(self):
+        """Force a fresh scheduler probe and publish a non-lossy queue wake."""
+        if self.running:
+            self.scheduler_state.set_next_attempt(self._clock())
+            self.refresh_queue.wake()
 
     def _get_current_datetime(self):
         """Retrieves the current datetime based on the device's configured timezone."""
@@ -743,7 +1596,7 @@ class RefreshTask:
             self.device_config.write_config()
 
     def _start_due_plugin_cache_refresh(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False, only_plugin_id=None):
-        """Start a non-blocking cache refresh for due plugin instances."""
+        """Submit one bounded cache command per due immutable instance."""
         if not self.running:
             return
         if self.manual_update_in_progress():
@@ -751,26 +1604,37 @@ class RefreshTask:
             return
         if self._cache_refresh_under_resource_pressure(allow_high_swap=only_plugin_id is not None):
             return
-        if not self.cache_refresh_lock.acquire(blocking=False):
-            logger.info("Due plugin cache refresh already running, skipping this tick.")
+        active = self.device_config.get_playlist_manager().snapshot_active_playlist(current_dt)
+        if active is None:
             return
-
-        def worker():
-            try:
-                self._refresh_due_plugin_instances(
-                    playlist,
-                    current_dt,
-                    skip_plugin_instance=skip_plugin_instance,
-                    displayed_plugin_instance=displayed_plugin_instance,
-                    force=force,
-                    only_plugin_id=only_plugin_id,
-                    max_updates=self._background_cache_refresh_max_per_pass(),
-                )
-            finally:
-                self.cache_refresh_lock.release()
-
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
+        skip_uuid = getattr(skip_plugin_instance, "instance_uuid", None)
+        commands = []
+        for instance in active.plugins:
+            if skip_uuid and instance.instance_uuid == skip_uuid:
+                continue
+            if only_plugin_id and instance.plugin_id != only_plugin_id:
+                continue
+            if self._snapshot_background_cache_disabled(instance):
+                continue
+            missing = not os.path.exists(self._snapshot_cache_path(instance))
+            if (
+                not force
+                and not missing
+                and not self._snapshot_should_refresh(instance, current_dt)
+                and not self._snapshot_live_refresh_due(instance, current_dt)
+            ):
+                continue
+            commands.append(self._playlist_command(
+                active.name,
+                instance,
+                source=CommandSource.BACKGROUND,
+                force=force,
+                display_cached_only=False,
+                priority=10,
+                kind=CommandKind.CACHE_REFRESH,
+            ))
+        for command in commands[:self._background_cache_refresh_max_per_pass()]:
+            self.refresh_queue.submit(command)
 
     def _maybe_start_background_cache_refresh(self, playlist, displayed_plugin_instance, current_dt, force=False):
         """Kick off a background cache refresh pass after a display tick."""
@@ -963,14 +1827,21 @@ class RefreshTask:
 
     def _restart_process_for_memory_pressure(self, stats, min_available_mb, max_swap_percent):
         logger.error(
-            "Restarting InkyPi process due to memory pressure. | available_mb: %.1f | "
+            "Requesting staged InkyPi restart due to memory pressure. | available_mb: %.1f | "
             "min_available_mb: %.1f | swap_percent: %.1f | max_swap_percent: %.1f",
             stats["available_mb"],
             min_available_mb,
             stats["swap_percent"],
             max_swap_percent,
         )
-        os._exit(75)
+        self._restart_request = {
+            "reason": "memory_pressure",
+            "available_mb": stats["available_mb"],
+            "min_available_mb": min_available_mb,
+            "swap_percent": stats["swap_percent"],
+            "max_swap_percent": max_swap_percent,
+        }
+        self.refresh_queue.wake()
 
     def _background_cache_refresh_max_per_pass(self):
         raw_value = self.device_config.get_config(
@@ -1009,7 +1880,6 @@ class RefreshTask:
             return False
 
         available_mb = memory.available / (1024 * 1024)
-        swap_under_pressure = swap.percent >= max_swap_percent and not allow_high_swap
         under_pressure = available_mb < min_available_mb
         if under_pressure:
             now = time.monotonic()
@@ -1027,11 +1897,10 @@ class RefreshTask:
         return under_pressure
 
     def _refresh_due_plugin_instances(self, playlist, current_dt, skip_plugin_instance=None, displayed_plugin_instance=None, force=False, only_plugin_id=None, max_updates=None):
-        """Refresh cached images for due plugin instances in the active playlist.
+        """Compatibility helper for direct callers and legacy unit tests.
 
-        This is intended for the non-blocking background cache pass. Display
-        rotation uses the latest cached image first, then this pass updates
-        stale caches without blocking the next visible playlist tick.
+        The production scheduler does not call this synchronous path; it emits
+        one immutable CACHE_REFRESH command per due instance instead.
         """
         if self.manual_update_in_progress():
             logger.info("Due plugin cache refresh pass skipped while manual update is running.")
