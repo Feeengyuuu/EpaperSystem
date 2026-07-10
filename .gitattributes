@@ -18,3 +18,4 @@
 inkypi-weather/package/InkyPi/install/inkypi text eol=lf
 inkypi-weather/package/InkyPi/install/inkypi-update text eol=lf
 inkypi-weather/package/InkyPi/install/cli/inkypi-plugin text eol=lf
+inkypi-weather/package/InkyPi/install/debian-requirements.txt text eol=lf

@@ -115,6 +115,7 @@ def test_release_scripts_and_services_are_forced_to_lf():
         "inkypi-weather/package/InkyPi/install/inkypi",
         "inkypi-weather/package/InkyPi/install/inkypi-update",
         "inkypi-weather/package/InkyPi/install/cli/inkypi-plugin",
+        "inkypi-weather/package/InkyPi/install/debian-requirements.txt",
     ):
         assert f"{relative} text eol=lf" in attributes
 
@@ -123,6 +124,7 @@ def test_release_scripts_and_services_are_forced_to_lf():
         "inkypi-weather/package/InkyPi/install/inkypi",
         "inkypi-weather/package/InkyPi/install/inkypi-update",
         "inkypi-weather/package/InkyPi/install/cli/inkypi-plugin",
+        "inkypi-weather/package/InkyPi/install/debian-requirements.txt",
         "inkypi-weather/package/InkyPi/install/privileged/inkypi-privileged.socket",
     ):
         assert b"\r" not in (REPO_ROOT / relative).read_bytes()
