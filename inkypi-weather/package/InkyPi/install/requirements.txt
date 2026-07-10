@@ -246,6 +246,10 @@ colorama==0.4.6 \
     # via
     #   click
     #   tqdm
+colorzero==2.0 \
+    --hash=sha256:0e60d743a6b8071498a56465f7719c96a5e92928f858bab1be2a0d606c9aa0f8 \
+    --hash=sha256:e7d5a5c26cd0dc37b164ebefc609f388de24f8593b659191e12d85f8f9d5eb58
+    # via gpiozero
 cryptography==49.0.0 \
     --hash=sha256:026ac7423e6fa66872d3bf889be5974507da3944f866f704fa200eadacd00001 \
     --hash=sha256:07cab27cc7b7e0fd28e5e26bb9eeedde5c135c868b46de4a27845abe94af6122 \
@@ -478,6 +482,10 @@ gpiodevice==0.0.5 \
     --hash=sha256:b808250cd1d89379b69f98cc6442b6b098aa32604c3ed7fb194a39607ee35253 \
     --hash=sha256:cca01ff4319e0ba906ff46dcb8113d8d532b3f5ee03d683d8a11037c8e89140c
     # via inky
+gpiozero==2.0.1 \
+    --hash=sha256:8f621de357171d574c0b7ea0e358cb66e560818a47b0eeedf41ce1cdbd20c70b \
+    --hash=sha256:d4ea1952689ec7e331f9d4ebc9adb15f1d01c2c9dcfabb72e752c9869ab7e97e
+    # via -r install/requirements-pi.in
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
@@ -625,6 +633,21 @@ jiter==0.16.0 \
     --hash=sha256:f4444a83f946605990c98f625cdd3d2725bfb818158760c5748c653170a20e0e \
     --hash=sha256:fb08c276dd02dac3a284acdd02cacc630d2e3cd6572a4b85519f35cbd133c3de
     # via openai
+lgpio==0.2.2.0 \
+    --hash=sha256:11372e653b200f76a0b3ef8a23a0735c85ec678a9f8550b9893151ed0f863fff \
+    --hash=sha256:1594dd4fdf054ff396bf0730802732c26aa2040d6c70250d0d34f703baafd121 \
+    --hash=sha256:2aadff092f642fcdada8457c158f87259dfda3a89ec19bae0b99ff22b34aac4b \
+    --hash=sha256:5b3c403e1fba9c17d178f1bde102726c548fc5c4fc1ccf5ec3e18f3c08e07e04 \
+    --hash=sha256:6c65ac42e878764d04a71ed12fe6d46089b36e9e8127722bf29bb2e4bc91de22 \
+    --hash=sha256:97fe5fb0e888c96031e8899e8c0eca64c63076a6d1f1e774acad8696430b2ff6 \
+    --hash=sha256:9ed135824c717901457dcf2462bb1af9f5445aa6e56bb7a9263fc064620ef586 \
+    --hash=sha256:a2f71fb95b149d8ac82c7c6bae70f054f6dc42a006ad35c90c7d8e54921fbcf4 \
+    --hash=sha256:d245f315e4bc5ba1b72df9fd935a16c99e56ccf6b41d9f66a87804c1dfd91c86 \
+    --hash=sha256:d907db79292c721c605af08187385ddb3b7af09907e1ffca56cf0cd6558ace0a \
+    --hash=sha256:e9f4f3915abe5ae0ffdb4b96f485076d80a663876d839e2d3fd9218a71b9873e \
+    --hash=sha256:f8f1a2818ed4293182999679ac8559aea70d45743f5a3ae8025837e529d9e0d4 \
+    --hash=sha256:f95d6a6db23f99e745e0aee36cd49a515dd6846a5ddb49474c73a390bb2048e2
+    # via -r install/requirements-pi.in
 markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
@@ -1236,6 +1259,14 @@ rich==15.0.0 \
     --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb \
     --hash=sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36
     # via curl-cffi
+rpi-gpio==0.7.1 \
+    --hash=sha256:15311d3b063b71dee738cd26570effc9985a952454d162937c34e08c0fc99902 \
+    --hash=sha256:29226823da8b5ccb9001d795a944f2e00924eeae583490f0bc7317581172c624 \
+    --hash=sha256:57b6c044ef5375a78c8dda27cdfadf329e76aa6943cd6cffbbbd345a9adf9ca5 \
+    --hash=sha256:77afb817b81331ce3049a4b8f94a85e41b7c404d8e56b61ac0f1eb75c3120868 \
+    --hash=sha256:b86b66dc02faa5461b443a1e1f0c1d209d64ab5229696f32fb3b0215e0600c8c \
+    --hash=sha256:cd61c4b03c37b62bba4a5acfea9862749c33c618e0295e7e90aa4713fb373b70
+    # via -r install/requirements-pi.in
 rsa==4.9.1 \
     --hash=sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762 \
     --hash=sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75
@@ -1438,3 +1469,9 @@ yfinance==0.2.66 \
     --hash=sha256:511a1a40a687f277aae3a02543009a8aeaa292fce5509671f58915078aebb5c7 \
     --hash=sha256:fae354cc1649109444b2c84194724afcc52c2a7799551ce44c739424ded6af9c
     # via -r install/requirements-base.in
+
+# The following packages are considered to be unsafe in a requirements file:
+setuptools==83.0.0 \
+    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
+    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
+    # via colorzero

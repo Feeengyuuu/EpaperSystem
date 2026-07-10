@@ -249,7 +249,7 @@ install_privileged_broker() {
 }
 
 build_release_artifact() {
-  TEMP_ROOT=$(mktemp -d /tmp/inkypi-install.XXXXXX)
+  TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/inkypi-install.XXXXXX")
   local artifact="$TEMP_ROOT/inkypi-release.zip"
   python3 - "$PROJECT_DIR" "$artifact" <<'PY'
 from pathlib import Path

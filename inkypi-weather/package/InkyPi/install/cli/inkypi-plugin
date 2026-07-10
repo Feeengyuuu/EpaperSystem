@@ -79,9 +79,7 @@ install_plugin() {
             exit 1
         fi
 
-        source "$VENV_PATH/bin/activate"
-        pip install -r "$REQ_FILE"
-        deactivate
+        "$VENV_PATH/bin/python" -m pip install -r "$REQ_FILE"
 
         echo "[INFO] Dependencies installed"
     else

@@ -289,11 +289,11 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     inspection = inspect_artifact(artifact, digest)
     journal = UpdateJournal.create(layout.journal_path, release_id="candidate")
     journal.transition(UpdatePhase.DOWNLOADED)
-    commands = []
+    calls = []
     preparer = ArtifactPreparer(
         layout,
         config_path=tmp_path / "device.json",
-        run_command=lambda command, **_kwargs: commands.append(command),
+        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
         disk_checker=lambda _directory, _required: None,
     )
 
@@ -303,6 +303,7 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert (release / ".release-id").read_text(encoding="utf-8") == "candidate\n"
     assert (release / "cli" / "inkypi-plugin").is_file()
     assert not layout.staging_path("candidate").exists()
+    commands = [command for command, _kwargs in calls]
     assert len(commands) == 5
     pip_command = next(
         command for command in commands if command[1:4] == ["-m", "pip", "install"]
@@ -311,6 +312,11 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert "--no-deps" in pip_command
     assert "--no-compile" in pip_command
     assert "--no-cache-dir" not in pip_command
+    pip_kwargs = calls[commands.index(pip_command)][1]
+    pip_tmpdir = Path(pip_kwargs["env"]["TMPDIR"])
+    assert pip_tmpdir.parent == layout.staging_path("candidate")
+    assert pip_tmpdir.name.startswith("pip-")
+    assert not pip_tmpdir.exists()
     install_index = commands.index(pip_command)
     check_index = next(
         index
@@ -358,6 +364,12 @@ def test_operations_scripts_are_strict_and_forbid_mutable_deployment_paths():
     assert "accept-new" not in deploy
 
 
+def test_installer_honors_tmpdir_for_release_artifact():
+    installer = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert 'mktemp -d "${TMPDIR:-/tmp}/inkypi-install.XXXXXX"' in installer
+
+
 def test_optional_packaged_driver_validation_returns_success_when_unset():
     installer = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
 
@@ -371,3 +383,19 @@ def test_installed_launcher_exports_release_identity_and_update_entrypoint():
     assert "INKYPI_RELEASE_ID" in launcher
     assert "$PROGRAM_PATH/install/bootstrap_admin.py" in launcher
     assert (INSTALL_ROOT / "inkypi-update").is_file()
+
+
+def test_installed_launchers_use_relocated_virtual_environment_binaries():
+    launcher = (INSTALL_ROOT / "inkypi").read_text(encoding="utf-8")
+    plugin_cli = (INSTALL_ROOT / "cli" / "inkypi-plugin").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'source "$VENV_PATH/bin/activate"' not in launcher
+    assert 'exec "$VENV_PATH/bin/python" -u' in launcher
+    assert (
+        'exec "$VENV_PATH/bin/python" '
+        '"$PROGRAM_PATH/install/bootstrap_admin.py" "$subcommand"'
+    ) in launcher
+    assert 'source "$VENV_PATH/bin/activate"' not in plugin_cli
+    assert '"$VENV_PATH/bin/python" -m pip install -r "$REQ_FILE"' in plugin_cli

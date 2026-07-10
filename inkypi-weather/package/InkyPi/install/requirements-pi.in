@@ -2,5 +2,8 @@
 -r requirements-base.in
 
 cysystemd==2.0.1
+gpiozero==2.0.1
 inky==2.3.0
+lgpio==0.2.2.0
 pi-heif==1.2.0
+RPi.GPIO==0.7.1

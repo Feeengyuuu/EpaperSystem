@@ -41,8 +41,7 @@ usage() {
 }
 
 run_app() {
-    source "$VENV_PATH/bin/activate"
-    exec python -u "$(realpath "$PROGRAM_PATH/src/inkypi.py")"
+    exec "$VENV_PATH/bin/python" -u "$(realpath "$PROGRAM_PATH/src/inkypi.py")"
 }
 
 run_plugin_cli() {
@@ -53,8 +52,7 @@ run_admin_cli() {
     subcommand="${1:-}"
     case "$subcommand" in
         bootstrap|recover)
-            source "$VENV_PATH/bin/activate"
-            exec python "$PROGRAM_PATH/install/bootstrap_admin.py" "$subcommand"
+            exec "$VENV_PATH/bin/python" "$PROGRAM_PATH/install/bootstrap_admin.py" "$subcommand"
             ;;
         *)
             echo "Usage: inkypi admin <bootstrap|recover>"
@@ -90,4 +88,3 @@ case "$command" in
         exit 1
         ;;
 esac
-

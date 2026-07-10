@@ -18,11 +18,14 @@ def test_main_unit_is_unprivileged_and_hardened():
     assert unit["Service"]["User"] == "inkypi"
     assert unit["Service"]["Group"] == "inkypi"
     assert unit["Service"]["NoNewPrivileges"].lower() == "true"
-    assert unit["Service"]["WorkingDirectory"] == "/opt/inkypi/current/src"
+    assert unit["Service"]["WorkingDirectory"] == "/run/inkypi"
+    assert unit["Service"]["RuntimeDirectory"] == "inkypi"
     assert unit["Service"]["EnvironmentFile"] == "-/etc/inkypi/inkypi.env"
     assert "PYTHONDONTWRITEBYTECODE=1" in unit["Service"]["Environment"]
     assert "INKYPI_CACHE_DIR=/var/cache/inkypi" in unit["Service"]["Environment"]
     assert "INKYPI_DATA_DIR=/var/lib/inkypi/data" in unit["Service"]["Environment"]
+    assert "LG_WD=/run/inkypi" in unit["Service"]["Environment"]
+    assert "/run/inkypi" in unit["Service"]["ReadWritePaths"].split()
     assert unit["Unit"]["Requires"] == "inkypi-privileged.socket"
     assert unit["Service"]["AmbientCapabilities"] == "CAP_NET_BIND_SERVICE"
     assert unit["Service"]["CapabilityBoundingSet"] == "CAP_NET_BIND_SERVICE"

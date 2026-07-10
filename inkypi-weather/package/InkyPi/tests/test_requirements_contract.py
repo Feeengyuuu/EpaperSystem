@@ -37,6 +37,9 @@ def test_requirement_sources_exist_and_layer_base_pi_and_dev():
     assert "flask" in base.lower()
     assert "-r requirements-base.in" in pi
     assert "inky" in pi.lower()
+    assert "gpiozero" in pi.lower()
+    assert "lgpio" in pi.lower()
+    assert "rpi.gpio" in pi.lower()
     assert "-r requirements-base.in" in dev
     assert "pytest" in dev.lower()
 

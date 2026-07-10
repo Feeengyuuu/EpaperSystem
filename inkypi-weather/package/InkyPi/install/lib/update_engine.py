@@ -421,22 +421,26 @@ class ArtifactPreparer:
         )
         venv_python = venv / "bin" / "python"
         requirements = candidate / "install" / "requirements.txt"
-        self.run_command(
-            [
-                str(venv_python),
-                "-m",
-                "pip",
-                "install",
-                "--require-hashes",
-                "--no-deps",
-                "--no-compile",
-                "--disable-pip-version-check",
-                "-r",
-                str(requirements),
-            ],
-            cwd=candidate,
-            timeout=1200,
-        )
+        with tempfile.TemporaryDirectory(prefix="pip-", dir=staging) as pip_tmpdir:
+            pip_environment = os.environ.copy()
+            pip_environment["TMPDIR"] = pip_tmpdir
+            self.run_command(
+                [
+                    str(venv_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--require-hashes",
+                    "--no-deps",
+                    "--no-compile",
+                    "--disable-pip-version-check",
+                    "-r",
+                    str(requirements),
+                ],
+                cwd=candidate,
+                timeout=1200,
+                env=pip_environment,
+            )
         self.run_command(
             [str(venv_python), "-m", "pip", "check"],
             cwd=candidate,
@@ -888,11 +892,12 @@ def _fsync_tree(root) -> None:
         fsync_directory(directory)
 
 
-def _run_checked(command, *, cwd=None, timeout=None) -> None:
+def _run_checked(command, *, cwd=None, timeout=None, env=None) -> None:
     subprocess.run(
         [str(argument) for argument in command],
         cwd=str(cwd) if cwd is not None else None,
         check=True,
+        env=env,
         stdin=subprocess.DEVNULL,
         timeout=timeout,
     )

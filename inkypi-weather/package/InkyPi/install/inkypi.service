@@ -8,9 +8,9 @@ Requires=inkypi-privileged.socket
 User=inkypi
 Group=inkypi
 RuntimeDirectory=inkypi
-WorkingDirectory=/opt/inkypi/current/src
+WorkingDirectory=/run/inkypi
 EnvironmentFile=-/etc/inkypi/inkypi.env
-Environment="PYTHONDONTWRITEBYTECODE=1" "INKYPI_CACHE_DIR=/var/cache/inkypi" "INKYPI_DATA_DIR=/var/lib/inkypi/data"
+Environment="PYTHONDONTWRITEBYTECODE=1" "INKYPI_CACHE_DIR=/var/cache/inkypi" "INKYPI_DATA_DIR=/var/lib/inkypi/data" "LG_WD=/run/inkypi"
 ExecStart=/usr/local/bin/inkypi run
 Restart=on-failure
 RestartSec=60
