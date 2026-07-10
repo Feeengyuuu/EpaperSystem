@@ -11,3 +11,9 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
+*.service text eol=lf
+
+# Extensionless release entry points must remain executable Unix text.
+inkypi-weather/package/InkyPi/install/inkypi text eol=lf
+inkypi-weather/package/InkyPi/install/inkypi-update text eol=lf
+inkypi-weather/package/InkyPi/install/cli/inkypi-plugin text eol=lf

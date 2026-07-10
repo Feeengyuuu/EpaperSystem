@@ -1,0 +1,6 @@
+# Full Raspberry Pi runtime dependency set.
+-r requirements-base.in
+
+cysystemd==2.0.1
+inky==2.3.0
+pi-heif==1.2.0

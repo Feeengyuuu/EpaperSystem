@@ -1,0 +1,7 @@
+# Development, CI, lock generation, and dependency audit tools.
+-r requirements-base.in
+
+pip-audit==2.10.1
+pip-tools==7.5.3
+pytest==9.0.3
+ruff==0.15.20

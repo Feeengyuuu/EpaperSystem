@@ -1,0 +1,5 @@
+# LoL Esports exposes this shared read-only client token in its public web client.
+# Keep exceptions fingerprint-specific so any new hard-coded credential still fails CI.
+3e33ff6441b6714a64abd3c936667e172c791150:inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py:generic-api-key:273
+74c362575e1471b568db22c0b7a1437f76820ced:tools/download_lck_team_logos.py:generic-api-key:17
+eee057a57bab0e1f23db191c31ccf08fd80d4c0b:inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/sports_dashboard.py:generic-api-key:76

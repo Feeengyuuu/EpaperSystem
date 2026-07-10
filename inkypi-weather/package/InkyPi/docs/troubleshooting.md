@@ -12,12 +12,11 @@ If the service is running, this should output `Active: active (running)`:
 ● inkypi.service - InkyPi App
      Loaded: loaded (/etc/systemd/system/inkypi.service; enabled; preset: enabled)
      Active: active (running) since Sun 2024-12-22 20:48:53 GMT; 28s ago
-   Main PID: 48333 (bash)
+   Main PID: 48333 (python)
       Tasks: 6 (limit: 166)
         CPU: 6.333s
      CGroup: /system.slice/inkypi.service
-             ├─48333 bash /usr/local/bin/inkypi -d
-             └─48336 python -u /home/pi/inky/src/inkypi.py -d
+             └─48333 /opt/inkypi/current/venv_inkypi/bin/python -u /opt/inkypi/current/src/inkypi.py
 ```
 
 If the service is not running, check the logs for any errors or issues.
@@ -43,11 +42,14 @@ sudo systemctl restart inkypi.service
 
 ## Run InkyPi Manually
 
-If the InkyPi service is not running, try manually running the startup script to diagnose. This should output the logs to the terminal and make it easier to troubleshoot any errors:
+Stop the managed service first, then invoke the supported launcher as the dedicated service user. This prints application logs directly in the terminal:
 
 ```bash
-sudo /usr/local/bin/inkypi -d
+sudo systemctl stop inkypi.service
+sudo -u inkypi /usr/local/bin/inkypi run
 ```
+
+Press `Ctrl+C` when finished, then restore the managed service with `sudo systemctl start inkypi.service`.
 
 ## API Key not configured
 
@@ -166,16 +168,7 @@ WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status
 ```
 
 #### Recommended solution
-Manually install the required pip packages in the inkypi virtual environment:
-```bash
-source "/usr/local/inkypi/venv_inkypi/bin/activate"
-pip install -r install/requirements.txt
-deactivate
-```
-Restart the inkypi service to apply the changes:
-```bash
-sudo systemctl restart inkypi.service
-```
+Do not mutate dependencies inside `/opt/inkypi/current`; releases are immutable and dependency hashes are verified before activation. Re-run the installer or create a new update artifact and apply it with `sudo inkypi update --artifact <zip> --sha256 <hash> --release-id <id>`. The updater keeps the previous healthy release available for rollback.
 
 ### Numpy ImportError
 
@@ -187,19 +180,7 @@ your python interpreter from there.
 ```
 
 #### Recommended solution
-To resolve this issue, manually reinstall the Pillow library in the inkypi virtual environment:
-```bash
-sudo su
-source "/usr/local/inkypi/venv_inkypi/bin/activate"
-pip uninstall Pillow
-pip install Pillow
-deactivate
-```
-
-Restart the inkypi service to apply the changes:
-```bash
-sudo systemctl restart inkypi.service
-```
+Do not reinstall Pillow in place. Build and apply a new hash-locked release through `sudo inkypi update`; if its readiness check fails, the updater automatically restores the previous release.
 
 ## Colors look washed out or incorrect
 
