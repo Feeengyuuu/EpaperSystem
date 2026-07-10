@@ -20,12 +20,15 @@ DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
-DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB = 80
+DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT = 70
 DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS = 60
 DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
-DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 98
+DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 75
 DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS = 30 * 60
+DEFAULT_THEME_REFRESH_RETRY_COOLDOWN_SECONDS = 10 * 60
+DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
+DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
@@ -42,6 +45,95 @@ def _settings_with_force_refresh(settings, force=False, display_render=False):
     if display_render:
         merged[DISPLAY_RENDER_SETTING] = True
     return merged
+
+
+def _plugin_live_refresh_state(plugin, settings, current_dt, plugin_id=None):
+    hook = getattr(plugin, "get_live_refresh_state", None)
+    if not callable(hook):
+        return None
+    try:
+        state = hook(settings or {}, current_dt)
+    except Exception:
+        if plugin_id:
+            logger.exception(f"Plugin '{plugin_id}' live refresh hook failed.")
+        else:
+            logger.exception("Plugin live refresh hook failed.")
+        return None
+    if not isinstance(state, dict) or not state.get("active"):
+        return None
+    try:
+        interval = int(state.get("interval_seconds"))
+    except (TypeError, ValueError):
+        return None
+    return {"active": True, "interval_seconds": max(1, interval)}
+
+
+def _plugin_live_refresh_due_for_instance(plugin, plugin_instance, current_dt):
+    state = _plugin_live_refresh_state(
+        plugin,
+        plugin_instance.settings or {},
+        current_dt,
+        plugin_id=getattr(plugin_instance, "plugin_id", None),
+    )
+    if not state:
+        return False
+    latest_refresh_dt = plugin_instance.get_latest_refresh_dt()
+    if not latest_refresh_dt:
+        return True
+    latest_refresh_dt = plugin_instance.align_datetime_tz(latest_refresh_dt, current_dt)
+    return (current_dt - latest_refresh_dt) >= timedelta(seconds=state["interval_seconds"])
+
+
+def _device_config_float(device_config, key, default):
+    try:
+        raw_value = device_config.get_config(key, default=default)
+    except Exception:
+        raw_value = default
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _display_refresh_under_resource_pressure(device_config):
+    enabled = True
+    try:
+        enabled = _setting_enabled(device_config.get_config("display_refresh_resource_guard_enabled", default=True))
+    except Exception:
+        enabled = True
+    if not enabled:
+        return False
+
+    min_available_mb = max(0.0, _device_config_float(
+        device_config,
+        "display_refresh_min_available_mb",
+        DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB,
+    ))
+    max_swap_percent = _device_config_float(
+        device_config,
+        "display_refresh_max_swap_percent",
+        DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT,
+    )
+    try:
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+    except Exception:
+        logger.exception("Could not read system memory pressure for display refresh.")
+        return False
+
+    available_mb = memory.available / (1024 * 1024)
+    under_pressure = available_mb < min_available_mb or swap.percent >= max_swap_percent
+    if under_pressure:
+        logger.warning(
+            "Skipping synchronous display refresh due to resource pressure. | "
+            "available_mb: %.1f | min_available_mb: %.1f | "
+            "swap_percent: %.1f | max_swap_percent: %.1f",
+            available_mb,
+            min_available_mb,
+            swap.percent,
+            max_swap_percent,
+        )
+    return under_pressure
 
 
 def _save_image_atomic(image, path):
@@ -170,6 +262,8 @@ class RefreshTask:
         """
         while True:
             active_manual_request = None
+            current_dt = None
+            theme_context_to_persist = None
             try:
                 with self.condition:
                     if not self.manual_update_requests:
@@ -191,7 +285,6 @@ class RefreshTask:
                     refresh_action = None
                     background_cache_refresh = None
                     background_cache_refresh_force = False
-                    theme_context_to_persist = None
                     if self.manual_update_requests:
                         # handle immediate update request
                         logger.info("Manual update requested")
@@ -209,7 +302,7 @@ class RefreshTask:
                         # handle refresh based on playlists
                         logger.info(f"Running interval refresh check. | current_time: {current_dt.strftime('%Y-%m-%d %H:%M:%S')}")
                         theme_context = get_theme_context(self.device_config, now=current_dt)
-                        if self._has_theme_changed(theme_context):
+                        if self._has_theme_changed(theme_context, current_dt):
                             playlist, plugin_instance = self._determine_theme_refresh_plugin(playlist_manager, latest_refresh, current_dt)
                             if plugin_instance:
                                 logger.info(
@@ -287,6 +380,9 @@ class RefreshTask:
                 logger.exception('Exception during refresh')
                 if active_manual_request:
                     active_manual_request["result"]["exception"] = e
+                elif theme_context_to_persist:
+                    self._mark_theme_refresh_failed(theme_context_to_persist, current_dt or self._get_current_datetime(), e)
+                    self.refresh_result["exception"] = e
                 else:
                     self.refresh_result["exception"] = e  # Capture exception
             finally:
@@ -550,9 +646,11 @@ class RefreshTask:
         logger.info(f"Determined theme refresh plugin. | active_playlist: {playlist.name} | plugin_instance: {plugin.name}")
         return playlist, plugin
 
-    def _has_theme_changed(self, theme_context):
+    def _has_theme_changed(self, theme_context, current_dt=None):
         current_mode = (theme_context or {}).get("mode")
         previous_mode = self._get_config_value("active_theme", None)
+        if current_mode and previous_mode != current_mode and self._theme_refresh_retry_delayed(theme_context, current_dt):
+            return False
         return bool(current_mode and previous_mode != current_mode)
 
     def _persist_active_theme(self, theme_context, current_dt):
@@ -570,6 +668,62 @@ class RefreshTask:
         }
         self._set_config_value("active_theme", mode)
         self._set_config_value("active_theme_info", info)
+        self._set_config_value("active_theme_refresh_failure", None)
+
+    def _mark_theme_refresh_failed(self, theme_context, current_dt, error):
+        mode = (theme_context or {}).get("mode")
+        if not mode:
+            return
+        cooldown_seconds = max(0.0, self._config_float(
+            "theme_refresh_retry_cooldown_seconds",
+            DEFAULT_THEME_REFRESH_RETRY_COOLDOWN_SECONDS,
+        ))
+        retry_after = current_dt + timedelta(seconds=cooldown_seconds)
+        info = {
+            "mode": mode,
+            "source": theme_context.get("source"),
+            "reason": theme_context.get("reason"),
+            "date": theme_context.get("date"),
+            "failed_at": current_dt.isoformat(),
+            "retry_after": retry_after.isoformat(),
+            "error": str(error)[:240],
+        }
+        logger.warning(
+            "Theme refresh failed; delaying same-theme retry. | active_theme: %s | retry_after: %s | error: %s",
+            mode,
+            info["retry_after"],
+            info["error"],
+        )
+        self._set_config_value("active_theme_refresh_failure", info)
+        self._write_device_config()
+
+    def _theme_refresh_retry_delayed(self, theme_context, current_dt):
+        if current_dt is None:
+            return False
+        current_mode = (theme_context or {}).get("mode")
+        failure = self._get_config_value("active_theme_refresh_failure", None)
+        if not isinstance(failure, dict) or failure.get("mode") != current_mode:
+            return False
+        retry_after = self._parse_datetime_config(failure.get("retry_after"), current_dt)
+        if retry_after is None or current_dt >= retry_after:
+            return False
+        logger.info(
+            "Theme refresh retry delayed after previous failure. | active_theme: %s | retry_after: %s",
+            current_mode,
+            retry_after.isoformat(),
+        )
+        return True
+
+    def _parse_datetime_config(self, value, reference_dt):
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None and getattr(reference_dt, "tzinfo", None) is not None:
+            parsed = parsed.replace(tzinfo=reference_dt.tzinfo)
+        return parsed
 
     def _set_config_value(self, key, value):
         if hasattr(self.device_config, "update_value"):
@@ -620,14 +774,22 @@ class RefreshTask:
 
     def _maybe_start_background_cache_refresh(self, playlist, displayed_plugin_instance, current_dt, force=False):
         """Kick off a background cache refresh pass after a display tick."""
-        only_plugin_id = None
-        if (
-            playlist
-            and not self._plugin_instance_cache_refresh_due(displayed_plugin_instance, current_dt, displayed_plugin_instance=displayed_plugin_instance)
-            and self._playlist_has_live_refresh_due(playlist, current_dt)
+        if not playlist or not self._playlist_has_background_cache_refresh_due(
+            playlist,
+            current_dt,
+            displayed_plugin_instance=displayed_plugin_instance,
         ):
-            logger.info("Live plugin cache refresh due after playlist display tick.")
-            only_plugin_id = self._playlist_live_refresh_due_plugin_id(playlist, current_dt)
+            return
+        only_plugin_id = None
+        if not self._plugin_instance_background_cache_refresh_due(
+            displayed_plugin_instance,
+            current_dt,
+            displayed_plugin_instance=displayed_plugin_instance,
+        ):
+            live_refresh_plugin = self._playlist_live_refresh_due_plugin_instance(playlist, current_dt)
+            if live_refresh_plugin and not self._plugin_background_cache_refresh_disabled(live_refresh_plugin):
+                logger.info("Live plugin cache refresh due after playlist display tick.")
+                only_plugin_id = live_refresh_plugin.plugin_id
         self._start_due_plugin_cache_refresh(
             playlist,
             current_dt,
@@ -895,12 +1057,12 @@ class RefreshTask:
             )
             live_refresh_due = self._plugin_live_refresh_due(plugin_instance, current_dt)
             refresh_due = plugin_instance.should_refresh(current_dt)
-            if self._plugin_background_cache_refresh_disabled(plugin_instance):
-                if force or image_missing or refresh_due or refresh_on_display or live_refresh_due:
-                    logger.info(
-                        "Skipping background cache refresh for display-only plugin. | "
-                        f"plugin_instance: '{plugin_instance.name}'"
-                    )
+            background_cache_disabled = self._plugin_background_cache_refresh_disabled(plugin_instance)
+            if background_cache_disabled:
+                logger.info(
+                    "Skipping background cache refresh for display-only plugin. | "
+                    f"plugin_instance: '{plugin_instance.name}'"
+                )
                 continue
             if not force and not image_missing and not refresh_due and not refresh_on_display and not live_refresh_due:
                 continue
@@ -928,6 +1090,12 @@ class RefreshTask:
                 logger.info(
                     "Due plugin cache refresh pass limit reached. | "
                     f"max_updates: {max_updates}"
+                )
+                break
+            if self._cache_refresh_under_resource_pressure():
+                logger.info(
+                    "Due plugin cache refresh pass stopped due to resource pressure before generation. | "
+                    f"plugin_instance: '{plugin_instance.name}'"
                 )
                 break
             attempted_updates += 1
@@ -1001,9 +1169,28 @@ class RefreshTask:
             return True
         return self._plugin_live_refresh_due(plugin_instance, current_dt)
 
+    def _plugin_instance_background_cache_refresh_due(self, plugin_instance, current_dt, displayed_plugin_instance=None):
+        if plugin_instance is None or self._plugin_background_cache_refresh_disabled(plugin_instance):
+            return False
+        return self._plugin_instance_cache_refresh_due(
+            plugin_instance,
+            current_dt,
+            displayed_plugin_instance=displayed_plugin_instance,
+        )
+
     def _playlist_has_cache_refresh_due(self, playlist, current_dt):
         return any(
             self._plugin_instance_cache_refresh_due(plugin_instance, current_dt)
+            for plugin_instance in list(playlist.plugins)
+        )
+
+    def _playlist_has_background_cache_refresh_due(self, playlist, current_dt, displayed_plugin_instance=None):
+        return any(
+            self._plugin_instance_background_cache_refresh_due(
+                plugin_instance,
+                current_dt,
+                displayed_plugin_instance=displayed_plugin_instance,
+            )
             for plugin_instance in list(playlist.plugins)
         )
 
@@ -1062,21 +1249,12 @@ class RefreshTask:
         plugin = plugin or self._get_plugin_for_instance(plugin_instance)
         if plugin is None:
             return None
-        hook = getattr(plugin, "get_live_refresh_state", None)
-        if not callable(hook):
-            return None
-        try:
-            state = hook(plugin_instance.settings or {}, current_dt)
-        except Exception:
-            logger.exception(f"Plugin '{plugin_instance.plugin_id}' live refresh hook failed.")
-            return None
-        if not isinstance(state, dict) or not state.get("active"):
-            return None
-        try:
-            interval = int(state.get("interval_seconds"))
-        except (TypeError, ValueError):
-            return None
-        return {"active": True, "interval_seconds": max(1, interval)}
+        return _plugin_live_refresh_state(
+            plugin,
+            plugin_instance.settings or {},
+            current_dt,
+            plugin_id=plugin_instance.plugin_id,
+        )
 
     def _plugin_background_cache_refresh_disabled(self, plugin_instance):
         plugin_id = str(getattr(plugin_instance, "plugin_id", "") or "").strip()
@@ -1123,11 +1301,15 @@ class RefreshTask:
     def _playlist_has_live_refresh_due(self, playlist, current_dt):
         return self._playlist_live_refresh_due_plugin_id(playlist, current_dt) is not None
 
-    def _playlist_live_refresh_due_plugin_id(self, playlist, current_dt):
+    def _playlist_live_refresh_due_plugin_instance(self, playlist, current_dt):
         for plugin_instance in list(getattr(playlist, "plugins", []) or []):
             if self._plugin_live_refresh_due(plugin_instance, current_dt):
-                return plugin_instance.plugin_id
+                return plugin_instance
         return None
+
+    def _playlist_live_refresh_due_plugin_id(self, playlist, current_dt):
+        plugin_instance = self._playlist_live_refresh_due_plugin_instance(playlist, current_dt)
+        return None if plugin_instance is None else plugin_instance.plugin_id
 
     @staticmethod
     def _parse_iso_datetime(value):
@@ -1253,6 +1435,24 @@ class PlaylistRefresh(RefreshAction):
         # Determine the file path for the plugin's image
         plugin_image_path = os.path.join(device_config.plugin_image_dir, self.plugin_instance.get_image_path())
         image_missing = not os.path.exists(plugin_image_path)
+        if self.display_cached_only and not self.force and _display_refresh_under_resource_pressure(device_config):
+            if not image_missing:
+                logger.info(
+                    "Using cached plugin instance image for scheduled display under resource pressure. | "
+                    f"plugin_instance: {self.plugin_instance.name}."
+                )
+                try:
+                    return _load_image_copy(plugin_image_path)
+                except Exception:
+                    logger.exception(
+                        "Cached plugin image could not be loaded under resource pressure; using placeholder. | "
+                        f"plugin_instance: {self.plugin_instance.name}."
+                    )
+            logger.warning(
+                "Plugin instance image unavailable for scheduled display under resource pressure; using placeholder. | "
+                f"plugin_instance: '{self.plugin_instance.name}'"
+            )
+            return self._placeholder_image(device_config)
 
         refresh_on_display_hook = getattr(plugin, "wants_refresh_on_display", None)
         refresh_on_display = (
@@ -1260,8 +1460,11 @@ class PlaylistRefresh(RefreshAction):
             if callable(refresh_on_display_hook)
             else False
         )
+        live_refresh_due = _plugin_live_refresh_due_for_instance(plugin, self.plugin_instance, current_dt)
+        refresh_due = self.plugin_instance.should_refresh(current_dt)
+        refresh_due_on_display = refresh_due and self.plugin_instance.plugin_id == "sports_dashboard"
 
-        if self.display_cached_only and not self.force and not refresh_on_display:
+        if self.display_cached_only and not self.force and not refresh_on_display and not live_refresh_due and not refresh_due_on_display:
             if not image_missing:
                 logger.info(
                     "Using cached plugin instance image for scheduled display. | "
@@ -1298,11 +1501,13 @@ class PlaylistRefresh(RefreshAction):
                 return self._placeholder_image(device_config)
 
         # Check if a refresh is needed based on the plugin instance's criteria
-        if self.plugin_instance.should_refresh(current_dt) or self.force or image_missing or refresh_on_display:
+        if refresh_due or self.force or image_missing or refresh_on_display or live_refresh_due:
             if image_missing:
                 logger.info(f"Plugin instance image missing, refreshing. | plugin_instance: '{self.plugin_instance.name}'")
             if refresh_on_display and not self.force and not image_missing:
                 logger.info(f"Refreshing plugin instance on display. | plugin_instance: '{self.plugin_instance.name}'")
+            elif live_refresh_due and not self.force and not image_missing:
+                logger.info(f"Refreshing live plugin instance on display. | plugin_instance: '{self.plugin_instance.name}'")
             else:
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
