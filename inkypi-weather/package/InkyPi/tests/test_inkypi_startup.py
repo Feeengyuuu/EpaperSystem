@@ -401,3 +401,56 @@ def test_main_stops_and_preserves_serve_failures(monkeypatch, serve_error):
 
     assert caught.value is serve_error
     assert events == ["start", "stop"]
+
+
+def test_run_reaps_long_tasks_before_closing_browser_and_http(monkeypatch):
+    import inkypi
+    import waitress
+
+    events = []
+
+    class FakeConfig:
+        def get_config(self, key, default=None):
+            return False if key == "startup" else default
+
+    class RefreshTask:
+        def start(self):
+            events.append("start")
+
+        def stop(self):
+            events.append("stop")
+
+    app = Flask(__name__)
+    app.config.update(
+        DEVICE_CONFIG=FakeConfig(),
+        DISPLAY_MANAGER=object(),
+        REFRESH_TASK=RefreshTask(),
+    )
+    monkeypatch.setattr(waitress, "serve", lambda *_args, **_kwargs: events.append("serve"))
+    monkeypatch.setattr(
+        inkypi,
+        "shutdown_long_task_executors",
+        lambda **_kwargs: events.append("long_tasks"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_browser_renderer",
+        lambda: events.append("browser"),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_http_session",
+        lambda: events.append("http"),
+    )
+
+    assert inkypi.run(app, dev_mode=False, port=80) == 0
+
+    assert events == [
+        "start",
+        "serve",
+        "stop",
+        "long_tasks",
+        "browser",
+        "http",
+    ]

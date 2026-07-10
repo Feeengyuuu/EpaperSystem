@@ -3,12 +3,14 @@ from __future__ import annotations
 
 # ---- standard library ----
 import json
+from io import BytesIO
 import logging
 import os
 from pathlib import Path
 import re
 import sys
 import tempfile
+import threading
 import time
 from typing import Any, Dict, Tuple
 
@@ -28,6 +30,15 @@ from PIL import Image, ImageColor, ImageOps
 # ---- project / local ----
 from blueprints.plugin import plugin_bp
 from plugins.base_plugin.base_plugin import BasePlugin
+from runtime.long_task_executor import (
+    InstanceIdentity,
+    LongTaskExecutor,
+    LongTaskFailure,
+    LongTaskQueueFull,
+    current_instance_identity,
+    task_context_or_default,
+)
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 from utils.image_utils import pad_image_blur
 from utils.safe_image import safe_open_base64_image, safe_open_image
@@ -512,159 +523,266 @@ def _get_horde_model_stats(model_name: str) -> tuple[str, str]:
     except Exception:
         return "x", "x"
 
+HORDE_TASK_NAME = "ai_horde_generate"
+HORDE_TIMEOUT_SECONDS = 180.0
+HORDE_IMAGE_MAX_BYTES = 24 * 1024 * 1024
+_HORDE_EXECUTOR = None
+_HORDE_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_horde_executor() -> LongTaskExecutor:
+    global _HORDE_EXECUTOR
+    with _HORDE_EXECUTOR_LOCK:
+        if _HORDE_EXECUTOR is None or _HORDE_EXECUTOR.closed:
+            _HORDE_EXECUTOR = LongTaskExecutor(
+                {HORDE_TASK_NAME: _horde_long_task},
+                max_workers=1,
+                max_queue=1,
+                register_global=True,
+            )
+        return _HORDE_EXECUTOR
+
+
+def _horde_long_task(worker_payload, cancel_event):
+    """Submit, poll, and decode one Horde image inside a killable process."""
+
+    try:
+        timeout_seconds = float(
+            worker_payload.get("timeout_seconds", HORDE_TIMEOUT_SECONDS)
+        )
+    except (TypeError, ValueError, OverflowError):
+        timeout_seconds = HORDE_TIMEOUT_SECONDS
+    timeout_seconds = max(0.01, min(HORDE_TIMEOUT_SECONDS, timeout_seconds))
+    # Spawned workers do not inherit ContextVars. Rebind the process-safe
+    # cancellation event and a local absolute deadline explicitly.
+    context = TaskContext(
+        cancel_event,
+        time.monotonic() + timeout_seconds,
+        time.monotonic,
+    )
+    client = get_http_client()
+    headers = {
+        "apikey": worker_payload["api_key"],
+        "Content-Type": "application/json",
+        "Client-Agent": "AIImageMultiverse:1.0:Unknown",
+    }
+    submit_url = "https://aihorde.net/api/v2/generate/async"
+    status_url = "https://aihorde.net/api/v2/generate/status/"
+
+    try:
+        context.raise_if_cancelled()
+        submitted = client.request_json(
+            "POST",
+            submit_url,
+            json=worker_payload["request"],
+            headers=headers,
+            context=context,
+            timeout=(5, 30),
+        ).data
+        if not isinstance(submitted, dict) or not submitted.get("id"):
+            raise LongTaskFailure(
+                "horde_invalid_response",
+                "AI Horde did not return a valid job id.",
+            )
+        job_id = str(submitted["id"])
+
+        while True:
+            context.raise_if_cancelled()
+            data = client.request_json(
+                "GET",
+                status_url + job_id,
+                headers=headers,
+                context=context,
+                timeout=10,
+            ).data
+            if not isinstance(data, dict):
+                raise LongTaskFailure(
+                    "horde_invalid_response",
+                    "AI Horde returned an invalid status response.",
+                )
+
+            generations = data.get("generations")
+            if generations and isinstance(generations, list):
+                assigned_model = generations[0].get("model")
+                if assigned_model:
+                    logger.info("Horde assigned model: %s", assigned_model)
+
+            if data.get("done"):
+                if not generations or not isinstance(generations[0], dict):
+                    raise LongTaskFailure(
+                        "horde_invalid_response",
+                        "AI Horde completed without an image.",
+                    )
+                image_data = generations[0].get("img")
+                if isinstance(image_data, str) and image_data.startswith(
+                    ("http://", "https://")
+                ):
+                    image_bytes = client.request_bytes(
+                        "GET",
+                        image_data,
+                        context=context,
+                        timeout=20,
+                        max_bytes=HORDE_IMAGE_MAX_BYTES,
+                    ).data
+                    image = safe_open_image(image_bytes).convert("RGB")
+                else:
+                    if isinstance(image_data, str) and "base64," in image_data:
+                        image_data = image_data.split("base64,", 1)[1]
+                    image = safe_open_base64_image(image_data).convert("RGB")
+
+                output = BytesIO()
+                image.save(output, format="PNG", optimize=True)
+                return {"image_png": output.getvalue()}
+
+            logger.info(
+                "Horde pending | queue=%s | estimate_seconds=%s",
+                data.get("queue_position", "?"),
+                data.get("wait_time", 0),
+            )
+            wait_seconds = min(10.0, context.remaining_seconds())
+            context.raise_if_cancelled()
+            cancel_event.wait(wait_seconds)
+
+    except LongTaskFailure:
+        raise
+    except HttpStatusError as error:
+        if error.status == 401:
+            raise LongTaskFailure(
+                "horde_api_key_rejected",
+                "AI Horde rejected your API key. Please check AI_HORDE_KEY.",
+            ) from None
+        if error.status == 403:
+            raise LongTaskFailure(
+                "horde_request_rejected",
+                "AI Horde rejected the request. Lower the quality and try again.",
+            ) from None
+        if error.status == 429:
+            raise LongTaskFailure(
+                "horde_busy",
+                "AI Horde is busy right now. Please try again later.",
+            ) from None
+        raise LongTaskFailure(
+            "horde_http_error",
+            "AI Horde submission failed. Please try again later.",
+        ) from None
+    except HttpClientError:
+        raise LongTaskFailure(
+            "horde_connection_failed",
+            "AI Horde connection failed. Please try again.",
+        ) from None
+
+
+def _horde_identity_is_current(device_config, identity: InstanceIdentity) -> bool:
+    if identity.instance_uuid is None:
+        return True
+    snapshot = device_config.get_playlist_manager().validate_instance_revision(
+        identity.instance_uuid,
+        expected_generation=identity.structural_generation,
+        expected_settings_revision=identity.settings_revision,
+    )
+    return snapshot is not None
+
+
+def _raise_horde_result_error(result) -> None:
+    if result.status == "abandoned":
+        raise TaskDeadlineExceeded("AI Horde generation deadline expired")
+    if result.status == "canceled":
+        raise TaskCancelled("AI Horde generation was canceled")
+    if result.status == "stale":
+        raise TaskCancelled("AI Horde result belongs to a changed plugin instance")
+    raise RuntimeError(result.error or "AI Horde generation failed.")
+
+
 def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Image:
     model_id, entry = _get_pipeline_entry(settings)
-
-    image_cfg = (entry.get("image") or {})
-    image_provider = (image_cfg.get("provider") or "").strip().lower()
-    if image_provider != "horde":
-        raise RuntimeError(f"generate_horde_image called for non-horde model '{model_id}'.")
+    image_cfg = entry.get("image") or {}
+    if (image_cfg.get("provider") or "").strip().lower() != "horde":
+        raise RuntimeError(
+            f"generate_horde_image called for non-horde model '{model_id}'."
+        )
 
     image_env = (image_cfg.get("env") or "").strip()
     api_key = device_config.load_env_key(image_env) if image_env else None
     if not api_key:
         raise RuntimeError(f"AI Horde API key not configured ({image_env}).")
 
-    quality = (settings.get("quality") or "").strip()
-    if not quality:
-        quality = (entry.get("default_quality") or "").strip()
-    if not quality:
-        quality = "standard"
-    quality = quality.strip().lower()
-
+    quality = (
+        (settings.get("quality") or "").strip()
+        or (entry.get("default_quality") or "").strip()
+        or "standard"
+    ).lower()
     orientation = (device_config.get_config("orientation") or "horizontal").lower()
-    if orientation == "horizontal":
-        width, height = 1024, 640
-    else:
-        width, height = 640, 1024
-
+    width, height = (1024, 640) if orientation == "horizontal" else (640, 1024)
     if quality == "ultra":
-        steps = 40
-        cfg_scale = 8.0
-        sampler = "k_dpmpp_2m"
+        steps, cfg_scale, sampler = 40, 8.0, "k_dpmpp_2m"
     elif quality == "high":
-        steps = 35
-        cfg_scale = 7.8
-        sampler = "k_dpmpp_2m"
+        steps, cfg_scale, sampler = 35, 7.8, "k_dpmpp_2m"
     else:
-        steps = 20
-        cfg_scale = 7.5
-        sampler = "k_euler_a"
+        steps, cfg_scale, sampler = 20, 7.5, "k_euler_a"
 
-    client = get_http_client()
-
-    submit_url = "https://aihorde.net/api/v2/generate/async"
-    status_url = "https://aihorde.net/api/v2/generate/status/"
-
-    headers = {
-        "apikey": api_key,
-        "Content-Type": "application/json",
-        "Client-Agent": "AIImageMultiverse:1.0:Unknown",
-    }
-
-    payload = {
+    request_payload = {
         "prompt": final_prompt,
         "params": {
             "width": width,
             "height": height,
             "steps": steps,
-            "sampler_name": str(sampler),
+            "sampler_name": sampler,
             "cfg_scale": cfg_scale,
             "karras": True,
             "n": 1,
         },
     }
-
-    horde_models = (entry.get("horde_models") or [])
+    horde_models = entry.get("horde_models") or []
     if horde_models:
-        payload["models"] = horde_models
+        request_payload["models"] = list(horde_models)
+
+    context = task_context_or_default(HORDE_TIMEOUT_SECONDS)
+    context.raise_if_cancelled()
+    timeout_seconds = min(HORDE_TIMEOUT_SECONDS, context.remaining_seconds())
+    identity = current_instance_identity() or InstanceIdentity(None, None, None)
+    try:
+        handle = _get_horde_executor().submit(
+            HORDE_TASK_NAME,
+            {
+                "api_key": api_key,
+                "request": request_payload,
+                "timeout_seconds": timeout_seconds,
+            },
+            context=context,
+            instance_identity=identity,
+            identity_validator=lambda candidate: _horde_identity_is_current(
+                device_config,
+                candidate,
+            ),
+        )
+    except LongTaskQueueFull as error:
+        raise RuntimeError(
+            "AI Horde is already processing the maximum number of requests."
+        ) from error
 
     try:
-        requested_models = payload.get("models")
-        if requested_models:
-            logger.info("Horde submit requested models: %s", requested_models)
-        else:
-            logger.info("Horde submit requested models: <any available>")
+        result = handle.result(
+            timeout=max(0.1, context.remaining_seconds() + 1.0)
+        )
+    except TimeoutError as error:
+        handle.cancel()
+        context.raise_if_cancelled()
+        raise RuntimeError("AI Horde isolated worker did not stop in time.") from error
 
-        print("\n==== FINAL PROMPT TO HORDE ====\n" + (final_prompt or "") + "\n==== END FINAL PROMPT ====\n", flush=True)
-        submitted = client.request_json(
-            "POST",
-            submit_url,
-            json=payload,
-            headers=headers,
-            timeout=(5, 30),
-        ).data
+    if result.status != "succeeded":
+        _raise_horde_result_error(result)
+    context.raise_if_cancelled()
+    value = result.value
+    if not isinstance(value, dict) or not isinstance(value.get("image_png"), bytes):
+        raise RuntimeError("AI Horde isolated worker returned an invalid image.")
+    image = safe_open_image(value["image_png"]).convert("RGB")
+    _, target_width, target_height = _get_target_dims(device_config)
+    return _apply_pad_background(
+        image,
+        settings,
+        (target_width, target_height),
+    )
 
-        job_id = submitted.get("id")
-        if not job_id:
-            raise RuntimeError("AI Horde did not return a job id.")
-        job_id = str(job_id)
-
-        logger.info("Job ID: %s", job_id)
-
-        total_steps = 120
-        for i in range(total_steps):
-            data = client.request_json(
-                "GET",
-                status_url + job_id,
-                headers=headers,
-                timeout=10,
-            ).data
-
-            if data.get("generations"):
-                gen0 = data["generations"][0]
-                assigned_model = gen0.get("model")
-                if assigned_model:
-                    logger.info("Horde assigned model: %s", assigned_model)
-
-            if data.get("done"):
-                logger.info("Horde: [████████████████████] 100% - Done!")
-
-                img_data = data["generations"][0]["img"]
-
-                if isinstance(img_data, str) and img_data.startswith("http"):
-                    logger.info("Downloading image from Horde URL...")
-                    img_bytes = client.request_bytes(
-                        "GET",
-                        img_data,
-                        timeout=20,
-                    ).data
-                    img = safe_open_image(img_bytes).convert("RGB")
-                else:
-                    if isinstance(img_data, str) and "base64," in img_data:
-                        img_data = img_data.split("base64,", 1)[1]
-                    img = safe_open_base64_image(img_data).convert("RGB")
-
-                _, w, h = _get_target_dims(device_config)
-
-                # Blur / Background
-                return _apply_pad_background(img, settings, (w, h))
-
-            progress = (i + 1) / total_steps
-            bar = "█" * int(20 * progress) + "-" * (20 - int(20 * progress))
-            logger.info(
-                "Horde: [%s] %d%% | Queue: %s | Est: %ss",
-                bar,
-                int(progress * 100),
-                data.get("queue_position", "?"),
-                data.get("wait_time", 0),
-            )
-
-            time.sleep(10)
-
-    except HttpStatusError as e:
-        if e.status == 401:
-            raise RuntimeError("AI Horde rejected your API key. Please check AI_HORDE_KEY.")
-        if e.status == 403:
-            raise RuntimeError("AI Horde didn’t accept the request. Lower the quality setting and try again.")
-        if e.status == 429:
-            raise RuntimeError("AI Horde is busy right now. Please wait a moment and try again.")
-
-        raise RuntimeError("AI Horde submission failed. Please try again later.")
-
-    except HttpClientError as e:
-        logger.error("Horde Error: %s", e)
-        raise RuntimeError("AI Horde connection failed. Please try again.")
 
 # Presets
 

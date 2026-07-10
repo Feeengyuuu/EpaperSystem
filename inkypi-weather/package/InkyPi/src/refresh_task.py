@@ -27,6 +27,7 @@ from runtime.refresh_contracts import (
     thaw_payload,
 )
 from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.render_arbiter import RenderArbiter
 from runtime.runtime_state import RuntimeStateStore
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
@@ -828,7 +829,13 @@ class RefreshTask:
         try:
             self._record_runtime_attempt(command)
             try:
-                self._execute_command(command)
+                identity = InstanceIdentity(
+                    command.instance_uuid,
+                    command.structural_generation,
+                    command.settings_revision,
+                )
+                with bind_long_task_runtime(context, identity):
+                    self._execute_command(command)
             except TaskDeadlineExceeded as error:
                 finished = self.refresh_queue.finish(
                     entry.job.id,

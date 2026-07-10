@@ -26,6 +26,10 @@ from runtime.refresh_contracts import (
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.render_arbiter import RenderArbiter
+from runtime.long_task_executor import (
+    current_instance_identity,
+    current_task_context,
+)
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 
 
@@ -3559,6 +3563,40 @@ def test_active_operation_snapshot_publishes_command_deadline_then_clears(monkey
     assert observed[0].plugin_id == "active_plugin"
     assert observed[0].deadline_monotonic == command.deadline_monotonic
     assert task.active_operation_snapshot() is None
+
+
+def test_process_queue_entry_binds_context_and_immutable_instance_identity(monkeypatch):
+    tmp_path = make_test_dir("runtime-long-task-binding")
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    observed = []
+
+    def capture_runtime(_command):
+        observed.append((current_task_context(), current_instance_identity()))
+
+    monkeypatch.setattr(task, "_execute_command", capture_runtime)
+
+    task._process_queue_entry(entry)
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    context, identity = observed[0]
+    assert context.cancel_event is entry.cancel_event
+    assert context.deadline_monotonic == command.deadline_monotonic
+    assert identity.instance_uuid == instance.instance_uuid
+    assert identity.structural_generation == instance.structural_generation
+    assert identity.settings_revision == instance.settings_revision
+    assert current_task_context() is None
+    assert current_instance_identity() is None
 
 
 def test_failure_bookkeeping_error_cannot_leave_queue_job_running(monkeypatch):

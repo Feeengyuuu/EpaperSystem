@@ -8,6 +8,7 @@ import argparse
 import logging
 import logging.config
 import os
+import time
 import warnings
 from collections.abc import Sequence
 
@@ -25,6 +26,7 @@ from display.display_manager import DisplayManager
 from health import HealthCollector, HealthPublisher, ReadinessEvaluator
 from plugins.plugin_registry import load_plugins, register_plugin_blueprints
 from refresh_task import RefreshTask
+from runtime.long_task_executor import shutdown_long_task_executors
 from runtime_paths import RuntimePaths
 from security.request_limits import (
     WAITRESS_MAX_REQUEST_BODY_BYTES,
@@ -218,9 +220,14 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
                     health_collector.stop()
         finally:
             try:
-                close_browser_renderer()
+                shutdown_long_task_executors(
+                    deadline_monotonic=time.monotonic() + 5.0,
+                )
             finally:
-                close_http_session()
+                try:
+                    close_browser_renderer()
+                finally:
+                    close_http_session()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
