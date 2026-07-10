@@ -5,10 +5,6 @@ import logging
 import math
 import os
 import re
-import shutil
-import signal
-import subprocess
-import tempfile
 from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
@@ -22,7 +18,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.http_client import get_http_session
-from utils.image_utils import text_width
+from utils.image_utils import take_screenshot, text_width
 from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
@@ -42,7 +38,6 @@ STORY_PREVIEW_CAPTURE_SIZE = (1100, 720)
 STORY_PREVIEW_TIMEOUT_MS = 15000
 STORY_PREVIEW_CROP_TOP = 0
 STORY_PREVIEW_CROP_HEIGHT = 520
-STORY_PREVIEW_PROCESS_TIMEOUT_SECONDS = 35
 REQUEST_TIMEOUT = (4, 12)
 FEED_ENDPOINTS = {
     "topstories": f"{HN_BASE_URL}/topstories.json",
@@ -488,124 +483,11 @@ class TechPulse(BasePlugin):
         return self._capture_story_preview_page_direct(url)
 
     def _capture_story_preview_page_direct(self, url):
-        browser = self._browser_binary()
-        if not browser:
-            return None
-        img_file_path = None
-        profile_dir = None
-        process = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_file:
-                img_file_path = img_file.name
-            if not self._is_headless_shell_browser(browser):
-                profile_dir = tempfile.mkdtemp(prefix="inkypi-techpulse-")
-            command = self._story_preview_browser_command(browser, url, img_file_path, profile_dir)
-            popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
-            if os.name != "nt":
-                popen_kwargs["start_new_session"] = True
-            process = subprocess.Popen(command, **popen_kwargs)
-            try:
-                stdout, stderr = process.communicate(timeout=STORY_PREVIEW_PROCESS_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                self._kill_preview_process(process)
-                logger.warning("Story preview capture timed out for %s after %ss", url, STORY_PREVIEW_PROCESS_TIMEOUT_SECONDS)
-                return None
-            if process.returncode != 0 or not img_file_path or not os.path.exists(img_file_path):
-                error_text = stderr.decode("utf-8", errors="replace")[:1200] if stderr else ""
-                logger.debug("Direct story preview capture failed for %s with code %s: %s", url, process.returncode, error_text)
-                return None
-            with Image.open(img_file_path) as img:
-                return img.copy()
-        except Exception as exc:
-            if process is not None and process.poll() is None:
-                self._kill_preview_process(process)
-            logger.debug("Direct story preview capture failed for %s: %s", url, exc)
-            return None
-        finally:
-            if img_file_path and os.path.exists(img_file_path):
-                try:
-                    os.remove(img_file_path)
-                except OSError:
-                    pass
-            if profile_dir and os.path.exists(profile_dir):
-                try:
-                    shutil.rmtree(profile_dir)
-                except OSError:
-                    pass
-
-    def _story_preview_browser_command(self, browser, url, img_file_path, profile_dir=None):
-        if self._is_headless_shell_browser(browser):
-            return [
-                browser,
-                f"--screenshot={img_file_path}",
-                f"--window-size={STORY_PREVIEW_CAPTURE_SIZE[0]},{STORY_PREVIEW_CAPTURE_SIZE[1]}",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--hide-scrollbars",
-                url,
-            ]
-        command = [
-            browser,
+        return take_screenshot(
             url,
-            "--headless",
-            f"--screenshot={img_file_path}",
-            f"--window-size={STORY_PREVIEW_CAPTURE_SIZE[0]},{STORY_PREVIEW_CAPTURE_SIZE[1]}",
-            "--disable-background-networking",
-            "--disable-default-apps",
-            "--disable-dev-shm-usage",
-            "--disable-extensions",
-            "--disable-gpu",
-            "--disable-sync",
-            "--disable-features=Translate",
-            "--hide-scrollbars",
-        ]
-        if profile_dir:
-            command.append(f"--user-data-dir={profile_dir}")
-        command.extend([
-            "--mute-audio",
-            "--no-first-run",
-            "--no-sandbox",
-            f"--timeout={STORY_PREVIEW_TIMEOUT_MS}",
-        ])
-        return command
-
-    def _is_headless_shell_browser(self, browser):
-        return "headless-shell" in os.path.basename(str(browser)).lower()
-
-    def _kill_preview_process(self, process):
-        try:
-            if os.name != "nt":
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-                process.wait(timeout=3)
-        except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
-
-    def _browser_binary(self):
-        candidates = ["chromium-headless-shell", "chromium", "google-chrome", "chrome"]
-        if os.name == "nt":
-            candidates.extend([
-                r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-                r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-                r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-            ])
-        for candidate in candidates:
-            if os.path.isabs(candidate) and os.path.exists(candidate):
-                return candidate
-            found = shutil.which(candidate)
-            if found:
-                return found
-        logger.debug("No Chromium browser available for story preview capture")
-        return None
+            STORY_PREVIEW_CAPTURE_SIZE,
+            timeout_ms=STORY_PREVIEW_TIMEOUT_MS,
+        )
 
     def _prepare_story_screenshot(self, image):
         page = image.convert("RGB")

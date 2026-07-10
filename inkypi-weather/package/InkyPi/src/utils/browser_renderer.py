@@ -1,0 +1,439 @@
+"""Single-flight, bounded Chromium rendering with deterministic cleanup."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+import hashlib
+import logging
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import tempfile
+import threading
+import time
+from urllib.parse import urlsplit, urlunsplit
+
+from runtime.refresh_contracts import TaskCancelled, TaskContext
+from utils.safe_image import safe_open_image
+
+
+logger = logging.getLogger(__name__)
+
+RENDERER_VERSION = "browser-renderer-v1"
+DEFAULT_TIMEOUT_SECONDS = 60.0
+NEGATIVE_CACHE_TTL_SECONDS = 600.0
+MAX_NEGATIVE_CACHE_ENTRIES = 256
+MAX_HTML_BYTES = 5 * 1024 * 1024
+_GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
+_GLOBAL_RENDERER = None
+_GLOBAL_RENDERER_LOCK = threading.Lock()
+
+
+def find_browser_binary():
+    candidates = ["chromium-headless-shell", "chromium", "google-chrome", "chrome"]
+    if os.name == "nt":
+        candidates.extend(
+            [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            ]
+        )
+    for candidate in candidates:
+        if os.path.isabs(candidate) and os.path.isfile(candidate):
+            return candidate
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def _safe_target(value):
+    parsed = urlsplit(str(value or ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _cache_target(value):
+    parsed = urlsplit(str(value or ""))
+    query_hash = (
+        hashlib.sha256(parsed.query.encode("utf-8")).hexdigest()
+        if parsed.query
+        else ""
+    )
+    return f"{urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', ''))}|{query_hash}"
+
+
+class BrowserRenderer:
+    """Render local HTML or validated URLs through one global Chromium slot."""
+
+    def __init__(
+        self,
+        *,
+        binary=None,
+        temp_root=None,
+        popen=subprocess.Popen,
+        clock=time.monotonic,
+        negative_ttl_seconds=NEGATIVE_CACHE_TTL_SECONDS,
+    ):
+        self.binary = binary or find_browser_binary()
+        configured_root = os.getenv("INKYPI_BROWSER_TEMP_DIR", "").strip()
+        self.temp_root = Path(
+            temp_root
+            or configured_root
+            or (Path(tempfile.gettempdir()) / "inkypi-browser-jobs")
+        )
+        self.temp_root.mkdir(parents=True, exist_ok=True)
+        self._popen = popen
+        self._clock = clock
+        self.negative_ttl_seconds = max(0.0, float(negative_ttl_seconds))
+        self._negative_cache = {}
+        self._negative_lock = threading.Lock()
+        self._processes = {}
+        self._process_lock = threading.Lock()
+        self._closed = False
+
+    @property
+    def closed(self):
+        return self._closed
+
+    @property
+    def active_processes(self):
+        with self._process_lock:
+            return tuple(sorted(self._processes))
+
+    @property
+    def negative_cache_size(self):
+        with self._negative_lock:
+            self._prune_negative_locked(self._clock())
+            return len(self._negative_cache)
+
+    def render_html(
+        self,
+        html,
+        *,
+        viewport,
+        context=None,
+        timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        timezone_name=None,
+    ):
+        if not isinstance(html, str):
+            raise TypeError("html must be a string")
+        encoded = html.encode("utf-8")
+        if len(encoded) > MAX_HTML_BYTES:
+            logger.warning("Browser HTML input exceeded %s bytes", MAX_HTML_BYTES)
+            return None
+        key = self._cache_key("html", hashlib.sha256(encoded).hexdigest(), viewport)
+        if self._negative_hit(key):
+            return None
+        context = self._context(context, timeout_seconds)
+
+        def prepare(job_dir):
+            html_path = job_dir / "input.html"
+            html_path.write_bytes(encoded)
+            return html_path.resolve().as_uri()
+
+        return self._render(
+            key,
+            prepare,
+            viewport=viewport,
+            context=context,
+            timeout_seconds=timeout_seconds,
+            timezone_name=timezone_name,
+        )
+
+    def render_url(
+        self,
+        url,
+        *,
+        viewport,
+        context=None,
+        validator=None,
+        timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        timezone_name=None,
+    ):
+        if not callable(validator):
+            logger.warning("Rejected unvalidated browser URL: %s", _safe_target(url))
+            return None
+        try:
+            validated = validator(str(url))
+        except Exception:
+            logger.warning("Browser URL validator failed: %s", _safe_target(url))
+            return None
+        if validated is True:
+            target = str(url)
+        elif isinstance(validated, str) and validated.strip():
+            target = validated.strip()
+        else:
+            logger.warning("Browser URL validator rejected: %s", _safe_target(url))
+            return None
+        scheme = urlsplit(target).scheme.lower()
+        if scheme not in {"http", "https"}:
+            return None
+        key = self._cache_key("url", _cache_target(target), viewport)
+        if self._negative_hit(key):
+            return None
+        context = self._context(context, timeout_seconds)
+        return self._render(
+            key,
+            lambda _job_dir: target,
+            viewport=viewport,
+            context=context,
+            timeout_seconds=timeout_seconds,
+            timezone_name=timezone_name,
+        )
+
+    def close(self):
+        self._closed = True
+        with self._process_lock:
+            processes = tuple(self._processes.values())
+        for process in processes:
+            self._stop_process(process)
+
+    def _render(
+        self,
+        key,
+        prepare_target,
+        *,
+        viewport,
+        context,
+        timeout_seconds,
+        timezone_name,
+    ):
+        if self._closed or not self.binary:
+            self._remember_negative(key)
+            return None
+        width, height = self._viewport(viewport)
+        job_dir = None
+        process = None
+        try:
+            with self._browser_slot(context):
+                context.raise_if_cancelled()
+                job_dir = Path(
+                    tempfile.mkdtemp(prefix="render-", dir=self.temp_root)
+                )
+                profile_dir = job_dir / "profile"
+                profile_dir.mkdir()
+                output_path = job_dir / "screenshot.png"
+                target = prepare_target(job_dir)
+                command = self._command(
+                    target,
+                    output_path,
+                    profile_dir,
+                    (width, height),
+                    timeout_seconds,
+                    timezone_name,
+                )
+                popen_kwargs = {
+                    "stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL,
+                }
+                if os.name != "nt":
+                    popen_kwargs["start_new_session"] = True
+                process = self._popen(command, **popen_kwargs)
+                self._register_process(process)
+                try:
+                    wait_timeout = min(
+                        self._timeout(timeout_seconds),
+                        context.remaining_seconds(),
+                    )
+                    if wait_timeout <= 0:
+                        context.raise_if_cancelled()
+                    process.wait(timeout=max(0.001, wait_timeout))
+                except subprocess.TimeoutExpired:
+                    logger.warning("Chromium render timed out for %s", _safe_target(target))
+                    self._stop_process(process)
+                    self._remember_negative(key)
+                    return None
+                finally:
+                    self._unregister_process(process)
+                context.raise_if_cancelled()
+                if process.returncode != 0 or not output_path.is_file():
+                    self._remember_negative(key)
+                    return None
+                image = safe_open_image(output_path)
+                self._forget_negative(key)
+                return image
+        except TaskCancelled:
+            if process is not None and process.poll() is None:
+                self._stop_process(process)
+            self._remember_negative(key)
+            return None
+        except Exception:
+            if process is not None and process.poll() is None:
+                self._stop_process(process)
+            logger.exception("Chromium render failed")
+            self._remember_negative(key)
+            return None
+        finally:
+            if process is not None:
+                self._unregister_process(process)
+            if job_dir is not None:
+                shutil.rmtree(job_dir, ignore_errors=True)
+
+    @contextmanager
+    def _browser_slot(self, context):
+        acquired = False
+        try:
+            while not acquired:
+                context.raise_if_cancelled()
+                remaining = context.remaining_seconds()
+                acquired = _GLOBAL_BROWSER_SLOT.acquire(
+                    timeout=max(0.001, min(0.05, remaining))
+                )
+            yield
+        finally:
+            if acquired:
+                _GLOBAL_BROWSER_SLOT.release()
+
+    def _command(
+        self,
+        target,
+        output_path,
+        profile_dir,
+        viewport,
+        timeout_seconds,
+        timezone_name,
+    ):
+        timeout_ms = int(self._timeout(timeout_seconds) * 1000)
+        command = [
+            str(self.binary),
+            "--headless",
+            f"--screenshot={output_path}",
+            f"--window-size={viewport[0]},{viewport[1]}",
+            f"--user-data-dir={profile_dir}",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--disable-gpu",
+            "--disable-plugins",
+            "--disable-sync",
+            "--disable-features=Translate,DownloadBubble,OptimizationHints",
+            "--hide-scrollbars",
+            "--mute-audio",
+            "--no-first-run",
+            "--no-zygote",
+            "--renderer-process-limit=1",
+            "--disk-cache-size=1",
+            "--media-cache-size=1",
+            f"--timeout={timeout_ms}",
+            f"--virtual-time-budget={timeout_ms}",
+        ]
+        if timezone_name:
+            command.append(f"--timezone-for-testing={str(timezone_name)[:80]}")
+        command.append(str(target))
+        return command
+
+    def _register_process(self, process):
+        with self._process_lock:
+            self._processes[int(process.pid)] = process
+
+    def _unregister_process(self, process):
+        with self._process_lock:
+            self._processes.pop(int(process.pid), None)
+
+    def _stop_process(self, process):
+        if process.poll() is not None:
+            return
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            process.wait(timeout=2)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            logger.warning("Chromium process did not exit cleanly: %s", process.pid)
+
+    def _negative_hit(self, key):
+        now = self._clock()
+        with self._negative_lock:
+            self._prune_negative_locked(now)
+            expires_at = self._negative_cache.get(key)
+            return expires_at is not None and expires_at > now
+
+    def _remember_negative(self, key):
+        now = self._clock()
+        with self._negative_lock:
+            self._prune_negative_locked(now)
+            self._negative_cache[key] = now + self.negative_ttl_seconds
+            while len(self._negative_cache) > MAX_NEGATIVE_CACHE_ENTRIES:
+                oldest = min(self._negative_cache, key=self._negative_cache.get)
+                self._negative_cache.pop(oldest, None)
+
+    def _forget_negative(self, key):
+        with self._negative_lock:
+            self._negative_cache.pop(key, None)
+
+    def _prune_negative_locked(self, now):
+        self._negative_cache = {
+            key: expires
+            for key, expires in self._negative_cache.items()
+            if expires > now
+        }
+
+    @staticmethod
+    def _cache_key(kind, target, viewport):
+        width, height = BrowserRenderer._viewport(viewport)
+        raw = f"{RENDERER_VERSION}|{kind}|{target}|{width}x{height}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _viewport(viewport):
+        if not isinstance(viewport, (tuple, list)) or len(viewport) != 2:
+            raise ValueError("viewport must contain width and height")
+        width, height = (int(viewport[0]), int(viewport[1]))
+        if not 1 <= width <= 8192 or not 1 <= height <= 8192:
+            raise ValueError("viewport dimensions are out of range")
+        return width, height
+
+    @staticmethod
+    def _timeout(value):
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError, OverflowError):
+            timeout = DEFAULT_TIMEOUT_SECONDS
+        return max(0.01, min(180.0, timeout))
+
+    @staticmethod
+    def _context(context, timeout_seconds):
+        if context is not None:
+            return context
+        return TaskContext.never_cancelled(
+            deadline_monotonic=time.monotonic()
+            + BrowserRenderer._timeout(timeout_seconds),
+        )
+
+
+def get_browser_renderer():
+    global _GLOBAL_RENDERER
+
+    renderer = _GLOBAL_RENDERER
+    if renderer is None or renderer.closed:
+        with _GLOBAL_RENDERER_LOCK:
+            if _GLOBAL_RENDERER is None or _GLOBAL_RENDERER.closed:
+                _GLOBAL_RENDERER = BrowserRenderer()
+            renderer = _GLOBAL_RENDERER
+    return renderer
+
+
+def close_browser_renderer():
+    global _GLOBAL_RENDERER
+
+    with _GLOBAL_RENDERER_LOCK:
+        renderer = _GLOBAL_RENDERER
+        _GLOBAL_RENDERER = None
+    if renderer is not None:
+        renderer.close()

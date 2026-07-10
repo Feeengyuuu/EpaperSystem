@@ -31,6 +31,7 @@ from security.request_limits import (
     configure_request_limits,
 )
 from utils.app_utils import generate_startup_image
+from utils.browser_renderer import close_browser_renderer
 from utils.http_client import close_http_session, sanitize_dead_local_proxy_environment
 from utils.network_utils import disable_wifi_powersave, start_wifi_reconnect_watchdog
 from utils.secret_key import load_or_create_secret_key
@@ -216,7 +217,10 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
                 if health_collector is not None:
                     health_collector.stop()
         finally:
-            close_http_session()
+            try:
+                close_browser_renderer()
+            finally:
+                close_http_session()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

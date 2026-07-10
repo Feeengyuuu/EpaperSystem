@@ -2,7 +2,7 @@ import logging
 import os
 from plugins.plugin_settings import resolve_refresh_on_display
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
-from utils.image_utils import take_screenshot_html
+from utils.browser_renderer import get_browser_renderer
 from utils.image_loader import AdaptiveImageLoader
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
@@ -165,7 +165,8 @@ class BasePlugin:
         template_params['frame_styles'] = FRAME_STYLES
         return template_params
 
-    def render_image(self, dimensions, html_file, css_file=None, template_params={}):
+    def render_image(self, dimensions, html_file, css_file=None, template_params=None):
+        template_params = dict(template_params or {})
         # load the base plugin and current plugin css files
         css_files = [os.path.join(BASE_PLUGIN_RENDER_DIR, "plugin.css")]
         if css_file:
@@ -182,4 +183,7 @@ class BasePlugin:
         template = self.env.get_template(html_file)
         rendered_html = template.render(template_params)
 
-        return take_screenshot_html(rendered_html, dimensions)
+        return get_browser_renderer().render_html(
+            rendered_html,
+            viewport=dimensions,
+        )

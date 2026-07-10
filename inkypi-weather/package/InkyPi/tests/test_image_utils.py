@@ -8,49 +8,60 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from utils import image_utils  # noqa: E402
 
 
-class FakeScreenshotProcess:
-    returncode = 0
-    pid = 12345
+class RecordingRenderer:
+    def __init__(self):
+        self.calls = []
 
-    def __init__(self, command, **kwargs):
-        self.command = command
-        self.kwargs = kwargs
-        for arg in command:
-            if arg.startswith("--screenshot="):
-                image_path = arg.split("=", 1)[1]
-                Image.new("RGB", (8, 8), "white").save(image_path)
-                break
+    def render_html(self, html, **kwargs):
+        self.calls.append(("html", html, kwargs))
+        return Image.new("RGB", (8, 8), "white")
 
-    def communicate(self, timeout=None):
-        self.timeout = timeout
-        return b"", b""
-
-    def kill(self):
-        pass
-
-    def wait(self, timeout=None):
-        return self.returncode
+    def render_url(self, url, **kwargs):
+        self.calls.append(("url", url, kwargs))
+        if kwargs.get("validator") is None:
+            return None
+        return Image.new("RGB", (8, 8), "white")
 
 
-def test_take_screenshot_reuses_configured_profile_and_limits_disk_cache(tmp_path, monkeypatch):
-    profile_dir = tmp_path / "browser-profile"
-    commands = []
+def test_take_screenshot_html_delegates_to_bounded_renderer(monkeypatch):
+    renderer = RecordingRenderer()
+    monkeypatch.setattr(image_utils, "get_browser_renderer", lambda: renderer)
 
-    def fake_popen(command, **kwargs):
-        commands.append(command)
-        return FakeScreenshotProcess(command, **kwargs)
+    result = image_utils.take_screenshot_html(
+        "<p>hello</p>",
+        (800, 480),
+        timeout_ms=1000,
+        timezone_name="UTC",
+    )
 
-    monkeypatch.setenv("INKYPI_BROWSER_PROFILE_DIR", str(profile_dir))
-    monkeypatch.setattr(image_utils, "_find_chromium_binary", lambda: "fake-chromium")
-    monkeypatch.setattr(image_utils.subprocess, "Popen", fake_popen)
+    assert result.size == (8, 8)
+    kind, html, kwargs = renderer.calls[0]
+    assert kind == "html"
+    assert html == "<p>hello</p>"
+    assert kwargs["viewport"] == (800, 480)
+    assert kwargs["timezone_name"] == "UTC"
 
-    first = image_utils.take_screenshot("file:///tmp/first.html", (800, 480))
-    second = image_utils.take_screenshot("file:///tmp/second.html", (800, 480))
 
-    assert first.size == (8, 8)
-    assert second.size == (8, 8)
-    assert profile_dir.is_dir()
-    profile_args = [arg for command in commands for arg in command if arg.startswith("--user-data-dir=")]
-    assert profile_args == [f"--user-data-dir={profile_dir}", f"--user-data-dir={profile_dir}"]
-    assert all("--disk-cache-size=1" in command for command in commands)
-    assert all("--media-cache-size=1" in command for command in commands)
+def test_take_screenshot_remote_url_fails_closed_without_validator(monkeypatch):
+    renderer = RecordingRenderer()
+    monkeypatch.setattr(image_utils, "get_browser_renderer", lambda: renderer)
+
+    assert image_utils.take_screenshot(
+        "https://example.test/page",
+        (800, 480),
+    ) is None
+
+    assert renderer.calls[0][0] == "url"
+    assert renderer.calls[0][2]["validator"] is None
+
+
+def test_take_screenshot_local_file_uses_html_entrypoint(tmp_path, monkeypatch):
+    renderer = RecordingRenderer()
+    monkeypatch.setattr(image_utils, "get_browser_renderer", lambda: renderer)
+    html_path = tmp_path / "page.html"
+    html_path.write_text("<p>local</p>", encoding="utf-8")
+
+    result = image_utils.take_screenshot(str(html_path), (800, 480))
+
+    assert result.size == (8, 8)
+    assert renderer.calls[0][0:2] == ("html", "<p>local</p>")

@@ -1,33 +1,18 @@
 from PIL import Image, ImageEnhance, ImageOps, ImageFilter
-from io import BytesIO
 import os
 import logging
 import hashlib
-import tempfile
-import subprocess
-import shutil
-import signal
-import threading
-from utils.http_client import get_http_session
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+from utils.browser_renderer import find_browser_binary, get_browser_renderer
+from utils.http_client import get_http_client
+from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
-_SCREENSHOT_BROWSER_LOCK = threading.Lock()
-
-
-def _get_browser_profile_dir():
-    configured_dir = os.getenv("INKYPI_BROWSER_PROFILE_DIR")
-    if configured_dir:
-        return configured_dir
-    return os.path.join(tempfile.gettempdir(), "inkypi-browser-profile")
-
 def get_image(image_url):
-    response = get_http_session().get(image_url)
-    img = None
-    if 200 <= response.status_code < 300 or response.status_code == 304:
-        img = Image.open(BytesIO(response.content))
-    else:
-        logger.error(f"Received non-200 response from {image_url}: status_code: {response.status_code}")
-    return img
+    response = get_http_client().request_bytes("GET", image_url)
+    return safe_open_image(response.data)
 
 def change_orientation(image, orientation, inverted=False):
     if orientation == 'horizontal':
@@ -40,7 +25,7 @@ def change_orientation(image, orientation, inverted=False):
 
     return image.rotate(angle, expand=1)
 
-def resize_image(image, desired_size, image_settings=[]):
+def resize_image(image, desired_size, image_settings=()):
     img_width, img_height = image.size
     desired_width, desired_height = desired_size
     desired_width, desired_height = int(desired_width), int(desired_height)
@@ -71,7 +56,8 @@ def resize_image(image, desired_size, image_settings=[]):
     # Step 3: Resize to the exact desired dimensions (if necessary)
     return image.resize((desired_width, desired_height), Image.LANCZOS)
 
-def apply_image_enhancement(img, image_settings={}):
+def apply_image_enhancement(img, image_settings=None):
+    image_settings = image_settings or {}
     # Convert image to RGB mode if necessary for enhancement operations
     # ImageEnhance requires RGB mode for operations like blend
     if img.mode not in ('RGB', 'L'):
@@ -104,142 +90,63 @@ def text_width(draw, text, font):
     return bbox[2] - bbox[0]
 
 def take_screenshot_html(html_str, dimensions, timeout_ms=None, timezone_name=None):
-    image = None
     try:
-        # Create a temporary HTML file
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as html_file:
-            html_file.write(html_str.encode("utf-8"))
-            html_file_path = html_file.name
-
-        image = take_screenshot(html_file_path, dimensions, timeout_ms, timezone_name=timezone_name)
-
-        # Remove html file
-        os.remove(html_file_path)
-
+        timeout_seconds = ((timeout_ms or 45000) / 1000) + 15
+        return get_browser_renderer().render_html(
+            html_str,
+            viewport=dimensions,
+            timeout_seconds=timeout_seconds,
+            timezone_name=timezone_name,
+        )
     except Exception as e:
         logger.error(f"Failed to take screenshot: {str(e)}")
-
-    return image
+        return None
 
 def _find_chromium_binary():
-    """Find the first available Chromium-based binary in system PATH."""
-    candidates = ["chromium-headless-shell", "chromium", "chrome"]
-    if os.name == "nt":
-        candidates.extend([
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        ])
-    for candidate in candidates:
-        path = candidate if os.path.isabs(candidate) and os.path.exists(candidate) else shutil.which(candidate)
-        if path:
-            logger.debug(f"Found browser binary: {candidate} at {path}")
-            return candidate
-    return None
+    """Compatibility alias for callers that only probe browser availability."""
+
+    return find_browser_binary()
 
 
-def take_screenshot(target, dimensions, timeout_ms=None, timezone_name=None):
-    image = None
-    img_file_path = None
+def take_screenshot(
+    target,
+    dimensions,
+    timeout_ms=None,
+    timezone_name=None,
+    *,
+    validator=None,
+    task_context=None,
+):
     try:
-        # Find available browser binary
-        browser = _find_chromium_binary()
-        if not browser:
-            logger.error("No Chromium-based browser found. Install chromium, chromium-headless-shell, or chrome.")
-            return None
-
-        # Create a temporary output file for the screenshot
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_file:
-            img_file_path = img_file.name
-        browser_profile_dir = _get_browser_profile_dir()
-        os.makedirs(browser_profile_dir, exist_ok=True)
-
-        command = [
-            browser,
-            target,
-            "--headless",
-            f"--screenshot={img_file_path}",
-            f"--window-size={dimensions[0]},{dimensions[1]}",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--use-gl=swiftshader",
-            "--hide-scrollbars",
-            "--in-process-gpu",
-            "--js-flags=--jitless",
-            "--disable-zero-copy",
-            "--disable-gpu-memory-buffer-compositor-resources",
-            "--disable-extensions",
-            "--disable-plugins",
-            "--disable-crash-reporter",
-            "--disable-crashpad",
-            "--run-all-compositor-stages-before-draw",
-            f"--user-data-dir={browser_profile_dir}",
-            "--disk-cache-size=1",
-            "--media-cache-size=1",
-            "--mute-audio",
-            "--renderer-process-limit=1",
-            "--no-zygote",
-            "--no-sandbox"
-        ]
-        if timeout_ms:
-            command.append(f"--timeout={timeout_ms}")
-            command.append(f"--virtual-time-budget={timeout_ms}")
-        if timezone_name:
-            command.append(f"--timezone-for-testing={timezone_name}")
-
-        process_timeout = ((timeout_ms or 45000) / 1000) + 15
-        popen_kwargs = {
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-        }
-        if os.name != "nt":
-            popen_kwargs["start_new_session"] = True
-
-        with _SCREENSHOT_BROWSER_LOCK:
-            process = subprocess.Popen(command, **popen_kwargs)
-            try:
-                stdout, stderr = process.communicate(timeout=process_timeout)
-            except subprocess.TimeoutExpired:
-                logger.error(f"Timed out taking screenshot after {process_timeout:.0f}s.")
-                if os.name != "nt":
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                        process.wait(timeout=5)
-                    except Exception:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except Exception:
-                            pass
-                else:
-                    process.kill()
-                    process.wait()
-                return None
-
-            # Check if the process failed or the output file is missing
-            if process.returncode != 0 or not os.path.exists(img_file_path):
-                logger.error(f"Failed to take screenshot (return code: {process.returncode})")
-                if stderr:
-                    logger.debug(stderr.decode("utf-8", errors="replace")[:2000])
-                return None
-
-            # Load the image using PIL
-            with Image.open(img_file_path) as img:
-                image = img.copy()
-
-        # Remove image files
-        os.remove(img_file_path)
-
+        renderer = get_browser_renderer()
+        timeout_seconds = ((timeout_ms or 45000) / 1000) + 15
+        parsed = urlsplit(str(target))
+        if parsed.scheme.lower() in {"http", "https"}:
+            return renderer.render_url(
+                str(target),
+                viewport=dimensions,
+                context=task_context,
+                validator=validator,
+                timeout_seconds=timeout_seconds,
+                timezone_name=timezone_name,
+            )
+        if parsed.scheme.lower() == "file":
+            local_path = Path(unquote(parsed.path))
+            if os.name == "nt" and local_path.as_posix().startswith("/"):
+                local_path = Path(local_path.as_posix().lstrip("/"))
+        else:
+            local_path = Path(target)
+        html = local_path.read_text(encoding="utf-8")
+        return renderer.render_html(
+            html,
+            viewport=dimensions,
+            context=task_context,
+            timeout_seconds=timeout_seconds,
+            timezone_name=timezone_name,
+        )
     except Exception as e:
         logger.error(f"Failed to take screenshot: {str(e)}")
-    finally:
-        if img_file_path and os.path.exists(img_file_path):
-            try:
-                os.remove(img_file_path)
-            except OSError:
-                pass
-
-    return image
+        return None
 
 
 def pad_image_blur(img: Image, dimensions: tuple[int, int]) -> Image:

@@ -16,6 +16,8 @@ from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
     HN_DOCS_URL,
     HN_HOME_URL,
+    STORY_PREVIEW_CAPTURE_SIZE,
+    STORY_PREVIEW_TIMEOUT_MS,
     TITLE_WORDMARK_IMAGE,
     TechPulse,
 )
@@ -339,36 +341,31 @@ def test_hn_story_preview_falls_back_to_hn_homepage_when_target_fails(tmp_path, 
     assert plugin._story_preview_cache_path(HN_HOME_URL).is_file()
 
 
-def test_story_preview_prefers_headless_shell_browser(tmp_path, monkeypatch):
+def test_story_preview_remote_capture_uses_fail_closed_compatibility_wrapper(
+    tmp_path,
+    monkeypatch,
+):
     plugin = _plugin(tmp_path)
+    calls = []
 
-    def fake_which(candidate):
-        if candidate in ("chromium", "chromium-headless-shell"):
-            return f"/usr/bin/{candidate}"
+    def fake_take_screenshot(url, dimensions, **kwargs):
+        calls.append((url, dimensions, kwargs))
         return None
 
-    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.shutil.which", fake_which)
-
-    assert plugin._browser_binary() == "/usr/bin/chromium-headless-shell"
-
-
-def test_story_preview_headless_shell_uses_lightweight_command(tmp_path):
-    plugin = _plugin(tmp_path)
-
-    command = plugin._story_preview_browser_command(
-        "/usr/bin/chromium-headless-shell",
-        HN_HOME_URL,
-        "/tmp/story.png",
-        "/tmp/profile",
+    monkeypatch.setattr(
+        "plugins.tech_pulse.tech_pulse.take_screenshot",
+        fake_take_screenshot,
     )
 
-    assert command[0].endswith("chromium-headless-shell")
-    assert command[-1] == HN_HOME_URL
-    assert "--screenshot=/tmp/story.png" in command
-    assert "--disable-dev-shm-usage" in command
-    assert not any(arg.startswith("--user-data-dir") for arg in command)
-    assert not any(arg.startswith("--timeout") for arg in command)
-    assert "--disable-background-networking" not in command
+    assert plugin._capture_story_preview_page_direct(HN_HOME_URL) is None
+    assert calls == [
+        (
+            HN_HOME_URL,
+            STORY_PREVIEW_CAPTURE_SIZE,
+            {"timeout_ms": STORY_PREVIEW_TIMEOUT_MS},
+        )
+    ]
+
 
 
 def test_hn_story_preview_draws_story_target_screenshot(tmp_path, monkeypatch):
