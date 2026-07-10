@@ -10,6 +10,7 @@ import pytz
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import get_plugin_instance, plugin_supports_live_refresh
+from plugins.plugin_settings import PluginSettingError
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
@@ -908,6 +909,8 @@ class RefreshTask:
                 if callable(refresh_hook):
                     try:
                         refresh_on_display = bool(refresh_hook(settings))
+                    except PluginSettingError:
+                        raise
                     except Exception:
                         logger.exception(
                             "Plugin '%s' refresh-on-display hook failed.",
@@ -2295,6 +2298,8 @@ class RefreshTask:
             return False
         try:
             return bool(hook(plugin_instance.settings or {}))
+        except PluginSettingError:
+            raise
         except Exception:
             logger.exception(f"Plugin '{plugin_instance.plugin_id}' refresh-on-display hook failed.")
             return False

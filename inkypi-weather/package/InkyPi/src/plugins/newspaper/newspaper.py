@@ -1,4 +1,5 @@
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.plugin_settings import resolve_refresh_on_display
 from datetime import datetime, timedelta
 import html
 from io import BytesIO
@@ -147,7 +148,16 @@ def _enabled(value, default=False):
 
 class Newspaper(BasePlugin):
     def wants_refresh_on_display(self, settings):
-        return str((settings or {}).get("mediaRotationMode") or "rotate").lower() != "single"
+        settings = settings or {}
+        rotation_default = (
+            str(settings.get("mediaRotationMode") or "rotate").lower()
+            != "single"
+        )
+        return resolve_refresh_on_display(
+            settings,
+            self.config,
+            base_default=rotation_default,
+        )
 
     def generate_image(self, settings, device_config):
         if self._rotation_enabled(settings):

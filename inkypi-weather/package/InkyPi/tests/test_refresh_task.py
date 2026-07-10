@@ -9,6 +9,9 @@ import uuid
 import pytest
 from PIL import Image
 
+from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.newspaper.newspaper import Newspaper
+from plugins.plugin_settings import PluginSettingError
 from src.model import Playlist, PlaylistManager, RefreshInfo
 from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest
 from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
@@ -799,6 +802,121 @@ def test_playlist_refresh_uses_cached_image_without_generating_for_scheduled_dis
     assert image.size == (2, 1)
     assert image.getpixel((0, 0)) == (0, 0, 0)
     assert plugin_instance.latest_refresh_time == "2026-05-26T07:00:00+00:00"
+
+
+def test_playlist_refresh_instance_false_overrides_manifest_refresh_on_display():
+    calls = []
+    tmp_path = make_test_dir("instance-refresh-on-display-false")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["display_refresh_resource_guard_enabled"] = False
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "base_plugin",
+                "name": "ManifestDefaultTrue",
+                "plugin_settings": {
+                    "id": "base-instance",
+                    "refreshOnDisplay": False,
+                },
+                "refresh": {"interval": 300},
+                "latest_refresh_time": "2999-01-01T00:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.plugins[0]
+    Image.new("RGB", (2, 1), "black").save(
+        tmp_path / plugin_instance.get_image_path()
+    )
+    plugin = BasePlugin({"id": "base_plugin", "refresh_on_display": True})
+    plugin.generate_image = lambda *_args: calls.append("rendered") or Image.new(
+        "RGB", (2, 1), "white"
+    )
+
+    image = PlaylistRefresh(
+        playlist,
+        plugin_instance,
+        display_cached_only=True,
+    ).execute(
+        plugin,
+        device_config,
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_playlist_refresh_newspaper_refresh_on_display_false_overrides_rotation_default():
+    calls = []
+    tmp_path = make_test_dir("newspaper-instance-refresh-on-display-false")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["display_refresh_resource_guard_enabled"] = False
+    playlist = Playlist(
+        "DailyDoseOfDay",
+        "00:00",
+        "24:00",
+        plugins=[
+            {
+                "plugin_id": "newspaper",
+                "name": "RotatingNewspaper",
+                "plugin_settings": {
+                    "id": "rotating-news",
+                    "mediaRotationMode": "rotate",
+                    "refreshOnDisplay": " false ",
+                },
+                "refresh": {"scheduled": "15:00"},
+                "latest_refresh_time": "2999-01-01T00:00:00+00:00",
+            },
+        ],
+    )
+    plugin_instance = playlist.plugins[0]
+    Image.new("RGB", (2, 1), "black").save(
+        tmp_path / plugin_instance.get_image_path()
+    )
+    plugin = Newspaper({"id": "newspaper"})
+    plugin.generate_image = lambda *_args: calls.append("rendered") or Image.new(
+        "RGB", (2, 1), "white"
+    )
+
+    image = PlaylistRefresh(
+        playlist,
+        plugin_instance,
+        display_cached_only=True,
+    ).execute(
+        plugin,
+        device_config,
+        datetime(2026, 5, 26, 16, 0, tzinfo=timezone.utc),
+    )
+
+    assert calls == []
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({"mediaRotationMode": "rotate"}, True),
+        ({"mediaRotationMode": "single"}, False),
+        (
+            {"mediaRotationMode": "rotate", "refreshOnDisplay": False},
+            False,
+        ),
+        (
+            {"mediaRotationMode": "single", "refreshOnDisplay": " true "},
+            True,
+        ),
+    ],
+)
+def test_newspaper_refresh_on_display_uses_rotation_only_as_missing_value_default(
+    settings,
+    expected,
+):
+    plugin = Newspaper({"id": "newspaper"})
+
+    assert plugin.wants_refresh_on_display(settings) is expected
 
 
 def test_playlist_refresh_rerenders_live_refresh_due_on_scheduled_display():
@@ -1714,6 +1832,59 @@ def test_playlist_worker_uses_previous_cache_for_non_cacheable_display(monkeypat
     with Image.open(cache_path) as saved:
         assert saved.size == (2, 1)
         assert saved.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_playlist_worker_rejects_invalid_explicit_refresh_on_display(monkeypatch):
+    tmp_path = make_test_dir("invalid-refresh-on-display-worker")
+    plugin_data = _runtime_plugin_data(
+        "base_plugin",
+        "Invalid Explicit Boolean",
+    )
+    plugin_data["plugin_settings"]["refreshOnDisplay"] = "sometimes"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    _write_runtime_cache(
+        task,
+        playlist.plugins[0],
+        Image.new("RGB", (2, 1), "black"),
+    )
+    plugin = BasePlugin({"id": "base_plugin", "refresh_on_display": False})
+    plugin.generate_image = lambda *_args: Image.new("RGB", (2, 1), "white")
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: plugin,
+    )
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(
+            device_config.playlist_manager.first_instance_uuid(),
+            force=False,
+            display_cached_only=True,
+        )
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "failed"
+        assert "refreshOnDisplay must be true or false" in result["error"]
+        assert task.display_manager.calls == []
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_scheduler_selection_rejects_invalid_explicit_refresh_on_display():
+    tmp_path = make_test_dir("invalid-refresh-on-display-selection")
+    plugin_data = _runtime_plugin_data("base_plugin", "Invalid Selection Boolean")
+    plugin_data["plugin_settings"]["refreshOnDisplay"] = "sometimes"
+    playlist = _runtime_playlist(plugin_data)
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    plugin = BasePlugin({"id": "base_plugin", "refresh_on_display": False})
+
+    with pytest.raises(PluginSettingError, match="refreshOnDisplay"):
+        task._plugin_wants_refresh_on_display(playlist.plugins[0], plugin=plugin)
 
 
 class FailingPlugin:

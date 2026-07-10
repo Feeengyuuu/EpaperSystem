@@ -1,5 +1,6 @@
 import logging
 import os
+from plugins.plugin_settings import resolve_refresh_on_display
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.image_utils import take_screenshot_html
 from utils.image_loader import AdaptiveImageLoader
@@ -53,7 +54,7 @@ class BasePlugin:
 
     def wants_refresh_on_display(self, settings):
         """Return whether cached playlist display should refresh this plugin instance."""
-        return bool(self.config.get("refresh_on_display", False))
+        return resolve_refresh_on_display(settings, self.config)
 
     def get_live_refresh_state(self, settings, current_dt):
         """Return live refresh state for scheduler cache refresh, or None when inactive."""
