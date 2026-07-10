@@ -181,21 +181,30 @@ def test_commit_rejects_non_utf8_unicode_scalars_before_persistence(tmp_path, ba
         store.commit(0, bad_key)
 
 
-def test_missing_resolution_fails_schema_validation_before_persistence(tmp_path, monkeypatch):
-    from src import config_store
-
+def test_missing_resolution_can_bootstrap_before_hardware_detection(tmp_path):
     path = tmp_path / "device.json"
-    _write(path, _config())
     store = _store(path)
     store.load()
-    monkeypatch.setattr(
-        config_store,
-        "atomic_write_json",
-        lambda *_args, **_kwargs: pytest.fail("persistence must not be attempted"),
-    )
 
-    with pytest.raises(config_store.ConfigValidationError, match="resolution"):
-        store.commit(0, {"name": "toy"})
+    snapshot = store.commit(0, {"name": "toy", "display_type": "inky"})
+
+    assert snapshot.version == 1
+    assert "resolution" not in snapshot.data
+    assert json.loads(path.read_text(encoding="utf-8"))["display_type"] == "inky"
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [None, [], [800], [800, 480, 1], [0, 480], [-1, 480], [800, True], "800x480"],
+)
+def test_resolution_is_strict_when_present(tmp_path, resolution):
+    from src.config_store import ConfigValidationError
+
+    store = _store(tmp_path / "device.json")
+    store.load()
+
+    with pytest.raises(ConfigValidationError, match="resolution"):
+        store.commit(0, {"name": "toy", "resolution": resolution})
 
 
 @pytest.mark.parametrize(

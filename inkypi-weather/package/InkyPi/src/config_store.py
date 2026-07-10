@@ -469,15 +469,16 @@ class ConfigStore:
         return _ReadResult(path, source, True, snapshot, payload, None)
 
     def _validate_device_config(self, payload: dict[str, Any], *, legacy: bool) -> None:
-        resolution = payload.get("resolution")
-        if type(resolution) not in {list, tuple} or len(resolution) != 2:
-            raise ConfigValidationError(
-                "resolution must contain exactly two positive integers"
-            )
-        if any(type(item) is not int or item <= 0 for item in resolution):
-            raise ConfigValidationError(
-                "resolution must contain exactly two positive integers"
-            )
+        if "resolution" in payload:
+            resolution = payload["resolution"]
+            if type(resolution) not in {list, tuple} or len(resolution) != 2:
+                raise ConfigValidationError(
+                    "resolution must contain exactly two positive integers"
+                )
+            if any(type(item) is not int or item <= 0 for item in resolution):
+                raise ConfigValidationError(
+                    "resolution must contain exactly two positive integers"
+                )
 
         if "display_type" in payload:
             display_type = payload["display_type"]
