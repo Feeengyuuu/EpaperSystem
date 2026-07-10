@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 import sys
 from urllib.parse import urlparse
+from security.ssrf import validate_browser_target
 from utils.app_utils import get_font
 from utils.image_utils import get_image, take_screenshot, text_width
 from PIL import Image, ImageDraw, ImageFont
@@ -285,7 +286,12 @@ class Newspaper(BasePlugin):
         dimensions = self.get_dimensions(device_config)
 
         logger.info("Taking news front page screenshot: %s", url)
-        return take_screenshot(url, dimensions, timeout_ms=40000)
+        return take_screenshot(
+            url,
+            dimensions,
+            timeout_ms=40000,
+            validator=validate_browser_target,
+        )
 
     def _fetch_web_headlines(self, url):
         try:

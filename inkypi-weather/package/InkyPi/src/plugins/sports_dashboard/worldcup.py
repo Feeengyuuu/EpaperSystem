@@ -1,5 +1,6 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from security.ssrf import validate_browser_target
 
 SportsDashboard = None
 
@@ -44,6 +45,7 @@ class WorldCupMixin:
                 (capture_width, capture_height),
                 timeout_ms=40000,
                 timezone_name=timezone_name,
+                validator=validate_browser_target,
             )
         except Exception as exc:
             logger.warning("World Cup screenshot failed: %s", exc)
@@ -2225,7 +2227,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
 
 
 

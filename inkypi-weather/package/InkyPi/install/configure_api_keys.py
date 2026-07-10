@@ -22,7 +22,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from secret_schema import RUNTIME_DEFAULTS, SecretSchema, json_document
+from secret_schema import (
+    OPTIONAL_RUNTIME_SETTINGS,
+    RUNTIME_DEFAULTS,
+    SecretSchema,
+    json_document,
+)
 
 
 REGISTRY_PATH = SCRIPT_DIR / "api_key_registry.json"
@@ -108,6 +113,8 @@ def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
     known = set(primary_keys)
     for entry in registry:
         known.update(entry.get("aliases", []))
+    known.update(item[0] for item in RUNTIME_DEFAULTS)
+    known.update(item[0] for item in OPTIONAL_RUNTIME_SETTINGS)
 
     lines: list[str] = [
         "# InkyPi API Keys and Secrets",
@@ -147,7 +154,18 @@ def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
         lines.append(f"{key}={quote_env_value(value)}")
     lines.append("")
 
-    extras = sorted(key for key in values if key not in known and key not in {item[0] for item in RUNTIME_DEFAULTS})
+    lines.append("# Optional browser screenshot egress allowlist")
+    lines.append("# Cloud metadata addresses remain denied for every configuration.")
+    for key, example, note in OPTIONAL_RUNTIME_SETTINGS:
+        lines.append(f"# {note}")
+        value = values.get(key, "")
+        if value:
+            lines.append(f"{key}={quote_env_value(value)}")
+        else:
+            lines.append(f"# {key}={example}")
+    lines.append("")
+
+    extras = sorted(key for key in values if key not in known)
     if extras:
         lines.append("# Existing custom variables preserved by configure_api_keys.py")
         for key in extras:

@@ -109,6 +109,11 @@ def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
     assert profiles[0] != profiles[1]
     assert all("--no-sandbox" not in command for command in commands)
     assert all("--disk-cache-size=1" in command for command in commands)
+    assert all(
+        any(argument.startswith("--proxy-server=http://127.0.0.1:") for argument in command)
+        for command in commands
+    )
+    assert all("--proxy-bypass-list=<-loopback>" in command for command in commands)
     assert list(tmp_path.iterdir()) == []
 
 

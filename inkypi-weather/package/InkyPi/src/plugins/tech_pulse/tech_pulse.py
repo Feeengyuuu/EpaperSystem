@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from security.ssrf import validate_browser_target
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
@@ -500,6 +501,7 @@ class TechPulse(BasePlugin):
             url,
             STORY_PREVIEW_CAPTURE_SIZE,
             timeout_ms=STORY_PREVIEW_TIMEOUT_MS,
+            validator=validate_browser_target,
         )
 
     def _prepare_story_screenshot(self, image):

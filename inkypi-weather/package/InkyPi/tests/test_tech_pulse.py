@@ -21,6 +21,7 @@ from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     TITLE_WORDMARK_IMAGE,
     TechPulse,
 )
+from security.ssrf import validate_browser_target  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -375,7 +376,10 @@ def test_story_preview_remote_capture_uses_fail_closed_compatibility_wrapper(
         (
             HN_HOME_URL,
             STORY_PREVIEW_CAPTURE_SIZE,
-            {"timeout_ms": STORY_PREVIEW_TIMEOUT_MS},
+            {
+                "timeout_ms": STORY_PREVIEW_TIMEOUT_MS,
+                "validator": validate_browser_target,
+            },
         )
     ]
 

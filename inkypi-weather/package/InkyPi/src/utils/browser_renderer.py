@@ -14,14 +14,17 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
+import weakref
 
 from runtime.refresh_contracts import TaskCancelled, TaskContext
+from security.egress_proxy import EgressProxy
+from security.ssrf import ApprovedTarget, UnsafeTarget, get_ssrf_policy
 from utils.safe_image import safe_open_image
 
 
 logger = logging.getLogger(__name__)
 
-RENDERER_VERSION = "browser-renderer-v1"
+RENDERER_VERSION = "browser-renderer-v2-ssrf-proxy"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
@@ -77,6 +80,8 @@ class BrowserRenderer:
         popen=subprocess.Popen,
         clock=time.monotonic,
         negative_ttl_seconds=NEGATIVE_CACHE_TTL_SECONDS,
+        ssrf_policy=None,
+        egress_proxy=None,
     ):
         self.binary = binary or find_browser_binary()
         configured_root = os.getenv("INKYPI_BROWSER_TEMP_DIR", "").strip()
@@ -93,6 +98,9 @@ class BrowserRenderer:
         self._negative_lock = threading.Lock()
         self._processes = {}
         self._process_lock = threading.Lock()
+        self.ssrf_policy = ssrf_policy or get_ssrf_policy()
+        self.egress_proxy = egress_proxy or EgressProxy(policy=self.ssrf_policy)
+        self._proxy_finalizer = weakref.finalize(self, self.egress_proxy.close)
         self._closed = False
 
     @property
@@ -162,7 +170,12 @@ class BrowserRenderer:
         except Exception:
             logger.warning("Browser URL validator failed: %s", _safe_target(url))
             return None
-        if validated is True:
+        if isinstance(validated, ApprovedTarget) or isinstance(
+            getattr(validated, "normalized_url", None),
+            str,
+        ):
+            target = validated.normalized_url
+        elif validated is True:
             target = str(url)
         elif isinstance(validated, str) and validated.strip():
             target = validated.strip()
@@ -172,6 +185,12 @@ class BrowserRenderer:
         scheme = urlsplit(target).scheme.lower()
         if scheme not in {"http", "https"}:
             return None
+        try:
+            approved = self.ssrf_policy.resolve_and_validate(target)
+        except (UnsafeTarget, OSError, ValueError):
+            logger.warning("Browser SSRF policy rejected: %s", _safe_target(target))
+            return None
+        target = approved.normalized_url
         key = self._cache_key("url", _cache_target(target), viewport)
         if self._negative_hit(key):
             return None
@@ -191,6 +210,11 @@ class BrowserRenderer:
             processes = tuple(self._processes.values())
         for process in processes:
             self._stop_process(process)
+        if self._proxy_finalizer.alive:
+            try:
+                self._proxy_finalizer()
+            except Exception:
+                logger.exception("Browser egress proxy did not close cleanly")
 
     def _render(
         self,
@@ -211,6 +235,15 @@ class BrowserRenderer:
         try:
             with self._browser_slot(context):
                 context.raise_if_cancelled()
+                if not self.egress_proxy.start():
+                    logger.error("Browser render refused because egress proxy is unavailable")
+                    self._remember_negative(key)
+                    return None
+                proxy_url = self.egress_proxy.proxy_url
+                if not proxy_url:
+                    logger.error("Browser render refused because egress proxy has no endpoint")
+                    self._remember_negative(key)
+                    return None
                 job_dir = Path(
                     tempfile.mkdtemp(prefix="render-", dir=self.temp_root)
                 )
@@ -225,6 +258,7 @@ class BrowserRenderer:
                     (width, height),
                     timeout_seconds,
                     timezone_name,
+                    proxy_url,
                 )
                 popen_kwargs = {
                     "stdin": subprocess.DEVNULL,
@@ -297,6 +331,7 @@ class BrowserRenderer:
         viewport,
         timeout_seconds,
         timezone_name,
+        proxy_url,
     ):
         timeout_ms = int(self._timeout(timeout_seconds) * 1000)
         command = [
@@ -311,8 +346,11 @@ class BrowserRenderer:
             "--disable-extensions",
             "--disable-gpu",
             "--disable-plugins",
+            "--disable-quic",
             "--disable-sync",
-            "--disable-features=Translate,DownloadBubble,OptimizationHints",
+            "--disable-features=Translate,DownloadBubble,OptimizationHints,DnsOverHttps",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
             "--hide-scrollbars",
             "--mute-audio",
             "--no-first-run",
@@ -320,6 +358,8 @@ class BrowserRenderer:
             "--renderer-process-limit=1",
             "--disk-cache-size=1",
             "--media-cache-size=1",
+            f"--proxy-server={proxy_url}",
+            "--proxy-bypass-list=<-loopback>",
             f"--timeout={timeout_ms}",
             f"--virtual-time-budget={timeout_ms}",
         ]

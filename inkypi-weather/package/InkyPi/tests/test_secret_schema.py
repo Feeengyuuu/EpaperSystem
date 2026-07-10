@@ -25,6 +25,14 @@ def test_generated_registry_and_example_match_schema():
     assert EXAMPLE.read_text(encoding="utf-8") == schema.env_example()
 
 
+def test_example_documents_browser_private_target_allowlist():
+    example = SecretSchema.load(DEFAULT_SCHEMA_PATH).env_example()
+
+    assert "# INKYPI_BROWSER_ALLOWED_HOSTS=panel.home.arpa" in example
+    assert "# INKYPI_BROWSER_ALLOWED_CIDRS=192.168.1.0/24" in example
+    assert "Cloud metadata addresses remain denied" in example
+
+
 @pytest.mark.parametrize(
     ("canonical", "alias"),
     [

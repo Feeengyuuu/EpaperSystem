@@ -1,5 +1,6 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from PIL import Image
+from security.ssrf import validate_browser_target
 from utils.image_utils import take_screenshot
 import logging
 
@@ -18,7 +19,13 @@ class Screenshot(BasePlugin):
 
         logger.info(f"Taking screenshot of url: {url}")
 
-        image = take_screenshot(url, capture_dimensions, timeout_ms=40000, timezone_name=timezone_name)
+        image = take_screenshot(
+            url,
+            capture_dimensions,
+            timeout_ms=40000,
+            timezone_name=timezone_name,
+            validator=validate_browser_target,
+        )
 
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")

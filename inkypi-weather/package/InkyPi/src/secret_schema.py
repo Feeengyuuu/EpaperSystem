@@ -23,6 +23,18 @@ RUNTIME_DEFAULTS = (
     ("OPENWEATHER_AUX_MIN_SECONDS", "1800", "Weather safety throttle."),
     ("OPENWEATHER_LOCATION_MIN_SECONDS", "86400", "Weather safety throttle."),
 )
+OPTIONAL_RUNTIME_SETTINGS = (
+    (
+        "INKYPI_BROWSER_ALLOWED_HOSTS",
+        "panel.home.arpa",
+        "Exact private hostnames allowed for browser screenshots.",
+    ),
+    (
+        "INKYPI_BROWSER_ALLOWED_CIDRS",
+        "192.168.1.0/24",
+        "Narrow private CIDRs allowed for browser screenshots.",
+    ),
+)
 
 
 class SecretSchemaError(ValueError):
@@ -233,6 +245,12 @@ class SecretSchema:
         for key, default, note in RUNTIME_DEFAULTS:
             lines.append(f"# {note}")
             lines.append(f"{key}={default}")
+        lines.append("")
+        lines.append("# Optional browser screenshot egress allowlist")
+        lines.append("# Cloud metadata addresses remain denied for every configuration.")
+        for key, example, note in OPTIONAL_RUNTIME_SETTINGS:
+            lines.append(f"# {note}")
+            lines.append(f"# {key}={example}")
         return "\n".join(lines) + "\n"
 
 
