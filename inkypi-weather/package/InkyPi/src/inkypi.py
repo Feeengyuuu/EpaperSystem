@@ -16,6 +16,7 @@ from flask import Flask
 from jinja2 import ChoiceLoader, FileSystemLoader
 
 from blueprints.apikeys import apikeys_bp
+from blueprints.auth import auth_bp
 from blueprints.health import health_bp
 from blueprints.main import main_bp
 from blueprints.playlist import playlist_bp
@@ -32,6 +33,8 @@ from security.request_limits import (
     WAITRESS_MAX_REQUEST_BODY_BYTES,
     configure_request_limits,
 )
+from security.credentials import CredentialStore, UnavailableCredentialStore
+from security.request_guard import install_request_guards
 from utils.app_utils import generate_startup_image
 from utils.browser_renderer import close_browser_renderer
 from utils.cache_manager import configure_cache_manager
@@ -150,6 +153,13 @@ def build_application(
     app.config["READINESS_EVALUATOR"] = ReadinessEvaluator()
     configure_request_limits(app)
     app.secret_key = load_or_create_secret_key(paths.flask_secret_file)
+    try:
+        credential_store = CredentialStore(paths)
+    except Exception as error:
+        logger.exception("Administrator credential store could not be initialized")
+        _mark_startup_degraded(app, "credentials", error)
+        credential_store = UnavailableCredentialStore()
+    app.config["CREDENTIAL_STORE"] = credential_store
 
     app.register_blueprint(main_bp)
     app.register_blueprint(health_bp)
@@ -157,7 +167,9 @@ def build_application(
     app.register_blueprint(plugin_bp)
     app.register_blueprint(playlist_bp)
     app.register_blueprint(apikeys_bp)
+    app.register_blueprint(auth_bp)
     register_plugin_blueprints(app)
+    install_request_guards(app, credential_store, device_config)
 
     if register_heif_opener:
         register_heif_opener()

@@ -19,6 +19,8 @@ usage() {
     echo "Usage:"
     echo "  inkypi run"
     echo "  inkypi plugin <subcommand> [args]"
+    echo "  inkypi admin bootstrap"
+    echo "  inkypi admin recover"
     echo ""
 }
 
@@ -31,12 +33,29 @@ run_plugin_cli() {
     exec "$PROGRAM_PATH/cli/inkypi-plugin" "$@"
 }
 
+run_admin_cli() {
+    subcommand="${1:-}"
+    case "$subcommand" in
+        bootstrap|recover)
+            source "$VENV_PATH/bin/activate"
+            exec python "$PROGRAM_PATH/install/bootstrap_admin.py" "$subcommand"
+            ;;
+        *)
+            echo "Usage: inkypi admin <bootstrap|recover>"
+            exit 1
+            ;;
+    esac
+}
+
 case "$command" in
     run)
         run_app
         ;;
     plugin)
         run_plugin_cli "$@"
+        ;;
+    admin)
+        run_admin_cli "$@"
         ;;
     ""|-h|--help|help)
         usage

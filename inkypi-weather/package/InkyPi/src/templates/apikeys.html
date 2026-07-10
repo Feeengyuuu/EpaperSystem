@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="inkypi-csrf-token" content="{{ inkypi_csrf_token }}">
+    <meta name="inkypi-plain-http" content="{{ 'true' if inkypi_plain_http_warning else 'false' }}">
+    <script src="{{ url_for('static', filename='inkypi-security.js') }}" defer></script>
     <title>API Keys</title>
     <script>
         (function() {
