@@ -1832,3 +1832,162 @@ class TestPlaylistManagerSchedulerSnapshots:
         }
         assert results["snapshot"].name == "Default"
         assert results["update"].settings["updated"] is True
+
+
+class TestPlaylistManagerAtomicWebMutations:
+    @staticmethod
+    def _manager():
+        return PlaylistManager.from_dict({
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [
+                    {
+                        "plugin_id": "weather",
+                        "name": "Home",
+                        "plugin_settings": {"units": "metric"},
+                        "refresh": {"interval": 300},
+                        "instance_uuid": "home-uuid",
+                    },
+                    {
+                        "plugin_id": "clock",
+                        "name": "Office",
+                        "plugin_settings": {},
+                        "refresh": {"scheduled": "08:00"},
+                        "instance_uuid": "office-uuid",
+                    },
+                ],
+            }],
+        })
+
+    def test_legacy_identity_resolver_returns_detached_immutable_snapshot(self):
+        manager = self._manager()
+
+        resolved = manager.resolve_plugin_instance_snapshot(
+            "Default",
+            "weather",
+            "Home",
+        )
+        manager.update_plugin_instance(
+            "home-uuid",
+            settings={"units": "imperial"},
+        )
+
+        assert resolved.playlist_name == "Default"
+        assert resolved.instance.instance_uuid == "home-uuid"
+        assert resolved.instance.settings["units"] == "metric"
+        with pytest.raises(TypeError):
+            resolved.instance.settings["units"] = "mutated"
+
+    def test_atomic_update_returns_old_and_new_snapshots_with_one_revision_step(self):
+        manager = self._manager()
+        before = manager.snapshot_instance("home-uuid")
+
+        mutation = manager.update_plugin_instance_atomic(
+            before.instance_uuid,
+            settings={"units": "imperial"},
+            refresh={"interval": 600},
+            name="Home",
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+        )
+
+        assert mutation.playlist_name == "Default"
+        assert mutation.old_snapshot == before
+        assert mutation.new_snapshot.settings["units"] == "imperial"
+        assert mutation.new_snapshot.refresh["interval"] == 600
+        assert mutation.new_snapshot.settings_revision == before.settings_revision + 1
+        assert manager.snapshot_instance(before.instance_uuid) == mutation.new_snapshot
+
+    def test_atomic_update_rejects_stale_revision_without_mutation(self):
+        manager = self._manager()
+        before = manager.snapshot_instance("home-uuid")
+
+        result = manager.update_plugin_instance_atomic(
+            before.instance_uuid,
+            settings={"units": "imperial"},
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision + 1,
+        )
+
+        assert result is None
+        assert manager.snapshot_instance(before.instance_uuid) == before
+
+    def test_atomic_delete_requires_both_tokens_and_returns_old_snapshot(self):
+        manager = self._manager()
+        before = manager.snapshot_instance("home-uuid")
+
+        assert manager.delete_plugin_instance_atomic(
+            before.instance_uuid,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision + 1,
+        ) is None
+        mutation = manager.delete_plugin_instance_atomic(
+            before.instance_uuid,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+        )
+
+        assert mutation.playlist_name == "Default"
+        assert mutation.old_snapshot == before
+        assert mutation.new_snapshot is None
+        assert manager.snapshot_instance(before.instance_uuid) is None
+
+    def test_atomic_playlist_delete_returns_every_removed_snapshot(self):
+        manager = self._manager()
+
+        deleted = manager.delete_playlist_atomic("Default")
+
+        assert deleted.name == "Default"
+        assert {item.instance_uuid for item in deleted.removed_instances} == {
+            "home-uuid",
+            "office-uuid",
+        }
+        assert manager.get_playlist_names() == []
+        assert manager.delete_playlist_atomic("Default") is None
+
+    def test_snapshot_add_returns_new_identity_without_exposing_live_instance(self):
+        manager = self._manager()
+        source = {
+            "plugin_id": "news",
+            "name": "Headlines",
+            "plugin_settings": {"region": "us"},
+            "refresh": {"interval": 900},
+        }
+
+        added = manager.add_plugin_to_playlist_snapshot("Default", source)
+        source["plugin_settings"]["region"] = "mutated"
+
+        assert added.playlist_name == "Default"
+        assert added.instance.plugin_id == "news"
+        assert added.instance.settings["region"] == "us"
+        assert manager.snapshot_instance(added.instance.instance_uuid) == added.instance
+
+
+@pytest.mark.parametrize(
+    "legacy_interval",
+    [0, -1, "-5", float("-inf"), "-Infinity"],
+)
+def test_from_dict_normalizes_legacy_nonpositive_interval_once(
+    legacy_interval,
+    caplog,
+):
+    caplog.set_level("WARNING", logger="src.model")
+
+    plugin = PluginInstance.from_dict({
+        "plugin_id": "legacy",
+        "name": "Legacy",
+        "plugin_settings": {},
+        "refresh": {"interval": legacy_interval},
+        "latest_refresh_time": "2026-07-09T12:00:00+00:00",
+    })
+
+    assert plugin.refresh == {"interval": 60}
+    assert not plugin.should_refresh(datetime(2026, 7, 9, 12, 0, 30, tzinfo=timezone.utc))
+    diagnostics = [
+        record
+        for record in caplog.records
+        if "legacy non-positive refresh interval" in record.getMessage().lower()
+    ]
+    assert len(diagnostics) == 1

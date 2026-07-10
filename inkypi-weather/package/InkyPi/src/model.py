@@ -45,6 +45,25 @@ class PlaylistSelectionSnapshot:
     instance: PluginInstanceSnapshot
 
 
+@dataclass(frozen=True)
+class PluginInstanceMutationResult:
+    """Detached before/after views produced by one atomic mutation."""
+
+    playlist_name: str
+    old_snapshot: PluginInstanceSnapshot
+    new_snapshot: PluginInstanceSnapshot | None
+
+
+@dataclass(frozen=True)
+class PlaylistDeletionResult:
+    """Detached playlist contents removed by one atomic deletion."""
+
+    name: str
+    start_time: str
+    end_time: str
+    removed_instances: tuple[PluginInstanceSnapshot, ...]
+
+
 class RefreshInfo:
     """Keeps track of refresh metadata.
 
@@ -146,6 +165,32 @@ class PlaylistManager:
         with self._lock:
             match = self._find_instance_by_uuid(instance_uuid)
             return match[2].snapshot() if match else None
+
+    def resolve_plugin_instance_snapshot(
+        self,
+        playlist_name,
+        plugin_id,
+        instance_name,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Resolve a legacy web identity to one detached immutable selection."""
+        with self._lock:
+            playlist = next(
+                (item for item in self.playlists if item.name == playlist_name),
+                None,
+            )
+            if playlist is None:
+                return None
+            instance = next(
+                (
+                    item
+                    for item in playlist.plugins
+                    if item.plugin_id == plugin_id and item.name == instance_name
+                ),
+                None,
+            )
+            if instance is None:
+                return None
+            return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
 
     def snapshot_active_playlist(
         self,
@@ -383,6 +428,50 @@ class PlaylistManager:
 
             return instance.snapshot()
 
+    def update_plugin_instance_atomic(
+        self,
+        instance_uuid,
+        *,
+        settings=None,
+        refresh=None,
+        name=None,
+        expected_generation,
+        expected_settings_revision,
+    ) -> PluginInstanceMutationResult | None:
+        """CAS-update an instance and return immutable before/after snapshots."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+
+            playlist, _index, instance = match
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+            ):
+                return None
+
+            old_snapshot = instance.snapshot()
+            settings_changed = settings is not None and settings != instance.settings
+            refresh_changed = refresh is not None and refresh != instance.refresh
+            updated_name = str(name) if name is not None else instance.name
+            name_changed = name is not None and updated_name != instance.name
+
+            if settings_changed:
+                instance.settings = deepcopy(settings)
+            if refresh_changed:
+                instance.refresh = deepcopy(refresh)
+            if name_changed:
+                instance.name = updated_name
+            if settings_changed or refresh_changed or name_changed:
+                instance.settings_revision += 1
+
+            return PluginInstanceMutationResult(
+                playlist_name=playlist.name,
+                old_snapshot=old_snapshot,
+                new_snapshot=instance.snapshot(),
+            )
+
     def delete_plugin_instance(self, instance_uuid, *, expected_generation=None):
         """Atomically delete an instance, optionally rejecting a stale generation."""
         with self._lock:
@@ -400,6 +489,34 @@ class PlaylistManager:
             snapshot = instance.snapshot()
             playlist.plugins.pop(index)
             return snapshot
+
+    def delete_plugin_instance_atomic(
+        self,
+        instance_uuid,
+        *,
+        expected_generation,
+        expected_settings_revision,
+    ) -> PluginInstanceMutationResult | None:
+        """CAS-delete an instance and return its detached prior snapshot."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+
+            playlist, index, instance = match
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+            ):
+                return None
+
+            old_snapshot = instance.snapshot()
+            playlist.plugins.pop(index)
+            return PluginInstanceMutationResult(
+                playlist_name=playlist.name,
+                old_snapshot=old_snapshot,
+                new_snapshot=None,
+            )
 
     def determine_active_playlist(self, current_datetime):
         """Determine the active playlist based on the current time."""
@@ -438,6 +555,38 @@ class PlaylistManager:
                 logger.warning(f"Playlist '{playlist_name}' not found.")
             return False
 
+    def add_plugin_to_playlist_snapshot(
+        self,
+        playlist_name,
+        plugin_data,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Add an instance and return its detached runtime identity."""
+        with self._lock:
+            playlist = next(
+                (item for item in self.playlists if item.name == playlist_name),
+                None,
+            )
+            if playlist is None:
+                logger.warning("Playlist '%s' not found.", playlist_name)
+                return None
+            if not playlist.add_plugin(plugin_data):
+                return None
+
+            added_instance = playlist.plugins[-1]
+            other_uuids = {
+                instance.instance_uuid
+                for current_playlist in self.playlists
+                for instance in current_playlist.plugins
+                if instance is not added_instance
+            }
+            forbidden_uuids = set(other_uuids)
+            forbidden_uuids.add(str(added_instance.instance_uuid))
+            added_instance.instance_uuid = self._new_instance_uuid(forbidden_uuids)
+            return PlaylistSelectionSnapshot(
+                playlist.name,
+                added_instance.snapshot(),
+            )
+
     def add_playlist(self, name, start_time=None, end_time=None):
         """Creates and adds a new playlist with the given start and end times.
         Returns False if a playlist with the same name already exists."""
@@ -472,6 +621,24 @@ class PlaylistManager:
         """Deletes the playlist with the specified name."""
         with self._lock:
             self.playlists = [p for p in self.playlists if p.name != name]
+
+    def delete_playlist_atomic(self, name) -> PlaylistDeletionResult | None:
+        """Delete one playlist and return every removed instance snapshot."""
+        with self._lock:
+            for index, playlist in enumerate(self.playlists):
+                if playlist.name != name:
+                    continue
+                removed = PlaylistDeletionResult(
+                    name=playlist.name,
+                    start_time=playlist.start_time,
+                    end_time=playlist.end_time,
+                    removed_instances=tuple(
+                        instance.snapshot() for instance in playlist.plugins
+                    ),
+                )
+                self.playlists.pop(index)
+                return removed
+            return None
 
     def to_dict(self):
         with self._lock:
@@ -921,11 +1088,30 @@ class PluginInstance:
 
     @classmethod
     def from_dict(cls, data):
+        refresh = deepcopy(data["refresh"])
+        interval = refresh.get("interval") if isinstance(refresh, dict) else None
+        if interval is not None and not isinstance(interval, bool):
+            try:
+                normalized_interval = float(interval)
+            except (TypeError, ValueError, OverflowError):
+                normalized_interval = None
+            if (
+                normalized_interval is not None
+                and normalized_interval <= 0
+            ):
+                logger.warning(
+                    "Legacy non-positive refresh interval for plugin '%s' "
+                    "instance '%s' normalized to 60 seconds: %r",
+                    data.get("plugin_id"),
+                    data.get("name"),
+                    interval,
+                )
+                refresh["interval"] = 60
         return cls(
             plugin_id=data["plugin_id"],
             name=data["name"],
             settings=data["plugin_settings"],
-            refresh=data["refresh"],
+            refresh=refresh,
             latest_refresh_time=data.get("latest_refresh_time"),
             instance_uuid=data.get("instance_uuid"),
             structural_generation=data.get("structural_generation", 1),
