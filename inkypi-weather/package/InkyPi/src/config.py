@@ -1,13 +1,34 @@
 import os
 import json
 import logging
-import tempfile
 import threading
+from collections.abc import Mapping
+
 from dotenv import load_dotenv
+from config_store import ConfigConflictError, ConfigStore, ConfigStoreError
 from model import PlaylistManager, RefreshInfo
 from plugins.plugin_manifest import CapabilityCache, PluginManifest
 
 logger = logging.getLogger(__name__)
+
+_MODEL_CONFIG_FIELDS = ("playlist_config", "refresh_info")
+_MISSING_CONFIG_VALUE = object()
+_UNSET_MODEL_BASELINE = object()
+
+
+class ConfigLoadError(ConfigStoreError):
+    """The facade cannot expose a trustworthy initial device configuration."""
+
+
+def _detach_json(value):
+    """Return legacy mutable JSON containers from a frozen store value."""
+
+    if isinstance(value, Mapping):
+        return {key: _detach_json(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_detach_json(item) for item in value]
+    return value
+
 
 ENV_KEY_ALIASES = {
     "GROQ_API_KEY": ("Groq_V2", "GROQ_KEY"),
@@ -22,7 +43,10 @@ ENV_KEY_ALIASES = {
     "TELEGRAM_SESSION_PATH": ("TG_SESSION_PATH", "TELEGRAM_ACCOUNT_SESSION", "TELEGRAM_DIGEST_SESSION_PATH"),
 }
 
+
 class Config:
+    CONFIG_COMMIT_ATTEMPTS = 4
+
     # Base path for the project directory
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,31 +72,33 @@ class Config:
             self.flask_secret_file = runtime_paths.flask_secret_file
         self._write_lock = threading.RLock()
         self._env_file_mtimes = None
-        self.config = self.read_config()
+        self._config_store = ConfigStore(self.config_file)
+        self._require_readable_state(self._config_store.load())
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
 
     def read_config(self):
-        """Reads the device config JSON file and returns it as a dictionary."""
+        """Reload and return a detached device config, or report invalid state."""
         logger.debug(f"Reading device config from {self.config_file}")
-        try:
-            with open(self.config_file, encoding="utf-8") as f:
-                config = json.load(f)
-        except FileNotFoundError:
-            logger.warning("Device config file not found: %s", self.config_file)
-            return {}
-        except json.JSONDecodeError:
-            logger.exception("Device config file is not valid JSON: %s", self.config_file)
-            return {}
-
-        if not isinstance(config, dict):
-            logger.warning("Device config root must be an object, got %s", type(config).__name__)
-            return {}
+        store = getattr(self, "_config_store", None)
+        if store is None or str(store.config_path) != os.path.abspath(self.config_file):
+            store = ConfigStore(self.config_file)
+            self._config_store = store
+        state = store.load()
+        self._require_readable_state(state)
+        config = {} if state.snapshot is None else _detach_json(state.snapshot.data)
 
         logger.debug("Loaded config:\n%s", json.dumps(config, indent=3))
-
         return config
+
+    def _require_readable_state(self, state):
+        if state.snapshot is not None or state.status.source == "missing":
+            return
+        reason = state.status.degraded_reason or state.status.source
+        raise ConfigLoadError(
+            f"device config is invalid or unavailable ({reason}): {self.config_file}"
+        )
 
     def read_plugins_list(self):
         """Reads the plugin-info.json config JSON from each plugin folder. Excludes the base plugin."""
@@ -104,52 +130,57 @@ class Config:
         return plugins_list
 
     def write_config(self):
-        """Updates the cached config from the model objects and writes to the config file."""
+        """Persist one detached model snapshot through a bounded CAS commit."""
         with self._get_write_lock():
             logger.debug(f"Writing device config to {self.config_file}")
-            self.update_value("playlist_config", self.playlist_manager.to_dict())
-            self.update_value("refresh_info", self.refresh_info.to_dict())
-            config_dir = os.path.dirname(self.config_file)
-            os.makedirs(config_dir, exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(
-                prefix=".device.",
-                suffix=".json.tmp",
-                dir=config_dir,
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as outfile:
-                    self._write_json(outfile)
-                try:
-                    os.replace(tmp_path, self.config_file)
-                    tmp_path = None
-                except OSError:
-                    logger.exception(
-                        "Atomic config replace failed; falling back to direct write: %s",
-                        self.config_file,
-                    )
-                    with open(self.config_file, "w", encoding="utf-8") as outfile:
-                        self._write_json(outfile)
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        logger.warning("Could not remove temporary config file: %s", tmp_path)
+            model_values = self._capture_model_values()
+            self._commit_updates({}, model_values=model_values)
 
     def _get_write_lock(self):
         if not hasattr(self, "_write_lock"):
             self._write_lock = threading.RLock()
         return self._write_lock
 
-    def _write_json(self, outfile):
-        json.dump(self.config, outfile, indent=4)
-        outfile.write("\n")
-
     def get_config(self, key=None, default=None):
-        """Gets the value of a specific configuration key or returns the entire config if none provided."""
+        """Read the current immutable snapshot through legacy mutable values."""
+        store = getattr(self, "_config_store", None)
+        if store is None:
+            data = getattr(self, "_compat_config", {})
+        else:
+            state = store.current()
+            self._require_readable_state(state)
+            data = {} if state.snapshot is None else state.snapshot.data
         if key is not None:
-            return self.config.get(key, default)
-        return self.config
+            if key not in data:
+                return default
+            return _detach_json(data[key])
+        return _detach_json(data)
+
+    @property
+    def config(self):
+        """Detached compatibility view; the ConfigStore remains authoritative."""
+
+        return self.get_config()
+
+    @config.setter
+    def config(self, value):
+        """Keep legacy assignment safe, including lightweight ``__new__`` users."""
+
+        replacement = dict(value)
+        if not hasattr(self, "_config_store"):
+            self._compat_config = _detach_json(replacement)
+            return
+        with self._get_write_lock():
+            model_values = (
+                self._capture_model_values()
+                if hasattr(self, "playlist_manager") and hasattr(self, "refresh_info")
+                else None
+            )
+            self._commit_updates(
+                replacement,
+                model_values=model_values,
+                replace=True,
+            )
 
     def get_plugins(self):
         """Return JSON-safe plugin configurations in the configured order."""
@@ -167,7 +198,7 @@ class Config:
     def _ordered_plugins(self):
         """Return the internal plugin configurations in the configured order."""
 
-        plugin_order = self.config.get('plugin_order', [])
+        plugin_order = self.get_config('plugin_order', [])
 
         if not plugin_order:
             return list(self.plugins_list)
@@ -201,15 +232,77 @@ class Config:
         return (int(width), int(height))
 
     def update_config(self, config):
-        """Updates the config with the new values provided and writes to the config file."""
-        self.config.update(config)
-        self.write_config()
+        """Merge settings and the current models into one transactional commit."""
+        updates = dict(config)
+        with self._get_write_lock():
+            model_values = self._capture_model_values()
+            self._commit_updates(updates, model_values=model_values)
 
     def update_value(self, key, value, write=False):
-        """Updates a specific key in the configuration with a new value and optionally writes it to the config file."""
-        self.config[key] = value
-        if write:
-            self.write_config()
+        """Transactionally update one key while retaining the legacy signature."""
+        with self._get_write_lock():
+            # A full model snapshot also upgrades legacy playlist instances before
+            # ConfigStore applies its strict post-migration validation.  ``write``
+            # remains accepted for callers compiled against the former deferred API;
+            # every mutation is durable now.
+            model_values = self._capture_model_values()
+            self._commit_updates({key: value}, model_values=model_values)
+
+    def _capture_model_values(self):
+        # PlaylistManager.to_dict() owns its lock and returns a detached point-in-time
+        # value.  It has returned before ConfigStore.commit() can acquire its lock.
+        playlist_config = self.playlist_manager.to_dict()
+        playlist_names = {
+            playlist.get("name")
+            for playlist in playlist_config.get("playlists", [])
+            if isinstance(playlist, dict)
+        }
+        if playlist_config.get("active_playlist") not in playlist_names:
+            playlist_config["active_playlist"] = None
+        return {
+            "playlist_config": playlist_config,
+            "refresh_info": self.refresh_info.to_dict(),
+        }
+
+    def _commit_updates(self, updates, *, model_values=None, replace=False):
+        last_conflict = None
+        model_baseline = _UNSET_MODEL_BASELINE
+        for _attempt in range(self.CONFIG_COMMIT_ATTEMPTS):
+            state = self._config_store.current()
+            self._require_readable_state(state)
+            snapshot = state.snapshot
+            expected_version = snapshot.version if snapshot is not None else 0
+            snapshot_data = {} if snapshot is None else snapshot.data
+            current_model_values = tuple(
+                _detach_json(snapshot_data[field])
+                if field in snapshot_data
+                else _MISSING_CONFIG_VALUE
+                for field in _MODEL_CONFIG_FIELDS
+            )
+            if model_baseline is _UNSET_MODEL_BASELINE:
+                model_baseline = current_model_values
+            elif replace or (
+                model_values is not None and current_model_values != model_baseline
+            ):
+                # A stale model snapshot or whole-config replacement cannot be
+                # safely rebased.  Preserve the concurrent revision and make the
+                # caller resolve the reported CAS conflict explicitly.
+                raise last_conflict
+            candidate = (
+                {}
+                if replace or snapshot is None
+                else _detach_json(snapshot_data)
+            )
+            candidate.update(_detach_json(updates))
+            if model_values is not None:
+                candidate.update(_detach_json(model_values))
+            try:
+                self._config_store.commit(expected_version, candidate)
+            except ConfigConflictError as error:
+                last_conflict = error
+                continue
+            return
+        raise last_conflict
 
     def load_env_key(self, key):
         """Loads an environment variable from stable InkyPi .env locations."""
@@ -277,7 +370,53 @@ class Config:
         playlist_manager = PlaylistManager.from_dict(self.get_config("playlist_config", default={}))
         if not playlist_manager.playlists:
             playlist_manager.add_default_playlist()
+        playlist_snapshot = playlist_manager.to_dict()
+        if self._rename_duplicate_legacy_instances(playlist_snapshot):
+            playlist_manager = PlaylistManager.from_dict(playlist_snapshot)
         return playlist_manager
+
+    @staticmethod
+    def _rename_duplicate_legacy_instances(playlist_config):
+        """Migrate ambiguous legacy names without dropping either instance."""
+
+        playlists = playlist_config.get("playlists", [])
+        reserved = {
+            (instance.get("plugin_id"), instance.get("name"))
+            for playlist in playlists
+            for instance in playlist.get("plugins", [])
+        }
+        used = set()
+        renamed = False
+        for playlist in playlists:
+            for instance in playlist.get("plugins", []):
+                plugin_id = instance.get("plugin_id")
+                original_name = instance.get("name")
+                identity = (plugin_id, original_name)
+                if identity not in used:
+                    used.add(identity)
+                    continue
+
+                uuid_suffix = str(instance.get("instance_uuid", "instance"))
+                uuid_suffix = uuid_suffix.replace("-", "")[:8] or "instance"
+                migrated_name = f"{original_name} ({uuid_suffix})"
+                sequence = 2
+                candidate_identity = (plugin_id, migrated_name)
+                while candidate_identity in reserved or candidate_identity in used:
+                    migrated_name = f"{original_name} ({uuid_suffix}-{sequence})"
+                    candidate_identity = (plugin_id, migrated_name)
+                    sequence += 1
+                instance["name"] = migrated_name
+                used.add(candidate_identity)
+                renamed = True
+                logger.warning(
+                    "Migrated duplicate legacy plugin identity '%s/%s' in playlist "
+                    "'%s' to '%s'; instance UUID and settings were preserved.",
+                    plugin_id,
+                    original_name,
+                    playlist.get("name"),
+                    migrated_name,
+                )
+        return renamed
 
     def load_refresh_info(self):
         """Loads the refresh information from the config."""
