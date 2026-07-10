@@ -337,6 +337,12 @@ def test_operations_scripts_are_strict_and_forbid_mutable_deployment_paths():
     assert "accept-new" not in deploy
 
 
+def test_optional_packaged_driver_validation_returns_success_when_unset():
+    installer = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert '[[ -n "$WS_TYPE" ]] || return 0' in installer
+
+
 def test_installed_launcher_exports_release_identity_and_update_entrypoint():
     launcher = (INSTALL_ROOT / "inkypi").read_text(encoding="utf-8")
 

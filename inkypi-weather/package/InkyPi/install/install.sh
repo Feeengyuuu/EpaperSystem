@@ -144,7 +144,7 @@ ensure_service_user() {
 }
 
 validate_packaged_driver() {
-  [[ -n "$WS_TYPE" ]] || return
+  [[ -n "$WS_TYPE" ]] || return 0
   local driver="$SRC_PATH/display/waveshare_epd/$WS_TYPE.py"
   local epdconfig="$SRC_PATH/display/waveshare_epd/epdconfig.py"
   [[ -f "$driver" ]] || fail "Waveshare driver is not packaged: $driver"
