@@ -115,7 +115,11 @@ def _parse_panel(comic_name, feed):
 
 def _panel_cache_path(comic_name):
     digest = hashlib.sha256(comic_name.encode("utf-8")).hexdigest()[:16]
-    cache_dir = os.path.join(os.path.dirname(__file__), "cache")
+    runtime_root = os.getenv("INKYPI_CACHE_DIR", "").strip()
+    if runtime_root:
+        cache_dir = os.path.join(os.path.expanduser(runtime_root), "comic")
+    else:
+        cache_dir = os.path.join(os.path.dirname(__file__), "cache")
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, f"panel-{digest}.json")
 

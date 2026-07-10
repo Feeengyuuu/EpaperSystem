@@ -496,10 +496,11 @@ class RedditRule34Hot(PixivR18Ranking):
         return self._now_utc().astimezone().date().isoformat()
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_REDDIT_RULE34_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".reddit_rule34_hot_cache"))
+        return self.cache_dir(
+            env_var="INKYPI_REDDIT_RULE34_CACHE",
+            leaf=".reddit_rule34_hot_cache",
+            create=False,
+        )
 
 
 def _safe_int(value):

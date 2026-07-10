@@ -98,12 +98,59 @@ class BasePlugin:
         override = os.getenv(env_var) if env_var else None
         if strip and override is not None:
             override = override.strip()
-        if override:
-            path = Path(override)
-        elif leaf is not None:
-            path = Path(self.get_plugin_dir(leaf))
+
+        runtime_root_raw = os.getenv("INKYPI_CACHE_DIR", "").strip()
+        runtime_root = Path(runtime_root_raw).expanduser() if runtime_root_raw else None
+        if runtime_root is not None:
+            plugin_root = runtime_root / "plugins" / self.get_plugin_id()
         else:
-            path = Path(self.get_plugin_dir())
+            plugin_root = Path(self.get_plugin_dir())
+
+        if override:
+            path = Path(override).expanduser()
+            if runtime_root is not None and not path.is_absolute():
+                path = plugin_root / path
+        elif leaf is not None:
+            path = plugin_root / leaf
+        else:
+            path = plugin_root
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def data_dir(
+        self,
+        env_var=None,
+        leaf=None,
+        create=True,
+        strip=False,
+        legacy_leaf=None,
+    ):
+        """Resolve durable per-plugin state outside the immutable release tree.
+
+        ``legacy_leaf`` preserves an existing development location while
+        production uses ``INKYPI_DATA_DIR/plugins/<plugin id>/<leaf>``.
+        """
+        override = os.getenv(env_var) if env_var else None
+        if strip and override is not None:
+            override = override.strip()
+
+        runtime_root_raw = os.getenv("INKYPI_DATA_DIR", "").strip()
+        runtime_root = Path(runtime_root_raw).expanduser() if runtime_root_raw else None
+        if runtime_root is not None:
+            plugin_root = runtime_root / "plugins" / self.get_plugin_id()
+        else:
+            plugin_root = Path(self.get_plugin_dir())
+
+        if override:
+            path = Path(override).expanduser()
+            if runtime_root is not None and not path.is_absolute():
+                path = plugin_root / path
+        elif runtime_root is not None:
+            path = plugin_root / leaf if leaf is not None else plugin_root
+        else:
+            fallback_leaf = legacy_leaf if legacy_leaf is not None else leaf
+            path = plugin_root / fallback_leaf if fallback_leaf is not None else plugin_root
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path

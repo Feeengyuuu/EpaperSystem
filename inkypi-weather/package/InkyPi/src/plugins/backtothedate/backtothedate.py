@@ -601,7 +601,7 @@ class BacktotheDate(BasePlugin):
         return response.text
 
     def _state_path(self):
-        return Path(self.get_plugin_dir(".backtothedate_state.json"))
+        return self.cache_dir() / ".backtothedate_state.json"
 
     def _read_state(self):
         path = self._state_path()

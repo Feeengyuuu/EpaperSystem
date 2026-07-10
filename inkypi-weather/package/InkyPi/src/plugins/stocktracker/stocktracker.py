@@ -54,7 +54,19 @@ if os.path.isdir(GOOGLE_VENDOR_DIR):
 	except Exception:
 		pass
 
-MPLCONFIGDIR = os.path.join(os.path.dirname(__file__), "_mplconfig")
+def _default_mpl_config_dir():
+	cache_root = os.getenv("INKYPI_CACHE_DIR", "").strip()
+	if cache_root:
+		return os.path.join(
+			os.path.expanduser(cache_root),
+			"plugins",
+			"stocktracker",
+			"matplotlib",
+		)
+	return os.path.join(os.path.dirname(__file__), "_mplconfig")
+
+
+MPLCONFIGDIR = _default_mpl_config_dir()
 os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
@@ -794,13 +806,18 @@ class StockTracker(BasePlugin):
 	def _portfolio_history_path(self, stock_data):
 		explicit_file = os.getenv(PORTFOLIO_HISTORY_FILE_ENV)
 		if explicit_file:
+			explicit_file = os.path.expanduser(explicit_file)
+			if not os.path.isabs(explicit_file) and os.getenv("INKYPI_DATA_DIR", "").strip():
+				explicit_file = os.path.join(str(self.data_dir()), explicit_file)
 			return os.path.abspath(explicit_file)
 
-		history_dir = os.getenv(PORTFOLIO_HISTORY_DIR_ENV)
-		if not history_dir:
-			history_dir = os.path.join(os.path.dirname(__file__), ".stocktracker_history")
+		history_dir = self.data_dir(
+			env_var=PORTFOLIO_HISTORY_DIR_ENV,
+			leaf="history",
+			legacy_leaf=".stocktracker_history",
+		)
 		history_key = self._portfolio_history_key(stock_data)
-		return os.path.abspath(os.path.join(history_dir, f"{history_key}.json"))
+		return os.path.abspath(os.path.join(str(history_dir), f"{history_key}.json"))
 
 	@staticmethod
 	def _portfolio_history_key(stock_data):

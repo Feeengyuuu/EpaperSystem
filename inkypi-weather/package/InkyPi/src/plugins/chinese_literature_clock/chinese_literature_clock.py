@@ -1,7 +1,6 @@
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
@@ -185,10 +184,10 @@ class ChineseLiteratureClock(BasePlugin):
             return None
 
     def _open_library_cache_dir(self):
-        override = os.getenv("INKYPI_CHINESE_LITCLOCK_OPEN_LIBRARY_CACHE")
-        path = Path(override) if override else Path(self.get_plugin_dir(".open_library_cache"))
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.cache_dir(
+            env_var="INKYPI_CHINESE_LITCLOCK_OPEN_LIBRARY_CACHE",
+            leaf=".open_library_cache",
+        )
 
     def _build_source_block(self, book, author, metadata=None):
         metadata = metadata if isinstance(metadata, dict) else None

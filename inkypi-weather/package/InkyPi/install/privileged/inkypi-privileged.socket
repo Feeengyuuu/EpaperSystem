@@ -1,0 +1,12 @@
+[Unit]
+Description=InkyPi fixed privileged action socket
+
+[Socket]
+ListenStream=/run/inkypi-privileged.sock
+SocketUser=root
+SocketGroup=inkypi
+SocketMode=0660
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

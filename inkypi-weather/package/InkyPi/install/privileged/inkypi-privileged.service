@@ -1,0 +1,30 @@
+[Unit]
+Description=InkyPi fixed privileged action broker
+Requires=inkypi-privileged.socket
+After=inkypi-privileged.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/libexec/inkypi-privileged
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=2
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_BOOT
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_BOOT
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictRealtime=true
+RestrictSUIDSGID=true
+UMask=0077

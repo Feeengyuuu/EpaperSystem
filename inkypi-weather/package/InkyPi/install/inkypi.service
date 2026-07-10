@@ -1,12 +1,16 @@
 [Unit]
 Description=InkyPi App
-After=network-online.target
+After=network-online.target inkypi-privileged.socket
 Wants=network-online.target
+Requires=inkypi-privileged.socket
 
 [Service]
-User=root
+User=inkypi
+Group=inkypi
 RuntimeDirectory=inkypi
-WorkingDirectory=/run/inkypi
+WorkingDirectory=/opt/inkypi/current/src
+EnvironmentFile=-/etc/inkypi/inkypi.env
+Environment="PYTHONDONTWRITEBYTECODE=1" "INKYPI_CACHE_DIR=/var/cache/inkypi" "INKYPI_DATA_DIR=/var/lib/inkypi/data"
 ExecStart=/usr/local/bin/inkypi run
 Restart=on-failure
 RestartSec=60
@@ -16,6 +20,14 @@ StandardOutput=journal
 StandardError=journal
 CPUQuota=40%
 MemoryMax=200M
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/inkypi /var/cache/inkypi /run/inkypi /etc/inkypi
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

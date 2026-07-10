@@ -1,17 +1,28 @@
 #!/bin/bash
+set -Eeuo pipefail
 
 # Formatting stuff
-bold=$(tput bold)
-normal=$(tput sgr0)
-red=$(tput setaf 1)
-green=$(tput setaf 2)
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+  bold=$(tput bold)
+  normal=$(tput sgr0)
+  red=$(tput setaf 1)
+  green=$(tput setaf 2)
+else
+  bold=""
+  normal=""
+  red=""
+  green=""
+fi
 
 APPNAME="inkypi"
-INSTALL_PATH="/usr/local/$APPNAME"
+INSTALL_PATH="/opt/$APPNAME"
 BINPATH="/usr/local/bin"
 VENV_PATH="$INSTALL_PATH/venv_$APPNAME"
 SERVICE_FILE="/etc/systemd/system/$APPNAME.service"
-CONFIG_DIR="$INSTALL_PATH/src/config"
+PRIVILEGED_SOCKET_FILE="/etc/systemd/system/inkypi-privileged.socket"
+PRIVILEGED_SERVICE_FILE="/etc/systemd/system/inkypi-privileged.service"
+PRIVILEGED_BROKER="/usr/local/libexec/inkypi-privileged"
+CONFIG_DIR="/var/lib/inkypi/config"
 
 echo_success() {
   echo -e "$1 [\e[32m\xE2\x9C\x94\e[0m]"
@@ -58,25 +69,22 @@ disable_service() {
   else
     echo_success "\tService file does not exist. Nothing to remove."
   fi
+  if /usr/bin/systemctl is-active --quiet inkypi-privileged.service; then
+    /usr/bin/systemctl stop inkypi-privileged.service
+  fi
+  if /usr/bin/systemctl is-active --quiet inkypi-privileged.socket; then
+    /usr/bin/systemctl stop inkypi-privileged.socket
+  fi
+  if /usr/bin/systemctl is-enabled --quiet inkypi-privileged.socket; then
+    /usr/bin/systemctl disable inkypi-privileged.socket >/dev/null 2>&1
+  fi
+  rm -f "$PRIVILEGED_SOCKET_FILE" "$PRIVILEGED_SERVICE_FILE" "$PRIVILEGED_BROKER"
+  /usr/bin/systemctl daemon-reload
 }
 
 remove_files() {
   echo "Removing application files"
-  # Remove device.json if it exists
-  if [ -f "$CONFIG_DIR/device.json" ]; then
-    rm "$CONFIG_DIR/device.json"
-    echo_success "\tRemoved device.json."
-  else
-    echo_success "\tdevice.json does not exist in $CONFIG_DIR"
-  fi
-
-  # Remove plugins.json if it exists
-  if [ -f "$CONFIG_DIR/plugins.json" ]; then
-    rm "$CONFIG_DIR/plugins.json"
-    echo_success "\tRemoved plugins.json."
-  else
-    echo_success "\tplugins.json does not exist in $CONFIG_DIR"
-  fi
+  echo_success "\tPreserving /etc/inkypi, /var/lib/inkypi, and /var/cache/inkypi."
 
   # Remove the installation directory
   if [ -d "$INSTALL_PATH" ]; then

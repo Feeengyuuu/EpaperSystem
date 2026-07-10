@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app, render_template, Response
+from utils import privileged_actions
 from utils.time_utils import calculate_seconds
 from datetime import datetime, timedelta
-import os
 import pytz
 import logging
 import io
@@ -84,12 +84,20 @@ def save_settings():
 @settings_bp.route('/shutdown', methods=['POST'])
 def shutdown():
     data = request.get_json() or {}
-    if data.get("reboot"):
-        logger.info("Reboot requested")
-        os.system("sudo reboot")
-    else:
-        logger.info("Shutdown requested")
-        os.system("sudo shutdown -h now")
+    try:
+        if data.get("reboot"):
+            logger.info("Reboot requested")
+            privileged_actions.reboot()
+        else:
+            logger.info("Shutdown requested")
+            privileged_actions.poweroff()
+    except privileged_actions.PrivilegedActionError as error:
+        logger.error("Privileged power action failed: %s", error)
+        return jsonify({
+            "success": False,
+            "error": str(error),
+            "error_code": "privileged_action_unavailable",
+        }), 503
     return jsonify({"success": True})
 
 @settings_bp.route('/download-logs')

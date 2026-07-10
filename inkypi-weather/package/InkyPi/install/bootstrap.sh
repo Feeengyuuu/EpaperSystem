@@ -9,6 +9,7 @@ while [ -h "$SOURCE" ]; do
 done
 SCRIPT_DIR=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
 PROJECT_DIR=$( cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd )
+RUNTIME_ENV_FILE="/etc/inkypi/inkypi.env"
 ORIGINAL_ARGS=("$@")
 
 DEFAULT_WS_TYPE="epd7in3e"
@@ -193,19 +194,21 @@ run_install() {
 }
 
 ensure_env_file() {
-  local env_file="$PROJECT_DIR/.env"
+  local env_file="$RUNTIME_ENV_FILE"
   if [[ -f "$env_file" ]]; then
     say ".env already exists: $env_file" ".env 已存在: $env_file"
     return
   fi
   say "Creating starter .env at $env_file" "正在创建初始 .env: $env_file"
   python3 "$SCRIPT_DIR/configure_api_keys.py" --write-example "$env_file" --lang "$LANG_MODE"
+  chown inkypi:inkypi "$env_file"
+  chmod 0600 "$env_file"
 }
 
 configure_keys() {
   if [[ "$SKIP_KEYS" == "true" ]]; then
     say "Skipping API key prompts. Add keys later with:" "跳过 API Key 填写。之后可用以下命令添加："
-    echo "  python3 install/configure_api_keys.py --env-file .env"
+    echo "  sudo python3 install/configure_api_keys.py --env-file $RUNTIME_ENV_FILE"
     say "or open the web UI at /api-keys." "也可以打开 Web UI 的 /api-keys 页面。"
     return
   fi
@@ -226,10 +229,14 @@ configure_keys() {
   answer=${answer:-n}
   case "${answer,,}" in
     y|yes)
-      python3 "$SCRIPT_DIR/configure_api_keys.py" --env-file "$PROJECT_DIR/.env" --lang "$LANG_MODE"
+      python3 "$SCRIPT_DIR/configure_api_keys.py" --env-file "$RUNTIME_ENV_FILE" --lang "$LANG_MODE"
+      chown inkypi:inkypi "$RUNTIME_ENV_FILE"
+      chmod 0600 "$RUNTIME_ENV_FILE"
       ;;
     a|all)
-      python3 "$SCRIPT_DIR/configure_api_keys.py" --env-file "$PROJECT_DIR/.env" --all --lang "$LANG_MODE"
+      python3 "$SCRIPT_DIR/configure_api_keys.py" --env-file "$RUNTIME_ENV_FILE" --all --lang "$LANG_MODE"
+      chown inkypi:inkypi "$RUNTIME_ENV_FILE"
+      chmod 0600 "$RUNTIME_ENV_FILE"
       ;;
     *)
       say "Skipping API key entry for now." "暂时跳过 API Key 填写。"
@@ -259,7 +266,7 @@ show_access_info() {
   echo
   say "Useful commands:" "常用命令："
   echo "  bash install/healthcheck.sh"
-  echo "  python3 install/configure_api_keys.py --check"
+  echo "  sudo python3 install/configure_api_keys.py --check --env-file $RUNTIME_ENV_FILE"
   echo "  sudo journalctl -u inkypi -n 120 --no-pager"
   echo
   say "If this is a fresh Raspberry Pi install, reboot once now so SPI/I2C changes are fully active:" "如果这是全新的 Raspberry Pi 安装，请现在重启一次，让 SPI/I2C 设置完全生效："

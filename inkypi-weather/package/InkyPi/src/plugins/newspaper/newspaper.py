@@ -755,7 +755,7 @@ class Newspaper(BasePlugin):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _rotation_state_path(self):
-        return Path(self.get_plugin_dir(".newspaper_rotation_state.json"))
+        return self.cache_dir() / ".newspaper_rotation_state.json"
 
     def _read_rotation_state(self):
         path = self._rotation_state_path()

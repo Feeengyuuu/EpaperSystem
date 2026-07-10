@@ -15,10 +15,17 @@ SCHEMA_VERSION = 1
 
 def _cache_dir() -> Path:
     raw = os.getenv("INKYPI_CONTEXT_CACHE_DIR", "").strip()
+    runtime_root_raw = os.getenv("INKYPI_CACHE_DIR", "").strip()
+    runtime_root = Path(runtime_root_raw).expanduser() if runtime_root_raw else None
     if raw:
-        path = Path(raw)
+        path = Path(raw).expanduser()
         if not path.is_absolute():
-            path = Path(__file__).resolve().parent / path
+            if runtime_root is not None:
+                path = runtime_root / "context" / path
+            else:
+                path = Path(__file__).resolve().parent / path
+    elif runtime_root is not None:
+        path = runtime_root / "context"
     else:
         path = Path(__file__).resolve().parent / ".context_cache"
     path.mkdir(parents=True, exist_ok=True)

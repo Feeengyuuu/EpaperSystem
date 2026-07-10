@@ -3,8 +3,10 @@
 # entry script to launch the service
 
 export APPNAME="inkypi"
-export PROGRAM_PATH=/usr/local/inkypi
+export PROGRAM_PATH=/opt/inkypi/current
 export VENV_PATH="$PROGRAM_PATH/venv_inkypi"
+export INKYPI_CACHE_DIR=/var/cache/inkypi
+export INKYPI_DATA_DIR=/var/lib/inkypi/data
 
 export PROJECT_DIR="$PROGRAM_PATH"
 export SRC_DIR="$PROGRAM_PATH/src"

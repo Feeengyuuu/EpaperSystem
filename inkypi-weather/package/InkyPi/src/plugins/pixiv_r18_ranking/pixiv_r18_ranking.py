@@ -681,10 +681,11 @@ class PixivR18Ranking(BasePlugin):
         return self._cache_dir() / "state.json"
 
     def _cache_dir(self):
-        path = os.getenv("INKYPI_PIXIV_R18_CACHE")
-        if path:
-            return Path(path)
-        return Path(self.get_plugin_dir(".pixiv_r18_ranking_cache"))
+        return self.cache_dir(
+            env_var="INKYPI_PIXIV_R18_CACHE",
+            leaf=".pixiv_r18_ranking_cache",
+            create=False,
+        )
 
     def _read_state(self):
         path = self._state_path()

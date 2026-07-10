@@ -1,4 +1,5 @@
 #!/bin/bash
+set -Eeuo pipefail
 
 # =============================================================================
 # Script Name: install.sh
@@ -14,10 +15,17 @@
 # =============================================================================
 
 # Formatting stuff
-bold=$(tput bold)
-normal=$(tput sgr0)
-red=$(tput setaf 1)
-green=$(tput setaf 2)
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
+  bold=$(tput bold)
+  normal=$(tput sgr0)
+  red=$(tput setaf 1)
+  green=$(tput setaf 2)
+else
+  bold=""
+  normal=""
+  red=""
+  green=""
+fi
 
 SOURCE=${BASH_SOURCE[0]}
 while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
@@ -28,7 +36,8 @@ done
 SCRIPT_DIR=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
 
 APPNAME="inkypi"
-INSTALL_PATH="/usr/local/$APPNAME"
+INSTALL_ROOT="/opt/$APPNAME"
+INSTALL_PATH="$INSTALL_ROOT/current"
 SRC_PATH="$SCRIPT_DIR/../src"
 BINPATH="/usr/local/bin"
 VENV_PATH="$INSTALL_PATH/venv_$APPNAME"
@@ -36,6 +45,10 @@ VENV_PATH="$INSTALL_PATH/venv_$APPNAME"
 SERVICE_FILE="$APPNAME.service"
 SERVICE_FILE_SOURCE="$SCRIPT_DIR/$SERVICE_FILE"
 SERVICE_FILE_TARGET="/etc/systemd/system/$SERVICE_FILE"
+PRIVILEGED_UNIT_DIR="$SCRIPT_DIR/privileged"
+PRIVILEGED_SOCKET="inkypi-privileged.socket"
+PRIVILEGED_SERVICE="inkypi-privileged.service"
+PRIVILEGED_BROKER_TARGET="/usr/local/libexec/inkypi-privileged"
 
 APT_REQUIREMENTS_FILE="$SCRIPT_DIR/debian-requirements.txt"
 PIP_REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
@@ -170,16 +183,17 @@ show_loader() {
   local delay=0.1
   local spinstr='|/-\'
   printf "$1 [${spinstr:0:1}] "
-  while ps a | awk '{print $1}' | grep -q "${pid}"; do
+  while kill -0 "$pid" 2>/dev/null; do
     local temp=${spinstr#?}
     printf "\r$1 [${temp:0:1}] "
     spinstr=${temp}${spinstr%"${temp}"}
     sleep ${delay}
   done
-  if [[ $? -eq 0 ]]; then
+  if wait "$pid"; then
     printf "\r$1 [\e[32m\xE2\x9C\x94\e[0m]\n"
   else
     printf "\r$1 [\e[31m\xE2\x9C\x98\e[0m]\n"
+    return 1
   fi
 }
 
@@ -258,6 +272,62 @@ install_app_service() {
   fi
 }
 
+ensure_service_user() {
+  if ! id -u "$APPNAME" >/dev/null 2>&1; then
+    useradd --system --user-group --home-dir /var/lib/inkypi --create-home \
+      --shell /usr/sbin/nologin "$APPNAME"
+  fi
+  for group in gpio spi video render; do
+    if getent group "$group" >/dev/null 2>&1; then
+      usermod -a -G "$group" "$APPNAME"
+    fi
+  done
+  install -d -o inkypi -g inkypi -m 0750 \
+    /var/lib/inkypi \
+    /var/lib/inkypi/config \
+    /var/lib/inkypi/data \
+    /var/lib/inkypi/display \
+    /var/lib/inkypi/plugins \
+    /var/cache/inkypi
+  chown -R -h inkypi:inkypi /var/lib/inkypi /var/cache/inkypi
+  chmod -R u+rwX,go-rwx /var/lib/inkypi /var/cache/inkypi
+  install -d -o root -g inkypi -m 0770 /etc/inkypi
+  if [[ ! -e /etc/inkypi/inkypi.env ]]; then
+    local env_source=""
+    local env_candidate
+    for env_candidate in "/usr/local/inkypi/.env" "$SCRIPT_DIR/../.env"; do
+      if [[ -f "$env_candidate" ]]; then
+        env_source="$env_candidate"
+        echo "Migrating existing runtime environment from $env_candidate"
+        break
+      fi
+    done
+    if [[ -n "$env_source" ]]; then
+      install -o inkypi -g inkypi -m 0600 "$env_source" /etc/inkypi/inkypi.env
+    else
+      install -o inkypi -g inkypi -m 0600 /dev/null /etc/inkypi/inkypi.env
+    fi
+  else
+    chown inkypi:inkypi /etc/inkypi/inkypi.env
+    chmod 0600 /etc/inkypi/inkypi.env
+  fi
+}
+
+install_privileged_broker() {
+  install -d -o root -g root -m 0755 /usr/local/libexec
+  install -o root -g root -m 0755 \
+    "$PRIVILEGED_UNIT_DIR/inkypi_privileged.py" "$PRIVILEGED_BROKER_TARGET"
+  install -o root -g root -m 0644 \
+    "$PRIVILEGED_UNIT_DIR/$PRIVILEGED_SOCKET" "/etc/systemd/system/$PRIVILEGED_SOCKET"
+  install -o root -g root -m 0644 \
+    "$PRIVILEGED_UNIT_DIR/$PRIVILEGED_SERVICE" "/etc/systemd/system/$PRIVILEGED_SERVICE"
+  systemctl daemon-reload
+  if systemctl is-active --quiet "$PRIVILEGED_SERVICE"; then
+    systemctl stop "$PRIVILEGED_SERVICE"
+  fi
+  systemctl enable --now "$PRIVILEGED_SOCKET"
+}
+
 install_executable() {
   echo "Adding executable to ${BINPATH}/$APPNAME"
   cp $SCRIPT_DIR/inkypi $BINPATH/
@@ -266,16 +336,33 @@ install_executable() {
 
 install_config() {
   CONFIG_BASE_DIR="$SCRIPT_DIR/config_base"
-  CONFIG_DIR="$SRC_PATH/config"
+  CONFIG_DIR="/var/lib/inkypi/config"
   echo "Copying config files to $CONFIG_DIR"
 
   # Check and copy device.config if it doesn't exist
   if [ ! -f "$CONFIG_DIR/device.json" ]; then
-    cp "$CONFIG_BASE_DIR/device.json" "$CONFIG_DIR/"
-    show_loader "\tCopying device.config to $CONFIG_DIR"
+    local config_source="$CONFIG_BASE_DIR/device.json"
+    local candidate
+    for candidate in \
+      "/usr/local/inkypi/src/config/device.json" \
+      "$SRC_PATH/config/device.json"; do
+      if [[ ! -f "$candidate" ]]; then
+        continue
+      fi
+      if python3 -c 'import json, sys; value = json.load(open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if isinstance(value, dict) else 1)' "$candidate"; then
+        config_source="$candidate"
+        echo "Migrating existing device configuration from $candidate"
+        break
+      fi
+      echo "Ignoring invalid legacy device configuration: $candidate" >&2
+    done
+    install -o inkypi -g inkypi -m 0600 "$config_source" "$CONFIG_DIR/device.json"
+    echo_success "\tCopied device.json to $CONFIG_DIR"
   else
     echo_success "\tdevice.json already exists in $CONFIG_DIR"
   fi
+  chown inkypi:inkypi "$CONFIG_DIR/device.json"
+  chmod 0600 "$CONFIG_DIR/device.json"
 }
 
 #
@@ -322,6 +409,8 @@ with open(device_json, "w", encoding="utf-8") as f:
     json.dump(config, f, indent=4, ensure_ascii=False)
     f.write("\n")
 PY
+      chown inkypi:inkypi "$DEVICE_JSON"
+      chmod 0600 "$DEVICE_JSON"
       echo "Updated display configuration to: $WS_TYPE"
   else
       echo "Config not updated as WS_TYPE flag is not set"
@@ -349,13 +438,14 @@ install_src() {
   echo "Installing $APPNAME to $INSTALL_PATH"
   if [[ -d $INSTALL_PATH ]]; then
     rm -rf "$INSTALL_PATH" > /dev/null
-    show_loader "\tRemoving existing installation found at $INSTALL_PATH"
+    echo_success "\tRemoved existing installation at $INSTALL_PATH"
   fi
 
-  mkdir -p "$INSTALL_PATH"
-
-  ln -sf "$SRC_PATH" "$INSTALL_PATH/src"
-  show_loader "\tCreating symlink from $SRC_PATH to $INSTALL_PATH/src"
+  install -d -o root -g root -m 0755 "$INSTALL_ROOT" "$INSTALL_PATH"
+  cp -a "$SRC_PATH" "$INSTALL_PATH/src"
+  chown -R root:root "$INSTALL_ROOT"
+  chmod -R go-w "$INSTALL_ROOT"
+  echo_success "\tCopied immutable application source to $INSTALL_PATH/src"
 }
 
 install_cli() {
@@ -413,6 +503,7 @@ ask_for_reboot() {
 # to maintain default INKY display support.
 parse_arguments "$@"
 check_permissions
+ensure_service_user
 stop_service
 # fetch the WS display driver if defined.
 if [[ -n "$WS_TYPE" ]]; then
@@ -428,6 +519,8 @@ else
   echo "OS version is not Bookworm - skipping zramswap setup."
 fi
 setup_earlyoom_service
+echo "Update JS and CSS files"
+bash "$SCRIPT_DIR/update_vendors.sh" > /dev/null
 install_src
 install_cli
 create_venv
@@ -438,8 +531,6 @@ if [[ -n "$WS_TYPE" ]]; then
   update_config
 fi
 install_app_service
-
-echo "Update JS and CSS files"
-bash $SCRIPT_DIR/update_vendors.sh > /dev/null
+install_privileged_broker
 
 ask_for_reboot

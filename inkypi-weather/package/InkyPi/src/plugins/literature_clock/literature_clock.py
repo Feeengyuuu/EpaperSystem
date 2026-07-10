@@ -1,5 +1,7 @@
 import logging
 import os
+from pathlib import Path
+import shutil
 from datetime import datetime
 import pytz
 
@@ -51,9 +53,8 @@ class LiteratureClock(BasePlugin):
         now = datetime.now(pytz.timezone(tz_name))
         hhmm = now.strftime("%H:%M")
 
-        csv_path = os.path.join(self.get_plugin_dir("data"), "litclock_annotated.csv")
         try:
-            ensure_dataset(csv_path)
+            csv_path = self._resolve_dataset_path()
         except FileNotFoundError as exc:
             logger.error("Literature clock dataset missing: %s", exc)
             raise RuntimeError("Literature clock dataset unavailable.") from exc
@@ -79,6 +80,21 @@ class LiteratureClock(BasePlugin):
                 attribution = attribution[: ATTRIBUTION_MAX - 3] + "..."
 
         return self._render_quote_image(dimensions, quote, time_human, attribution, settings)
+
+    def _resolve_dataset_path(self) -> Path:
+        bundled_path = Path(self.get_plugin_dir("data")) / "litclock_annotated.csv"
+        runtime_path = self.cache_dir(leaf="datasets") / "litclock_annotated.csv"
+        try:
+            ensure_dataset(runtime_path)
+        except FileNotFoundError:
+            if not bundled_path.is_file():
+                raise
+            shutil.copyfile(bundled_path, runtime_path)
+            logger.info(
+                "Using bundled literature clock dataset fallback at %s",
+                runtime_path,
+            )
+        return runtime_path
 
     def _render_no_quote(self, dimensions, hhmm, settings):
         return self._render_quote_image(

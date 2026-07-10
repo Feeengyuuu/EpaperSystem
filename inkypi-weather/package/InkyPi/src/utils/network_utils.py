@@ -5,6 +5,8 @@ import threading
 import time
 from pathlib import Path
 
+from . import privileged_actions
+
 
 logger = logging.getLogger(__name__)
 _wifi_watchdog_thread = None
@@ -48,12 +50,7 @@ def _wireless_interfaces(sys_class_net="/sys/class/net"):
 
 
 def disable_wifi_powersave(interface_names=None, iw_path=None):
-    """Disable Wi-Fi powersave on Linux wireless interfaces when possible."""
-    iw_bin = iw_path or _find_iw()
-    if not iw_bin:
-        logger.info("Skipping Wi-Fi powersave disable: iw command not found")
-        return False
-
+    """Ask the fixed privileged broker to disable Wi-Fi power saving."""
     interfaces = list(interface_names) if interface_names is not None else _wireless_interfaces()
     if not interfaces:
         logger.info("Skipping Wi-Fi powersave disable: no wireless interfaces found")
@@ -62,28 +59,12 @@ def disable_wifi_powersave(interface_names=None, iw_path=None):
     any_disabled = False
     for interface in interfaces:
         try:
-            result = subprocess.run(
-                [iw_bin, "dev", interface, "set", "power_save", "off"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            privileged_actions.wifi_powersave_off(interface)
+        except privileged_actions.PrivilegedActionError as exc:
             logger.warning("Could not disable Wi-Fi powersave on %s: %s", interface, exc)
             continue
-
-        if result.returncode == 0:
-            any_disabled = True
-            logger.info("Disabled Wi-Fi powersave on %s", interface)
-        else:
-            detail = (result.stderr or result.stdout or "").strip()
-            logger.warning(
-                "Could not disable Wi-Fi powersave on %s with %s: %s",
-                interface,
-                iw_bin,
-                detail or f"exit {result.returncode}",
-            )
+        any_disabled = True
+        logger.info("Disabled Wi-Fi powersave on %s", interface)
 
     return any_disabled
 
@@ -180,35 +161,14 @@ def _known_wifi_connections(nmcli_path=None):
 
 
 def reconnect_wifi(interface="wlan0", nmcli_path=None, iw_path=None):
-    """Ask the local Wi-Fi manager to rescan and reconnect after a confirmed outage."""
-    disable_wifi_powersave([interface], iw_path=iw_path)
-
-    nmcli_bin = nmcli_path or _find_command("nmcli", ("/usr/bin/nmcli", "/bin/nmcli"))
-    if not nmcli_bin:
-        logger.warning("Skipping Wi-Fi reconnect: nmcli command not found")
+    """Ask the fixed privileged broker to rescan and reconnect Wi-Fi."""
+    try:
+        privileged_actions.wifi_reconnect(interface)
+    except privileged_actions.PrivilegedActionError as error:
+        logger.warning("Wi-Fi reconnect failed on %s: %s", interface, error)
         return False
-
-    commands = [
-        [nmcli_bin, "radio", "wifi", "on"],
-        [nmcli_bin, "device", "set", interface, "managed", "yes"],
-        [nmcli_bin, "device", "wifi", "rescan", "ifname", interface],
-        [nmcli_bin, "device", "connect", interface],
-    ]
-
-    connections = _known_wifi_connections(nmcli_bin)
-    commands.extend([nmcli_bin, "connection", "up", connection] for connection in connections[:3])
-
-    any_success = False
-    for command in commands:
-        result = _run_command(command, timeout=20)
-        if result and result.returncode == 0:
-            any_success = True
-            logger.info("Wi-Fi recovery command succeeded: %s", command)
-        elif result:
-            detail = (result.stderr or result.stdout or "").strip()
-            logger.warning("Wi-Fi recovery command failed: %s | %s", command, detail)
-
-    return any_success
+    logger.info("Wi-Fi reconnect succeeded on %s", interface)
+    return True
 
 
 def wifi_reconnect_watchdog_loop(

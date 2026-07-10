@@ -1225,9 +1225,7 @@ class EpaperPet(BasePlugin):
             return datetime.now(ZoneInfo("UTC"))
 
     def _cache_dir(self) -> Path:
-        path = Path(self.get_plugin_dir("cache")) / "pets"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.data_dir(leaf="pets", legacy_leaf=Path("cache") / "pets")
 
     def _state_file(self, settings) -> Path:
         pet_id = _slug(settings.get("pet_id") or settings.get("pet_name") or DEFAULT_PET_NAME)

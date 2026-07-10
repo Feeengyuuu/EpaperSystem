@@ -848,10 +848,17 @@ class Weather(BasePlugin):
 
     def _openweather_cache_dir(self):
         cache_dir = os.getenv("OPENWEATHER_CACHE_DIR")
+        runtime_root = os.getenv("INKYPI_CACHE_DIR", "").strip()
         if not cache_dir:
-            cache_dir = os.path.join(os.path.dirname(__file__), ".openweather_cache")
+            if runtime_root:
+                cache_dir = os.path.join(os.path.expanduser(runtime_root), "weather")
+            else:
+                cache_dir = os.path.join(os.path.dirname(__file__), ".openweather_cache")
         elif not os.path.isabs(cache_dir):
-            cache_dir = os.path.join(os.path.dirname(__file__), cache_dir)
+            if runtime_root:
+                cache_dir = os.path.join(os.path.expanduser(runtime_root), "weather", cache_dir)
+            else:
+                cache_dir = os.path.join(os.path.dirname(__file__), cache_dir)
         os.makedirs(cache_dir, exist_ok=True)
         return cache_dir
 
