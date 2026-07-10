@@ -22,6 +22,7 @@ from runtime.refresh_contracts import (
     LifecycleState,
     RefreshCommand,
     TaskCancelled,
+    TaskContext,
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.render_arbiter import RenderArbiter
@@ -2403,6 +2404,40 @@ class RecordingDisplayManager:
         self.calls.append((image.copy(), list(image_settings or [])))
 
 
+class TransactionRecordingDisplayManager:
+    def __init__(self):
+        self.calls = []
+        self.bound_runtime_state = None
+        self.recovery_context = None
+
+    def bind_runtime_state(self, runtime_state):
+        self.bound_runtime_state = runtime_state
+        return object()
+
+    def recover_display(self, *, task_context):
+        self.recovery_context = task_context
+        return None
+
+    def display_image(
+        self,
+        image,
+        image_settings=(),
+        *,
+        task_context=None,
+        logical_target=None,
+        instance_revision=None,
+    ):
+        self.calls.append(
+            {
+                "image": image.copy(),
+                "image_settings": tuple(image_settings),
+                "task_context": task_context,
+                "logical_target": dict(logical_target or {}),
+                "instance_revision": instance_revision,
+            }
+        )
+
+
 class BlockingRuntimePlugin:
     def __init__(self, render_started, allow_render, calls=None, fail_first=False):
         self.render_started = render_started
@@ -2467,6 +2502,68 @@ def _write_runtime_cache(task, instance, image=None):
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     (image or Image.new("RGB", (1, 1), "black")).save(cache_path)
     return cache_path
+
+
+def test_refresh_task_binds_shared_runtime_state_and_recovers_display_on_start():
+    tmp_path = make_test_dir("runtime-display-recovery")
+    manager = TransactionRecordingDisplayManager()
+    task = RefreshTask(RuntimeDeviceConfig(tmp_path), manager)
+
+    assert manager.bound_runtime_state is task.runtime_state
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        assert isinstance(manager.recovery_context, TaskContext)
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_playlist_display_commit_passes_target_revision_and_task_context(monkeypatch):
+    tmp_path = make_test_dir("runtime-display-transaction-metadata")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("transactional", "Transactional Plugin")
+    )
+    manager = TransactionRecordingDisplayManager()
+    device_config = RuntimeDeviceConfig(tmp_path, [playlist])
+    task = RefreshTask(device_config, manager)
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance, Image.new("RGB", (2, 1), "white"))
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([]),
+    )
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(
+            instance.instance_uuid,
+            force=False,
+            display_cached_only=True,
+            expected_playlist_name=playlist.name,
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+        )
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert len(manager.calls) == 1
+        call = manager.calls[0]
+        assert isinstance(call["task_context"], TaskContext)
+        assert call["logical_target"] == {
+            "kind": "playlist",
+            "playlist": playlist.name,
+            "plugin_id": instance.plugin_id,
+            "plugin_instance": instance.name,
+            "instance_uuid": instance.instance_uuid,
+        }
+        assert call["instance_revision"] == (
+            instance.structural_generation,
+            instance.settings_revision,
+        )
+    finally:
+        task.stop(join_timeout=1.0)
 
 
 def _wait_for_legacy_job(task, job_id, timeout=1.0):

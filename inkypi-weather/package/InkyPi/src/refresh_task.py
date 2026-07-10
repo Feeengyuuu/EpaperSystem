@@ -273,6 +273,11 @@ class RefreshTask:
                 wall_clock=wall_clock,
             )
         )
+        self._display_transactions_enabled = False
+        bind_runtime_state = getattr(display_manager, "bind_runtime_state", None)
+        if callable(bind_runtime_state):
+            bind_runtime_state(self.runtime_state)
+            self._display_transactions_enabled = True
 
         self.thread = None
         self._start_lock = threading.Lock()
@@ -360,6 +365,13 @@ class RefreshTask:
             if self.lifecycle.state is not LifecycleState.STARTING:
                 raise RuntimeError(f"refresh task cannot start from {self.lifecycle.state.value}")
             self._prune_runtime_state()
+            recover_display = getattr(self.display_manager, "recover_display", None)
+            if self._display_transactions_enabled and callable(recover_display):
+                recover_display(
+                    task_context=self.make_cleanup_context(
+                        self._config_int("display_timeout_seconds", 120, 1, 900)
+                    )
+                )
             logger.info("Starting refresh task")
             self.thread = threading.Thread(
                 target=self._run,
@@ -942,6 +954,28 @@ class RefreshTask:
                 state,
             )
 
+    def _display_image(
+        self,
+        image,
+        *,
+        context,
+        image_settings=(),
+        logical_target=None,
+        instance_revision=None,
+    ):
+        if self._display_transactions_enabled:
+            return self.display_manager.display_image(
+                image,
+                image_settings=image_settings,
+                task_context=context,
+                logical_target=logical_target,
+                instance_revision=instance_revision,
+            )
+        return self.display_manager.display_image(
+            image,
+            image_settings=image_settings,
+        )
+
     def make_cleanup_context(self, timeout_seconds=30.0):
         """Return a bounded public context for cleanup under the shared arbiter."""
         try:
@@ -1249,9 +1283,21 @@ class RefreshTask:
             if command.kind is CommandKind.DISPLAY:
                 self._require_fresh_selection(command, context)
                 if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
-                    self.display_manager.display_image(
+                    self._display_image(
                         image,
-                        image_settings=getattr(self._execution_local, "image_settings", []),
+                        context=context,
+                        image_settings=getattr(self._execution_local, "image_settings", ()),
+                        logical_target={
+                            "kind": "playlist",
+                            "playlist": resolved_snapshot.playlist_name,
+                            "plugin_id": instance.plugin_id,
+                            "plugin_instance": instance.name,
+                            "instance_uuid": instance.instance_uuid,
+                        },
+                        instance_revision=(
+                            instance.structural_generation,
+                            instance.settings_revision,
+                        ),
                     )
 
             if command.kind is CommandKind.DISPLAY:
@@ -1267,11 +1313,12 @@ class RefreshTask:
                 if thawed_theme_context:
                     self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_device_config()
-                self._record_runtime_display_state(
-                    "committed",
-                    instance_uuid=instance.instance_uuid,
-                    changed_at=current_dt.isoformat(),
-                )
+                if not self._display_transactions_enabled:
+                    self._record_runtime_display_state(
+                        "committed",
+                        instance_uuid=instance.instance_uuid,
+                        changed_at=current_dt.isoformat(),
+                    )
             return image
 
         image_hash = compute_image_hash(image)
@@ -1285,9 +1332,15 @@ class RefreshTask:
         refresh_record = RefreshInfo(**refresh_info)
         if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
             context.raise_if_cancelled()
-            self.display_manager.display_image(
+            self._display_image(
                 image,
-                image_settings=getattr(self._execution_local, "image_settings", []),
+                context=context,
+                image_settings=getattr(self._execution_local, "image_settings", ()),
+                logical_target={
+                    "kind": "manual",
+                    "plugin_id": command.plugin_id,
+                    "refresh_type": refresh_info["refresh_type"],
+                },
             )
         context.raise_if_cancelled()
         context.raise_if_cancelled()
@@ -1295,11 +1348,12 @@ class RefreshTask:
         # write the candidate without another cancellation check in between.
         self.device_config.refresh_info = refresh_record
         self._write_device_config()
-        self._record_runtime_display_state(
-            "committed",
-            instance_uuid=None,
-            changed_at=current_dt.isoformat(),
-        )
+        if not self._display_transactions_enabled:
+            self._record_runtime_display_state(
+                "committed",
+                instance_uuid=None,
+                changed_at=current_dt.isoformat(),
+            )
         return image
 
     @staticmethod
