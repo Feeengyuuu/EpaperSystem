@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify, current_app, render_template, send_file
-import os
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Blueprint, current_app, jsonify, render_template, request, send_file
 
 main_bp = Blueprint("main", __name__)
 
@@ -11,34 +12,29 @@ def main_page():
 
 @main_bp.route('/api/current_image')
 def get_current_image():
-    """Serve current_image.png with conditional request support (If-Modified-Since)."""
-    image_path = current_app.config["RUNTIME_PATHS"].current_image_file
-    
-    if not os.path.exists(image_path):
+    """Serve only the image named by the authoritative display manifest."""
+
+    display_manager = current_app.config.get("DISPLAY_MANAGER")
+    transaction = getattr(display_manager, "transaction", None)
+    commit = transaction.current() if transaction is not None else None
+    if commit is None or not Path(commit.image_path).is_file():
         return jsonify({"error": "Image not found"}), 404
-    
-    # Get the file's last modified time (truncate to seconds to match HTTP header precision)
-    file_mtime = int(os.path.getmtime(image_path))
-    last_modified = datetime.fromtimestamp(file_mtime)
-    
-    # Check If-Modified-Since header
-    if_modified_since = request.headers.get('If-Modified-Since')
-    if if_modified_since:
-        try:
-            # Parse the If-Modified-Since header
-            client_mtime = datetime.strptime(if_modified_since, '%a, %d %b %Y %H:%M:%S %Z')
-            client_mtime_seconds = int(client_mtime.timestamp())
-            
-            # Compare (both now in seconds, no sub-second precision)
-            if file_mtime <= client_mtime_seconds:
-                return '', 304
-        except (ValueError, AttributeError):
-            pass
-    
-    # Send the file with Last-Modified header
-    response = send_file(image_path, mimetype='image/png')
-    response.headers['Last-Modified'] = last_modified.strftime('%a, %d %b %Y %H:%M:%S GMT')
-    response.headers['Cache-Control'] = 'no-cache'
+
+    try:
+        last_modified = datetime.fromisoformat(commit.committed_at)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Image not found"}), 404
+    if last_modified.tzinfo is None:
+        last_modified = last_modified.replace(tzinfo=timezone.utc)
+
+    response = send_file(
+        commit.image_path,
+        mimetype="image/png",
+        conditional=True,
+        etag=commit.commit_id,
+        last_modified=last_modified,
+    )
+    response.headers["Cache-Control"] = "no-cache"
     return response
 
 

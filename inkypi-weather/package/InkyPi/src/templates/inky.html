@@ -13,7 +13,8 @@
                 document.documentElement.setAttribute('data-theme', 'dark');
             }
         })();
-        let lastModified = null;
+        let currentETag = null;
+        let currentObjectUrl = null;
         const refreshIntervalMs = 3 * 1000;
 
         async function refreshImage() {
@@ -22,8 +23,8 @@
 
             try {
                 const headers = {};
-                if (lastModified) {
-                    headers['If-Modified-Since'] = lastModified;
+                if (currentETag) {
+                    headers['If-None-Match'] = currentETag;
                 }
 
                 const response = await fetch('{{ url_for("main.get_current_image") }}', { headers });
@@ -39,9 +40,15 @@
 
                 const blob = await response.blob();
                 const objectUrl = URL.createObjectURL(blob);
-                
+                const previousObjectUrl = currentObjectUrl;
+                currentObjectUrl = objectUrl;
+                img.addEventListener('load', () => {
+                    if (previousObjectUrl) {
+                        URL.revokeObjectURL(previousObjectUrl);
+                    }
+                }, { once: true });
                 img.src = objectUrl;
-                lastModified = response.headers.get('Last-Modified');
+                currentETag = response.headers.get('ETag');
             } catch (error) {
                 console.error('Error refreshing image:', error);
             }
