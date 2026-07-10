@@ -148,6 +148,8 @@ def test_running_entry_cancel_event_observes_instance_cancellation():
     entry = queue.take(timeout=0)
 
     assert entry is not None
+    assert not hasattr(entry.cancel_event, "set")
+    assert not hasattr(entry.cancel_event, "clear")
     assert not entry.cancel_event.is_set()
     assert queue.cancel_instance("cancel-me") == 1
     assert entry.cancel_event.is_set()
@@ -197,6 +199,83 @@ def test_explicit_queue_wake_unblocks_change_waiter_without_work():
 
     assert not waiter.is_alive()
     assert observed and observed[0] != token
+
+
+@pytest.mark.parametrize("status", [JobStatus.CANCELED, JobStatus.ABANDONED])
+def test_terminal_cancellation_status_sets_read_only_running_signal(status):
+    queue = make_queue()
+    queue.submit(command(instance_uuid=f"terminal-{status.value}"))
+    entry = queue.take(timeout=0)
+
+    queue.finish(entry.job.id, status)
+
+    assert entry.cancel_event.is_set()
+    assert not hasattr(entry.cancel_event, "set")
+    assert not hasattr(entry.cancel_event, "clear")
+
+
+def test_superseded_rejected_and_expired_jobs_publish_cancellation_signals():
+    fake_time = FakeTime()
+    queue = make_queue(fake_time)
+    pending = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="superseded",
+    )
+    queue.submit(pending)
+    pending_signal = queue.get_entry(pending.id).cancel_event
+
+    replacement = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid="superseded",
+    )
+    replacement_job = queue.submit(replacement)
+
+    assert pending_signal.is_set()
+    assert not queue.get_entry(replacement_job.id).cancel_event.is_set()
+
+    invalid = replace(command(instance_uuid="invalid"), kind="invalid")
+    with pytest.raises(InvalidRefreshCommandError) as rejected:
+        queue.submit(invalid)
+    assert queue.get_entry(rejected.value.job.id).cancel_event.is_set()
+
+    expired = queue.submit(command(instance_uuid="expired", deadline=fake_time.monotonic()))
+    assert expired.status is JobStatus.CANCELED
+    assert queue.get_entry(expired.id).cancel_event.is_set()
+
+
+def test_cancellation_signal_storage_prunes_with_ttl_and_command_aliases():
+    fake_time = FakeTime(monotonic=0.0)
+    queue = make_queue(
+        fake_time,
+        terminal_limit=8,
+        terminal_ttl_seconds=1.0,
+    )
+    original = command(
+        instance_uuid="alias-prune",
+        idempotency_key="alias-prune-key",
+        now=0.0,
+        deadline=100.0,
+    )
+    actual = queue.submit(original)
+    replay = replace(original, id="alias-command-id")
+    assert queue.submit(replay).id == actual.id
+    replay_signal = queue.get_entry(replay.id).cancel_event
+    actual_signal = queue.get_entry(actual.id).cancel_event
+    entry = queue.take(timeout=0)
+    queue.finish(entry.job.id, JobStatus.CANCELED)
+
+    assert replay_signal.is_set()
+    assert actual_signal.is_set()
+
+    fake_time.advance(2.0)
+    queue.snapshot()
+
+    assert queue.get_entry(actual.id) is None
+    assert queue.get_entry(replay.id) is None
+    assert actual.id not in queue._cancel_events
+    assert set(queue._cancel_events) <= set(queue._jobs)
 
 
 def test_display_supersedes_cache_and_absorbs_newest_requirements():

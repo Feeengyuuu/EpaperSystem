@@ -38,7 +38,22 @@ _MAX_TERMINAL_TTL_SECONDS = 1800.0
 class QueueEntry:
     command: RefreshCommand
     job: JobRecord
-    cancel_event: threading.Event = field(compare=False, repr=False)
+    cancel_event: "CancellationSignal" = field(compare=False, repr=False)
+
+
+class CancellationSignal:
+    """Read-only view of a queue-owned cancellation event."""
+
+    __slots__ = ("__event",)
+
+    def __init__(self, event: threading.Event):
+        self.__event = event
+
+    def is_set(self) -> bool:
+        return self.__event.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        return self.__event.wait(timeout)
 
 
 class RefreshQueueError(RuntimeError):
@@ -231,7 +246,7 @@ class RefreshQueue:
                     return QueueEntry(
                         self._commands[job_id],
                         replace(job),
-                        self._cancel_events[job_id],
+                        CancellationSignal(self._cancel_events[job_id]),
                     )
 
                 if not self._accepting:
@@ -323,7 +338,11 @@ class RefreshQueue:
             command = self._commands.get(actual_job_id)
             if job is None or command is None:
                 return None
-            return QueueEntry(command, replace(job), self._cancel_events[actual_job_id])
+            return QueueEntry(
+                command,
+                replace(job),
+                CancellationSignal(self._cancel_events[actual_job_id]),
+            )
 
     def cancel_instance(self, instance_uuid: str) -> int:
         with self._condition:
