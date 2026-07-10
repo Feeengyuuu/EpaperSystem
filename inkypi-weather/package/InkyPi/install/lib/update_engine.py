@@ -428,12 +428,19 @@ class ArtifactPreparer:
                 "pip",
                 "install",
                 "--require-hashes",
+                "--no-deps",
+                "--no-compile",
                 "--disable-pip-version-check",
                 "-r",
                 str(requirements),
             ],
             cwd=candidate,
             timeout=1200,
+        )
+        self.run_command(
+            [str(venv_python), "-m", "pip", "check"],
+            cwd=candidate,
+            timeout=120,
         )
         config_source = self.config_path
         if not config_source.is_file():

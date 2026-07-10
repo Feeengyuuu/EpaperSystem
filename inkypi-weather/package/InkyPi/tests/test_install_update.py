@@ -209,7 +209,7 @@ def test_artifact_hash_and_zip_paths_fail_before_release_switch(tmp_path):
         inspect_artifact(artifact, actual)
 
 
-@pytest.mark.parametrize("failure", ["disk", "pip", "migration"])
+@pytest.mark.parametrize("failure", ["disk", "pip", "pip_check", "migration"])
 def test_pre_switch_failure_cleans_candidate_without_touching_current(tmp_path, failure):
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
     layout.ensure()
@@ -234,6 +234,8 @@ def test_pre_switch_failure_cleans_candidate_without_touching_current(tmp_path, 
     def run_command(command, **_kwargs):
         joined = " ".join(str(item) for item in command)
         if failure == "pip" and " pip install " in f" {joined} ":
+            raise subprocess.CalledProcessError(1, command)
+        if failure == "pip_check" and " pip check" in f" {joined}":
             raise subprocess.CalledProcessError(1, command)
         if failure == "migration" and "preflight.py" in joined:
             raise subprocess.CalledProcessError(1, command)
@@ -301,7 +303,26 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert (release / ".release-id").read_text(encoding="utf-8") == "candidate\n"
     assert (release / "cli" / "inkypi-plugin").is_file()
     assert not layout.staging_path("candidate").exists()
-    assert len(commands) == 4
+    assert len(commands) == 5
+    pip_command = next(
+        command for command in commands if command[1:4] == ["-m", "pip", "install"]
+    )
+    assert "--require-hashes" in pip_command
+    assert "--no-deps" in pip_command
+    assert "--no-compile" in pip_command
+    assert "--no-cache-dir" not in pip_command
+    install_index = commands.index(pip_command)
+    check_index = next(
+        index
+        for index, command in enumerate(commands)
+        if command[1:4] == ["-m", "pip", "check"]
+    )
+    preflight_index = next(
+        index
+        for index, command in enumerate(commands)
+        if any("preflight.py" in str(item) for item in command)
+    )
+    assert install_index < check_index < preflight_index
 
 
 def test_operations_scripts_are_strict_and_forbid_mutable_deployment_paths():
