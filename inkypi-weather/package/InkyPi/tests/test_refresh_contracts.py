@@ -1,7 +1,11 @@
-from collections import UserDict, UserList
+from collections import UserDict, UserList, namedtuple
+from collections.abc import Mapping as MappingABC
+from collections.abc import Sequence as SequenceABC
+from collections.abc import Set as SetABC
 from dataclasses import FrozenInstanceError
 from enum import Enum
 import threading
+from types import MappingProxyType
 
 import pytest
 
@@ -26,6 +30,96 @@ class MutableCustomLeaf:
 
 class MutableEnumLeaf(Enum):
     VALUE = ["mutable"]
+
+
+class MutableStr(str):
+    def __new__(cls, value):
+        instance = super().__new__(cls, value)
+        instance.values = ["mutable"]
+        return instance
+
+
+class MutableBytes(bytes):
+    def __new__(cls, value):
+        instance = super().__new__(cls, value)
+        instance.values = ["mutable"]
+        return instance
+
+
+class StringSemanticEnum(str, Enum):
+    VALUE = "semantic"
+
+
+class IntegerSemanticEnum(int, Enum):
+    VALUE = 1
+
+
+SemanticPair = namedtuple("SemanticPair", ("left", "right"))
+
+
+class SemanticSequence(SequenceABC):
+    def __init__(self, values):
+        self.values = list(values)
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __len__(self):
+        return len(self.values)
+
+    __hash__ = object.__hash__
+
+
+class SemanticSet(SetABC):
+    def __init__(self, values):
+        self.values = set(values)
+
+    def __contains__(self, value):
+        return value in self.values
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def __len__(self):
+        return len(self.values)
+
+
+class SemanticMapping(MappingABC):
+    def __init__(self, values):
+        self.values = dict(values)
+
+    def __getitem__(self, key):
+        return self.values[key]
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def __len__(self):
+        return len(self.values)
+
+
+class SemanticDict(dict):
+    pass
+
+
+class SemanticList(list):
+    pass
+
+
+class SemanticTuple(tuple):
+    pass
+
+
+class SemanticBuiltinSet(set):
+    pass
+
+
+class SemanticUserDict(UserDict):
+    pass
+
+
+class SemanticUserList(UserList):
+    pass
 
 
 def test_refresh_command_is_immutable_and_freezes_nested_payload():
@@ -98,6 +192,145 @@ def test_refresh_command_strictly_rejects_custom_mutable_payload_leaves_and_keys
         )
     with pytest.raises(TypeError):
         freeze_payload(payload)
+
+
+@pytest.mark.parametrize(
+    "semantic_value",
+    [
+        MutableStr("semantic"),
+        MutableBytes(b"semantic"),
+        StringSemanticEnum.VALUE,
+        IntegerSemanticEnum.VALUE,
+        SemanticPair("left", "right"),
+        range(3),
+        SemanticSequence([1, 2]),
+        SemanticSet({1, 2}),
+        SemanticMapping({}),
+        SemanticDict({"one": 1}),
+        SemanticList([1, 2]),
+        SemanticTuple((1, 2)),
+        SemanticBuiltinSet({1, 2}),
+        SemanticUserDict({"one": 1}),
+        SemanticUserList([1, 2]),
+    ],
+    ids=[
+        "str-subclass",
+        "bytes-subclass",
+        "str-enum",
+        "int-enum",
+        "namedtuple",
+        "range",
+        "custom-sequence",
+        "custom-set",
+        "custom-mapping",
+        "dict-subclass",
+        "list-subclass",
+        "tuple-subclass",
+        "set-subclass",
+        "userdict-subclass",
+        "userlist-subclass",
+    ],
+)
+def test_freeze_payload_rejects_semantic_or_subclassed_containers(
+    semantic_value,
+):
+    payload = {"semantic": semantic_value}
+
+    with pytest.raises(TypeError):
+        freeze_payload(payload)
+    with pytest.raises(TypeError):
+        RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="sports_dashboard",
+            payload=payload,
+            now_monotonic=10.0,
+            deadline_monotonic=20.0,
+        )
+
+
+def test_refresh_command_does_not_bypass_empty_semantic_payload_validation():
+    empty_semantic_mapping = SemanticMapping({})
+
+    with pytest.raises(TypeError):
+        freeze_payload(empty_semantic_mapping)
+    with pytest.raises(TypeError):
+        RefreshCommand.create(
+            kind=CommandKind.DISPLAY,
+            source=CommandSource.MANUAL,
+            plugin_id="sports_dashboard",
+            payload=empty_semantic_mapping,
+            now_monotonic=10.0,
+            deadline_monotonic=20.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "semantic_key",
+    [
+        SemanticPair("left", "right"),
+        SemanticTuple(("left", "right")),
+        MutableStr("semantic-key"),
+        StringSemanticEnum.VALUE,
+    ],
+    ids=["namedtuple", "tuple-subclass", "str-subclass", "str-enum"],
+)
+def test_freeze_payload_rejects_semantic_mapping_keys(semantic_key):
+    with pytest.raises(TypeError):
+        freeze_payload({semantic_key: "value"})
+
+
+@pytest.mark.parametrize(
+    "semantic_member",
+    [
+        SemanticPair("left", "right"),
+        SemanticTuple(("left", "right")),
+        MutableStr("semantic-member"),
+        StringSemanticEnum.VALUE,
+        SemanticSequence(["semantic-member"]),
+    ],
+    ids=[
+        "namedtuple",
+        "tuple-subclass",
+        "str-subclass",
+        "str-enum",
+        "custom-sequence",
+    ],
+)
+def test_freeze_payload_rejects_semantic_set_members(semantic_member):
+    with pytest.raises(TypeError):
+        freeze_payload({"members": {semantic_member}})
+
+
+def test_freeze_payload_exact_safe_container_allowlist_remains_supported():
+    source = MappingProxyType(
+        {
+            "dict": {"nested": [1, 2]},
+            "tuple": ("one", "two"),
+            "set": {"one", "two"},
+            "frozenset": frozenset({"one", "two"}),
+            "userdict": UserDict({"nested": UserList([1, 2])}),
+            "scalars": [None, True, 1, 1.5, 2 + 3j, "text", b"bytes"],
+        }
+    )
+
+    frozen = freeze_payload(source)
+
+    assert isinstance(frozen, MappingProxyType)
+    assert frozen["dict"]["nested"] == (1, 2)
+    assert frozen["tuple"] == ("one", "two")
+    assert frozen["set"] == frozenset({"one", "two"})
+    assert frozen["frozenset"] == frozenset({"one", "two"})
+    assert frozen["userdict"]["nested"] == (1, 2)
+    assert frozen["scalars"] == (
+        None,
+        True,
+        1,
+        1.5,
+        2 + 3j,
+        "text",
+        b"bytes",
+    )
 
 
 def test_cancel_requested_is_metadata_not_a_job_status():

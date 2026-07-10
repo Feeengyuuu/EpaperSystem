@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import UserDict, UserList
 from collections.abc import Mapping as MappingABC
 from collections.abc import Sequence, Set
 from copy import deepcopy
@@ -53,6 +54,9 @@ _IMMUTABLE_PAYLOAD_SCALAR_TYPES = {
     str,
     bytes,
 }
+_SAFE_PAYLOAD_MAPPING_TYPES = {dict, MappingProxyType, UserDict}
+_SAFE_PAYLOAD_SEQUENCE_TYPES = {list, tuple, UserList}
+_SAFE_PAYLOAD_SET_TYPES = {set, frozenset}
 
 
 def _is_immutable_payload_scalar(value: Any) -> bool:
@@ -60,11 +64,12 @@ def _is_immutable_payload_scalar(value: Any) -> bool:
 
 
 def _freeze_hashable_payload_member(value: Any) -> Any:
+    value_type = type(value)
     if _is_immutable_payload_scalar(value):
         frozen = value
-    elif isinstance(value, tuple):
+    elif value_type is tuple:
         frozen = tuple(_freeze_hashable_payload_member(item) for item in value)
-    elif isinstance(value, frozenset):
+    elif value_type is frozenset:
         frozen = frozenset(
             _freeze_hashable_payload_member(item) for item in value
         )
@@ -77,20 +82,23 @@ def _freeze_hashable_payload_member(value: Any) -> Any:
 
 
 def freeze_payload(value: Any) -> Any:
-    if isinstance(value, MappingABC):
+    value_type = type(value)
+    if _is_immutable_payload_scalar(value):
+        return value
+    if value_type in _SAFE_PAYLOAD_MAPPING_TYPES:
         return MappingProxyType(
             {
                 _freeze_hashable_payload_member(key): freeze_payload(item)
                 for key, item in value.items()
             }
         )
-    if _is_immutable_payload_scalar(value):
-        return value
-    if isinstance(value, Sequence):
+    if value_type in _SAFE_PAYLOAD_SEQUENCE_TYPES:
         return tuple(freeze_payload(item) for item in value)
-    if isinstance(value, Set):
+    if value_type in _SAFE_PAYLOAD_SET_TYPES:
         return frozenset(freeze_payload(item) for item in value)
-    raise TypeError(f"unsupported mutable payload leaf: {type(value).__name__}")
+    raise TypeError(
+        f"unsupported semantic payload type: {value_type.__name__}"
+    )
 
 
 def _copy_hashable_payload_member(value: Any) -> Any:
@@ -161,7 +169,7 @@ class RefreshCommand:
             enqueued_monotonic=float(now_monotonic),
             deadline_monotonic=float(deadline_monotonic),
             idempotency_key=idempotency_key,
-            payload=freeze_payload(payload or {}),
+            payload=freeze_payload({} if payload is None else payload),
         )
 
 
