@@ -34,7 +34,17 @@ class Config:
     # Directory path for storing plugin instance images
     plugin_image_dir = os.path.join(BASE_DIR, "static", "images", "plugins")
 
-    def __init__(self):
+    def __init__(self, runtime_paths=None):
+        self.runtime_paths = runtime_paths
+        if runtime_paths is not None:
+            self.config_file = runtime_paths.config_file
+            self.current_image_file = runtime_paths.current_image_file
+            self.plugin_image_dir = runtime_paths.plugin_image_dir
+            self.data_dir = runtime_paths.data_dir
+            self.cache_dir = runtime_paths.cache_dir
+            self.env_file = runtime_paths.env_file
+            self.display_dir = runtime_paths.display_dir
+            self.flask_secret_file = runtime_paths.flask_secret_file
         self._write_lock = threading.RLock()
         self._env_file_mtimes = None
         self.config = self.read_config()
@@ -204,7 +214,8 @@ class Config:
             return
         for env_file in current_mtimes:
             load_dotenv(env_file, override=True)
-        load_dotenv(override=True)
+        if getattr(self, "runtime_paths", None) is None:
+            load_dotenv(override=True)
         self._env_file_mtimes = current_mtimes
 
     def _env_key_candidates(self, key):
@@ -212,6 +223,11 @@ class Config:
         return (key, *ENV_KEY_ALIASES.get(key, ()))
 
     def _env_file_candidates(self):
+        runtime_paths = getattr(self, "runtime_paths", None)
+        if runtime_paths is not None:
+            yield str(runtime_paths.env_file)
+            return
+
         candidates = []
         explicit_file = os.getenv("INKYPI_ENV_FILE")
         if explicit_file:

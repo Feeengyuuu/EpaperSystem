@@ -12,7 +12,7 @@ def main_page():
 @main_bp.route('/api/current_image')
 def get_current_image():
     """Serve current_image.png with conditional request support (If-Modified-Since)."""
-    image_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'images', 'current_image.png')
+    image_path = current_app.config["RUNTIME_PATHS"].current_image_file
     
     if not os.path.exists(image_path):
         return jsonify({"error": "Image not found"}), 404

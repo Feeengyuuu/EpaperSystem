@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app, render_template
+from flask import Blueprint, request, jsonify, current_app, has_app_context, render_template
 from dotenv import dotenv_values
 import json
 import os
@@ -11,7 +11,11 @@ apikeys_bp = Blueprint("apikeys", __name__)
 
 # Path to .env file
 def get_env_path():
-    """Get path to .env file in the project root."""
+    """Get the canonical runtime env path, with a legacy standalone fallback."""
+    if has_app_context():
+        runtime_paths = current_app.config.get("RUNTIME_PATHS")
+        if runtime_paths is not None:
+            return runtime_paths.env_file
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(base_dir, '.env')
 

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import config as config_module
 from config import Config
 from model import PlaylistManager, RefreshInfo
+from runtime_paths import RuntimePaths
 
 TEST_CACHE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "config_env_key_aliases_tests"
 
@@ -157,3 +158,52 @@ def test_read_config_returns_empty_dict_for_invalid_json(tmp_path):
     (tmp_path / "device.json").write_text("{bad json", encoding="utf-8")
 
     assert config.read_config() == {}
+
+
+def test_injected_runtime_paths_bind_one_identity_without_changing_legacy_aliases(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DEV_ROOT", str(tmp_path))
+    paths = RuntimePaths.from_environment(dev_mode=True)
+    legacy_aliases = (
+        Config.config_file,
+        Config.current_image_file,
+        Config.plugin_image_dir,
+    )
+
+    config = Config(runtime_paths=paths)
+
+    assert config.runtime_paths is paths
+    assert Path(config.config_file) == paths.config_file
+    assert Path(config.current_image_file) == paths.current_image_file
+    assert Path(config.plugin_image_dir) == paths.plugin_image_dir
+    assert (
+        Config.config_file,
+        Config.current_image_file,
+        Config.plugin_image_dir,
+    ) == legacy_aliases
+
+
+def test_injected_config_loads_only_its_canonical_env_file(tmp_path, monkeypatch):
+    dev_root = tmp_path / "checkout" / "src"
+    canonical_env = tmp_path / "runtime" / "inkypi.env"
+    canonical_env.parent.mkdir(parents=True)
+    canonical_env.write_text("INKYPI_INJECTED_ENV_TEST=canonical\n", encoding="utf-8")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".env").write_text("INKYPI_INJECTED_ENV_TEST=wrong-cwd\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("INKYPI_DEV_ROOT", str(dev_root))
+    monkeypatch.setenv("INKYPI_ENV_FILE", str(canonical_env))
+    monkeypatch.delenv("INKYPI_INJECTED_ENV_TEST", raising=False)
+    paths = RuntimePaths.from_environment(dev_mode=True)
+    config = Config(runtime_paths=paths)
+    calls = []
+    real_load_dotenv = config_module.load_dotenv
+
+    def recording_load_dotenv(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_load_dotenv(*args, **kwargs)
+
+    monkeypatch.setattr(config_module, "load_dotenv", recording_load_dotenv)
+
+    assert config.load_env_key("INKYPI_INJECTED_ENV_TEST") == "canonical"
+    assert calls == [((str(canonical_env),), {"override": True})]
