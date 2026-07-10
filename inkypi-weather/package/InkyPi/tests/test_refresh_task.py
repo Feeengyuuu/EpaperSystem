@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import threading
@@ -1638,8 +1639,11 @@ def test_playlist_worker_uses_previous_cache_for_non_cacheable_display(monkeypat
     )
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    cache_path = tmp_path / playlist.plugins[0].get_image_path()
-    Image.new("RGB", (2, 1), "black").save(cache_path)
+    cache_path = _write_runtime_cache(
+        task,
+        playlist.plugins[0],
+        Image.new("RGB", (2, 1), "black"),
+    )
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
         lambda config: NonCacheablePlugin([]),
@@ -2206,6 +2210,15 @@ def _make_runtime_task(tmp_path, *, playlists=(), clock=None, cycle_seconds=300)
     return task, device_config, clock
 
 
+def _write_runtime_cache(task, instance, image=None):
+    """Seed the UUID/revision cache used by the production command worker."""
+    snapshot = instance.snapshot() if hasattr(instance, "snapshot") else instance
+    cache_path = Path(task.cache_path_for_snapshot(snapshot))
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    (image or Image.new("RGB", (1, 1), "black")).save(cache_path)
+    return cache_path
+
+
 def _wait_for_legacy_job(task, job_id, timeout=1.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -2214,6 +2227,59 @@ def _wait_for_legacy_job(task, job_id, timeout=1.0):
             return job
         time.sleep(0.01)
     return task.get_manual_update_job(job_id)
+
+
+def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("manual-inactive-playlist-display")
+    active = _runtime_playlist(
+        _runtime_plugin_data("active", "Active"),
+        name="Active",
+    )
+    inactive = _runtime_playlist(
+        _runtime_plugin_data("inactive", "Inactive"),
+        name="Inactive",
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[active, inactive],
+    )
+    target = device_config.playlist_manager.resolve_plugin_instance_snapshot(
+        "Inactive",
+        "inactive",
+        "Inactive",
+    ).instance
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(
+            target.instance_uuid,
+            force=True,
+            display_cached_only=False,
+            expected_playlist_name="Inactive",
+            expected_generation=target.structural_generation,
+            expected_settings_revision=target.settings_revision,
+            require_active=False,
+        )
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert calls[-1] == {
+            "id": "inactive",
+            "forceRefresh": True,
+            "force_refresh": True,
+            "_inkypiDisplayRender": True,
+        }
+        assert device_config.refresh_info.playlist == "Inactive"
+    finally:
+        task.stop(join_timeout=1.0)
 
 
 def test_playlist_refresh_rerenders_non_sports_live_due_before_ordinary_interval():
@@ -2602,7 +2668,7 @@ def _make_blocked_playlist_task(monkeypatch, name):
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist], cycle_seconds=300)
     device_config.config["theme_mode"] = "day"
     device_config.config["active_theme"] = "day"
-    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    _write_runtime_cache(task, playlist.plugins[0])
     render_started = threading.Event()
     allow_render = threading.Event()
     plugin = BlockingRuntimePlugin(render_started, allow_render)
@@ -2619,7 +2685,9 @@ def test_deleted_instance_result_is_discarded_after_render(monkeypatch):
     )
     try:
         instance_uuid = manager.first_instance_uuid()
-        cache_path = tmp_path / "runtime_plugin_Runtime_Plugin.png"
+        cache_path = Path(task.cache_path_for_snapshot(
+            manager.snapshot_instance(instance_uuid)
+        ))
         original_cache = cache_path.read_bytes()
         job = task.submit_playlist_display(instance_uuid)
         assert render_started.wait(1.0)
@@ -2646,7 +2714,7 @@ def test_settings_revision_changed_during_render_discards_all_side_effects(monke
     try:
         instance_uuid = manager.first_instance_uuid()
         before = manager.snapshot_instance(instance_uuid)
-        cache_path = tmp_path / "runtime_plugin_Runtime_Plugin.png"
+        cache_path = Path(task.cache_path_for_snapshot(before))
         original_cache = cache_path.read_bytes()
         job = task.submit_playlist_display(instance_uuid)
         assert render_started.wait(1.0)
@@ -2809,13 +2877,27 @@ def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
     playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00"))
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    cache_path = tmp_path / playlist.plugins[0].get_image_path()
-    Image.new("RGB", (1, 1), "black").save(cache_path)
+    cache_path = _write_runtime_cache(task, playlist.plugins[0])
     events = []
     manager = device_config.playlist_manager
     original_validate = manager.validate_selection
     original_record = manager.record_instance_refresh
     original_replace = __import__("os").replace
+    inner_arbiter = task.render_arbiter
+    lease_depth = 0
+
+    class ObservingArbiter:
+        @contextmanager
+        def lease(self, plugin_id, context):
+            nonlocal lease_depth
+            with inner_arbiter.lease(plugin_id, context):
+                lease_depth += 1
+                try:
+                    yield
+                finally:
+                    lease_depth -= 1
+
+    task.render_arbiter = ObservingArbiter()
 
     def validate(*args, **kwargs):
         events.append("validate")
@@ -2826,6 +2908,7 @@ def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
         return original_record(*args, **kwargs)
 
     def replace(source, destination):
+        assert lease_depth == 1
         events.append("cache")
         return original_replace(source, destination)
 
@@ -2857,7 +2940,7 @@ def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeyp
     )
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    _write_runtime_cache(task, playlist.plugins[0])
     monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
     original_require = task._require_fresh_selection
     checks = []
@@ -3244,6 +3327,42 @@ def test_memory_maintenance_error_cannot_kill_worker_after_terminalization(monke
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
 
 
+@pytest.mark.parametrize(
+    ("render_error", "expected_status"),
+    [
+        (None, JobStatus.SUCCEEDED),
+        (RuntimeError("render failed"), JobStatus.FAILED),
+    ],
+)
+def test_manual_preview_upload_is_removed_at_job_terminal(
+    monkeypatch,
+    render_error,
+    expected_status,
+):
+    tmp_path = make_test_dir(f"manual-transient-{expected_status.value}")
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+    task.running = True
+    upload = tmp_path / "preview.png"
+    upload.write_bytes(b"preview")
+
+    job = task.submit_manual_update(
+        ManualRefresh("weather", {"imageFile": str(upload)}),
+        transient_paths=(str(upload),),
+    )
+    entry = task.refresh_queue.take(timeout=0)
+
+    def execute(_command):
+        assert upload.read_bytes() == b"preview"
+        if render_error is not None:
+            raise render_error
+
+    monkeypatch.setattr(task, "_execute_command", execute)
+    task._process_queue_entry(entry)
+
+    assert not upload.exists()
+    assert task.refresh_queue.get_entry(job["id"]).job.status is expected_status
+
+
 def test_blocking_manual_completion_map_holds_only_events_and_is_removed(monkeypatch):
     tmp_path = make_test_dir("runtime-completion-event-map")
     task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
@@ -3312,7 +3431,7 @@ def test_legacy_background_trigger_executes_on_single_command_worker(monkeypatch
     playlist = _runtime_playlist(_runtime_plugin_data())
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    Image.new("RGB", (1, 1), "black").save(tmp_path / playlist.plugins[0].get_image_path())
+    _write_runtime_cache(task, playlist.plugins[0])
     called = threading.Event()
     thread_ids = []
 
@@ -3348,9 +3467,14 @@ def test_cleanup_context_and_managed_cache_paths_are_bounded_public_contracts():
     task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[], clock=clock)
     staging = tmp_path / ".refresh-staging"
     staging.mkdir()
-    expected_stage = staging / "target-1-2.png"
+    cache = tmp_path / ".refresh-cache"
+    cache.mkdir()
+    filename = task._cache_identity_filename("target", 1, 2)
+    expected_stage = staging / filename
     expected_stage.write_bytes(b"stage")
-    (staging / "other-1-2.png").write_bytes(b"other")
+    expected_cache = cache / filename
+    expected_cache.write_bytes(b"cache")
+    (staging / task._cache_identity_filename("other", 1, 2)).write_bytes(b"other")
 
     context = task.make_cleanup_context(timeout_seconds=12)
     paths = task.managed_cache_paths(
@@ -3363,11 +3487,27 @@ def test_cleanup_context_and_managed_cache_paths_are_bounded_public_contracts():
     assert context.deadline_monotonic == 12.0
     assert paths == tuple(sorted((
         str(expected_stage),
-        str(tmp_path / "weather_Main_View.png"),
+        str(expected_cache),
     )))
     task.stop(join_timeout=0)
     with pytest.raises(TaskCancelled):
         context.raise_if_cancelled()
+
+
+def test_authoritative_cache_identity_changes_for_same_name_replacement():
+    tmp_path = make_test_dir("runtime-versioned-cache-identity")
+    first = _runtime_playlist(_runtime_plugin_data("weather", "Main"))
+    second = _runtime_playlist(_runtime_plugin_data("weather", "Main"))
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
+
+    first_path = Path(task.cache_path_for_snapshot(first.plugins[0].snapshot()))
+    second_path = Path(task.cache_path_for_snapshot(second.plugins[0].snapshot()))
+
+    assert first.plugins[0].instance_uuid != second.plugins[0].instance_uuid
+    assert first_path != second_path
+    assert first_path.parent.name == ".refresh-cache"
+    assert second_path.parent.name == ".refresh-cache"
+    assert "weather_Main.png" not in {first_path.name, second_path.name}
 
 
 def test_manual_submission_propagates_queue_full_and_stopping_errors():

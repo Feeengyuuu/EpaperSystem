@@ -1880,6 +1880,18 @@ class TestPlaylistManagerAtomicWebMutations:
         with pytest.raises(TypeError):
             resolved.instance.settings["units"] = "mutated"
 
+    def test_legacy_identity_resolver_supports_existing_global_request_shape(self):
+        manager = self._manager()
+
+        resolved = manager.resolve_plugin_instance_snapshot(
+            None,
+            "weather",
+            "Home",
+        )
+
+        assert resolved.playlist_name == "Default"
+        assert resolved.instance.instance_uuid == "home-uuid"
+
     def test_atomic_update_returns_old_and_new_snapshots_with_one_revision_step(self):
         manager = self._manager()
         before = manager.snapshot_instance("home-uuid")
@@ -1963,6 +1975,24 @@ class TestPlaylistManagerAtomicWebMutations:
         assert added.instance.plugin_id == "news"
         assert added.instance.settings["region"] == "us"
         assert manager.snapshot_instance(added.instance.instance_uuid) == added.instance
+
+    def test_snapshot_add_preserves_global_legacy_identity_uniqueness(self):
+        manager = self._manager()
+        assert manager.add_playlist("Other")
+
+        result = manager.add_plugin_to_playlist_snapshot("Other", {
+            "plugin_id": "weather",
+            "name": "Home",
+            "plugin_settings": {"units": "replacement"},
+            "refresh": {"interval": 300},
+        })
+
+        assert result is None
+        assert manager.resolve_plugin_instance_snapshot(
+            "Other",
+            "weather",
+            "Home",
+        ) is None
 
 
 @pytest.mark.parametrize(

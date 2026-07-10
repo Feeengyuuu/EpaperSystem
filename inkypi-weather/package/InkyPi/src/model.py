@@ -2,6 +2,7 @@ import logging
 import math
 import random
 import threading
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -137,8 +138,17 @@ class PlaylistManager:
         self.active_playlist = active_playlist
         # Serializes check-then-act mutations across web threads and the refresh thread
         self._lock = threading.RLock()
+        # Extends instance create/delete serialization across external cleanup work.
+        # This must stay separate from ``_lock`` because plugin cleanup can be slow.
+        self._instance_lifecycle_lock = threading.RLock()
         with self._lock:
             self._ensure_unique_instance_uuids()
+
+    @contextmanager
+    def instance_lifecycle_guard(self):
+        """Serialize instance ownership changes with opaque resource cleanup."""
+        with self._instance_lifecycle_lock:
+            yield
 
     def get_playlist_names(self):
         """Returns a list of all playlist names."""
@@ -174,23 +184,27 @@ class PlaylistManager:
     ) -> PlaylistSelectionSnapshot | None:
         """Resolve a legacy web identity to one detached immutable selection."""
         with self._lock:
-            playlist = next(
-                (item for item in self.playlists if item.name == playlist_name),
-                None,
-            )
-            if playlist is None:
-                return None
-            instance = next(
-                (
-                    item
-                    for item in playlist.plugins
-                    if item.plugin_id == plugin_id and item.name == instance_name
-                ),
-                None,
-            )
-            if instance is None:
-                return None
-            return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+            playlists = self.playlists
+            if playlist_name is not None:
+                playlists = [
+                    item for item in self.playlists if item.name == playlist_name
+                ]
+            for playlist in playlists:
+                instance = next(
+                    (
+                        item
+                        for item in playlist.plugins
+                        if item.plugin_id == plugin_id
+                        and item.name == instance_name
+                    ),
+                    None,
+                )
+                if instance is not None:
+                    return PlaylistSelectionSnapshot(
+                        playlist.name,
+                        instance.snapshot(),
+                    )
+            return None
 
     def snapshot_active_playlist(
         self,
@@ -531,29 +545,30 @@ class PlaylistManager:
     def add_plugin_to_playlist(self, playlist_name, plugin_data):
         """Adds a plugin to a playlist by the specified name. Returns true if successfully added,
         False if playlist doesn't exist"""
-        with self._lock:
-            playlist = self.get_playlist(playlist_name)
-            if playlist:
-                if playlist.add_plugin(plugin_data):
-                    added_instance = playlist.plugins[-1]
-                    other_uuids = {
-                        instance.instance_uuid
-                        for current_playlist in self.playlists
-                        for instance in current_playlist.plugins
-                        if instance is not added_instance
-                    }
-                    # Runtime creation is a new identity boundary. Never trust a
-                    # caller-provided UUID, even when it is not currently live:
-                    # accepting it could reopen a delete/recreate ABA window.
-                    forbidden_uuids = set(other_uuids)
-                    forbidden_uuids.add(str(added_instance.instance_uuid))
-                    added_instance.instance_uuid = self._new_instance_uuid(
-                        forbidden_uuids
-                    )
-                    return True
-            else:
-                logger.warning(f"Playlist '{playlist_name}' not found.")
-            return False
+        with self.instance_lifecycle_guard():
+            with self._lock:
+                playlist = self.get_playlist(playlist_name)
+                if playlist:
+                    if playlist.add_plugin(plugin_data):
+                        added_instance = playlist.plugins[-1]
+                        other_uuids = {
+                            instance.instance_uuid
+                            for current_playlist in self.playlists
+                            for instance in current_playlist.plugins
+                            if instance is not added_instance
+                        }
+                        # Runtime creation is a new identity boundary. Never trust a
+                        # caller-provided UUID, even when it is not currently live:
+                        # accepting it could reopen a delete/recreate ABA window.
+                        forbidden_uuids = set(other_uuids)
+                        forbidden_uuids.add(str(added_instance.instance_uuid))
+                        added_instance.instance_uuid = self._new_instance_uuid(
+                            forbidden_uuids
+                        )
+                        return True
+                else:
+                    logger.warning(f"Playlist '{playlist_name}' not found.")
+                return False
 
     def add_plugin_to_playlist_snapshot(
         self,
@@ -561,31 +576,44 @@ class PlaylistManager:
         plugin_data,
     ) -> PlaylistSelectionSnapshot | None:
         """Add an instance and return its detached runtime identity."""
-        with self._lock:
-            playlist = next(
-                (item for item in self.playlists if item.name == playlist_name),
-                None,
-            )
-            if playlist is None:
-                logger.warning("Playlist '%s' not found.", playlist_name)
-                return None
-            if not playlist.add_plugin(plugin_data):
-                return None
+        with self.instance_lifecycle_guard():
+            with self._lock:
+                playlist = next(
+                    (item for item in self.playlists if item.name == playlist_name),
+                    None,
+                )
+                if playlist is None:
+                    logger.warning("Playlist '%s' not found.", playlist_name)
+                    return None
+                if any(
+                    instance.plugin_id == plugin_data.get("plugin_id")
+                    and instance.name == plugin_data.get("name")
+                    for current_playlist in self.playlists
+                    for instance in current_playlist.plugins
+                ):
+                    logger.warning(
+                        "Plugin '%s' with instance '%s' already exists.",
+                        plugin_data.get("plugin_id"),
+                        plugin_data.get("name"),
+                    )
+                    return None
+                if not playlist.add_plugin(plugin_data):
+                    return None
 
-            added_instance = playlist.plugins[-1]
-            other_uuids = {
-                instance.instance_uuid
-                for current_playlist in self.playlists
-                for instance in current_playlist.plugins
-                if instance is not added_instance
-            }
-            forbidden_uuids = set(other_uuids)
-            forbidden_uuids.add(str(added_instance.instance_uuid))
-            added_instance.instance_uuid = self._new_instance_uuid(forbidden_uuids)
-            return PlaylistSelectionSnapshot(
-                playlist.name,
-                added_instance.snapshot(),
-            )
+                added_instance = playlist.plugins[-1]
+                other_uuids = {
+                    instance.instance_uuid
+                    for current_playlist in self.playlists
+                    for instance in current_playlist.plugins
+                    if instance is not added_instance
+                }
+                forbidden_uuids = set(other_uuids)
+                forbidden_uuids.add(str(added_instance.instance_uuid))
+                added_instance.instance_uuid = self._new_instance_uuid(forbidden_uuids)
+                return PlaylistSelectionSnapshot(
+                    playlist.name,
+                    added_instance.snapshot(),
+                )
 
     def add_playlist(self, name, start_time=None, end_time=None):
         """Creates and adds a new playlist with the given start and end times.

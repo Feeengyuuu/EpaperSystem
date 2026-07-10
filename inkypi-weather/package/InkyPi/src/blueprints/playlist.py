@@ -1,10 +1,24 @@
-from flask import Blueprint, request, jsonify, current_app, render_template
-from utils.time_utils import calculate_seconds
-import json
-from datetime import datetime, timedelta
-import os
 import logging
-from utils.app_utils import resolve_path, handle_request_files, parse_form
+from datetime import datetime, timedelta
+
+from flask import Blueprint, current_app, jsonify, render_template, request
+
+from blueprints.plugin import (
+    _cancel_instance_work,
+    _cleanup_plugin_instance_snapshot,
+    _discard_instance_retry,
+)
+from utils.app_utils import (
+    RequestFileReferenceError,
+    parse_form,
+    prepare_request_files,
+    validate_request_file_references,
+)
+from utils.refresh_validation import (
+    RefreshValidationError,
+    parse_refresh_config,
+    validation_error_payload,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -20,59 +34,64 @@ def _signal_config_change():
 @playlist_bp.route('/add_plugin', methods=['POST'])
 def add_plugin():
     device_config = current_app.config['DEVICE_CONFIG']
-    refresh_task = current_app.config['REFRESH_TASK']
     playlist_manager = device_config.get_playlist_manager()
 
+    prepared_files = None
     try:
         plugin_settings = parse_form(request.form)
-        refresh_settings = json.loads(plugin_settings.pop("refresh_settings"))
-        plugin_id = plugin_settings.pop("plugin_id")
+        parsed_refresh = parse_refresh_config(
+            plugin_settings.pop("refresh_settings", None)
+        )
+        plugin_id = plugin_settings.pop("plugin_id", None)
+        if not plugin_id:
+            return jsonify({"error": "Plugin id is required"}), 400
 
-        playlist = refresh_settings.get('playlist')
-        instance_name = refresh_settings.get('instance_name')
+        playlist = parsed_refresh.request.get('playlist')
+        instance_name = parsed_refresh.request.get('instance_name')
         if not playlist:
             return jsonify({"error": "Playlist name is required"}), 400
         if not instance_name or not instance_name.strip():
             return jsonify({"error": "Instance name is required"}), 400
         if not all(char.isalpha() or char.isspace() or char.isnumeric() for char in instance_name):
             return jsonify({"error": "Instance name can only contain alphanumeric characters and spaces"}), 400
-        refresh_type = refresh_settings.get('refreshType')
-        if not refresh_type or refresh_type not in ["interval", "scheduled"]:
-            return jsonify({"error": "Refresh type is required"}), 400
 
-        existing = playlist_manager.find_plugin(plugin_id, instance_name)
-        if existing:
-            return jsonify({"error": f"Plugin instance '{instance_name}' already exists"}), 400
-
-        if refresh_type == "interval":
-            unit, interval = refresh_settings.get('unit'), refresh_settings.get("interval")
-            if not unit or unit not in ["minute", "hour", "day"]:
-                return jsonify({"error": "Refresh interval unit is required"}), 400
-            if not interval:
-                return jsonify({"error": "Refresh interval is required"}), 400
-            refresh_interval_seconds = calculate_seconds(int(interval), unit)
-            refresh_config = {"interval": refresh_interval_seconds}
-        else:
-            refresh_time = refresh_settings.get('refreshTime')
-            if not refresh_settings.get('refreshTime'):
-                return jsonify({"error": "Refresh time is required"}), 400
-            refresh_config = {"scheduled": refresh_time}
-
-        plugin_settings.update(handle_request_files(request.files))
+        prepared_files = prepare_request_files(request.files)
+        plugin_settings.update(prepared_files.locations)
         plugin_dict = {
             "plugin_id": plugin_id,
-            "refresh": refresh_config,
+            "refresh": dict(parsed_refresh.refresh),
             "plugin_settings": plugin_settings,
             "name": instance_name
         }
-        result = playlist_manager.add_plugin_to_playlist(playlist, plugin_dict)
-        if not result:
-            return jsonify({"error": "Failed to add to playlist"}), 500
+        with playlist_manager.instance_lifecycle_guard():
+            prepared_files.promote()
+            validate_request_file_references(plugin_settings)
+            result = playlist_manager.add_plugin_to_playlist_snapshot(
+                playlist,
+                plugin_dict,
+            )
+            if not result:
+                prepared_files.rollback()
+                return jsonify({"error": "Failed to add to playlist"}), 400
 
-        device_config.write_config()
+            # The live model owns these files as soon as its mutation commits.
+            # A later persistence failure must not leave dangling live settings.
+            prepared_files.accept()
+            device_config.write_config()
         _signal_config_change()
-    except Exception as e:
-        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+    except RefreshValidationError as error:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        return jsonify(validation_error_payload(error)), 400
+    except RequestFileReferenceError as error:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        if prepared_files is not None:
+            prepared_files.rollback()
+        logger.exception("Add plugin failed: %s", error)
+        return jsonify({"error": f"An error occurred: {error}"}), 500
     return jsonify({"success": True, "message": "Scheduled refresh configured."})
 
 @playlist_bp.route('/playlist')
@@ -94,7 +113,7 @@ def create_playlist():
     device_config = current_app.config['DEVICE_CONFIG']
     playlist_manager = device_config.get_playlist_manager()
 
-    data = request.json
+    data = request.get_json(silent=True) or {}
     playlist_name = data.get("playlist_name")
     start_time = data.get("start_time")
     end_time = data.get("end_time")
@@ -105,10 +124,6 @@ def create_playlist():
         return jsonify({"error": "Start time and End time are required"}), 400
 
     try:
-        playlist = playlist_manager.get_playlist(playlist_name)
-        if playlist:
-            return jsonify({"error": f"Playlist with name '{playlist_name}' already exists"}), 400
-
         result = playlist_manager.add_playlist(playlist_name, start_time, end_time)
         if not result:
             # add_playlist is atomic; a False here means another request created it first
@@ -130,17 +145,13 @@ def update_playlist(playlist_name):
     device_config = current_app.config['DEVICE_CONFIG']
     playlist_manager = device_config.get_playlist_manager()
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     new_name = data.get("new_name")
     start_time = data.get("start_time")
     end_time = data.get("end_time")
     if not new_name or not start_time or not end_time:
         return jsonify({"success": False, "error": "Missing required fields"}), 400
-
-    playlist = playlist_manager.get_playlist(playlist_name)
-    if not playlist:
-        return jsonify({"error": f"Playlist '{playlist_name}' does not exist"}), 400
 
     result = playlist_manager.update_playlist(playlist_name, new_name, start_time, end_time)
     if not result:
@@ -153,23 +164,35 @@ def update_playlist(playlist_name):
 @playlist_bp.route('/delete_playlist/<string:playlist_name>', methods=['DELETE'])
 def delete_playlist(playlist_name):
     device_config = current_app.config['DEVICE_CONFIG']
+    refresh_task = current_app.config['REFRESH_TASK']
     playlist_manager = device_config.get_playlist_manager()
 
     if not playlist_name:
         return jsonify({"error": f"Playlist name is required"}), 400
 
-    playlist = playlist_manager.get_playlist(playlist_name)
-    if not playlist:
-        return jsonify({"error": f"Playlist '{playlist_name}' does not exist"}), 400
+    try:
+        with playlist_manager.instance_lifecycle_guard():
+            deleted = playlist_manager.delete_playlist_atomic(playlist_name)
+            if deleted is None:
+                return jsonify({
+                    "error": f"Playlist '{playlist_name}' does not exist"
+                }), 400
 
-    # Delete all images associated with plugin instances in this playlist
-    from blueprints.plugin import _delete_plugin_instance_images
-    for plugin_instance in playlist.plugins:
-        _delete_plugin_instance_images(device_config, plugin_instance)
-
-    playlist_manager.delete_playlist(playlist_name)
-    device_config.write_config()
-    _signal_config_change()
+            for snapshot in deleted.removed_instances:
+                _cancel_instance_work(refresh_task, snapshot.instance_uuid)
+            for snapshot in deleted.removed_instances:
+                _discard_instance_retry(refresh_task, snapshot.instance_uuid)
+            device_config.write_config()
+            for snapshot in deleted.removed_instances:
+                _cleanup_plugin_instance_snapshot(
+                    device_config,
+                    refresh_task,
+                    snapshot,
+                )
+        _signal_config_change()
+    except Exception as error:
+        logger.exception("Playlist deletion failed: %s", error)
+        return jsonify({"error": f"An error occurred: {error}"}), 500
 
     return jsonify({"success": True, "message": f"Deleted playlist '{playlist_name}'!"})
 

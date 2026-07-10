@@ -2,6 +2,8 @@ import logging
 import os
 import socket
 import subprocess
+from dataclasses import dataclass, field
+from uuid import uuid4
 
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -227,6 +229,140 @@ def parse_form(request_form):
         if key.endswith('[]'):
             request_dict[key] = request_form.getlist(key)
     return request_dict
+
+
+class RequestFileReferenceError(ValueError):
+    """A submitted local upload reference disappeared before admission."""
+
+
+def validate_request_file_references(settings):
+    """Reject missing absolute paths carried by file-valued form settings.
+
+    Existing upload paths can wait behind instance cleanup. Validation must run
+    inside the instance lifecycle guard so cleanup cannot remove a path between
+    this check and the model mutation that takes ownership of it.
+    """
+    for key, raw_value in (settings or {}).items():
+        if "file" not in str(key).casefold():
+            continue
+        values = raw_value if isinstance(raw_value, (list, tuple)) else (raw_value,)
+        for value in values:
+            if not isinstance(value, (str, os.PathLike)):
+                continue
+            path = os.fspath(value)
+            if path and os.path.isabs(path) and not os.path.isfile(path):
+                raise RequestFileReferenceError(
+                    "Referenced upload no longer exists; reload and upload it again"
+                )
+
+@dataclass
+class PreparedRequestFiles:
+    """Unique request uploads that can be rolled back before admission commits."""
+
+    locations: dict
+    pending: list[tuple[str, str]] = field(default_factory=list, repr=False)
+    promoted: list[str] = field(default_factory=list, repr=False)
+    _accepted: bool = field(default=False, init=False, repr=False)
+
+    def promote(self):
+        """Publish unique final files without overwriting an existing resource."""
+        if self._accepted:
+            return dict(self.locations)
+        try:
+            while self.pending:
+                temporary, final = self.pending[0]
+                if os.path.exists(final):
+                    raise FileExistsError(f"Prepared upload target already exists: {final}")
+                os.replace(temporary, final)
+                self.pending.pop(0)
+                self.promoted.append(final)
+        except BaseException:
+            self.rollback()
+            raise
+        return dict(self.locations)
+
+    def accept(self):
+        """Transfer ownership of promoted files to the committed configuration."""
+        self.pending.clear()
+        self.promoted.clear()
+        self._accepted = True
+
+    def rollback(self):
+        """Remove all temporary and uniquely promoted files for a failed request."""
+        if self._accepted:
+            return
+        for path in [temporary for temporary, _final in self.pending] + list(self.promoted):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                logger.warning("Could not roll back prepared upload %s: %s", path, error)
+        self.pending.clear()
+        self.promoted.clear()
+
+
+def prepare_request_files(request_files, form_data=None):
+    """Stage uploads under unique names without touching existing user files."""
+    form_data = form_data or {}
+    allowed_file_extensions = {
+        'pdf', 'png', 'avif', 'jpg', 'jpeg', 'gif', 'webp', 'heif', 'heic', 'csv'
+    }
+    file_location_map = {}
+    prepared = PreparedRequestFiles(file_location_map)
+
+    for key in set(request_files.keys()):
+        is_list = key.endswith('[]')
+        if key in form_data:
+            file_location_map[key] = form_data.getlist(key) if is_list else form_data.get(key)
+
+    try:
+        for key, file in request_files.items(multi=True):
+            is_list = key.endswith('[]')
+            original_name = os.path.basename(file.filename or "")
+            if not original_name:
+                continue
+            extension = os.path.splitext(original_name)[1].lstrip('.').lower()
+            if extension not in allowed_file_extensions:
+                continue
+
+            file_save_dir = resolve_path(os.path.join("static", "images", "saved"))
+            os.makedirs(file_save_dir, exist_ok=True)
+            token = uuid4().hex
+            final_name = f"{token}-{original_name}"
+            temporary_name = f".{token}.pending-{original_name}"
+            final_path = os.path.join(file_save_dir, final_name)
+            temporary_path = os.path.join(file_save_dir, temporary_name)
+
+            # Register ownership before writing so even a partial save is
+            # discoverable and removable by the outer rollback path.
+            prepared.pending.append((temporary_path, final_path))
+
+            if extension in {'jpg', 'jpeg'}:
+                try:
+                    with Image.open(file) as image:
+                        ImageOps.exif_transpose(image).save(temporary_path)
+                except Exception as error:
+                    logger.warning("EXIF processing error for %s: %s", original_name, error)
+                    try:
+                        file.stream.seek(0)
+                    except (AttributeError, OSError):
+                        pass
+                    file.save(temporary_path)
+            else:
+                file.save(temporary_path)
+
+            if is_list:
+                file_location_map.setdefault(key, [])
+                file_location_map[key].append(final_path)
+            else:
+                file_location_map[key] = final_path
+    except BaseException:
+        prepared.rollback()
+        raise
+
+    return prepared
+
 
 def handle_request_files(request_files, form_data={}):
     allowed_file_extensions = {'pdf', 'png', 'avif', 'jpg', 'jpeg', 'gif', 'webp', 'heif', 'heic', 'csv'}

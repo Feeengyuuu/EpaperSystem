@@ -4,6 +4,7 @@ import os
 import logging
 import ctypes
 import gc
+import hashlib
 import psutil
 import pytz
 from datetime import datetime, timedelta, timezone
@@ -270,6 +271,8 @@ class RefreshTask:
         self._attempt_count = 0
         self._completion_lock = threading.Lock()
         self._completion_events = {}
+        self._transient_upload_lock = threading.Lock()
+        self._transient_uploads = {}
         self.cache_refresh_lock = threading.Lock()
         self.manual_refresh_lock = threading.Lock()
         self.config_write_lock = threading.Lock()
@@ -357,6 +360,7 @@ class RefreshTask:
                 state = self.lifecycle.state
                 if state is LifecycleState.STOPPED:
                     self.running = False
+                    self._cleanup_all_transient_uploads()
                     return True
                 if state is LifecycleState.FORCED_EXIT:
                     self.running = False
@@ -377,6 +381,7 @@ class RefreshTask:
                 if self.lifecycle.state is LifecycleState.DRAINING:
                     self.lifecycle.mark_forced_exit("refresh worker did not stop")
                 return False
+            self._cleanup_all_transient_uploads()
             if self.lifecycle.state is LifecycleState.QUIESCING:
                 self.lifecycle.begin_draining()
             if self.lifecycle.state is LifecycleState.DRAINING:
@@ -395,11 +400,13 @@ class RefreshTask:
                 self._process_queue_entry(entry)
         finally:
             self.running = False
+            self._cleanup_all_transient_uploads()
             self._waiting_event.clear()
             self.refresh_event.set()
 
     def _wait_for_work(self) -> QueueEntry | None:
         """Probe, schedule, reprobe, then wait on a non-lossy queue cursor."""
+        self._reap_terminal_transient_uploads()
         token = self.refresh_queue.change_token()
         entry = self.refresh_queue.take(timeout=0)
         if entry is not None:
@@ -665,6 +672,43 @@ class RefreshTask:
         return get_plugin_instance(plugin_config)
 
     def _snapshot_cache_path(self, instance):
+        """Return the authoritative cache path for one immutable revision.
+
+        Human-readable plugin/name cache files are legacy compatibility
+        artifacts. They are not safe scheduler inputs because deleting and
+        recreating the same name can otherwise reuse another instance's image.
+        """
+        directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-cache")
+        filename = self._cache_identity_filename(
+            instance.instance_uuid,
+            instance.structural_generation,
+            instance.settings_revision,
+        )
+        return os.path.join(directory, filename)
+
+    @staticmethod
+    def _cache_identity_prefix(instance_uuid):
+        return hashlib.sha256(str(instance_uuid).encode("utf-8")).hexdigest()[:32]
+
+    @classmethod
+    def _cache_identity_filename(
+        cls,
+        instance_uuid,
+        structural_generation,
+        settings_revision,
+    ):
+        prefix = cls._cache_identity_prefix(instance_uuid)
+        return (
+            f"{prefix}-{int(structural_generation)}-"
+            f"{int(settings_revision)}.png"
+        )
+
+    def cache_path_for_snapshot(self, instance):
+        """Public read-only cache location for an immutable instance snapshot."""
+        return self._snapshot_cache_path(instance)
+
+    def compatibility_cache_path_for_snapshot(self, instance):
+        """Return the old name-based preview path; never use it for scheduling."""
         return os.path.join(
             self.device_config.plugin_image_dir,
             f"{instance.plugin_id}_{instance.name.replace(' ', '_')}.png",
@@ -758,6 +802,7 @@ class RefreshTask:
                         logger.exception("Refresh success bookkeeping failed")
             self._signal_completion(finished.id)
         finally:
+            self._cleanup_transient_uploads(entry.job.id, entry.command)
             if busy_lock is not None:
                 busy_lock.release()
             self._execution_local.context = None
@@ -792,12 +837,16 @@ class RefreshTask:
             if resolved is None:
                 raise _StaleSelection("playlist selection is stale")
             image = self._render_playlist_command(command, resolved, context)
-            return self._commit_command_result(
-                command,
-                resolved,
-                image,
-                self._get_current_datetime(),
-            )
+            # Cache promotion is plugin-owned work too. Reacquiring the same
+            # canonical lease closes the render->commit gap against deletion
+            # cleanup without holding it across unrelated queue bookkeeping.
+            with self.render_arbiter.lease(command.plugin_id, context):
+                return self._commit_command_result(
+                    command,
+                    resolved,
+                    image,
+                    self._get_current_datetime(),
+                )
 
         plugin_config = self.device_config.get_plugin(command.plugin_id)
         if plugin_config is None:
@@ -980,7 +1029,7 @@ class RefreshTask:
             expected_generation=command.structural_generation,
             expected_settings_revision=command.settings_revision,
             current_datetime=self._get_current_datetime(),
-            require_active=True,
+            require_active=bool(command.payload.get("require_active", True)),
         )
 
     def _require_fresh_selection(self, command, context):
@@ -991,7 +1040,7 @@ class RefreshTask:
             expected_generation=command.structural_generation,
             expected_settings_revision=command.settings_revision,
             current_datetime=self._get_current_datetime(),
-            require_active=True,
+            require_active=bool(command.payload.get("require_active", True)),
         )
         if selection is None:
             raise _StaleSelection("playlist selection changed before commit")
@@ -999,30 +1048,32 @@ class RefreshTask:
 
     def _staging_cache_path(self, instance):
         directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
-        filename = (
-            f"{instance.instance_uuid}-{instance.structural_generation}-"
-            f"{instance.settings_revision}.png"
+        filename = self._cache_identity_filename(
+            instance.instance_uuid,
+            instance.structural_generation,
+            instance.settings_revision,
         )
         return os.path.join(directory, filename)
 
     def managed_cache_paths(self, instance_uuid, *, plugin_id=None, instance_name=None):
-        """Return Task-5-owned cache paths for bounded cleanup by Task 6."""
-        directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
+        """Return UUID-owned versioned cache paths for bounded cleanup.
+
+        ``plugin_id`` and ``instance_name`` remain accepted for callers from the
+        transition release, but name-based compatibility files are deliberately
+        excluded: a replacement instance may own that shared alias.
+        """
         paths = []
-        prefix = f"{instance_uuid}-"
-        try:
-            paths.extend(
-                os.path.join(directory, name)
-                for name in os.listdir(directory)
-                if name.startswith(prefix)
-            )
-        except FileNotFoundError:
-            pass
-        if plugin_id is not None and instance_name is not None:
-            paths.append(os.path.join(
-                self.device_config.plugin_image_dir,
-                f"{plugin_id}_{str(instance_name).replace(' ', '_')}.png",
-            ))
+        prefix = f"{self._cache_identity_prefix(instance_uuid)}-"
+        for directory_name in (".refresh-staging", ".refresh-cache"):
+            directory = os.path.join(self.device_config.plugin_image_dir, directory_name)
+            try:
+                paths.extend(
+                    os.path.join(directory, name)
+                    for name in os.listdir(directory)
+                    if name.startswith(prefix)
+                )
+            except FileNotFoundError:
+                pass
         return tuple(sorted(set(paths)))
 
     def _commit_command_result(self, command, resolved_snapshot, image, current_dt):
@@ -1174,6 +1225,62 @@ class RefreshTask:
         for _requested_id, event in ready:
             event.set()
 
+    @staticmethod
+    def _normalize_transient_paths(paths):
+        normalized = []
+        seen = set()
+        for path in paths or ():
+            try:
+                value = os.fspath(path)
+            except TypeError:
+                continue
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return tuple(normalized)
+
+    @staticmethod
+    def _remove_transient_paths(paths):
+        for path in paths:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                logger.warning("Could not remove transient upload %s: %s", path, error)
+
+    def _cleanup_transient_uploads(self, job_id, command=None):
+        with self._transient_upload_lock:
+            owned_paths = self._transient_uploads.pop(job_id, ())
+        if not owned_paths and command is not None:
+            payload = thaw_payload(command.payload)
+            owned_paths = self._normalize_transient_paths(
+                payload.get("transient_upload_paths", ())
+            )
+        self._remove_transient_paths(owned_paths)
+
+    def _cleanup_all_transient_uploads(self):
+        with self._transient_upload_lock:
+            batches = tuple(self._transient_uploads.values())
+            self._transient_uploads.clear()
+        for paths in batches:
+            self._remove_transient_paths(paths)
+
+    def _reap_terminal_transient_uploads(self):
+        with self._transient_upload_lock:
+            job_ids = tuple(self._transient_uploads)
+        for job_id in job_ids:
+            entry = self.refresh_queue.get_entry(job_id)
+            if entry is None or entry.job.status not in {
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
+            }:
+                self._cleanup_transient_uploads(
+                    job_id,
+                    entry.command if entry is not None else None,
+                )
+
     def _get_refresh_wait_seconds(self):
         """Return time until the next playlist tick, aligned to the latest refresh time."""
         interval = self.device_config.get_config(
@@ -1209,18 +1316,21 @@ class RefreshTask:
                 wait_seconds = min(wait_seconds, max(0, live_wait_seconds))
         return wait_seconds
 
-    def _command_from_refresh_action(self, refresh_action):
+    def _command_from_refresh_action(self, refresh_action, *, transient_paths=()):
         now = self._clock()
         deadline = now + self._manual_update_timeout_seconds()
         if isinstance(refresh_action, ManualRefresh):
+            payload = {
+                "refresh_type": "Manual Update",
+                "settings": refresh_action.plugin_settings,
+            }
+            if transient_paths:
+                payload["transient_upload_paths"] = tuple(transient_paths)
             return RefreshCommand.create(
                 kind=CommandKind.DISPLAY,
                 source=CommandSource.MANUAL,
                 plugin_id=refresh_action.plugin_id,
-                payload={
-                    "refresh_type": "Manual Update",
-                    "settings": refresh_action.plugin_settings,
-                },
+                payload=payload,
                 now_monotonic=now,
                 deadline_monotonic=deadline,
                 force=True,
@@ -1268,6 +1378,7 @@ class RefreshTask:
         deadline_monotonic=None,
         kind=CommandKind.DISPLAY,
         theme_context=None,
+        require_active=True,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -1280,6 +1391,7 @@ class RefreshTask:
             "refresh": instance.refresh,
             "latest_refresh_time": instance.latest_refresh_time,
             "display_cached_only": bool(display_cached_only),
+            "require_active": bool(require_active),
         }
         if theme_context:
             payload["theme_context"] = theme_context
@@ -1352,34 +1464,98 @@ class RefreshTask:
             raise TaskCancelled(job.get("error") or "Manual update canceled")
         return job
 
-    def submit_manual_update(self, refresh_action):
+    def submit_manual_update(self, refresh_action, *, transient_paths=()):
         """Queue a manual refresh and return the bounded queue job payload."""
         if not self.running and self.refresh_queue.snapshot().accepting:
             logger.warning("Background refresh task is not running, unable to queue a manual update")
             return self._rejected_manual_job(refresh_action, "Background refresh task is not running")
-        command = self._command_from_refresh_action(refresh_action)
-        job = self.refresh_queue.submit(command)
+        owned_paths = self._normalize_transient_paths(transient_paths)
+        command = self._command_from_refresh_action(
+            refresh_action,
+            transient_paths=owned_paths,
+        )
+        if owned_paths:
+            with self._transient_upload_lock:
+                self._transient_uploads[command.id] = owned_paths
+        try:
+            job = self.refresh_queue.submit(command)
+        except BaseException:
+            with self._transient_upload_lock:
+                self._transient_uploads.pop(command.id, None)
+            raise
         return self._job_payload(self.refresh_queue.get_entry(job.id))
 
-    def submit_playlist_display(self, instance_uuid, *, force=True, display_cached_only=False):
+    def submit_playlist_display(
+        self,
+        instance_uuid,
+        *,
+        force=True,
+        display_cached_only=False,
+        expected_playlist_name=None,
+        expected_generation=None,
+        expected_settings_revision=None,
+        require_active=True,
+    ):
         """Queue an immutable active-playlist display command by UUID."""
         if not self.running and self.refresh_queue.snapshot().accepting:
             raise RuntimeError("Background refresh task is not running")
         current_dt = self._get_current_datetime()
-        active = self.device_config.get_playlist_manager().snapshot_active_playlist(current_dt)
-        instance = None if active is None else next(
-            (candidate for candidate in active.plugins if candidate.instance_uuid == instance_uuid),
-            None,
+        playlist_manager = self.device_config.get_playlist_manager()
+        explicit_selection = any(
+            value is not None
+            for value in (
+                expected_playlist_name,
+                expected_generation,
+                expected_settings_revision,
+            )
         )
+        playlist_name = None
+        instance = None
+        if explicit_selection:
+            if any(
+                value is None
+                for value in (
+                    expected_playlist_name,
+                    expected_generation,
+                    expected_settings_revision,
+                )
+            ):
+                raise ValueError("Playlist display CAS requires playlist, generation, and revision")
+            selection = playlist_manager.validate_selection(
+                instance_uuid,
+                expected_playlist_name=expected_playlist_name,
+                expected_generation=expected_generation,
+                expected_settings_revision=expected_settings_revision,
+                current_datetime=current_dt,
+                require_active=bool(require_active),
+            )
+            if selection is not None:
+                playlist_name = selection.playlist_name
+                instance = selection.instance
+        else:
+            if not require_active:
+                raise ValueError("Inactive playlist display requires exact CAS metadata")
+            active = playlist_manager.snapshot_active_playlist(current_dt)
+            if active is not None:
+                playlist_name = active.name
+                instance = next(
+                    (
+                        candidate
+                        for candidate in active.plugins
+                        if candidate.instance_uuid == instance_uuid
+                    ),
+                    None,
+                )
         if instance is None:
-            raise ValueError(f"Active playlist instance not found: {instance_uuid}")
+            raise ValueError(f"Playlist instance not found or changed: {instance_uuid}")
         command = self._playlist_command(
-            active.name,
+            playlist_name,
             instance,
             source=CommandSource.MANUAL,
             force=force,
             display_cached_only=display_cached_only,
             priority=100,
+            require_active=bool(require_active),
         )
         job = self.refresh_queue.submit(command)
         return self._job_payload(self.refresh_queue.get_entry(job.id))

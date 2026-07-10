@@ -477,6 +477,39 @@ def test_same_kind_revision_matrix_preserves_newest_payload(
     assert entry.command.payload["owner"] == expected_payload_owner
 
 
+@pytest.mark.parametrize("manual_first", [False, True])
+def test_inactive_manual_display_payload_survives_scheduled_coalescing(manual_first):
+    queue = make_queue()
+    scheduled = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        instance_uuid="inactive-display",
+        structural_generation=1,
+        settings_revision=3,
+        priority=10,
+        payload={"require_active": True, "playlist_name": "Inactive"},
+    )
+    manual = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid="inactive-display",
+        structural_generation=1,
+        settings_revision=3,
+        priority=100,
+        payload={"require_active": False, "playlist_name": "Inactive"},
+    )
+
+    first, second = (manual, scheduled) if manual_first else (scheduled, manual)
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+
+    assert second_job.id == first_job.id
+    entry = queue.take(timeout=0)
+    assert entry.command.source is CommandSource.MANUAL
+    assert entry.command.priority == 100
+    assert entry.command.payload["require_active"] is False
+
+
 def test_missing_revision_is_older_than_concrete_and_cannot_replace_payload():
     queue = make_queue()
     missing = command(

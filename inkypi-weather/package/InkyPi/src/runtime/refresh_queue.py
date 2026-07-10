@@ -755,6 +755,23 @@ class RefreshQueue:
                 priority = existing.priority
                 source = self._more_urgent_source(existing.source, incoming.source)
 
+        if revision_comparison == 0:
+            manual_inactive = next(
+                (
+                    candidate
+                    for candidate in (incoming, existing)
+                    if candidate.source is CommandSource.MANUAL
+                    and candidate.kind is CommandKind.DISPLAY
+                    and candidate.payload.get("require_active") is False
+                ),
+                None,
+            )
+            if manual_inactive is not None:
+                # Manual display of an exact inactive-playlist revision is a
+                # stronger admission requirement than an older scheduled probe.
+                # Keep its immutable payload when the jobs coalesce.
+                selected_payload = manual_inactive.payload
+
         deadline = existing.deadline_monotonic
         if (
             incoming.deadline_monotonic > now
