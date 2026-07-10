@@ -1,9 +1,9 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
-from utils.http_client import DEFAULT_TIMEOUT_SECONDS, get_http_session
+from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
-from utils.safe_image import ImageLimits, read_limited_response_bytes, safe_open_base64_image
+from utils.safe_image import ImageLimits, safe_open_base64_image
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
 import concurrent.futures
@@ -11,7 +11,6 @@ from io import BytesIO
 from functools import lru_cache
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
@@ -1491,8 +1490,8 @@ class SteamCharts(BasePlugin):
         if not appid.isdigit():
             return {}
         try:
-            session = get_http_session()
-            response = session.get(
+            response = get_http_client().request_json(
+                "GET",
                 STEAM_STORE_APPDETAILS,
                 params={
                     "appids": appid,
@@ -1500,8 +1499,7 @@ class SteamCharts(BasePlugin):
                 },
                 timeout=STEAM_STORE_TIMEOUT,
             )
-            response.raise_for_status()
-            payload = response.json()
+            payload = response.data
             entry = payload.get(appid, {}) if isinstance(payload, dict) else {}
             data = entry.get("data") if entry.get("success") else None
             return data if isinstance(data, dict) else {}
@@ -1513,10 +1511,13 @@ class SteamCharts(BasePlugin):
         """Return SteamCharts homepage HTML or raise a descriptive runtime error."""
         try:
             steamcharts_rate_limiter.wait()
-            session = get_http_session()
-            resp = session.get(STEAMCHARTS_HOME_URL, timeout=15)
-            resp.raise_for_status()
-            return resp.text
+            return get_http_client().request_text(
+                "GET",
+                STEAMCHARTS_HOME_URL,
+                timeout=15,
+                max_bytes=4 * 1024 * 1024,
+                errors="replace",
+            ).data
         except Exception as e:
             logger.error(f"Failed to fetch SteamCharts homepage: {e}")
             raise RuntimeError(f"{failure_message}: {e}") from e
@@ -1716,12 +1717,12 @@ class SteamCharts(BasePlugin):
     def _image_url_to_data_uri(image_url):
         if not image_url:
             return ""
-        session = get_http_session()
-        resp = session.get(image_url, timeout=STEAM_CAPSULE_TIMEOUT, stream=True)
-        image_bytes = read_limited_response_bytes(
-            resp,
+        image_bytes = get_http_client().request_bytes(
+            "GET",
+            image_url,
+            timeout=STEAM_CAPSULE_TIMEOUT,
             max_bytes=STEAM_CAPSULE_IMAGE_LIMITS.max_bytes,
-        )
+        ).data
         encoded_image = base64.b64encode(image_bytes).decode("ascii")
         return f"data:image/jpeg;base64,{encoded_image}"
 
@@ -1734,27 +1735,12 @@ class SteamCharts(BasePlugin):
         try:
             url = STEAMCHARTS_CHART_URL.format(appid=app_id)
             steamcharts_rate_limiter.wait()
-            # Use a per-call session to avoid sharing a requests.Session() across threads.
-            # Shared sessions from `get_http_session()` are a global singleton and
-            # may not be safe to reuse concurrently from multiple worker threads.
-            # To retain retry and connection-pool characteristics, configure the
-            # per-call session with the same HTTPAdapter settings used by
-            # `get_http_session()` so transient failures are retried.
-            with requests.Session() as session:
-                session.headers.update({
-                    'User-Agent': 'InkyPi/1.0 (https://github.com/fatihak/InkyPi/)'
-                })
-                adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=10,
-                    pool_maxsize=10,
-                    max_retries=3,
-                    pool_block=False,
-                )
-                session.mount('http://', adapter)
-                session.mount('https://', adapter)
-                resp = session.get(url, timeout=DEFAULT_TIMEOUT_SECONDS)
-                resp.raise_for_status()
-                data = resp.json()
+            data = get_http_client().request_json(
+                "GET",
+                url,
+                timeout=30,
+                max_bytes=8 * 1024 * 1024,
+            ).data
         except Exception as e:
             logger.warning(f"Failed chart data for app {app_id}: {e}")
             return {}

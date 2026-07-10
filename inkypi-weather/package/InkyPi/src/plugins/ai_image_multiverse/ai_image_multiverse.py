@@ -24,13 +24,13 @@ from google.genai import types
 from google.genai.errors import ClientError
 from openai import BadRequestError, OpenAI
 from PIL import Image, ImageColor, ImageOps
-import requests
 
 # ---- project / local ----
 from blueprints.plugin import plugin_bp
 from plugins.base_plugin.base_plugin import BasePlugin
+from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 from utils.image_utils import pad_image_blur
-from utils.safe_image import safe_open_base64_image, safe_open_image, safe_open_image_response
+from utils.safe_image import safe_open_base64_image, safe_open_image
 
 from .e_ink_prompt import e_ink_prompt
 from .randomizer import randomizer
@@ -316,8 +316,12 @@ def generate_openai_image(settings, device_config, final_prompt: str) -> Image.I
     if getattr(img0, "b64_json", None):
         img = safe_open_base64_image(img0.b64_json).convert("RGB")
     elif getattr(img0, "url", None):
-        r = requests.get(img0.url, timeout=20, stream=True)
-        img = safe_open_image_response(r).convert("RGB")
+        payload = get_http_client().request_bytes(
+            "GET",
+            img0.url,
+            timeout=20,
+        ).data
+        img = safe_open_image(payload).convert("RGB")
     else:
         raise RuntimeError("OpenAI returned neither b64_json nor url.")
 
@@ -459,21 +463,29 @@ def _get_horde_kudos(api_key: str) -> str:
         return "Anon"
     try:
         url = "https://stablehorde.net/api/v2/find_user"
-        r = requests.get(url, headers={"apikey": api_key}, timeout=5)
-        if r.status_code == 200:
-            return str(int(r.json().get("kudos", 0)))
+        data = get_http_client().request_json(
+            "GET",
+            url,
+            headers={"apikey": api_key},
+            timeout=5,
+        ).data
+        return str(int(data.get("kudos", 0)))
+    except HttpStatusError:
+        return "0"
     except Exception:
         return "Error"
-    return "0"
 
 def _get_horde_model_stats(model_name: str) -> tuple[str, str]:
     
     try:
         url = "https://aihorde.net/api/v2/status/models"
         params = {"type": "image", "model_state": "all"}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        data = get_http_client().request_json(
+            "GET",
+            url,
+            params=params,
+            timeout=10,
+        ).data
 
         if not isinstance(data, list):
             return "x", "x"
@@ -539,7 +551,7 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
         cfg_scale = 7.5
         sampler = "k_euler_a"
 
-    session = requests.Session()
+    client = get_http_client()
 
     submit_url = "https://aihorde.net/api/v2/generate/async"
     status_url = "https://aihorde.net/api/v2/generate/status/"
@@ -575,15 +587,15 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
             logger.info("Horde submit requested models: <any available>")
 
         print("\n==== FINAL PROMPT TO HORDE ====\n" + (final_prompt or "") + "\n==== END FINAL PROMPT ====\n", flush=True)
-        r = session.post(submit_url, json=payload, headers=headers, timeout=(5, 30))
-        
-        r.raise_for_status()
+        submitted = client.request_json(
+            "POST",
+            submit_url,
+            json=payload,
+            headers=headers,
+            timeout=(5, 30),
+        ).data
 
-        if r.status_code in (400, 401, 403, 429):
-            logger.error("Horde submit status=%s body=%s", r.status_code, r.text)
-        r.raise_for_status()
-
-        job_id = r.json().get("id")
+        job_id = submitted.get("id")
         if not job_id:
             raise RuntimeError("AI Horde did not return a job id.")
         job_id = str(job_id)
@@ -592,9 +604,12 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
 
         total_steps = 120
         for i in range(total_steps):
-            s = session.get(status_url + job_id, headers=headers, timeout=10)
-            s.raise_for_status()
-            data = s.json()
+            data = client.request_json(
+                "GET",
+                status_url + job_id,
+                headers=headers,
+                timeout=10,
+            ).data
 
             if data.get("generations"):
                 gen0 = data["generations"][0]
@@ -609,8 +624,12 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
 
                 if isinstance(img_data, str) and img_data.startswith("http"):
                     logger.info("Downloading image from Horde URL...")
-                    img_res = requests.get(img_data, timeout=20, stream=True)
-                    img = safe_open_image_response(img_res).convert("RGB")
+                    img_bytes = client.request_bytes(
+                        "GET",
+                        img_data,
+                        timeout=20,
+                    ).data
+                    img = safe_open_image(img_bytes).convert("RGB")
                 else:
                     if isinstance(img_data, str) and "base64," in img_data:
                         img_data = img_data.split("base64,", 1)[1]
@@ -633,21 +652,17 @@ def generate_horde_image(settings, device_config, final_prompt: str) -> Image.Im
 
             time.sleep(10)
 
-    except requests.exceptions.HTTPError as e:
-        resp = getattr(e, "response", None)
-
-        code = getattr(resp, "status_code", None)
-
-        if code == 401:
+    except HttpStatusError as e:
+        if e.status == 401:
             raise RuntimeError("AI Horde rejected your API key. Please check AI_HORDE_KEY.")
-        if code == 403:
+        if e.status == 403:
             raise RuntimeError("AI Horde didn’t accept the request. Lower the quality setting and try again.")
-        if code == 429:
+        if e.status == 429:
             raise RuntimeError("AI Horde is busy right now. Please wait a moment and try again.")
 
         raise RuntimeError("AI Horde submission failed. Please try again later.")
 
-    except requests.exceptions.RequestException as e:
+    except HttpClientError as e:
         logger.error("Horde Error: %s", e)
         raise RuntimeError("AI Horde connection failed. Please try again.")
 

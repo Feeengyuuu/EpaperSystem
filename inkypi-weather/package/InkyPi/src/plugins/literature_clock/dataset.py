@@ -1,7 +1,8 @@
 import logging
 import time
 from pathlib import Path
-import requests
+
+from utils.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,14 @@ def ensure_dataset(csv_path: Path) -> None:
         return
 
     try:
-        response = requests.get(DATASET_URL, timeout=15)
-        response.raise_for_status()
+        response = get_http_client().request_text(
+            "GET",
+            DATASET_URL,
+            timeout=15,
+            max_bytes=16 * 1024 * 1024,
+        )
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        csv_path.write_text(response.text, encoding="utf-8")
+        csv_path.write_text(response.data, encoding="utf-8")
         return
     except Exception as exc:
         logger.warning("Literature clock dataset refresh failed: %s", exc)

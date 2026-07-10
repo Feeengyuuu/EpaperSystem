@@ -14,13 +14,13 @@ import os
 import re
 import time
 
-import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_font
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.http_client import get_http_client
+from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -489,9 +489,12 @@ class FlightRadar(BasePlugin):
         raise _SkippedSource("unknown source")
 
     def _fetch_readsb_point(self, url, source_key, center_lat, center_lon, timeout):
-        response = self._session().get(url, headers=HTTP_HEADERS, timeout=(4, timeout))
-        response.raise_for_status()
-        data = response.json()
+        data = self._client().request_json(
+            "GET",
+            url,
+            headers=HTTP_HEADERS,
+            timeout=(4, timeout),
+        ).data
         raw_aircraft = data.get("ac") or data.get("aircraft") or data.get("data") or []
         if not isinstance(raw_aircraft, list):
             raise RuntimeError("unexpected aircraft payload")
@@ -518,15 +521,14 @@ class FlightRadar(BasePlugin):
         if username and password:
             auth = (username, password)
 
-        response = self._session().get(
+        data = self._client().request_json(
+            "GET",
             OPENSKY_STATES_URL,
             params=params,
             headers=HTTP_HEADERS,
             timeout=(4, timeout),
             auth=auth,
-        )
-        response.raise_for_status()
-        data = response.json()
+        ).data
         states = data.get("states") or []
         if not isinstance(states, list):
             raise RuntimeError("unexpected OpenSky payload")
@@ -546,14 +548,14 @@ class FlightRadar(BasePlugin):
         if not query:
             raise _SkippedSource("missing FlightAware query")
 
-        response = self._session().get(
+        data = self._client().request_json(
+            "GET",
             FLIGHTAWARE_POSITIONS_URL,
             params={"query": query, "max_pages": 1},
             headers={**HTTP_HEADERS, "x-apikey": api_key},
             timeout=(4, timeout),
-        )
-        response.raise_for_status()
-        records = self._extract_generic_records(response.json())
+        ).data
+        records = self._extract_generic_records(data)
         return self._normalize_generic_records(records, "flightaware", lat, lon, radius_nm)
 
     def _fetch_rapidapi_custom(self, settings, device_config, lat, lon, radius_nm, timeout):
@@ -576,9 +578,14 @@ class FlightRadar(BasePlugin):
         if host:
             headers["X-RapidAPI-Host"] = host
 
-        response = self._session().get(url, params=params, headers=headers, timeout=(4, timeout))
-        response.raise_for_status()
-        records = self._extract_generic_records(response.json())
+        data = self._client().request_json(
+            "GET",
+            url,
+            params=params,
+            headers=headers,
+            timeout=(4, timeout),
+        ).data
+        records = self._extract_generic_records(data)
         return self._normalize_generic_records(records, "rapidapi_custom", lat, lon, radius_nm)
 
     def _normalize_readsb_aircraft(self, item, source_key, center_lat, center_lon):
@@ -788,16 +795,17 @@ class FlightRadar(BasePlugin):
         if not planes:
             return {}
 
-        response = self._session().post(
+        response = self._client().request_bytes(
+            "POST",
             url,
             json={"planes": planes},
             headers={**HTTP_HEADERS, "Accept": "application/json"},
             timeout=(3, timeout),
+            max_bytes=2 * 1024 * 1024,
         )
-        response.raise_for_status()
-        if not response.text.strip():
+        if not response.data.strip():
             return {}
-        data = response.json()
+        data = json.loads(response.data)
         if isinstance(data, str):
             try:
                 data = json.loads(data)
@@ -1288,8 +1296,14 @@ class FlightRadar(BasePlugin):
 
         timeout = self._int_setting(settings, "mapTimeoutSeconds", 6, 3, 12)
         try:
-            response = self._session().get(url, headers=HTTP_HEADERS, timeout=(4, timeout), stream=True)
-            image = safe_open_image_response(response, limits=MAP_IMAGE_LIMITS).convert("RGB")
+            response = self._client().request_bytes(
+                "GET",
+                url,
+                headers=HTTP_HEADERS,
+                timeout=(4, timeout),
+                max_bytes=MAP_IMAGE_LIMITS.max_bytes,
+            )
+            image = safe_open_image(response.data, limits=MAP_IMAGE_LIMITS).convert("RGB")
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             image.save(cache_file)
             return image
@@ -2242,10 +2256,8 @@ class FlightRadar(BasePlugin):
             return datetime.now()
 
     @staticmethod
-    def _session():
-        session = requests.Session()
-        session.trust_env = True
-        return session
+    def _client():
+        return get_http_client()
 
     @staticmethod
     def _number(value):

@@ -12,12 +12,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunparse
 
-import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.safe_image import safe_open_image_response
+from utils.http_client import HttpClientError, HttpStatusError, get_http_client
+from utils.safe_image import safe_open_image
 
 try:
     import pytz
@@ -666,24 +666,31 @@ class GcdComicCovers(BasePlugin):
 
     def _download_cover_image(self, cover_url, candidate, detail):
         try:
-            response = requests.get(
+            response = get_http_client().request_bytes(
+                "GET",
                 cover_url,
                 timeout=(GCD_COVER_CONNECT_TIMEOUT_SECONDS, GCD_COVER_READ_TIMEOUT_SECONDS),
                 headers=IMAGE_HEADERS,
-                stream=True,
+                max_bytes=12 * 1024 * 1024,
             )
-            if response.status_code in {403, 429}:
-                response.close()
+            return safe_open_image(response.data)
+        except HttpStatusError as exc:
+            if exc.status in {403, 429}:
                 raise GcdCoverImageUnavailable(
-                    f"cover image blocked by source ({response.status_code})",
+                    f"cover image blocked by source ({exc.status})",
                     candidate,
                     detail,
                     cover_url,
-                )
-            return safe_open_image_response(response)
+                ) from exc
+            raise GcdCoverImageUnavailable(
+                f"cover image request failed: {exc}",
+                candidate,
+                detail,
+                cover_url,
+            ) from exc
         except GcdCoverImageUnavailable:
             raise
-        except requests.exceptions.RequestException as exc:
+        except HttpClientError as exc:
             raise GcdCoverImageUnavailable(f"cover image request failed: {exc}", candidate, detail, cover_url) from exc
         except Exception as exc:
             raise GcdCoverImageUnavailable(f"cover image could not be decoded: {exc}", candidate, detail, cover_url) from exc
@@ -896,17 +903,17 @@ class GcdComicCovers(BasePlugin):
         request_params = dict(params or {})
         request_params["api_key"] = api_key
         request_params["format"] = "json"
-        response = requests.get(
-            url,
-            params=request_params,
-            headers=COMIC_VINE_HEADERS,
-            timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(f"Comic Vine HTTP {response.status_code}")
         try:
-            payload = response.json()
-        except ValueError as exc:
+            payload = get_http_client().request_json(
+                "GET",
+                url,
+                params=request_params,
+                headers=COMIC_VINE_HEADERS,
+                timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
+            ).data
+        except HttpStatusError as exc:
+            raise RuntimeError(f"Comic Vine HTTP {exc.status}") from exc
+        except HttpClientError as exc:
             raise RuntimeError("Comic Vine response was not JSON") from exc
         status = str(payload.get("status_code") or "")
         if status and status != "1":
@@ -1024,11 +1031,15 @@ class GcdComicCovers(BasePlugin):
         params = {"_export": "json"}
         if page > 1:
             params["page"] = page
-        response = self._gcd_get(url, params=params, headers=REQUEST_HEADERS)
-        response.raise_for_status()
         try:
-            data = response.json()
-        except Exception:
+            data = get_http_client().request_json(
+                "GET",
+                url,
+                params=params,
+                headers=REQUEST_HEADERS,
+                timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
+            ).data
+        except HttpClientError:
             return []
         return self._extract_json_candidates(data, year, month)
 
@@ -1037,12 +1048,17 @@ class GcdComicCovers(BasePlugin):
         params = {}
         if page > 1:
             params["page"] = page
-        response = self._gcd_get(url, params=params, headers=REQUEST_HEADERS)
-        response.raise_for_status()
-        if not response.encoding:
-            response.encoding = "utf-8"
+        response = get_http_client().request_text(
+            "GET",
+            url,
+            params=params,
+            headers=REQUEST_HEADERS,
+            timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
+            max_bytes=4 * 1024 * 1024,
+            errors="replace",
+        )
         parser = _GcdMonthlyParser(response.url)
-        parser.feed(response.text or "")
+        parser.feed(response.data or "")
 
         candidates = []
         for row in parser.rows:
@@ -1421,22 +1437,15 @@ class GcdComicCovers(BasePlugin):
         return lines
 
     def _fetch_json(self, url):
-        response = self._gcd_get(url, headers=JSON_HEADERS)
-        response.raise_for_status()
         try:
-            return response.json()
-        except ValueError as exc:
-            content_type = response.headers.get("content-type", "unknown")
-            snippet = _clean_text((response.text or "")[:180])
-            raise RuntimeError(f"GCD JSON endpoint returned {content_type}: {snippet}") from exc
-
-    def _gcd_get(self, url, params=None, headers=None):
-        return requests.get(
-            url,
-            params=params,
-            headers=headers or REQUEST_HEADERS,
-            timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
-        )
+            return get_http_client().request_json(
+                "GET",
+                url,
+                headers=JSON_HEADERS,
+                timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
+            ).data
+        except HttpClientError as exc:
+            raise RuntimeError("GCD JSON endpoint returned invalid data") from exc
 
     def _read_comic_vine_cache(self, today, limit):
         path = self._comic_vine_cache_path(today, limit)

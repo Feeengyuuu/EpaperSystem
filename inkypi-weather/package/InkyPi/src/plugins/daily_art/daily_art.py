@@ -12,13 +12,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
-import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import get_available_font_names, get_font
 from utils.image_utils import text_width
+from utils.http_client import get_http_client
 from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
@@ -538,17 +538,14 @@ class DailyArt(BasePlugin):
         return _first_text(record, ["primaryimageurl"])
 
     def _get_json(self, url, params, headers=None):
-        response = requests.get(
+        response = get_http_client().request_json(
+            "GET",
             url,
             params=params,
             headers=headers or REQUEST_HEADERS,
             timeout=(5, 12),
         )
-        response.raise_for_status()
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise RuntimeError(f"response from {url} was not JSON") from exc
+        return response.data
 
     def _download_image_preview(self, image_url, dimensions, settings):
         if not image_url:
@@ -561,17 +558,14 @@ class DailyArt(BasePlugin):
         tmp_path = cache_dir / f"download-{digest}.img"
 
         try:
-            with requests.get(image_url, headers=IMAGE_HEADERS, timeout=(5, timeout), stream=True) as response:
-                response.raise_for_status()
-                downloaded = 0
-                with tmp_path.open("wb") as handle:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if not chunk:
-                            continue
-                        downloaded += len(chunk)
-                        if downloaded > max_bytes:
-                            raise RuntimeError(f"image exceeded {max_bytes} bytes")
-                        handle.write(chunk)
+            get_http_client().stream_to_file(
+                "GET",
+                image_url,
+                tmp_path,
+                headers=IMAGE_HEADERS,
+                timeout=(5, timeout),
+                max_bytes=max_bytes,
+            )
 
             image = safe_open_image(
                 tmp_path,

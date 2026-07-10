@@ -16,12 +16,12 @@ import feedparser
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import pytz
-import requests
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, get_available_font_names, get_font
 from utils.image_utils import text_width
+from utils.http_client import get_http_client
 from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
 from utils.plugin_cache import read_json, write_json
 from utils.theme_utils import get_theme_context, get_theme_palette
@@ -1153,13 +1153,14 @@ class DailyAINews(BasePlugin):
         for source, url in feeds:
             display_source, section = self._feed_source_and_section(source, url)
             try:
-                resp = requests.get(
+                resp = get_http_client().request_bytes(
+                    "GET",
                     url,
                     timeout=DEFAULT_FEED_FETCH_TIMEOUT_SECONDS,
                     headers={"User-Agent": "InkyPi Daily AI News/1.0"},
+                    max_bytes=4 * 1024 * 1024,
                 )
-                resp.raise_for_status()
-                feed = feedparser.parse(resp.content)
+                feed = feedparser.parse(resp.data)
             except Exception as exc:
                 logger.warning("RSS fetch failed for %s: %s", url, exc)
                 continue
@@ -1383,14 +1384,14 @@ class DailyAINews(BasePlugin):
     def _fetch_yahoo_quote(self, symbol: str, name: str) -> dict[str, Any] | None:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
         try:
-            resp = requests.get(
+            resp = get_http_client().request_json(
+                "GET",
                 url,
                 params={"range": "5d", "interval": "1d"},
                 timeout=10,
                 headers={"User-Agent": "InkyPi Daily AI News/1.0"},
             )
-            resp.raise_for_status()
-            result = resp.json()["chart"]["result"][0]
+            result = resp.data["chart"]["result"][0]
         except Exception as exc:
             logger.warning("Market quote fetch failed for %s: %s", symbol, exc)
             return None

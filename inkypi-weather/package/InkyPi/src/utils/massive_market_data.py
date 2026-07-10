@@ -9,6 +9,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
+from utils.http_client import get_http_client
+
 logger = logging.getLogger(__name__)
 
 MASSIVE_BASE_URL = "https://api.massive.com"
@@ -156,15 +158,29 @@ class MassiveMarketData:
             if self.session is None:
                 self.session = self._requests_session()
             session = self.session
-            response = session.get(
-                url,
-                params=request_params,
-                timeout=self.timeout,
-                headers={"User-Agent": "InkyPi MassiveMarketData/1.0"},
-            )
-            if hasattr(response, "raise_for_status"):
-                response.raise_for_status()
-            payload = response.json()
+            if hasattr(session, "request_json"):
+                payload = session.request_json(
+                    "GET",
+                    url,
+                    params=request_params,
+                    timeout=self.timeout,
+                    headers={"User-Agent": "InkyPi MassiveMarketData/1.0"},
+                ).data
+            else:
+                response = session.get(
+                    url,
+                    params=request_params,
+                    timeout=self.timeout,
+                    headers={"User-Agent": "InkyPi MassiveMarketData/1.0"},
+                )
+                try:
+                    if hasattr(response, "raise_for_status"):
+                        response.raise_for_status()
+                    payload = response.json()
+                finally:
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
         except Exception as exc:
             raise MassiveMarketDataError(f"{type(exc).__name__}: request failed") from exc
         if not isinstance(payload, dict):
@@ -173,9 +189,7 @@ class MassiveMarketData:
 
     @staticmethod
     def _requests_session():
-        import requests
-
-        return requests.Session()
+        return get_http_client()
 
     def fetch_daily_bars(
         self,

@@ -14,8 +14,8 @@ import json
 import logging
 import os
 import re
-import requests
 from plugins.newspaper.constants import NEWSPAPERS
+from utils.http_client import HttpStatusError, get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -289,32 +289,33 @@ class Newspaper(BasePlugin):
 
     def _fetch_web_headlines(self, url):
         try:
-            response = requests.get(
+            response = get_http_client().request_bytes(
+                "GET",
                 url,
                 timeout=15,
                 headers={"User-Agent": "InkyPi News Front Pages/1.0"},
+                max_bytes=4 * 1024 * 1024,
             )
-            response.raise_for_status()
         except Exception as exc:
             logger.warning("Could not fetch news front page HTML %s: %s", url, exc)
             return []
 
-        return self._extract_headlines(self._decode_response_text(response))
+        return self._extract_headlines(
+            self._decode_response_text(response.data, response.headers)
+        )
 
-    def _decode_response_text(self, response):
+    def _decode_response_text(self, content, headers=None):
         encodings = []
 
-        content_type = response.headers.get("content-type", "")
+        content_type = (headers or {}).get("content-type", "")
         for match in re.finditer(r"charset\s*=\s*['\"]?([A-Za-z0-9._-]+)", content_type, re.I):
             encodings.append(match.group(1))
 
-        head = response.content[:4096].decode("ascii", errors="ignore")
+        head = content[:4096].decode("ascii", errors="ignore")
         for match in re.finditer(r"charset\s*=\s*['\"]?([A-Za-z0-9._-]+)", head, re.I):
             encodings.append(match.group(1))
 
         encodings.extend([
-            response.encoding,
-            getattr(response, "apparent_encoding", None),
             "utf-8",
             "gb18030",
             "gbk",
@@ -333,7 +334,7 @@ class Newspaper(BasePlugin):
             seen.add(encoding_key)
 
             try:
-                text = response.content.decode(encoding, errors="replace")
+                text = content.decode(encoding, errors="replace")
             except LookupError:
                 continue
 
@@ -343,7 +344,7 @@ class Newspaper(BasePlugin):
                 best_score = score
 
         if best_text is None:
-            best_text = response.text
+            best_text = content.decode("utf-8", errors="replace")
 
         return self._repair_chinese_mojibake(best_text)
 
@@ -653,26 +654,30 @@ class Newspaper(BasePlugin):
 
     def _download_pdf(self, url):
         try:
-            response = requests.get(
+            response = get_http_client().request_bytes(
+                "GET",
                 url,
                 timeout=20,
                 headers={
                     "User-Agent": "Mozilla/5.0 InkyPi News Front Pages/1.0",
                     "Referer": "https://lywb.lyd.com.cn/",
                 },
+                max_bytes=25 * 1024 * 1024,
             )
-            if response.status_code == 404:
+        except HttpStatusError as exc:
+            if exc.status == 404:
                 return None
-            response.raise_for_status()
+            logger.warning("Could not fetch PDF front page %s: %s", url, exc)
+            return None
         except Exception as exc:
             logger.warning("Could not fetch PDF front page %s: %s", url, exc)
             return None
 
-        if not response.content.startswith(b"%PDF"):
+        if not response.data.startswith(b"%PDF"):
             logger.warning("PDF front page response was not a PDF: %s", url)
             return None
 
-        return response.content
+        return response.data
 
     def _render_pdf_first_page(self, pdf_bytes):
         try:

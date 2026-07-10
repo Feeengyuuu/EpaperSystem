@@ -166,16 +166,10 @@ def test_fetch_items_samples_all_configured_sources(monkeypatch):
     feeds_text = "\n".join(f"Source {i}|{url}" for i, url in enumerate(urls))
     calls = []
 
-    class FakeResponse:
-        def __init__(self, url):
-            self.content = url.encode("utf-8")
-
-        def raise_for_status(self):
-            return None
-
-    def fake_get(url, **_kwargs):
-        calls.append(url)
-        return FakeResponse(url)
+    class FakeClient:
+        def request_bytes(self, _method, url, **_kwargs):
+            calls.append(url)
+            return type("Result", (), {"data": url.encode("utf-8")})()
 
     def fake_parse(content):
         url = content.decode("utf-8")
@@ -190,7 +184,11 @@ def test_fetch_items_samples_all_configured_sources(monkeypatch):
         ]
         return type("FakeFeed", (), {"entries": entries})()
 
-    monkeypatch.setattr(daily_ai_news_module.requests, "get", fake_get)
+    monkeypatch.setattr(
+        daily_ai_news_module,
+        "get_http_client",
+        lambda: FakeClient(),
+    )
     monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
 
     items = plugin._fetch_items(feeds_text, 6)
@@ -206,21 +204,19 @@ def test_fetch_items_strips_source_section_prefix_and_tags_items(monkeypatch):
         "世界新闻:BBC世界|https://feeds.bbci.co.uk/news/world/rss.xml",
     ])
 
-    class FakeResponse:
-        def __init__(self, url):
-            self.content = url.encode("utf-8")
-
-        def raise_for_status(self):
-            return None
-
-    def fake_get(url, **_kwargs):
-        return FakeResponse(url)
+    class FakeClient:
+        def request_bytes(self, _method, url, **_kwargs):
+            return type("Result", (), {"data": url.encode("utf-8")})()
 
     def fake_parse(content):
         url = content.decode("utf-8")
         return type("FakeFeed", (), {"entries": [{"title": f"{url} 标题", "summary": "摘要", "published": "", "link": url}]})()
 
-    monkeypatch.setattr(daily_ai_news_module.requests, "get", fake_get)
+    monkeypatch.setattr(
+        daily_ai_news_module,
+        "get_http_client",
+        lambda: FakeClient(),
+    )
     monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
 
     items = plugin._fetch_items(feeds_text, 4)
