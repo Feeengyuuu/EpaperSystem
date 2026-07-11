@@ -354,7 +354,6 @@ class BrowserRenderer:
             "--hide-scrollbars",
             "--mute-audio",
             "--no-first-run",
-            "--no-zygote",
             "--renderer-process-limit=1",
             "--disk-cache-size=1",
             "--media-cache-size=1",
