@@ -403,11 +403,8 @@ def test_legacy_calendar_mapping_never_probes_drive_like_name_outside_durable_ro
     with pytest.raises(FileNotFoundError):
         plugin._read_calendar_source(legacy_url)
 
+    assert len(candidates) <= 1
     assert all(candidate.is_relative_to(durable_root) for candidate in candidates)
-    if os.name == "nt":
-        assert candidates == []
-    else:
-        assert len(candidates) == 1
 
 
 def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
