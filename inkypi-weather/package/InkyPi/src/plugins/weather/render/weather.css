@@ -93,7 +93,7 @@
 
 .current-temp {
   flex: 0 0 60%;
-  font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+  font-family: "Jost";
   font-size: 58.5cqmin;
   line-height: 0.9;
   text-align: center;
@@ -104,7 +104,7 @@
 }
 
 .temperature-unit {
-  font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+  font-family: "Jost";
   font-size: 0.4em;
   position: absolute;
   top: 0.6em;

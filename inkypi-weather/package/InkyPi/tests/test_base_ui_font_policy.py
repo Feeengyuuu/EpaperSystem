@@ -29,6 +29,36 @@ PYTHON_BASE_UI_BYPASS_FILES = (
 
 DECORATIVE_FONT_ALLOWLIST = ("dogica", "ds-digital", "napoli")
 BASE_UI_FONT_STACK = '"Microsoft YaHei", "\u5fae\u8f6f\u96c5\u9ed1", Arial, sans-serif'
+CSS_SELECTOR_FONT_ALLOWLIST = {
+    (
+        "src/plugins/weather/render/weather.css",
+        ".current-temp",
+    ): '"Jost"',
+    (
+        "src/plugins/weather/render/weather.css",
+        ".temperature-unit",
+    ): '"Jost"',
+}
+
+
+def _selector_font_declarations(content, selector):
+    block = re.compile(
+        rf"(?m)^\s*{re.escape(selector)}\s*\{{(?P<body>[^{{}}]*)\}}",
+        re.DOTALL,
+    )
+    declaration = re.compile(r"font-family\s*:\s*([^;]+)", re.IGNORECASE)
+    results = []
+    for match in block.finditer(content):
+        body = match.group("body")
+        for font_match in declaration.finditer(body):
+            results.append(
+                (
+                    font_match.group(1).strip(),
+                    match.start("body") + font_match.start(),
+                    match.start("body") + font_match.end(),
+                )
+            )
+    return results
 
 
 def test_base_ui_font_policy_css_uses_shared_stack_or_decorative_allowlist():
@@ -38,10 +68,32 @@ def test_base_ui_font_policy_css_uses_shared_stack_or_decorative_allowlist():
     for relative_path in CSS_BASE_UI_FILES:
         path = PROJECT_ROOT / relative_path
         content = path.read_text(encoding="utf-8")
+        selector_override_spans = []
+        for (override_path, selector), expected in CSS_SELECTOR_FONT_ALLOWLIST.items():
+            if override_path != relative_path:
+                continue
+            declarations = _selector_font_declarations(content, selector)
+            if len(declarations) != 1:
+                offenders.append(
+                    f"{relative_path}: selector {selector} has "
+                    f"{len(declarations)} font declarations"
+                )
+                continue
+            value, start, end = declarations[0]
+            selector_override_spans.append((start, end))
+            if value != expected:
+                offenders.append(
+                    f"{relative_path}: selector {selector} uses {value}, expected {expected}"
+                )
         shared_stack_count = 0
         for match in declaration.finditer(content):
             value = match.group(1).strip()
             lowered = value.casefold()
+            if any(
+                start <= match.start() < end
+                for start, end in selector_override_spans
+            ):
+                continue
             decorative = any(
                 allowed in lowered for allowed in DECORATIVE_FONT_ALLOWLIST
             )
@@ -54,6 +106,19 @@ def test_base_ui_font_policy_css_uses_shared_stack_or_decorative_allowlist():
             offenders.append(f"{relative_path}: missing shared YaHei stack")
 
     assert offenders == []
+
+
+def test_weather_primary_temperature_preserves_original_jost_font():
+    path = PROJECT_ROOT / "src/plugins/weather/render/weather.css"
+    content = path.read_text(encoding="utf-8")
+
+    current_temp = _selector_font_declarations(content, ".current-temp")
+    temperature_unit = _selector_font_declarations(content, ".temperature-unit")
+    dashboard = _selector_font_declarations(content, ".weather-dashboard")
+
+    assert [value for value, _start, _end in current_temp] == ['"Jost"']
+    assert [value for value, _start, _end in temperature_unit] == ['"Jost"']
+    assert BASE_UI_FONT_STACK in {value for value, _start, _end in dashboard}
 
 
 def test_base_ui_font_policy_python_has_no_ordinary_jost_calls():
