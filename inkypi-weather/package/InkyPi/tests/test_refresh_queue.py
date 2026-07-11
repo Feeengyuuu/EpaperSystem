@@ -580,7 +580,7 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
             "display_cached_only": False,
             "require_active": False,
             "theme_context": {
-                "mode": incoming_mode,
+                "mode": existing_mode,
                 "source": "weather",
                 "reason": "sunrise/sunset",
             },

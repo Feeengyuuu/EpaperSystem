@@ -823,6 +823,13 @@ class RefreshQueue:
             Mapping,
         ):
             combined_theme_context = dict(existing_theme_context)
+            incoming_resolved_context = incoming.payload.get(
+                "resolved_theme_context"
+            )
+            if isinstance(incoming_resolved_context, Mapping):
+                incoming_resolved_mode = incoming_resolved_context.get("mode")
+                if incoming_resolved_mode in {"day", "night"}:
+                    combined_theme_context["mode"] = incoming_resolved_mode
             if isinstance(incoming_theme_context, Mapping):
                 combined_theme_context.update(incoming_theme_context)
             merged["theme_context"] = combined_theme_context
