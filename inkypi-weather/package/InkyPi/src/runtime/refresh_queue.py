@@ -834,12 +834,21 @@ class RefreshQueue:
                 combined_theme_context.update(incoming_theme_context)
             merged["theme_context"] = combined_theme_context
 
-        if any(
-            candidate.kind is CommandKind.DISPLAY
-            and candidate.payload.get("theme_render_only") is True
-            for candidate in (existing, incoming)
-        ):
+        theme_display = next(
+            (
+                candidate
+                for candidate in (incoming, existing)
+                if candidate.kind is CommandKind.DISPLAY
+                and candidate.payload.get("theme_render_only") is True
+            ),
+            None,
+        )
+        if theme_display is not None:
             merged["theme_render_only"] = True
+            if "expected_displayed_instance_uuid" in theme_display.payload:
+                merged["expected_displayed_instance_uuid"] = theme_display.payload[
+                    "expected_displayed_instance_uuid"
+                ]
 
         if manual_inactive is not None:
             for key in (
@@ -854,6 +863,9 @@ class RefreshQueue:
             ):
                 if key in manual_inactive.payload:
                     merged[key] = manual_inactive.payload[key]
+            if manual_inactive.payload.get("theme_render_only") is not True:
+                merged.pop("theme_render_only", None)
+                merged.pop("expected_displayed_instance_uuid", None)
 
         if "resolved_theme_context" in incoming.payload:
             merged["resolved_theme_context"] = incoming.payload[

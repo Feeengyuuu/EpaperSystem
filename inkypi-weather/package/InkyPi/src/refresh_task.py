@@ -712,12 +712,11 @@ class RefreshTask:
     def _select_background_commands(self, current_dt, *, skip_instance_uuid=None):
         theme_context = get_theme_context(self.device_config, now=current_dt)
         current_mode = (theme_context or {}).get("mode")
-        if (
+        theme_refresh_delayed = bool(
             current_mode
             and self._get_config_value("active_theme", None) != current_mode
             and self._theme_refresh_retry_delayed(theme_context, current_dt)
-        ):
-            return ()
+        )
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
@@ -754,6 +753,8 @@ class RefreshTask:
             missing_work = missing and not reusable_theme_cache
             due = self._snapshot_should_refresh(instance, current_dt)
             live_due = self._snapshot_live_refresh_due(instance, current_dt)
+            if theme_refresh_delayed and missing_work and not due and not live_due:
+                continue
             if not missing_work and not due and not live_due:
                 continue
             latest = self._snapshot_latest_refresh_dt(instance)
@@ -1211,13 +1212,21 @@ class RefreshTask:
 
         with self.render_arbiter.lease(command.plugin_id, context):
             context.raise_if_cancelled()
-            if (
+            display_under_pressure = (
                 command.kind is CommandKind.DISPLAY
                 and display_cached_only
                 and not command.force
-                and not theme_render_only
                 and _display_refresh_under_resource_pressure(self.device_config)
-            ):
+            )
+            if display_under_pressure:
+                if theme_render_only and image_missing:
+                    self._set_render_metadata(
+                        False,
+                        False,
+                        plugin_config,
+                        theme_only=True,
+                    )
+                    return None
                 image = self._load_snapshot_cache_or_placeholder(instance, cache_path)
             else:
                 if (
@@ -1489,6 +1498,23 @@ class RefreshTask:
         return selection
 
     def _live_display_target_is_current(self, command):
+        expected_displayed_uuid = command.payload.get(
+            "expected_displayed_instance_uuid"
+        )
+        if expected_displayed_uuid is not None:
+            if expected_displayed_uuid != command.instance_uuid:
+                return False
+            displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+            if displayed_uuid is not None:
+                return displayed_uuid == expected_displayed_uuid
+            latest_refresh = self.device_config.get_refresh_info()
+            return (
+                latest_refresh.refresh_type == "Playlist"
+                and latest_refresh.playlist == command.payload.get("playlist_name")
+                and latest_refresh.plugin_id == command.plugin_id
+                and latest_refresh.plugin_instance
+                == command.payload.get("instance_name")
+            )
         if command.source is not CommandSource.LIVE:
             return True
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
@@ -1897,6 +1923,7 @@ class RefreshTask:
             payload["theme_context"] = theme_context
         if theme_render_only:
             payload["theme_render_only"] = True
+            payload["expected_displayed_instance_uuid"] = instance.instance_uuid
         if resolved_theme_context is None:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             resolved_theme_context = _resolved_theme_context_for_instance(

@@ -580,6 +580,7 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
             "display_cached_only": False,
             "require_active": False,
             "theme_render_only": True,
+            "expected_displayed_instance_uuid": "cross-kind-theme-transition",
             "theme_context": {
                 "mode": existing_mode,
                 "source": "weather",
@@ -639,12 +640,110 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
     assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
     assert selected.payload["display_cached_only"] is False
     assert selected.payload["theme_render_only"] is True
+    assert selected.payload["expected_displayed_instance_uuid"] == (
+        "cross-kind-theme-transition"
+    )
     assert selected.instance_uuid == display.instance_uuid
     assert selected.structural_generation == display.structural_generation
     assert selected.settings_revision == display.settings_revision
     assert selected.force is True
     assert selected.priority == 20
     assert selected.source is CommandSource.MANUAL
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+@pytest.mark.parametrize(
+    ("theme_mode", "manual_mode"),
+    [("day", "night"), ("night", "day")],
+)
+@pytest.mark.parametrize("manual_theme_value", [None, False])
+def test_normal_manual_display_clears_lower_priority_theme_only_transition(
+    manual_first,
+    theme_mode,
+    manual_mode,
+    manual_theme_value,
+):
+    queue = make_queue()
+    theme = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        instance_uuid="manual-over-theme",
+        settings_revision=5,
+        priority=80,
+        force=False,
+        payload={
+            "refresh_type": "Playlist",
+            "playlist_name": "Active",
+            "instance_name": "Theme Target",
+            "settings": {"owner": "theme"},
+            "refresh": {"interval": 60},
+            "latest_refresh_time": "2026-07-11T12:01:00+00:00",
+            "display_cached_only": True,
+            "require_active": True,
+            "theme_render_only": True,
+            "expected_displayed_instance_uuid": "manual-over-theme",
+            "theme_context": {
+                "mode": theme_mode,
+                "source": "weather",
+                "reason": "sunrise/sunset",
+            },
+            "resolved_theme_context": {
+                "mode": theme_mode,
+                "palette": {"accent": "theme"},
+            },
+        },
+    )
+    manual_payload = {
+        "refresh_type": "Playlist",
+        "playlist_name": "Inactive Manual",
+        "instance_name": "Manual Target",
+        "settings": {"owner": "manual"},
+        "refresh": {"interval": 3600},
+        "latest_refresh_time": "2026-07-11T12:02:00+00:00",
+        "display_cached_only": False,
+        "require_active": False,
+        "resolved_theme_context": {
+            "mode": manual_mode,
+            "palette": {"accent": "manual"},
+        },
+    }
+    if manual_theme_value is not None:
+        manual_payload["theme_render_only"] = manual_theme_value
+    manual = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid="manual-over-theme",
+        settings_revision=5,
+        priority=100,
+        force=True,
+        payload=manual_payload,
+    )
+    first, second = (manual, theme) if manual_first else (theme, manual)
+
+    queue.submit(first)
+    queue.submit(second)
+    selected = queue.take(timeout=0).command
+
+    incoming_mode = second.payload["resolved_theme_context"]["mode"]
+    assert selected.kind is CommandKind.DISPLAY
+    assert selected.source is CommandSource.MANUAL
+    assert selected.priority == 100
+    assert selected.force is True
+    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.payload["theme_context"] == {
+        "mode": incoming_mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+    }
+    assert selected.payload["require_active"] is False
+    assert selected.payload["playlist_name"] == "Inactive Manual"
+    assert selected.payload["instance_name"] == "Manual Target"
+    assert selected.payload["settings"] == {"owner": "manual"}
+    assert selected.payload["refresh"] == {"interval": 3600}
+    assert selected.payload["latest_refresh_time"] == "2026-07-11T12:02:00+00:00"
+    assert selected.payload["display_cached_only"] is False
+    assert "theme_render_only" not in selected.payload
+    assert "expected_displayed_instance_uuid" not in selected.payload
 
 
 @pytest.mark.parametrize("manual_first", [False, True])

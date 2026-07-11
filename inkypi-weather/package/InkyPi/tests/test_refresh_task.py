@@ -2815,6 +2815,9 @@ def test_theme_transition_selects_exact_displayed_auto_instance_without_fallback
     assert observed["is_eligible"](playlist.plugins[1].snapshot()) is True
     assert command.force is False
     assert command.payload["theme_render_only"] is True
+    assert command.payload["expected_displayed_instance_uuid"] == (
+        playlist.plugins[0].instance_uuid
+    )
     assert command.payload["resolved_theme_context"]["requested_mode"] == "auto"
 
 
@@ -2936,6 +2939,252 @@ def test_failed_immediate_theme_redraw_keeps_last_good_and_enters_cooldown(
     )
 
 
+def test_queued_theme_transition_is_stale_if_display_changes_before_render(
+    monkeypatch,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "theme-transition-stale-before-render"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    target = playlist.plugins[0].snapshot()
+    other = playlist.plugins[1].snapshot()
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_scheduled_command(current_dt)
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=other.instance_uuid,
+        changed_at=(current_dt + timedelta(seconds=1)).isoformat(),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    result = task.refresh_queue.get_entry(submitted.id).job
+
+    assert command.payload["expected_displayed_instance_uuid"] == target.instance_uuid
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "stale_selection"
+    assert plugin.calls == []
+    assert task.display_manager.calls == []
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+    assert device_config.config["active_theme"] == "day"
+    assert "active_theme_info" not in device_config.config
+    assert "active_theme_refresh_failure" not in device_config.config
+    assert device_config.write_count == 0
+
+
+def test_theme_transition_is_stale_if_display_changes_during_render(
+    monkeypatch,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "theme-transition-stale-after-render"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    target = playlist.plugins[0].snapshot()
+    other = playlist.plugins[1].snapshot()
+    day_path = _write_runtime_theme_cache(
+        task,
+        target,
+        "day",
+        Image.new("RGB", (32, 16), "black"),
+    )
+    day_bytes = day_path.read_bytes()
+
+    class DisplaySwitchingPlugin(ThemeOnlyRecordingPlugin):
+        def render_themed_image(self, *args, **kwargs):
+            image = super().render_themed_image(*args, **kwargs)
+            task.runtime_state.set_display_state(
+                "committed",
+                instance_uuid=other.instance_uuid,
+                changed_at=(current_dt + timedelta(seconds=1)).isoformat(),
+            )
+            return image
+
+    plugin = DisplaySwitchingPlugin(configs["displayed"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_scheduled_command(current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    result = task.refresh_queue.get_entry(submitted.id).job
+
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "stale_selection"
+    assert len(plugin.calls) == 1
+    assert day_path.read_bytes() == day_bytes
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+    assert not Path(task._staging_cache_path(target, "night")).exists()
+    assert task.display_manager.calls == []
+    state = task.runtime_state.snapshot().instances[target.instance_uuid]
+    assert state.last_success_at is None
+    assert device_config.config["active_theme"] == "day"
+    assert "active_theme_info" not in device_config.config
+    assert "active_theme_refresh_failure" not in device_config.config
+    assert device_config.write_count == 0
+
+
+def test_theme_transition_without_runtime_uuid_uses_exact_refresh_info_target(
+    monkeypatch,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "theme-transition-refresh-info-compat"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    target = playlist.plugins[0].snapshot()
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=None,
+        changed_at=current_dt.isoformat(),
+    )
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    command = task._select_scheduled_command(current_dt)
+    result = task._execute_command(command)
+
+    assert command.payload["expected_displayed_instance_uuid"] == target.instance_uuid
+    assert result is not None
+    assert len(plugin.calls) == 1
+    assert device_config.config["active_theme"] == "night"
+
+
+@pytest.mark.parametrize("presentation", ["ui", "media"])
+def test_missing_theme_cache_under_pressure_keeps_last_good_without_render(
+    monkeypatch,
+    presentation,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        f"theme-transition-pressure-{presentation}"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    target = playlist.plugins[0].snapshot()
+    configs["displayed"]["_manifest"] = _theme_manifest(
+        "displayed",
+        presentation=presentation,
+    )
+    dimensions = (40, 24) if presentation == "media" else (32, 16)
+    device_config.get_resolution = lambda: dimensions
+    day_path = _write_runtime_theme_cache(
+        task,
+        target,
+        "day",
+        Image.new("RGB", dimensions, "black"),
+    )
+    day_bytes = day_path.read_bytes()
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
+    chrome_calls = []
+    original_chrome = refresh_task_module.apply_media_theme_chrome
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+
+    def record_chrome(*args, **kwargs):
+        chrome_calls.append((args, kwargs))
+        return original_chrome(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "src.refresh_task.apply_media_theme_chrome",
+        record_chrome,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    before_refresh = device_config.refresh_info.to_dict()
+    command = task._select_scheduled_command(current_dt)
+
+    result = task._execute_command(command)
+
+    assert result is None
+    assert plugin.calls == []
+    assert chrome_calls == []
+    assert day_path.read_bytes() == day_bytes
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+    assert not Path(task._staging_cache_path(target, "night")).exists()
+    assert task.display_manager.calls == []
+    assert device_config.refresh_info.to_dict() == before_refresh
+    state = task.runtime_state.snapshot().instances.get(target.instance_uuid)
+    assert state is None or state.last_success_at is None
+    assert device_config.config["active_theme"] == "day"
+    assert "active_theme_info" not in device_config.config
+    assert "active_theme_refresh_failure" not in device_config.config
+    assert device_config.write_count == 0
+
+
+def test_existing_target_theme_cache_is_safe_to_promote_under_pressure(monkeypatch):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "theme-transition-pressure-cached"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    target = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(
+        task,
+        target,
+        "night",
+        Image.new("RGB", (32, 16), "white"),
+    )
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    anchor = device_config.refresh_info.refresh_time
+    command = task._select_scheduled_command(current_dt)
+
+    result = task._execute_command(command)
+
+    assert result is not None
+    assert plugin.calls == []
+    assert device_config.config["active_theme"] == "night"
+    assert device_config.refresh_info.refresh_time == anchor
+    state = task.runtime_state.snapshot().instances.get(target.instance_uuid)
+    assert state is None or state.last_success_at is None
+
+
+def test_manual_force_display_still_renders_under_display_pressure(monkeypatch):
+    tmp_path = make_test_dir("manual-force-under-pressure")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("manual_force", "Manual Force")
+    )
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        force=True,
+        display_cached_only=True,
+        require_active=True,
+    )
+
+    result = task._execute_command(command)
+
+    assert result is not None
+    assert calls == [
+        {
+            "id": "manual_force",
+            "forceRefresh": True,
+            "force_refresh": True,
+            "_inkypiDisplayRender": True,
+        }
+    ]
+
+
 @pytest.mark.parametrize("source_mode", ["day", None])
 def test_media_theme_redraw_reuses_opposite_or_legacy_cache_without_provider(
     monkeypatch,
@@ -3014,6 +3263,78 @@ def test_opposite_theme_cache_is_not_background_missing_until_data_is_due(
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
     assert state.last_success_at == current_dt.isoformat()
     assert Path(task._snapshot_cache_path(instance.snapshot(), "night")).exists()
+
+
+def test_theme_retry_cooldown_does_not_block_independently_due_background_data(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("theme-cooldown-keeps-data-refresh")
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    due = _runtime_plugin_data(
+        "ordinary_due",
+        "Ordinary Due",
+        latest_refresh_time=(current_dt - timedelta(hours=2)).isoformat(),
+        interval=3600,
+    )
+    presentation_only = _runtime_plugin_data(
+        "presentation_only",
+        "Presentation Only",
+        latest_refresh_time="2999-01-01T00:00:00+00:00",
+        interval=3600,
+    )
+    presentation_only["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(due, presentation_only)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    failure = {
+        "mode": "night",
+        "retry_after": (current_dt + timedelta(minutes=10)).isoformat(),
+        "error": "theme render failed",
+    }
+    device_config.config.update(
+        {
+            "theme_mode": "night",
+            "active_theme": "day",
+            "active_theme_refresh_failure": failure,
+        }
+    )
+
+    def plugin_config(plugin_id):
+        return {
+            "id": plugin_id,
+            "_manifest": _theme_manifest(
+                plugin_id,
+                supported=plugin_id == "presentation_only",
+            ),
+        }
+
+    device_config.get_plugin = plugin_config
+
+    commands = task._select_background_commands(current_dt)
+
+    assert [command.instance_uuid for command in commands] == [
+        playlist.plugins[0].instance_uuid
+    ]
+    assert commands[0].plugin_id == "ordinary_due"
+    assert commands[0].payload.get("theme_render_only") is None
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    task._execute_command(commands[0])
+
+    assert calls == [
+        {
+            "id": "ordinary_due",
+        }
+    ]
+    state = task.runtime_state.snapshot().instances[playlist.plugins[0].instance_uuid]
+    assert state.last_success_at == current_dt.isoformat()
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.config["active_theme_refresh_failure"] == failure
 
 
 def test_ordinary_next_display_lazily_builds_theme_cache_without_data_success(
