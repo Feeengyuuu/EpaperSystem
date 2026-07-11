@@ -6,21 +6,51 @@ import ast
 import hashlib
 import json
 import logging
+import re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 
 logger = logging.getLogger(__name__)
 _LIVE_REFRESH_HOOK = "get_live_refresh_state"
+_HEX_COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}\Z")
 
 
 @dataclass(frozen=True)
 class PluginCapabilities:
     supports_live_refresh: bool = False
+    supports_day_night_theme: bool = False
+
+
+@dataclass(frozen=True)
+class PluginTheme:
+    presentation: Literal["ui", "media"]
+    day: Mapping[str, str]
+    night: Mapping[str, str]
+
+
+def _parse_theme_palette(raw_theme, mode):
+    palette = raw_theme.get(mode)
+    if type(palette) is not dict:
+        raise TypeError(f"plugin manifest theme.{mode} must be an object")
+
+    colors = {}
+    for role in ("background", "accent"):
+        color = palette.get(role)
+        if type(color) is not str:
+            raise TypeError(
+                f"plugin manifest theme.{mode}.{role} must be a six-digit hex color"
+            )
+        if _HEX_COLOR_PATTERN.fullmatch(color) is None:
+            raise ValueError(
+                f"plugin manifest theme.{mode}.{role} must be a six-digit hex color"
+            )
+        colors[role] = color
+    return MappingProxyType(colors)
 
 
 class CapabilityCache:
@@ -140,6 +170,7 @@ class PluginManifest:
     refresh_on_display: bool
     capabilities: PluginCapabilities
     raw: Mapping[str, Any]
+    theme: PluginTheme | None = None
 
     @classmethod
     def from_path(
@@ -174,6 +205,7 @@ class PluginManifest:
                 "plugin manifest refresh_on_display must be a boolean"
             )
 
+        theme = None
         if schema_version == 2:
             raw_capabilities = payload.get("capabilities", {})
             if type(raw_capabilities) is not dict:
@@ -187,9 +219,37 @@ class PluginManifest:
                     "plugin manifest capabilities.supports_live_refresh "
                     "must be a boolean"
                 )
+            supports_day_night_theme = raw_capabilities.get(
+                "supports_day_night_theme",
+                False,
+            )
+            if type(supports_day_night_theme) is not bool:
+                raise TypeError(
+                    "plugin manifest capabilities.supports_day_night_theme "
+                    "must be a boolean"
+                )
             capabilities = PluginCapabilities(
                 supports_live_refresh=supports_live_refresh,
+                supports_day_night_theme=supports_day_night_theme,
             )
+            if supports_day_night_theme:
+                raw_theme = payload.get("theme")
+                if type(raw_theme) is not dict:
+                    raise TypeError("plugin manifest theme must be an object")
+                presentation = raw_theme.get("presentation")
+                if type(presentation) is not str:
+                    raise TypeError(
+                        "plugin manifest theme.presentation must be ui or media"
+                    )
+                if presentation not in {"ui", "media"}:
+                    raise ValueError(
+                        "plugin manifest theme.presentation must be ui or media"
+                    )
+                theme = PluginTheme(
+                    presentation=presentation,
+                    day=_parse_theme_palette(raw_theme, "day"),
+                    night=_parse_theme_palette(raw_theme, "night"),
+                )
         else:
             plugin_id = required_strings["id"]
             capabilities = inspect_v1_capabilities(
@@ -210,4 +270,5 @@ class PluginManifest:
             refresh_on_display=refresh_on_display,
             capabilities=capabilities,
             raw=MappingProxyType(payload),
+            theme=theme,
         )

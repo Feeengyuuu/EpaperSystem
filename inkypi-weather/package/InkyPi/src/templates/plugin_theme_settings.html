@@ -1,0 +1,25 @@
+{% if supports_day_night_theme %}
+<div class="form-group plugin-theme-control">
+    <label for="themeMode" class="form-label">Display palette</label>
+    <select id="themeMode" name="themeMode" class="form-input">
+        <option value="auto">Auto day/night</option>
+        <option value="day">Day</option>
+        <option value="night">Deep night</option>
+    </select>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const raw = pluginSettings.themeMode || pluginSettings.theme_mode ||
+        pluginSettings.theme || pluginSettings.sportsDashboardTheme || 'auto';
+    const normalized = String(raw).trim().toLowerCase();
+    const aliases = {paper:'day', light:'day', comic:'day', white:'day',
+        dark:'night', cinema:'night', streaming:'night', midnight:'night'};
+    const selected = aliases[normalized] || normalized;
+    const themeMode = document.getElementById('themeMode');
+    if (!themeMode) {
+        return;
+    }
+    themeMode.value = ['auto', 'day', 'night'].includes(selected) ? selected : 'auto';
+});
+</script>
+{% endif %}

@@ -263,6 +263,74 @@ def test_display_instance_force_refresh_skips_sports_dashboard_force_mode():
     ) is False
 
 
+def test_plugin_page_has_one_shared_theme_selector(tmp_path, monkeypatch):
+    from jinja2 import ChoiceLoader, FileSystemLoader
+
+    manifest = SimpleNamespace(
+        capabilities=SimpleNamespace(supports_day_night_theme=True),
+    )
+    plugin_config = {
+        "id": "themed",
+        "display_name": "Themed Plugin",
+        "_manifest": manifest,
+    }
+
+    class DeviceConfig:
+        def get_playlist_manager(self):
+            return SimpleNamespace(get_playlist_names=lambda: ["Default"])
+
+        def get_plugin(self, plugin_id):
+            return plugin_config if plugin_id == "themed" else None
+
+    class Plugin:
+        def generate_settings_template(self):
+            return {
+                "settings_template": "base_plugin/settings.html",
+                "frame_styles": [],
+                "supports_day_night_theme": False,
+            }
+
+    monkeypatch.setattr(
+        plugin_blueprint,
+        "get_plugin_instance",
+        lambda _config: Plugin(),
+    )
+    template_dir = Path(plugin_blueprint.__file__).resolve().parents[1] / "templates"
+    plugin_dir = Path(plugin_blueprint.__file__).resolve().parents[1] / "plugins"
+    app = Flask(__name__, template_folder=str(template_dir))
+    app.jinja_loader = ChoiceLoader([
+        FileSystemLoader(template_dir),
+        FileSystemLoader(plugin_dir),
+    ])
+    app.config.update(TESTING=True, DEVICE_CONFIG=DeviceConfig())
+    app.register_blueprint(plugin_blueprint.plugin_bp)
+    app.register_blueprint(playlist_blueprint.playlist_bp)
+
+    html = app.test_client().get("/plugin/themed").get_data(as_text=True)
+
+    assert html.count('name="themeMode"') == 1
+    assert 'value="auto"' in html
+    assert 'value="day"' in html
+    assert 'value="night"' in html
+    precedence = [
+        html.index("pluginSettings.themeMode"),
+        html.index("pluginSettings.theme_mode"),
+        html.index("pluginSettings.theme ||"),
+        html.index("pluginSettings.sportsDashboardTheme"),
+    ]
+    assert precedence == sorted(precedence)
+    assert "paper:'day'" in html
+    assert "midnight:'night'" in html
+    assert "String(raw).trim().toLowerCase()" in html
+    assert "aliases[normalized] || normalized" in html
+    assert "if (!themeMode)" in html
+    assert "includes(selected) ? selected : 'auto'" in html
+
+    manifest.capabilities.supports_day_night_theme = False
+    opt_out_html = app.test_client().get("/plugin/themed").get_data(as_text=True)
+    assert 'name="themeMode"' not in opt_out_html
+
+
 @pytest.mark.parametrize("refresh_settings", INVALID_REFRESH_SETTINGS)
 def test_update_rejects_invalid_refresh_before_any_effect(
     plugin_env,

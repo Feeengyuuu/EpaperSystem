@@ -1,6 +1,7 @@
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -101,6 +102,37 @@ def test_manifest_live_refresh_capability_is_read_without_loading_plugin():
 
     assert plugin_registry.plugin_supports_live_refresh({"_manifest": manifest}) is False
     assert plugin_registry.plugin_supports_live_refresh({"id": "legacy-caller"}) is True
+
+
+def test_manifest_day_night_capability_is_opt_in_and_metadata_only(monkeypatch):
+    manifest = SimpleNamespace(
+        capabilities=SimpleNamespace(supports_day_night_theme=True),
+    )
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+
+    assert plugin_registry.plugin_supports_day_night_theme(
+        {"_manifest": manifest}
+    ) is True
+    assert plugin_registry.plugin_supports_day_night_theme(
+        {"id": "legacy-caller"}
+    ) is False
+    assert imported == []
+
+
+def test_base_plugin_exposes_day_night_capability_in_template_params(tmp_path):
+    from plugins.base_plugin.base_plugin import BasePlugin
+
+    manifest = SimpleNamespace(
+        capabilities=SimpleNamespace(supports_day_night_theme=True),
+    )
+    plugin = BasePlugin.__new__(BasePlugin)
+    plugin.config = {"id": "themed", "_manifest": manifest}
+    plugin.get_plugin_dir = lambda _path=None: str(tmp_path / "missing")
+
+    template_params = plugin.generate_settings_template()
+
+    assert template_params["supports_day_night_theme"] is True
 
 
 def test_register_plugin_blueprints_imports_only_declared_blueprint_plugins(tmp_path, monkeypatch):

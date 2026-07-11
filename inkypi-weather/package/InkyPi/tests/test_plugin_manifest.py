@@ -19,6 +19,7 @@ from plugins.plugin_manifest import (  # noqa: E402
 
 
 PLUGIN_SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "plugins"
+_UNSET = object()
 
 
 def _write_plugin(
@@ -28,6 +29,8 @@ def _write_plugin(
     class_name="Example",
     schema_version=2,
     supports_live_refresh=False,
+    supports_day_night_theme=_UNSET,
+    theme=_UNSET,
     source="class Example:\n    pass\n",
 ):
     plugin_dir = root / "plugins" / plugin_id
@@ -43,6 +46,12 @@ def _write_plugin(
         payload["capabilities"] = {
             "supports_live_refresh": supports_live_refresh,
         }
+        if supports_day_night_theme is not _UNSET:
+            payload["capabilities"]["supports_day_night_theme"] = (
+                supports_day_night_theme
+            )
+    if theme is not _UNSET:
+        payload["theme"] = theme
     manifest_path = plugin_dir / "plugin-info.json"
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
     (plugin_dir / f"{plugin_id}.py").write_text(source, encoding="utf-8")
@@ -64,7 +73,146 @@ def test_v2_manifest_declares_live_refresh_without_import(tmp_path, monkeypatch)
     manifest = PluginManifest.from_path(manifest_path)
 
     assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_day_night_theme is False
+    assert manifest.theme is None
     assert imported == []
+
+
+def test_v2_manifest_parses_theme_contract(tmp_path):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme={
+            "presentation": "media",
+            "day": {"background": "#f6f0e4", "accent": "#b33a2b"},
+            "night": {"background": "#101318", "accent": "#ff7868"},
+        },
+    )
+
+    manifest = PluginManifest.from_path(manifest_path)
+
+    assert manifest.capabilities.supports_day_night_theme is True
+    assert type(manifest.theme).__name__ == "PluginTheme"
+    assert manifest.theme.presentation == "media"
+    assert manifest.theme.day == {
+        "background": "#f6f0e4",
+        "accent": "#b33a2b",
+    }
+    assert manifest.theme.night == {
+        "background": "#101318",
+        "accent": "#ff7868",
+    }
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_v2_manifest_rejects_coerced_day_night_theme_booleans(tmp_path, value):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=value,
+    )
+
+    with pytest.raises(TypeError, match="supports_day_night_theme"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("theme", [_UNSET, None, [], "theme", True])
+def test_v2_manifest_requires_theme_object_when_capability_enabled(
+    tmp_path,
+    theme,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme=theme,
+    )
+
+    with pytest.raises(TypeError, match="theme"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("presentation", [None, "", "UI", "photo", 1, True])
+def test_v2_manifest_rejects_unsupported_theme_presentations(
+    tmp_path,
+    presentation,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme={
+            "presentation": presentation,
+            "day": {"background": "#ffffff", "accent": "#123456"},
+            "night": {"background": "#000000", "accent": "#abcdef"},
+        },
+    )
+
+    with pytest.raises((TypeError, ValueError), match="presentation"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("palette", [None, [], "palette", True])
+def test_v2_manifest_requires_theme_palette_objects(tmp_path, mode, palette):
+    theme = {
+        "presentation": "ui",
+        "day": {"background": "#ffffff", "accent": "#123456"},
+        "night": {"background": "#000000", "accent": "#abcdef"},
+    }
+    theme[mode] = palette
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme=theme,
+    )
+
+    with pytest.raises(TypeError, match=rf"theme\.{mode}"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("role", ["background", "accent"])
+@pytest.mark.parametrize(
+    "color",
+    [None, True, 123456, "ffffff", "#fff", "#12345g", "#1234567"],
+)
+def test_v2_manifest_requires_six_digit_theme_seed_colors(
+    tmp_path,
+    mode,
+    role,
+    color,
+):
+    theme = {
+        "presentation": "ui",
+        "day": {"background": "#ffffff", "accent": "#123456"},
+        "night": {"background": "#000000", "accent": "#abcdef"},
+    }
+    theme[mode][role] = color
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme=theme,
+    )
+
+    with pytest.raises((TypeError, ValueError), match=rf"theme\.{mode}\.{role}"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("role", ["background", "accent"])
+def test_v2_manifest_requires_each_theme_seed_role(tmp_path, mode, role):
+    theme = {
+        "presentation": "ui",
+        "day": {"background": "#ffffff", "accent": "#123456"},
+        "night": {"background": "#000000", "accent": "#abcdef"},
+    }
+    del theme[mode][role]
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme=theme,
+    )
+
+    with pytest.raises(TypeError, match=rf"theme\.{mode}\.{role}"):
+        PluginManifest.from_path(manifest_path)
 
 
 @pytest.mark.parametrize("schema_version", [0, 3, -1, True, "2"])
@@ -148,6 +296,8 @@ def test_v1_capability_inspection_uses_ast_without_executing_source(tmp_path):
 
     assert manifest.schema_version == 1
     assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_day_night_theme is False
+    assert manifest.theme is None
     assert not marker.exists()
 
 

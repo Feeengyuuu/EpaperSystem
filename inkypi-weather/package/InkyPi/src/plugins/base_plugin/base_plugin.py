@@ -1,5 +1,6 @@
 import logging
 import os
+from plugins.plugin_registry import plugin_supports_day_night_theme
 from plugins.plugin_settings import resolve_refresh_on_display
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.browser_renderer import get_browser_renderer
@@ -170,7 +171,12 @@ class BasePlugin:
         return path
 
     def generate_settings_template(self):
-        template_params = {"settings_template": "base_plugin/settings.html"}
+        template_params = {
+            "settings_template": "base_plugin/settings.html",
+            "supports_day_night_theme": plugin_supports_day_night_theme(
+                self.config
+            ),
+        }
 
         settings_path = self.get_plugin_dir("settings.html")
         if Path(settings_path).is_file():

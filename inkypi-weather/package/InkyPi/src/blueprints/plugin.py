@@ -5,7 +5,10 @@ from enum import Enum
 
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 
-from plugins.plugin_registry import get_plugin_instance
+from plugins.plugin_registry import (
+    get_plugin_instance,
+    plugin_supports_day_night_theme,
+)
 from refresh_task import ManualRefresh
 from runtime.refresh_contracts import JobRecord, thaw_payload
 from runtime.refresh_queue import QueueFullError, QueueStoppingError
@@ -244,6 +247,9 @@ def plugin_page(plugin_id):
         try:
             plugin = get_plugin_instance(plugin_config)
             template_params = plugin.generate_settings_template()
+            template_params["supports_day_night_theme"] = (
+                plugin_supports_day_night_theme(plugin_config)
+            )
 
             # retrieve plugin instance from the query parameters if updating existing plugin instance
             plugin_instance_name = request.args.get('instance')
