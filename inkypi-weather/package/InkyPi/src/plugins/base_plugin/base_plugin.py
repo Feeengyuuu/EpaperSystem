@@ -1,5 +1,6 @@
 import logging
 import os
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_registry import plugin_supports_day_night_theme
 from plugins.plugin_settings import resolve_refresh_on_display
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
@@ -10,6 +11,7 @@ from utils.cache_manager import (
     cache_namespace_for_directory,
 )
 from utils.image_loader import AdaptiveImageLoader
+from utils.theme_utils import resolve_plugin_theme
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import asyncio
@@ -68,6 +70,52 @@ class BasePlugin:
 
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
+
+    def resolve_theme(self, settings, device_config, now=None):
+        """Resolve this plugin's theme using any manifest palette seeds."""
+        manifest = self.config.get("_manifest")
+        manifest_theme = getattr(manifest, "theme", None)
+        palette = None
+        if manifest_theme is not None:
+            palette = {
+                "day": manifest_theme.day,
+                "night": manifest_theme.night,
+            }
+        return resolve_plugin_theme(
+            settings,
+            device_config,
+            now=now,
+            palette=palette,
+        )
+
+    def render_themed_image(
+        self,
+        settings,
+        device_config,
+        *,
+        theme_render_only=False,
+    ):
+        """Render through the shared plugin theme contract."""
+        theme = self.resolve_theme(settings, device_config)
+        render_settings = dict(settings or {})
+        render_settings["_inkypi_theme"] = theme
+        render_settings["_theme_render_only"] = bool(theme_render_only)
+        if theme_render_only:
+            render_settings.pop("forceRefresh", None)
+            render_settings.pop("force_refresh", None)
+
+        image = self.generate_image(render_settings, device_config)
+        manifest = self.config.get("_manifest")
+        manifest_theme = getattr(manifest, "theme", None)
+        if getattr(manifest_theme, "presentation", None) == "media":
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                theme,
+                self.get_dimensions(device_config),
+            )
+        image.info["inkypi_theme_mode"] = theme["mode"]
+        return image
 
     def get_dimensions(self, device_config):
         """Return the display resolution as (width, height), swapped for vertical orientation."""
