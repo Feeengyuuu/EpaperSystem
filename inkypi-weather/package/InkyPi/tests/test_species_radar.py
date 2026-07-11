@@ -31,6 +31,7 @@ from plugins.species_radar.species_radar import (  # noqa: E402
     HEADER_PIXEL_BACKGROUND_IMAGE,
     PIXEL_PLACEHOLDER_IMAGE,
     TITLE_WORDMARK_DISPLAY_SIZE,
+    TITLE_WORDMARK_EMPTY_DISPLAY_SIZE,
     TITLE_WORDMARK_IMAGE,
 )
 
@@ -856,7 +857,7 @@ def test_render_page_draws_right_panel_pixel_placeholder(tmp_path, monkeypatch):
     assert x1 - x0 >= 260
     assert 30 <= y1 - y0 <= 72
 
-def test_render_page_draws_title_with_configured_bold_cjk_font(tmp_path, monkeypatch):
+def test_render_page_uses_title_wordmark_asset(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     now = datetime(2026, 6, 27, tzinfo=timezone.utc)
     location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
@@ -868,39 +869,18 @@ def test_render_page_draws_title_with_configured_bold_cjk_font(tmp_path, monkeyp
         "location": location,
         "source_state": "live",
     }
-    wordmark_calls = []
-    font_calls = []
-    title_fonts = []
-    original_font = plugin._font
-    original_text = ImageDraw.ImageDraw.text
-
-    def spy_font(size, bold=False, cjk=False):
-        font = original_font(size, bold=bold, cjk=cjk)
-        font_calls.append((size, bold, cjk, font))
-        return font
-
-    def spy_text(self, xy, text, *args, **kwargs):
-        if str(text) == "\u7269\u79cd\u96f7\u8fbe":
-            title_fonts.append(kwargs.get("font"))
-        return original_text(self, xy, text, *args, **kwargs)
+    calls = []
 
     monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
-    monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda *_args, **_kwargs: wordmark_calls.append(True) or True)
-    monkeypatch.setattr(plugin, "_font", spy_font)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", spy_text)
+    monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda _canvas, x, y, size: calls.append((x, y, size)) or True)
 
     image = plugin._render_page((800, 480), payload, {}, now)
 
     assert image.size == (800, 480)
-    assert wordmark_calls == []
-    assert len(title_fonts) == 1
-    assert any(
-        size == 29 and bold is True and cjk is True and font is title_fonts[0]
-        for size, bold, cjk, font in font_calls
-    )
+    assert calls[0][2] == TITLE_WORDMARK_DISPLAY_SIZE
 
 
-def test_empty_page_draws_title_with_configured_bold_cjk_font(tmp_path, monkeypatch):
+def test_empty_page_uses_title_wordmark_asset(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     now = datetime(2026, 6, 27, tzinfo=timezone.utc)
     payload = {
@@ -909,35 +889,18 @@ def test_empty_page_draws_title_with_configured_bold_cjk_font(tmp_path, monkeypa
         "location": {"name": "Fremont, CA"},
         "source_state": "live",
     }
-    wordmark_calls = []
-    font_calls = []
-    title_fonts = []
-    original_font = plugin._font
-    original_text = ImageDraw.ImageDraw.text
+    calls = []
 
-    def spy_font(size, bold=False, cjk=False):
-        font = original_font(size, bold=bold, cjk=cjk)
-        font_calls.append((size, bold, cjk, font))
-        return font
-
-    def spy_text(self, xy, text, *args, **kwargs):
-        if str(text) == "\u7269\u79cd\u96f7\u8fbe":
-            title_fonts.append(kwargs.get("font"))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda *_args, **_kwargs: wordmark_calls.append(True) or True)
-    monkeypatch.setattr(plugin, "_font", spy_font)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", spy_text)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_title_wordmark",
+        lambda _canvas, x, y, size: calls.append((x, y, size)) or True,
+    )
 
     image = plugin._render_page((800, 480), payload, {}, now)
 
     assert image.size == (800, 480)
-    assert wordmark_calls == []
-    assert len(title_fonts) == 1
-    assert any(
-        size == 32 and bold is True and cjk is True and font is title_fonts[0]
-        for size, bold, cjk, font in font_calls
-    )
+    assert calls[0][2] == TITLE_WORDMARK_EMPTY_DISPLAY_SIZE
 
 
 def test_title_wordmark_visible_ink_is_left_aligned(tmp_path):
