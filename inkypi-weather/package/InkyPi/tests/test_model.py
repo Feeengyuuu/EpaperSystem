@@ -870,6 +870,23 @@ class TestPlaylistManagerSchedulerSnapshots:
             for playlist in manager.playlists
         )
 
+    @staticmethod
+    def _assert_manager_lock_released(manager):
+        acquired = []
+
+        def acquire_from_another_thread():
+            lock_acquired = manager._lock.acquire(timeout=1.0)
+            acquired.append(lock_acquired)
+            if lock_acquired:
+                manager._lock.release()
+
+        thread = threading.Thread(target=acquire_from_another_thread)
+        thread.start()
+        thread.join(timeout=2.0)
+
+        assert not thread.is_alive()
+        assert acquired == [True]
+
     def test_active_playlist_snapshot_is_deeply_immutable_detached_and_pure(self):
         manager = self._manager(
             self._playlist(
@@ -1308,6 +1325,71 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert selected is None
         assert self._rotation_state(manager) == before_rotation
 
+    def test_select_theme_exact_predicate_exception_releases_lock_without_rotating(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("A", instance_uuid="a-uuid"),
+                    self._plugin("B", instance_uuid="b-uuid"),
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["b-uuid"],
+                plugin_rotation_pool=["a-uuid", "b-uuid"],
+                plugin_rotation_recent_history=["a-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+
+        def raise_from_predicate(_snapshot):
+            raise RuntimeError("exact predicate failed")
+
+        with pytest.raises(RuntimeError, match="exact predicate failed"):
+            manager.select_theme_instance(
+                datetime(2026, 7, 9, 12, 0),
+                displayed_instance_uuid="a-uuid",
+                is_eligible=raise_from_predicate,
+            )
+
+        self._assert_manager_lock_released(manager)
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_fallback_predicate_exception_restores_rotation_and_releases_lock(
+        self,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("A", instance_uuid="a-uuid"),
+                    self._plugin("B", instance_uuid="b-uuid"),
+                ],
+                current_plugin_index=None,
+                plugin_rotation_queue=["a-uuid", "b-uuid"],
+                plugin_rotation_pool=["a-uuid", "b-uuid"],
+                plugin_rotation_recent_history=[],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+        predicate_uuids = []
+
+        def raise_on_second_candidate(snapshot):
+            predicate_uuids.append(snapshot.instance_uuid)
+            if snapshot.instance_uuid == "b-uuid":
+                raise RuntimeError("fallback predicate failed")
+            return False
+
+        with pytest.raises(RuntimeError, match="fallback predicate failed"):
+            manager.select_theme_instance(
+                datetime(2026, 7, 9, 12, 0),
+                displayed_instance_uuid="missing-uuid",
+                is_eligible=raise_on_second_candidate,
+            )
+
+        assert predicate_uuids == ["a-uuid", "b-uuid"]
+        self._assert_manager_lock_released(manager)
+        assert self._rotation_state(manager) == before_rotation
+
     def test_select_theme_fallback_skips_ineligible_rotation_item(self):
         manager = self._manager(
             self._playlist(
@@ -1346,30 +1428,115 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert len(get_next_calls) == 2
         assert predicate_uuids == ["blocked-uuid", "allowed-uuid"]
 
-    def test_select_theme_all_ineligible_fallback_is_bounded_by_plugin_count(self):
+    def test_select_theme_ineligible_exact_is_not_rechecked_during_fallback(self):
         manager = self._manager(
             self._playlist(
                 "Default",
                 plugins=[
-                    self._plugin("One", instance_uuid="one-uuid"),
-                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("A", instance_uuid="a-uuid"),
+                    self._plugin("B", instance_uuid="b-uuid"),
                 ],
                 current_plugin_index=None,
-                plugin_rotation_queue=["one-uuid", "two-uuid"],
-                plugin_rotation_pool=["one-uuid", "two-uuid"],
+                plugin_rotation_queue=["a-uuid", "b-uuid"],
+                plugin_rotation_pool=["a-uuid", "b-uuid"],
                 plugin_rotation_recent_history=[],
+            )
+        )
+        predicate_uuids = []
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="a-uuid",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid)
+                or snapshot.instance_uuid == "b-uuid"
+            ),
+        )
+
+        assert selected.instance.instance_uuid == "b-uuid"
+        assert predicate_uuids == ["a-uuid", "b-uuid"]
+
+    def test_select_theme_persisted_partial_queue_checks_every_unique_candidate(
+        self,
+        monkeypatch,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("A", instance_uuid="a-uuid"),
+                    self._plugin("B", instance_uuid="b-uuid"),
+                    self._plugin("C", instance_uuid="c-uuid"),
+                ],
+                current_plugin_index=1,
+                plugin_rotation_queue=["a-uuid"],
+                plugin_rotation_pool=["a-uuid", "b-uuid", "c-uuid"],
+                plugin_rotation_recent_history=["b-uuid"],
             )
         )
         playlist = manager.get_playlist("Default")
         original_get_next = playlist.get_next_plugin
-        get_next_calls = []
+        rotation_uuids = []
         predicate_uuids = []
 
-        def bounded_get_next():
-            get_next_calls.append(None)
-            assert len(get_next_calls) <= len(playlist.plugins)
-            return original_get_next()
+        def refill_after_partial_queue(items):
+            items[:] = ["b-uuid", "a-uuid", "c-uuid"]
 
+        def counted_get_next():
+            candidate = original_get_next()
+            rotation_uuids.append(candidate.instance_uuid)
+            return candidate
+
+        monkeypatch.setattr("src.model.random.shuffle", refill_after_partial_queue)
+        playlist.get_next_plugin = counted_get_next
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="missing-uuid",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid)
+                or snapshot.instance_uuid == "c-uuid"
+            ),
+        )
+
+        assert selected is not None
+        assert selected.instance.instance_uuid == "c-uuid"
+        assert rotation_uuids == ["a-uuid", "b-uuid", "a-uuid", "c-uuid"]
+        assert predicate_uuids == ["a-uuid", "b-uuid", "c-uuid"]
+
+    def test_select_theme_all_ineligible_checks_each_unique_candidate_once(
+        self,
+        monkeypatch,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("A", instance_uuid="a-uuid"),
+                    self._plugin("B", instance_uuid="b-uuid"),
+                    self._plugin("C", instance_uuid="c-uuid"),
+                ],
+                current_plugin_index=1,
+                plugin_rotation_queue=["a-uuid"],
+                plugin_rotation_pool=["a-uuid", "b-uuid", "c-uuid"],
+                plugin_rotation_recent_history=["b-uuid"],
+            )
+        )
+        playlist = manager.get_playlist("Default")
+        original_get_next = playlist.get_next_plugin
+        rotation_uuids = []
+        predicate_uuids = []
+
+        def refill_after_partial_queue(items):
+            items[:] = ["b-uuid", "a-uuid", "c-uuid"]
+
+        def bounded_get_next():
+            candidate = original_get_next()
+            rotation_uuids.append(candidate.instance_uuid)
+            assert len(rotation_uuids) <= 2 * len(playlist.plugins)
+            return candidate
+
+        monkeypatch.setattr("src.model.random.shuffle", refill_after_partial_queue)
         playlist.get_next_plugin = bounded_get_next
 
         selected = manager.select_theme_instance(
@@ -1382,8 +1549,9 @@ class TestPlaylistManagerSchedulerSnapshots:
         )
 
         assert selected is None
-        assert len(get_next_calls) == len(playlist.plugins)
-        assert predicate_uuids == ["one-uuid", "two-uuid"]
+        assert rotation_uuids == ["a-uuid", "b-uuid", "a-uuid", "c-uuid"]
+        assert predicate_uuids == ["a-uuid", "b-uuid", "c-uuid"]
+        assert len(predicate_uuids) == len(set(predicate_uuids)) == len(playlist.plugins)
 
     def test_select_theme_stale_uuid_recreate_falls_back_exactly_once(self):
         manager = self._manager(

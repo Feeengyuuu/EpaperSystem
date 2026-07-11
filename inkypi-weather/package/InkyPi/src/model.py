@@ -269,7 +269,10 @@ class PlaylistManager:
         The three legacy display fields are consulted only when UUID is absent.
         That compatibility path is inherently ABA-unsafe and is retained only
         until all callers persist and provide instance UUIDs. Eligibility is
-        evaluated against immutable snapshots. Rotation fallback can be disabled.
+        evaluated against immutable snapshots. The callback runs under the manager
+        lock and must be pure and non-blocking. Callback exceptions propagate; any
+        fallback rotation performed before an exception is rolled back. Rotation
+        fallback can be disabled.
         """
         with self._lock:
             playlist = self._determine_active_playlist_locked(current_datetime)
@@ -278,6 +281,7 @@ class PlaylistManager:
                 return None
 
             self.active_playlist = playlist.name
+            considered_instance_uuids = set()
             if displayed_instance_uuid is not None:
                 displayed = next(
                     (
@@ -294,6 +298,7 @@ class PlaylistManager:
                             playlist.name,
                             displayed_snapshot,
                         )
+                    considered_instance_uuids.add(displayed_snapshot.instance_uuid)
             elif (
                 displayed_playlist == playlist.name
                 and displayed_plugin_id is not None
@@ -315,21 +320,50 @@ class PlaylistManager:
                             playlist.name,
                             displayed_snapshot,
                         )
+                    considered_instance_uuids.add(displayed_snapshot.instance_uuid)
 
             if not allow_fallback:
                 return None
             if not playlist.plugins:
                 return None
-            for _ in range(len(playlist.plugins)):
+            rotation_state = (
+                playlist.current_plugin_index,
+                list(playlist.plugin_rotation_queue),
+                list(playlist.plugin_rotation_pool),
+                list(playlist.plugin_rotation_recent_history),
+            )
+            unique_candidate_count = len({
+                instance.instance_uuid for instance in playlist.plugins
+            })
+            for _ in range(2 * len(playlist.plugins)):
                 fallback = playlist.get_next_plugin()
                 if fallback is None:
                     return None
+                if fallback.instance_uuid in considered_instance_uuids:
+                    if len(considered_instance_uuids) == unique_candidate_count:
+                        return None
+                    continue
                 fallback_snapshot = fallback.snapshot()
-                if is_eligible is None or is_eligible(fallback_snapshot):
+                considered_instance_uuids.add(fallback_snapshot.instance_uuid)
+                try:
+                    fallback_is_eligible = (
+                        is_eligible is None or is_eligible(fallback_snapshot)
+                    )
+                except BaseException:
+                    (
+                        playlist.current_plugin_index,
+                        playlist.plugin_rotation_queue,
+                        playlist.plugin_rotation_pool,
+                        playlist.plugin_rotation_recent_history,
+                    ) = rotation_state
+                    raise
+                if fallback_is_eligible:
                     return PlaylistSelectionSnapshot(
                         playlist.name,
                         fallback_snapshot,
                     )
+                if len(considered_instance_uuids) == unique_candidate_count:
+                    return None
             return None
 
     def validate_instance_revision(
