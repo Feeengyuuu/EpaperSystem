@@ -2,7 +2,7 @@
 .rss-container {
     align-items: center; 
     justify-content: center;
-    font-family: "Jost";
+    font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
     height: 100%;
     width: 100%;
     overflow: hidden;

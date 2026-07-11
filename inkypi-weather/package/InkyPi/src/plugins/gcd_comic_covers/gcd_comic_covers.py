@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import get_base_ui_font
 from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 from utils.safe_image import safe_open_image
 
@@ -1387,17 +1388,7 @@ class GcdComicCovers(BasePlugin):
         draw.text((x - (bbox[2] - bbox[0]) // 2, y - (bbox[3] - bbox[1]) // 2), text, font=font, fill=fill)
 
     def _fallback_font(self, size, bold=False):
-        paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        ]
-        for path in paths:
-            try:
-                if Path(path).is_file():
-                    return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _fit_text(self, draw, text, font, max_width):
         if draw.textlength(text, font=font) <= max_width:

@@ -9,7 +9,7 @@ import pytz
 from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import get_font, resolve_dimensions
+from utils.app_utils import get_base_ui_font, get_font, resolve_dimensions
 
 
 SYNODIC_MONTH_DAYS = 29.530588853
@@ -412,6 +412,13 @@ def _palette(theme):
 
 
 def _font(name, size, weight="normal"):
+    if str(name or "").strip().casefold() in {
+        "jost",
+        "lxgw wenkai",
+        "microsoft yahei",
+        "\u5fae\u8f6f\u96c5\u9ed1",
+    }:
+        return get_base_ui_font(int(size), bold=weight == "bold")
     try:
         return get_font(name, int(size), font_weight=weight) or ImageFont.load_default()
     except Exception:

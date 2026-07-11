@@ -915,3 +915,18 @@ def test_generate_image_without_token_renders_sample_digest(tmp_path):
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
     assert len(image.getcolors(maxcolors=1_000_000)) > 20
+
+
+def test_telegram_digest_base_font_uses_shared_resolver(monkeypatch, tmp_path):
+    plugin = _plugin(tmp_path)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        telegram_mod,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert plugin._font(15, "bold") is sentinel
+    assert calls == [(15, True)]

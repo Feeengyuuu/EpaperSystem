@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PIL import Image, ImageDraw
 
+import plugins.flight_radar.flight_radar as flight_radar_module
 from plugins.flight_radar.flight_radar import DEFAULT_TRACK_HISTORY_POINTS, FlightRadar, SourceStatus
 
 
@@ -351,3 +352,17 @@ def test_render_sample_dashboard_size():
     image = plugin._render(sample, (800, 480), {}, now)
 
     assert image.size == (800, 480)
+
+
+def test_flight_radar_base_font_uses_shared_resolver(monkeypatch):
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        flight_radar_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert FlightRadar._font(16, "bold") is sentinel
+    assert calls == [(16, True)]

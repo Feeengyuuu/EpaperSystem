@@ -13,7 +13,7 @@
   justify-content: center;
   gap: 0.8dvh;
   padding: 0dvh 0.5dvw;
-  font-family: "Jost";
+  font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
   background: var(--theme-background, #ffffff);
   color: var(--theme-ink, #000000);
   overflow: hidden;

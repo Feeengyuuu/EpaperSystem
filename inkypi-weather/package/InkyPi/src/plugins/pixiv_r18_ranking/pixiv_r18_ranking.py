@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,13 @@ JST = timezone(timedelta(hours=9))
 DOWNLOAD_CHUNK_SIZE = 8192
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
+JAPANESE_FONT_SAMPLE = "\u65e5\u672c\u8a9e\u3042\u30a2"
+JAPANESE_FONT_PATHS = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf",
+)
 
 # Public ranking endpoint. ``format=json`` needs no OAuth/API key; only the R-18
 # modes require a logged-in session (a ``PHPSESSID`` cookie). When no cookie is
@@ -784,16 +792,47 @@ class PixivR18Ranking(BasePlugin):
         return image
 
     def _font(self, size, bold=False):
-        paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        ]
+        font = get_base_ui_font(int(size), bold=bool(bold))
+        if self._font_supports_text(font, JAPANESE_FONT_SAMPLE):
+            return font
+
+        paths = []
+        if bold:
+            paths.extend(
+                [
+                    "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
+                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+                ]
+            )
+        paths.extend(JAPANESE_FONT_PATHS)
         for path in paths:
             try:
-                return ImageFont.truetype(path, size=size)
+                candidate = ImageFont.truetype(path, size=int(size))
+                if self._font_supports_text(candidate, JAPANESE_FONT_SAMPLE):
+                    return candidate
             except Exception:
                 continue
-        return ImageFont.load_default()
+        return font
+
+    @staticmethod
+    def _font_supports_text(font, text):
+        if font is None or not hasattr(font, "getmask"):
+            return False
+        try:
+            replacement = font.getmask("\ufffd")
+            replacement_signature = (replacement.size, bytes(replacement))
+            for char in str(text or ""):
+                if char.isspace():
+                    continue
+                glyph = font.getmask(char)
+                if glyph.getbbox() is None:
+                    return False
+                if (glyph.size, bytes(glyph)) == replacement_signature:
+                    return False
+        except Exception:
+            return False
+        return True
 
     def _draw_centered(self, draw, text, x, y, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)

@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client
 from utils.safe_image import ImageLimits, safe_open_image
 
@@ -2300,30 +2300,22 @@ class FlightRadar(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
+        font = get_base_ui_font(int(size), bold=weight == "bold")
+        if font is not None:
+            return font
         font = FlightRadar._font_from_paths(SANS_FONT_PATHS["bold" if weight == "bold" else "normal"], size)
         if font:
             return font
-        for family in ("Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Jost"):
-            try:
-                font = get_font(family, int(size), "bold" if weight == "bold" else "normal")
-                if font:
-                    return font
-            except Exception:
-                continue
         return ImageFont.load_default()
 
     @staticmethod
     def _city_font(size, weight="normal"):
+        font = get_base_ui_font(int(size), bold=weight == "bold")
+        if font is not None:
+            return font
         font = FlightRadar._font_from_paths(CITY_FONT_PATHS["bold" if weight == "bold" else "normal"], size)
         if font:
             return font
-        for family in ("Microsoft YaHei", "Microsoft YaHei UI", "Noto Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei"):
-            try:
-                font = get_font(family, int(size), "bold" if weight == "bold" else "normal")
-                if font:
-                    return font
-            except Exception:
-                continue
         return FlightRadar._font(size, weight)
 
     @staticmethod

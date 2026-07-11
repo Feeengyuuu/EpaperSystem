@@ -1566,3 +1566,17 @@ def test_generate_image_uses_stale_cache_on_fetch_failure():
     stale = plugin.generate_image({**settings, "forceRefresh": "true"}, FakeDeviceConfig())
 
     assert stale.size == (800, 480)
+
+
+def test_live_radar_base_font_uses_shared_resolver(monkeypatch):
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        live_radar_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert LiveRadar._font(17, "bold") is sentinel
+    assert calls == [(17, True)]

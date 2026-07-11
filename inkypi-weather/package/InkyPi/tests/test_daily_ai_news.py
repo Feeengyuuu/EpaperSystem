@@ -770,13 +770,20 @@ def test_static_render_labels_use_simplified_chinese():
     assert plugin._footer_text({"generated_at": "2026-06-17T21:12:00"}, {"sources": []}).startswith("来源: 新闻源 + AI摘要")
 
 
-def test_daily_ai_news_loads_microsoft_yahei_font():
+def test_daily_ai_news_uses_shared_base_ui_resolver(monkeypatch):
     plugin = _plugin()
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        daily_ai_news_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+    )
 
     font = plugin._font("Microsoft YaHei", 18, "bold")
 
-    assert hasattr(font, "getbbox")
-    assert "msyh" in str(getattr(font, "path", "")).lower()
+    assert font is sentinel
+    assert calls == [(18, True)]
 
 
 def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
@@ -1519,13 +1526,23 @@ def test_render_positions_title_background_between_title_and_meta(monkeypatch):
         "market_snapshot": {},
     }
 
-    image = plugin._render((800, 480), {"brief_title": ""}, payload, datetime(2026, 6, 8), {"mode": "day"})
+    now = datetime(2026, 6, 8)
+    theme_context = {"mode": "day"}
+    image = plugin._render((800, 480), {"brief_title": ""}, payload, now, theme_context)
 
     assert image.size == (800, 480)
     left, top, right, bottom = seen["box"]
+    measure = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+    meta_font = plugin._font("Microsoft YaHei", 14)
+    meta = f"{plugin._date_label(payload, now)}  |  \u667a\u80fd\u751f\u6210  |  \u7f13\u5b58"
+    theme_label = plugin._theme_label(theme_context)
+    expected_meta_left = 800 - 24 - max(
+        plugin._tw(measure, meta, meta_font),
+        plugin._tw(measure, theme_label, meta_font),
+    )
     assert right - left >= 290
     assert bottom - top == TITLE_BACKGROUND_SIZE[1]
     assert 250 <= left <= 260
     assert top == 8
-    assert 565 <= right <= 575
+    assert right == expected_meta_left - 12
     assert bottom == 73

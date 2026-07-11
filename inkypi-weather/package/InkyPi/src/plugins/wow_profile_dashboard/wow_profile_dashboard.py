@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import safe_open_image, safe_open_image_response
@@ -862,30 +863,7 @@ class WowProfileDashboard(BasePlugin):
         return max(1, bbox[3] - bbox[1] + 3)
 
     def _font(self, size, bold=False):
-        plugin_dir = Path(self.get_plugin_dir())
-        candidates = []
-        shared_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
-        if bold:
-            candidates.extend([
-                plugin_dir / "fonts" / "msyhbd.ttc",
-                shared_fonts / "msyhbd.ttc",
-                Path("C:/Windows/Fonts/msyhbd.ttc"),
-                Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-            ])
-        candidates.extend([
-            plugin_dir / "fonts" / "msyh.ttc",
-            shared_fonts / "msyh.ttc",
-            Path("C:/Windows/Fonts/msyh.ttc"),
-            Path("C:/Windows/Fonts/segoeui.ttf"),
-            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        ])
-        for path in candidates:
-            if path.exists():
-                try:
-                    return ImageFont.truetype(str(path), size=size)
-                except Exception:
-                    continue
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _region(self, settings):
         region = str(settings.get("region") or DEFAULT_REGION).strip().lower()

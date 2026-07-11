@@ -14041,3 +14041,16 @@ def test_logo_with_flat_background_becomes_transparent():
     assert logo.mode == "RGBA"
     assert logo.getpixel((0, 0))[3] == 0
     assert logo.getpixel((3, 3)) == (0, 92, 185, 255)
+
+
+def test_sports_dashboard_base_font_uses_shared_resolver(monkeypatch):
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        "plugins.sports_dashboard.common.get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert SportsDashboard._font(18, True) is sentinel
+    assert calls == [(18, True)]

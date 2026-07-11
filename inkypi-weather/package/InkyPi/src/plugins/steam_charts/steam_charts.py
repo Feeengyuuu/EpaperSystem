@@ -1,6 +1,11 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font
+from utils.app_utils import (
+    font_file_uri,
+    get_base_ui_font,
+    get_font,
+    resolve_base_ui_font_path,
+)
 from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
 from utils.safe_image import ImageLimits, safe_open_base64_image
@@ -1178,6 +1183,11 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _font_file_uri(weight="normal"):
+        try:
+            shared_path = resolve_base_ui_font_path(bold=weight == "bold")
+            return font_file_uri(shared_path)
+        except (OSError, ValueError):
+            pass
         for font_path in SteamCharts._preferred_sans_font_paths(weight):
             if not SteamCharts._is_yahei_font_path(font_path):
                 continue
@@ -1194,12 +1204,23 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
+        font = get_base_ui_font(int(size), bold=weight == "bold")
+        if font is not None:
+            font_path = getattr(font, "path", None)
+            if font_path:
+                try:
+                    return SteamCharts._load_sans_font(
+                        str(font_path), int(size), weight
+                    )
+                except Exception:
+                    pass
+            return font
         for font_path in SteamCharts._preferred_sans_font_paths(weight):
             try:
                 return SteamCharts._load_sans_font(font_path, size, weight)
             except Exception:
                 continue
-        return get_font("LXGW WenKai", size, weight) or get_font("Jost", size, weight) or ImageFont.load_default()
+        return get_font("LXGW WenKai", size, weight) or ImageFont.load_default()
 
     @staticmethod
     def _load_sans_font(font_path, size, weight="normal"):

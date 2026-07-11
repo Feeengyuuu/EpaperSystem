@@ -1,6 +1,6 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from PIL import Image, ImageColor, ImageDraw
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font, get_font
 import calendar
 import unicodedata
 from datetime import datetime, timedelta
@@ -356,7 +356,7 @@ class FlowProgress(BasePlugin):
         if dot_font is None:
             raise RuntimeError("Required font 'Dogica' not found.")
         title_font = (
-            get_font("Jost", max(30, int(rw * 0.055)), font_weight="bold")
+            get_base_ui_font(max(30, int(rw * 0.055)), bold=True)
             or dot_font
         )
 
@@ -423,7 +423,9 @@ class FlowProgress(BasePlugin):
             title_y + int(title_h * 0.18) + meta_h,
         )
         if meta_box[0] > title_x + title_w + 12 * scale:
-            meta_font = get_font("Jost", max(15 * scale, int(meta_h * 0.42)), font_weight="bold") or dot_font
+            meta_font = get_base_ui_font(
+                max(15 * scale, int(meta_h * 0.42)), bold=True
+            ) or dot_font
             _draw_comic_panel(draw, meta_box, BLUE, INK, ORANGE, border_w, shadow_offset // 2)
             _draw_centered_text(
                 draw,
@@ -476,7 +478,9 @@ class FlowProgress(BasePlugin):
         bar_dot_r = min(bar_dot_sp * 0.34, single_bar_h * 0.42, 7.5 * scale)
         dot_outline = max(1.0, 0.55 * scale)
         text_shadow = max(0.9 * scale, 1.0)
-        tag_font = get_font("Jost", max(15 * scale, int(row_h * 0.20)), font_weight="bold") or dot_font
+        tag_font = get_base_ui_font(
+            max(15 * scale, int(row_h * 0.20)), bold=True
+        ) or dot_font
 
         for i in range(item_count):
             style = COMIC_DAY_CATEGORY_STYLES[i % len(COMIC_DAY_CATEGORY_STYLES)]

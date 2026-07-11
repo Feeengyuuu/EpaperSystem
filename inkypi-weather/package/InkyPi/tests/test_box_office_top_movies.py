@@ -349,43 +349,36 @@ def test_render_chart_smoke(monkeypatch):
     assert image.getbbox() is not None
 
 
-def first_available_yahei_path(plugin, bold=False):
-    for path in plugin._microsoft_yahei_paths(bold):
-        path = Path(path)
-        if path.is_file():
-            return path
-    raise AssertionError("Microsoft YaHei font is not available")
-
-
-def assert_uses_yahei(font, expected_path):
-    path = Path(getattr(font, "path", ""))
-    family = font.getname()[0] if hasattr(font, "getname") else ""
-
-    assert path == expected_path
-    assert "Microsoft YaHei" in family
-
-
-def test_default_font_uses_microsoft_yahei():
+def test_default_font_uses_shared_base_ui_resolver(monkeypatch):
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
-    expected_path = first_available_yahei_path(plugin, bold=False)
-    selected_font = plugin._font(18, bold=False, cjk=False)
-    fallback_font = plugin._default_yahei_font(18, bold=False)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        box_office_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
 
-    assert expected_path.name == box_office_module.YAHEI_REGULAR_FILE
-    assert_uses_yahei(selected_font, expected_path)
-    assert_uses_yahei(fallback_font, expected_path)
+    assert plugin._font(18, bold=False, cjk=False) is sentinel
+    assert plugin._default_yahei_font(19, bold=True) is sentinel
+    assert calls == [(18, False), (19, True)]
 
 
-def test_cjk_bold_font_uses_microsoft_yahei():
+def test_cjk_font_accepts_shared_font_when_it_has_required_glyphs(monkeypatch):
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
-    expected_path = first_available_yahei_path(plugin, bold=True)
-    selected_font = plugin._font(24, bold=True, cjk=True)
-    fallback_font = plugin._default_yahei_font(24, bold=True)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        box_office_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+    monkeypatch.setattr(plugin, "_font_has_cjk_glyphs", lambda font: font is sentinel)
 
-    assert expected_path.name == box_office_module.YAHEI_BOLD_FILE
-    assert_uses_yahei(selected_font, expected_path)
-    assert_uses_yahei(fallback_font, expected_path)
-    assert plugin._font_has_cjk_glyphs(selected_font)
+    assert plugin._font(24, bold=True, cjk=True) is sentinel
+    assert calls == [(24, True)]
 
 
 def test_cjk_glyph_detector_rejects_latin_tofu_boxes():

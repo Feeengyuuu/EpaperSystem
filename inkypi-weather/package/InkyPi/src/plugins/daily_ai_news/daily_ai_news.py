@@ -19,7 +19,12 @@ import pytz
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import bounded_int, get_available_font_names, get_font
+from utils.app_utils import (
+    bounded_int,
+    get_available_font_names,
+    get_base_ui_font,
+    get_font,
+)
 from utils.image_utils import text_width
 from utils.http_client import get_http_client
 from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
@@ -2291,45 +2296,10 @@ class DailyAINews(BasePlugin):
         return ImageFont.load_default()
 
     def _microsoft_yahei_font(self, size: int, weight: str = "normal"):
-        plugin_dir = Path(self.get_plugin_dir())
-        shared_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
-        local_fonts = plugin_dir / "fonts"
-        weight = str(weight or "normal").lower()
-        candidates = []
-        if weight == "bold":
-            candidates.extend([
-                local_fonts / "msyhbd.ttc",
-                shared_fonts / "msyhbd.ttc",
-                Path("C:/Windows/Fonts/msyhbd.ttc"),
-                Path("C:/Windows/Fonts/msyhbd.ttf"),
-                Path("/usr/share/fonts/opentype/microsoft/msyhbd.ttc"),
-                Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttc"),
-                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
-                Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"),
-            ])
-        candidates.extend([
-            local_fonts / "msyh.ttc",
-            shared_fonts / "msyh.ttc",
-            local_fonts / "msyhl.ttc",
-            shared_fonts / "msyhl.ttc",
-            Path("C:/Windows/Fonts/msyh.ttc"),
-            Path("C:/Windows/Fonts/msyh.ttf"),
-            Path("C:/Windows/Fonts/msyhl.ttc"),
-            Path("/usr/share/fonts/opentype/microsoft/msyh.ttc"),
-            Path("/usr/share/fonts/truetype/microsoft/msyh.ttc"),
-            Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
-            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        ])
-        for path in candidates:
-            if not path.exists():
-                continue
-            try:
-                return ImageFont.truetype(str(path), size=int(size))
-            except Exception:
-                continue
-        return None
+        return get_base_ui_font(
+            int(size),
+            bold=str(weight or "normal").lower() == "bold",
+        )
 
     def _date_label(self, payload: dict[str, Any], now: datetime) -> str:
         date = payload.get("date") or now.strftime("%Y-%m-%d")

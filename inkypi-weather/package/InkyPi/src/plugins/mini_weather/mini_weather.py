@@ -9,7 +9,7 @@ import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.weather.weather import UNITS, Weather
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.draw_utils import text_width
 from utils.http_client import get_http_session
 from utils.plugin_cache import MemoryTTLCache
@@ -694,24 +694,7 @@ class MiniWeather(Weather):
             return img
 
     def _pil_font(self, size, weight="normal"):
-        system_fonts = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if weight == "bold" else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if weight == "bold" else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        ]
-        for path in system_fonts:
-            try:
-                if Path(path).is_file():
-                    return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-        for family in ("Jost", "LXGW WenKai", "FandolKai"):
-            try:
-                font = get_font(family, size, weight)
-                if font:
-                    return font
-            except Exception:
-                pass
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     def _unit_label(self, data):
         units = ((data.get("plugin_settings") or {}).get("units") or "metric")

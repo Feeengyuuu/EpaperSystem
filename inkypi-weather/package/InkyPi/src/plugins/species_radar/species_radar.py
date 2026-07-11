@@ -21,7 +21,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import coerce_bool, get_available_font_names, get_font
+from utils.app_utils import (
+    coerce_bool,
+    get_available_font_names,
+    get_base_ui_font,
+    get_font,
+)
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
@@ -1933,6 +1938,10 @@ LIMIT 8
         return ""
 
     def _font(self, size, bold=False, cjk=False):
+        font = get_base_ui_font(int(size), bold=bool(bold))
+        if font is not None:
+            return font
+
         weight = "bold" if bold else "normal"
         for path in self._preferred_font_paths(bold=bold):
             try:

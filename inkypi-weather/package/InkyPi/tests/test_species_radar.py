@@ -7,6 +7,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.species_radar.species_radar as species_mod  # noqa: E402
 from plugins.species_radar.species_radar import (  # noqa: E402
     CATEGORY_STYLES,
     COMIC_BLUE,
@@ -652,6 +653,22 @@ def test_font_defaults_prefer_microsoft_yahei(tmp_path):
     ]
     if Path(normal_paths[0]).exists():
         assert all("msyh" in str(getattr(font, "path", "")).lower() for font in fonts)
+
+
+def test_font_loader_uses_shared_base_ui_resolver(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        species_mod,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert plugin._font(15) is sentinel
+    assert plugin._font(26, bold=True) is sentinel
+    assert calls == [(15, False), (26, True)]
 
 
 def test_title_wordmark_asset_is_transparent_and_header_sized():

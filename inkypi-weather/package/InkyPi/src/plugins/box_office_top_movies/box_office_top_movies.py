@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import bounded_int
+from utils.app_utils import bounded_int, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image_response
 
@@ -58,9 +58,6 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_FONT_DIR = PLUGIN_DIR / "fonts"
 SRC_DIR = PLUGIN_DIR.parent.parent
 STATIC_FONT_DIR = SRC_DIR / "static" / "fonts"
-SPORTS_DASHBOARD_FONT_DIR = PLUGIN_DIR.parent / "sports_dashboard" / "fonts"
-YAHEI_REGULAR_FILE = "msyh.ttc"
-YAHEI_BOLD_FILE = "msyhbd.ttc"
 CINEMA_PLACEHOLDER_FILE = "boxoffice_cinema_placeholder.png"
 CINEMA_PLACEHOLDER_SIZE = (300, 90)
 CHINA_TITLE_WORDMARK_FILE = "boxoffice_china_title_wordmark.png"
@@ -1167,8 +1164,17 @@ class BoxOfficeTopMovies(BasePlugin):
         return lines or [""]
 
     def _font(self, size, bold=False, cjk=False):
-        yahei_paths = self._microsoft_yahei_paths(bold)
-        cjk_paths = yahei_paths + [
+        font = get_base_ui_font(int(size), bold=bool(bold))
+        font_path = getattr(font, "path", None)
+        if font_path:
+            try:
+                font = self._load_font(str(font_path), int(size), bool(bold))
+            except Exception:
+                pass
+        if not cjk or self._font_has_cjk_glyphs(font):
+            return font
+
+        cjk_paths = [
             PLUGIN_FONT_DIR / "NotoSansSC-VF.ttf",
             STATIC_FONT_DIR / "NotoSansSC-VF.ttf",
             STATIC_FONT_DIR / "LXGWWenKai-Regular.ttf",
@@ -1177,41 +1183,18 @@ class BoxOfficeTopMovies(BasePlugin):
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         ]
-        latin_paths = yahei_paths + [
-            r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
-            r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        ]
-        if cjk:
-            for path in cjk_paths:
-                font = self._font_from_path(path, size, bold)
-                if font is not None and self._font_has_cjk_glyphs(font):
-                    return font
-            logger.warning("No CJK-capable Microsoft YaHei font found for BoxOfficeTopMovies; trying last-resort fallback.")
-            return self._default_yahei_font(size, bold)
-
-        for path in latin_paths:
-            font = self._font_from_path(path, size, bold)
-            if font is not None:
-                return font
-        return self._default_yahei_font(size, bold)
-
-    def _microsoft_yahei_paths(self, bold=False):
-        filename = YAHEI_BOLD_FILE if bold else YAHEI_REGULAR_FILE
-        return [
-            PLUGIN_FONT_DIR / filename,
-            SPORTS_DASHBOARD_FONT_DIR / filename,
-            r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
-            r"C:\Windows\Fonts\msyhbd.ttf" if bold else r"C:\Windows\Fonts\msyh.ttf",
-        ]
+        for path in cjk_paths:
+            candidate = self._font_from_path(path, size, bold)
+            if candidate is not None and self._font_has_cjk_glyphs(candidate):
+                return candidate
+        logger.warning(
+            "Shared base font lacks CJK glyphs for BoxOfficeTopMovies; "
+            "using the shared fallback."
+        )
+        return font
 
     def _default_yahei_font(self, size, bold=False):
-        for path in self._microsoft_yahei_paths(bold):
-            font = self._font_from_path(path, size, bold)
-            if font is not None:
-                return font
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _font_from_path(self, path, size, bold=False):
         try:

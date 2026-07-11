@@ -1,7 +1,7 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image
 from datetime import datetime
@@ -947,23 +947,7 @@ class BambuMonitor(BasePlugin):
         return img
 
     def _font(self, size, bold=False):
-        font_size = int(size)
-        font_name = "Jost-SemiBold.ttf" if bold else "Jost.ttf"
-        font_paths = [
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static", "fonts", font_name)),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-        try:
-            for font_path in font_paths:
-                if os.path.isfile(font_path):
-                    return ImageFont.truetype(font_path, font_size)
-            font = get_font("Jost", font_size, "bold" if bold else "normal")
-            if font:
-                return font
-        except Exception as exc:
-            logger.warning(f"Falling back to default font: {exc}")
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     @staticmethod
     def _text_width(draw, text, font):

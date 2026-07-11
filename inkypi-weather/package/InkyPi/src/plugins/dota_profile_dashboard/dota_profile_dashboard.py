@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import coerce_bool
+from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image, safe_open_image_response
@@ -669,32 +669,7 @@ class DotaProfileDashboard(BasePlugin):
         return max(1, bbox[3] - bbox[1] + 2)
 
     def _font(self, size, bold=False):
-        plugin_dir = Path(self.get_plugin_dir())
-        candidates = []
-        sports_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
-        if bold:
-            candidates.extend([
-                plugin_dir / "fonts" / "msyhbd.ttc",
-                sports_fonts / "msyhbd.ttc",
-                Path("C:/Windows/Fonts/msyhbd.ttc"),
-            ])
-        candidates.extend([
-            plugin_dir / "fonts" / "msyh.ttc",
-            sports_fonts / "msyh.ttc",
-            Path("C:/Windows/Fonts/msyh.ttc"),
-            plugin_dir.parent.parent / "static" / "fonts" / "LXGWWenKai-Regular.ttf",
-            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-            Path("C:/Windows/Fonts/simhei.ttf"),
-            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        ])
-        for path in candidates:
-            if path.exists():
-                try:
-                    return ImageFont.truetype(str(path), size=size)
-                except Exception:
-                    continue
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _avg_total(self, totals, field):
         for row in totals:

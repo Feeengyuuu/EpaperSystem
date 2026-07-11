@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import coerce_bool
+from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import safe_open_image, safe_open_image_response
@@ -1551,34 +1551,47 @@ class LoLInfo(BasePlugin):
             draw.line((x, 0, x + 80, height), fill=(18, 16, 20), width=8)
 
     def _font(self, size, bold=False, prefer_hangul=False):
+        font = get_base_ui_font(int(size), bold=bool(bold))
+        if not prefer_hangul or self._font_supports_text(font, "\ud55c"):
+            return font
+
         plugin_dir = Path(self.get_plugin_dir())
-        sports_fonts = plugin_dir.parent / "sports_dashboard" / "fonts"
         static_fonts = plugin_dir.parent.parent / "static" / "fonts"
-        candidates = []
-        if prefer_hangul:
-            candidates.extend([
-                static_fonts / "LXGWWenKai-Regular.ttf",
-                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-                Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-            ])
-        if bold:
-            candidates.extend([sports_fonts / "msyhbd.ttc", Path("C:/Windows/Fonts/msyhbd.ttc")])
-        candidates.extend([
-            sports_fonts / "msyh.ttc",
-            Path("C:/Windows/Fonts/msyh.ttc"),
+        candidates = [
             static_fonts / "LXGWWenKai-Regular.ttf",
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc") if bold else Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc") if bold else Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
             Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
             Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-            Path("C:/Windows/Fonts/simhei.ttf"),
-            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        ])
+        ]
         for path in candidates:
             if path.exists():
                 try:
-                    return ImageFont.truetype(str(path), size=size)
+                    candidate = ImageFont.truetype(str(path), size=int(size))
+                    if self._font_supports_text(candidate, "\ud55c"):
+                        return candidate
                 except Exception:
                     continue
-        return ImageFont.load_default()
+        return font
+
+    @staticmethod
+    def _font_supports_text(font, text):
+        if font is None or not hasattr(font, "getmask"):
+            return False
+        try:
+            replacement = font.getmask("\ufffd")
+            replacement_signature = (replacement.size, bytes(replacement))
+            for char in str(text or ""):
+                if char.isspace():
+                    continue
+                glyph = font.getmask(char)
+                if glyph.getbbox() is None:
+                    return False
+                if (glyph.size, bytes(glyph)) == replacement_signature:
+                    return False
+        except Exception:
+            return False
+        return True
 
     def _settings_for_selected_pro_account(self, settings):
         effective = dict(settings or {})

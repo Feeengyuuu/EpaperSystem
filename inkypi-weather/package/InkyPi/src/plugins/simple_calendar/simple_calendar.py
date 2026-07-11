@@ -13,7 +13,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import read_contexts
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -687,16 +687,18 @@ class SimpleCalendar(BasePlugin):
         month_name = self._get_month_name(selected_date, locale_data, language)
         focus_max_w = panel_w * 0.78
         clean_day_font_size = max(int(min(panel_w * 0.52, panel_h * 0.34)), 58)
-        clean_day_font = get_font("Jost", clean_day_font_size, "bold")
+        clean_day_font = get_base_ui_font(clean_day_font_size, bold=True)
         while clean_day_font_size > 48:
             bbox = draw.textbbox((0, 0), day_str, font=clean_day_font)
             if bbox[2] - bbox[0] <= focus_max_w:
                 break
             clean_day_font_size -= 2
-            clean_day_font = get_font("Jost", clean_day_font_size, "bold")
+            clean_day_font = get_base_ui_font(clean_day_font_size, bold=True)
 
-        clean_weekday_font = get_font("Jost", max(int(panel_w * 0.105), 18), "bold")
-        clean_date_font = get_font("Jost", max(int(panel_w * 0.072), 13))
+        clean_weekday_font = get_base_ui_font(
+            max(int(panel_w * 0.105), 18), bold=True
+        )
+        clean_date_font = get_base_ui_font(max(int(panel_w * 0.072), 13))
 
         weekday_y = panel_cy - int(panel_h * 0.22)
         day_y = panel_cy + int(panel_h * 0.01)
@@ -747,10 +749,10 @@ class SimpleCalendar(BasePlugin):
         header_font_size = max(int(col_w * 0.40), 9)
         day_font_size = max(int(col_w * 0.56), 10)
 
-        month_font = get_font("Jost", month_font_size, "bold")
-        year_font = get_font("Jost", year_font_size)
-        header_font = get_font("Jost", header_font_size)
-        day_font = get_font("Jost", day_font_size)
+        month_font = get_base_ui_font(month_font_size, bold=True)
+        year_font = get_base_ui_font(year_font_size)
+        header_font = get_base_ui_font(header_font_size)
+        day_font = get_base_ui_font(day_font_size)
 
         top_pad = int(cal_h * 0.045)
         month_y = c_top + top_pad
@@ -1771,7 +1773,7 @@ class SimpleCalendar(BasePlugin):
         if not events:
             return
 
-        label_font = get_font("Jost", 10, "bold")
+        label_font = get_base_ui_font(10, bold=True)
         text_font = self._get_holiday_title_font(14, bold=True)
         event = (self._merge_same_day_events(events) or events)[0]
         card_w = int(max_width * 0.98)
@@ -1862,8 +1864,8 @@ class SimpleCalendar(BasePlugin):
         date_font_size = max(int(width * 0.032), 14)
         label_font_size = max(int(width * 0.025), 11)
         title_font_size = max(int(width * 0.032), 14)
-        date_font = get_font("Jost", date_font_size, "bold")
-        label_font = get_font("Jost", label_font_size, "bold")
+        date_font = get_base_ui_font(date_font_size, bold=True)
+        label_font = get_base_ui_font(label_font_size, bold=True)
         title_font = self._get_holiday_title_font(title_font_size)
         row_h = (bottom - top - 12) / 3
         x0 = left + int(width * 0.055)
@@ -1938,34 +1940,7 @@ class SimpleCalendar(BasePlugin):
         return bbox[2] - bbox[0]
 
     def _get_holiday_title_font(self, font_size, bold=False):
-        src_dir = Path(__file__).resolve().parents[2]
-        bold_candidates = [
-            src_dir / "static" / "fonts" / "msyhbd.ttc",
-            src_dir / "static" / "fonts" / "msyhbd.ttf",
-            src_dir / "static" / "fonts" / "MicrosoftYaHeiBold.ttf",
-            src_dir / "plugins" / "sports_dashboard" / "fonts" / "msyhbd.ttc",
-            Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttc"),
-            Path("/usr/share/fonts/truetype/microsoft/msyhbd.ttf"),
-        ]
-        regular_candidates = [
-            src_dir / "static" / "fonts" / "msyh.ttc",
-            src_dir / "static" / "fonts" / "msyh.ttf",
-            src_dir / "static" / "fonts" / "MicrosoftYaHei.ttf",
-            Path("/usr/share/fonts/truetype/microsoft/msyh.ttc"),
-            Path("/usr/share/fonts/truetype/microsoft/msyh.ttf"),
-            src_dir / "static" / "fonts" / "NotoSansSC-VF.ttf",
-        ]
-        candidates = (bold_candidates if bold else []) + regular_candidates
-
-        for path in candidates:
-            if not path.exists():
-                continue
-            try:
-                return ImageFont.truetype(str(path), font_size)
-            except Exception as exc:
-                logger.debug("Could not load holiday title font %s: %s", path, exc)
-
-        return get_font("LXGW WenKai", font_size) or get_font("Jost", font_size)
+        return get_base_ui_font(int(font_size), bold=bool(bold))
 
     def _merge_same_day_events(self, events):
         merged = []

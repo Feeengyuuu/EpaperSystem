@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import bounded_int, coerce_bool, get_font, resolve_path
+from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font, get_font, resolve_path
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
@@ -1840,6 +1840,11 @@ class TelegramDigest(BasePlugin):
             return bbox[2] - bbox[0]
 
     def _font(self, size, weight="normal"):
+        font = get_base_ui_font(int(size), bold=weight == "bold")
+        if font is not None:
+            if weight == "bold":
+                self._apply_font_weight(font, 760)
+            return font
         paths = FONT_PATHS["bold" if weight == "bold" else "normal"]
         for path in paths:
             try:
@@ -1850,7 +1855,7 @@ class TelegramDigest(BasePlugin):
                     return font
             except Exception:
                 continue
-        for family in ("Microsoft YaHei", "Noto Sans CJK SC", "LXGW WenKai", "Jost"):
+        for family in ("Microsoft YaHei", "Noto Sans CJK SC", "LXGW WenKai"):
             try:
                 font = get_font(family, int(size), "bold" if weight == "bold" else "normal")
                 if font:

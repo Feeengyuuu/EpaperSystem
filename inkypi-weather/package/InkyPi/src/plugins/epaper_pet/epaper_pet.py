@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
-from utils.app_utils import bounded_int, get_font
+from utils.app_utils import bounded_int, get_base_ui_font, get_font
 from utils.image_utils import text_width
 from utils.theme_utils import get_theme_context
 
@@ -3221,6 +3221,14 @@ class EpaperPet(BasePlugin):
             return ""
 
     def _font(self, family: str, size: int, weight: str = "normal"):
+        if str(family or "").strip().casefold() in {
+            "jost",
+            "lxgw wenkai",
+            "microsoft yahei",
+            "\u5fae\u8f6f\u96c5\u9ed1",
+        }:
+            return get_base_ui_font(int(size), bold=weight == "bold")
+
         families = [family]
         if family != "LXGW WenKai":
             families.append("LXGW WenKai")
@@ -3231,7 +3239,7 @@ class EpaperPet(BasePlugin):
                     return font
             except Exception:
                 pass
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     def _fit_font(self, draw, text: str, max_size: int, max_width: int):
         for size in range(int(max_size), 15, -2):

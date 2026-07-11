@@ -6,6 +6,7 @@ from PIL import ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.steam_charts.steam_charts as steam_charts_module
 from plugins.steam_charts.steam_charts import Image, SANS_FONT_PATHS, STATIC_YAHEI_FONT_PATH, STEAM_PIXEL_KAIJU_PATH, STEAM_TITLE_WORDMARK_PATH, SteamCharts
 
 
@@ -820,8 +821,56 @@ def test_font_file_uri_exports_yahei_file_uri(monkeypatch, tmp_path):
         "_preferred_sans_font_paths",
         staticmethod(lambda weight="normal": (str(noto), str(yahei))),
     )
+    monkeypatch.setattr(
+        steam_charts_module,
+        "resolve_base_ui_font_path",
+        lambda bold=False: (_ for _ in ()).throw(OSError("shared font unavailable")),
+    )
 
     assert SteamCharts._font_file_uri("normal") == yahei.resolve().as_uri()
+
+
+def test_font_file_uri_uses_shared_durable_font_path(monkeypatch, tmp_path):
+    yahei = tmp_path / "msyhbd.ttc"
+    yahei.write_bytes(b"yahei")
+    calls = []
+    monkeypatch.setattr(
+        steam_charts_module,
+        "resolve_base_ui_font_path",
+        lambda bold=False: calls.append(bold) or str(yahei),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        steam_charts_module,
+        "font_file_uri",
+        lambda path: Path(path).resolve().as_uri(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        SteamCharts,
+        "_preferred_sans_font_paths",
+        staticmethod(lambda weight="normal": ()),
+    )
+
+    assert SteamCharts._font_file_uri("bold") == yahei.resolve().as_uri()
+    assert calls == [True]
+
+
+def test_font_file_uri_exports_shared_tracked_fallback(monkeypatch, tmp_path):
+    noto = tmp_path / "NotoSansSC-VF.ttf"
+    noto.write_bytes(b"noto")
+    monkeypatch.setattr(
+        steam_charts_module,
+        "resolve_base_ui_font_path",
+        lambda bold=False: str(noto),
+    )
+    monkeypatch.setattr(
+        steam_charts_module,
+        "font_file_uri",
+        lambda path: Path(path).resolve().as_uri(),
+    )
+
+    assert SteamCharts._font_file_uri("normal") == noto.resolve().as_uri()
 
 def test_font_match_rejects_non_cjk_sans_fallbacks():
     assert SteamCharts._is_accepted_sans_match("Microsoft YaHei", "DejaVu Sans") is False
@@ -922,3 +971,17 @@ def test_header_scene_asset_is_exact_transparent_pixel_level_strip():
     assert image.size == (320, 44)
     assert alpha.getbbox() is not None
     assert alpha.getextrema() == (0, 255)
+
+
+def test_steam_charts_base_font_uses_shared_resolver(monkeypatch):
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        steam_charts_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert SteamCharts._font(20, "bold") is sentinel
+    assert calls == [(20, True)]

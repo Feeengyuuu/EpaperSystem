@@ -17,7 +17,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context
@@ -2304,17 +2304,15 @@ class LiveRadar(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
+        font = get_base_ui_font(int(size), bold=weight == "bold")
+        if font is not None:
+            if weight == "bold":
+                LiveRadar._apply_variation_weight(font, 780)
+            return font
         for path in SANS_FONT_PATHS["bold" if weight == "bold" else "normal"]:
             try:
                 if os.path.isfile(path):
                     return LiveRadar._load_sans_font(path, int(size), weight)
-            except Exception:
-                continue
-        for family in ("Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "LXGW WenKai", "FandolKai", "Jost"):
-            try:
-                font = get_font(family, int(size), "bold" if weight == "bold" else "normal")
-                if font:
-                    return font
             except Exception:
                 continue
         return ImageFont.load_default()

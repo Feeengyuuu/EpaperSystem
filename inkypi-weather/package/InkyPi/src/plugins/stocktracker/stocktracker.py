@@ -71,7 +71,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 from utils.image_utils import text_width
 from utils.massive_market_data import (
 	MassiveMarketData,
@@ -588,23 +588,33 @@ class StockTracker(BasePlugin):
 		return None
 
 	def _font(self, size, bold=False):
-		font_size = int(size)
-		font_name = "Jost-SemiBold.ttf" if bold else "Jost.ttf"
-		font_paths = [
-			os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static", "fonts", font_name)),
-			"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-			"/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-		]
+		font = get_base_ui_font(int(size), bold=bool(bold))
+		if not hasattr(font, "get_variation_axes") or not hasattr(font, "set_variation_by_axes"):
+			return font
 		try:
-			for font_path in font_paths:
-				if os.path.isfile(font_path):
-					return ImageFont.truetype(font_path, font_size)
-			font = get_font("Jost", font_size, "bold" if bold else "normal")
-			if font:
-				return font
-		except Exception as e:
-			logging.warning(f"Falling back to default font: {e}")
-		return ImageFont.load_default()
+			axes = font.get_variation_axes()
+		except Exception:
+			return font
+		values = []
+		changed = False
+		for axis in axes:
+			name = axis.get("name") or axis.get(b"name") or ""
+			if isinstance(name, bytes):
+				name = name.decode("ascii", errors="ignore")
+			minimum = axis.get("minimum", axis.get(b"minimum", 0))
+			maximum = axis.get("maximum", axis.get(b"maximum", 1000))
+			default = axis.get("default", axis.get(b"default", minimum))
+			value = default
+			if "weight" in str(name).lower() or "wght" in str(name).lower():
+				value = max(minimum, min(maximum, 760 if bold else 430))
+				changed = True
+			values.append(value)
+		if changed:
+			try:
+				font.set_variation_by_axes(values)
+			except Exception:
+				pass
+		return font
 
 	@staticmethod
 	def _text_width(draw, text, font):

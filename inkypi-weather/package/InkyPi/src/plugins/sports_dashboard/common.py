@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
-from utils.app_utils import resolve_path
+from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
     CacheBudget,
     CacheError,
@@ -2988,51 +2988,7 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _font(size, bold=False):
-        candidates = []
-        yahei_regular_fonts = [
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyh.ttc")),
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyhl.ttc")),
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyhbd.ttc")),
-        ]
-        yahei_bold_fonts = [
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyhbd.ttc")),
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyh.ttc")),
-            resolve_path(os.path.join("plugins", "sports_dashboard", "fonts", "msyhl.ttc")),
-        ]
-        bundled_fallback_fonts = [
-            resolve_path(os.path.join("static", "fonts", "LXGWWenKai-Regular.ttf")),
-            resolve_path(os.path.join("plugins", "chinese_literature_clock", "fonts", "FandolKai-Regular.otf")),
-            resolve_path(os.path.join("plugins", "chinese_literature_clock", "fonts", "I.Ming-8.10.ttf")),
-        ]
-        if bold:
-            candidates.extend(
-                [
-                    *yahei_bold_fonts,
-                    r"C:\Windows\Fonts\msyhbd.ttc",
-                    *bundled_fallback_fonts,
-                    r"C:\Windows\Fonts\arialbd.ttf",
-                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                ]
-            )
-        candidates.extend(
-            [
-                *yahei_regular_fonts,
-                r"C:\Windows\Fonts\msyh.ttc",
-                *bundled_fallback_fonts,
-                r"C:\Windows\Fonts\arial.ttf",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            ]
-        )
-        for path in candidates:
-            if os.path.exists(path):
-                return ImageFont.truetype(path, size=size)
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     @staticmethod
     def _text_width(draw, text, font):

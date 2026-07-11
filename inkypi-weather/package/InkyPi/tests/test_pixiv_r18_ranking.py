@@ -552,3 +552,50 @@ def test_missing_filtered_pool_renders_safe_placeholder(monkeypatch):
     assert pool_payload["items"] == []
     # R-18 fetched with the cookie (page returned JSON, so no SFW fallback).
     assert calls[0] == ("daily_r18", "session-cookie", 1)
+
+
+def test_pixiv_font_falls_back_to_noto_when_shared_font_lacks_japanese(
+    monkeypatch, tmp_path
+):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    shared_font = object()
+    japanese_font = object()
+    noto_path = tmp_path / "NotoSansCJKjp-Regular.otf"
+    noto_path.write_bytes(b"test font placeholder")
+    calls = []
+    checked_text = []
+    monkeypatch.setattr(
+        pixiv_mod,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or shared_font,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pixiv_mod,
+        "JAPANESE_FONT_PATHS",
+        (str(noto_path),),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_font_supports_text",
+        lambda font, text: checked_text.append(text) or font is japanese_font,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pixiv_mod.ImageFont,
+        "truetype",
+        lambda path, size: japanese_font,
+    )
+
+    assert plugin._font(18, bold=True) is japanese_font
+    assert calls == [(18, True)]
+    assert checked_text
+    assert "\u3042" in checked_text[0]
+
+
+def test_pixiv_japanese_fallback_includes_tracked_noto_font():
+    assert any(
+        Path(path).name == "NotoSansSC-VF.ttf"
+        for path in pixiv_mod.JAPANESE_FONT_PATHS
+    )

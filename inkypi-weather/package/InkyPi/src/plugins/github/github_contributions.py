@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, date, timedelta
 from PIL import Image, ImageColor, ImageDraw, ImageFont
-from utils.app_utils import get_font, resolve_dimensions
+from utils.app_utils import get_base_ui_font, get_font, resolve_dimensions
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -440,6 +440,13 @@ def int_or_default(value, default):
         return int(default)
 
 def font(name, size, weight="normal"):
+    if str(name or "").strip().casefold() in {
+        "jost",
+        "lxgw wenkai",
+        "microsoft yahei",
+        "\u5fae\u8f6f\u96c5\u9ed1",
+    }:
+        return get_base_ui_font(int(size), bold=weight == "bold")
     return get_font(name, int(size), weight) or ImageFont.load_default()
 
 def fetch_contributions(username, api_key):

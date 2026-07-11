@@ -8,7 +8,7 @@ import pytz
 
 from .comic_parser import COMICS, get_panel
 from plugins.context_cache import write_context
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class Comic(BasePlugin):
 
         with img:
             background = Image.new("RGB", (width, height), "white")
-            font = get_font("Jost", font_size=int(caption_font_size))
+            font = get_base_ui_font(int(caption_font_size))
             draw = ImageDraw.Draw(background)
             top_padding, bottom_padding = 0, 0
 
@@ -235,7 +235,7 @@ class Comic(BasePlugin):
 
     def _placeholder_image(self, comic_panel, caption_font_size, width, height):
         background = Image.new("RGB", (width, height), "white")
-        font = get_font("Jost", font_size=max(14, int(caption_font_size)))
+        font = get_base_ui_font(max(14, int(caption_font_size)))
         draw = ImageDraw.Draw(background)
         lines = [comic_panel.get("title") or "Comic", comic_panel.get("caption") or "Feed temporarily unavailable."]
         text = "\n".join(line for line in lines if line)

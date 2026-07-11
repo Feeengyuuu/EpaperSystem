@@ -127,6 +127,55 @@ def test_hangul_riot_id_uses_font_with_korean_glyphs(tmp_path):
     assert Path(getattr(hangul_font, "path", "")).name == "LXGWWenKai-Regular.ttf"
 
 
+def test_lol_normal_font_uses_shared_resolver(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        lol_info_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert plugin._font(19, bold=True) is sentinel
+    assert calls == [(19, True)]
+
+
+def test_lol_hangul_font_falls_back_when_shared_font_lacks_glyphs(
+    monkeypatch, tmp_path
+):
+    plugin = make_plugin(tmp_path)
+    shared_font = object()
+    hangul_font = object()
+    calls = []
+    monkeypatch.setattr(
+        lol_info_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or shared_font,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_font_supports_text",
+        lambda font, text: font is hangul_font,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        lol_info_module.Path,
+        "exists",
+        lambda path: "NotoSansCJK" in str(path),
+    )
+    monkeypatch.setattr(
+        lol_info_module.ImageFont,
+        "truetype",
+        lambda path, size: hangul_font,
+    )
+
+    assert plugin._font(16, prefer_hangul=True) is hangul_font
+    assert calls == [(16, False)]
+
+
 def test_pro_accounts_parse_default_pool_with_korean_names(tmp_path):
     plugin = make_plugin(tmp_path)
 

@@ -37,6 +37,7 @@ def install_import_stubs():
 
     http = types.ModuleType("utils.http_client")
     http.get_http_session = lambda: None
+    http.get_http_client = lambda: None
     sys.modules.setdefault("utils.http_client", http)
 
     theme = types.ModuleType("utils.theme_utils")
@@ -46,6 +47,7 @@ def install_import_stubs():
 
 install_import_stubs()
 
+import plugins.dota_profile_dashboard.dota_profile_dashboard as dota_module  # noqa: E402
 from plugins.dota_profile_dashboard.dota_profile_dashboard import (  # noqa: E402
     DEFAULT_ACCOUNT_ID,
     DEFAULT_STEAM_ID64,
@@ -176,3 +178,18 @@ def test_hero_square_icon_uses_black_background(tmp_path):
     assert icon.getpixel((1, 1))[:3] == (0, 0, 0)
     assert icon.getpixel((12, 12))[0] > 0
     assert icon.getpixel((12, 10))[:3] == (0, 0, 0)
+
+
+def test_dota_dashboard_base_font_uses_shared_resolver(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        dota_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        raising=False,
+    )
+
+    assert plugin._font(21, bold=True) is sentinel
+    assert calls == [(21, True)]

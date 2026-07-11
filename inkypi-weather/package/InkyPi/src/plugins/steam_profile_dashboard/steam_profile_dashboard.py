@@ -1,5 +1,6 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context, get_theme_palette
@@ -1653,38 +1654,7 @@ class SteamProfileDashboard(BasePlugin):
         }
 
     def _font(self, size, bold=False):
-        candidates = []
-        plugin_dir = self.get_plugin_dir()
-        src_dir = os.path.abspath(os.path.join(plugin_dir, "..", ".."))
-        yahei_dir = os.path.join(plugin_dir, "..", "sports_dashboard", "fonts")
-        if bold:
-            candidates.extend([
-                os.path.join(plugin_dir, "fonts", "msyhbd.ttc"),
-                os.path.join(yahei_dir, "msyhbd.ttc"),
-                "C:/Windows/Fonts/msyhbd.ttc",
-            ])
-        candidates.extend([
-            os.path.join(plugin_dir, "fonts", "msyh.ttc"),
-            os.path.join(yahei_dir, "msyh.ttc"),
-            "C:/Windows/Fonts/msyh.ttc",
-            os.path.join(src_dir, "static", "fonts", "LXGWWenKai-Regular.ttf"),
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-        ])
-        if bold:
-            candidates.extend([
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "C:/Windows/Fonts/arialbd.ttf",
-            ])
-        candidates.extend([
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        ])
-        for path in candidates:
-            if os.path.exists(path):
-                return ImageFont.truetype(path, size=size)
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _text(self, draw, position, text, font, fill):
         draw.text(position, str(text), font=font, fill=fill)
@@ -1922,7 +1892,7 @@ class SteamProfileDashboard(BasePlugin):
             detail_font = self._font(max(10, int(getattr(font, "size", 14) or 14) - 5))
             title_height = self._line_height(draw, title_font)
             detail_height = self._line_height(draw, detail_font) if detail_text else 0
-            text_gap = 1 if detail_text else 0
+            text_gap = 0
             text_height = title_height + text_gap + detail_height
             icon_size = self._game_icon_size(draw, title_font, min_size=18, max_size=22)
             row_height = max(icon_size, text_height)
