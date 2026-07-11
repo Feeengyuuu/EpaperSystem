@@ -749,9 +749,6 @@ class RefreshQueue:
             selected_revision = incoming.settings_revision
             selected_payload = incoming.payload
 
-        if theme_mode_changed:
-            selected_payload = incoming.payload
-
         base = existing if reuse_existing else incoming
         priority = base.priority
         source = base.source
@@ -777,7 +774,13 @@ class RefreshQueue:
                 ),
                 None,
             )
-            if manual_inactive is not None and not theme_mode_changed:
+            if theme_mode_changed:
+                selected_payload = self._merged_theme_transition_payload(
+                    existing,
+                    incoming,
+                    manual_inactive,
+                )
+            elif manual_inactive is not None:
                 # Manual display of an exact inactive-playlist revision is a
                 # stronger admission requirement than an older scheduled probe.
                 # Keep its immutable payload when the jobs coalesce.
@@ -803,6 +806,46 @@ class RefreshQueue:
             deadline_monotonic=deadline,
             payload=selected_payload,
         )
+
+    @staticmethod
+    def _merged_theme_transition_payload(
+        existing: RefreshCommand,
+        incoming: RefreshCommand,
+        manual_inactive: RefreshCommand | None,
+    ):
+        """Combine transition metadata without retaining the old resolved mode."""
+        merged = dict(incoming.payload)
+
+        existing_theme_context = existing.payload.get("theme_context")
+        incoming_theme_context = incoming.payload.get("theme_context")
+        if existing.kind is CommandKind.DISPLAY and isinstance(
+            existing_theme_context,
+            Mapping,
+        ):
+            combined_theme_context = dict(existing_theme_context)
+            if isinstance(incoming_theme_context, Mapping):
+                combined_theme_context.update(incoming_theme_context)
+            merged["theme_context"] = combined_theme_context
+
+        if manual_inactive is not None:
+            for key in (
+                "refresh_type",
+                "playlist_name",
+                "instance_name",
+                "settings",
+                "refresh",
+                "latest_refresh_time",
+                "display_cached_only",
+                "require_active",
+            ):
+                if key in manual_inactive.payload:
+                    merged[key] = manual_inactive.payload[key]
+
+        if "resolved_theme_context" in incoming.payload:
+            merged["resolved_theme_context"] = incoming.payload[
+                "resolved_theme_context"
+            ]
+        return freeze_payload(merged)
 
     @staticmethod
     def _resolved_theme_mode(command: RefreshCommand) -> str | None:

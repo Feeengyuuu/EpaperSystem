@@ -494,7 +494,18 @@ def test_equal_revision_same_kind_theme_mode_change_uses_incoming_payload(
         force=True,
         payload={
             "owner": existing_mode,
-            "resolved_theme_context": {"mode": existing_mode},
+            "refresh_type": "Playlist",
+            "playlist_name": "Inactive Manual",
+            "instance_name": "Manual Target",
+            "settings": {"revision": 4, "owner": "manual"},
+            "refresh": {"interval": 3600},
+            "latest_refresh_time": "2026-07-11T12:00:00+00:00",
+            "display_cached_only": False,
+            "require_active": False,
+            "resolved_theme_context": {
+                "mode": existing_mode,
+                "palette": {"accent": "old"},
+            },
         },
     )
     incoming = command(
@@ -505,7 +516,18 @@ def test_equal_revision_same_kind_theme_mode_change_uses_incoming_payload(
         force=False,
         payload={
             "owner": incoming_mode,
-            "resolved_theme_context": {"mode": incoming_mode},
+            "refresh_type": "Playlist",
+            "playlist_name": "Active Scheduled",
+            "instance_name": "Scheduled Target",
+            "settings": {"revision": 4, "owner": "scheduled"},
+            "refresh": {"interval": 60},
+            "latest_refresh_time": "2026-07-11T12:01:00+00:00",
+            "display_cached_only": True,
+            "require_active": True,
+            "resolved_theme_context": {
+                "mode": incoming_mode,
+                "palette": {"accent": "new"},
+            },
         },
     )
 
@@ -515,7 +537,17 @@ def test_equal_revision_same_kind_theme_mode_change_uses_incoming_payload(
     assert actual_job.id == existing_job.id
     selected = queue.take(timeout=0).command
     assert selected.payload["owner"] == incoming_mode
-    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.payload["resolved_theme_context"] == {
+        "mode": incoming_mode,
+        "palette": {"accent": "new"},
+    }
+    assert selected.payload["require_active"] is False
+    assert selected.payload["playlist_name"] == "Inactive Manual"
+    assert selected.payload["instance_name"] == "Manual Target"
+    assert selected.payload["settings"]["owner"] == "manual"
+    assert selected.payload["refresh"]["interval"] == 3600
+    assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
+    assert selected.payload["display_cached_only"] is False
     assert selected.force is True
     assert selected.priority == 20
     assert selected.source is CommandSource.MANUAL
@@ -539,7 +571,23 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
         force=False,
         payload={
             "owner": existing_mode,
-            "resolved_theme_context": {"mode": existing_mode},
+            "refresh_type": "Playlist",
+            "playlist_name": "Inactive Manual",
+            "instance_name": "Manual Target",
+            "settings": {"revision": 4, "owner": "manual"},
+            "refresh": {"interval": 3600},
+            "latest_refresh_time": "2026-07-11T12:00:00+00:00",
+            "display_cached_only": False,
+            "require_active": False,
+            "theme_context": {
+                "mode": incoming_mode,
+                "source": "weather",
+                "reason": "sunrise/sunset",
+            },
+            "resolved_theme_context": {
+                "mode": existing_mode,
+                "palette": {"accent": "old"},
+            },
         },
     )
     cache = command(
@@ -551,7 +599,18 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
         force=True,
         payload={
             "owner": incoming_mode,
-            "resolved_theme_context": {"mode": incoming_mode},
+            "refresh_type": "Playlist",
+            "playlist_name": "Active Background",
+            "instance_name": "Background Target",
+            "settings": {"revision": 4, "owner": "background"},
+            "refresh": {"interval": 60},
+            "latest_refresh_time": "2026-07-11T12:01:00+00:00",
+            "display_cached_only": True,
+            "require_active": True,
+            "resolved_theme_context": {
+                "mode": incoming_mode,
+                "palette": {"accent": "new"},
+            },
         },
     )
 
@@ -562,7 +621,25 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
     selected = queue.take(timeout=0).command
     assert selected.kind is CommandKind.DISPLAY
     assert selected.payload["owner"] == incoming_mode
-    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.payload["resolved_theme_context"] == {
+        "mode": incoming_mode,
+        "palette": {"accent": "new"},
+    }
+    assert selected.payload["theme_context"] == {
+        "mode": incoming_mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+    }
+    assert selected.payload["require_active"] is False
+    assert selected.payload["playlist_name"] == "Inactive Manual"
+    assert selected.payload["instance_name"] == "Manual Target"
+    assert selected.payload["settings"]["owner"] == "manual"
+    assert selected.payload["refresh"]["interval"] == 3600
+    assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
+    assert selected.payload["display_cached_only"] is False
+    assert selected.instance_uuid == display.instance_uuid
+    assert selected.structural_generation == display.structural_generation
+    assert selected.settings_revision == display.settings_revision
     assert selected.force is True
     assert selected.priority == 20
     assert selected.source is CommandSource.MANUAL
