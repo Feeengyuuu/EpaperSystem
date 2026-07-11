@@ -137,6 +137,14 @@ def test_default_schema_has_one_owner_for_every_name():
     assert schema.validate() is schema
 
 
+def test_tmdb_bearer_and_api_key_remain_distinct_credential_types():
+    schema = SecretSchema.load(DEFAULT_SCHEMA_PATH)
+
+    assert schema.resolve_names("TMDB_BEARER_TOKEN")[0] == "TMDB_BEARER_TOKEN"
+    assert schema.resolve_names("TMDB_API_KEY")[0] == "TMDB_API_KEY"
+    assert "TMDB_API_KEY" not in schema.resolve_names("TMDB_BEARER_TOKEN")
+
+
 def test_installer_can_read_schema_without_site_packages():
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)

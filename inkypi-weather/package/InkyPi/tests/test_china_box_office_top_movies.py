@@ -23,6 +23,45 @@ class DummyDeviceConfig:
         return None
 
 
+class EnvDeviceConfig(DummyDeviceConfig):
+    def __init__(self, values):
+        self.values = values
+
+    def load_env_key(self, key):
+        return self.values.get(key)
+
+
+def test_north_america_cache_invalidates_when_tmdb_credentials_appear(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_CHINA_BOX_OFFICE_CACHE", str(tmp_path))
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    load_calls = []
+
+    def fake_load_movies(_settings, _items_count):
+        load_calls.append(True)
+        return [BoxOfficeMovie(rank=1, title="Test Movie")], "The Numbers"
+
+    monkeypatch.setattr(plugin, "_load_movies", fake_load_movies)
+    monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_download_posters", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plugin,
+        "_render_chart",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+
+    plugin.generate_image({}, DummyDeviceConfig())
+    plugin.generate_image(
+        {},
+        EnvDeviceConfig({"TMDB_BEARER_TOKEN": "newly-configured"}),
+    )
+
+    assert len(load_calls) == 2
+
+
 def test_parse_report_links():
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
     html = """

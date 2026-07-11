@@ -12,7 +12,9 @@ import getpass
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -108,6 +110,119 @@ def entry_configured(entry: dict, values: dict[str, str]) -> tuple[str, str]:
     return "", ""
 
 
+def merge_missing_values(
+    current: dict[str, str],
+    legacy: dict[str, str],
+    registry: list[dict],
+) -> tuple[dict[str, str], int]:
+    """Merge non-empty legacy values without replacing managed settings.
+
+    Known aliases are normalized to their canonical registry name. Unknown
+    custom variables are retained so older third-party plugins do not lose
+    their local configuration during a managed-install migration.
+    """
+
+    merged = dict(current)
+    additions = 0
+    known_names: set[str] = set()
+
+    for entry in registry:
+        primary = entry["key"]
+        aliases = list(entry.get("aliases", []))
+        known_names.update((primary, *aliases))
+        _current_name, current_value = entry_configured(entry, current)
+        _legacy_name, legacy_value = entry_configured(entry, legacy)
+        selected = current_value or legacy_value
+        if selected:
+            merged[primary] = selected
+            if not current_value and legacy_value:
+                additions += 1
+        for alias in aliases:
+            merged.pop(alias, None)
+
+    for key, value in legacy.items():
+        if key in known_names or not str(value).strip():
+            continue
+        if not str(merged.get(key, "")).strip():
+            merged[key] = value
+            additions += 1
+
+    return merged, additions
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(path, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _chmod_open_file(file_descriptor: int, path: Path, mode: int) -> None:
+    if hasattr(os, "fchmod"):
+        os.fchmod(file_descriptor, mode)
+    else:
+        os.chmod(path, mode)
+
+
+def _atomic_write_env(path: Path, document: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise OSError(f"refusing to replace symlinked environment file: {path}")
+
+    try:
+        target_stat = path.stat()
+    except FileNotFoundError:
+        target_stat = None
+
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    handle = None
+    try:
+        handle = os.fdopen(file_descriptor, "wb")
+        file_descriptor = -1
+        _chmod_open_file(handle.fileno(), temporary_path, 0o600)
+        handle.write(document.encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+
+        if target_stat is not None:
+            temporary_stat = os.fstat(handle.fileno())
+            owner_changed = (
+                temporary_stat.st_uid != target_stat.st_uid
+                or temporary_stat.st_gid != target_stat.st_gid
+            )
+            if owner_changed:
+                if not hasattr(os, "fchown"):
+                    raise OSError("cannot preserve environment file ownership")
+                os.fchown(handle.fileno(), target_stat.st_uid, target_stat.st_gid)
+            _chmod_open_file(
+                handle.fileno(),
+                temporary_path,
+                stat.S_IMODE(target_stat.st_mode),
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        handle.close()
+        handle = None
+        os.replace(temporary_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        if handle is not None:
+            handle.close()
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        temporary_path.unlink(missing_ok=True)
+
+
 def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
     primary_keys = [entry["key"] for entry in registry]
     known = set(primary_keys)
@@ -172,12 +287,7 @@ def write_env(path: Path, values: dict[str, str], registry: list[dict]) -> None:
             lines.append(f"{key}={quote_env_value(values[key])}")
         lines.append("")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    _atomic_write_env(path, "\n".join(lines).rstrip() + "\n")
 
 
 def write_example(path: Path, schema: SecretSchema) -> None:
@@ -306,6 +416,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list", action="store_true", help="List known API key names and registration URLs.")
     parser.add_argument("--common", action="store_true", help="With --list, show only common first-install keys.")
     parser.add_argument("--check", action="store_true", help="Show which optional key groups are configured.")
+    parser.add_argument(
+        "--merge-from",
+        action="append",
+        default=[],
+        type=Path,
+        help="Merge missing values from a legacy .env file; may be repeated.",
+    )
     parser.add_argument("--write-example", type=Path, help="Write an example .env file to this path.")
     parser.add_argument(
         "--generate-artifacts",
@@ -338,6 +455,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_example:
         write_example(args.write_example, schema)
         print(f"{'已写入' if is_zh(lang) else 'Wrote'} {args.write_example}")
+        return 0
+
+    if args.merge_from:
+        values = parse_env(args.env_file)
+        target = args.env_file.resolve(strict=False)
+        sources_used = 0
+        additions = 0
+        for source in args.merge_from:
+            if source.is_symlink() or not source.is_file():
+                parser.error(f"legacy environment source is not a regular file: {source}")
+            if source.resolve() == target:
+                continue
+            values, source_additions = merge_missing_values(
+                values,
+                parse_env(source),
+                registry,
+            )
+            sources_used += 1
+            additions += source_additions
+        write_env(args.env_file, values, registry)
+        print(
+            f"Merged {additions} missing setting(s) from "
+            f"{sources_used} legacy environment file(s) into {args.env_file}"
+        )
         return 0
 
     return interactive_configure(registry, args.env_file, configure_all=args.all, lang=lang)

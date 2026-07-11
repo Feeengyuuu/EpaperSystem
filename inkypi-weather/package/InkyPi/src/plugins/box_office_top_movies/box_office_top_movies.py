@@ -172,7 +172,7 @@ class BoxOfficeTopMovies(BasePlugin):
         cache_hours = self._bounded_int(settings.get("cacheHours"), 6, 1, 48)
         cache = self._read_cache()
 
-        cache_key = self._cache_key(settings, dimensions, items_count)
+        cache_key = self._cache_key(settings, dimensions, items_count, device_config)
         movies = []
         source_label = "The Numbers"
         generated_at = self._now_for_device(device_config)
@@ -1037,7 +1037,7 @@ class BoxOfficeTopMovies(BasePlugin):
     def _display_dimensions(self, device_config):
         return self.get_dimensions(device_config)
 
-    def _cache_key(self, settings, dimensions, items_count):
+    def _cache_key(self, settings, dimensions, items_count, device_config=None):
         raw = "|".join([
             STATE_VERSION,
             str(dimensions),
@@ -1049,6 +1049,7 @@ class BoxOfficeTopMovies(BasePlugin):
             settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
             str(self._truthy(settings.get("showLocalizedTitles"), True)),
+            "tmdb-configured" if self._tmdb_auth(settings, device_config) else "tmdb-missing",
             settings.get("themeMode") or "auto",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()

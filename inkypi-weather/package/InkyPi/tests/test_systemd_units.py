@@ -98,6 +98,15 @@ def test_install_manages_service_user_runtime_ownership_and_broker_units():
     assert "chown -R -h inkypi:inkypi" in script
 
 
+def test_install_merges_missing_keys_from_resolved_legacy_checkout():
+    script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert 'legacy_src="$(readlink -f -- "/usr/local/inkypi/src")"' in script
+    assert 'legacy_env_candidates+=("$(dirname "$legacy_src")/.env")' in script
+    assert 'merge_args+=(--merge-from "$env_candidate")' in script
+    assert 'configure_api_keys.py" --env-file "$RUNTIME_ENV_FILE"' in script
+
+
 def test_install_delegates_durable_font_permissions_to_fd_helper():
     script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
 

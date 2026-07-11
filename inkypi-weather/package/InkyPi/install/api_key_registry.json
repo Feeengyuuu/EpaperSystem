@@ -317,8 +317,20 @@
         "TMDB_READ_ACCESS_TOKEN",
         "TMDB_ACCESS_TOKEN",
         "TMDB_Access_Token",
-        "THEMOVIEDB_BEARER_TOKEN",
-        "TMDB_API_KEY",
+        "THEMOVIEDB_BEARER_TOKEN"
+      ],
+      "signup_url": "https://www.themoviedb.org/settings/api",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TMDB_API_KEY",
+      "service": "The Movie Database API key",
+      "features": [
+        "Box Office Top Movies"
+      ],
+      "required": false,
+      "aliases": [
         "THEMOVIEDB_API_KEY"
       ],
       "signup_url": "https://www.themoviedb.org/settings/api",

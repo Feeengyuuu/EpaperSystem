@@ -720,7 +720,7 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             ttl_seconds=8 * 60 * 60,
         )
 
-    def _cache_key(self, settings, dimensions, items_count):
+    def _cache_key(self, settings, dimensions, items_count, device_config=None):
         raw = "|".join([
             STATE_VERSION,
             str(dimensions),
@@ -731,6 +731,7 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             settings.get("tmdbLanguage") or "en-US",
             settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
+            "tmdb-configured" if self._tmdb_auth(settings, device_config) else "tmdb-missing",
             settings.get("themeMode") or "auto",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
