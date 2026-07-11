@@ -79,6 +79,12 @@ def test_install_manages_service_user_runtime_ownership_and_broker_units():
     assert "chown -R -h inkypi:inkypi" in script
 
 
+def test_install_creates_root_owned_durable_font_directory():
+    script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert 'install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"' in script
+
+
 def test_installed_launcher_exports_mutable_runtime_roots():
     launcher = (INSTALL_ROOT / "inkypi").read_text(encoding="utf-8")
 

@@ -23,3 +23,11 @@ def test_uninstall_removes_release_binaries_but_not_arbitrary_paths():
     assert 'UPDATE_BIN="/usr/local/sbin/inkypi-update"' in source
     assert 'rm -rf "$INSTALL_ROOT"' in source
     assert "rm -rf /" not in source
+
+
+def test_default_uninstall_preserves_durable_fonts_directory():
+    source = SCRIPT.read_text(encoding="utf-8")
+    _purge_branch, preserve_branch = source.rsplit("else", maxsplit=1)
+
+    assert 'rm -rf "$STATE_ROOT/data/fonts"' not in preserve_branch
+    assert 'rm -rf "$STATE_ROOT"' not in preserve_branch

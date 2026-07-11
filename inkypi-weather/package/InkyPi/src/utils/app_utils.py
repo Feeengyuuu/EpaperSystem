@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FONT_FAMILY = "Microsoft YaHei"
 
+YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc", "msyhl.ttf", "msyhl.ttc")
+YAHEI_BOLD_FILES = ("msyhbd.ttf", "msyhbd.ttc")
+BASE_FALLBACK_FILES = ("NotoSansSC-VF.ttf", "LXGWWenKai-Regular.ttf")
+
 FONT_FAMILIES = {
     "Microsoft YaHei": [{
         "font-weight": "normal",
@@ -112,6 +116,48 @@ def resolve_font_path(file_path):
         return resolve_path(file_path)
     return resolve_path(os.path.join("static", "fonts", file_path))
 
+def base_ui_font_candidates(bold: bool = False) -> tuple[str, ...]:
+    names = YAHEI_BOLD_FILES if bold else YAHEI_REGULAR_FILES
+    data_dir = os.getenv("INKYPI_DATA_DIR")
+    candidates = []
+    if data_dir:
+        candidates.extend(str(Path(data_dir) / "fonts" / name) for name in names)
+    candidates.extend(resolve_path(os.path.join("static", "fonts", name)) for name in names)
+    candidates.extend(
+        resolve_path(os.path.join("static", "fonts", name))
+        for name in BASE_FALLBACK_FILES
+    )
+    return tuple(dict.fromkeys(candidates))
+
+def get_base_ui_font(
+    font_size: int, bold: bool = False
+) -> ImageFont.FreeTypeFont:
+    for candidate in base_ui_font_candidates(bold=bold):
+        if not Path(candidate).is_file():
+            continue
+        try:
+            font = ImageFont.truetype(candidate, int(font_size))
+        except OSError:
+            continue
+        if Path(font.path).resolve() == Path(candidate).resolve():
+            return font
+    return ImageFont.load_default()
+
+def resolve_base_ui_font_path(bold: bool = False) -> str:
+    for candidate in base_ui_font_candidates(bold=bold):
+        if not Path(candidate).is_file():
+            continue
+        try:
+            font = ImageFont.truetype(candidate, 10)
+        except OSError:
+            continue
+        if Path(font.path).resolve() == Path(candidate).resolve():
+            return candidate
+    raise OSError("No loadable base UI font is available")
+
+def font_file_uri(path: str) -> str:
+    return Path(path).resolve().as_uri()
+
 def get_ip_address(default="Unknown"):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -146,7 +192,16 @@ def get_font(font_name, font_size=50, font_weight="normal"):
             font_entry = font_variants[0]  # Default to first available variant
 
         if font_entry:
-            font_path = resolve_font_path(font_entry["file"])
+            font_file = font_entry["file"]
+            if Path(font_file).name.casefold() in {
+                name.casefold() for name in YAHEI_REGULAR_FILES + YAHEI_BOLD_FILES
+            }:
+                return get_base_ui_font(
+                    font_size,
+                    bold=Path(font_file).name.casefold()
+                    in {name.casefold() for name in YAHEI_BOLD_FILES},
+                )
+            font_path = resolve_font_path(font_file)
             return ImageFont.truetype(font_path, font_size)
         else:
             logger.warning(f"Requested font weight not found: font_name={font_name}, font_weight={font_weight}")
@@ -159,16 +214,34 @@ def get_fonts():
     fonts_list = []
     for font_family, variants in FONT_FAMILIES.items():
         for variant in variants:
+            font_file = variant["file"]
+            if Path(font_file).name.casefold() in {
+                name.casefold() for name in YAHEI_REGULAR_FILES + YAHEI_BOLD_FILES
+            }:
+                font_path = resolve_base_ui_font_path(
+                    bold=Path(font_file).name.casefold()
+                    in {name.casefold() for name in YAHEI_BOLD_FILES}
+                )
+            else:
+                font_path = resolve_font_path(font_file)
             fonts_list.append({
                 "font_family": font_family,
-                "url": resolve_font_path(variant["file"]),
+                "url": font_file_uri(font_path),
                 "font_weight": variant.get("font-weight", "normal"),
                 "font_style": variant.get("font-style", "normal"),
             })
     return fonts_list
 
 def get_font_path(font_name):
-    return resolve_font_path(FONTS[font_name])
+    font_file = FONTS[font_name]
+    if Path(font_file).name.casefold() in {
+        name.casefold() for name in YAHEI_REGULAR_FILES + YAHEI_BOLD_FILES
+    }:
+        return resolve_base_ui_font_path(
+            bold=Path(font_file).name.casefold()
+            in {name.casefold() for name in YAHEI_BOLD_FILES}
+        )
+    return resolve_font_path(font_file)
 
 def resolve_dimensions(device_config):
     """Return the device resolution as (width, height), reversed for vertical orientation."""

@@ -121,6 +121,7 @@ ensure_service_user() {
     "$CACHE_ROOT"
   chown -R -h inkypi:inkypi "$STATE_ROOT" "$CACHE_ROOT"
   chmod -R u+rwX,go-rwx "$STATE_ROOT" "$CACHE_ROOT"
+  install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
   install -d -o root -g root -m 0700 "$STATE_ROOT/update"
   install -d -o root -g inkypi -m 0770 "$ENV_ROOT"
   if [[ ! -e "$RUNTIME_ENV_FILE" ]]; then

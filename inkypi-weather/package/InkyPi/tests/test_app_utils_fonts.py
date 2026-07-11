@@ -1,3 +1,5 @@
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -6,7 +8,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PIL import ImageFont  # noqa: E402
-from utils.app_utils import DEFAULT_FONT_FAMILY, FONTS, get_available_font_names, get_font, get_font_path  # noqa: E402
+from utils import app_utils  # noqa: E402
+from utils.app_utils import (  # noqa: E402
+    DEFAULT_FONT_FAMILY,
+    FONTS,
+    get_available_font_names,
+    get_font,
+    get_font_path,
+    get_fonts,
+)
 
 # The YaHei binaries are proprietary and not committed; loading tests only run
 # where the fonts have been installed locally (see static/fonts/).
@@ -21,6 +31,74 @@ def test_default_font_family_is_microsoft_yahei():
     assert DEFAULT_FONT_FAMILY == "Microsoft YaHei"
     assert "Microsoft YaHei" in get_available_font_names()
     assert "\u5fae\u8f6f\u96c5\u9ed1" in get_available_font_names()
+
+
+def test_durable_yahei_regular_and_bold_take_priority(tmp_path, monkeypatch):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "fonts"
+        / "NotoSansSC-VF.ttf"
+    )
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    shutil.copyfile(source, fonts / "msyh.ttf")
+    shutil.copyfile(source, fonts / "msyhbd.ttf")
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    regular = app_utils.get_base_ui_font(18)
+    bold = app_utils.get_base_ui_font(18, bold=True)
+
+    assert Path(regular.path) == fonts / "msyh.ttf"
+    assert Path(bold.path) == fonts / "msyhbd.ttf"
+    assert Path(get_font_path("microsoft-yahei")) == fonts / "msyh.ttf"
+    assert Path(get_font_path("microsoft-yahei-bold")) == fonts / "msyhbd.ttf"
+
+
+@pytest.mark.parametrize("durable_font_state", ["missing", "corrupt"])
+@pytest.mark.parametrize("bold", [False, True])
+def test_missing_or_corrupt_durable_yahei_falls_back_to_tracked_font(
+    tmp_path, monkeypatch, durable_font_state, bold
+):
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    if durable_font_state == "corrupt":
+        filename = "msyhbd.ttf" if bold else "msyh.ttf"
+        (fonts / filename).write_bytes(b"not-a-font")
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    font = app_utils.get_base_ui_font(18, bold=bold)
+
+    assert isinstance(font, ImageFont.FreeTypeFont)
+    assert Path(font.path).name == "NotoSansSC-VF.ttf"
+
+
+def test_base_font_resolver_and_css_uri_use_durable_yahei(tmp_path, monkeypatch):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "fonts"
+        / "NotoSansSC-VF.ttf"
+    )
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    durable_path = fonts / "msyh.ttf"
+    shutil.copyfile(source, durable_path)
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    assert Path(app_utils.base_ui_font_candidates()[0]) == durable_path
+    assert Path(app_utils.resolve_base_ui_font_path()) == durable_path
+    assert app_utils.font_file_uri(os.fspath(durable_path)) == durable_path.resolve().as_uri()
+
+    yahei_regular = next(
+        font
+        for font in get_fonts()
+        if font["font_family"] == "Microsoft YaHei"
+        and font["font_weight"] == "normal"
+    )
+    assert yahei_regular["url"] == durable_path.resolve().as_uri()
 
 
 @requires_yahei_files
@@ -39,11 +117,13 @@ def test_microsoft_yahei_font_family_loads_static_files():
     assert "Microsoft YaHei" in bold.getname()[0]
 
 
-def test_yahei_font_path_aliases_are_registered():
+def test_yahei_font_path_aliases_are_registered(monkeypatch):
+    monkeypatch.delenv("INKYPI_DATA_DIR", raising=False)
+
     assert FONTS["microsoft-yahei"] == "msyh.ttf"
     assert FONTS["microsoft-yahei-bold"] == "msyhbd.ttf"
-    assert Path(get_font_path("microsoft-yahei")).name == "msyh.ttf"
-    assert Path(get_font_path("microsoft-yahei-bold")).name == "msyhbd.ttf"
+    assert Path(get_font_path("microsoft-yahei")).name == "NotoSansSC-VF.ttf"
+    assert Path(get_font_path("microsoft-yahei-bold")).name == "NotoSansSC-VF.ttf"
 
 
 def test_base_plugin_css_defaults_to_microsoft_yahei():
