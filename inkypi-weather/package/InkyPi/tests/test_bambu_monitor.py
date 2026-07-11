@@ -2,7 +2,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -14,6 +14,7 @@ from plugins.bambu_monitor.bambu_monitor import (
     BAMBU_LAB_LOGO_SIZE,
     ACCENT_GOLD,
     CINNABAR,
+    INK,
     MALACHITE,
     PAPER,
     SECTION_WORDMARK_IMAGES,
@@ -302,13 +303,13 @@ def test_print_card_draws_masked_machine_info(tmp_path, monkeypatch):
     })
     expected = plugin._machine_info_lines(status)
     drawn_text = []
-    draw_fit_text = plugin._draw_fit_text
+    draw_fit_text = plugin._draw_fit_text_ellipsis
 
     def record_text(draw, text, *args, **kwargs):
         drawn_text.append(text)
         return draw_fit_text(draw, text, *args, **kwargs)
 
-    monkeypatch.setattr(plugin, "_draw_fit_text", record_text)
+    monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", record_text)
 
     plugin._render_status(status, (800, 480))
 
@@ -316,6 +317,94 @@ def test_print_card_draws_masked_machine_info(tmp_path, monkeypatch):
     assert expected[1] in drawn_text
     assert status["serial"] not in drawn_text
     assert status["host"] not in drawn_text
+
+
+def test_max_machine_identity_lines_fit_with_pixel_aware_ellipsis(tmp_path):
+    plugin = _plugin(tmp_path)
+    status = {}
+    plugin._apply_machine_identity(
+        status,
+        {
+            "printerName": "W" * 28,
+            "printerModel": "M" * 16,
+        },
+        host="printer-with-a-very-long-hostname.local",
+        serial="SERIAL1234567890",
+    )
+    identity_lines = plugin._machine_info_lines(status)
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+    max_width = 238
+
+    assert plugin._text_width(draw, identity_lines[0], plugin._font(9, True)) > max_width
+
+    fitted = []
+    for line, start_size in zip(identity_lines, (11, 10)):
+        rendered_text, font = plugin._draw_fit_text_ellipsis(
+            draw,
+            line,
+            0,
+            0,
+            max_width,
+            start_size,
+            True,
+            INK,
+        )
+        bounds = draw.textbbox((0, 0), rendered_text, font=font)
+        fitted.append((rendered_text, font))
+        assert bounds[2] - bounds[0] <= max_width
+
+    assert fitted[0][0].endswith("…")
+    assert fitted[0][1].size == 9
+
+
+def test_max_machine_identity_pixels_stay_inside_print_card(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    plugin._apply_machine_identity(
+        status,
+        {
+            "printerName": "W" * 28,
+            "printerModel": "M" * 16,
+        },
+        host="printer-with-a-very-long-hostname.local",
+        serial="SERIAL1234567890",
+    )
+    draw_identity = plugin._draw_fit_text_ellipsis
+    drawn_identity = []
+
+    def record_identity(draw, text, x, y, max_width, start_size, bold=False, fill=INK):
+        rendered_text, font = draw_identity(
+            draw,
+            text,
+            x,
+            y,
+            max_width,
+            start_size,
+            bold,
+            fill,
+        )
+        drawn_identity.append((draw, rendered_text, font, max_width))
+        return rendered_text, font
+
+    monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", lambda *args, **kwargs: None)
+    background = plugin._render_status(status, (800, 480))
+    monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", record_identity)
+    rendered = plugin._render_status(status, (800, 480))
+
+    assert len(drawn_identity) == 2
+    for draw, rendered_text, font, max_width in drawn_identity:
+        bounds = draw.textbbox((0, 0), rendered_text, font=font)
+        assert max_width == 238
+        assert bounds[2] - bounds[0] <= max_width
+
+    identity_pixels = [
+        (x, y)
+        for y in range(98, 125)
+        for x in range(rendered.width)
+        if rendered.getpixel((x, y)) != background.getpixel((x, y))
+    ]
+    assert identity_pixels
+    assert max(x for x, _ in identity_pixels) <= 292
 
 
 def test_print_card_does_not_use_full_host_as_stage_fallback(tmp_path, monkeypatch):

@@ -566,8 +566,26 @@ class BambuMonitor(BasePlugin):
     def _draw_print_panel(self, draw, box, status):
         left, top, right, bottom = box
         machine_name, machine_endpoint = self._machine_info_lines(status)
-        self._draw_fit_text(draw, machine_name, left + 16, top + 34, right - left - 32, 11, True, INK)
-        self._draw_fit_text(draw, machine_endpoint, left + 16, top + 47, right - left - 32, 10, True, INK)
+        self._draw_fit_text_ellipsis(
+            draw,
+            machine_name,
+            left + 16,
+            top + 34,
+            right - left - 32,
+            11,
+            True,
+            INK,
+        )
+        self._draw_fit_text_ellipsis(
+            draw,
+            machine_endpoint,
+            left + 16,
+            top + 47,
+            right - left - 32,
+            10,
+            True,
+            INK,
+        )
 
         state = self._state_label(status.get("state"))
         state_color = self._status_color(status.get("state"), status.get("error"))
@@ -974,6 +992,45 @@ class BambuMonitor(BasePlugin):
     def _draw_fit_text(self, draw, text, x, y, max_width, start_size, bold=False, fill=INK):
         font = self._fit_font(draw, text, max_width, start_size, bold, 9)
         draw.text((x, y), str(text), fill=fill, font=font)
+
+    def _draw_fit_text_ellipsis(
+        self,
+        draw,
+        text,
+        x,
+        y,
+        max_width,
+        start_size,
+        bold=False,
+        fill=INK,
+    ):
+        rendered = str(text)
+        font = self._fit_font(draw, rendered, max_width, start_size, bold, 9)
+
+        def rendered_width(value):
+            bounds = draw.textbbox((0, 0), value, font=font)
+            return max(0, bounds[2] - bounds[0])
+
+        if rendered_width(rendered) > max_width:
+            ellipsis = "…"
+            if rendered_width(ellipsis) > max_width:
+                rendered = ""
+            else:
+                low = 0
+                high = len(rendered)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    candidate = rendered[:midpoint].rstrip() + ellipsis
+                    if rendered_width(candidate) <= max_width:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                rendered = rendered[:low].rstrip() + ellipsis
+                while rendered and rendered_width(rendered) > max_width:
+                    rendered = rendered[:-2].rstrip() + ellipsis
+
+        draw.text((x, y), rendered, fill=fill, font=font)
+        return rendered, font
 
     def _draw_filament_color_chip(self, draw, box, color):
         swatch = self._filament_swatch_color(color)
