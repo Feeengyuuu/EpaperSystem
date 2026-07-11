@@ -263,10 +263,13 @@ excluded_names = {
     ".git", ".pytest_cache", ".tmp", ".venv", ".venv-test",
     ".venv-codex", ".venv-local", "__pycache__", "tmp",
 }
+excluded_yahei_suffixes = {".ttf", ".ttc"}
 with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
         if any(part in excluded_names for part in relative.parts):
+            continue
+        if path.name.casefold().startswith("msyh") and path.suffix.casefold() in excluded_yahei_suffixes:
             continue
         if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
             continue

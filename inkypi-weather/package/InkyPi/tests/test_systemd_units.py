@@ -1,4 +1,7 @@
 import configparser
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 
@@ -10,6 +13,14 @@ def _parse_unit(path):
     parser.optionxform = str
     parser.read(path, encoding="utf-8")
     return parser
+
+
+def _release_archive_python():
+    source = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+    marker = 'python3 - "$PROJECT_DIR" "$artifact" <<\'PY\'\n'
+    _prefix, heredoc = source.split(marker, maxsplit=1)
+    archive_python, _suffix = heredoc.split("\nPY\n", maxsplit=1)
+    return archive_python
 
 
 def test_main_unit_is_unprivileged_and_hardened():
@@ -83,6 +94,42 @@ def test_install_creates_root_owned_durable_font_directory():
     script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
 
     assert 'install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"' in script
+
+
+def test_release_archive_excludes_yahei_binaries_from_any_directory(tmp_path):
+    project = tmp_path / "project"
+    files = {
+        "src/app.py": b"print('included')\n",
+        "src/static/fonts/NotoSansSC-VF.ttf": b"tracked fallback",
+        "src/static/fonts/msyh.ttf": b"proprietary regular",
+        "src/static/fonts/msyh.ttc": b"proprietary regular collection",
+        "src/plugins/sports_dashboard/fonts/msyhbd.ttc": b"proprietary bold collection",
+        "vendor/fonts/MSYHL.TTC": b"proprietary light collection",
+    }
+    for relative, content in files.items():
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    artifact = tmp_path / "release.zip"
+    subprocess.run(
+        [sys.executable, "-", str(project), str(artifact)],
+        input=_release_archive_python(),
+        text=True,
+        check=True,
+    )
+
+    with zipfile.ZipFile(artifact) as archive:
+        members = set(archive.namelist())
+
+    assert "src/app.py" in members
+    assert "src/static/fonts/NotoSansSC-VF.ttf" in members
+    assert {
+        "src/static/fonts/msyh.ttf",
+        "src/static/fonts/msyh.ttc",
+        "src/plugins/sports_dashboard/fonts/msyhbd.ttc",
+        "vendor/fonts/MSYHL.TTC",
+    }.isdisjoint(members)
 
 
 def test_installed_launcher_exports_mutable_runtime_roots():

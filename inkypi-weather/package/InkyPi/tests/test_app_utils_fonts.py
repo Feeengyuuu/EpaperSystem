@@ -56,6 +56,46 @@ def test_durable_yahei_regular_and_bold_take_priority(tmp_path, monkeypatch):
     assert Path(get_font_path("microsoft-yahei-bold")) == fonts / "msyhbd.ttf"
 
 
+def test_durable_yahei_ttc_regular_and_bold_are_supported(tmp_path, monkeypatch):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "fonts"
+        / "NotoSansSC-VF.ttf"
+    )
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    shutil.copyfile(source, fonts / "msyh.ttc")
+    shutil.copyfile(source, fonts / "msyhbd.ttc")
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    assert Path(app_utils.get_base_ui_font(18).path) == fonts / "msyh.ttc"
+    assert Path(app_utils.get_base_ui_font(18, bold=True).path) == fonts / "msyhbd.ttc"
+
+
+def test_corrupt_bold_falls_back_independently_of_regular(tmp_path, monkeypatch):
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "fonts"
+        / "NotoSansSC-VF.ttf"
+    )
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    regular_path = fonts / "msyh.ttf"
+    shutil.copyfile(source, regular_path)
+    (fonts / "msyhbd.ttf").write_bytes(b"not-a-font")
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    regular = app_utils.get_base_ui_font(18)
+    bold = app_utils.get_base_ui_font(18, bold=True)
+
+    assert Path(regular.path) == regular_path
+    assert Path(bold.path).name == "NotoSansSC-VF.ttf"
+
+
 @pytest.mark.parametrize("durable_font_state", ["missing", "corrupt"])
 @pytest.mark.parametrize("bold", [False, True])
 def test_missing_or_corrupt_durable_yahei_falls_back_to_tracked_font(
@@ -85,7 +125,9 @@ def test_base_font_resolver_and_css_uri_use_durable_yahei(tmp_path, monkeypatch)
     fonts = tmp_path / "fonts"
     fonts.mkdir()
     durable_path = fonts / "msyh.ttf"
+    durable_bold_path = fonts / "msyhbd.ttf"
     shutil.copyfile(source, durable_path)
+    shutil.copyfile(source, durable_bold_path)
     monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
 
     assert Path(app_utils.base_ui_font_candidates()[0]) == durable_path
@@ -98,7 +140,14 @@ def test_base_font_resolver_and_css_uri_use_durable_yahei(tmp_path, monkeypatch)
         if font["font_family"] == "Microsoft YaHei"
         and font["font_weight"] == "normal"
     )
+    yahei_bold = next(
+        font
+        for font in get_fonts()
+        if font["font_family"] == "Microsoft YaHei"
+        and font["font_weight"] == "bold"
+    )
     assert yahei_regular["url"] == durable_path.resolve().as_uri()
+    assert yahei_bold["url"] == durable_bold_path.resolve().as_uri()
 
 
 @requires_yahei_files
