@@ -25,7 +25,7 @@ def apply_media_theme_chrome(image, plugin_id, theme, dimensions):
     canvas = Image.new(
         "RGB",
         (width, height),
-        palette["background"],
+        tuple(palette["background"]),
     )
     inner_box = (
         MEDIA_INSET,
@@ -36,7 +36,7 @@ def apply_media_theme_chrome(image, plugin_id, theme, dimensions):
     canvas.paste(source_rgb.crop(inner_box), (MEDIA_INSET, MEDIA_INSET))
     ImageDraw.Draw(canvas).rectangle(
         (6, 6, width - 7, height - 7),
-        outline=palette["accent"],
+        outline=tuple(palette["accent"]),
         width=2,
     )
     canvas.info.update(source_info)

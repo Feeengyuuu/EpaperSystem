@@ -834,6 +834,13 @@ class RefreshQueue:
                 combined_theme_context.update(incoming_theme_context)
             merged["theme_context"] = combined_theme_context
 
+        if any(
+            candidate.kind is CommandKind.DISPLAY
+            and candidate.payload.get("theme_render_only") is True
+            for candidate in (existing, incoming)
+        ):
+            merged["theme_render_only"] = True
+
         if manual_inactive is not None:
             for key in (
                 "refresh_type",

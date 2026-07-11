@@ -17,8 +17,9 @@ from plugins.plugin_registry import (
     plugin_supports_live_refresh,
 )
 from plugins.plugin_settings import PluginSettingError
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from utils.image_utils import compute_image_hash
-from utils.app_utils import get_base_ui_font
+from utils.app_utils import get_base_ui_font, resolve_dimensions
 from utils.theme_utils import get_theme_context, resolve_plugin_theme
 from model import RefreshInfo, PlaylistManager
 from runtime.refresh_contracts import (
@@ -595,6 +596,22 @@ class RefreshTask:
         latest_refresh = self.device_config.get_refresh_info()
         theme_context = get_theme_context(self.device_config, now=current_dt)
         if self._has_theme_changed(theme_context, current_dt):
+            active = manager.snapshot_active_playlist(current_dt)
+            eligible_instance_uuids = set()
+            if active is not None:
+                for instance in active.plugins:
+                    plugin_config = self.device_config.get_plugin(instance.plugin_id)
+                    resolved_theme = _resolved_theme_context_for_instance(
+                        instance,
+                        plugin_config,
+                        self.device_config,
+                        current_dt=current_dt,
+                    )
+                    if (
+                        resolved_theme is not None
+                        and resolved_theme.get("requested_mode") == "auto"
+                    ):
+                        eligible_instance_uuids.add(instance.instance_uuid)
             displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
             if displayed_uuid is None:
                 displayed_uuid = self._get_config_value("displayed_instance_uuid", None)
@@ -604,18 +621,25 @@ class RefreshTask:
                 displayed_playlist=None if displayed_uuid is not None else latest_refresh.playlist,
                 displayed_plugin_id=None if displayed_uuid is not None else latest_refresh.plugin_id,
                 displayed_name=None if displayed_uuid is not None else latest_refresh.plugin_instance,
+                is_eligible=lambda instance: (
+                    instance.instance_uuid in eligible_instance_uuids
+                ),
+                allow_fallback=False,
             )
             if selection is not None:
                 return self._playlist_command(
                     selection.playlist_name,
                     selection.instance,
                     source=CommandSource.SCHEDULER,
-                    force=True,
-                    display_cached_only=False,
+                    force=False,
+                    display_cached_only=True,
                     priority=80,
                     theme_context=theme_context,
+                    theme_render_only=True,
                     current_dt=current_dt,
                 )
+            self._persist_active_theme(theme_context, current_dt)
+            self._write_device_config()
 
         # Playlist rotation owns the display cadence. A currently displayed
         # live instance may refresh between ticks, but it must never delay the
@@ -706,15 +730,41 @@ class RefreshTask:
                 continue
             if self._snapshot_background_cache_disabled(instance):
                 continue
-            cache_path = self._snapshot_cache_path(instance)
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            resolved_theme = _resolved_theme_context_for_instance(
+                instance,
+                plugin_config,
+                self.device_config,
+                current_dt=current_dt,
+            )
+            theme_mode = (
+                resolved_theme.get("mode")
+                if isinstance(resolved_theme, Mapping)
+                else None
+            )
+            cache_path = self._snapshot_cache_path(instance, theme_mode)
             missing = not os.path.exists(cache_path)
+            reusable_theme_cache = bool(
+                theme_mode
+                and any(
+                    os.path.exists(path)
+                    for path in self._theme_cache_reuse_paths(instance, theme_mode)
+                )
+            )
+            missing_work = missing and not reusable_theme_cache
             due = self._snapshot_should_refresh(instance, current_dt)
             live_due = self._snapshot_live_refresh_due(instance, current_dt)
-            if not missing and not due and not live_due:
+            if not missing_work and not due and not live_due:
                 continue
             latest = self._snapshot_latest_refresh_dt(instance)
             latest_timestamp = float("-inf") if latest is None else latest.timestamp()
-            candidates.append((not missing, latest_timestamp, instance.plugin_id, instance.name, instance))
+            candidates.append((
+                not missing_work,
+                latest_timestamp,
+                instance.plugin_id,
+                instance.name,
+                instance,
+            ))
 
         limit = self._background_cache_refresh_max_per_pass()
         selected = sorted(candidates, key=lambda item: item[:4])[:limit]
@@ -726,6 +776,7 @@ class RefreshTask:
                 display_cached_only=False,
                 priority=10,
                 kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
             )
             for item in selected
         )
@@ -840,6 +891,15 @@ class RefreshTask:
             theme_mode,
         )
         return os.path.join(directory, filename)
+
+    def _theme_cache_reuse_paths(self, instance, theme_mode):
+        if theme_mode not in {"day", "night"}:
+            return ()
+        opposite_mode = "night" if theme_mode == "day" else "day"
+        return (
+            self._snapshot_cache_path(instance, opposite_mode),
+            self._snapshot_cache_path(instance, None),
+        )
 
     @staticmethod
     def _cache_identity_prefix(instance_uuid):
@@ -1145,6 +1205,7 @@ class RefreshTask:
         cache_path = self._snapshot_cache_path(instance, theme_mode)
         image_missing = not os.path.exists(cache_path)
         display_cached_only = bool(command.payload.get("display_cached_only", True))
+        theme_render_only = bool(command.payload.get("theme_render_only", False))
         generated = False
         cacheable = False
 
@@ -1154,6 +1215,7 @@ class RefreshTask:
                 command.kind is CommandKind.DISPLAY
                 and display_cached_only
                 and not command.force
+                and not theme_render_only
                 and _display_refresh_under_resource_pressure(self.device_config)
             ):
                 image = self._load_snapshot_cache_or_placeholder(instance, cache_path)
@@ -1165,39 +1227,80 @@ class RefreshTask:
                     self._set_render_metadata(False, False, plugin_config)
                     return None
 
-                refresh_on_display = False
-                refresh_hook = getattr(plugin, "wants_refresh_on_display", None)
-                if callable(refresh_hook):
-                    try:
-                        refresh_on_display = bool(refresh_hook(settings))
-                    except PluginSettingError:
-                        raise
-                    except Exception:
-                        logger.exception(
-                            "Plugin '%s' refresh-on-display hook failed.",
-                            command.plugin_id,
-                        )
-                live_state = None
-                if plugin_supports_live_refresh(plugin_config):
-                    live_state = _plugin_live_refresh_state(
+                if theme_render_only and not image_missing:
+                    image = _load_image_copy(cache_path)
+                elif theme_render_only:
+                    image = self._render_theme_only_image(
                         plugin,
+                        plugin_config,
+                        instance,
                         settings,
-                        current_dt,
-                        plugin_id=command.plugin_id,
+                        resolved_theme_context,
                     )
-                live_due = self._snapshot_live_state_due(instance, live_state, current_dt)
-                refresh_due = self._snapshot_should_refresh(instance, current_dt)
-                sports_due = command.plugin_id == "sports_dashboard" and refresh_due
-                should_generate = (
-                    command.force
-                    or image_missing
-                    or refresh_on_display
-                    or live_due
-                    or sports_due
-                    or command.kind is CommandKind.CACHE_REFRESH
-                )
+                    generated = True
+                else:
+                    refresh_on_display = False
+                    refresh_hook = getattr(plugin, "wants_refresh_on_display", None)
+                    if callable(refresh_hook):
+                        try:
+                            refresh_on_display = bool(refresh_hook(settings))
+                        except PluginSettingError:
+                            raise
+                        except Exception:
+                            logger.exception(
+                                "Plugin '%s' refresh-on-display hook failed.",
+                                command.plugin_id,
+                            )
+                    live_state = None
+                    if plugin_supports_live_refresh(plugin_config):
+                        live_state = _plugin_live_refresh_state(
+                            plugin,
+                            settings,
+                            current_dt,
+                            plugin_id=command.plugin_id,
+                        )
+                    live_due = self._snapshot_live_state_due(instance, live_state, current_dt)
+                    refresh_due = self._snapshot_should_refresh(instance, current_dt)
+                    sports_due = command.plugin_id == "sports_dashboard" and refresh_due
+                    reusable_theme_cache = bool(
+                        theme_mode
+                        and any(
+                            os.path.exists(path)
+                            for path in self._theme_cache_reuse_paths(
+                                instance,
+                                theme_mode,
+                            )
+                        )
+                    )
+                    lazy_theme_render = (
+                        command.kind is CommandKind.DISPLAY
+                        and not command.force
+                        and image_missing
+                        and reusable_theme_cache
+                        and not refresh_on_display
+                        and not live_due
+                        and not refresh_due
+                    )
+                    should_generate = (
+                        command.force
+                        or image_missing
+                        or refresh_on_display
+                        or live_due
+                        or sports_due
+                        or command.kind is CommandKind.CACHE_REFRESH
+                    )
+                    if lazy_theme_render:
+                        image = self._render_theme_only_image(
+                            plugin,
+                            plugin_config,
+                            instance,
+                            settings,
+                            resolved_theme_context,
+                        )
+                        theme_render_only = True
+                        generated = True
 
-                if display_cached_only and not should_generate:
+                if not theme_render_only and display_cached_only and not should_generate:
                     try:
                         image = _load_image_copy(cache_path)
                     except Exception:
@@ -1224,7 +1327,7 @@ class RefreshTask:
                                 instance.name,
                             )
                             image = self._placeholder_for_snapshot(instance)
-                elif should_generate:
+                elif not theme_render_only and should_generate:
                     image = plugin.render_themed_image(
                         _settings_with_force_refresh(
                             settings,
@@ -1235,7 +1338,7 @@ class RefreshTask:
                         resolved_theme_context=resolved_theme_context,
                     )
                     generated = True
-                else:
+                elif not theme_render_only:
                     image = _load_image_copy(cache_path)
                 cacheable = generated and _image_allows_cache(image)
                 if (
@@ -1255,12 +1358,74 @@ class RefreshTask:
                         )
             context.raise_if_cancelled()
 
-        self._set_render_metadata(generated, cacheable, getattr(plugin, "config", plugin_config))
+        self._set_render_metadata(
+            generated,
+            cacheable,
+            getattr(plugin, "config", plugin_config),
+            theme_only=theme_render_only,
+        )
         return image
 
-    def _set_render_metadata(self, generated, cacheable, plugin_config):
+    def _render_theme_only_image(
+        self,
+        plugin,
+        plugin_config,
+        instance,
+        settings,
+        resolved_theme_context,
+    ):
+        manifest = plugin_config.get("_manifest") if plugin_config else None
+        manifest_theme = getattr(manifest, "theme", None)
+        presentation = getattr(manifest_theme, "presentation", None)
+        theme_mode = (
+            resolved_theme_context.get("mode")
+            if isinstance(resolved_theme_context, Mapping)
+            else None
+        )
+        if presentation == "media" and theme_mode in {"day", "night"}:
+            for source_path in self._theme_cache_reuse_paths(instance, theme_mode):
+                if not os.path.exists(source_path):
+                    continue
+                try:
+                    source = _load_image_copy(source_path)
+                except Exception:
+                    logger.exception(
+                        "Reusable media theme cache could not be loaded. | "
+                        "plugin_instance: '%s' | cache_path: %s",
+                        instance.name,
+                        source_path,
+                    )
+                    continue
+                image = apply_media_theme_chrome(
+                    source,
+                    instance.plugin_id,
+                    thaw_payload(resolved_theme_context),
+                    resolve_dimensions(self.device_config),
+                )
+                image.info["inkypi_theme_mode"] = theme_mode
+                return image
+        return plugin.render_themed_image(
+            _settings_with_force_refresh(
+                settings,
+                False,
+                display_render=True,
+            ),
+            self.device_config,
+            theme_render_only=True,
+            resolved_theme_context=resolved_theme_context,
+        )
+
+    def _set_render_metadata(
+        self,
+        generated,
+        cacheable,
+        plugin_config,
+        *,
+        theme_only=False,
+    ):
         self._execution_local.render_generated = bool(generated)
         self._execution_local.render_cacheable = bool(cacheable)
+        self._execution_local.render_theme_only = bool(theme_only)
         self._execution_local.image_settings = list((plugin_config or {}).get("image_settings", []))
 
     def _snapshot_live_state_due(self, instance, state, current_dt):
@@ -1377,6 +1542,9 @@ class RefreshTask:
             instance = resolved_snapshot.instance
             generated = bool(getattr(self._execution_local, "render_generated", False))
             cacheable = bool(getattr(self._execution_local, "render_cacheable", False))
+            theme_only = bool(
+                getattr(self._execution_local, "render_theme_only", False)
+            )
             theme_mode = _resolved_theme_mode(command.payload)
             stage_path = None
             if generated and cacheable:
@@ -1395,10 +1563,11 @@ class RefreshTask:
                         except OSError:
                             logger.warning("Could not remove stale staged cache: %s", stage_path)
                 self._require_fresh_selection(command, context)
-                self._record_runtime_success(
-                    instance.instance_uuid,
-                    current_dt.isoformat(),
-                )
+                if not theme_only:
+                    self._record_runtime_success(
+                        instance.instance_uuid,
+                        current_dt.isoformat(),
+                    )
 
             image_hash = compute_image_hash(image)
             latest_refresh = self.device_config.get_refresh_info()
@@ -1411,7 +1580,10 @@ class RefreshTask:
                 "image_hash": image_hash,
             }
             if (
-                command.source is CommandSource.LIVE
+                (
+                    command.source is CommandSource.LIVE
+                    or command.payload.get("theme_render_only") is True
+                )
                 and latest_refresh.refresh_time
                 and not self._display_target_changed(latest_refresh, refresh_info)
             ):
@@ -1703,6 +1875,7 @@ class RefreshTask:
         deadline_monotonic=None,
         kind=CommandKind.DISPLAY,
         theme_context=None,
+        theme_render_only=False,
         current_dt=None,
         resolved_theme_context=None,
         require_active=True,
@@ -1722,6 +1895,8 @@ class RefreshTask:
         }
         if theme_context:
             payload["theme_context"] = theme_context
+        if theme_render_only:
+            payload["theme_render_only"] = True
         if resolved_theme_context is None:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             resolved_theme_context = _resolved_theme_context_for_instance(

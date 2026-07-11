@@ -579,6 +579,7 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
             "latest_refresh_time": "2026-07-11T12:00:00+00:00",
             "display_cached_only": False,
             "require_active": False,
+            "theme_render_only": True,
             "theme_context": {
                 "mode": existing_mode,
                 "source": "weather",
@@ -637,6 +638,7 @@ def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payloa
     assert selected.payload["refresh"]["interval"] == 3600
     assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
     assert selected.payload["display_cached_only"] is False
+    assert selected.payload["theme_render_only"] is True
     assert selected.instance_uuid == display.instance_uuid
     assert selected.structural_generation == display.structural_generation
     assert selected.settings_revision == display.settings_revision
