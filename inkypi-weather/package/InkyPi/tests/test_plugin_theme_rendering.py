@@ -110,6 +110,54 @@ def test_render_themed_image_copies_settings_and_injects_theme_contract():
     assert plugin.seen_settings["_theme_render_only"] is False
 
 
+def test_render_themed_image_uses_detached_supplied_context_without_resolving(
+    monkeypatch,
+):
+    plugin = _recording_plugin()
+    supplied = MappingProxyType(
+        {
+            "requested_mode": "night",
+            "mode": "night",
+            "source": "weather",
+            "palette": MappingProxyType(
+                {
+                    "background": (16, 24, 32),
+                    "accent": (242, 170, 76),
+                }
+            ),
+            "css": MappingProxyType(
+                {
+                    "background": "rgb(16, 24, 32)",
+                    "accent": "rgb(242, 170, 76)",
+                }
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_theme",
+        lambda *_args, **_kwargs: pytest.fail("supplied context was re-resolved"),
+    )
+
+    plugin.render_themed_image(
+        {"themeMode": "day"},
+        FakeDeviceConfig({"theme_mode": "day"}),
+        resolved_theme_context=supplied,
+    )
+
+    injected = plugin.seen_settings["_inkypi_theme"]
+    assert injected["requested_mode"] == "night"
+    assert injected["mode"] == "night"
+    assert injected["palette"] == {
+        "background": [16, 24, 32],
+        "accent": [242, 170, 76],
+    }
+    assert injected is not supplied
+    assert injected["palette"] is not supplied["palette"]
+    injected["palette"]["background"] = (1, 2, 3)
+    assert supplied["palette"]["background"] == (16, 24, 32)
+
+
 def test_theme_only_render_removes_both_force_keys_from_copy():
     plugin = _recording_plugin()
     settings = {

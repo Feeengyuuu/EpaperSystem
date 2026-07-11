@@ -728,6 +728,14 @@ class RefreshQueue:
             incoming.settings_revision,
             existing.settings_revision,
         )
+        existing_theme_mode = self._resolved_theme_mode(existing)
+        incoming_theme_mode = self._resolved_theme_mode(incoming)
+        theme_mode_changed = (
+            revision_comparison == 0
+            and existing_theme_mode is not None
+            and incoming_theme_mode is not None
+            and existing_theme_mode != incoming_theme_mode
+        )
         if revision_comparison > 0:
             selected_revision = incoming.settings_revision
             selected_payload = incoming.payload
@@ -739,6 +747,9 @@ class RefreshQueue:
             selected_payload = existing.payload
         else:
             selected_revision = incoming.settings_revision
+            selected_payload = incoming.payload
+
+        if theme_mode_changed:
             selected_payload = incoming.payload
 
         base = existing if reuse_existing else incoming
@@ -766,7 +777,7 @@ class RefreshQueue:
                 ),
                 None,
             )
-            if manual_inactive is not None:
+            if manual_inactive is not None and not theme_mode_changed:
                 # Manual display of an exact inactive-playlist revision is a
                 # stronger admission requirement than an older scheduled probe.
                 # Keep its immutable payload when the jobs coalesce.
@@ -792,6 +803,17 @@ class RefreshQueue:
             deadline_monotonic=deadline,
             payload=selected_payload,
         )
+
+    @staticmethod
+    def _resolved_theme_mode(command: RefreshCommand) -> str | None:
+        for key in ("resolved_theme_context", "theme_context"):
+            context = command.payload.get(key)
+            if not isinstance(context, Mapping):
+                continue
+            mode = context.get("mode")
+            if mode in {"day", "night"}:
+                return mode
+        return None
 
     @staticmethod
     def _compare_revision(

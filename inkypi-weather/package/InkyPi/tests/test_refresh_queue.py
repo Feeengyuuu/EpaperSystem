@@ -477,6 +477,97 @@ def test_same_kind_revision_matrix_preserves_newest_payload(
     assert entry.command.payload["owner"] == expected_payload_owner
 
 
+@pytest.mark.parametrize(
+    ("existing_mode", "incoming_mode"),
+    [("day", "night"), ("night", "day")],
+)
+def test_equal_revision_same_kind_theme_mode_change_uses_incoming_payload(
+    existing_mode,
+    incoming_mode,
+):
+    queue = make_queue()
+    existing = command(
+        instance_uuid="theme-transition",
+        settings_revision=4,
+        source=CommandSource.MANUAL,
+        priority=20,
+        force=True,
+        payload={
+            "owner": existing_mode,
+            "resolved_theme_context": {"mode": existing_mode},
+        },
+    )
+    incoming = command(
+        instance_uuid="theme-transition",
+        settings_revision=4,
+        source=CommandSource.BACKGROUND,
+        priority=5,
+        force=False,
+        payload={
+            "owner": incoming_mode,
+            "resolved_theme_context": {"mode": incoming_mode},
+        },
+    )
+
+    existing_job = queue.submit(existing)
+    actual_job = queue.submit(incoming)
+
+    assert actual_job.id == existing_job.id
+    selected = queue.take(timeout=0).command
+    assert selected.payload["owner"] == incoming_mode
+    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.force is True
+    assert selected.priority == 20
+    assert selected.source is CommandSource.MANUAL
+
+
+@pytest.mark.parametrize(
+    ("existing_mode", "incoming_mode"),
+    [("day", "night"), ("night", "day")],
+)
+def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payload(
+    existing_mode,
+    incoming_mode,
+):
+    queue = make_queue()
+    display = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid="cross-kind-theme-transition",
+        settings_revision=4,
+        priority=20,
+        force=False,
+        payload={
+            "owner": existing_mode,
+            "resolved_theme_context": {"mode": existing_mode},
+        },
+    )
+    cache = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="cross-kind-theme-transition",
+        settings_revision=4,
+        priority=5,
+        force=True,
+        payload={
+            "owner": incoming_mode,
+            "resolved_theme_context": {"mode": incoming_mode},
+        },
+    )
+
+    display_job = queue.submit(display)
+    actual_job = queue.submit(cache)
+
+    assert actual_job.id == display_job.id
+    selected = queue.take(timeout=0).command
+    assert selected.kind is CommandKind.DISPLAY
+    assert selected.payload["owner"] == incoming_mode
+    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.force is True
+    assert selected.priority == 20
+    assert selected.source is CommandSource.MANUAL
+
+
 @pytest.mark.parametrize("manual_first", [False, True])
 def test_inactive_manual_display_payload_survives_scheduled_coalescing(manual_first):
     queue = make_queue()

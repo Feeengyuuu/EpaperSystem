@@ -3,6 +3,7 @@ import os
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_registry import plugin_supports_day_night_theme
 from plugins.plugin_settings import resolve_refresh_on_display
+from runtime.refresh_contracts import thaw_payload
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.browser_renderer import get_browser_renderer
 from utils.cache_manager import (
@@ -94,9 +95,14 @@ class BasePlugin:
         device_config,
         *,
         theme_render_only=False,
+        resolved_theme_context=None,
     ):
         """Render through the shared plugin theme contract."""
-        theme = self.resolve_theme(settings, device_config)
+        theme = (
+            self.resolve_theme(settings, device_config)
+            if resolved_theme_context is None
+            else thaw_payload(resolved_theme_context)
+        )
         render_settings = dict(settings or {})
         render_settings["_inkypi_theme"] = theme
         render_settings["_theme_render_only"] = bool(theme_render_only)

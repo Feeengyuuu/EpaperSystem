@@ -7,14 +7,19 @@ import gc
 import hashlib
 import psutil
 import pytz
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from plugins.plugin_registry import get_plugin_instance, plugin_supports_live_refresh
+from plugins.plugin_registry import (
+    get_plugin_instance,
+    plugin_supports_day_night_theme,
+    plugin_supports_live_refresh,
+)
 from plugins.plugin_settings import PluginSettingError
 from utils.image_utils import compute_image_hash
 from utils.app_utils import get_base_ui_font
-from utils.theme_utils import get_theme_context
+from utils.theme_utils import get_theme_context, resolve_plugin_theme
 from model import RefreshInfo, PlaylistManager
 from runtime.refresh_contracts import (
     CommandKind,
@@ -79,6 +84,40 @@ def _settings_with_force_refresh(settings, force=False, display_render=False):
     if display_render:
         merged[DISPLAY_RENDER_SETTING] = True
     return merged
+
+
+def _resolved_theme_context_for_instance(
+    instance,
+    plugin_config,
+    device_config,
+    *,
+    current_dt=None,
+):
+    """Resolve immutable instance theme metadata without loading plugin code."""
+    if not plugin_supports_day_night_theme(plugin_config):
+        return None
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    manifest_theme = getattr(manifest, "theme", None)
+    palette = None
+    if manifest_theme is not None:
+        palette = {
+            "day": manifest_theme.day,
+            "night": manifest_theme.night,
+        }
+    return resolve_plugin_theme(
+        thaw_payload(instance.settings),
+        device_config,
+        now=current_dt,
+        palette=palette,
+    )
+
+
+def _resolved_theme_mode(payload):
+    context = payload.get("resolved_theme_context")
+    if not isinstance(context, Mapping):
+        return None
+    mode = context.get("mode")
+    return mode if mode in {"day", "night"} else None
 
 
 def _plugin_live_refresh_state(plugin, settings, current_dt, plugin_id=None):
@@ -575,6 +614,7 @@ class RefreshTask:
                     display_cached_only=False,
                     priority=80,
                     theme_context=theme_context,
+                    current_dt=current_dt,
                 )
 
         # Playlist rotation owns the display cadence. A currently displayed
@@ -785,7 +825,7 @@ class RefreshTask:
             logger.exception("Plugin '%s' could not be loaded.", instance.plugin_id)
             return None
 
-    def _snapshot_cache_path(self, instance):
+    def _snapshot_cache_path(self, instance, theme_mode=None):
         """Return the authoritative cache path for one immutable revision.
 
         Human-readable plugin/name cache files are legacy compatibility
@@ -797,6 +837,7 @@ class RefreshTask:
             instance.instance_uuid,
             instance.structural_generation,
             instance.settings_revision,
+            theme_mode,
         )
         return os.path.join(directory, filename)
 
@@ -810,11 +851,15 @@ class RefreshTask:
         instance_uuid,
         structural_generation,
         settings_revision,
+        theme_mode=None,
     ):
+        if theme_mode not in {None, "day", "night"}:
+            raise ValueError("theme_mode must be day, night, or None")
         prefix = cls._cache_identity_prefix(instance_uuid)
+        suffix = "" if theme_mode is None else f"-{theme_mode}"
         return (
             f"{prefix}-{int(structural_generation)}-"
-            f"{int(settings_revision)}.png"
+            f"{int(settings_revision)}{suffix}.png"
         )
 
     def cache_path_for_snapshot(self, instance):
@@ -1072,13 +1117,16 @@ class RefreshTask:
         settings = thaw_payload(command.payload.get("settings", {}))
         with self.render_arbiter.lease(command.plugin_id, context):
             context.raise_if_cancelled()
-            image = plugin.generate_image(
+            image = plugin.render_themed_image(
                 _settings_with_force_refresh(
                     settings,
                     command.force,
                     display_render=command.kind is CommandKind.DISPLAY,
                 ),
                 self.device_config,
+                resolved_theme_context=command.payload.get(
+                    "resolved_theme_context"
+                ),
             )
             context.raise_if_cancelled()
         self._set_render_metadata(True, False, getattr(plugin, "config", plugin_config))
@@ -1092,7 +1140,9 @@ class RefreshTask:
         plugin = get_plugin_instance(plugin_config)
         settings = thaw_payload(instance.settings)
         current_dt = self._get_current_datetime()
-        cache_path = self._snapshot_cache_path(instance)
+        resolved_theme_context = command.payload.get("resolved_theme_context")
+        theme_mode = _resolved_theme_mode(command.payload)
+        cache_path = self._snapshot_cache_path(instance, theme_mode)
         image_missing = not os.path.exists(cache_path)
         display_cached_only = bool(command.payload.get("display_cached_only", True))
         generated = False
@@ -1157,13 +1207,14 @@ class RefreshTask:
                             instance.name,
                         )
                         try:
-                            image = plugin.generate_image(
+                            image = plugin.render_themed_image(
                                 _settings_with_force_refresh(
                                     settings,
                                     command.force,
                                     display_render=True,
                                 ),
                                 self.device_config,
+                                resolved_theme_context=resolved_theme_context,
                             )
                             generated = True
                         except Exception:
@@ -1174,13 +1225,14 @@ class RefreshTask:
                             )
                             image = self._placeholder_for_snapshot(instance)
                 elif should_generate:
-                    image = plugin.generate_image(
+                    image = plugin.render_themed_image(
                         _settings_with_force_refresh(
                             settings,
                             command.force,
                             display_render=command.kind is CommandKind.DISPLAY,
                         ),
                         self.device_config,
+                        resolved_theme_context=resolved_theme_context,
                     )
                     generated = True
                 else:
@@ -1285,12 +1337,13 @@ class RefreshTask:
             and latest_refresh.plugin_instance == command.payload.get("instance_name")
         )
 
-    def _staging_cache_path(self, instance):
+    def _staging_cache_path(self, instance, theme_mode=None):
         directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
         filename = self._cache_identity_filename(
             instance.instance_uuid,
             instance.structural_generation,
             instance.settings_revision,
+            theme_mode,
         )
         return os.path.join(directory, filename)
 
@@ -1324,13 +1377,14 @@ class RefreshTask:
             instance = resolved_snapshot.instance
             generated = bool(getattr(self._execution_local, "render_generated", False))
             cacheable = bool(getattr(self._execution_local, "render_cacheable", False))
+            theme_mode = _resolved_theme_mode(command.payload)
             stage_path = None
             if generated and cacheable:
-                stage_path = self._staging_cache_path(instance)
+                stage_path = self._staging_cache_path(instance, theme_mode)
                 _save_image_atomic(image, stage_path)
                 try:
                     self._require_fresh_selection(command, context)
-                    canonical_path = self._snapshot_cache_path(instance)
+                    canonical_path = self._snapshot_cache_path(instance, theme_mode)
                     os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
                     os.replace(stage_path, canonical_path)
                     stage_path = None
@@ -1649,6 +1703,8 @@ class RefreshTask:
         deadline_monotonic=None,
         kind=CommandKind.DISPLAY,
         theme_context=None,
+        current_dt=None,
+        resolved_theme_context=None,
         require_active=True,
     ):
         now = self._clock()
@@ -1666,6 +1722,18 @@ class RefreshTask:
         }
         if theme_context:
             payload["theme_context"] = theme_context
+        if resolved_theme_context is None:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            resolved_theme_context = _resolved_theme_context_for_instance(
+                instance,
+                plugin_config,
+                self.device_config,
+                current_dt=current_dt,
+            )
+        else:
+            resolved_theme_context = thaw_payload(resolved_theme_context)
+        if resolved_theme_context is not None:
+            payload["resolved_theme_context"] = resolved_theme_context
         return RefreshCommand.create(
             kind=kind,
             source=source,
@@ -2471,7 +2539,10 @@ class RefreshTask:
                     continue
 
                 plugin = get_plugin_instance(plugin_config)
-                image = plugin.generate_image(_settings_with_force_refresh(plugin_instance.settings, force), self.device_config)
+                image = plugin.render_themed_image(
+                    _settings_with_force_refresh(plugin_instance.settings, force),
+                    self.device_config,
+                )
                 if _image_allows_cache(image):
                     _save_image_atomic(image, plugin_image_path)
                     plugin_instance.latest_refresh_time = current_dt.isoformat()
@@ -2763,7 +2834,14 @@ class ManualRefresh(RefreshAction):
 
     def execute(self, plugin, device_config, current_dt: datetime):
         """Performs a manual refresh using the stored plugin ID and settings."""
-        return plugin.generate_image(_settings_with_force_refresh(self.plugin_settings, True, display_render=True), device_config)
+        return plugin.render_themed_image(
+            _settings_with_force_refresh(
+                self.plugin_settings,
+                True,
+                display_render=True,
+            ),
+            device_config,
+        )
 
     def get_refresh_info(self):
         """Return refresh metadata as a dictionary."""
@@ -2853,7 +2931,14 @@ class PlaylistRefresh(RefreshAction):
                     "Plugin instance image unavailable for scheduled display; refreshing now. | "
                     f"plugin_instance: '{self.plugin_instance.name}'"
                 )
-                image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force, display_render=True), device_config)
+                image = plugin.render_themed_image(
+                    _settings_with_force_refresh(
+                        self.plugin_instance.settings,
+                        self.force,
+                        display_render=True,
+                    ),
+                    device_config,
+                )
                 if _image_allows_cache(image):
                     _save_image_atomic(image, plugin_image_path)
                     self.plugin_instance.latest_refresh_time = current_dt.isoformat()
@@ -2881,7 +2966,14 @@ class PlaylistRefresh(RefreshAction):
             else:
                 logger.info(f"Refreshing plugin instance. | plugin_instance: '{self.plugin_instance.name}'")
             # Generate a new image
-            image = plugin.generate_image(_settings_with_force_refresh(self.plugin_instance.settings, self.force, display_render=True), device_config)
+            image = plugin.render_themed_image(
+                _settings_with_force_refresh(
+                    self.plugin_instance.settings,
+                    self.force,
+                    display_render=True,
+                ),
+                device_config,
+            )
             if _image_allows_cache(image):
                 _save_image_atomic(image, plugin_image_path)
                 self.plugin_instance.latest_refresh_time = current_dt.isoformat()

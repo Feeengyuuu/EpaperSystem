@@ -1,7 +1,9 @@
 import json
+import inspect
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from types import MappingProxyType
 import threading
 import time
 import uuid
@@ -13,7 +15,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.newspaper.newspaper import Newspaper
 from plugins.plugin_settings import PluginSettingError
 from src.model import Playlist, PlaylistManager, RefreshInfo
-from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest
+from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest, PluginTheme
 from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
 import src.refresh_task as refresh_task_module
 from runtime.refresh_contracts import (
@@ -72,6 +74,13 @@ def test_refresh_on_display_settings_defaults_have_runtime_fallback():
     assert expected_plugin_ids <= _refresh_on_display_plugin_info_ids()
 
 
+def test_refresh_task_routes_all_seven_plugin_renders_through_theme_wrapper():
+    source = inspect.getsource(refresh_task_module)
+
+    assert source.count("plugin.generate_image(") == 0
+    assert source.count("plugin.render_themed_image(") == 7
+
+
 def make_test_dir(name):
     path = TEST_STATE_ROOT / f"{name}-{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
@@ -101,7 +110,41 @@ class FakeDeviceConfig:
         self.write_count += 1
 
 
-class FakePlugin:
+def _theme_manifest(plugin_id="themed_plugin", *, supported=True):
+    theme = None
+    if supported:
+        theme = PluginTheme(
+            presentation="ui",
+            day=MappingProxyType(
+                {"background": "#f7f1e3", "accent": "#9b3424"}
+            ),
+            night=MappingProxyType(
+                {"background": "#101820", "accent": "#f2aa4c"}
+            ),
+        )
+    return PluginManifest(
+        schema_version=2,
+        id=plugin_id,
+        class_name="ThemedPlugin",
+        display_name="Themed Plugin",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_day_night_theme=supported),
+        raw={},
+        theme=theme,
+    )
+
+
+class DelegatingThemeWrapper:
+    def render_themed_image(
+        self,
+        settings,
+        device_config,
+        **_kwargs,
+    ):
+        return self.generate_image(settings, device_config)
+
+
+class FakePlugin(DelegatingThemeWrapper):
     REFRESH_ON_DISPLAY_IDS = {
         "backtothedate",
         "live_radar",
@@ -135,7 +178,7 @@ class FakePlugin:
         return Image.new("RGB", (1, 1), "white")
 
 
-class CapturePlugin:
+class CapturePlugin(DelegatingThemeWrapper):
     def __init__(self, calls):
         self.calls = calls
         self.config = {}
@@ -1715,7 +1758,7 @@ def test_get_current_datetime_falls_back_to_utc_for_invalid_timezone():
     assert current_dt.tzinfo.zone == "UTC"
 
 
-class NonCacheablePlugin:
+class NonCacheablePlugin(DelegatingThemeWrapper):
     def __init__(self, calls):
         self.calls = calls
 
@@ -1893,7 +1936,7 @@ def test_scheduler_selection_rejects_invalid_explicit_refresh_on_display():
         task._plugin_wants_refresh_on_display(playlist.plugins[0], plugin=plugin)
 
 
-class FailingPlugin:
+class FailingPlugin(DelegatingThemeWrapper):
     def generate_image(self, settings, device_config):
         raise RuntimeError("boom")
 
@@ -2443,7 +2486,7 @@ class TransactionRecordingDisplayManager:
         )
 
 
-class BlockingRuntimePlugin:
+class BlockingRuntimePlugin(DelegatingThemeWrapper):
     def __init__(self, render_started, allow_render, calls=None, fail_first=False):
         self.render_started = render_started
         self.allow_render = allow_render
@@ -2498,6 +2541,139 @@ def _make_runtime_task(tmp_path, *, playlists=(), clock=None, cycle_seconds=300)
         wall_clock=clock.wall_time,
     )
     return task, device_config, clock
+
+
+@pytest.mark.parametrize(
+    ("plugin_mode", "device_mode", "expected_mode"),
+    [("night", "day", "night"), ("auto", "day", "day")],
+)
+def test_playlist_command_pins_full_plugin_context_and_theme_cache_suffix(
+    plugin_mode,
+    device_mode,
+    expected_mode,
+):
+    tmp_path = make_test_dir(f"runtime-theme-context-{plugin_mode}")
+    plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
+    plugin_data["plugin_settings"]["themeMode"] = plugin_mode
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config["theme_mode"] = device_mode
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": _theme_manifest(plugin_id),
+    }
+    instance = playlist.plugins[0].snapshot()
+
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        current_dt=datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    context = command.payload["resolved_theme_context"]
+    assert context["requested_mode"] == plugin_mode
+    assert context["mode"] == expected_mode
+    assert context["palette"]["background"] == (
+        (16, 24, 32) if expected_mode == "night" else (247, 241, 227)
+    )
+    expected_name = task._cache_identity_filename(
+        instance.instance_uuid,
+        instance.structural_generation,
+        instance.settings_revision,
+        expected_mode,
+    )
+    assert Path(task._snapshot_cache_path(instance, expected_mode)).name == expected_name
+    assert Path(task._staging_cache_path(instance, expected_mode)).name == expected_name
+
+
+def test_theme_unaware_command_keeps_exact_legacy_unsuffixed_cache_identity():
+    tmp_path = make_test_dir("runtime-theme-unaware-cache")
+    playlist = _runtime_playlist(_runtime_plugin_data("plain_plugin", "Plain Plugin"))
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": _theme_manifest(plugin_id, supported=False),
+    }
+    instance = playlist.plugins[0].snapshot()
+
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+    )
+
+    assert "resolved_theme_context" not in command.payload
+    prefix = task._cache_identity_prefix(instance.instance_uuid)
+    assert task._cache_identity_filename(
+        instance.instance_uuid,
+        instance.structural_generation,
+        instance.settings_revision,
+    ) == (
+        f"{prefix}-{instance.structural_generation}-"
+        f"{instance.settings_revision}.png"
+    )
+
+
+class RecordingThemeWrapperPlugin:
+    def __init__(self, config):
+        self.config = config
+        self.contexts = []
+
+    def render_themed_image(
+        self,
+        settings,
+        device_config,
+        *,
+        theme_render_only=False,
+        resolved_theme_context=None,
+    ):
+        self.contexts.append(resolved_theme_context)
+        return Image.new("RGB", (2, 1), "white")
+
+
+def test_pinned_mode_survives_environment_flip_through_render_stage_and_commit(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("runtime-theme-pinned-commit")
+    plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
+    plugin_data["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    manifest = _theme_manifest("themed_plugin")
+    plugin_config = {
+        "id": "themed_plugin",
+        "_manifest": manifest,
+    }
+    device_config.get_plugin = lambda _plugin_id: plugin_config
+    device_config.config["theme_mode"] = "night"
+    plugin = RecordingThemeWrapperPlugin(plugin_config)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        force=True,
+        display_cached_only=False,
+        current_dt=datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc),
+    )
+    device_config.config["theme_mode"] = "day"
+    monkeypatch.setattr(
+        task,
+        "_get_current_datetime",
+        lambda: datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc),
+    )
+
+    result = task._execute_command(command)
+
+    assert result is not None
+    assert plugin.contexts[0]["mode"] == "night"
+    night_path = Path(task._snapshot_cache_path(instance, "night"))
+    assert night_path.exists()
+    assert not Path(task._snapshot_cache_path(instance, "day")).exists()
+    assert not Path(task._snapshot_cache_path(instance)).exists()
+    assert not Path(task._staging_cache_path(instance, "night")).exists()
 
 
 def _write_runtime_cache(task, instance, image=None):
@@ -3621,6 +3797,9 @@ def test_shared_plugin_singleton_never_executes_concurrently(monkeypatch):
     class SingletonPlugin:
         config = {}
 
+        def render_themed_image(self, settings, config, **_kwargs):
+            return self.generate_image(settings, config)
+
         def generate_image(self, settings, config):
             nonlocal active, maximum
             with guard:
@@ -4338,11 +4517,16 @@ def test_cleanup_context_and_managed_cache_paths_are_bounded_public_contracts():
     staging.mkdir()
     cache = tmp_path / ".refresh-cache"
     cache.mkdir()
-    filename = task._cache_identity_filename("target", 1, 2)
-    expected_stage = staging / filename
-    expected_stage.write_bytes(b"stage")
-    expected_cache = cache / filename
-    expected_cache.write_bytes(b"cache")
+    filenames = tuple(
+        task._cache_identity_filename("target", 1, 2, mode)
+        for mode in (None, "day", "night")
+    )
+    expected_paths = []
+    for directory in (staging, cache):
+        for filename in filenames:
+            path = directory / filename
+            path.write_bytes(b"owned")
+            expected_paths.append(str(path))
     (staging / task._cache_identity_filename("other", 1, 2)).write_bytes(b"other")
 
     context = task.make_cleanup_context(timeout_seconds=12)
@@ -4354,10 +4538,7 @@ def test_cleanup_context_and_managed_cache_paths_are_bounded_public_contracts():
 
     assert context.cancel_event is task.stop_event
     assert context.deadline_monotonic == 12.0
-    assert paths == tuple(sorted((
-        str(expected_stage),
-        str(expected_cache),
-    )))
+    assert paths == tuple(sorted(expected_paths))
     task.stop(join_timeout=0)
     with pytest.raises(TaskCancelled):
         context.raise_if_cancelled()
@@ -4496,6 +4677,9 @@ def test_runtime_worker_records_attempt_failure_without_advancing_legacy_success
 ):
     class ExplodingPlugin:
         config = {}
+
+        def render_themed_image(self, settings, device_config, **_kwargs):
+            return self.generate_image(settings, device_config)
 
         def generate_image(self, settings, device_config):
             raise RuntimeError("offline")
