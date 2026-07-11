@@ -79,11 +79,33 @@ def test_cjk_font_uses_shared_base_ui_resolver(tmp_path, monkeypatch):
 def test_settings_default_font_is_microsoft_yahei():
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_knowledge" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
+    script = " ".join(html.split())
+    missing = object()
+    native_initial = knowledge_module.get_available_font_names(default=knowledge_module.DEFAULT_FONT)[0]
+
+    def submitted_font(stored=missing):
+        current = native_initial if stored is missing else stored
+        has_stored = stored is not missing
+        if "const hasStoredFont =" in script:
+            assert "&& pluginSettings.font_family !== undefined;" in script
+            assert "const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');" in script
+            assert "if (yahei && (!hasStoredFont || !fontFamily.value)) {" in script
+            if not has_stored or not current:
+                current = "Microsoft YaHei"
+        else:
+            assert "if (fontFamily && !fontFamily.value) {" in script
+            if not current:
+                current = "Microsoft YaHei"
+        return current
 
     assert knowledge_module.DEFAULT_FONT == "Microsoft YaHei"
-    assert "option.value === 'Microsoft YaHei'" in html
+    assert native_initial != "Microsoft YaHei"
     assert "fontFamily.value = 'Microsoft YaHei';" in html
     assert "fontFamily.value = 'Jost';" not in html
+    assert submitted_font("Jost") == "Jost"
+    assert submitted_font("方正新楷近似") == "方正新楷近似"
+    assert submitted_font("") == "Microsoft YaHei"
+    assert submitted_font() == "Microsoft YaHei"
 
 
 def test_extract_fact_text_accepts_common_response_shapes(tmp_path):

@@ -123,6 +123,24 @@ def test_plugin_info_matches_class_and_id():
 def test_settings_defaults_are_declared():
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "tech_pulse" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
+    script = " ".join(html.split())
+    missing = object()
+    native_initial = tech_pulse_module.get_available_font_names(default=tech_pulse_module.DEFAULT_FONT)[0]
+
+    def submitted_font(stored=missing):
+        current = native_initial if stored is missing else stored
+        has_stored = stored is not missing
+        if "const hasStoredFont =" in script:
+            assert "&& pluginSettings.fontFamily !== undefined;" in script
+            assert "const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');" in script
+            assert "if (yahei && (!hasStoredFont || !fontFamily.value)) {" in script
+            if not has_stored or not current:
+                current = "Microsoft YaHei"
+        else:
+            assert "if (fontFamily && !fontFamily.value) {" in script
+            if not current:
+                current = "Microsoft YaHei"
+        return current
 
     assert 'name="feed"' in html
     assert 'value="topstories" selected' in html
@@ -131,9 +149,13 @@ def test_settings_defaults_are_declared():
     assert 'name="refreshMinutes"' in html
     assert 'value="30"' in html
     assert tech_pulse_module.DEFAULT_FONT == "Microsoft YaHei"
-    assert "option.value === 'Microsoft YaHei'" in html
+    assert native_initial != "Microsoft YaHei"
     assert "fontFamily.value = 'Microsoft YaHei';" in html
     assert "fontFamily.value = 'Jost';" not in html
+    assert submitted_font("Jost") == "Jost"
+    assert submitted_font("LXGW WenKai") == "LXGW WenKai"
+    assert submitted_font("") == "Microsoft YaHei"
+    assert submitted_font() == "Microsoft YaHei"
 
 
 def test_parse_story_item_extracts_hn_fields(tmp_path):

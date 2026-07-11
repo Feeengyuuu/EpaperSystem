@@ -62,11 +62,33 @@ def test_default_font_is_yahei_but_explicit_jost_is_preserved(monkeypatch):
 def test_settings_default_font_is_microsoft_yahei():
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_art" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
+    script = " ".join(html.split())
+    missing = object()
+    native_initial = daily_art_module.get_available_font_names(default=daily_art_module.DEFAULT_FONT)[0]
+
+    def submitted_font(stored=missing):
+        current = native_initial if stored is missing else stored
+        has_stored = stored is not missing
+        if "const hasStoredFont =" in script:
+            assert "&& pluginSettings.fontFamily !== undefined;" in script
+            assert "const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');" in script
+            assert "if (yahei && (!hasStoredFont || !fontFamily.value)) {" in script
+            if not has_stored or not current:
+                current = "Microsoft YaHei"
+        else:
+            assert "if (fontFamily && !fontFamily.value) {" in script
+            if not current:
+                current = "Microsoft YaHei"
+        return current
 
     assert daily_art_module.DEFAULT_FONT == "Microsoft YaHei"
-    assert "option.value === 'Microsoft YaHei'" in html
+    assert native_initial != "Microsoft YaHei"
     assert "fontFamily.value = 'Microsoft YaHei';" in html
     assert "fontFamily.value = 'Jost';" not in html
+    assert submitted_font("Jost") == "Jost"
+    assert submitted_font("LXGW WenKai") == "LXGW WenKai"
+    assert submitted_font("") == "Microsoft YaHei"
+    assert submitted_font() == "Microsoft YaHei"
 
 
 def test_enabled_sources_skips_keyed_sources_without_keys(tmp_path):

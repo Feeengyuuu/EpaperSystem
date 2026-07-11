@@ -127,9 +127,14 @@
     }
 
     const fontFamily = document.getElementById('fontFamily');
-    if (fontFamily && !fontFamily.value) {
+    if (fontFamily) {
+      const hasStoredFont = typeof loadPluginSettings !== 'undefined'
+        && loadPluginSettings
+        && pluginSettings.fontFamily !== undefined;
       const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');
-      if (yahei) fontFamily.value = 'Microsoft YaHei';
+      if (yahei && (!hasStoredFont || !fontFamily.value)) {
+        fontFamily.value = 'Microsoft YaHei';
+      }
     }
   });
 </script>
