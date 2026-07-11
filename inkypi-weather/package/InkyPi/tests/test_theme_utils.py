@@ -131,6 +131,27 @@ def test_missing_palette_roles_receive_readable_fallbacks(monkeypatch):
     assert result["css"]["accent"] == "#ff8800"
 
 
+@pytest.mark.parametrize(
+    "malformed_color",
+    [
+        (float("inf"), 0, 0),
+        (12.9, 34.1, 56.8),
+        (True, 0, 1),
+    ],
+    ids=["infinite", "fractional", "boolean"],
+)
+def test_plugin_theme_rejects_malformed_rgb_channels(monkeypatch, malformed_color):
+    monkeypatch.setattr(theme_utils, "read_contexts", lambda *args, **kwargs: [])
+
+    result = theme_utils.resolve_plugin_theme(
+        {"themeMode": "night"},
+        now=NOON,
+        palette={"night": {"accent": malformed_color}},
+    )
+
+    assert result["palette"]["accent"] == theme_utils.NIGHT_PALETTE["accent"]
+
+
 def test_plugin_theme_result_always_contains_canonical_contract(monkeypatch):
     monkeypatch.setattr(theme_utils, "read_contexts", lambda *args, **kwargs: [])
 

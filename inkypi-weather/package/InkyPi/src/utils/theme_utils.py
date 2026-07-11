@@ -245,12 +245,12 @@ def _coerce_rgb(value: Any, default: tuple[int, int, int]) -> tuple[int, int, in
             except ValueError:
                 return default
     if isinstance(value, (list, tuple)) and len(value) == 3:
-        try:
-            channels = tuple(int(channel) for channel in value)
-        except (TypeError, ValueError):
-            return default
-        if all(0 <= channel <= 255 for channel in channels):
-            return channels
+        channels_are_valid = all(
+            isinstance(channel, int) and not isinstance(channel, bool) and 0 <= channel <= 255
+            for channel in value
+        )
+        if channels_are_valid:
+            return tuple(value)
     return default
 
 
