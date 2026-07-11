@@ -11,6 +11,18 @@
 </div>
 
 <div class="form-group">
+    <label for="printerName" class="form-label">Device Name</label>
+    <input type="text" id="printerName" name="printerName" class="form-input" placeholder="Workshop Printer" maxlength="28">
+    <small>Optional display label shown on the status card.</small>
+</div>
+
+<div class="form-group">
+    <label for="printerModel" class="form-label">Printer Model</label>
+    <input type="text" id="printerModel" name="printerModel" class="form-input" placeholder="A1 / P1S / X1C" maxlength="16">
+    <small>Optional model label; the local MQTT report does not provide a reliable model field.</small>
+</div>
+
+<div class="form-group">
     <label for="serialNumber" class="form-label">Printer Serial Number</label>
     <input type="text" id="serialNumber" name="serialNumber" class="form-input" placeholder="01P00...">
     <small>Shown in Device Info / Bambu Studio. Used for MQTT topics.</small>
@@ -81,6 +93,8 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
             document.getElementById('host').value = pluginSettings.host || '';
+            document.getElementById('printerName').value = pluginSettings.printerName || '';
+            document.getElementById('printerModel').value = pluginSettings.printerModel || '';
             document.getElementById('serialNumber').value = pluginSettings.serialNumber || '';
             document.getElementById('accessCode').value = pluginSettings.accessCode || '';
             document.getElementById('accessCodeEnv').value = pluginSettings.accessCodeEnv || 'BAMBU_ACCESS_CODE';

@@ -62,6 +62,9 @@ TITLE_WORDMARK_SIZE = (292, 52)
 BAMBU_LAB_LOGO_IMAGE = "bambulab_logo.png"
 BAMBU_LAB_LOGO_SIZE = (116, 34)
 BAMBU_LAB_LOGO_GAP = 8
+MACHINE_NAME_MAX_LENGTH = 28
+MACHINE_MODEL_MAX_LENGTH = 16
+_MACHINE_IDENTITY_UNSET = object()
 SECTION_WORDMARK_IMAGES = {
     "PRINT": ("subtitle_print.png", (106, 24)),
     "LIVE VIEW": ("subtitle_live_view.png", (150, 24)),
@@ -302,6 +305,7 @@ class BambuMonitor(BasePlugin):
 
         if self._bool_setting(settings, "demoMode", False):
             status = self._demo_status()
+            self._apply_machine_identity(status, settings)
             return self._render_status(status, dimensions)
 
         host = str(settings.get("host") or "").strip()
@@ -318,13 +322,20 @@ class BambuMonitor(BasePlugin):
             access_code = str(device_config.load_env_key(env_key) or "").strip()
 
         if not host or not serial or not access_code:
-            return self._render_setup_required(dimensions, host, serial, bool(access_code))
+            return self._render_setup_required(
+                dimensions,
+                host,
+                serial,
+                bool(access_code),
+                settings,
+            )
 
         cache_file = self._cache_file(host, serial)
         cached = self._read_cache(cache_file)
         now = time.time()
         if cached and cache_seconds > 0 and now - cached.get("fetched_at", 0) < cache_seconds:
-            status = cached.get("status") or {}
+            status = dict(cached.get("status") or {})
+            self._apply_machine_identity(status, settings, host=host, serial=serial)
             status["source"] = "cache"
             if camera_enabled:
                 self._attach_camera_frame(status, host, camera_port, access_code, camera_timeout)
@@ -333,7 +344,7 @@ class BambuMonitor(BasePlugin):
 
         try:
             report = self._fetch_report(host, port, serial, access_code, timeout, settings)
-            status = self._normalize_report(report, host, serial)
+            status = self._normalize_report(report, host, serial, settings)
             if camera_enabled:
                 self._attach_camera_frame(status, host, camera_port, access_code, camera_timeout)
             self._write_cache(cache_file, {"fetched_at": now, "status": status})
@@ -345,10 +356,17 @@ class BambuMonitor(BasePlugin):
                 logger.error(f"Bambu Monitor failed: {exc}", exc_info=True)
             if cached and cached.get("status"):
                 status = dict(cached["status"])
+                self._apply_machine_identity(status, settings, host=host, serial=serial)
                 status["source"] = "stale"
                 status["warning"] = str(exc)
                 return self._non_cacheable_image(self._render_status(status, dimensions))
-            return self._render_error(dimensions, str(exc))
+            return self._render_error(
+                dimensions,
+                str(exc),
+                host=host,
+                serial=serial,
+                settings=settings,
+            )
 
     def _fetch_report(self, host, port, serial, access_code, timeout, settings):
         with BambuMqttClient(host, port, serial, access_code, timeout) as client:
@@ -382,12 +400,11 @@ class BambuMonitor(BasePlugin):
                 status["camera_path"] = None
                 status["camera_waiting"] = True
 
-    def _normalize_report(self, report, host, serial):
+    def _normalize_report(self, report, host, serial, settings=None):
         data = report.get("print") or {}
+        settings = settings or {}
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         status = {
-            "host": host,
-            "serial": serial,
             "updated_at": now,
             "source": "live",
             "state": str(data.get("gcode_state") or data.get("print_status") or data.get("stg_cur") or "UNKNOWN"),
@@ -409,6 +426,36 @@ class BambuMonitor(BasePlugin):
             "camera_failure_count": 0,
             "camera_waiting": False,
         }
+        return self._apply_machine_identity(
+            status,
+            settings,
+            host=host,
+            serial=serial,
+        )
+
+    @staticmethod
+    def _apply_machine_identity(
+        status,
+        settings,
+        *,
+        host=_MACHINE_IDENTITY_UNSET,
+        serial=_MACHINE_IDENTITY_UNSET,
+    ):
+        settings = settings or {}
+        name = (
+            str(settings.get("printerName") or "").strip()[:MACHINE_NAME_MAX_LENGTH]
+            or "Bambu Printer"
+        )
+        model = (
+            str(settings.get("printerModel") or "").strip()[:MACHINE_MODEL_MAX_LENGTH]
+            or "MODEL --"
+        )
+        if host is not _MACHINE_IDENTITY_UNSET:
+            status["host"] = str(host or "").strip()
+        if serial is not _MACHINE_IDENTITY_UNSET:
+            status["serial"] = str(serial or "").strip()
+        status["machine_name"] = name
+        status["machine_model"] = model
         return status
 
     def _extract_ams(self, data):
@@ -435,6 +482,8 @@ class BambuMonitor(BasePlugin):
         return {
             "host": "demo.local",
             "serial": "01P-DEMO",
+            "machine_name": "Workshop Printer",
+            "machine_model": "A1",
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "source": "demo",
             "state": "RUNNING",
@@ -516,19 +565,23 @@ class BambuMonitor(BasePlugin):
 
     def _draw_print_panel(self, draw, box, status):
         left, top, right, bottom = box
+        machine_name, machine_endpoint = self._machine_info_lines(status)
+        self._draw_fit_text(draw, machine_name, left + 16, top + 34, right - left - 32, 11, True, INK)
+        self._draw_fit_text(draw, machine_endpoint, left + 16, top + 47, right - left - 32, 10, True, INK)
+
         state = self._state_label(status.get("state"))
         state_color = self._status_color(status.get("state"), status.get("error"))
         state_font = self._fit_font(draw, state, right - left - 28, 36, True, 20)
-        state_box = (left + 14, top + 38, right - 14, top + 76)
+        state_box = (left + 14, top + 62, right - 14, top + 100)
         draw.rectangle(state_box, fill=state_color, outline=INK, width=2)
         state_text_box = draw.textbbox((0, 0), state, font=state_font)
         state_y = state_box[1] + 5 - state_text_box[1]
         draw.text((left + 24, state_y), state, fill=self._contrast_text(state_color), font=state_font)
-        stage = self._display_stage(status.get("stage"), status.get("host"))
-        self._draw_fit_text(draw, stage, left + 16, top + 84, right - left - 32, 14, False, MUTED)
+        stage = self._display_stage(status.get("stage"), status.get("state"))
+        self._draw_fit_text(draw, stage, left + 16, top + 106, right - left - 32, 13, True, INK)
 
         progress = int(max(0, min(100, self._num(status.get("progress"), 0))))
-        bar = (left + 16, top + 110, right - 16, top + 142)
+        bar = (left + 16, top + 128, right - 16, top + 156)
         draw.rectangle(bar, fill=WHITE, outline=INK, width=2)
         fill_w = int((bar[2] - bar[0] - 4) * progress / 100)
         if fill_w > 0:
@@ -536,7 +589,7 @@ class BambuMonitor(BasePlugin):
             draw.rectangle(fill_box, fill=state_color)
             for x in range(fill_box[0] + 8, fill_box[2], 12):
                 draw.line((x, fill_box[1], x - 8, fill_box[3]), fill=INK, width=1)
-        draw.text((right - 18, top + 152), f"{progress}%", fill=INK, font=self._font(26, True), anchor="ra")
+        draw.text((right - 18, top + 158), f"{progress}%", fill=INK, font=self._font(22, True), anchor="ra")
 
         remaining = self._remaining_text(status.get("remaining_minutes"))
         remaining_box = (left + 16, top + 187, right - 16, top + 211)
@@ -545,6 +598,46 @@ class BambuMonitor(BasePlugin):
         draw.text((left + 29, top + 190), remaining, fill=INK, font=self._font(16, True))
         file_name = str(status.get("file") or "No active job")
         self._draw_wrapped_fit_text(draw, file_name, left + 16, top + 224, right - left - 32, 2, 14, True, INK)
+
+    @classmethod
+    def _machine_info_lines(cls, status):
+        name = str(status.get("machine_name") or "Bambu Printer").strip()
+        model = str(status.get("machine_model") or "MODEL --").strip()
+        serial = str(status.get("serial") or "").strip()
+        if len(serial) > 4:
+            serial_tail = serial[-4:]
+        elif len(serial) > 2:
+            serial_tail = serial[-2:]
+        else:
+            serial_tail = "--"
+        host = cls._masked_host(status.get("host"))
+        return (
+            f"{name} / {model}",
+            f"SN ...{serial_tail} / HOST {host}",
+        )
+
+    @staticmethod
+    def _masked_host(value):
+        host = str(value or "").strip()
+        octets = host.split(".")
+        if len(octets) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in octets):
+            return f"{octets[0]}.x.x.{octets[-1]}"
+        if not host:
+            return "--"
+        if ":" in host:
+            address = host.strip("[]").split("%", 1)[0]
+            hex_chars = "".join(
+                character
+                for character in address
+                if character in "0123456789abcdefABCDEF"
+            )
+            tail = hex_chars[-2:] if len(hex_chars) > 2 else "--"
+            return f"IPv6 ...{tail}"
+        if len(host) <= 4:
+            return host[0] + "..."
+        if len(host) <= 6:
+            return f"{host[0]}...{host[-1]}"
+        return f"{host[:2]}...{host[-2:]}"
 
     def _draw_camera_panel(self, canvas, draw, box, status):
         left, top, right, bottom = box
@@ -656,7 +749,7 @@ class BambuMonitor(BasePlugin):
             self._draw_fit_text(draw, self._filament_color_label(color), x + 23, y + 39, tray_w - 30, 10, False, MUTED)
             x += tray_w + 8
 
-    def _render_setup_required(self, dimensions, host, serial, has_code):
+    def _render_setup_required(self, dimensions, host, serial, has_code, settings=None):
         status = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "source": "setup",
@@ -682,9 +775,15 @@ class BambuMonitor(BasePlugin):
             "error": 0,
             "ams": [],
         }
+        self._apply_machine_identity(
+            status,
+            settings,
+            host=host,
+            serial=serial,
+        )
         return self._render_status(status, dimensions)
 
-    def _render_error(self, dimensions, message):
+    def _render_error(self, dimensions, message, host="", serial="", settings=None):
         status = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "source": "error",
@@ -703,6 +802,12 @@ class BambuMonitor(BasePlugin):
             "error": 1,
             "ams": [],
         }
+        self._apply_machine_identity(
+            status,
+            settings,
+            host=host,
+            serial=serial,
+        )
         return self._non_cacheable_image(self._render_status(status, dimensions))
 
     @staticmethod
