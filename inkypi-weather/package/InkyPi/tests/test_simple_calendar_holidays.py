@@ -379,7 +379,7 @@ def test_legacy_calendar_path_mapping_rejects_parent_traversal(tmp_path, monkeyp
         plugin._read_calendar_source((legacy_dir / ".." / "secret.ics").as_uri())
 
 
-def test_legacy_calendar_mapping_keeps_drive_like_name_in_durable_root(
+def test_legacy_calendar_mapping_never_probes_drive_like_name_outside_durable_root(
     tmp_path, monkeypatch
 ):
     plugin = SimpleCalendar({"id": "simple_calendar"})
@@ -403,8 +403,11 @@ def test_legacy_calendar_mapping_keeps_drive_like_name_in_durable_root(
     with pytest.raises(FileNotFoundError):
         plugin._read_calendar_source(legacy_url)
 
-    assert len(candidates) == 1
-    assert candidates[0].is_relative_to(durable_root)
+    assert all(candidate.is_relative_to(durable_root) for candidate in candidates)
+    if os.name == "nt":
+        assert candidates == []
+    else:
+        assert len(candidates) == 1
 
 
 def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
