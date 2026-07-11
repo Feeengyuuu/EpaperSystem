@@ -1026,10 +1026,12 @@ LIMIT 8
                 ),
             )
 
-        title_tint = palette["ink"] if palette.get("night") else None
-        title_drawn = self._draw_title_wordmark(canvas, margin, header_y - 1, TITLE_WORDMARK_DISPLAY_SIZE, title_tint) if title_tint else self._draw_title_wordmark(canvas, margin, header_y - 1, TITLE_WORDMARK_DISPLAY_SIZE)
-        if not title_drawn:
-            draw.text((margin, header_y), "\u7269\u79cd\u96f7\u8fbe", fill=palette["ink"], font=title_font)
+        draw.text(
+            (margin, header_y),
+            "\u7269\u79cd\u96f7\u8fbe",
+            fill=palette["ink"],
+            font=title_font,
+        )
         subtitle = self._ellipsize(draw, f"{location_name} / {radius_label} / {source}", subtitle_font, width - margin * 2 - 120)
         draw.text((margin, header_y + 33), subtitle, fill=palette["muted"], font=subtitle_font)
         draw.text((width - margin - date_w, header_y + 10), date_text, fill=palette["muted"], font=small_font)
@@ -1444,11 +1446,7 @@ LIMIT 8
         body_font = self._font(19, cjk=True)
         title = "\u7269\u79cd\u96f7\u8fbe"
         message = "GBIF \u6682\u65f6\u6ca1\u6709\u8fd4\u56de\u9644\u8fd1\u5e26\u7167\u7247\u7684\u89c2\u5bdf\u8bb0\u5f55"
-        canvas = getattr(draw, "_image", None)
-        title_tint = palette["ink"] if palette.get("night") else None
-        title_drawn = bool(canvas) and (self._draw_title_wordmark(canvas, 28, 24, TITLE_WORDMARK_EMPTY_DISPLAY_SIZE, title_tint) if title_tint else self._draw_title_wordmark(canvas, 28, 24, TITLE_WORDMARK_EMPTY_DISPLAY_SIZE))
-        if not title_drawn:
-            draw.text((28, 30), title, fill=palette["ink"], font=title_font)
+        draw.text((28, 30), title, fill=palette["ink"], font=title_font)
         draw.line((28, 82, width - 28, 82), fill=palette["rule"], width=2)
         draw.text((28, 118), message, fill=palette["ink"], font=body_font)
         location = payload.get("location_summary") or (payload.get("location") or {}).get("name") or DEFAULT_LOCATION_NAME
