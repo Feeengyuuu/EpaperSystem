@@ -14,7 +14,13 @@ import tempfile
 REQUIRED_RELEASE_PATHS = (
     "src/inkypi.py",
     "src/templates/inky.html",
+    "src/static/styles/main.css",
     "src/static/styles/select2.min.css",
+    "src/static/scripts/dark_mode.js",
+    "src/static/scripts/i18n.js",
+    "src/static/scripts/image_modal.js",
+    "src/static/scripts/refresh_settings_manager.js",
+    "src/static/scripts/response_modal.js",
     "src/static/scripts/select2.min.js",
     "src/static/scripts/jquery.min.js",
     "src/static/scripts/chart.js",

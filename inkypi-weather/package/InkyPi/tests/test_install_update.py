@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import zipfile
@@ -24,7 +25,12 @@ from update_engine import (  # noqa: E402
     UpdateFailed,
     inspect_artifact,
 )
-from preflight import prepare_config_copy  # noqa: E402
+from preflight import (  # noqa: E402
+    PreflightError,
+    REQUIRED_RELEASE_PATHS,
+    prepare_config_copy,
+    validate_release_tree,
+)
 
 
 class FakeLinks:
@@ -290,6 +296,35 @@ def test_preflight_config_migration_uses_copy_and_forces_mock_display(tmp_path):
     assert migrated["display_type"] == "mock"
     assert migrated["startup"] is False
     assert migrated["name"] == "frame"
+
+
+@pytest.mark.parametrize(
+    "missing_asset",
+    (
+        "src/static/styles/main.css",
+        "src/static/scripts/dark_mode.js",
+        "src/static/scripts/i18n.js",
+        "src/static/scripts/image_modal.js",
+        "src/static/scripts/refresh_settings_manager.js",
+        "src/static/scripts/response_modal.js",
+    ),
+)
+def test_preflight_rejects_release_missing_application_static_asset(
+    tmp_path,
+    missing_asset,
+):
+    release = tmp_path / "release"
+    for relative_path in REQUIRED_RELEASE_PATHS:
+        target = release / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "candidate\n" if relative_path != ".release-id" else "candidate",
+            encoding="utf-8",
+        )
+    (release / missing_asset).unlink()
+
+    with pytest.raises(PreflightError, match=re.escape(missing_asset)):
+        validate_release_tree(release)
 
 
 def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):

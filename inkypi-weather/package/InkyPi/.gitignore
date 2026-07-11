@@ -171,9 +171,14 @@ mock_display_output/
 # IDE files
 .idea
 
-# Static Files added by install/update_vendors.sh
-/src/static/scripts/
-/src/static/styles/
+# Static vendor files added by install/update_vendors.sh. Application-owned
+# CSS and JavaScript in these directories must stay tracked so a clean release
+# cannot start with an unstyled, non-functional web UI.
+/src/static/scripts/calendar.min.js
+/src/static/scripts/chart.js
+/src/static/scripts/jquery.min.js
+/src/static/scripts/select2.min.js
+/src/static/styles/select2.min.css
 
 # Telegram local account sessions
 *.session
