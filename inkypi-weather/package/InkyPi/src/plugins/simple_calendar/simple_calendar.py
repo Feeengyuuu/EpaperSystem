@@ -18,6 +18,10 @@ from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
+LEGACY_CALENDAR_DIR = Path("/usr/local/inkypi/src/static/calendar")
+DEFAULT_DATA_DIR = Path("/var/lib/inkypi/data")
+DURABLE_CALENDAR_SUBDIR = Path("plugins/simple_calendar/calendars")
+
 DEFAULT_HOLIDAY_CALENDARS = [
     {
         "label": "US",
@@ -1266,9 +1270,9 @@ class SimpleCalendar(BasePlugin):
                 path_text = f"//{parsed.netloc}{path_text}"
             if os.name == "nt" and path_text.startswith("/") and len(path_text) > 2 and path_text[2] == ":":
                 path_text = path_text[1:]
-            return Path(path_text).read_bytes()
+            return self._read_local_calendar_path(Path(path_text))
         if not parsed.scheme and url.startswith("/"):
-            return Path(url).read_bytes()
+            return self._read_local_calendar_path(Path(url))
         response = get_http_session().get(
             url,
             timeout=20,
@@ -1276,6 +1280,24 @@ class SimpleCalendar(BasePlugin):
         )
         response.raise_for_status()
         return response.content
+
+    def _read_local_calendar_path(self, path):
+        try:
+            relative = path.relative_to(LEGACY_CALENDAR_DIR)
+        except ValueError:
+            return path.read_bytes()
+
+        if len(relative.parts) != 1 or relative.name in {"", ".", ".."}:
+            return path.read_bytes()
+
+        data_dir = Path(os.environ.get("INKYPI_DATA_DIR") or DEFAULT_DATA_DIR)
+        durable_root = data_dir / DURABLE_CALENDAR_SUBDIR
+        durable_path = durable_root / relative
+        if not durable_path.is_relative_to(durable_root):
+            return path.read_bytes()
+        if durable_path.is_file():
+            return durable_path.read_bytes()
+        return path.read_bytes()
 
     def _extract_holiday_events(self, cal, source, selected_date, tz):
         month_start = date(selected_date.year, selected_date.month, 1)

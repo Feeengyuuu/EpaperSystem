@@ -1,8 +1,10 @@
 from datetime import date, datetime
+import os
 import sys
 from pathlib import Path
 
 import icalendar
+import pytest
 import pytz
 from PIL import Image, ImageDraw
 
@@ -324,6 +326,85 @@ END:VCALENDAR
         "time": "7a",
         "starts_at": tz.localize(datetime(2026, 6, 9, 7, 0)),
     }]
+
+
+def test_legacy_calendar_file_url_prefers_durable_data_copy(tmp_path, monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    legacy_dir = tmp_path / "legacy" / "static" / "calendar"
+    data_dir = tmp_path / "data"
+    durable_file = (
+        data_dir
+        / "plugins"
+        / "simple_calendar"
+        / "calendars"
+        / "nintendo_direct.ics"
+    )
+    durable_file.parent.mkdir(parents=True)
+    durable_file.write_bytes(b"BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_dir))
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.LEGACY_CALENDAR_DIR",
+        legacy_dir,
+    )
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: (_ for _ in ()).throw(AssertionError("network called")),
+    )
+
+    content = plugin._read_calendar_source(
+        (legacy_dir / "nintendo_direct.ics").as_uri()
+    )
+
+    assert content == b"BEGIN:VCALENDAR\nEND:VCALENDAR\n"
+
+
+def test_legacy_calendar_path_mapping_rejects_parent_traversal(tmp_path, monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    legacy_dir = tmp_path / "legacy" / "static" / "calendar"
+    data_dir = tmp_path / "data"
+    durable_file = (
+        data_dir / "plugins" / "simple_calendar" / "calendars" / "secret.ics"
+    )
+    durable_file.parent.mkdir(parents=True)
+    durable_file.write_bytes(b"not reachable")
+
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_dir))
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.LEGACY_CALENDAR_DIR",
+        legacy_dir,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        plugin._read_calendar_source((legacy_dir / ".." / "secret.ics").as_uri())
+
+
+def test_legacy_calendar_mapping_keeps_drive_like_name_in_durable_root(
+    tmp_path, monkeypatch
+):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    legacy_dir = tmp_path / "legacy" / "static" / "calendar"
+    data_dir = tmp_path / "data"
+    durable_root = data_dir / "plugins" / "simple_calendar" / "calendars"
+    candidates = []
+
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_dir))
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.LEGACY_CALENDAR_DIR",
+        legacy_dir,
+    )
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda candidate: candidates.append(candidate) or False,
+    )
+
+    legacy_url = f"{legacy_dir.as_uri()}/C%3Atarget.ics"
+    with pytest.raises(FileNotFoundError):
+        plugin._read_calendar_source(legacy_url)
+
+    assert len(candidates) == 1
+    assert candidates[0].is_relative_to(durable_root)
 
 
 def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
