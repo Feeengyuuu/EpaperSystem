@@ -3168,6 +3168,25 @@ def test_mlb_scoreboard_parser_extracts_live_base_and_rhe_state():
     assert live["team_b_logo"].endswith("/lad.png")
 
 
+def test_mlb_warmup_state_is_scheduled_not_live():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_mlb_scoreboard_payload()))
+    game = payload["dates"][0]["games"][0]
+    game["status"] = {
+        "abstractGameState": "Live",
+        "codedGameState": "P",
+        "detailedState": "Warmup",
+        "statusCode": "PW",
+    }
+
+    event = SportsDashboard._parse_mlb_scoreboard(payload, la)["events"][0]
+
+    assert event["state"] == "scheduled"
+    assert event["status_text"] == "Warmup"
+    assert event["wins_a"] is None
+    assert event["wins_b"] is None
+
+
 def test_mlb_short_team_aliases_stay_chinese_with_correct_logo_codes():
     la = ZoneInfo("America/Los_Angeles")
     payload = {

@@ -1197,6 +1197,8 @@ class OffseasonHubMixin:
         abstract = str((status or {}).get("abstractGameState") or "").strip().lower()
         coded = str((status or {}).get("codedGameState") or "").strip().lower()
         detailed = str((status or {}).get("detailedState") or "").strip().lower()
+        if coded == "p" or detailed in {"warmup", "pre-game", "pregame"}:
+            return "scheduled"
         if abstract == "live" or coded in {"i", "m"}:
             return "live"
         if abstract == "final" or "final" in detailed or coded == "f":
@@ -1551,7 +1553,6 @@ class OffseasonHubMixin:
             logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 
