@@ -480,7 +480,7 @@ class WorldCupMixin:
                 url,
                 params={
                     "dates": f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}",
-                    "limit": "100",
+                    "limit": str(WORLD_CUP_SCOREBOARD_EVENT_LIMIT),
                 },
                 headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
                 timeout=20,
@@ -506,6 +506,7 @@ class WorldCupMixin:
                 start_date.isoformat(),
                 end_date.isoformat(),
                 getattr(timezone_info, "key", DEFAULT_TIMEZONE),
+                str(WORLD_CUP_SCOREBOARD_EVENT_LIMIT),
             ]
         )
 
@@ -1636,6 +1637,9 @@ class WorldCupMixin:
                 "provider_status_confirmed": state in WORLD_CUP_LIVE_STATES.union(WORLD_CUP_FINISHED_STATES),
                 "score_confirmed": show_score and wins_a is not None and wins_b is not None,
             }
+            odds = SportsDashboard._worldcup_espn_moneyline_odds(competition)
+            if odds:
+                row["odds"] = odds
             SportsDashboard._write_worldcup_period_score(row, "extra_time_score", extra_a, extra_b)
             SportsDashboard._write_worldcup_period_score(row, "penalty_score", penalty_a, penalty_b)
             parsed.append(row)
@@ -1649,6 +1653,61 @@ class WorldCupMixin:
             seen.add(key)
             unique.append(event)
         return unique
+
+    @staticmethod
+    def _worldcup_espn_moneyline_odds(competition):
+        for offer in (competition or {}).get("odds") or []:
+            if not isinstance(offer, Mapping):
+                continue
+            moneyline = offer.get("moneyline") or {}
+            if not isinstance(moneyline, Mapping):
+                continue
+
+            def side_odds(side):
+                side_data = moneyline.get(side) or {}
+                for snapshot in ("close", "open"):
+                    value = (side_data.get(snapshot) or {}).get("odds")
+                    formatted = SportsDashboard._worldcup_decimal_odds_from_american(value)
+                    if formatted:
+                        return formatted
+                return ""
+
+            team_a = side_odds("home")
+            team_b = side_odds("away")
+            if not team_a or not team_b:
+                continue
+            draw = side_odds("draw")
+            if not draw:
+                draw = SportsDashboard._worldcup_decimal_odds_from_american(
+                    (offer.get("drawOdds") or {}).get("moneyLine")
+                )
+            provider = offer.get("provider") or {}
+            return {
+                "team_a": team_a,
+                "draw": draw,
+                "team_b": team_b,
+                "bookmaker": str(
+                    provider.get("displayName") or provider.get("name") or "ESPN"
+                ).strip(),
+            }
+        return {}
+
+    @staticmethod
+    def _worldcup_decimal_odds_from_american(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            number = float(text)
+        except (TypeError, ValueError):
+            return ""
+        if number == 0:
+            return ""
+        if text.startswith(("+", "-")) or abs(number) >= 100:
+            decimal = 1 + number / 100 if number > 0 else 1 + 100 / abs(number)
+        else:
+            decimal = number
+        return SportsDashboard._format_decimal_odds(decimal)
 
     @staticmethod
     def _worldcup_espn_event_url(event, competition):
@@ -2227,7 +2286,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
 
 
 

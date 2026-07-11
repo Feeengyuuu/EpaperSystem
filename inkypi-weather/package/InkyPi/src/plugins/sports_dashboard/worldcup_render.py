@@ -959,9 +959,11 @@ class WorldCupRenderMixin:
             or re.search(r"\bknock\s*out\b", normalized)
             or re.search(r"\bknockout\b", normalized)
             or re.search(r"\bquarter\b", normalized)
+            or re.search(r"\bquarter\s*finals?\b", normalized)
             or re.search(r"\bsemi\b", normalized)
-            or re.search(r"\bthird\s+place\b", normalized)
-            or re.search(r"\bfinal\b", normalized)
+            or re.search(r"\bsemi\s*finals?\b", normalized)
+            or re.search(r"\b(?:third|3rd)\s+place\b", normalized)
+            or re.search(r"\bfinals?\b", normalized)
         )
 
     @staticmethod

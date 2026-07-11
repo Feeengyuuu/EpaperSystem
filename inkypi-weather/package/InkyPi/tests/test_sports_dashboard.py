@@ -11317,6 +11317,20 @@ def test_worldcup_espn_parser_marks_eliminated_knockout_loser():
     assert SportsDashboard._worldcup_team_eliminated(events[0], "b") is True
 
 
+def test_worldcup_real_espn_knockout_stage_labels_are_detected():
+    for stage in ("Quarterfinals", "Semifinals", "3rd-Place Match"):
+        event = {
+            "block": stage,
+            "state": "FT",
+            "team_a_advance": True,
+            "team_b_advance": False,
+        }
+
+        assert SportsDashboard._worldcup_is_knockout_stage_event(event) is True, stage
+        assert SportsDashboard._worldcup_team_eliminated(event, "a") is False, stage
+        assert SportsDashboard._worldcup_team_eliminated(event, "b") is True, stage
+
+
 def _worldcup_espn_scheduled_competition(detail):
     return {
         "status": {
@@ -12079,6 +12093,45 @@ def test_worldcup_espn_parser_localizes_cape_verde():
     assert events[0]["team_b_flag"] == "https://flagcdn.com/w80/cv.png"
 
 
+def test_worldcup_espn_parser_preserves_embedded_moneyline_odds():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_worldcup_espn_scoreboard_payload()))
+    payload["events"] = [payload["events"][0]]
+    event = payload["events"][0]
+    event["date"] = "2026-07-14T19:00Z"
+    competition = event["competitions"][0]
+    competition["date"] = event["date"]
+    competition["altGameNote"] = "FIFA World Cup, Semifinals"
+    home, away = competition["competitors"]
+    home["team"].update(
+        {"abbreviation": "FRA", "shortDisplayName": "France", "displayName": "France"}
+    )
+    away["team"].update(
+        {"abbreviation": "ESP", "shortDisplayName": "Spain", "displayName": "Spain"}
+    )
+    competition["odds"] = [
+        {
+            "provider": {"name": "DraftKings", "displayName": "DraftKings"},
+            "moneyline": {
+                "home": {"close": {"odds": "+135"}},
+                "draw": {"close": {"odds": "+225"}},
+                "away": {"close": {"odds": "+215"}},
+            },
+        }
+    ]
+
+    parsed = SportsDashboard._parse_worldcup_espn_events(payload, la)[0]
+
+    assert parsed["team_a"] == "\u6cd5\u56fd"
+    assert parsed["team_b"] == "\u897f\u73ed\u7259"
+    assert parsed["odds"] == {
+        "team_a": "2.35",
+        "draw": "3.25",
+        "team_b": "3.15",
+        "bookmaker": "DraftKings",
+    }
+
+
 def test_worldcup_lineups_attach_formation_summary_from_api_cache():
     plugin = _plugin()
     tmp_path = _sports_dashboard_tmp("worldcup_lineups")
@@ -12473,6 +12526,46 @@ def test_worldcup_scoreboard_default_range_covers_group_history():
 
     assert start_date <= datetime(2026, 6, 11, tzinfo=la).date()
     assert end_date >= now.astimezone(la).date()
+
+
+def test_worldcup_scoreboard_fetch_keeps_semifinals_beyond_first_hundred_events(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime(2026, 7, 11, 6, 0, tzinfo=timezone.utc)
+    captured = {}
+    plugin._record_worldcup_scoreboard_call = lambda *_args, **_kwargs: None
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            events = [{"id": str(index)} for index in range(100)]
+            if int(captured["limit"]) >= 102:
+                events.extend(
+                    [
+                        {"id": "760514", "shortName": "ESP @ FRA"},
+                        {"id": "760515", "shortName": "QW4 @ QFW3"},
+                    ]
+                )
+            return {"events": events}
+
+    class FakeSession:
+        def get(self, _url, params=None, headers=None, timeout=None):
+            captured.update(params or {})
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+
+    cache_key = plugin._worldcup_scoreboard_cache_key({}, la, now_utc)
+    payload = plugin._fetch_worldcup_scoreboard_payload({}, la, cache_key, now_utc)
+
+    assert int(captured["limit"]) >= 102
+    assert str(captured["limit"]) in cache_key.split("|")
+    assert any(
+        event.get("id") == "760514"
+        for event in payload["scoreboard"]["events"]
+    )
 
 
 def test_worldcup_api_daily_limit_uses_stale_cache_without_network():
