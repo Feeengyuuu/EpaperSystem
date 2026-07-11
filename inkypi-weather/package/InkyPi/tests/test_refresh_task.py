@@ -2783,6 +2783,382 @@ def test_default_display_pressure_trips_at_30_percent_swap_with_safe_memory(monk
     assert image.getpixel((0, 0)) == (0, 0, 0)
 
 
+def _make_scheduler_fairness_task(name, *, refresh_time, clock=None):
+    tmp_path = make_test_dir(name)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time="2026-05-26T07:00:00+00:00",
+            interval=900,
+        ),
+        _runtime_plugin_data(
+            "ordinary_plugin",
+            "Ordinary Plugin",
+            latest_refresh_time="2026-05-26T07:00:00+00:00",
+            interval=3600,
+        ),
+    )
+    sports, ordinary = playlist.plugins
+    plugin_keys = [sports.instance_uuid, ordinary.instance_uuid]
+    playlist.current_plugin_index = 0
+    playlist.plugin_rotation_pool = list(plugin_keys)
+    playlist.plugin_rotation_queue = [ordinary.instance_uuid, sports.instance_uuid]
+
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        cycle_seconds=300,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=sports.plugin_id,
+        plugin_instance=sports.name,
+        refresh_time=refresh_time,
+        image_hash="sports",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=sports.instance_uuid,
+        changed_at=refresh_time,
+    )
+    return task, device_config, playlist, sports, ordinary
+
+
+@pytest.mark.parametrize("live_due", [False, True])
+def test_playlist_cycle_wins_before_live_or_sports_priority(monkeypatch, live_due):
+    task, _device_config, _playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-cycle-priority",
+            refresh_time="2026-05-26T07:00:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: (
+            live_due and instance.instance_uuid == sports.instance_uuid
+        ),
+    )
+
+    command = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.source is CommandSource.SCHEDULER
+    assert command.priority == 50
+
+
+@pytest.mark.parametrize("under_pressure", [False, True])
+def test_live_refresh_cycles_do_not_move_playlist_rotation_anchor(
+    monkeypatch,
+    under_pressure,
+):
+    anchor = "2026-05-26T07:00:00+00:00"
+    task, device_config, playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-anchor",
+            refresh_time=anchor,
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: under_pressure,
+    )
+
+    for minute in (1, 2):
+        current = datetime(2026, 5, 26, 7, minute, tzinfo=timezone.utc)
+        command = task._select_scheduled_command(current)
+        if under_pressure:
+            assert command is None
+            continue
+        assert command is not None
+        assert command.instance_uuid == sports.instance_uuid
+        assert command.source is CommandSource.LIVE
+        resolved = task._resolve_playlist_command(command)
+        task._set_render_metadata(True, True, {})
+        task._commit_command_result(
+            command,
+            resolved,
+            Image.new("RGB", (2, 1), (minute, minute, minute)),
+            current,
+        )
+        assert device_config.refresh_info.refresh_time == anchor
+
+    rotation = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
+    )
+
+    assert rotation is not None
+    assert rotation.instance_uuid == ordinary.instance_uuid
+    assert rotation.source is CommandSource.SCHEDULER
+
+
+def test_live_refresh_does_not_preempt_a_different_displayed_instance(monkeypatch):
+    task, device_config, playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-non-current",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=ordinary.plugin_id,
+        plugin_instance=ordinary.name,
+        refresh_time="2026-05-26T07:19:00+00:00",
+        image_hash="ordinary",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at="2026-05-26T07:19:00+00:00",
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: False,
+    )
+
+    command = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+
+    assert command is None
+
+
+def test_stale_display_uuid_never_falls_back_to_same_name_live_instance(monkeypatch):
+    task, _device_config, _playlist, sports, _ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-stale-uuid",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="stale-replaced-instance-uuid",
+        changed_at="2026-05-26T07:19:30+00:00",
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: False,
+    )
+
+    command = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+
+    assert command is None
+
+
+def test_live_command_is_stale_if_display_changes_before_execution(monkeypatch):
+    task, device_config, playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-stale-before-execute",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: False,
+    )
+    command = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+    assert command is not None
+    assert command.source is CommandSource.LIVE
+
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=ordinary.plugin_id,
+        plugin_instance=ordinary.name,
+        refresh_time="2026-05-26T07:19:30+00:00",
+        image_hash="ordinary",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at="2026-05-26T07:19:30+00:00",
+    )
+
+    assert task._resolve_playlist_command(command) is None
+
+
+def test_live_command_revalidates_current_display_before_commit(monkeypatch):
+    task, device_config, playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-stale-before-commit",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: False,
+    )
+    command = task._select_scheduled_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+    resolved = task._resolve_playlist_command(command)
+    assert resolved is not None
+
+    changed_at = "2026-05-26T07:19:30+00:00"
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=ordinary.plugin_id,
+        plugin_instance=ordinary.name,
+        refresh_time=changed_at,
+        image_hash="ordinary",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at=changed_at,
+    )
+    task._set_render_metadata(False, False, {})
+
+    with pytest.raises(TaskCancelled, match="live display target changed"):
+        task._commit_command_result(
+            command,
+            resolved,
+            Image.new("RGB", (2, 1), "white"),
+            datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc),
+        )
+
+    assert device_config.refresh_info.plugin_instance == ordinary.name
+    assert task.display_manager.calls == []
+
+
+def test_sports_interval_does_not_bypass_playlist_cycle(monkeypatch):
+    task, _device_config, _playlist, sports, _ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-sports-interval",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    monkeypatch.setattr(task, "_snapshot_live_refresh_due", lambda *_args: False)
+
+    current = datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    command = task._select_scheduled_command(current)
+    background = task._select_background_commands(current)
+
+    assert command is None
+    assert all(item.instance_uuid != sports.instance_uuid for item in background)
+
+
+def test_live_due_background_policy_remains_reachable(monkeypatch):
+    task, _device_config, _playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-background",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt, plugin=None: (
+            instance.instance_uuid == ordinary.instance_uuid
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_background_cache_disabled",
+        lambda instance: instance.instance_uuid == sports.instance_uuid,
+    )
+
+    current = datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    display = task._select_scheduled_command(current)
+    background = task._select_background_commands(current)
+
+    assert display is None
+    ordinary_work = [
+        item for item in background if item.instance_uuid == ordinary.instance_uuid
+    ]
+    assert len(ordinary_work) == 1
+    assert ordinary_work[0].kind is CommandKind.CACHE_REFRESH
+    assert ordinary_work[0].source is CommandSource.BACKGROUND
+
+
+def test_live_failures_never_delay_the_playlist_rotation_deadline(monkeypatch):
+    anchor_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(monotonic=0.0, wall=anchor_dt.timestamp())
+    task, _device_config, _playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-failure-fairness",
+            refresh_time=anchor_dt.isoformat(),
+            clock=clock,
+        )
+    )
+    task.retry_registry = RetryRegistry(jitter=lambda delay: delay)
+    monkeypatch.setattr(
+        task,
+        "_get_current_datetime",
+        lambda: datetime.fromtimestamp(clock.wall_time(), tz=timezone.utc),
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task._display_refresh_under_resource_pressure",
+        lambda _device_config, **_kwargs: False,
+    )
+    monkeypatch.setattr(task, "_select_background_commands", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    attempts = []
+
+    def execute(command):
+        attempts.append((clock.monotonic(), command.source, command.instance_uuid))
+        if command.source is CommandSource.LIVE:
+            raise RuntimeError("live render failed")
+
+    monkeypatch.setattr(task, "_execute_command", execute)
+
+    task._run_one_iteration_for_test()
+    for _ in range(10):
+        clock.advance(30)
+        task._run_one_iteration_for_test()
+
+    assert attempts == [
+        (0.0, CommandSource.LIVE, sports.instance_uuid),
+        (30.0, CommandSource.LIVE, sports.instance_uuid),
+        (90.0, CommandSource.LIVE, sports.instance_uuid),
+        (210.0, CommandSource.LIVE, sports.instance_uuid),
+        (300.0, CommandSource.SCHEDULER, ordinary.instance_uuid),
+    ]
+
+
 def test_theme_refresh_failure_default_retry_cooldown_is_600_seconds():
     tmp_path = make_test_dir("theme-default-cooldown")
     device_config = FakeDeviceConfig(tmp_path)

@@ -128,7 +128,7 @@ def _device_config_float(device_config, key, default):
         return float(default)
 
 
-def _display_refresh_under_resource_pressure(device_config):
+def _display_refresh_under_resource_pressure(device_config, *, log_warning=True):
     enabled = True
     try:
         enabled = _setting_enabled(device_config.get_config("display_refresh_resource_guard_enabled", default=True))
@@ -156,7 +156,7 @@ def _display_refresh_under_resource_pressure(device_config):
 
     available_mb = memory.available / (1024 * 1024)
     under_pressure = available_mb < min_available_mb or swap.percent >= max_swap_percent
-    if under_pressure:
+    if under_pressure and log_warning:
         logger.warning(
             "Skipping synchronous display refresh due to resource pressure. | "
             "available_mb: %.1f | min_available_mb: %.1f | "
@@ -576,27 +576,9 @@ class RefreshTask:
                     theme_context=theme_context,
                 )
 
-        active = manager.snapshot_active_playlist(current_dt)
-        if active is not None:
-            for instance in active.plugins:
-                if self._snapshot_live_refresh_due(instance, current_dt):
-                    return self._playlist_command(
-                        active.name,
-                        instance,
-                        source=CommandSource.LIVE,
-                        display_cached_only=True,
-                        priority=70,
-                    )
-            for instance in active.plugins:
-                if instance.plugin_id == "sports_dashboard" and self._snapshot_should_refresh(instance, current_dt):
-                    return self._playlist_command(
-                        active.name,
-                        instance,
-                        source=CommandSource.SCHEDULER,
-                        display_cached_only=True,
-                        priority=60,
-                    )
-
+        # Playlist rotation owns the display cadence. A currently displayed
+        # live instance may refresh between ticks, but it must never delay the
+        # next rotation or pull a different instance onto the screen.
         try:
             interval = float(self.device_config.get_config(
                 "plugin_cycle_interval_seconds",
@@ -609,14 +591,57 @@ class RefreshTask:
             latest_refresh=latest_refresh.get_refresh_datetime(),
             interval_seconds=interval,
         )
-        if selection is None:
+        if selection is not None:
+            return self._playlist_command(
+                selection.playlist_name,
+                selection.instance,
+                source=CommandSource.SCHEDULER,
+                display_cached_only=True,
+                priority=50,
+            )
+
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is None:
+            return None
+        displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+        displayed = next(
+            (
+                instance
+                for instance in active.plugins
+                if instance.instance_uuid == displayed_uuid
+            ),
+            None,
+        )
+        if (
+            displayed is None
+            and displayed_uuid is None
+            and latest_refresh.refresh_type == "Playlist"
+            and latest_refresh.playlist == active.name
+        ):
+            displayed = next(
+                (
+                    instance
+                    for instance in active.plugins
+                    if instance.plugin_id == latest_refresh.plugin_id
+                    and instance.name == latest_refresh.plugin_instance
+                ),
+                None,
+            )
+        if displayed is None or self._snapshot_retry_delayed(displayed, current_dt):
+            return None
+        if not self._snapshot_live_refresh_due(displayed, current_dt):
+            return None
+        if _display_refresh_under_resource_pressure(
+            self.device_config,
+            log_warning=False,
+        ):
             return None
         return self._playlist_command(
-            selection.playlist_name,
-            selection.instance,
-            source=CommandSource.SCHEDULER,
+            active.name,
+            displayed,
+            source=CommandSource.LIVE,
             display_cached_only=True,
-            priority=50,
+            priority=70,
         )
 
     def _select_background_commands(self, current_dt, *, skip_instance_uuid=None):
@@ -1218,6 +1243,8 @@ class RefreshTask:
         playlist_name = command.payload.get("playlist_name")
         if not playlist_name:
             return None
+        if not self._live_display_target_is_current(command):
+            return None
         return self.device_config.get_playlist_manager().validate_selection(
             command.instance_uuid,
             expected_playlist_name=playlist_name,
@@ -1229,6 +1256,8 @@ class RefreshTask:
 
     def _require_fresh_selection(self, command, context):
         context.raise_if_cancelled()
+        if not self._live_display_target_is_current(command):
+            raise _StaleSelection("live display target changed")
         selection = self.device_config.get_playlist_manager().validate_selection(
             command.instance_uuid,
             expected_playlist_name=command.payload.get("playlist_name"),
@@ -1240,6 +1269,20 @@ class RefreshTask:
         if selection is None:
             raise _StaleSelection("playlist selection changed before commit")
         return selection
+
+    def _live_display_target_is_current(self, command):
+        if command.source is not CommandSource.LIVE:
+            return True
+        displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+        if displayed_uuid is not None:
+            return displayed_uuid == command.instance_uuid
+        latest_refresh = self.device_config.get_refresh_info()
+        return (
+            latest_refresh.refresh_type == "Playlist"
+            and latest_refresh.playlist == command.payload.get("playlist_name")
+            and latest_refresh.plugin_id == command.plugin_id
+            and latest_refresh.plugin_instance == command.payload.get("instance_name")
+        )
 
     def _staging_cache_path(self, instance):
         directory = os.path.join(self.device_config.plugin_image_dir, ".refresh-staging")
@@ -1312,6 +1355,15 @@ class RefreshTask:
                 "refresh_time": current_dt.isoformat(),
                 "image_hash": image_hash,
             }
+            if (
+                command.source is CommandSource.LIVE
+                and latest_refresh.refresh_time
+                and not self._display_target_changed(latest_refresh, refresh_info)
+            ):
+                # RefreshInfo.refresh_time is the playlist rotation anchor.
+                # Same-target live updates have their own instance success and
+                # display-manifest timestamps, so they must not move it.
+                refresh_info["refresh_time"] = latest_refresh.refresh_time
             refresh_record = RefreshInfo(**refresh_info)
             theme_context = command.payload.get("theme_context")
             thawed_theme_context = thaw_payload(theme_context) if theme_context else None
@@ -1428,7 +1480,8 @@ class RefreshTask:
         key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
         delay = self.retry_registry.mark_failure(key, self._clock())
         self._record_runtime_failure(command, error, delay)
-        self.scheduler_state.set_next_attempt(self._clock() + delay)
+        next_delay = self._scheduler_poll_seconds() if command.source is CommandSource.LIVE else delay
+        self.scheduler_state.set_next_attempt(self._clock() + next_delay)
 
     def _signal_completion(self, actual_job_id):
         ready = []
