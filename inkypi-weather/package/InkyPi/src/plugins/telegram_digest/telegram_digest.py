@@ -1806,41 +1806,7 @@ class TelegramDigest(BasePlugin):
             return bbox[2] - bbox[0]
 
     def _font(self, size, weight="normal"):
-        font = get_base_ui_font(int(size), bold=weight == "bold")
-        if weight == "bold":
-            self._apply_font_weight(font, 760)
-        return font
-
-    def _apply_font_weight(self, font, target_weight):
-        if not hasattr(font, "get_variation_axes") or not hasattr(font, "set_variation_by_axes"):
-            return
-        try:
-            axes = font.get_variation_axes()
-        except Exception:
-            return
-        if not axes:
-            return
-        values = []
-        changed = False
-        for axis in axes:
-            if not isinstance(axis, dict):
-                return
-            name = axis.get("name") or axis.get(b"name") or ""
-            if isinstance(name, bytes):
-                name = name.decode("ascii", errors="ignore")
-            minimum = axis.get("minimum", axis.get(b"minimum", 0))
-            maximum = axis.get("maximum", axis.get(b"maximum", 1000))
-            default = axis.get("default", axis.get(b"default", minimum))
-            value = default
-            if "weight" in str(name).lower() or "wght" in str(name).lower():
-                value = max(minimum, min(maximum, int(target_weight)))
-                changed = True
-            values.append(value)
-        if changed:
-            try:
-                font.set_variation_by_axes(values)
-            except Exception:
-                pass
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     def _enabled(self, value, default=False):
         return coerce_bool(value, default=default, truthy=("1", "true", "yes", "on"))

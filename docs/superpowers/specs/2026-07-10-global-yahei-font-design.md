@@ -22,11 +22,17 @@ The live device's existing user-provided YaHei files may be installed there as
 `msyh.ttf` and `msyhbd.ttf`. This is a local device operation only; repository
 and release tooling continue to exclude the binaries.
 
+Repeated installation reasserts the directory ownership and mode above and
+normalizes regular files inside it to `root:inkypi` `0640` without following
+symbolic links.
+
 ## Resolution architecture
 
 `utils.app_utils` becomes the single resolver for runtime font candidates:
 
-1. For `msyh.ttf` or `msyhbd.ttf`, check the durable font directory first.
+1. For regular `msyh.ttf`/`msyh.ttc` or bold `msyhbd.ttf`/`msyhbd.ttc`, check
+   the durable font directory first. The light `msyhl` face is not a base-text
+   candidate.
 2. Check the existing release-local font path for development compatibility.
 3. If a candidate is missing or cannot be opened, continue to the existing
    readable CJK fallback instead of raising `OSError`.
@@ -47,6 +53,9 @@ ordinary UI copy consistent.
 - Regular and bold variants fall back independently.
 - Existing Noto Sans CJK or bundled readable CJK fonts remain the final base
   fallback.
+- The tracked Noto Sans SC variable fallback is configured once by the shared
+  resolver at weight 400 for regular text and 700 for bold text. Plugin loaders
+  retain that configured instance instead of applying local 430/760/780 axes.
 - Missing optional YaHei files do not degrade startup or readiness; the shared
   resolver exposes the selected fallback path for diagnostics.
 
@@ -59,6 +68,9 @@ Automated tests cover:
 - missing and corrupt files falling back without a render failure;
 - SportsDashboard regular/bold selection;
 - no font binary entering `git archive` or a release payload;
+- both installer and updater release entry points using the same archive
+  builder, plus updater inspection rejecting any nested, case-insensitive
+  `msyh*.ttf`/`msyh*.ttc` member;
 - full unit, lint, and clean-archive gates.
 
 Live acceptance requires a fresh SportsDashboard render on the physical

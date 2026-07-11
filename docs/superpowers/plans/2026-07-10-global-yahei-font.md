@@ -15,6 +15,8 @@
 - Brand wordmarks, icon fonts, DS-Digital, Napoli, Dogica, literary typefaces, and other explicitly decorative type remain unchanged.
 - Missing, unreadable, or corrupt YaHei files must fall back to tracked Noto Sans SC without crashing a plugin.
 - Regular and bold resolution must be independent and use `msyh.ttf`/`msyh.ttc` and `msyhbd.ttf`/`msyhbd.ttc` respectively.
+- `msyhl.ttf`/`msyhl.ttc` are light faces and are not regular base-font candidates.
+- The tracked Noto Sans SC fallback uses weight 400 for regular text and 700 for bold text; plugin loaders preserve the shared resolver instance instead of applying local 430/760/780 axes.
 - Existing explicit user font selections remain valid; only empty/default settings and the five approved live legacy-default values migrate.
 
 ---
@@ -73,7 +75,7 @@ Expected: failures because the durable resolver and safe fallback do not exist.
 Add the following structure to `app_utils.py` and make the three existing font APIs use it:
 
 ```python
-YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc", "msyhl.ttf", "msyhl.ttc")
+YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc")
 YAHEI_BOLD_FILES = ("msyhbd.ttf", "msyhbd.ttc")
 BASE_FALLBACK_FILES = ("NotoSansSC-VF.ttf", "LXGWWenKai-Regular.ttf")
 
@@ -102,10 +104,14 @@ def get_base_ui_font(font_size, bold=False):
 
 - [ ] **Step 4: Create the persistent directory in the installer**
 
-After the existing state-root ownership normalization, add:
+After the existing state-root ownership normalization, reassert the durable
+font permissions without following symbolic links:
 
 ```bash
 install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
+find -P "$DATA_DIR/fonts" -xdev -type f \
+  -exec chown --no-dereference root:inkypi {} + \
+  -exec chmod 0640 {} +
 ```
 
 Add a system install test asserting the exact owner/group/mode declaration and that uninstall without `--purge` does not remove `${DATA_DIR}/fonts`.
@@ -213,7 +219,7 @@ if font is not None:
     return font
 ```
 
-Remove duplicate YaHei path lists only when they serve ordinary UI copy. Change the nine base CSS overrides to `"Microsoft YaHei", "微软雅黑", Arial, sans-serif`. Keep explicit decorative assets, wordmarks, Hangul/Japanese glyph fallback branches, variable-font weight logic, DS-Digital, Napoli, Dogica, and the three literary loaders intact.
+Remove duplicate YaHei path lists only when they serve ordinary UI copy. Change the nine base CSS overrides to `"Microsoft YaHei", "微软雅黑", Arial, sans-serif`. Keep the shared resolver's configured 400/700 variable-font instance intact rather than reloading or mutating it in plugin helpers. Keep explicit decorative assets, wordmarks, Hangul/Japanese glyph fallback branches, DS-Digital, Napoli, Dogica, and the three literary loaders intact.
 
 - [ ] **Step 4: Run plugin suites and render smoke tests**
 
@@ -316,6 +322,12 @@ git status --short
 ```
 
 Expected: all tests pass, clean-archive verification passes, and no `msyh*` binary appears in `git status` or `git archive`.
+
+Both `install.sh` and `update.sh` call the single
+`install/lib/release_archive.py` builder. Archive tests execute that real
+builder through both production entry points, and `inspect_artifact()`
+independently rejects nested, case-insensitive `msyh*.ttf`/`msyh*.ttc`
+members.
 
 - [ ] **Step 2: Install the device-owned fonts outside the release**
 

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FONT_FAMILY = "Microsoft YaHei"
 
-YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc", "msyhl.ttf", "msyhl.ttc")
+YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc")
 YAHEI_BOLD_FILES = ("msyhbd.ttf", "msyhbd.ttc")
 BASE_FALLBACK_FILES = ("NotoSansSC-VF.ttf", "LXGWWenKai-Regular.ttf")
 BASE_FALLBACK_VARIABLE_WEIGHTS = {
@@ -335,15 +335,15 @@ def generate_startup_image(dimensions=(800,480)):
 
     # Draw the instructions
     y_text = height * 3 / 4
-    image_draw.text((width/2, y_text), text, anchor="mm", fill=text_color, font=get_font("Jost", text_font_size))
+    image_draw.text((width/2, y_text), text, anchor="mm", fill=text_color, font=get_base_ui_font(text_font_size))
 
     # Draw the IP on a line below
     ip_text = f"or http://{ip}"
     ip_text_font_size = width * 0.032
-    bbox = image_draw.textbbox((0, 0), text, font=get_font("Jost", text_font_size))
+    bbox = image_draw.textbbox((0, 0), text, font=get_base_ui_font(text_font_size))
     text_height = bbox[3] - bbox[1]
     ip_y = y_text + text_height * 1.35
-    image_draw.text((width/2, ip_y), ip_text, anchor="mm", fill=text_color, font=get_font("Jost", ip_text_font_size))
+    image_draw.text((width/2, ip_y), ip_text, anchor="mm", fill=text_color, font=get_base_ui_font(ip_text_font_size))
 
     return image
 

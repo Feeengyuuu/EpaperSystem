@@ -588,33 +588,7 @@ class StockTracker(BasePlugin):
 		return None
 
 	def _font(self, size, bold=False):
-		font = get_base_ui_font(int(size), bold=bool(bold))
-		if not hasattr(font, "get_variation_axes") or not hasattr(font, "set_variation_by_axes"):
-			return font
-		try:
-			axes = font.get_variation_axes()
-		except Exception:
-			return font
-		values = []
-		changed = False
-		for axis in axes:
-			name = axis.get("name") or axis.get(b"name") or ""
-			if isinstance(name, bytes):
-				name = name.decode("ascii", errors="ignore")
-			minimum = axis.get("minimum", axis.get(b"minimum", 0))
-			maximum = axis.get("maximum", axis.get(b"maximum", 1000))
-			default = axis.get("default", axis.get(b"default", minimum))
-			value = default
-			if "weight" in str(name).lower() or "wght" in str(name).lower():
-				value = max(minimum, min(maximum, 760 if bold else 430))
-				changed = True
-			values.append(value)
-		if changed:
-			try:
-				font.set_variation_by_axes(values)
-			except Exception:
-				pass
-		return font
+		return get_base_ui_font(int(size), bold=bool(bold))
 
 	@staticmethod
 	def _text_width(draw, text, font):

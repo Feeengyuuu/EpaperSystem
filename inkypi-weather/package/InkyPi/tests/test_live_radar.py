@@ -1580,3 +1580,18 @@ def test_live_radar_base_font_uses_shared_resolver(monkeypatch):
 
     assert LiveRadar._font(17, "bold") is sentinel
     assert calls == [(17, True)]
+
+
+def test_live_radar_preserves_shared_bold_fallback_raster(monkeypatch):
+    shared = live_radar_module.get_base_ui_font(48, bold=True)
+    expected = bytes(shared.getmask("Readable UI"))
+    monkeypatch.setattr(
+        live_radar_module,
+        "get_base_ui_font",
+        lambda size, bold=False: shared,
+    )
+
+    font = LiveRadar._font(48, "bold")
+
+    assert font is shared
+    assert bytes(font.getmask("Readable UI")) == expected

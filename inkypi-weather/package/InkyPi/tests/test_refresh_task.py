@@ -7,7 +7,7 @@ import time
 import uuid
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.newspaper.newspaper import Newspaper
@@ -15,6 +15,7 @@ from plugins.plugin_settings import PluginSettingError
 from src.model import Playlist, PlaylistManager, RefreshInfo
 from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest
 from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
+import src.refresh_task as refresh_task_module
 from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
@@ -3201,6 +3202,27 @@ def test_display_pressure_missing_or_corrupt_cache_uses_placeholder_without_rend
 
     assert calls == []
     assert image.size == (800, 480)
+
+
+def test_cache_pending_placeholder_uses_shared_base_ui_fonts(monkeypatch):
+    tmp_path = make_test_dir("cache-pending-fonts")
+    device_config = FakeDeviceConfig(tmp_path)
+    playlist = _runtime_playlist(_runtime_plugin_data("plugin", "Plugin"))
+    instance = playlist.plugins[0]
+    calls = []
+    font_path = Path(__file__).resolve().parents[1] / "src/static/fonts/NotoSansSC-VF.ttf"
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append((size, bold))
+        or ImageFont.truetype(font_path, size),
+        raising=False,
+    )
+
+    image = PlaylistRefresh(playlist, instance)._placeholder_image(device_config)
+
+    assert image.size == (800, 480)
+    assert calls == [(40, True), (17, False)]
 
 
 def test_overdue_empty_playlist_advances_monotonic_attempt_deadline():

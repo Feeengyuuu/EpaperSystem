@@ -1165,12 +1165,6 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _font(self, size, bold=False, cjk=False):
         font = get_base_ui_font(int(size), bold=bool(bold))
-        font_path = getattr(font, "path", None)
-        if font_path:
-            try:
-                font = self._load_font(str(font_path), int(size), bool(bold))
-            except Exception:
-                pass
         if not cjk or self._font_has_cjk_glyphs(font):
             return font
 
@@ -1217,7 +1211,7 @@ class BoxOfficeTopMovies(BasePlugin):
                         axis_name = axis_name.decode("utf-8", errors="ignore")
                     default = axis.get("default")
                     if "weight" in str(axis_name).lower():
-                        values.append(780)
+                        values.append(700)
                         changed = True
                     else:
                         values.append(default)

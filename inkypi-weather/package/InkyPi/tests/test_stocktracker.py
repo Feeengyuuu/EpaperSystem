@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.stocktracker.stocktracker as stocktracker_module  # noqa: E402
 from plugins.stocktracker.stocktracker import (  # noqa: E402
     ACCENT_BLUE,
     ACCENT_GOLD,
@@ -504,3 +505,22 @@ def test_stock_tracker_can_fetch_stock_data_from_massive_without_yfinance(monkey
     assert data["total_value"] == 220.0
     assert data["history"].loc["2026-06-02", "Close"] == 110.0
     assert StockTracker._source_label([data]) == "Massive market data"
+
+
+def test_stocktracker_preserves_shared_fallback_weight_rasters(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    sample = "Readable UI"
+
+    for bold in (False, True):
+        shared = stocktracker_module.get_base_ui_font(48, bold=bold)
+        expected = bytes(shared.getmask(sample))
+        monkeypatch.setattr(
+            stocktracker_module,
+            "get_base_ui_font",
+            lambda size, bold=False, shared=shared: shared,
+        )
+
+        font = plugin._font(48, bold=bold)
+
+        assert font is shared
+        assert bytes(font.getmask(sample)) == expected

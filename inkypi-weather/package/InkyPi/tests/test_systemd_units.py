@@ -1,8 +1,11 @@
 import configparser
+import re
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+import pytest
 
 
 INSTALL_ROOT = Path(__file__).resolve().parents[1] / "install"
@@ -15,12 +18,15 @@ def _parse_unit(path):
     return parser
 
 
-def _release_archive_python():
-    source = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
-    marker = 'python3 - "$PROJECT_DIR" "$artifact" <<\'PY\'\n'
-    _prefix, heredoc = source.split(marker, maxsplit=1)
-    archive_python, _suffix = heredoc.split("\nPY\n", maxsplit=1)
-    return archive_python
+def _release_archive_builder(entrypoint, artifact_variable):
+    source = (INSTALL_ROOT / entrypoint).read_text(encoding="utf-8")
+    match = re.search(
+        rf'python3 "\$SCRIPT_DIR/(?P<helper>[^\"]+)" '
+        rf'"\$PROJECT_DIR" "{re.escape(artifact_variable)}"',
+        source,
+    )
+    assert match is not None, f"{entrypoint} does not invoke the shared archive builder"
+    return INSTALL_ROOT / match.group("helper")
 
 
 def test_main_unit_is_unprivileged_and_hardened():
@@ -90,13 +96,25 @@ def test_install_manages_service_user_runtime_ownership_and_broker_units():
     assert "chown -R -h inkypi:inkypi" in script
 
 
-def test_install_creates_root_owned_durable_font_directory():
+def test_install_reestablishes_root_owned_durable_font_permissions_without_following_symlinks():
     script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
 
     assert 'install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"' in script
+    function = script.split("normalize_durable_font_permissions() {", maxsplit=1)[1].split(
+        "\n}", maxsplit=1
+    )[0]
+    assert 'find -P "$DATA_DIR/fonts" -xdev -type f' in function
+    assert "-exec chown --no-dereference root:inkypi {} +" in function
+    assert "-exec chmod 0640 {} +" in function
 
 
-def test_release_archive_excludes_yahei_binaries_from_any_directory(tmp_path):
+@pytest.mark.parametrize(
+    ("entrypoint", "artifact_variable"),
+    (("install.sh", "$artifact"), ("update.sh", "$ARTIFACT")),
+)
+def test_release_archive_excludes_yahei_binaries_from_any_directory(
+    tmp_path, entrypoint, artifact_variable
+):
     project = tmp_path / "project"
     files = {
         "src/app.py": b"print('included')\n",
@@ -104,7 +122,7 @@ def test_release_archive_excludes_yahei_binaries_from_any_directory(tmp_path):
         "src/static/fonts/msyh.ttf": b"proprietary regular",
         "src/static/fonts/msyh.ttc": b"proprietary regular collection",
         "src/plugins/sports_dashboard/fonts/msyhbd.ttc": b"proprietary bold collection",
-        "vendor/fonts/MSYHL.TTC": b"proprietary light collection",
+        "vendor/deep/fonts/MSYHL.TTC": b"proprietary light collection",
     }
     for relative, content in files.items():
         path = project / relative
@@ -113,9 +131,12 @@ def test_release_archive_excludes_yahei_binaries_from_any_directory(tmp_path):
 
     artifact = tmp_path / "release.zip"
     subprocess.run(
-        [sys.executable, "-", str(project), str(artifact)],
-        input=_release_archive_python(),
-        text=True,
+        [
+            sys.executable,
+            str(_release_archive_builder(entrypoint, artifact_variable)),
+            str(project),
+            str(artifact),
+        ],
         check=True,
     )
 
@@ -128,7 +149,7 @@ def test_release_archive_excludes_yahei_binaries_from_any_directory(tmp_path):
         "src/static/fonts/msyh.ttf",
         "src/static/fonts/msyh.ttc",
         "src/plugins/sports_dashboard/fonts/msyhbd.ttc",
-        "vendor/fonts/MSYHL.TTC",
+        "vendor/deep/fonts/MSYHL.TTC",
     }.isdisjoint(members)
 
 

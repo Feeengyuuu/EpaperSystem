@@ -1203,23 +1203,14 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
-        font = get_base_ui_font(int(size), bold=weight == "bold")
-        font_path = getattr(font, "path", None)
-        if font_path:
-            try:
-                return SteamCharts._load_sans_font(
-                    str(font_path), int(size), weight
-                )
-            except Exception:
-                pass
-        return font
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     @staticmethod
     def _load_sans_font(font_path, size, weight="normal"):
         font = ImageFont.truetype(font_path, size)
         if hasattr(font, "get_variation_axes") and hasattr(font, "set_variation_by_axes"):
             try:
-                target_weight = 780 if weight == "bold" else 430
+                target_weight = 700 if weight == "bold" else 400
                 values = []
                 changed = False
                 for axis in font.get_variation_axes():

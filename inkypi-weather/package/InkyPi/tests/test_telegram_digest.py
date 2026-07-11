@@ -930,3 +930,19 @@ def test_telegram_digest_base_font_uses_shared_resolver(monkeypatch, tmp_path):
 
     assert plugin._font(15, "bold") is sentinel
     assert calls == [(15, True)]
+
+
+def test_telegram_digest_preserves_shared_bold_fallback_raster(monkeypatch, tmp_path):
+    plugin = _plugin(tmp_path)
+    shared = telegram_mod.get_base_ui_font(48, bold=True)
+    expected = bytes(shared.getmask("Readable UI"))
+    monkeypatch.setattr(
+        telegram_mod,
+        "get_base_ui_font",
+        lambda size, bold=False: shared,
+    )
+
+    font = plugin._font(48, "bold")
+
+    assert font is shared
+    assert bytes(font.getmask("Readable UI")) == expected

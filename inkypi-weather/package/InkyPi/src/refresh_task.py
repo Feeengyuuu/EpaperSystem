@@ -13,6 +13,7 @@ from uuid import uuid4
 from plugins.plugin_registry import get_plugin_instance, plugin_supports_live_refresh
 from plugins.plugin_settings import PluginSettingError
 from utils.image_utils import compute_image_hash
+from utils.app_utils import get_base_ui_font
 from utils.theme_utils import get_theme_context
 from model import RefreshInfo, PlaylistManager
 from runtime.refresh_contracts import (
@@ -2937,18 +2938,7 @@ class PlaylistRefresh(RefreshAction):
         return tuple(int(value) for value in resolution)
 
     def _font(self, size, bold=False):
-        paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
-        ]
-        for path in paths:
-            try:
-                if os.path.exists(path):
-                    return ImageFont.truetype(path, size)
-            except Exception:
-                continue
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=bool(bold))
 
     def _draw_centered(self, draw, text, x, y, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)

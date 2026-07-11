@@ -121,7 +121,7 @@ ensure_service_user() {
     "$CACHE_ROOT"
   chown -R -h inkypi:inkypi "$STATE_ROOT" "$CACHE_ROOT"
   chmod -R u+rwX,go-rwx "$STATE_ROOT" "$CACHE_ROOT"
-  install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
+  normalize_durable_font_permissions
   install -d -o root -g root -m 0700 "$STATE_ROOT/update"
   install -d -o root -g inkypi -m 0770 "$ENV_ROOT"
   if [[ ! -e "$RUNTIME_ENV_FILE" ]]; then
@@ -142,6 +142,19 @@ ensure_service_user() {
     chown inkypi:inkypi "$RUNTIME_ENV_FILE"
     chmod 0600 "$RUNTIME_ENV_FILE"
   fi
+}
+
+normalize_durable_font_permissions() {
+  local fonts_dir="$DATA_DIR/fonts"
+  [[ ! -L "$DATA_DIR" ]] || fail "Refusing symlinked data directory: $DATA_DIR"
+  [[ ! -L "$fonts_dir" ]] || fail "Refusing symlinked font directory: $fonts_dir"
+  install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
+  if find -P "$DATA_DIR/fonts" -xdev -type l -print -quit | grep -q .; then
+    fail "Refusing symbolic links in durable font directory: $fonts_dir"
+  fi
+  find -P "$DATA_DIR/fonts" -xdev -type f \
+    -exec chown --no-dereference root:inkypi {} + \
+    -exec chmod 0640 {} +
 }
 
 validate_packaged_driver() {
@@ -252,29 +265,7 @@ install_privileged_broker() {
 build_release_artifact() {
   TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/inkypi-install.XXXXXX")
   local artifact="$TEMP_ROOT/inkypi-release.zip"
-  python3 - "$PROJECT_DIR" "$artifact" <<'PY'
-from pathlib import Path
-import sys
-import zipfile
-
-root = Path(sys.argv[1]).resolve()
-artifact = Path(sys.argv[2])
-excluded_names = {
-    ".git", ".pytest_cache", ".tmp", ".venv", ".venv-test",
-    ".venv-codex", ".venv-local", "__pycache__", "tmp",
-}
-excluded_yahei_suffixes = {".ttf", ".ttc"}
-with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if any(part in excluded_names for part in relative.parts):
-            continue
-        if path.name.casefold().startswith("msyh") and path.suffix.casefold() in excluded_yahei_suffixes:
-            continue
-        if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
-            continue
-        archive.write(path, relative.as_posix())
-PY
+  python3 "$SCRIPT_DIR/lib/release_archive.py" "$PROJECT_DIR" "$artifact"
   local sha256
   sha256=$(sha256sum "$artifact" | awk '{print $1}')
   local release_id

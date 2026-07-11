@@ -985,3 +985,14 @@ def test_steam_charts_base_font_uses_shared_resolver(monkeypatch):
 
     assert SteamCharts._font(20, "bold") is sentinel
     assert calls == [(20, True)]
+
+
+def test_steam_charts_preserves_shared_resolver_weight_instance(monkeypatch):
+    shared = steam_charts_module.get_base_ui_font(32, bold=False)
+    monkeypatch.setattr(
+        steam_charts_module,
+        "get_base_ui_font",
+        lambda size, bold=False: shared,
+    )
+
+    assert SteamCharts._font(32, "normal") is shared

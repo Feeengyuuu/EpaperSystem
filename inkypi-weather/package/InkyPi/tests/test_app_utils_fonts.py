@@ -114,6 +114,18 @@ def test_missing_or_corrupt_durable_yahei_falls_back_to_tracked_font(
     assert Path(font.path).name == "NotoSansSC-VF.ttf"
 
 
+def test_light_yahei_file_is_not_a_regular_base_font_candidate(tmp_path, monkeypatch):
+    source = _FONTS_DIR / "NotoSansSC-VF.ttf"
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    shutil.copyfile(source, fonts / "msyhl.ttf")
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    font = app_utils.get_base_ui_font(18)
+
+    assert Path(font.path).name == "NotoSansSC-VF.ttf"
+
+
 def test_tracked_variable_fallback_renders_distinct_regular_and_bold_weights(
     tmp_path, monkeypatch
 ):
@@ -130,6 +142,32 @@ def test_tracked_variable_fallback_renders_distinct_regular_and_bold_weights(
     bold_ink = sum(bold.getmask(sample))
     assert bytes(regular.getmask(sample)) != bytes(bold.getmask(sample))
     assert bold_ink > regular_ink
+
+
+def test_startup_instructions_and_ip_use_base_ui_font_but_wordmark_keeps_jost(
+    monkeypatch,
+):
+    calls = []
+    jost = ImageFont.truetype(_FONTS_DIR / "Jost.ttf", 12)
+    base = ImageFont.truetype(_FONTS_DIR / "NotoSansSC-VF.ttf", 12)
+    monkeypatch.setattr(
+        app_utils,
+        "get_font",
+        lambda family, size, weight="normal": calls.append((family, size, weight))
+        or jost,
+    )
+    monkeypatch.setattr(
+        app_utils,
+        "get_base_ui_font",
+        lambda size, bold=False: calls.append(("base", size, bold)) or base,
+    )
+    monkeypatch.setattr(app_utils, "get_ip_address", lambda: "192.0.2.1")
+
+    image = app_utils.generate_startup_image((800, 480))
+
+    assert image.size == (800, 480)
+    assert [call[0] for call in calls].count("Jost") == 1
+    assert [call[0] for call in calls].count("base") == 3
 
 
 def test_base_font_resolver_and_css_uri_use_durable_yahei(tmp_path, monkeypatch):

@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
 import zipfile
 
+from release_archive import is_device_owned_yahei_font
 from release_state import (
     RecoveryAction,
     ReleaseLayout,
@@ -687,7 +688,11 @@ def inspect_artifact(path, expected_sha256) -> ArtifactInspection:
     try:
         with zipfile.ZipFile(artifact) as archive:
             for info in archive.infolist():
-                _validated_archive_path(info)
+                relative = _validated_archive_path(info)
+                if is_device_owned_yahei_font(relative):
+                    raise ArtifactError(
+                        "release archive cannot contain device-owned YaHei font binaries"
+                    )
                 count += 1
                 if count > MAX_ARCHIVE_FILES:
                     raise ArtifactError("release archive contains too many files")

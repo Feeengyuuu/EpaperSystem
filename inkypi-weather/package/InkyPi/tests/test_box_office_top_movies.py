@@ -365,6 +365,18 @@ def test_default_font_uses_shared_base_ui_resolver(monkeypatch):
     assert calls == [(18, False), (19, True)]
 
 
+def test_default_font_preserves_shared_resolver_weight_instance(monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    shared = box_office_module.get_base_ui_font(32, bold=True)
+    monkeypatch.setattr(
+        box_office_module,
+        "get_base_ui_font",
+        lambda size, bold=False: shared,
+    )
+
+    assert plugin._font(32, bold=True, cjk=False) is shared
+
+
 def test_cjk_font_accepts_shared_font_when_it_has_required_glyphs(monkeypatch):
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
     sentinel = object()

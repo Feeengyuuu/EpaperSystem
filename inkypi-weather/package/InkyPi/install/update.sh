@@ -42,26 +42,7 @@ cleanup() {
 trap cleanup EXIT
 ARTIFACT="$TEMP_ROOT/inkypi-release.zip"
 
-python3 - "$PROJECT_DIR" "$ARTIFACT" <<'PY'
-from pathlib import Path
-import sys
-import zipfile
-
-root = Path(sys.argv[1]).resolve()
-artifact = Path(sys.argv[2])
-excluded_names = {
-    ".git", ".pytest_cache", ".tmp", ".venv", ".venv-test",
-    ".venv-codex", ".venv-local", "__pycache__", "tmp",
-}
-with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if any(part in excluded_names for part in relative.parts):
-            continue
-        if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
-            continue
-        archive.write(path, relative.as_posix())
-PY
+python3 "$SCRIPT_DIR/lib/release_archive.py" "$PROJECT_DIR" "$ARTIFACT"
 
 SHA256=$(sha256sum "$ARTIFACT" | awk '{print $1}')
 if [[ -z "$RELEASE_ID" ]]; then

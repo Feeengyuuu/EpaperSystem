@@ -209,6 +209,23 @@ def test_artifact_hash_and_zip_paths_fail_before_release_switch(tmp_path):
         inspect_artifact(artifact, actual)
 
 
+@pytest.mark.parametrize(
+    "member_name",
+    ("msyh.ttf", "nested/fonts/MSYHBD.TTC", "vendor/deep/MsYhL.TtF"),
+)
+def test_artifact_inspection_rejects_yahei_font_members_in_any_directory(
+    tmp_path, member_name
+):
+    artifact = tmp_path / "release.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("src/inkypi.py", "# candidate")
+        archive.writestr(member_name, "proprietary font")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+    with pytest.raises(ArtifactError, match="YaHei font"):
+        inspect_artifact(artifact, digest)
+
+
 @pytest.mark.parametrize("failure", ["disk", "pip", "pip_check", "migration"])
 def test_pre_switch_failure_cleans_candidate_without_touching_current(tmp_path, failure):
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
