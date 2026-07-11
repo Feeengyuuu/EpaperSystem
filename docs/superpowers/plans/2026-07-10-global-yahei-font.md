@@ -104,15 +104,22 @@ def get_base_ui_font(font_size, bold=False):
 
 - [ ] **Step 4: Create the persistent directory in the installer**
 
-After the existing state-root ownership normalization, reassert the durable
-font permissions without following symbolic links:
+After the existing state-root ownership normalization, delegate durable font
+directory creation and permission repair without a path-based `install -d` on
+`$DATA_DIR/fonts`:
 
 ```bash
-install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
-find -P "$DATA_DIR/fonts" -xdev -type f \
-  -exec chown --no-dereference root:inkypi {} + \
-  -exec chmod 0640 {} +
+python3 "$SCRIPT_DIR/lib/font_permissions.py" "$DATA_DIR"
 ```
+
+The helper opens each absolute data-directory component from `/` with
+`O_DIRECTORY|O_NOFOLLOW`, creates `fonts` with `mkdir(..., dir_fd=data_fd)`,
+and opens each direct member relative to the font-directory descriptor with
+`O_NOFOLLOW`. It rejects symbolic links and non-regular members and uses
+`fchown`/`fchmod` for the `root:inkypi 0750` directory and `root:inkypi 0640`
+files. It verifies a fresh no-follow reopen of the absolute data path and a
+lookup of `fonts` from the held data descriptor still identify the original
+inodes.
 
 Add a system install test asserting the exact owner/group/mode declaration and that uninstall without `--purge` does not remove `${DATA_DIR}/fonts`.
 
@@ -324,10 +331,11 @@ git status --short
 Expected: all tests pass, clean-archive verification passes, and no `msyh*` binary appears in `git status` or `git archive`.
 
 Both `install.sh` and `update.sh` call the single
-`install/lib/release_archive.py` builder. Archive tests execute that real
-builder through both production entry points, and `inspect_artifact()`
-independently rejects nested, case-insensitive `msyh*.ttf`/`msyh*.ttc`
-members.
+`install/lib/release_archive.py` builder. One archive test executes the real
+builder CLI and inspects its ZIP output; separate parameterized wiring tests
+assert each shell entry point's normal path invokes that exact helper once.
+`bash -n` validates both shell scripts, and `inspect_artifact()` independently
+rejects nested, case-insensitive `msyh*.ttf`/`msyh*.ttc` members.
 
 - [ ] **Step 2: Install the device-owned fonts outside the release**
 

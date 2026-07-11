@@ -23,8 +23,13 @@ The live device's existing user-provided YaHei files may be installed there as
 and release tooling continue to exclude the binaries.
 
 Repeated installation reasserts the directory ownership and mode above and
-normalizes regular files inside it to `root:inkypi` `0640` without following
-symbolic links.
+normalizes direct regular files inside it to `root:inkypi` `0640`. The
+normalizer opens the absolute data path component-by-component from `/` with
+`O_DIRECTORY|O_NOFOLLOW`, creates `fonts` relative to the held data-directory
+descriptor, and opens the directory and each member with `O_NOFOLLOW`. It
+applies ownership and mode through file descriptors, rejects symbolic links and
+other non-regular members, and verifies that reopening the absolute data path
+and resolving `fonts` from the held descriptor still produce the same inodes.
 
 ## Resolution architecture
 
@@ -68,9 +73,9 @@ Automated tests cover:
 - missing and corrupt files falling back without a render failure;
 - SportsDashboard regular/bold selection;
 - no font binary entering `git archive` or a release payload;
-- both installer and updater release entry points using the same archive
-  builder, plus updater inspection rejecting any nested, case-insensitive
-  `msyh*.ttf`/`msyh*.ttc` member;
+- real ZIP behavior from the shared archive builder, exact normal-path wiring
+  from both installer and updater to that one helper, and updater inspection
+  rejecting any nested, case-insensitive `msyh*.ttf`/`msyh*.ttc` member;
 - full unit, lint, and clean-archive gates.
 
 Live acceptance requires a fresh SportsDashboard render on the physical

@@ -145,16 +145,7 @@ ensure_service_user() {
 }
 
 normalize_durable_font_permissions() {
-  local fonts_dir="$DATA_DIR/fonts"
-  [[ ! -L "$DATA_DIR" ]] || fail "Refusing symlinked data directory: $DATA_DIR"
-  [[ ! -L "$fonts_dir" ]] || fail "Refusing symlinked font directory: $fonts_dir"
-  install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"
-  if find -P "$DATA_DIR/fonts" -xdev -type l -print -quit | grep -q .; then
-    fail "Refusing symbolic links in durable font directory: $fonts_dir"
-  fi
-  find -P "$DATA_DIR/fonts" -xdev -type f \
-    -exec chown --no-dereference root:inkypi {} + \
-    -exec chmod 0640 {} +
+  python3 "$SCRIPT_DIR/lib/font_permissions.py" "$DATA_DIR"
 }
 
 validate_packaged_driver() {

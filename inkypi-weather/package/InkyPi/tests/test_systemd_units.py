@@ -9,6 +9,8 @@ import pytest
 
 
 INSTALL_ROOT = Path(__file__).resolve().parents[1] / "install"
+RELEASE_ARCHIVE_HELPER = INSTALL_ROOT / "lib" / "release_archive.py"
+FONT_PERMISSIONS_HELPER = INSTALL_ROOT / "lib" / "font_permissions.py"
 
 
 def _parse_unit(path):
@@ -96,24 +98,39 @@ def test_install_manages_service_user_runtime_ownership_and_broker_units():
     assert "chown -R -h inkypi:inkypi" in script
 
 
-def test_install_reestablishes_root_owned_durable_font_permissions_without_following_symlinks():
+def test_install_delegates_durable_font_permissions_to_fd_helper():
     script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
 
-    assert 'install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"' in script
-    function = script.split("normalize_durable_font_permissions() {", maxsplit=1)[1].split(
-        "\n}", maxsplit=1
-    )[0]
-    assert 'find -P "$DATA_DIR/fonts" -xdev -type f' in function
-    assert "-exec chown --no-dereference root:inkypi {} +" in function
-    assert "-exec chmod 0640 {} +" in function
+    directory_command = 'install -d -o root -g inkypi -m 0750 "$DATA_DIR/fonts"'
+    helper_command = 'python3 "$SCRIPT_DIR/lib/font_permissions.py" "$DATA_DIR"'
+    assert directory_command not in script
+    assert helper_command in script
+    assert 'find -P "$DATA_DIR/fonts"' not in script
 
 
-@pytest.mark.parametrize(
-    ("entrypoint", "artifact_variable"),
-    (("install.sh", "$artifact"), ("update.sh", "$ARTIFACT")),
-)
-def test_release_archive_excludes_yahei_binaries_from_any_directory(
-    tmp_path, entrypoint, artifact_variable
+def test_font_permission_helper_uses_no_follow_file_descriptors_only():
+    assert FONT_PERMISSIONS_HELPER.is_file()
+    source = FONT_PERMISSIONS_HELPER.read_text(encoding="utf-8")
+
+    assert "os.O_DIRECTORY" in source
+    assert "os.O_NOFOLLOW" in source
+    assert "def _open_absolute_directory" in source
+    assert "dir_fd=directory_fd" in source
+    assert "os.mkdir(" in source
+    assert "dir_fd=data_fd" in source
+    assert source.count("_open_absolute_directory(") >= 3
+    assert "os.fchown(" in source
+    assert "os.fchmod(" in source
+    assert '"fonts", dir_fd=data_fd, follow_symlinks=False' in " ".join(
+        source.split()
+    )
+    assert source.count("os.fstat(") >= 3
+    assert "os.chmod(" not in source
+    assert "os.makedirs(" not in source
+
+
+def test_shared_release_archive_builder_excludes_yahei_binaries_from_any_directory(
+    tmp_path,
 ):
     project = tmp_path / "project"
     files = {
@@ -133,7 +150,7 @@ def test_release_archive_excludes_yahei_binaries_from_any_directory(
     subprocess.run(
         [
             sys.executable,
-            str(_release_archive_builder(entrypoint, artifact_variable)),
+            str(RELEASE_ARCHIVE_HELPER),
             str(project),
             str(artifact),
         ],
@@ -151,6 +168,22 @@ def test_release_archive_excludes_yahei_binaries_from_any_directory(
         "src/plugins/sports_dashboard/fonts/msyhbd.ttc",
         "vendor/deep/fonts/MSYHL.TTC",
     }.isdisjoint(members)
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "artifact_variable"),
+    (("install.sh", "$artifact"), ("update.sh", "$ARTIFACT")),
+)
+def test_release_entrypoints_delegate_once_to_the_shared_builder_on_normal_path(
+    entrypoint, artifact_variable
+):
+    source = (INSTALL_ROOT / entrypoint).read_text(encoding="utf-8")
+    builder = _release_archive_builder(entrypoint, artifact_variable)
+
+    assert builder == RELEASE_ARCHIVE_HELPER
+    assert source.count("lib/release_archive.py") == 1
+    assert "import zipfile" not in source
+    assert "root.rglob" not in source
 
 
 def test_installed_launcher_exports_mutable_runtime_roots():
