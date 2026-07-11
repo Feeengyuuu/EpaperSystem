@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from runtime.refresh_contracts import freeze_payload
@@ -261,12 +261,15 @@ class PlaylistManager:
         displayed_playlist=None,
         displayed_plugin_id=None,
         displayed_name=None,
+        is_eligible: Callable[[PluginInstanceSnapshot], bool] | None = None,
+        allow_fallback: bool = True,
     ) -> PlaylistSelectionSnapshot | None:
-        """Select theme input, preferring an exact displayed UUID.
+        """Select eligible theme input, preferring an exact displayed UUID.
 
         The three legacy display fields are consulted only when UUID is absent.
         That compatibility path is inherently ABA-unsafe and is retained only
-        until all callers persist and provide instance UUIDs.
+        until all callers persist and provide instance UUIDs. Eligibility is
+        evaluated against immutable snapshots. Rotation fallback can be disabled.
         """
         with self._lock:
             playlist = self._determine_active_playlist_locked(current_datetime)
@@ -285,10 +288,12 @@ class PlaylistManager:
                     None,
                 )
                 if displayed is not None:
-                    return PlaylistSelectionSnapshot(
-                        playlist.name,
-                        displayed.snapshot(),
-                    )
+                    displayed_snapshot = displayed.snapshot()
+                    if is_eligible is None or is_eligible(displayed_snapshot):
+                        return PlaylistSelectionSnapshot(
+                            playlist.name,
+                            displayed_snapshot,
+                        )
             elif (
                 displayed_playlist == playlist.name
                 and displayed_plugin_id is not None
@@ -304,17 +309,28 @@ class PlaylistManager:
                     None,
                 )
                 if displayed is not None:
-                    return PlaylistSelectionSnapshot(
-                        playlist.name,
-                        displayed.snapshot(),
-                    )
+                    displayed_snapshot = displayed.snapshot()
+                    if is_eligible is None or is_eligible(displayed_snapshot):
+                        return PlaylistSelectionSnapshot(
+                            playlist.name,
+                            displayed_snapshot,
+                        )
 
+            if not allow_fallback:
+                return None
             if not playlist.plugins:
                 return None
-            fallback = playlist.get_next_plugin()
-            if fallback is None:
-                return None
-            return PlaylistSelectionSnapshot(playlist.name, fallback.snapshot())
+            for _ in range(len(playlist.plugins)):
+                fallback = playlist.get_next_plugin()
+                if fallback is None:
+                    return None
+                fallback_snapshot = fallback.snapshot()
+                if is_eligible is None or is_eligible(fallback_snapshot):
+                    return PlaylistSelectionSnapshot(
+                        playlist.name,
+                        fallback_snapshot,
+                    )
+            return None
 
     def validate_instance_revision(
         self,

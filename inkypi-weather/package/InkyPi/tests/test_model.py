@@ -5,7 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.model import Playlist, PlaylistManager, PluginInstance, RefreshInfo
+from src.model import (
+    Playlist,
+    PlaylistManager,
+    PluginInstance,
+    PluginInstanceSnapshot,
+    RefreshInfo,
+)
 
 
 class MutableSettingsLeaf:
@@ -1194,6 +1200,191 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert selected.playlist_name == "Default"
         assert self._rotation_state(manager) == before_rotation
 
+    def test_select_theme_exact_uuid_applies_predicate_to_one_immutable_snapshot(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="home-uuid",
+                        settings={"appearance": {"theme": "dark"}},
+                    ),
+                    self._plugin("Clock", instance_uuid="clock-uuid"),
+                ],
+                current_plugin_index=1,
+                plugin_rotation_queue=["home-uuid"],
+                plugin_rotation_pool=["home-uuid", "clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+        live_instance = manager.find_plugin("weather", "Home")
+        original_snapshot = live_instance.snapshot
+        snapshot_calls = []
+        predicate_calls = []
+
+        def counted_snapshot():
+            snapshot = original_snapshot()
+            snapshot_calls.append(snapshot)
+            return snapshot
+
+        def is_eligible(snapshot):
+            predicate_calls.append(snapshot)
+            assert isinstance(snapshot, PluginInstanceSnapshot)
+            assert snapshot is not live_instance
+            with pytest.raises(FrozenInstanceError):
+                snapshot.name = "Changed"
+            with pytest.raises(TypeError):
+                snapshot.settings["appearance"]["theme"] = "light"
+            return True
+
+        live_instance.snapshot = counted_snapshot
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="home-uuid",
+            is_eligible=is_eligible,
+        )
+
+        assert selected.instance.instance_uuid == "home-uuid"
+        assert snapshot_calls == [selected.instance]
+        assert predicate_calls == [selected.instance]
+        assert predicate_calls[0] is selected.instance
+        assert live_instance.name == "Home"
+        assert live_instance.settings["appearance"]["theme"] == "dark"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_ineligible_exact_uuid_without_fallback_does_not_rotate(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("Blocked", instance_uuid="blocked-uuid"),
+                    self._plugin("Allowed", instance_uuid="allowed-uuid"),
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["allowed-uuid"],
+                plugin_rotation_pool=["blocked-uuid", "allowed-uuid"],
+                plugin_rotation_recent_history=["blocked-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+        predicate_uuids = []
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="blocked-uuid",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid) or False
+            ),
+            allow_fallback=False,
+        )
+
+        assert selected is None
+        assert predicate_uuids == ["blocked-uuid"]
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_missing_exact_uuid_without_fallback_does_not_rotate(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+                current_plugin_index=0,
+                plugin_rotation_queue=[],
+                plugin_rotation_pool=["clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="missing-uuid",
+            allow_fallback=False,
+        )
+
+        assert selected is None
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_fallback_skips_ineligible_rotation_item(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("Blocked", instance_uuid="blocked-uuid"),
+                    self._plugin("Allowed", instance_uuid="allowed-uuid"),
+                ],
+                current_plugin_index=None,
+                plugin_rotation_queue=["blocked-uuid", "allowed-uuid"],
+                plugin_rotation_pool=["blocked-uuid", "allowed-uuid"],
+                plugin_rotation_recent_history=[],
+            )
+        )
+        playlist = manager.get_playlist("Default")
+        original_get_next = playlist.get_next_plugin
+        get_next_calls = []
+        predicate_uuids = []
+
+        def counted_get_next():
+            get_next_calls.append(None)
+            return original_get_next()
+
+        playlist.get_next_plugin = counted_get_next
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="missing-uuid",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid)
+                or snapshot.instance_uuid == "allowed-uuid"
+            ),
+        )
+
+        assert selected.instance.instance_uuid == "allowed-uuid"
+        assert len(get_next_calls) == 2
+        assert predicate_uuids == ["blocked-uuid", "allowed-uuid"]
+
+    def test_select_theme_all_ineligible_fallback_is_bounded_by_plugin_count(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+                current_plugin_index=None,
+                plugin_rotation_queue=["one-uuid", "two-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid"],
+                plugin_rotation_recent_history=[],
+            )
+        )
+        playlist = manager.get_playlist("Default")
+        original_get_next = playlist.get_next_plugin
+        get_next_calls = []
+        predicate_uuids = []
+
+        def bounded_get_next():
+            get_next_calls.append(None)
+            assert len(get_next_calls) <= len(playlist.plugins)
+            return original_get_next()
+
+        playlist.get_next_plugin = bounded_get_next
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_instance_uuid="missing-uuid",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid) or False
+            ),
+            allow_fallback=True,
+        )
+
+        assert selected is None
+        assert len(get_next_calls) == len(playlist.plugins)
+        assert predicate_uuids == ["one-uuid", "two-uuid"]
+
     def test_select_theme_stale_uuid_recreate_falls_back_exactly_once(self):
         manager = self._manager(
             self._playlist(
@@ -1372,6 +1563,87 @@ class TestPlaylistManagerSchedulerSnapshots:
         )
 
         assert selected.instance.instance_uuid == "home-uuid"
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_eligible_legacy_match_snapshots_once_without_rotating(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="home-uuid",
+                    ),
+                    self._plugin("Clock", instance_uuid="clock-uuid"),
+                ],
+                current_plugin_index=1,
+                plugin_rotation_queue=["home-uuid"],
+                plugin_rotation_pool=["home-uuid", "clock-uuid"],
+                plugin_rotation_recent_history=["clock-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+        live_instance = manager.find_plugin("weather", "Home")
+        original_snapshot = live_instance.snapshot
+        snapshot_calls = []
+        predicate_calls = []
+
+        def counted_snapshot():
+            snapshot = original_snapshot()
+            snapshot_calls.append(snapshot)
+            return snapshot
+
+        live_instance.snapshot = counted_snapshot
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_playlist="Default",
+            displayed_plugin_id="weather",
+            displayed_name="Home",
+            is_eligible=lambda snapshot: predicate_calls.append(snapshot) or True,
+        )
+
+        assert selected.instance.instance_uuid == "home-uuid"
+        assert snapshot_calls == [selected.instance]
+        assert predicate_calls == [selected.instance]
+        assert predicate_calls[0] is selected.instance
+        assert self._rotation_state(manager) == before_rotation
+
+    def test_select_theme_ineligible_legacy_match_without_fallback_does_not_rotate(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(
+                        "Home",
+                        plugin_id="weather",
+                        instance_uuid="home-uuid",
+                    ),
+                    self._plugin("Clock", instance_uuid="clock-uuid"),
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=["clock-uuid"],
+                plugin_rotation_pool=["home-uuid", "clock-uuid"],
+                plugin_rotation_recent_history=["home-uuid"],
+            )
+        )
+        before_rotation = self._rotation_state(manager)
+        predicate_uuids = []
+
+        selected = manager.select_theme_instance(
+            datetime(2026, 7, 9, 12, 0),
+            displayed_playlist="Default",
+            displayed_plugin_id="weather",
+            displayed_name="Home",
+            is_eligible=lambda snapshot: (
+                predicate_uuids.append(snapshot.instance_uuid) or False
+            ),
+            allow_fallback=False,
+        )
+
+        assert selected is None
+        assert predicate_uuids == ["home-uuid"]
         assert self._rotation_state(manager) == before_rotation
 
     def test_validate_instance_revision_requires_exact_nonwildcard_tokens(self):
