@@ -687,7 +687,10 @@ class OffseasonHubMixin:
         if not start:
             return None
         leaderboard = SportsDashboard._parse_pga_leaderboard(competition.get("competitors") or event.get("competitors") or [])
-        if end and start <= now <= end + timedelta(hours=18):
+        provider_state = SportsDashboard._pga_provider_state(event, competition)
+        if provider_state:
+            state = provider_state
+        elif end and start <= now <= end + timedelta(hours=18):
             state = "live"
         elif end and now > end + timedelta(hours=18):
             state = "final"
@@ -700,13 +703,55 @@ class OffseasonHubMixin:
             "start": start,
             "end": end,
             "state": state,
-            "status_text": SportsDashboard._pga_status_label(start, end, now),
+            "status_text": SportsDashboard._pga_provider_status_text(event, competition, state)
+            or SportsDashboard._pga_status_label(start, end, now),
             "name": SportsDashboard._pga_display_event_name(event_name),
             "name_en": event_name,
             "venue": SportsDashboard._pga_venue_label(competition, event),
             "leaderboard": leaderboard,
             "leader": SportsDashboard._pga_leader_summary(leaderboard),
         }
+
+    @staticmethod
+    def _pga_provider_state(event, competition):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") if isinstance(status, Mapping) else {}
+        status_type = status_type if isinstance(status_type, Mapping) else {}
+        state = str(status_type.get("state") or "").strip().lower()
+        name = str(status_type.get("name") or "").strip().lower()
+        description = str(status_type.get("description") or "").strip().lower()
+        detail = str(
+            status_type.get("detail") or status_type.get("shortDetail") or ""
+        ).strip().lower()
+        if (
+            status_type.get("completed") is True
+            or state == "post"
+            or "play complete" in detail
+            or "final" in name
+            or "final" in description
+        ):
+            return "final"
+        if state == "in" or "progress" in name or "in progress" in description:
+            return "live"
+        return ""
+
+    @staticmethod
+    def _pga_provider_status_text(event, competition, state):
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") if isinstance(status, Mapping) else {}
+        status_type = status_type if isinstance(status_type, Mapping) else {}
+        detail = str(
+            status_type.get("shortDetail")
+            or status_type.get("detail")
+            or status_type.get("description")
+            or ""
+        ).strip()
+        if not detail:
+            return ""
+        text = detail.upper()
+        if state == "final":
+            text = re.sub(r"\s*-\s*PLAY COMPLETE\s*$", " COMPLETE", text)
+        return text
 
     @staticmethod
     def _pga_venue_label(competition, event=None):
@@ -780,20 +825,58 @@ class OffseasonHubMixin:
             latest_round = SportsDashboard._pga_latest_round(linescores)
             country = SportsDashboard._pga_athlete_country_code(athlete, competitor)
             position = SportsDashboard._pga_position_value(competitor, index)
+            raw_score = competitor.get("score")
             rows.append(
                 {
                     "position": position,
                     "position_label": SportsDashboard._pga_position_display_label(competitor, position),
                     "name": str(athlete.get("shortName") or athlete.get("displayName") or athlete.get("fullName") or "Player").strip(),
                     "country": country,
-                    "score": str(competitor.get("score") or "E").strip() or "E",
+                    "score": str(raw_score or "E").strip() or "E",
+                    "_score_provided": raw_score is not None and bool(str(raw_score).strip()),
+                    "_rank_provided": SportsDashboard._pga_has_provider_rank(competitor),
                     "round": latest_round.get("round"),
                     "today": latest_round.get("today") or "",
                     "strokes": latest_round.get("strokes") or "",
                 }
             )
         rows.sort(key=lambda item: item["position"])
+        tied_scores = {}
+        for row in rows:
+            if row.get("_score_provided"):
+                tied_scores.setdefault(str(row.get("score") or "").upper(), []).append(row)
+        for tied_rows in tied_scores.values():
+            if len(tied_rows) < 2 or any(row.get("_rank_provided") for row in tied_rows):
+                continue
+            tie_position = min(int(row["position"]) for row in tied_rows)
+            for row in tied_rows:
+                row["position_label"] = f"T{tie_position}"
+        for row in rows:
+            row.pop("_score_provided", None)
+            row.pop("_rank_provided", None)
         return rows[:8]
+
+    @staticmethod
+    def _pga_has_provider_rank(competitor):
+        competitor = competitor or {}
+        curated = (
+            competitor.get("curatedRank")
+            if isinstance(competitor.get("curatedRank"), Mapping)
+            else {}
+        )
+        candidates = [
+            curated.get("displayValue"),
+            curated.get("abbreviation"),
+            curated.get("current"),
+            curated.get("rank"),
+            curated.get("value"),
+            competitor.get("displayRank"),
+            competitor.get("rankDisplay"),
+            competitor.get("currentRank"),
+            competitor.get("currentRankDisplay"),
+            competitor.get("rank"),
+        ]
+        return any(value is not None and bool(str(value).strip()) for value in candidates)
 
     @staticmethod
     def _pga_position_value(competitor, index):
@@ -1468,9 +1551,6 @@ class OffseasonHubMixin:
             logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
 
 
 

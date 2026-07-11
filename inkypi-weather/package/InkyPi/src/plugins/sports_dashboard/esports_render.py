@@ -217,7 +217,7 @@ class EsportsRenderMixin:
 
         header_y = 12
         self._draw_ewc_logo(image, draw, right_x + 12, header_y + 5, 92, 35)
-        source_label = self._source_label(source_state)
+        source_label = self._ewc_source_label(source_state)
         source_label, source_font = self._fit_text_ellipsis(draw, source_label, 58, 9, bold=True, min_size=7)
         self._draw_text_in_box(
             draw,
@@ -233,11 +233,19 @@ class EsportsRenderMixin:
         live = selected.get("live") or []
         main_event = main_match or selected.get("main") or None
         is_live = False
+        is_active_event = False
         if main_match:
             is_live = any(main_match.get("event_id") == match.get("event_id") for match in live_matches)
         else:
-            is_live = bool(main_event and live and main_event.get("event_id") == live[0].get("event_id"))
-        self._draw_status_pill(draw, right_x + right_w - 88, header_y + 8, "LIVE" if is_live else "NEXT", is_live)
+            is_active_event = bool(
+                main_event
+                and any(
+                    main_event.get("event_id") == event.get("event_id")
+                    for event in live
+                )
+            )
+        status_label = "LIVE" if is_live else ("ACTIVE" if is_active_event else "NEXT")
+        self._draw_status_pill(draw, right_x + right_w - 88, header_y + 8, status_label, is_live)
         draw.line((right_x + 14, 66, right_x + right_w - 14, 66), fill=COLORS["border"], width=1)
 
         if main_match:
@@ -256,7 +264,16 @@ class EsportsRenderMixin:
             self._draw_ewc_match_rows(image, draw, right_x, right_w, 252, "RECENT", recent_matches[:4], now, "No EWC match schedule")
             return
 
-        self._draw_ewc_focus_card(image, draw, right_x, right_w, 78, main_event, now, is_live)
+        self._draw_ewc_focus_card(
+            image,
+            draw,
+            right_x,
+            right_w,
+            78,
+            main_event,
+            now,
+            is_active_event,
+        )
         upcoming = list(selected.get("upcoming") or [])
         if main_event:
             main_id = main_event.get("event_id")
@@ -452,11 +469,24 @@ class EsportsRenderMixin:
         if isinstance(now, datetime) and start.date() == now.date():
             return start.strftime("%I:%M %p").lstrip("0")
         return start.strftime("%b %d %H:%M").upper()
-    def _draw_ewc_focus_card(self, image, draw, right_x, right_w, y, event, now, is_live):
+    @staticmethod
+    def _ewc_source_label(source_state):
+        state = str(source_state or "").strip().upper()
+        if "FALLBACK" in state:
+            return "SCHEDULE FALLBACK"
+        if "STALE" in state:
+            return "STALE DATA"
+        if "CACHE" in state:
+            return "OFFICIAL CACHE"
+        if state.startswith("EWC"):
+            return "OFFICIAL DATA"
+        return state or "OFFICIAL DATA"
+
+    def _draw_ewc_focus_card(self, image, draw, right_x, right_w, y, event, now, is_active):
         card_x1 = right_x + 12
         card_x2 = right_x + right_w - 12
         card_y2 = y + 154
-        accent = COLORS["ewc_live"] if is_live else COLORS["ewc_accent"]
+        accent = COLORS["ewc_accent"]
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["ewc_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
@@ -464,10 +494,10 @@ class EsportsRenderMixin:
             draw.text((card_x1 + 20, y + 58), "No EWC schedule", font=self._font(19, True), fill=COLORS["text"])
             return
 
-        tag = "LIVE EVENT" if is_live else "NEXT EVENT"
-        tag_w = 106 if is_live else 98
+        tag = "CURRENT EVENT" if is_active else "NEXT EVENT"
+        tag_w = 116 if is_active else 98
         tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
-        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=COLORS["ewc_live"] if is_live else COLORS["ewc_tag"], outline=COLORS["border"], width=1)
+        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=COLORS["ewc_tag"], outline=COLORS["border"], width=1)
         draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
         date_text = self._ewc_date_label(event)
         date_text, date_font = self._fit_text_ellipsis(draw, date_text, 82, 11, bold=True, min_size=8)
@@ -488,7 +518,7 @@ class EsportsRenderMixin:
 
         title, title_font = self._fit_text_ellipsis(draw, event.get("game") or "EWC", card_x2 - card_x1 - 34, 18, bold=True, min_size=12)
         self._draw_centered(draw, (right_x + right_w / 2, title_y), title, title_font, COLORS["text"])
-        status_text = "IN PROGRESS" if is_live else self._ewc_countdown_label(event, now)
+        status_text = "EVENT IN PROGRESS" if is_active else self._ewc_countdown_label(event, now)
         status_text, status_font = self._fit_text_ellipsis(draw, status_text, card_x2 - card_x1 - 40, 15, bold=True, min_size=10)
         self._draw_centered(draw, (right_x + right_w / 2, status_y), status_text, status_font, accent)
 

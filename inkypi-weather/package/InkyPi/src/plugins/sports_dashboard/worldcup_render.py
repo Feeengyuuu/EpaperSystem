@@ -1313,7 +1313,7 @@ class WorldCupRenderMixin:
         elif "ESPN" in state and state.startswith("API"):
             prefix = "API+ESPN"
         elif state == "ESPN LIVE":
-            prefix = "ESPN LIVE"
+            prefix = "ESPN DATA"
         elif state == "ESPN CACHE":
             prefix = "ESPN CACHE"
         elif state == "ESPN STALE":
@@ -1329,7 +1329,7 @@ class WorldCupRenderMixin:
         elif state == "FOOTBALL LIMIT":
             prefix = "FD LIMIT"
         elif state == "API LIVE":
-            prefix = "API LIVE"
+            prefix = "API DATA"
         elif state == "API STALE":
             prefix = "STALE CACHE"
         elif state == "API LIMIT":

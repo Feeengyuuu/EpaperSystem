@@ -1665,6 +1665,81 @@ def test_ewc_live_state_file_marks_live_match_group():
     assert state["live_until"] == "2026-07-08T21:00:00+00:00"
 
 
+def test_ewc_competition_window_without_matches_is_not_live_state():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_event_window_state")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 10, 18, 0, tzinfo=la)
+    competition = {
+        "event_id": "ewc-2026-valorant",
+        "game": "VALORANT",
+        "slug": "valorant",
+        "start": datetime(2026, 7, 2, 0, 0, tzinfo=la),
+        "end": datetime(2026, 7, 12, 23, 59, tzinfo=la),
+        "status": "ONGOING",
+        "participant_count": 16,
+        "participant_label": "clubs",
+    }
+    selected = SportsDashboard._select_ewc_events(
+        [competition], now, 21, rotation_seed=0
+    )
+
+    plugin._write_ewc_live_state(selected, now, "EWC LIVE")
+
+    state = json.loads((cache_dir / "ewc_live_state.json").read_text(encoding="utf-8"))
+    assert selected["main_match"] is None
+    assert state["has_live"] is False
+    assert state["live_until"] is None
+
+
+def test_ewc_competition_window_renders_as_active_calendar_not_live_match():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 10, 18, 0, tzinfo=la)
+    selected = SportsDashboard._select_ewc_events(
+        [
+            {
+                "event_id": "ewc-2026-valorant",
+                "game": "VALORANT",
+                "slug": "valorant",
+                "start": datetime(2026, 7, 2, 0, 0, tzinfo=la),
+                "end": datetime(2026, 7, 12, 23, 59, tzinfo=la),
+                "status": "ONGOING",
+                "participant_count": 16,
+                "participant_label": "clubs",
+                "prize_pool": "$2,000,000",
+            }
+        ],
+        now,
+        21,
+        rotation_seed=0,
+    )
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    seen_texts = []
+    status_pills = []
+    original_fit_text_ellipsis = plugin._fit_text_ellipsis
+
+    def capture_fit_text_ellipsis(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_text_ellipsis(draw_obj, text, *args, **kwargs)
+
+    def capture_status_pill(_draw, _x, _y, text, is_live):
+        status_pills.append((str(text), bool(is_live)))
+
+    plugin._fit_text_ellipsis = capture_fit_text_ellipsis
+    plugin._draw_status_pill = capture_status_pill
+
+    plugin._draw_ewc_sidebar(image, 552, selected, "EWC LIVE", now)
+
+    assert status_pills == [("ACTIVE", False)]
+    assert "CURRENT EVENT" in seen_texts
+    assert "EVENT IN PROGRESS" in seen_texts
+    assert "LIVE EVENT" not in seen_texts
+    assert "EWC LIVE" not in seen_texts
+    assert "OFFICIAL DATA" in seen_texts
+
+
 def test_ewc_sidebar_render_draws_detail_match_names_and_official_logos(monkeypatch, tmp_path):
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -3271,6 +3346,77 @@ def test_pga_event_parser_preserves_available_course_names():
     parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
 
     assert parsed["events"][0]["venue"] == "Event Course"
+
+
+def test_pga_provider_play_complete_is_not_rendered_as_live():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 10, 18, 0, tzinfo=la)
+    payload = json.loads(json.dumps(_sample_pga_scoreboard_payload()))
+    event = payload["events"][0]
+    event["date"] = "2026-07-09T04:00Z"
+    event["endDate"] = "2026-07-12T22:00Z"
+    competition = event["competitions"][0]
+    competition["date"] = event["date"]
+    competition["endDate"] = event["endDate"]
+    competition["status"] = {
+        "type": {
+            "state": "post",
+            "completed": True,
+            "detail": "Round 2 - Play Complete",
+        }
+    }
+
+    parsed = SportsDashboard._parse_pga_scoreboard(payload, la, now)
+    current = parsed["events"][0]
+
+    assert current["state"] == "final"
+    assert current["status_text"] == "ROUND 2 COMPLETE"
+
+
+def test_pga_equal_scores_without_provider_rank_render_as_tied():
+    competitors = [
+        {
+            "order": index,
+            "score": "-9",
+            "athlete": {"shortName": name},
+            "linescores": [],
+        }
+        for index, name in enumerate(
+            ("J. Smith", "T. Kim", "R. McIlroy"), start=1
+        )
+    ]
+
+    rows = SportsDashboard._parse_pga_leaderboard(competitors)
+
+    assert [row["position_label"] for row in rows] == ["T1", "T1", "T1"]
+
+
+def test_pga_equal_scores_preserve_provider_rank_labels():
+    provider_rank_shapes = (
+        ({"rank": 1}, {"rank": 2}),
+        (
+            {"curatedRank": {"abbreviation": "1"}},
+            {"curatedRank": {"abbreviation": "2"}},
+        ),
+    )
+
+    for first_rank, second_rank in provider_rank_shapes:
+        rows = SportsDashboard._parse_pga_leaderboard(
+            [
+                {
+                    **rank,
+                    "score": "-9",
+                    "athlete": {"shortName": name},
+                    "linescores": [],
+                }
+                for rank, name in (
+                    (first_rank, "J. Smith"),
+                    (second_rank, "T. Kim"),
+                )
+            ]
+        )
+
+        assert [row["position_label"] for row in rows] == ["P1", "P2"]
 
 
 def test_offseason_hub_parses_wnba_and_pga_sources():
@@ -11465,6 +11611,16 @@ def test_worldcup_scoreboard_source_label_identifies_overlay():
     )
 
     assert label.startswith("FD+ESPN")
+
+
+def test_worldcup_fresh_source_label_does_not_claim_match_is_live():
+    label = SportsDashboard._worldcup_api_source_label(
+        "ESPN LIVE",
+        "2026-07-11T01:51:12+00:00",
+    )
+
+    assert label.startswith("ESPN DATA")
+    assert "LIVE" not in label
 
 
 def test_worldcup_completed_only_selection_uses_recent_mode_and_year():

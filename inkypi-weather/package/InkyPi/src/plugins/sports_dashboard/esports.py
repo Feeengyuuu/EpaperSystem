@@ -1129,8 +1129,14 @@ class EsportsMixin:
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         current_utc = current.astimezone(timezone.utc)
-        live_matches = list(selected.get("live_matches") or selected.get("live") or [])
-        main_match = selected.get("main_match") or selected.get("main") or (live_matches[0] if live_matches else {})
+        live_matches = [
+            match
+            for match in (selected.get("live_matches") or [])
+            if self._is_ewc_match_item(match)
+        ]
+        main_match = selected.get("main_match") or (live_matches[0] if live_matches else {})
+        if main_match and not self._is_ewc_match_item(main_match):
+            main_match = {}
         event = live_matches[0] if live_matches else (main_match or {})
         event_start = event.get("start") if isinstance(event, Mapping) else None
         event_end = event.get("end") if isinstance(event, Mapping) else None
@@ -3428,7 +3434,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 
