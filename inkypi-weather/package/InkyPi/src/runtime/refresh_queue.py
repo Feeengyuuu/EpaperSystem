@@ -764,6 +764,15 @@ class RefreshQueue:
                 source = self._more_urgent_source(existing.source, incoming.source)
 
         if revision_comparison == 0:
+            manual_display_owner = next(
+                (
+                    candidate
+                    for candidate in (incoming, existing)
+                    if candidate.source is CommandSource.MANUAL
+                    and candidate.kind is CommandKind.DISPLAY
+                ),
+                None,
+            )
             manual_inactive = next(
                 (
                     candidate
@@ -778,7 +787,7 @@ class RefreshQueue:
                 selected_payload = self._merged_theme_transition_payload(
                     existing,
                     incoming,
-                    manual_inactive,
+                    manual_display_owner,
                 )
             elif manual_inactive is not None:
                 # Manual display of an exact inactive-playlist revision is a
@@ -811,66 +820,60 @@ class RefreshQueue:
     def _merged_theme_transition_payload(
         existing: RefreshCommand,
         incoming: RefreshCommand,
-        manual_inactive: RefreshCommand | None,
+        manual_display_owner: RefreshCommand | None,
     ):
-        """Combine transition metadata without retaining the old resolved mode."""
-        merged = dict(incoming.payload)
+        """Merge theme metadata while retaining ordinary manual display intent."""
+        payload_owner = manual_display_owner or incoming
+        merged = dict(payload_owner.payload)
 
         existing_theme_context = existing.payload.get("theme_context")
         incoming_theme_context = incoming.payload.get("theme_context")
+        combined_theme_context = None
         if existing.kind is CommandKind.DISPLAY and isinstance(
             existing_theme_context,
             Mapping,
         ):
             combined_theme_context = dict(existing_theme_context)
-            incoming_resolved_context = incoming.payload.get(
-                "resolved_theme_context"
-            )
-            if isinstance(incoming_resolved_context, Mapping):
-                incoming_resolved_mode = incoming_resolved_context.get("mode")
-                if incoming_resolved_mode in {"day", "night"}:
-                    combined_theme_context["mode"] = incoming_resolved_mode
-            if isinstance(incoming_theme_context, Mapping):
-                combined_theme_context.update(incoming_theme_context)
+        if isinstance(incoming_theme_context, Mapping):
+            if combined_theme_context is None:
+                combined_theme_context = {}
+            combined_theme_context.update(incoming_theme_context)
+        incoming_resolved_context = incoming.payload.get("resolved_theme_context")
+        if (
+            combined_theme_context is not None
+            and isinstance(incoming_resolved_context, Mapping)
+        ):
+            incoming_resolved_mode = incoming_resolved_context.get("mode")
+            if incoming_resolved_mode in {"day", "night"}:
+                combined_theme_context["mode"] = incoming_resolved_mode
+        if combined_theme_context is not None:
             merged["theme_context"] = combined_theme_context
 
-        theme_display = next(
-            (
-                candidate
-                for candidate in (incoming, existing)
-                if candidate.kind is CommandKind.DISPLAY
-                and candidate.payload.get("theme_render_only") is True
-            ),
-            None,
-        )
-        if theme_display is not None:
-            merged["theme_render_only"] = True
-            if "expected_displayed_instance_uuid" in theme_display.payload:
-                merged["expected_displayed_instance_uuid"] = theme_display.payload[
-                    "expected_displayed_instance_uuid"
-                ]
+        if (
+            manual_display_owner is not None
+            and manual_display_owner.payload.get("theme_render_only") is not True
+        ):
+            merged.pop("theme_render_only", None)
+            merged.pop("expected_displayed_instance_uuid", None)
+        else:
+            theme_display = next(
+                (
+                    candidate
+                    for candidate in (incoming, existing)
+                    if candidate.kind is CommandKind.DISPLAY
+                    and candidate.payload.get("theme_render_only") is True
+                ),
+                None,
+            )
+            if theme_display is not None:
+                merged["theme_render_only"] = True
+                if "expected_displayed_instance_uuid" in theme_display.payload:
+                    merged["expected_displayed_instance_uuid"] = (
+                        theme_display.payload["expected_displayed_instance_uuid"]
+                    )
 
-        if manual_inactive is not None:
-            for key in (
-                "refresh_type",
-                "playlist_name",
-                "instance_name",
-                "settings",
-                "refresh",
-                "latest_refresh_time",
-                "display_cached_only",
-                "require_active",
-            ):
-                if key in manual_inactive.payload:
-                    merged[key] = manual_inactive.payload[key]
-            if manual_inactive.payload.get("theme_render_only") is not True:
-                merged.pop("theme_render_only", None)
-                merged.pop("expected_displayed_instance_uuid", None)
-
-        if "resolved_theme_context" in incoming.payload:
-            merged["resolved_theme_context"] = incoming.payload[
-                "resolved_theme_context"
-            ]
+        if incoming_resolved_context is not None:
+            merged["resolved_theme_context"] = incoming_resolved_context
         return freeze_payload(merged)
 
     @staticmethod
