@@ -24,18 +24,4 @@
         return originalFetch(input, options);
     };
 
-    const warningMeta = document.querySelector('meta[name="inkypi-plain-http"]');
-    if (warningMeta && warningMeta.getAttribute("content") === "true") {
-        document.addEventListener("DOMContentLoaded", function () {
-            if (document.getElementById("inkypi-http-warning")) {
-                return;
-            }
-            const warning = document.createElement("div");
-            warning.id = "inkypi-http-warning";
-            warning.setAttribute("role", "status");
-            warning.textContent = "Connection is not encrypted. Administrative changes should use a trusted local network or HTTPS.";
-            warning.style.cssText = "position:sticky;top:0;z-index:10000;padding:8px 14px;background:#8f3f22;color:#fff;font:600 13px/1.4 system-ui,sans-serif;text-align:center";
-            document.body.insertBefore(warning, document.body.firstChild);
-        });
-    }
 })();

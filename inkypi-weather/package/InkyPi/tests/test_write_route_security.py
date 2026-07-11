@@ -137,3 +137,15 @@ def test_all_administration_pages_load_the_shared_csrf_fetch_wrapper():
     assert "window.fetch" in script
     assert "X-CSRF-Token" in script
     assert "target.origin === window.location.origin" in script
+
+
+def test_shared_security_script_does_not_inject_plain_http_banner():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "inkypi-security.js"
+    ).read_text(encoding="utf-8")
+
+    assert "inkypi-http-warning" not in script
+    assert "Administrative changes should use" not in script
