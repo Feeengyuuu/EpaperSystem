@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime, time, timezone
 from typing import Any
 
@@ -15,6 +16,8 @@ DEFAULT_NIGHT_START = time(19, 0)
 WEATHER_CONTEXT_MAX_AGE_SECONDS = 72 * 60 * 60
 
 THEME_MODE_KEYS = ("theme_mode", "display_theme_mode", "themeMode")
+PLUGIN_THEME_MODE_KEYS = ("themeMode", "theme_mode", "theme", "sportsDashboardTheme")
+PALETTE_ROLES = ("background", "panel", "ink", "muted", "rule", "accent")
 
 DAY_PALETTE = {
     "background": (255, 255, 255),
@@ -54,11 +57,21 @@ MODE_ALIASES = {
     "auto": "auto",
     "day": "day",
     "light": "day",
+    "paper": "day",
+    "comic": "day",
     "white": "day",
     "night": "night",
     "dark": "night",
+    "cinema": "night",
+    "streaming": "night",
     "midnight": "night",
 }
+
+
+def normalize_theme_mode(value: Any, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    return MODE_ALIASES.get(str(value).strip().lower(), default)
 
 
 def get_theme_context(device_config: Any = None, now: datetime | None = None) -> dict[str, Any]:
@@ -96,6 +109,53 @@ def get_theme_context(device_config: Any = None, now: datetime | None = None) ->
         source="fallback",
         reason="07:00-19:00 local fallback",
     )
+
+
+def resolve_plugin_theme(
+    settings: Mapping[str, Any] | None = None,
+    device_config: Any = None,
+    now: datetime | None = None,
+    palette: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    plugin_settings = settings if isinstance(settings, Mapping) else {}
+    raw_mode = next(
+        (
+            plugin_settings.get(key)
+            for key in PLUGIN_THEME_MODE_KEYS
+            if plugin_settings.get(key) not in (None, "")
+        ),
+        "auto",
+    )
+    requested_mode = normalize_theme_mode(raw_mode, "auto") or "auto"
+    context = get_theme_context(device_config, now=now)
+    mode = context["mode"] if requested_mode == "auto" else requested_mode
+
+    result = dict(context)
+    result.update({"requested_mode": requested_mode, "mode": mode})
+    result["palette"] = resolve_palette_roles(palette, mode)
+    result["css"] = _css_palette(result["palette"])
+    return result
+
+
+def resolve_palette_roles(
+    palette: Mapping[str, Any] | None,
+    mode: Any,
+) -> dict[str, tuple[int, int, int]]:
+    resolved_mode = normalize_theme_mode(mode, "day")
+    resolved_mode = resolved_mode if resolved_mode in {"day", "night"} else "day"
+    fallback = NIGHT_PALETTE if resolved_mode == "night" else DAY_PALETTE
+    supplied = _palette_for_mode(palette, resolved_mode)
+
+    resolved = {
+        role: _coerce_rgb(supplied.get(role), fallback[role])
+        for role in PALETTE_ROLES
+    }
+    if _contrast_ratio(resolved["background"], resolved["ink"]) < 4.5:
+        resolved["ink"] = max(
+            ((0, 0, 0), (255, 255, 255)),
+            key=lambda candidate: _contrast_ratio(resolved["background"], candidate),
+        )
+    return resolved
 
 
 def get_theme_palette(theme: Any = None) -> dict[str, tuple[int, int, int]]:
@@ -160,9 +220,51 @@ def _requested_theme_mode(device_config: Any) -> str:
 
 
 def _normalize_mode(value: Any) -> str | None:
-    if value is None:
-        return None
-    return MODE_ALIASES.get(str(value).strip().lower())
+    return normalize_theme_mode(value)
+
+
+def _palette_for_mode(palette: Mapping[str, Any] | None, mode: str) -> Mapping[str, Any]:
+    if not isinstance(palette, Mapping):
+        return {}
+    selected = palette.get(mode)
+    if isinstance(selected, Mapping):
+        return selected
+    if "day" in palette or "night" in palette:
+        return {}
+    return palette
+
+
+def _coerce_rgb(value: Any, default: tuple[int, int, int]) -> tuple[int, int, int]:
+    if isinstance(value, str):
+        raw = value.strip().removeprefix("#")
+        if len(raw) == 3:
+            raw = "".join(channel * 2 for channel in raw)
+        if len(raw) == 6:
+            try:
+                return tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+            except ValueError:
+                return default
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            channels = tuple(int(channel) for channel in value)
+        except (TypeError, ValueError):
+            return default
+        if all(0 <= channel <= 255 for channel in channels):
+            return channels
+    return default
+
+
+def _contrast_ratio(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+    lighter, darker = sorted((_relative_luminance(first), _relative_luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+    channels = []
+    for channel in rgb:
+        value = channel / 255
+        channels.append(value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
 
 
 def _device_timezone(device_config: Any):
