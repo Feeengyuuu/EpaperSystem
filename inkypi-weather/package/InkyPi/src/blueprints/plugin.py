@@ -25,9 +25,25 @@ from utils.refresh_validation import (
     parse_refresh_config,
     validation_error_payload,
 )
+from utils.theme_utils import normalize_theme_mode
 
 logger = logging.getLogger(__name__)
 plugin_bp = Blueprint("plugin", __name__)
+_PLUGIN_THEME_SETTING_KEYS = (
+    "themeMode",
+    "theme_mode",
+    "theme",
+    "sportsDashboardTheme",
+)
+
+
+def _plugin_theme_mode(plugin_settings):
+    if not isinstance(plugin_settings, Mapping):
+        return "auto"
+    for key in _PLUGIN_THEME_SETTING_KEYS:
+        if key in plugin_settings:
+            return normalize_theme_mode(plugin_settings[key], "auto") or "auto"
+    return "auto"
 
 
 def _signal_config_change():
@@ -271,6 +287,9 @@ def plugin_page(plugin_id):
                     selection.instance.refresh
                 )
 
+            template_params["plugin_theme_mode"] = _plugin_theme_mode(
+                template_params.get("plugin_settings")
+            )
             template_params["playlists"] = playlist_manager.get_playlist_names()
         except Exception as e:
             logger.exception("EXCEPTION CAUGHT: " + str(e))

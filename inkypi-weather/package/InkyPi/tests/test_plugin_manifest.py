@@ -3,6 +3,7 @@ import json
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -102,6 +103,26 @@ def test_v2_manifest_parses_theme_contract(tmp_path):
         "background": "#101318",
         "accent": "#ff7868",
     }
+
+
+def test_v2_manifest_theme_contract_is_deeply_immutable(tmp_path):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_day_night_theme=True,
+        theme={
+            "presentation": "ui",
+            "day": {"background": "#ffffff", "accent": "#123456"},
+            "night": {"background": "#000000", "accent": "#abcdef"},
+        },
+    )
+    manifest = PluginManifest.from_path(manifest_path)
+
+    with pytest.raises(FrozenInstanceError):
+        manifest.theme.presentation = "media"
+    with pytest.raises(TypeError):
+        manifest.theme.day["background"] = "#111111"
+    with pytest.raises(TypeError):
+        manifest.theme.night["accent"] = "#222222"
 
 
 @pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
