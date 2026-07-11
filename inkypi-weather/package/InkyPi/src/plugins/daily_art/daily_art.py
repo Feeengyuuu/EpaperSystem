@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_available_font_names, get_font
+from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_client
 from utils.safe_image import ImageLimits, safe_open_image
@@ -27,7 +27,7 @@ PLUGIN_ID = "daily_art"
 CACHE_SCHEMA_VERSION = "daily-art-cache-v1"
 STATE_SCHEMA_VERSION = "daily-art-state-v1"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-DEFAULT_FONT = "Jost"
+DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_LAYOUT_MODE = "auto_gallery"
 DEFAULT_GALLERY_COUNT = 3
 GALLERY_LAYOUT_MODES = {"auto_gallery", "gallery"}
@@ -1011,7 +1011,7 @@ class DailyArt(BasePlugin):
 
 
 def _font(family, size, weight="normal"):
-    font = get_font(family, int(size), weight)
+    font = get_font(family or DEFAULT_FONT, int(size), weight)
     if font:
         return font
     try:

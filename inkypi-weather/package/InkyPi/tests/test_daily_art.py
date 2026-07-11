@@ -6,6 +6,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.daily_art import daily_art as daily_art_module  # noqa: E402
 from plugins.daily_art.daily_art import ArtworkCandidate, DailyArt  # noqa: E402
 
 
@@ -36,6 +37,36 @@ def make_plugin(tmp_path):
     plugin = DailyArt({"id": "daily_art"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def test_default_font_is_yahei_but_explicit_jost_is_preserved(monkeypatch):
+    sentinel = object()
+    calls = []
+
+    def fake_get_font(family, size, weight="normal"):
+        calls.append((family, size, weight))
+        return sentinel
+
+    monkeypatch.setattr(daily_art_module, "get_font", fake_get_font)
+
+    assert daily_art_module._font(None, 18) is sentinel
+    assert daily_art_module._font("", 18) is sentinel
+    assert daily_art_module._font("Jost", 18, "bold") is sentinel
+    assert calls == [
+        ("Microsoft YaHei", 18, "normal"),
+        ("Microsoft YaHei", 18, "normal"),
+        ("Jost", 18, "bold"),
+    ]
+
+
+def test_settings_default_font_is_microsoft_yahei():
+    settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_art" / "settings.html"
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert daily_art_module.DEFAULT_FONT == "Microsoft YaHei"
+    assert "option.value === 'Microsoft YaHei'" in html
+    assert "fontFamily.value = 'Microsoft YaHei';" in html
+    assert "fontFamily.value = 'Jost';" not in html
 
 
 def test_enabled_sources_skips_keyed_sources_without_keys(tmp_path):

@@ -36,6 +36,37 @@ def _plugin(tmp_path):
     return plugin
 
 
+def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_get_font(family, size, weight="normal"):
+        calls.append((family, size, weight))
+        return sentinel
+
+    monkeypatch.setattr(word_module, "get_font", fake_get_font)
+
+    assert plugin._load_font(None, 18) is sentinel
+    assert plugin._load_font("", 18) is sentinel
+    assert plugin._load_font("康熙字典体", 18, "bold") is sentinel
+    assert calls == [
+        ("Microsoft YaHei", 18, "normal"),
+        ("Microsoft YaHei", 18, "normal"),
+        ("康熙字典体", 18, "bold"),
+    ]
+
+
+def test_settings_default_font_is_microsoft_yahei():
+    settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_word_poem" / "settings.html"
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert word_module.DEFAULT_FONT == "Microsoft YaHei"
+    assert "option.value === 'Microsoft YaHei'" in html
+    assert "fontFamily.value = 'Microsoft YaHei';" in html
+    assert "fontFamily.value = 'Jost';" not in html
+
+
 def test_custom_word_list_picks_one_word_per_day(tmp_path):
     plugin = _plugin(tmp_path)
     settings = {"word_list": "Aurora\nNimbus\nAurora\n"}

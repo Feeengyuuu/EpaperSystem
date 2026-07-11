@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import get_available_font_names, get_font
+from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
 from utils.theme_utils import get_theme_context, get_theme_palette
@@ -30,7 +30,7 @@ WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Qu
 WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
 REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
 CACHE_SCHEMA_VERSION = "daily-word-quote-v4"
-DEFAULT_FONT = "Jost"
+DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (224, 48)
@@ -1127,7 +1127,7 @@ class DailyWordPoem(BasePlugin):
 
     def _load_font(self, font_family, size, weight="normal"):
         try:
-            font = get_font(font_family, int(size), weight)
+            font = get_font(font_family or DEFAULT_FONT, int(size), weight)
             if font:
                 return font
         except OSError as exc:

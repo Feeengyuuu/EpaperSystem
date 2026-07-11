@@ -6,6 +6,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.daily_knowledge import daily_knowledge as knowledge_module  # noqa: E402
 from plugins.daily_knowledge.daily_knowledge import DailyKnowledge, LOCAL_FALLBACK_FACTS  # noqa: E402
 
 
@@ -37,6 +38,52 @@ def _plugin(tmp_path):
     plugin = DailyKnowledge({"id": "daily_knowledge"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_get_font(family, size, weight="normal"):
+        calls.append((family, size, weight))
+        return sentinel
+
+    monkeypatch.setattr(knowledge_module, "get_font", fake_get_font)
+
+    assert plugin._load_font(None, 18) is sentinel
+    assert plugin._load_font("", 18) is sentinel
+    assert plugin._load_font("方正新楷近似", 18, "bold") is sentinel
+    assert calls == [
+        ("Microsoft YaHei", 18, "normal"),
+        ("Microsoft YaHei", 18, "normal"),
+        ("方正新楷近似", 18, "bold"),
+    ]
+
+
+def test_cjk_font_uses_shared_base_ui_resolver(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_base_ui_font(size, bold=False):
+        calls.append((size, bold))
+        return sentinel
+
+    monkeypatch.setattr(knowledge_module, "get_base_ui_font", fake_base_ui_font, raising=False)
+
+    assert plugin._load_font("__cjk__", 19, "bold") is sentinel
+    assert calls == [(19, True)]
+
+
+def test_settings_default_font_is_microsoft_yahei():
+    settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_knowledge" / "settings.html"
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert knowledge_module.DEFAULT_FONT == "Microsoft YaHei"
+    assert "option.value === 'Microsoft YaHei'" in html
+    assert "fontFamily.value = 'Microsoft YaHei';" in html
+    assert "fontFamily.value = 'Jost';" not in html
 
 
 def test_extract_fact_text_accepts_common_response_shapes(tmp_path):

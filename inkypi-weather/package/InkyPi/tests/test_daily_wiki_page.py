@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.daily_wiki_page import daily_wiki_page as wiki_module  # noqa: E402
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DAILY_IMAGE_TITLE_PATH, DAILY_HEADER_FILLER_PATH, HISTORY_TITLE_WORDMARK_PATH, DAILY_CAPTION_GAP, DAILY_CAPTION_LINE_SPACING, EPAPER_RULE_WIDTH, HISTORY_BODY_Y_OFFSET, HISTORY_FLOAT_MIN_TEXT_WIDTH, HISTORY_IMAGE_GAP, HISTORY_IMAGE_HEIGHT, HISTORY_IMAGE_WIDTH, HISTORY_LINE_SPACING, HISTORY_MIN_EVENT_FONT_SIZE, HISTORY_TEXT_INDENT, HISTORY_TITLE_RULE_GAP, HISTORY_TITLE_Y_OFFSET, HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET, YEAR_LABEL_Y_OFFSET, TOPIC_PLACEHOLDER_PATH, DEFAULT_FONT  # noqa: E402
 
 
@@ -77,16 +78,55 @@ def test_daily_wiki_settings_refresh_on_display_default_enabled():
 
 
 
-def test_daily_wiki_defaults_to_microsoft_yahei(tmp_path):
+def test_daily_wiki_font_defaults_to_microsoft_yahei_and_preserves_explicit_choice(tmp_path):
     plugin = make_plugin(tmp_path)
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_wiki_page" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
 
     assert DEFAULT_FONT == "Microsoft YaHei"
     assert plugin._resolved_font_family({}) == "Microsoft YaHei"
-    assert plugin._resolved_font_family({"fontFamily": "Jost"}) == "Microsoft YaHei"
+    assert plugin._resolved_font_family({"fontFamily": ""}) == "Microsoft YaHei"
+    assert plugin._resolved_font_family({"fontFamily": "Jost"}) == "Jost"
+    assert plugin._resolved_font_family({"fontFamily": "LXGW WenKai"}) == "LXGW WenKai"
     assert "fontFamily.value = 'Microsoft YaHei';" in html
     assert "fontFamily.value = 'Jost';" not in html
+    assert "fontFamily.value === 'Jost'" not in html
+
+
+def test_daily_wiki_font_default_and_explicit_choice(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_get_font(family, size, weight="normal"):
+        calls.append((family, size, weight))
+        return sentinel
+
+    monkeypatch.setattr(wiki_module, "get_font", fake_get_font)
+
+    assert plugin._font(None, 18) is sentinel
+    assert plugin._font("", 18) is sentinel
+    assert plugin._font("Jost", 18, "bold") is sentinel
+    assert calls == [
+        ("Microsoft YaHei", 18, "normal"),
+        ("Microsoft YaHei", 18, "normal"),
+        ("Jost", 18, "bold"),
+    ]
+
+
+def test_daily_wiki_cjk_font_uses_shared_base_ui_resolver(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_base_ui_font(size, bold=False):
+        calls.append((size, bold))
+        return sentinel
+
+    monkeypatch.setattr(wiki_module, "get_base_ui_font", fake_base_ui_font, raising=False)
+
+    assert plugin._font("__cjk__", 21, "bold") is sentinel
+    assert calls == [(21, True)]
 
 
 def test_daily_wiki_cjk_font_prefers_microsoft_yahei_static_file(tmp_path, monkeypatch):

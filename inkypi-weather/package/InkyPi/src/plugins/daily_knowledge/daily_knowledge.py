@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import coerce_bool, get_available_font_names, get_font
+from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
 from utils.theme_utils import get_theme_context, get_theme_palette
@@ -28,7 +28,7 @@ CACHE_SCHEMA_VERSION = "daily-knowledge-v3"
 SENTENCE_STATE_SCHEMA_VERSION = "daily-knowledge-fallback-history-v1"
 SENTENCE_HISTORY_FILENAME = "fallback_history.json"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-DEFAULT_FONT = "Jost"
+DEFAULT_FONT = DEFAULT_FONT_FAMILY
 USELESS_FACTS_BASE_URL = "https://uselessfacts.jsph.pl/api/v2/facts"
 DEFAULT_RAPIDAPI_HOST = "world-fun-facts-all-languages-support.p.rapidapi.com"
 DEFAULT_RAPIDAPI_PATH = "/fact"
@@ -770,14 +770,7 @@ class DailyKnowledge(BasePlugin):
 
     def _load_font(self, font_family, size, weight="normal"):
         if font_family == "__cjk__":
-            cjk = self._cjk_font_path()
-            if cjk:
-                try:
-                    return ImageFont.truetype(str(cjk), size)
-                except OSError:
-                    pass
-        if self._contains_cjk(str(font_family or "")):
-            font_family = DEFAULT_FONT
+            return get_base_ui_font(int(size), bold=weight == "bold")
         try:
             font = get_font(font_family or DEFAULT_FONT, size, weight)
             if font:

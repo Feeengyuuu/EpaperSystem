@@ -12,6 +12,7 @@ sys.modules.setdefault(
 )
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.tech_pulse import tech_pulse as tech_pulse_module  # noqa: E402
 from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
     HN_DOCS_URL,
@@ -76,6 +77,27 @@ def _plugin(tmp_path):
     return plugin
 
 
+def test_default_font_is_yahei_but_explicit_lxgw_is_preserved(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    sentinel = object()
+    calls = []
+
+    def fake_get_font(family, size, weight="normal"):
+        calls.append((family, size, weight))
+        return sentinel
+
+    monkeypatch.setattr(tech_pulse_module, "get_font", fake_get_font)
+
+    assert plugin._load_font(None, 18) is sentinel
+    assert plugin._load_font("", 18) is sentinel
+    assert plugin._load_font("LXGW WenKai", 18, "bold") is sentinel
+    assert calls == [
+        ("Microsoft YaHei", 18, "normal"),
+        ("Microsoft YaHei", 18, "normal"),
+        ("LXGW WenKai", 18, "bold"),
+    ]
+
+
 def _story(story_id, title, score=100, descendants=25, when=1782520200, url="https://example.com/story"):
     return {
         "id": story_id,
@@ -108,6 +130,10 @@ def test_settings_defaults_are_declared():
     assert 'value="5"' in html
     assert 'name="refreshMinutes"' in html
     assert 'value="30"' in html
+    assert tech_pulse_module.DEFAULT_FONT == "Microsoft YaHei"
+    assert "option.value === 'Microsoft YaHei'" in html
+    assert "fontFamily.value = 'Microsoft YaHei';" in html
+    assert "fontFamily.value = 'Jost';" not in html
 
 
 def test_parse_story_item_extracts_hn_fields(tmp_path):

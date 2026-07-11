@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from security.ssrf import validate_browser_target
-from utils.app_utils import bounded_int, coerce_bool, get_available_font_names, get_font
+from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
 from utils.image_utils import take_screenshot, text_width
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_ID = "tech_pulse"
 CACHE_SCHEMA_VERSION = "tech-pulse-v1"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-DEFAULT_FONT = "Jost"
+DEFAULT_FONT = DEFAULT_FONT_FAMILY
 HN_BASE_URL = "https://hacker-news.firebaseio.com/v0"
 HN_DOCS_URL = "https://github.com/HackerNews/API"
 HN_HOME_URL = "https://news.ycombinator.com/"

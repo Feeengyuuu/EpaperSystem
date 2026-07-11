@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
-from utils.app_utils import coerce_bool, get_available_font_names, get_font
+from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image_response
@@ -42,8 +42,7 @@ DAILY_HEADER_FILLER_PATH = PLUGIN_DIR / "assets" / "daily_header_pixel_filler.pn
 HISTORY_TITLE_WORDMARK_PATH = PLUGIN_DIR / "assets" / "history_title_wordmark.png"
 TOPIC_PLACEHOLDER_PATH = PLUGIN_DIR / "assets" / "topic_pixel_placeholder.png"
 CACHE_SCHEMA_VERSION = "daily-wiki-page-v6"
-DEFAULT_FONT = "Microsoft YaHei"
-LEGACY_DEFAULT_FONT = "Jost"
+DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 FEED_URL = "https://api.wikimedia.org/feed/v1/wikipedia/{language}/featured/{year}/{month}/{day}"
 ZH_ACTION_API_URL = "https://zh.wikipedia.org/w/api.php"
@@ -1482,12 +1481,7 @@ class DailyWikiPage(BasePlugin):
 
     def _font(self, font_family, size, weight="normal"):
         if font_family == "__cjk__":
-            cjk = self._cjk_font_path()
-            if cjk:
-                try:
-                    return ImageFont.truetype(str(cjk), size)
-                except OSError:
-                    pass
+            return get_base_ui_font(int(size), bold=weight == "bold")
         try:
             font = get_font(font_family or DEFAULT_FONT, size, weight)
             if font:
@@ -1504,9 +1498,7 @@ class DailyWikiPage(BasePlugin):
 
     def _resolved_font_family(self, settings):
         font_family = str((settings or {}).get("fontFamily") or "").strip()
-        if not font_family or font_family == LEGACY_DEFAULT_FONT:
-            return DEFAULT_FONT
-        return font_family
+        return font_family or DEFAULT_FONT
 
     def _font_for_text(self, text, fallback_font):
         if not self._contains_cjk(text):
