@@ -300,18 +300,37 @@
 
     let applying = false;
     let pendingApply = null;
+    let translationObserver = null;
+    const translationObserverOptions = {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["title", "placeholder", "aria-label", "alt"]
+    };
+
+    function observeTranslationMutations() {
+        if (translationObserver && document.body) {
+            translationObserver.observe(document.body, translationObserverOptions);
+        }
+    }
 
     function applyTranslations(language = getLanguage()) {
         if (!document.body) {
             return;
         }
 
+        translationObserver?.disconnect();
         applying = true;
-        document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
-        document.documentElement.setAttribute("data-inkypi-language", language);
-        ensureLanguageToggle(language);
-        walkAndTranslate(document.body, language);
-        applying = false;
+        try {
+            document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+            document.documentElement.setAttribute("data-inkypi-language", language);
+            ensureLanguageToggle(language);
+            walkAndTranslate(document.body, language);
+        } finally {
+            applying = false;
+            observeTranslationMutations();
+        }
     }
 
     function refreshOriginalsFromMutations(mutations) {
@@ -347,16 +366,8 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+        translationObserver = new MutationObserver(scheduleApply);
         applyTranslations();
-
-        const observer = new MutationObserver(scheduleApply);
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ["title", "placeholder", "aria-label", "alt"]
-        });
     });
 
     window.InkyPiI18n = {

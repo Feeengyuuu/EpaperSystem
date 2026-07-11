@@ -78,9 +78,8 @@ html[data-theme="dark"] {
 body {
     font-family: 'Poppins', sans-serif;
     background-color: var(--bg-primary);
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    display: block;
+    padding: 24px 0;
     min-height: 100vh;
     transition: background-color 0.3s ease, color 0.3s ease;
 }
@@ -94,6 +93,7 @@ body {
     width: 90%;
     min-height: 90vh;
     max-width: 900px;
+    margin: 0 auto;
     box-shadow: 0 8px 20px var(--shadow-light);
     display: flex;
     flex-direction: column;
