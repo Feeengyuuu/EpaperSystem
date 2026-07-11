@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.simple_calendar.simple_calendar import SimpleCalendar
+from plugins.simple_calendar.simple_calendar import LOCALE_DATA, SimpleCalendar
 
 
 def test_default_us_cn_holiday_sources_when_enabled():
@@ -671,6 +671,53 @@ def test_focus_holiday_card_uses_bold_title_font(monkeypatch):
     plugin._draw_focus_holiday(draw, events, 110, 55, 200, (0, 0, 0), (132, 132, 132))
 
     assert calls == [(14, True)]
+
+
+def test_calendar_ui_font_uses_original_jost_faces():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    regular = plugin._get_calendar_ui_font(18)
+    bold = plugin._get_calendar_ui_font(42, bold=True)
+
+    assert Path(regular.path).name == "Jost.ttf"
+    assert Path(bold.path).name == "Jost-SemiBold.ttf"
+    assert regular.getname()[0] == "Jost"
+    assert bold.getname()[0] == "Jost"
+
+
+def test_calendar_render_uses_original_ui_font_resolver(monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    calls = []
+    drawn_font_files = []
+    original_font = plugin._get_calendar_ui_font
+    original_text = ImageDraw.ImageDraw.text
+
+    def track_font(font_size, bold=False):
+        calls.append((font_size, bold))
+        return original_font(font_size, bold=bold)
+
+    def track_text(self, xy, text, *args, **kwargs):
+        font = kwargs.get("font")
+        if font is not None:
+            drawn_font_files.append(Path(font.path).name)
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_get_calendar_ui_font", track_font)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", track_text)
+
+    image = plugin._render_calendar(
+        (800, 480),
+        date(2026, 7, 11),
+        (230, 26, 26),
+        (163, 13, 13),
+        LOCALE_DATA["en"],
+        "en",
+    )
+
+    assert image.size == (800, 480)
+    assert any(bold for _size, bold in calls)
+    assert any(not bold for _size, bold in calls)
+    assert set(drawn_font_files) == {"Jost.ttf", "Jost-SemiBold.ttf"}
 
 
 def test_holiday_list_source_labels_color_cn_and_us_independently():

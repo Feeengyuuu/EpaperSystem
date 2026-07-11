@@ -27,6 +27,13 @@ PYTHON_BASE_UI_BYPASS_FILES = (
     "src/plugins/magazine_covers/magazine_covers.py",
 )
 
+PYTHON_JOST_CALL_ALLOWLIST = {
+    (
+        "src/plugins/simple_calendar/simple_calendar.py",
+        "_get_calendar_ui_font",
+    ),
+}
+
 DECORATIVE_FONT_ALLOWLIST = ("dogica", "ds-digital", "napoli")
 BASE_UI_FONT_STACK = '"Microsoft YaHei", "\u5fae\u8f6f\u96c5\u9ed1", Arial, sans-serif'
 CSS_SELECTOR_FONT_ALLOWLIST = {
@@ -123,10 +130,17 @@ def test_weather_primary_temperature_preserves_original_jost_font():
 
 def test_base_ui_font_policy_python_has_no_ordinary_jost_calls():
     offenders = []
+    used_allowlist = set()
 
     for relative_path in PYTHON_BASE_UI_BYPASS_FILES:
         path = PROJECT_ROOT / relative_path
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        function_by_node = {}
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for child in ast.walk(function):
+                function_by_node.setdefault(id(child), function.name)
         get_font_names = {
             alias.asname or alias.name
             for node in ast.walk(tree)
@@ -167,9 +181,17 @@ def test_base_ui_font_policy_python_has_no_ordinary_jost_calls():
                 and isinstance(family, ast.Constant)
                 and family.value == "Jost"
             ):
-                offenders.append(f"{relative_path}:{node.lineno}")
+                allowlist_key = (
+                    relative_path,
+                    function_by_node.get(id(node), ""),
+                )
+                if allowlist_key in PYTHON_JOST_CALL_ALLOWLIST:
+                    used_allowlist.add(allowlist_key)
+                else:
+                    offenders.append(f"{relative_path}:{node.lineno}")
 
     assert offenders == []
+    assert used_allowlist == PYTHON_JOST_CALL_ALLOWLIST
 
 
 def test_base_ui_font_policy_python_bypasses_use_shared_resolver():
