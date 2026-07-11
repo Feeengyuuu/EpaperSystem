@@ -221,8 +221,12 @@ class PlaylistManager:
         *,
         latest_refresh,
         interval_seconds,
+        eligible_instance_uuids=None,
     ) -> PlaylistSelectionSnapshot | None:
         """Atomically choose and rotate the next due active instance."""
+        eligible_instance_uuids = self._normalize_eligible_instance_uuids(
+            eligible_instance_uuids
+        )
         if latest_refresh is not None and not isinstance(latest_refresh, datetime):
             raise ValueError("latest_refresh must be a datetime or None")
         try:
@@ -248,10 +252,26 @@ class PlaylistManager:
             ):
                 return None
 
-            instance = playlist.get_next_plugin()
+            instance = playlist.get_next_plugin(eligible_instance_uuids)
             if instance is None:
                 return None
             return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    @staticmethod
+    def _normalize_eligible_instance_uuids(values):
+        if values is None:
+            return None
+        if isinstance(values, (str, bytes)):
+            raise TypeError("eligible_instance_uuids must be a collection of strings")
+        try:
+            normalized = frozenset(values)
+        except TypeError as exc:
+            raise TypeError(
+                "eligible_instance_uuids must be a collection of strings"
+            ) from exc
+        if any(not isinstance(value, str) or not value for value in normalized):
+            raise ValueError("eligible_instance_uuids must contain non-empty strings")
+        return normalized
 
     def select_theme_instance(
         self,
@@ -893,8 +913,12 @@ class Playlist:
         """Find a plugin instance by its plugin_id and name."""
         return next((p for p in self.plugins if p.plugin_id == plugin_id and p.name == name), None)
 
-    def get_next_plugin(self):
+    def get_next_plugin(self, eligible_instance_uuids=None):
         """Return the next plugin from a shuffled no-repeat rotation bag."""
+        if eligible_instance_uuids is not None:
+            eligible_instance_uuids = frozenset(eligible_instance_uuids)
+            if not eligible_instance_uuids:
+                return None
         if not self.plugins:
             self.current_plugin_index = None
             self.plugin_rotation_queue = []
@@ -902,27 +926,62 @@ class Playlist:
             self.plugin_rotation_recent_history = []
             return None
 
-        if len(self.plugins) == 1:
-            self.current_plugin_index = 0
+        if eligible_instance_uuids is None:
+            eligible_plugins = self.plugins
+        else:
+            eligible_plugins = [
+                plugin
+                for plugin in self.plugins
+                if plugin.instance_uuid in eligible_instance_uuids
+            ]
+            if not eligible_plugins:
+                return None
+
+        if len(eligible_plugins) == 1:
+            only_plugin = eligible_plugins[0]
+            self.current_plugin_index = self.plugins.index(only_plugin)
             self.plugin_rotation_queue = []
-            only_key = self._plugin_rotation_key(self.plugins[0])
+            only_key = self._plugin_rotation_key(only_plugin)
             self.plugin_rotation_pool = [only_key]
             self.plugin_rotation_recent_history = [only_key]
             return self.plugins[self.current_plugin_index]
 
-        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        plugin_keys = [
+            self._plugin_rotation_key(plugin) for plugin in eligible_plugins
+        ]
         current_key = None
         if isinstance(self.current_plugin_index, int) and 0 <= self.current_plugin_index < len(self.plugins):
-            current_key = plugin_keys[self.current_plugin_index]
+            indexed_key = self._plugin_rotation_key(
+                self.plugins[self.current_plugin_index]
+            )
+            if indexed_key in plugin_keys:
+                current_key = indexed_key
 
+        started_new_round = False
         if self.plugin_rotation_pool != plugin_keys:
-            self.plugin_rotation_queue = []
+            if eligible_instance_uuids is None:
+                self.plugin_rotation_queue = []
+            else:
+                previous_pool = set(self.plugin_rotation_pool)
+                queue = self._dedupe_rotation_keys(
+                    key
+                    for key in self.plugin_rotation_queue
+                    if key in plugin_keys
+                )
+                newly_eligible = [
+                    key
+                    for key in plugin_keys
+                    if key not in previous_pool and key not in queue
+                ]
+                random.shuffle(newly_eligible)
+                queue.extend(newly_eligible)
+                self.plugin_rotation_queue = queue
+                started_new_round = not previous_pool
             self.plugin_rotation_pool = list(plugin_keys)
 
         queue = self._dedupe_rotation_keys(
             key for key in self.plugin_rotation_queue if key in plugin_keys
         )
-        started_new_round = False
         if not queue:
             started_new_round = True
             queue = list(plugin_keys)
@@ -944,7 +1003,11 @@ class Playlist:
 
         next_key = queue.pop(0)
         self.plugin_rotation_queue = queue
-        self.current_plugin_index = plugin_keys.index(next_key)
+        self.current_plugin_index = next(
+            index
+            for index, plugin in enumerate(self.plugins)
+            if self._plugin_rotation_key(plugin) == next_key
+        )
         self.plugin_rotation_recent_history = self._updated_recent_history(next_key, recent_history, len(plugin_keys))
 
         return self.plugins[self.current_plugin_index]

@@ -16,11 +16,41 @@ from src.runtime.refresh_contracts import (
     JobRecord,
     JobStatus,
     RefreshCommand,
+    RefreshIntent,
     TaskCancelled,
     TaskContext,
     TaskDeadlineExceeded,
     freeze_payload,
 )
+
+
+def test_refresh_command_freezes_explicit_intent():
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        payload={},
+        now_monotonic=10.0,
+        deadline_monotonic=20.0,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    assert command.intent is RefreshIntent.DATA_REFRESH
+    with pytest.raises(FrozenInstanceError):
+        command.intent = RefreshIntent.LIVE_REFRESH
+
+
+def test_legacy_factory_without_intent_remains_compatible_until_c_integration():
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        plugin_id="weather",
+        payload={},
+        now_monotonic=10.0,
+        deadline_monotonic=20.0,
+    )
+
+    assert command.intent is None
 
 
 class MutableCustomLeaf:

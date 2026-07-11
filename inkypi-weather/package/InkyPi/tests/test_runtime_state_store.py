@@ -5,7 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.runtime.runtime_state import RuntimeStateStore
+from src.runtime.runtime_state import (
+    LastGoodCacheState,
+    RefreshLane,
+    RuntimeStateStore,
+)
 
 
 class FakeClock:
@@ -41,6 +45,167 @@ class ManualTimer:
     def fire(self):
         if not self.cancelled:
             self.callback()
+
+
+def test_data_live_theme_success_clocks_are_independent(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+
+    store.record_success(
+        "one",
+        "2026-07-09T10:00:00+00:00",
+        lane=RefreshLane.DATA,
+    )
+    store.record_success(
+        "one",
+        "2026-07-09T10:01:00+00:00",
+        lane=RefreshLane.LIVE,
+    )
+    store.record_success(
+        "one",
+        "2026-07-09T10:02:00+00:00",
+        lane=RefreshLane.THEME,
+    )
+
+    state = store.snapshot().instances["one"]
+    assert state.data.last_success_at == "2026-07-09T10:00:00+00:00"
+    assert state.live.last_success_at == "2026-07-09T10:01:00+00:00"
+    assert state.theme.last_success_at == "2026-07-09T10:02:00+00:00"
+
+
+def test_failure_cools_only_requested_instance_lane(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    for lane in RefreshLane:
+        store.record_success("one", "2026-07-09T10:00:00+00:00", lane=lane)
+
+    store.record_failure(
+        "one",
+        "2026-07-09T10:03:00+00:00",
+        "live provider offline",
+        "2026-07-09T10:04:00+00:00",
+        lane=RefreshLane.LIVE,
+    )
+
+    state = store.snapshot().instances["one"]
+    assert state.data.next_retry_at is None
+    assert state.theme.next_retry_at is None
+    assert state.live.next_retry_at == "2026-07-09T10:04:00+00:00"
+    assert state.live.last_error == "live provider offline"
+
+
+def test_last_good_cache_requires_exact_revision(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    cache = LastGoodCacheState(
+        theme_mode="night",
+        structural_generation=3,
+        settings_revision=7,
+        promoted_at="2026-07-09T10:00:00+00:00",
+    )
+
+    store.record_success(
+        "one",
+        "2026-07-09T10:00:00+00:00",
+        last_good_cache=cache,
+    )
+    state = store.snapshot().instances["one"]
+
+    assert state.last_good_cache == cache
+    assert state.last_good_cache.structural_generation == 3
+    assert state.last_good_cache.settings_revision == 7
+    with pytest.raises((TypeError, ValueError)):
+        LastGoodCacheState(
+            theme_mode="night",
+            structural_generation=3,
+            settings_revision=None,
+            promoted_at="2026-07-09T10:00:00+00:00",
+        )
+    with pytest.raises(ValueError):
+        LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=0,
+            settings_revision=7,
+            promoted_at="2026-07-09T10:00:00+00:00",
+        )
+
+
+def test_schema_v1_migrates_cache_success_without_claiming_theme_as_data_success(
+    tmp_path,
+):
+    path = tmp_path / "runtime.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "updated_at": "2026-07-09T10:06:00+00:00",
+                "display": {
+                    "state": "committed",
+                    "commit_id": "display-1",
+                    "instance_uuid": "one",
+                },
+                "instances": {
+                    "one": {
+                        "last_attempt_at": "2026-07-09T10:00:00+00:00",
+                        "last_success_at": "2026-07-09T10:01:00+00:00",
+                        "last_failure_at": "2026-07-09T10:02:00+00:00",
+                        "last_error": "temporary",
+                        "next_retry_at": "2026-07-09T10:03:00+00:00",
+                        "tombstoned_at": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = RuntimeStateStore(path).snapshot()
+    state = snapshot.instances["one"]
+
+    assert snapshot.schema_version == 2
+    assert state.data.last_attempt_at == "2026-07-09T10:00:00+00:00"
+    assert state.data.last_failure_at == "2026-07-09T10:02:00+00:00"
+    assert state.data.last_success_at is None
+    assert state.live.last_success_at is None
+    assert state.theme.last_success_at is None
+    assert state.last_good_cache is None
+    assert state.legacy_cache_success_at == "2026-07-09T10:01:00+00:00"
+    assert state.last_success_at == "2026-07-09T10:01:00+00:00"
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+def test_schema_v2_roundtrip_preserves_lane_and_last_good_state(tmp_path):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+    cache = LastGoodCacheState(
+        theme_mode="day",
+        structural_generation=4,
+        settings_revision=9,
+        promoted_at="2026-07-09T10:04:00+00:00",
+    )
+    store.record_attempt(
+        "one",
+        "2026-07-09T10:00:00+00:00",
+        lane=RefreshLane.THEME,
+    )
+    store.record_success(
+        "one",
+        "2026-07-09T10:04:00+00:00",
+        lane=RefreshLane.THEME,
+        last_good_cache=cache,
+    )
+    store.record_failure(
+        "one",
+        "2026-07-09T10:05:00+00:00",
+        "data failed",
+        "2026-07-09T10:06:00+00:00",
+        lane=RefreshLane.DATA,
+    )
+    store.flush()
+
+    state = RuntimeStateStore(path).snapshot().instances["one"]
+
+    assert state.theme.last_attempt_at == "2026-07-09T10:00:00+00:00"
+    assert state.theme.last_success_at == "2026-07-09T10:04:00+00:00"
+    assert state.data.last_failure_at == "2026-07-09T10:05:00+00:00"
+    assert state.last_good_cache == cache
 
 
 def test_failure_does_not_advance_success_time(tmp_path):
@@ -145,7 +310,8 @@ def test_last_dirty_update_is_flushed_when_debounce_timer_expires(tmp_path):
         "2026-07-09T10:00:30+00:00",
     )
 
-    assert json.loads(path.read_text(encoding="utf-8"))["instances"]["one"][
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["instances"]["one"]["lanes"]["data"][
         "last_failure_at"
     ] is None
     assert len(timers) == 1
@@ -156,7 +322,8 @@ def test_last_dirty_update_is_flushed_when_debounce_timer_expires(tmp_path):
     clock.advance(4)
     timers[0].fire()
 
-    assert json.loads(path.read_text(encoding="utf-8"))["instances"]["one"][
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["instances"]["one"]["lanes"]["data"][
         "last_failure_at"
     ] == "2026-07-09T10:00:01+00:00"
 
@@ -176,7 +343,7 @@ def test_store_round_trips_display_and_instance_state(tmp_path):
     assert loaded.display_state == "committed"
     assert loaded.display_commit_id == "commit-1"
     assert loaded.displayed_instance_uuid == "one"
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
 
 
 def test_prune_keeps_current_instances_and_only_64_recent_tombstones(tmp_path):

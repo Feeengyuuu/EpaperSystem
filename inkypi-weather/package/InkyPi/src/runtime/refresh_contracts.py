@@ -34,6 +34,14 @@ class CommandSource(str, Enum):
     BACKGROUND = "background"
 
 
+class RefreshIntent(str, Enum):
+    DISPLAY_CACHE = "display_cache"
+    DATA_REFRESH = "data_refresh"
+    LIVE_REFRESH = "live_refresh"
+    THEME_REDRAW = "theme_redraw"
+    MANUAL_RENDER = "manual_render"
+
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -138,6 +146,7 @@ class RefreshCommand:
     deadline_monotonic: float
     idempotency_key: str | None
     payload: Mapping[str, Any] = field(compare=False, repr=False)
+    intent: RefreshIntent | None = None
 
     @classmethod
     def create(
@@ -155,6 +164,7 @@ class RefreshCommand:
         force=False,
         priority=0,
         idempotency_key=None,
+        intent=None,
     ):
         return cls(
             id=uuid4().hex,
@@ -170,6 +180,7 @@ class RefreshCommand:
             deadline_monotonic=float(deadline_monotonic),
             idempotency_key=idempotency_key,
             payload=freeze_payload({} if payload is None else payload),
+            intent=None if intent is None else RefreshIntent(intent),
         )
 
 

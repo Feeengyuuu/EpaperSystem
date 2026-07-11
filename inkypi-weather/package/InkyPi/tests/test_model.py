@@ -887,6 +887,158 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert not thread.is_alive()
         assert acquired == [True]
 
+    def test_select_next_active_uses_only_eligible_uuid_bag(self, monkeypatch):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 9, 12, 0),
+            latest_refresh=None,
+            interval_seconds=300,
+            eligible_instance_uuids={"two-uuid", "three-uuid"},
+        )
+
+        assert selected.instance.instance_uuid == "two-uuid"
+        assert manager.playlists[0].plugin_rotation_pool == [
+            "two-uuid",
+            "three-uuid",
+        ]
+
+    def test_select_next_active_all_ineligible_preserves_rotation_state(self):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+                current_plugin_index=1,
+                plugin_rotation_queue=["one-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid"],
+                plugin_rotation_recent_history=["two-uuid"],
+            ),
+            active_playlist="Default",
+        )
+        before = self._rotation_state(manager)
+
+        selected = manager.select_next_active_instance(
+            datetime(2026, 7, 9, 12, 0),
+            latest_refresh=None,
+            interval_seconds=300,
+            eligible_instance_uuids=frozenset(),
+        )
+
+        assert selected is None
+        assert self._rotation_state(manager) == before
+
+        empty = Playlist(
+            "Empty",
+            "00:00",
+            "24:00",
+            current_plugin_index=7,
+            plugin_rotation_queue=["stale-queue"],
+            plugin_rotation_pool=["stale-pool"],
+            plugin_rotation_recent_history=["stale-history"],
+        )
+        empty_before = (
+            empty.current_plugin_index,
+            list(empty.plugin_rotation_queue),
+            list(empty.plugin_rotation_pool),
+            list(empty.plugin_rotation_recent_history),
+        )
+
+        assert empty.get_next_plugin(frozenset()) is None
+        assert (
+            empty.current_plugin_index,
+            empty.plugin_rotation_queue,
+            empty.plugin_rotation_pool,
+            empty.plugin_rotation_recent_history,
+        ) == empty_before
+
+    def test_eligible_bag_uses_each_displayable_instance_before_repeat(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                    self._plugin("Four", instance_uuid="four-uuid"),
+                ],
+            )
+        )
+        eligible = {"one-uuid", "three-uuid", "four-uuid"}
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        selected = [
+            playlist.get_next_plugin(eligible).instance_uuid for _ in range(4)
+        ]
+
+        assert selected[:3] == ["one-uuid", "three-uuid", "four-uuid"]
+        assert len(set(selected[:3])) == 3
+        assert selected[3] != selected[2]
+        assert set(selected) <= eligible
+
+    def test_newly_eligible_instance_enters_reconciled_bag_without_immediate_repeat(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        first = playlist.get_next_plugin({"one-uuid", "two-uuid"})
+        second = playlist.get_next_plugin(
+            {"one-uuid", "two-uuid", "three-uuid"}
+        )
+        third = playlist.get_next_plugin(
+            {"one-uuid", "two-uuid", "three-uuid"}
+        )
+
+        assert first.instance_uuid == "one-uuid"
+        assert second.instance_uuid != first.instance_uuid
+        assert "three-uuid" in {second.instance_uuid, third.instance_uuid}
+
+    def test_eligible_rotation_survives_dict_roundtrip(self, monkeypatch):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        eligible = {"two-uuid", "three-uuid"}
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        assert playlist.get_next_plugin(eligible).instance_uuid == "two-uuid"
+        restored = Playlist.from_dict(playlist.to_dict())
+
+        assert restored.get_next_plugin(eligible).instance_uuid == "three-uuid"
+        assert restored.plugin_rotation_pool == ["two-uuid", "three-uuid"]
+
     def test_active_playlist_snapshot_is_deeply_immutable_detached_and_pure(self):
         manager = self._manager(
             self._playlist(
