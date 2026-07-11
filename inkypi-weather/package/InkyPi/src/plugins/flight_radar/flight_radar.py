@@ -14,7 +14,7 @@ import os
 import re
 import time
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
@@ -102,50 +102,6 @@ SOURCE_LABELS = {
 HTTP_HEADERS = {
     "User-Agent": "InkyPi-SkyRadar/1.0 (+https://github.com/aceisace/InkyPi)",
     "Accept": "application/json,text/plain;q=0.9,*/*;q=0.5",
-}
-
-SANS_FONT_PATHS = {
-    "normal": (
-        r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ),
-    "bold": (
-        r"C:\Windows\Fonts\segoeuib.ttf",
-        r"C:\Windows\Fonts\arialbd.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    ),
-}
-
-CITY_FONT_PATHS = {
-    "normal": (
-        PLUGIN_DIR / "fonts" / "msyh.ttc",
-        PLUGIN_DIR / "fonts" / "msyh.ttf",
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyhl.ttc",
-        "/usr/share/fonts/opentype/microsoft/msyh.ttc",
-        PLUGIN_DIR.parent.parent / "static" / "fonts" / "NotoSansSC-VF.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ),
-    "bold": (
-        PLUGIN_DIR / "fonts" / "msyhbd.ttc",
-        PLUGIN_DIR / "fonts" / "msyh.ttc",
-        PLUGIN_DIR / "fonts" / "msyh.ttf",
-        r"C:\Windows\Fonts\msyhbd.ttc",
-        r"C:\Windows\Fonts\msyh.ttc",
-        "/usr/share/fonts/opentype/microsoft/msyhbd.ttc",
-        "/usr/share/fonts/opentype/microsoft/msyh.ttc",
-        PLUGIN_DIR.parent.parent / "static" / "fonts" / "NotoSansSC-VF.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    ),
 }
 
 CITY_NAME_ZH_CN = {
@@ -2300,33 +2256,11 @@ class FlightRadar(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
-        font = get_base_ui_font(int(size), bold=weight == "bold")
-        if font is not None:
-            return font
-        font = FlightRadar._font_from_paths(SANS_FONT_PATHS["bold" if weight == "bold" else "normal"], size)
-        if font:
-            return font
-        return ImageFont.load_default()
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     @staticmethod
     def _city_font(size, weight="normal"):
-        font = get_base_ui_font(int(size), bold=weight == "bold")
-        if font is not None:
-            return font
-        font = FlightRadar._font_from_paths(CITY_FONT_PATHS["bold" if weight == "bold" else "normal"], size)
-        if font:
-            return font
-        return FlightRadar._font(size, weight)
-
-    @staticmethod
-    def _font_from_paths(paths, size):
-        for path in paths:
-            try:
-                if os.path.isfile(path):
-                    return ImageFont.truetype(path, int(size))
-            except Exception:
-                continue
-        return None
+        return get_base_ui_font(int(size), bold=weight == "bold")
 
     @staticmethod
     def _resampling_filter():

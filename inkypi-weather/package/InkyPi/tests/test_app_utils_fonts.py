@@ -114,6 +114,24 @@ def test_missing_or_corrupt_durable_yahei_falls_back_to_tracked_font(
     assert Path(font.path).name == "NotoSansSC-VF.ttf"
 
 
+def test_tracked_variable_fallback_renders_distinct_regular_and_bold_weights(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "fonts").mkdir()
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path))
+
+    regular = app_utils.get_base_ui_font(48)
+    bold = app_utils.get_base_ui_font(48, bold=True)
+
+    assert Path(regular.path).name == "NotoSansSC-VF.ttf"
+    assert Path(bold.path).name == "NotoSansSC-VF.ttf"
+    sample = "微软 YaHei UI"
+    regular_ink = sum(regular.getmask(sample))
+    bold_ink = sum(bold.getmask(sample))
+    assert bytes(regular.getmask(sample)) != bytes(bold.getmask(sample))
+    assert bold_ink > regular_ink
+
+
 def test_base_font_resolver_and_css_uri_use_durable_yahei(tmp_path, monkeypatch):
     source = (
         Path(__file__).resolve().parents[1]

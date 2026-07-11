@@ -25,7 +25,6 @@ from utils.app_utils import (
     coerce_bool,
     get_available_font_names,
     get_base_ui_font,
-    get_font,
 )
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.http_client import get_http_session
@@ -1939,30 +1938,44 @@ LIMIT 8
 
     def _font(self, size, bold=False, cjk=False):
         font = get_base_ui_font(int(size), bold=bool(bold))
-        if font is not None:
+        if not cjk or self._font_supports_text(font, "汉"):
             return font
 
-        weight = "bold" if bold else "normal"
         for path in self._preferred_font_paths(bold=bold):
             try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                continue
-
-        for family in self._preferred_font_families():
-            try:
-                font = get_font(family, size, weight)
-                if font:
-                    return font
+                candidate = ImageFont.truetype(path, size)
+                if self._font_supports_text(candidate, "汉"):
+                    return candidate
             except Exception:
                 continue
 
         for path in self._emergency_font_paths(bold=bold):
             try:
-                return ImageFont.truetype(path, size)
+                candidate = ImageFont.truetype(path, size)
+                if self._font_supports_text(candidate, "汉"):
+                    return candidate
             except Exception:
                 continue
-        return ImageFont.load_default()
+        return font
+
+    @staticmethod
+    def _font_supports_text(font, text):
+        if font is None or not hasattr(font, "getmask"):
+            return False
+        try:
+            replacement = font.getmask("�")
+            replacement_signature = (replacement.size, bytes(replacement))
+            for char in str(text or ""):
+                if char.isspace():
+                    continue
+                glyph = font.getmask(char)
+                if glyph.getbbox() is None:
+                    return False
+                if (glyph.size, bytes(glyph)) == replacement_signature:
+                    return False
+        except Exception:
+            return False
+        return True
 
     def _preferred_font_paths(self, bold=False):
         if bold:
@@ -1992,14 +2005,6 @@ LIMIT 8
             "/usr/share/fonts/truetype/microsoft/YaHei/msyhl.ttc",
             "/usr/share/fonts/truetype/msttcorefonts/msyh.ttc",
             "/usr/share/fonts/truetype/msttcorefonts/msyhl.ttc",
-        )
-
-    def _preferred_font_families(self):
-        return (
-            MICROSOFT_YAHEI_FONT,
-            "微软雅黑",
-            "Microsoft YaHei UI",
-            "Microsoft YaHei UI Light",
         )
 
     def _emergency_font_paths(self, bold=False):

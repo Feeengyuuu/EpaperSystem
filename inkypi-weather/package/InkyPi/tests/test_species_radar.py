@@ -641,7 +641,6 @@ def test_font_defaults_prefer_microsoft_yahei(tmp_path):
     assert bold_first.endswith("sports_dashboard/fonts/msyhbd.ttc")
     assert "jost" not in "|".join(normal_paths + bold_paths).lower()
     assert "lxgw" not in "|".join(normal_paths + bold_paths).lower()
-    assert plugin._preferred_font_families()[0] == MICROSOFT_YAHEI_FONT
 
     fonts = [
         plugin._font(10),
@@ -669,6 +668,73 @@ def test_font_loader_uses_shared_base_ui_resolver(monkeypatch, tmp_path):
     assert plugin._font(15) is sentinel
     assert plugin._font(26, bold=True) is sentinel
     assert calls == [(15, False), (26, True)]
+
+
+def test_cjk_font_falls_back_when_shared_font_lacks_required_glyphs(
+    monkeypatch, tmp_path
+):
+    plugin = make_plugin(tmp_path)
+    shared_font = object()
+    cjk_font = object()
+    monkeypatch.setattr(
+        species_mod,
+        "get_base_ui_font",
+        lambda _size, bold=False: shared_font,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_font_supports_text",
+        lambda font, _text: font is cjk_font,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_preferred_font_paths",
+        lambda bold=False: ("cjk-capable.ttf",),
+    )
+    monkeypatch.setattr(
+        species_mod.ImageFont,
+        "truetype",
+        lambda _path, _size: cjk_font,
+    )
+
+    assert plugin._font(18, cjk=True) is cjk_font
+
+
+def test_non_cjk_font_returns_shared_font_without_probing_fallback(
+    monkeypatch, tmp_path
+):
+    plugin = make_plugin(tmp_path)
+    shared_font = object()
+    monkeypatch.setattr(
+        species_mod,
+        "get_base_ui_font",
+        lambda _size, bold=False: shared_font,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_font_supports_text",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected glyph probe")),
+    )
+
+    assert plugin._font(18) is shared_font
+
+
+def test_cjk_font_keeps_shared_font_when_no_capable_fallback_exists(
+    monkeypatch, tmp_path
+):
+    plugin = make_plugin(tmp_path)
+    shared_font = object()
+    monkeypatch.setattr(
+        species_mod,
+        "get_base_ui_font",
+        lambda _size, bold=False: shared_font,
+    )
+    monkeypatch.setattr(plugin, "_font_supports_text", lambda *_args: False)
+    monkeypatch.setattr(plugin, "_preferred_font_paths", lambda bold=False: ())
+    monkeypatch.setattr(plugin, "_emergency_font_paths", lambda bold=False: ())
+
+    assert plugin._font(18, cjk=True) is shared_font
 
 
 def test_title_wordmark_asset_is_transparent_and_header_sized():

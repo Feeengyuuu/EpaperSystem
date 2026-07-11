@@ -365,4 +365,5 @@ def test_flight_radar_base_font_uses_shared_resolver(monkeypatch):
     )
 
     assert FlightRadar._font(16, "bold") is sentinel
-    assert calls == [(16, True)]
+    assert FlightRadar._city_font(14, "bold") is sentinel
+    assert calls == [(16, True), (14, True)]

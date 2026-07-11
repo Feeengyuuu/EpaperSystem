@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.steam_profile_dashboard import steam_profile_dashboard as steam_profile_module
 from plugins.steam_profile_dashboard.steam_profile_dashboard import (
     STEAM_SECTION_WORDMARK_IMAGES,
     STEAM_SECTION_WORDMARK_SIZES,
@@ -520,7 +521,27 @@ def test_recent_item_draws_full_detail_as_two_line_dense_row():
     assert diff.crop((0, 54, image.width, image.height)).getbbox() is None
 
 
-def test_recent_panel_fits_four_full_detail_rows():
+def test_recent_panel_tracked_noto_metrics_fit_four_rows_without_internal_gap(
+    monkeypatch,
+):
+    tracked_noto = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "static"
+        / "fonts"
+        / "NotoSansSC-VF.ttf"
+    )
+
+    def load_tracked_noto(size, bold=False):
+        font = ImageFont.truetype(tracked_noto, int(size))
+        font.set_variation_by_axes([700 if bold else 400])
+        return font
+
+    monkeypatch.setattr(
+        steam_profile_module,
+        "get_base_ui_font",
+        load_tracked_noto,
+    )
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     image = Image.new("RGB", (360, 150), "white")
     draw = ImageDraw.Draw(image)
@@ -549,7 +570,9 @@ def test_recent_panel_fits_four_full_detail_rows():
         assert fits is True
         if index < 3:
             y += 3
-    assert y <= 151
+    # Four 33px rows plus the existing 3px inter-row spacing end at 149px.
+    # A 1px title/detail gap would push the fourth row to 153px and clip it.
+    assert y == 149
 
 def test_recent_grid_uses_unboxed_single_line_playtime_rows():
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})

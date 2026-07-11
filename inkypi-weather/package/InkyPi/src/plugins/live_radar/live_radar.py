@@ -13,7 +13,7 @@ import re
 import time
 import unicodedata
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
@@ -144,9 +144,6 @@ SECTION_TITLE_WORDMARK_FILES = {
     "OFFLINE": "liveradar_section_offline.png",
 }
 COMPACT_PLACEHOLDER_SIZE = (150, 24)
-INKYPI_SRC_DIR = os.path.dirname(os.path.dirname(os.path.dirname(PLUGIN_DIR)))
-LIVE_RADAR_FONT_FILE = os.path.join(PLUGIN_DIR, "fonts", "NotoSansSC-VF.ttf")
-STATIC_NOTO_SANS_SC_FILE = os.path.join(INKYPI_SRC_DIR, "static", "fonts", "NotoSansSC-VF.ttf")
 HEADER_ART_SIZE = (270, 64)
 TITLE_WORDMARK_SIZE = (226, 58)
 SECTION_TITLE_WORDMARK_SIZE = (78, 22)
@@ -161,32 +158,6 @@ CARD_META_Y_NUDGE = 2
 LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
 LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
 COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
-SANS_FONT_PATHS = {
-    "normal": (
-        LIVE_RADAR_FONT_FILE,
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyh.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        STATIC_NOTO_SANS_SC_FILE,
-        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
-    ),
-    "bold": (
-        LIVE_RADAR_FONT_FILE,
-        r"C:\Windows\Fonts\msyhbd.ttc",
-        r"C:\Windows\Fonts\msyhbd.ttf",
-        r"C:\Windows\Fonts\msyh.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        STATIC_NOTO_SANS_SC_FILE,
-        os.path.join(os.path.dirname(os.path.dirname(PLUGIN_DIR)), "static", "fonts", "NotoSansSC-VF.ttf"),
-    ),
-}
-
 STATUS_RANK = {
     "live": 0,
     "replay": 1,
@@ -2305,22 +2276,6 @@ class LiveRadar(BasePlugin):
     @staticmethod
     def _font(size, weight="normal"):
         font = get_base_ui_font(int(size), bold=weight == "bold")
-        if font is not None:
-            if weight == "bold":
-                LiveRadar._apply_variation_weight(font, 780)
-            return font
-        for path in SANS_FONT_PATHS["bold" if weight == "bold" else "normal"]:
-            try:
-                if os.path.isfile(path):
-                    return LiveRadar._load_sans_font(path, int(size), weight)
-            except Exception:
-                continue
-        return ImageFont.load_default()
-
-    @staticmethod
-    @lru_cache(maxsize=96)
-    def _load_sans_font(path, size, weight="normal"):
-        font = ImageFont.truetype(path, int(size))
         if weight == "bold":
             LiveRadar._apply_variation_weight(font, 780)
         return font
@@ -2356,14 +2311,6 @@ class LiveRadar(BasePlugin):
                 font.set_variation_by_axes(values)
             except Exception:
                 return
-
-    @staticmethod
-    @lru_cache(maxsize=4)
-    def _font_source_marker(weight="normal"):
-        for path in SANS_FONT_PATHS["bold" if weight == "bold" else "normal"]:
-            if os.path.isfile(path):
-                return path
-        return "app-font-fallback"
 
     @staticmethod
     def _line_height(font):

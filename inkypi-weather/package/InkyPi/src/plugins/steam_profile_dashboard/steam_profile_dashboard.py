@@ -1892,6 +1892,8 @@ class SteamProfileDashboard(BasePlugin):
             detail_font = self._font(max(10, int(getattr(font, "size", 14) or 14) - 5))
             title_height = self._line_height(draw, title_font)
             detail_height = self._line_height(draw, detail_font) if detail_text else 0
+            # Tracked Noto fallback metrics are 19px + 14px here. A 1px
+            # internal gap would push row four beyond the 151px panel limit.
             text_gap = 0
             text_height = title_height + text_gap + detail_height
             icon_size = self._game_icon_size(draw, title_font, min_size=18, max_size=22)

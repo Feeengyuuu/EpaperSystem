@@ -38,15 +38,20 @@ def test_base_ui_font_policy_css_uses_shared_stack_or_decorative_allowlist():
     for relative_path in CSS_BASE_UI_FILES:
         path = PROJECT_ROOT / relative_path
         content = path.read_text(encoding="utf-8")
+        shared_stack_count = 0
         for match in declaration.finditer(content):
             value = match.group(1).strip()
             lowered = value.casefold()
             decorative = any(
                 allowed in lowered for allowed in DECORATIVE_FONT_ALLOWLIST
             )
+            if value == BASE_UI_FONT_STACK:
+                shared_stack_count += 1
             if "jost" in lowered or (not decorative and value != BASE_UI_FONT_STACK):
                 line = content[: match.start()].count("\n") + 1
                 offenders.append(f"{relative_path}:{line}: {value}")
+        if shared_stack_count == 0:
+            offenders.append(f"{relative_path}: missing shared YaHei stack")
 
     assert offenders == []
 
@@ -57,15 +62,43 @@ def test_base_ui_font_policy_python_has_no_ordinary_jost_calls():
     for relative_path in PYTHON_BASE_UI_BYPASS_FILES:
         path = PROJECT_ROOT / relative_path
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        get_font_names = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module == "utils.app_utils"
+            for alias in node.names
+            if alias.name == "get_font"
+        }
+        app_utils_names = {
+            alias.asname
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == "utils.app_utils" and alias.asname
+        }
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not node.args:
+            if not isinstance(node, ast.Call):
                 continue
-            func_name = getattr(node.func, "id", None) or getattr(
-                node.func, "attr", None
+            is_get_font = (
+                isinstance(node.func, ast.Name)
+                and node.func.id in get_font_names
+            ) or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get_font"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in app_utils_names
             )
-            family = node.args[0]
+            family = node.args[0] if node.args else next(
+                (
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg == "font_name"
+                ),
+                None,
+            )
             if (
-                func_name == "get_font"
+                is_get_font
                 and isinstance(family, ast.Constant)
                 and family.value == "Jost"
             ):
@@ -75,11 +108,45 @@ def test_base_ui_font_policy_python_has_no_ordinary_jost_calls():
 
 
 def test_base_ui_font_policy_python_bypasses_use_shared_resolver():
-    offenders = [
-        relative_path
-        for relative_path in PYTHON_BASE_UI_BYPASS_FILES
-        if "get_base_ui_font"
-        not in (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
-    ]
+    offenders = []
+
+    for relative_path in PYTHON_BASE_UI_BYPASS_FILES:
+        path = PROJECT_ROOT / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported_names = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module == "utils.app_utils"
+            for alias in node.names
+            if alias.name == "get_base_ui_font"
+        }
+        module_aliases = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == "utils.app_utils"
+        }
+        has_call = any(
+            isinstance(node, ast.Call)
+            and (
+                (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id in imported_names
+                )
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get_base_ui_font"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in module_aliases
+                )
+            )
+            for node in ast.walk(tree)
+        )
+        if not imported_names and not module_aliases:
+            offenders.append(f"{relative_path}: missing resolver import")
+        elif not has_call:
+            offenders.append(f"{relative_path}: missing resolver call")
 
     assert offenders == []

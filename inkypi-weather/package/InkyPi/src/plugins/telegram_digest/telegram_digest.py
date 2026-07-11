@@ -12,10 +12,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font, get_font, resolve_path
+from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
@@ -42,40 +42,6 @@ REQUEST_TIMEOUT = (4, 18)
 TELEGRAM_MEDIA_IMAGE_LIMITS = ImageLimits(max_bytes=25 * 1024 * 1024)
 MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
-
-FONT_PATHS = {
-    "normal": (
-        resolve_path(os.path.join("static", "fonts", "msyh.ttf")),
-        resolve_path(os.path.join("static", "fonts", "msyh.ttc")),
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyh.ttf",
-        "/usr/share/fonts/truetype/microsoft/msyh.ttf",
-        "/usr/share/fonts/opentype/microsoft/msyh.ttf",
-        "/usr/share/fonts/opentype/microsoft/msyh.ttc",
-        resolve_path(os.path.join("static", "fonts", "NotoSansSC-VF.ttf")),
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    ),
-    "bold": (
-        resolve_path(os.path.join("static", "fonts", "msyhbd.ttf")),
-        resolve_path(os.path.join("static", "fonts", "msyhbd.ttc")),
-        resolve_path(os.path.join("static", "fonts", "msyh.ttf")),
-        r"C:\Windows\Fonts\msyhbd.ttc",
-        r"C:\Windows\Fonts\msyhbd.ttf",
-        r"C:\Windows\Fonts\msyh.ttc",
-        "/usr/share/fonts/truetype/microsoft/msyhbd.ttf",
-        "/usr/share/fonts/opentype/microsoft/msyhbd.ttf",
-        "/usr/share/fonts/opentype/microsoft/msyhbd.ttc",
-        resolve_path(os.path.join("static", "fonts", "NotoSansSC-VF.ttf")),
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    ),
-}
-
 
 class TelegramDigest(BasePlugin):
     def generate_settings_template(self):
@@ -1841,28 +1807,9 @@ class TelegramDigest(BasePlugin):
 
     def _font(self, size, weight="normal"):
         font = get_base_ui_font(int(size), bold=weight == "bold")
-        if font is not None:
-            if weight == "bold":
-                self._apply_font_weight(font, 760)
-            return font
-        paths = FONT_PATHS["bold" if weight == "bold" else "normal"]
-        for path in paths:
-            try:
-                if os.path.isfile(path):
-                    font = ImageFont.truetype(path, int(size))
-                    if weight == "bold":
-                        self._apply_font_weight(font, 760)
-                    return font
-            except Exception:
-                continue
-        for family in ("Microsoft YaHei", "Noto Sans CJK SC", "LXGW WenKai"):
-            try:
-                font = get_font(family, int(size), "bold" if weight == "bold" else "normal")
-                if font:
-                    return font
-            except Exception:
-                continue
-        return ImageFont.load_default()
+        if weight == "bold":
+            self._apply_font_weight(font, 760)
+        return font
 
     def _apply_font_weight(self, font, target_weight):
         if not hasattr(font, "get_variation_axes") or not hasattr(font, "set_variation_by_axes"):

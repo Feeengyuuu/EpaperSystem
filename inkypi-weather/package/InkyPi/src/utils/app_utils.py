@@ -24,6 +24,9 @@ DEFAULT_FONT_FAMILY = "Microsoft YaHei"
 YAHEI_REGULAR_FILES = ("msyh.ttf", "msyh.ttc", "msyhl.ttf", "msyhl.ttc")
 YAHEI_BOLD_FILES = ("msyhbd.ttf", "msyhbd.ttc")
 BASE_FALLBACK_FILES = ("NotoSansSC-VF.ttf", "LXGWWenKai-Regular.ttf")
+BASE_FALLBACK_VARIABLE_WEIGHTS = {
+    "notosanssc-vf.ttf": {False: 400, True: 700},
+}
 
 FONT_FAMILIES = {
     "Microsoft YaHei": [{
@@ -129,6 +132,42 @@ def base_ui_font_candidates(bold: bool = False) -> tuple[str, ...]:
     )
     return tuple(dict.fromkeys(candidates))
 
+
+def _apply_base_ui_variable_weight(font, candidate, bold):
+    weights = BASE_FALLBACK_VARIABLE_WEIGHTS.get(Path(candidate).name.casefold())
+    if weights is None:
+        return font
+    try:
+        axes = font.get_variation_axes()
+    except (AttributeError, OSError):
+        return font
+
+    values = []
+    changed = False
+    for axis in axes:
+        if not isinstance(axis, dict):
+            return font
+        name = axis.get("name", axis.get(b"name", b""))
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", errors="ignore")
+        minimum = axis.get("minimum", axis.get(b"minimum"))
+        maximum = axis.get("maximum", axis.get(b"maximum"))
+        default = axis.get("default", axis.get(b"default", minimum))
+        value = default
+        if "weight" in str(name).casefold() or "wght" in str(name).casefold():
+            target = weights[bool(bold)]
+            value = max(minimum, min(maximum, target))
+            changed = True
+        values.append(value)
+
+    if changed:
+        try:
+            font.set_variation_by_axes(values)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return font
+    return font
+
+
 def get_base_ui_font(
     font_size: int, bold: bool = False
 ) -> ImageFont.FreeTypeFont:
@@ -140,7 +179,7 @@ def get_base_ui_font(
         except OSError:
             continue
         if Path(font.path).resolve() == Path(candidate).resolve():
-            return font
+            return _apply_base_ui_variable_weight(font, candidate, bold)
     return ImageFont.load_default()
 
 def resolve_base_ui_font_path(bold: bool = False) -> str:

@@ -3,7 +3,6 @@ from plugins.context_cache import write_context
 from utils.app_utils import (
     font_file_uri,
     get_base_ui_font,
-    get_font,
     resolve_base_ui_font_path,
 )
 from utils.http_client import get_http_client
@@ -1205,22 +1204,15 @@ class SteamCharts(BasePlugin):
     @staticmethod
     def _font(size, weight="normal"):
         font = get_base_ui_font(int(size), bold=weight == "bold")
-        if font is not None:
-            font_path = getattr(font, "path", None)
-            if font_path:
-                try:
-                    return SteamCharts._load_sans_font(
-                        str(font_path), int(size), weight
-                    )
-                except Exception:
-                    pass
-            return font
-        for font_path in SteamCharts._preferred_sans_font_paths(weight):
+        font_path = getattr(font, "path", None)
+        if font_path:
             try:
-                return SteamCharts._load_sans_font(font_path, size, weight)
+                return SteamCharts._load_sans_font(
+                    str(font_path), int(size), weight
+                )
             except Exception:
-                continue
-        return get_font("LXGW WenKai", size, weight) or ImageFont.load_default()
+                pass
+        return font
 
     @staticmethod
     def _load_sans_font(font_path, size, weight="normal"):
