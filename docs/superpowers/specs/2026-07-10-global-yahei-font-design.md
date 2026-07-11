@@ -47,8 +47,8 @@ ordinary UI copy consistent.
 - Regular and bold variants fall back independently.
 - Existing Noto Sans CJK or bundled readable CJK fonts remain the final base
   fallback.
-- Startup health reports the missing optional YaHei files as a warning, not as
-  a fatal readiness failure.
+- Missing optional YaHei files do not degrade startup or readiness; the shared
+  resolver exposes the selected fallback path for diagnostics.
 
 ## Verification
 
