@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
+import subprocess
 import threading
 import time
 from types import SimpleNamespace
@@ -390,6 +391,113 @@ def _settings_form_html(html):
     return match.group(0)
 
 
+def _run_settings_dom_harness(html, *, initial_theme, plugin_settings):
+    scripts = re.findall(
+        r"<script(?:\s[^>]*)?>(.*?)</script>",
+        _settings_form_html(html),
+        flags=re.DOTALL,
+    )
+    assert scripts
+    payload = json.dumps({
+        "scripts": scripts,
+        "initialTheme": initial_theme,
+        "pluginSettings": plugin_settings,
+    })
+    harness = r"""
+const vm = require('node:vm');
+const payload = JSON.parse(process.argv[1]);
+const listeners = new Map();
+
+function makeElement(id, {name = id, type = 'text', value = '', checked = false} = {}) {
+  return {id, name, type, value, checked, disabled: false, options: []};
+}
+
+function makeSelect(id, name, values, initialValue) {
+  const element = makeElement(id, {name, type: 'select-one'});
+  element.options = values.map((value) => ({value}));
+  let selectedValue = values.includes(initialValue) ? initialValue : '';
+  Object.defineProperty(element, 'value', {
+    get() { return selectedValue; },
+    set(value) { selectedValue = values.includes(String(value)) ? String(value) : ''; },
+  });
+  return element;
+}
+
+const elements = {
+  themeMode: makeSelect('themeMode', 'themeMode', ['auto', 'day', 'night'], payload.initialTheme),
+  roomsText: makeElement('roomsText', {value: 'default room'}),
+  roomsJson: makeElement('roomsJson'),
+  apiUrl: makeElement('apiUrl'),
+  cacheSeconds: makeElement('cacheSeconds'),
+  snapshotCacheSeconds: makeElement('snapshotCacheSeconds'),
+  maxLiveCards: makeElement('maxLiveCards'),
+  maxOfflineCards: makeElement('maxOfflineCards'),
+  fetchAvatars: makeElement('fetchAvatars', {type: 'checkbox', checked: true}),
+  fetchAvatarsHidden: makeElement('fetchAvatarsHidden', {name: 'fetchAvatars'}),
+  showSnapshots: makeElement('showSnapshots', {type: 'checkbox', checked: true}),
+  showSnapshotsHidden: makeElement('showSnapshotsHidden', {name: 'showSnapshots'}),
+  refreshOnDisplay: makeElement('refreshOnDisplay'),
+  forceRefresh: makeElement('forceRefresh', {type: 'checkbox'}),
+  feed: makeSelect('feed', 'feed', ['topstories', 'beststories', 'newstories'], 'topstories'),
+  maxStories: makeElement('maxStories'),
+  refreshMinutes: makeElement('refreshMinutes'),
+  minScore: makeElement('minScore'),
+  showDomain: makeElement('showDomain', {type: 'checkbox', checked: true}),
+  showByline: makeElement('showByline', {type: 'checkbox', checked: true}),
+  fontFamily: makeSelect('fontFamily', 'fontFamily', ['Microsoft YaHei'], 'Microsoft YaHei'),
+};
+const form = {elements: Object.values(elements)};
+const document = {
+  addEventListener(type, callback) {
+    const callbacks = listeners.get(type) || [];
+    callbacks.push(callback);
+    listeners.set(type, callbacks);
+  },
+  getElementById(id) {
+    if (id === 'settingsForm') return form;
+    return elements[id] || null;
+  },
+};
+
+class FormData {
+  constructor(source) {
+    this.fields = [];
+    for (const element of source.elements) {
+      if (!element.name || element.disabled) continue;
+      if (element.type === 'checkbox' && !element.checked) continue;
+      this.fields.push([element.name, element.value]);
+    }
+  }
+  entries() { return this.fields[Symbol.iterator](); }
+}
+
+const context = vm.createContext({
+  console,
+  document,
+  FormData,
+  loadPluginSettings: true,
+  pluginSettings: payload.pluginSettings,
+});
+for (const script of payload.scripts) vm.runInContext(script, context);
+for (const callback of listeners.get('DOMContentLoaded') || []) callback();
+const formData = new FormData(form);
+const themeFields = [...formData.entries()].filter(([name]) =>
+  ['themeMode', 'theme_mode', 'theme', 'sportsDashboardTheme'].includes(name)
+);
+process.stdout.write(JSON.stringify({
+  selectedTheme: elements.themeMode.value,
+  themeFields,
+}));
+"""
+    completed = subprocess.run(
+        ["node", "-e", harness, payload],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
 def _submitted_select_fields(html, *, theme_mode):
     parser = _SettingsFormSelectParser()
     parser.feed(_settings_form_html(html))
@@ -528,6 +636,49 @@ def test_builtin_theme_settings_parse_submitted_night_once(
         if key in parsed_form
     }
     assert parsed_theme_fields == {"themeMode": "night"}
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "saved_settings", "expected_theme"),
+    [
+        pytest.param(
+            "live_radar",
+            {"themeMode": "dark"},
+            "night",
+            id="live-radar-dark",
+        ),
+        pytest.param(
+            "tech_pulse",
+            {"themeMode": "paper"},
+            "day",
+            id="tech-pulse-paper",
+        ),
+    ],
+)
+def test_plugin_settings_hydration_preserves_canonical_theme_dom_behavior(
+    theme_page_client_factory,
+    plugin_id,
+    saved_settings,
+    expected_theme,
+):
+    client = theme_page_client_factory(
+        plugin_id=plugin_id,
+        settings=saved_settings,
+        settings_template=f"{plugin_id}/settings.html",
+    )
+    response = client.get(f"/plugin/{plugin_id}?instance=Home")
+    assert response.status_code == 200
+
+    outcome = _run_settings_dom_harness(
+        response.get_data(as_text=True),
+        initial_theme=expected_theme,
+        plugin_settings=saved_settings,
+    )
+
+    assert outcome == {
+        "selectedTheme": expected_theme,
+        "themeFields": [["themeMode", expected_theme]],
+    }
 
 
 def test_new_plugin_page_defaults_theme_to_auto(theme_page_client_factory):

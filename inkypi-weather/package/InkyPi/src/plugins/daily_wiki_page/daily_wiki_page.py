@@ -5,8 +5,10 @@ import html
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -16,6 +18,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
+from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
@@ -67,6 +70,13 @@ HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET = 20
 DAILY_CAPTION_GAP = 4
 DAILY_CAPTION_LINE_SPACING = 1.12
 EPAPER_RULE_WIDTH = 2
+DEFAULT_IMAGE_CACHE_HOURS = 24
+MAX_IMAGE_CACHE_HOURS = 30 * 24
+MEDIA_CACHE_BUDGET = CacheBudget(
+    max_age_seconds=30 * 24 * 60 * 60,
+    max_files=256,
+    max_bytes=50 * 1024 * 1024,
+)
 
 TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "俠": "侠", "盜": "盗", "獵": "猎", "車": "车", "獲": "获", "獎": "奖", "與": "与",
@@ -862,16 +872,16 @@ class DailyWikiPage(BasePlugin):
         draw.line((cx, cy - radius, cx, cy + radius), fill=palette["rule"], width=1)
 
     def _download_image(self, image_url, target_size, settings):
-        cache_path = self._media_cache_path(image_url)
-        cached = self._open_cached_media(cache_path)
-        if cached is not None:
-            cached.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
-            return cached
-
         theme_render_only = self._enabled(
             settings.get("_theme_render_only"),
             default=False,
         )
+        cache_path = self._media_cache_path(image_url)
+        if theme_render_only or self._cached_media_is_fresh(cache_path, settings):
+            cached = self._open_cached_media(cache_path)
+            if cached is not None:
+                cached.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
+                return cached
         if theme_render_only:
             return None
 
@@ -897,10 +907,30 @@ class DailyWikiPage(BasePlugin):
 
     def _media_cache_path(self, image_url):
         digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()
-        return self._cache_dir() / "media" / f"{digest}.png"
+        return self._media_cache_namespace().path(digest, ".png")
+
+    def _media_cache_namespace(self):
+        return self.managed_cache_namespace(
+            self._cache_dir() / "media",
+            MEDIA_CACHE_BUDGET,
+        )
+
+    def _cached_media_is_fresh(self, path, settings):
+        cache_hours = self._int(
+            settings.get("imageCacheHours"),
+            DEFAULT_IMAGE_CACHE_HOURS,
+            1,
+            MAX_IMAGE_CACHE_HOURS,
+        )
+        try:
+            if path.is_symlink() or not path.is_file():
+                return False
+            return time.time() - path.stat(follow_symlinks=False).st_mtime < cache_hours * 60 * 60
+        except OSError:
+            return False
 
     def _open_cached_media(self, path):
-        if not path.is_file() or path.is_symlink():
+        if path.is_symlink() or not path.is_file():
             return None
         try:
             cached = safe_open_image(path)
@@ -913,23 +943,16 @@ class DailyWikiPage(BasePlugin):
             return None
 
     def _write_cached_media(self, path, image):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
         try:
-            image.save(tmp, format="PNG")
-            tmp.replace(path)
-        except PermissionError:
-            image.save(path, format="PNG")
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+            output = BytesIO()
+            image.save(output, format="PNG")
+            self._media_cache_namespace().put_bytes(
+                path.stem,
+                output.getvalue(),
+                suffix=path.suffix,
+            )
         except Exception as exc:
             logger.warning("Could not write DailyWikiPage media cache %s: %s", path, exc)
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
 
     def _first_most_read_article(self, feed):
         mostread = feed.get("mostread") if isinstance(feed.get("mostread"), dict) else {}

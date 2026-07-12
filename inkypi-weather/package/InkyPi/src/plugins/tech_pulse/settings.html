@@ -50,7 +50,20 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
-      for (const [key, value] of Object.entries(pluginSettings)) {
+      const ownFields = [
+        'feed',
+        'maxStories',
+        'refreshMinutes',
+        'minScore',
+        'showDomain',
+        'showByline',
+        'fontFamily',
+        'forceRefresh',
+        'refreshOnDisplay'
+      ];
+      for (const key of ownFields) {
+        if (pluginSettings[key] === undefined) continue;
+        const value = pluginSettings[key];
         const el = document.getElementById(key);
         if (!el) continue;
         if (el.type === 'checkbox') {

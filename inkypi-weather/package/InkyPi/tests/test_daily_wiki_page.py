@@ -1,16 +1,20 @@
 import hashlib
 import os
 import sys
+import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.daily_wiki_page import daily_wiki_page as wiki_module  # noqa: E402
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DAILY_IMAGE_TITLE_PATH, DAILY_HEADER_FILLER_PATH, HISTORY_TITLE_WORDMARK_PATH, DAILY_CAPTION_GAP, DAILY_CAPTION_LINE_SPACING, EPAPER_RULE_WIDTH, HISTORY_BODY_Y_OFFSET, HISTORY_FLOAT_MIN_TEXT_WIDTH, HISTORY_IMAGE_GAP, HISTORY_IMAGE_HEIGHT, HISTORY_IMAGE_WIDTH, HISTORY_LINE_SPACING, HISTORY_MIN_EVENT_FONT_SIZE, HISTORY_TEXT_INDENT, HISTORY_TITLE_RULE_GAP, HISTORY_TITLE_Y_OFFSET, HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET, YEAR_LABEL_Y_OFFSET, TOPIC_PLACEHOLDER_PATH, DEFAULT_FONT  # noqa: E402
+from utils import cache_manager  # noqa: E402
+from utils.cache_manager import CacheBudget, CachePathError  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -446,6 +450,156 @@ def test_daily_wiki_normal_render_reuses_cached_media_without_http(
 
     assert len(warm_session.calls) == 2
     assert forbidden_session.calls == []
+
+
+def test_daily_wiki_normal_render_refreshes_stale_cached_media(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    cache_path = media_cache_path(tmp_path, DAILY_MEDIA_URL)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(png_bytes((12, 34, 56)))
+    stale_timestamp = time.time() - (2 * 60 * 60)
+    os.utime(cache_path, (stale_timestamp, stale_timestamp))
+    session = RecordingImageSession(
+        {DAILY_MEDIA_URL: png_bytes((210, 120, 30))},
+    )
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: session)
+
+    loaded = plugin._download_image(
+        DAILY_MEDIA_URL,
+        (96, 72),
+        {"imageCacheHours": 1},
+    )
+
+    assert loaded.getpixel((0, 0)) == (210, 120, 30)
+    assert [url for url, _kwargs in session.calls] == [DAILY_MEDIA_URL]
+    with Image.open(cache_path) as refreshed:
+        assert refreshed.convert("RGB").getpixel((0, 0)) == (210, 120, 30)
+
+
+def test_daily_wiki_fresh_media_read_does_not_extend_download_age(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    cache_path = media_cache_path(tmp_path, DAILY_MEDIA_URL)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(png_bytes((18, 52, 86)))
+    downloaded_at = time.time() - (30 * 60)
+    os.utime(cache_path, (downloaded_at, downloaded_at))
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+
+    loaded = plugin._download_image(
+        DAILY_MEDIA_URL,
+        (96, 72),
+        {"imageCacheHours": 1},
+    )
+
+    assert loaded.getpixel((0, 0)) == (18, 52, 86)
+    assert cache_path.stat().st_mtime == pytest.approx(
+        downloaded_at,
+        abs=0.01,
+        rel=0,
+    )
+    assert forbidden_session.calls == []
+
+
+def test_daily_wiki_theme_only_reuses_stale_media_without_http(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    cache_path = media_cache_path(tmp_path, DAILY_MEDIA_URL)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(png_bytes((24, 68, 112)))
+    stale_timestamp = time.time() - (2 * 60 * 60)
+    os.utime(cache_path, (stale_timestamp, stale_timestamp))
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+
+    loaded = plugin._download_image(
+        DAILY_MEDIA_URL,
+        (96, 72),
+        {"imageCacheHours": 1, "_theme_render_only": True},
+    )
+
+    assert loaded.getpixel((0, 0)) == (24, 68, 112)
+    assert forbidden_session.calls == []
+
+
+def test_daily_wiki_media_url_change_uses_a_new_cache_object(tmp_path):
+    plugin = make_plugin(tmp_path)
+    first = plugin._media_cache_path(DAILY_MEDIA_URL)
+    second = plugin._media_cache_path(f"{DAILY_MEDIA_URL}?revision=2")
+
+    plugin._write_cached_media(first, Image.new("RGB", (8, 8), (10, 20, 30)))
+    plugin._write_cached_media(second, Image.new("RGB", (8, 8), (40, 50, 60)))
+
+    assert first != second
+    assert first.is_file()
+    assert second.is_file()
+    assert len(first.stem) == 64
+    assert len(second.stem) == 64
+
+
+def test_daily_wiki_media_cache_uses_managed_budget_namespace(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    namespace = plugin._media_cache_namespace()
+
+    assert namespace.root == tmp_path / "media"
+    assert namespace.budget == CacheBudget(
+        max_age_seconds=30 * 24 * 60 * 60,
+        max_files=256,
+        max_bytes=50 * 1024 * 1024,
+    )
+    assert wiki_module.MEDIA_CACHE_BUDGET == namespace.budget
+
+
+def test_daily_wiki_atomic_cache_replace_failure_preserves_existing_file(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    cache_path = plugin._media_cache_path(DAILY_MEDIA_URL)
+    plugin._write_cached_media(
+        cache_path,
+        Image.new("RGB", (8, 8), (10, 20, 30)),
+    )
+    original = cache_path.read_bytes()
+
+    def fail_replace(_source, _target):
+        raise PermissionError("simulated atomic replace failure")
+
+    monkeypatch.setattr(cache_manager.os, "replace", fail_replace)
+    plugin._write_cached_media(
+        cache_path,
+        Image.new("RGB", (8, 8), (200, 210, 220)),
+    )
+
+    assert cache_path.read_bytes() == original
+    assert not list(cache_path.parent.glob("*.tmp"))
+
+
+def test_daily_wiki_media_cache_rejects_symlink_root_without_os_privileges(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    original = Path.is_symlink
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda path: path == media_root or original(path),
+    )
+
+    with pytest.raises(CachePathError):
+        plugin._media_cache_path(DAILY_MEDIA_URL)
 
 
 def test_daily_wiki_theme_only_reads_stale_cached_media_without_http(

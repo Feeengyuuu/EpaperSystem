@@ -166,7 +166,8 @@ twitch|ludwig</textarea>
             ? { ...defaults, ...pluginSettings }
             : defaults;
 
-        for (const [key, value] of Object.entries(values)) {
+        for (const key of Object.keys(defaults)) {
+            const value = values[key];
             const el = document.getElementById(key);
             if (!el) continue;
             if (el.type === 'checkbox') {
