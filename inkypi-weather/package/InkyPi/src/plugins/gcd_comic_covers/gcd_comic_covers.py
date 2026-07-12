@@ -7,6 +7,8 @@ import logging
 import os
 import random
 import re
+from copy import deepcopy
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -15,7 +17,23 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
+from plugins.gcd_comic_covers.presentation_bank import (
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    GcdPresentationBank,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+)
+from utils.atomic_file import atomic_write_json
 from utils.app_utils import get_base_ui_font
 from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 from utils.safe_image import safe_open_image
@@ -80,6 +98,10 @@ COMIC_VINE_ENV_KEYS = (
     "Comic_Vine_Key",
     "ComicVine",
     "COMIC_VINE",
+)
+_PROVIDER_CACHE_WRITES_ENABLED = ContextVar(
+    "gcd_provider_cache_writes_enabled",
+    default=True,
 )
 
 
@@ -173,6 +195,18 @@ class GcdComicCovers(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        if get_presentation_instance_uuid(settings) is not None:
+            return self._generate_banked_image(settings, device_config)
+        return self._generate_stateless_preview(settings, device_config)
+
+    def _generate_stateless_preview(self, settings, device_config):
+        token = _PROVIDER_CACHE_WRITES_ENABLED.set(False)
+        try:
+            return self._render_stateless_preview(settings, device_config)
+        finally:
+            _PROVIDER_CACHE_WRITES_ENABLED.reset(token)
+
+    def _render_stateless_preview(self, settings, device_config):
         self._device_config = device_config
         dimensions = self._display_dimensions(device_config)
         today = self._current_date(device_config)
@@ -180,16 +214,304 @@ class GcdComicCovers(BasePlugin):
         if not candidates:
             return self._fallback_image(dimensions, "GCD Comic Covers", "No covers found for this date")
 
-        state = self._read_state()
+        state = {"version": STATE_VERSION, "date_buckets": {}}
         ordered = self._candidate_order(candidates, state, today)
         attempt_limit = self._bounded_int(settings.get("maxCoverAttempts"), DEFAULT_MAX_COVER_ATTEMPTS, 1, 30)
 
         if self._fit_mode(settings) in TRIPTYCH_FIT_MODES:
-            return self._generate_triptych_image(ordered, state, today, dimensions, settings, attempt_limit)
+            return self._generate_triptych_image(
+                ordered,
+                state,
+                today,
+                dimensions,
+                settings,
+                attempt_limit,
+                remember=False,
+            )
 
-        return self._generate_single_cover_image(ordered, state, today, dimensions, settings, attempt_limit)
+        return self._generate_single_cover_image(
+            ordered,
+            state,
+            today,
+            dimensions,
+            settings,
+            attempt_limit,
+            remember=False,
+        )
 
-    def _generate_single_cover_image(self, ordered, state, today, dimensions, settings, attempt_limit):
+    def _generate_banked_image(self, settings, device_config):
+        self._device_config = device_config
+        dimensions = self._display_dimensions(device_config)
+        today = self._current_date(device_config)
+        bank = self._presentation_bank(settings, dimensions, today)
+        document, profile = bank.load_for_data()
+        for protected_record in bank.protected_records(profile):
+            if protected_record.get("render_kind") == "metadata":
+                continue
+            try:
+                bank.load_media(protected_record)
+            except RuntimeError as media_error:
+                try:
+                    recovered_image = self._download_cover_image(
+                        protected_record["cover_url"],
+                        protected_record,
+                        protected_record,
+                    )
+                    bank.recover_media(profile, protected_record, recovered_image)
+                except Exception as recovery_error:
+                    raise RuntimeError(
+                        "GCD protected cover exact recovery failed"
+                    ) from recovery_error
+                logger.info(
+                    "Recovered exact protected GCD cover media for issue %s after: %s",
+                    protected_record.get("issue_id"),
+                    media_error,
+                )
+        ready = bank.ready_records(profile, prune=True)
+        ready_keys = {record["record_key"] for record in ready}
+        attempt_limit = self._bounded_int(
+            settings.get("maxCoverAttempts"),
+            DEFAULT_MAX_COVER_ATTEMPTS,
+            1,
+            30,
+        )
+
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
+            candidates = self._candidate_pool(settings, today)
+            ordered = self._candidate_order(candidates, deepcopy(document), today)
+            existing_issue_ids = {record["issue_id"] for record in profile["records"]}
+            attempts = 0
+            for candidate in ordered:
+                if len(ready_keys) >= READY_TARGET or attempts >= attempt_limit:
+                    break
+                issue_id = str(candidate.get("issue_id") or "").strip()
+                if not issue_id or issue_id in existing_issue_ids:
+                    continue
+                attempts += 1
+                try:
+                    cover = self._load_cover(candidate, dimensions, settings)
+                    record = bank.ingest(
+                        profile,
+                        cover,
+                        cover["image"],
+                        render_kind="media",
+                    )
+                except GcdCoverImageUnavailable as exc:
+                    cover = self._cover_from_unavailable_image(exc)
+                    if not self._has_candidate_metadata(cover):
+                        logger.warning(
+                            "GCD cover candidate failed for issue %s: %s",
+                            candidate.get("issue_id"),
+                            exc,
+                        )
+                        continue
+                    try:
+                        record = bank.ingest(profile, cover, render_kind="metadata")
+                    except RuntimeError as ingest_exc:
+                        logger.warning(
+                            "GCD metadata candidate was rejected for issue %s: %s",
+                            candidate.get("issue_id"),
+                            ingest_exc,
+                        )
+                        continue
+                except Exception as exc:
+                    if not self._has_candidate_metadata(candidate):
+                        logger.warning(
+                            "GCD cover candidate failed for issue %s: %s",
+                            candidate.get("issue_id"),
+                            exc,
+                        )
+                        continue
+                    cover = self._cover_from_candidate_metadata(candidate)
+                    try:
+                        record = bank.ingest(profile, cover, render_kind="metadata")
+                    except RuntimeError as ingest_exc:
+                        logger.warning(
+                            "GCD metadata candidate was rejected for issue %s: %s",
+                            candidate.get("issue_id"),
+                            ingest_exc,
+                        )
+                        continue
+                existing_issue_ids.add(record["issue_id"])
+                ready_keys.add(record["record_key"])
+                retained_current_day_keys = {
+                    item["record_key"]
+                    for item in profile["records"]
+                    if item.get("display_date_key") == today.strftime("%m-%d")
+                }
+                ready_keys.intersection_update(retained_current_day_keys)
+        if profile.get("refill_in_progress") is True:
+            profile["refill_in_progress"] = len(ready_keys) < READY_TARGET
+
+        bank.save(document)
+        ready = bank.ready_records(profile, prune=True)
+        if not ready:
+            return self._fallback_image(
+                dimensions,
+                "GCD Comic Covers",
+                "No usable cover image",
+            )
+        current = profile.get("current_selection")
+        if current is None:
+            current = bank.ensure_current(
+                document,
+                profile,
+                ready,
+                self._fit_mode(settings),
+            )
+        else:
+            bank.selection_records(profile, current, load_media=True)
+        return self._render_bank_selection(bank, profile, current, dimensions, settings)
+
+    def presentation_mode(self, settings):
+        return PresentationMode.PREPARED_BANK
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        dimensions = self._display_dimensions(device_config)
+        today = self._current_date(device_config)
+        bank = self._presentation_bank(settings, dimensions, today)
+        document, profile = bank.load_warm()
+        committed_origin = bank.apply_trusted_origin(document, profile, request)
+        if committed_origin:
+            self._write_cover_context(committed_origin)
+        ready = bank.ready_records(profile, prune=False)
+        pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None:
+            selection = bank.choose_selection(
+                document,
+                profile,
+                ready,
+                self._fit_mode(settings),
+            )
+        else:
+            selection = pending
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            selection,
+            dimensions,
+            settings,
+        )
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError(
+                "GCD receipt reconciliation requires trusted instance identity"
+            )
+        bank = self._presentation_bank_for_receipt(settings, instance_uuid)
+        document, profile = bank.load_warm()
+        committed = bank.reconcile_receipt(document, profile, receipt)
+        if committed:
+            self._write_cover_context(committed)
+        return None
+
+    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
+        selected = bank.selection_records(profile, selection, load_media=True)
+        covers = []
+        for record, image in selected:
+            cover = dict(record)
+            if record.get("render_kind") == "metadata":
+                image = self._metadata_cover_image(dimensions, settings, cover)
+                cover["image"] = image
+            else:
+                cover["image"] = image
+            covers.append(cover)
+        if len(covers) > 1:
+            return self._compose_triptych_display_image(covers, dimensions, settings)
+        cover = covers[0]
+        if cover.get("render_kind") == "metadata":
+            return cover["image"]
+        return self._fit_cover(cover["image"], dimensions, settings, cover)
+
+    def _presentation_bank(self, settings, dimensions, today=None):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("GCD presentation bank requires trusted instance identity")
+        fit_mode = self._fit_mode(settings)
+        base_fingerprint = settings_fingerprint(settings, fit_mode, dimensions)
+        fingerprint = instance_profile_fingerprint(base_fingerprint, instance_uuid)
+        target_date = today or date.today()
+        return GcdPresentationBank(
+            self._state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base_fingerprint,
+            profile_settings_key=settings_key(settings, fit_mode),
+            instance_uuid=instance_uuid,
+            display_date_key=target_date.strftime("%m-%d"),
+        )
+
+    def _presentation_media_dir(self):
+        return self._cache_dir() / "presentation-media"
+
+    def _presentation_bank_for_receipt(self, settings, instance_uuid):
+        state = read_bounded_json_object(self._state_path())
+        mappings = state.get("instance_profiles")
+        profiles = state.get("profiles")
+        if not isinstance(mappings, dict) or not isinstance(profiles, dict):
+            raise RuntimeError("GCD presentation bank is missing instance metadata")
+        fingerprint = mappings.get(instance_uuid)
+        profile = profiles.get(fingerprint)
+        if not isinstance(fingerprint, str) or not isinstance(profile, dict):
+            raise RuntimeError("GCD presentation bank is cold for this plugin instance")
+        pending = profile.get("pending_selection")
+        current = profile.get("current_selection")
+        selection = pending if isinstance(pending, dict) else current
+        date_key = selection.get("date_key") if isinstance(selection, dict) else None
+        if not isinstance(date_key, str) or not date_key:
+            raise RuntimeError("GCD presentation bank selection date is missing")
+        return GcdPresentationBank(
+            self._state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=profile.get("settings_fingerprint"),
+            profile_settings_key=profile.get("settings_key"),
+            instance_uuid=instance_uuid,
+            display_date_key=date_key,
+        )
+
+    def _generate_single_cover_image(
+        self,
+        ordered,
+        state,
+        today,
+        dimensions,
+        settings,
+        attempt_limit,
+        *,
+        remember=True,
+    ):
         errors = []
         image_unavailable_cover = None
         detail_unavailable_cover = None
@@ -197,9 +519,10 @@ class GcdComicCovers(BasePlugin):
             try:
                 cover = self._load_cover(candidate, dimensions, settings)
                 image = self._fit_cover(cover["image"], dimensions, settings, cover)
-                self._mark_seen(state, today, cover)
-                self._write_state(state)
-                self._write_cover_context(cover)
+                if remember:
+                    self._mark_seen(state, today, cover)
+                    self._write_state(state)
+                    self._write_cover_context(cover)
                 logger.info(
                     "Selected GCD comic cover: %s #%s (%s) | %s",
                     cover.get("series_name") or "Unknown series",
@@ -221,9 +544,10 @@ class GcdComicCovers(BasePlugin):
                 logger.warning("GCD cover candidate failed for issue %s: %s", candidate.get("issue_id"), exc)
 
         if image_unavailable_cover:
-            self._mark_seen(state, today, image_unavailable_cover)
-            self._write_state(state)
-            self._write_cover_context(image_unavailable_cover)
+            if remember:
+                self._mark_seen(state, today, image_unavailable_cover)
+                self._write_state(state)
+                self._write_cover_context(image_unavailable_cover)
             logger.warning(
                 "Using GCD metadata cover because source cover images were unavailable. | "
                 "plugin_instance: GCD Comic Covers | issue_id: %s | cover_url: %s",
@@ -233,9 +557,10 @@ class GcdComicCovers(BasePlugin):
             return self._metadata_cover_image(dimensions, settings, image_unavailable_cover)
 
         if detail_unavailable_cover:
-            self._mark_seen(state, today, detail_unavailable_cover)
-            self._write_state(state)
-            self._write_cover_context(detail_unavailable_cover)
+            if remember:
+                self._mark_seen(state, today, detail_unavailable_cover)
+                self._write_state(state)
+                self._write_cover_context(detail_unavailable_cover)
             logger.warning(
                 "Using GCD candidate metadata cover because issue details were unavailable. | "
                 "plugin_instance: GCD Comic Covers | issue_id: %s",
@@ -249,7 +574,17 @@ class GcdComicCovers(BasePlugin):
         logger.warning("No usable GCD comic cover could be rendered. %s", detail)
         return self._fallback_image(dimensions, "GCD Comic Covers", "No usable cover image")
 
-    def _generate_triptych_image(self, ordered, state, today, dimensions, settings, attempt_limit):
+    def _generate_triptych_image(
+        self,
+        ordered,
+        state,
+        today,
+        dimensions,
+        settings,
+        attempt_limit,
+        *,
+        remember=True,
+    ):
         errors = []
         covers = []
         wide_fallback_covers = []
@@ -281,10 +616,11 @@ class GcdComicCovers(BasePlugin):
             covers.extend(wide_fallback_covers[:TRIPTYCH_COVER_COUNT - len(covers)])
 
         if covers:
-            for cover in covers:
-                self._mark_seen(state, today, cover)
-            self._write_state(state)
-            self._write_cover_context(covers)
+            if remember:
+                for cover in covers:
+                    self._mark_seen(state, today, cover)
+                self._write_state(state)
+                self._write_cover_context(covers)
             logger.info(
                 "Selected GCD comic cover triptych: %s",
                 " | ".join(self._label_text(cover) for cover in covers),
@@ -292,9 +628,10 @@ class GcdComicCovers(BasePlugin):
             return self._compose_triptych_display_image(covers, dimensions, settings)
 
         if image_unavailable_cover:
-            self._mark_seen(state, today, image_unavailable_cover)
-            self._write_state(state)
-            self._write_cover_context(image_unavailable_cover)
+            if remember:
+                self._mark_seen(state, today, image_unavailable_cover)
+                self._write_state(state)
+                self._write_cover_context(image_unavailable_cover)
             logger.warning(
                 "Using GCD metadata cover because source cover images were unavailable. | "
                 "plugin_instance: GCD Comic Covers | issue_id: %s | cover_url: %s",
@@ -304,9 +641,10 @@ class GcdComicCovers(BasePlugin):
             return self._metadata_cover_image(dimensions, settings, image_unavailable_cover)
 
         if detail_unavailable_cover:
-            self._mark_seen(state, today, detail_unavailable_cover)
-            self._write_state(state)
-            self._write_cover_context(detail_unavailable_cover)
+            if remember:
+                self._mark_seen(state, today, detail_unavailable_cover)
+                self._write_state(state)
+                self._write_cover_context(detail_unavailable_cover)
             logger.warning(
                 "Using GCD candidate metadata cover because issue details were unavailable. | "
                 "plugin_instance: GCD Comic Covers | issue_id: %s",
@@ -527,8 +865,26 @@ class GcdComicCovers(BasePlugin):
 
     def _candidate_order(self, candidates, state, today):
         date_key = today.strftime("%m-%d")
-        bucket = state.setdefault("date_buckets", {}).setdefault(date_key, {})
+        date_buckets = state.get("date_buckets") if isinstance(state, dict) else None
+        source_bucket = date_buckets.get(date_key) if isinstance(date_buckets, dict) else None
+        bucket = dict(source_bucket) if isinstance(source_bucket, dict) else {}
         seen = {str(value) for value in bucket.get("seen_issue_ids", [])}
+        pending_issue_ids = set()
+        profiles = state.get("profiles") if isinstance(state, dict) else None
+        if isinstance(profiles, dict):
+            for profile in profiles.values():
+                if not isinstance(profile, dict):
+                    continue
+                pending = profile.get("pending_selection")
+                if not isinstance(pending, dict):
+                    continue
+                pending_keys = set(pending.get("record_keys", []))
+                pending_issue_ids.update(
+                    str(record.get("issue_id") or "")
+                    for record in profile.get("records", [])
+                    if isinstance(record, dict) and record.get("record_key") in pending_keys
+                )
+        seen.update(pending_issue_ids)
 
         priority = [candidate for candidate in candidates if candidate.get("match_quality") == "comicvine_recent"]
         priority_ids = {item.get("issue_id") for item in priority}
@@ -549,8 +905,7 @@ class GcdComicCovers(BasePlugin):
 
         if not priority_unseen and not exact_unseen and not month_unseen:
             reset_last_issue_id = str(bucket.get("last_issue_id") or "")
-            bucket["seen_issue_ids"] = []
-            seen = set()
+            seen = set(pending_issue_ids)
             priority_unseen = self._unseen_pool(priority, seen)
             exact_unseen = self._unseen_pool(exact, seen)
             month_unseen = [
@@ -561,7 +916,11 @@ class GcdComicCovers(BasePlugin):
 
         if priority and not priority_unseen:
             reset_last_issue_id = str(bucket.get("last_issue_id") or reset_last_issue_id or "")
-            priority_unseen = list(priority)
+            priority_unseen = [
+                candidate
+                for candidate in priority
+                if str(candidate.get("issue_id") or "") not in pending_issue_ids
+            ]
             if reset_last_issue_id and len(priority_unseen) > 1:
                 recycled = [
                     candidate for candidate in priority_unseen
@@ -667,13 +1026,16 @@ class GcdComicCovers(BasePlugin):
 
     def _download_cover_image(self, cover_url, candidate, detail):
         try:
+            cover_url = _canonical_provider_url(cover_url, "cover")
             response = get_http_client().request_bytes(
                 "GET",
                 cover_url,
                 timeout=(GCD_COVER_CONNECT_TIMEOUT_SECONDS, GCD_COVER_READ_TIMEOUT_SECONDS),
                 headers=IMAGE_HEADERS,
                 max_bytes=12 * 1024 * 1024,
+                allow_redirects=False,
             )
+            _canonical_provider_url(response.url, "cover")
             return safe_open_image(response.data)
         except HttpStatusError as exc:
             if exc.status in {403, 429}:
@@ -901,17 +1263,21 @@ class GcdComicCovers(BasePlugin):
 
     def _comic_vine_get(self, path_or_url, api_key, params=None):
         url = path_or_url if str(path_or_url).startswith("http") else f"{COMIC_VINE_BASE_URL}/{str(path_or_url).lstrip('/')}"
+        url = _canonical_provider_url(url, "comicvine_api")
         request_params = dict(params or {})
         request_params["api_key"] = api_key
         request_params["format"] = "json"
         try:
-            payload = get_http_client().request_json(
+            response = get_http_client().request_json(
                 "GET",
                 url,
                 params=request_params,
                 headers=COMIC_VINE_HEADERS,
                 timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
-            ).data
+                allow_redirects=False,
+            )
+            _canonical_provider_url(response.url, "comicvine_api")
+            payload = response.data
         except HttpStatusError as exc:
             raise RuntimeError(f"Comic Vine HTTP {exc.status}") from exc
         except HttpClientError as exc:
@@ -1033,13 +1399,16 @@ class GcdComicCovers(BasePlugin):
         if page > 1:
             params["page"] = page
         try:
-            data = get_http_client().request_json(
+            response = get_http_client().request_json(
                 "GET",
                 url,
                 params=params,
                 headers=REQUEST_HEADERS,
                 timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
-            ).data
+                allow_redirects=False,
+            )
+            _canonical_provider_url(response.url, "gcd")
+            data = response.data
         except HttpClientError:
             return []
         return self._extract_json_candidates(data, year, month)
@@ -1057,7 +1426,9 @@ class GcdComicCovers(BasePlugin):
             timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
             max_bytes=4 * 1024 * 1024,
             errors="replace",
+            allow_redirects=False,
         )
+        _canonical_provider_url(response.url, "gcd")
         parser = _GcdMonthlyParser(response.url)
         parser.feed(response.data or "")
 
@@ -1429,12 +1800,16 @@ class GcdComicCovers(BasePlugin):
 
     def _fetch_json(self, url):
         try:
-            return get_http_client().request_json(
+            url = _canonical_provider_url(urljoin(GCD_BASE_URL, str(url)), "gcd")
+            response = get_http_client().request_json(
                 "GET",
                 url,
                 headers=JSON_HEADERS,
                 timeout=(GCD_API_CONNECT_TIMEOUT_SECONDS, GCD_API_READ_TIMEOUT_SECONDS),
-            ).data
+                allow_redirects=False,
+            )
+            _canonical_provider_url(response.url, "gcd")
+            return response.data
         except HttpClientError as exc:
             raise RuntimeError("GCD JSON endpoint returned invalid data") from exc
 
@@ -1457,6 +1832,8 @@ class GcdComicCovers(BasePlugin):
             return None
 
     def _write_comic_vine_cache(self, today, limit, candidates):
+        if not _PROVIDER_CACHE_WRITES_ENABLED.get():
+            return
         path = self._comic_vine_cache_path(today, limit)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -1487,6 +1864,8 @@ class GcdComicCovers(BasePlugin):
             return None
 
     def _write_month_cache(self, year, month, candidates, day=None):
+        if not _PROVIDER_CACHE_WRITES_ENABLED.get():
+            return
         path = self._month_cache_path(year, month, day)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -1518,6 +1897,8 @@ class GcdComicCovers(BasePlugin):
             return None
 
     def _write_issue_cache(self, issue_id, detail):
+        if not _PROVIDER_CACHE_WRITES_ENABLED.get():
+            return
         path = self._issue_cache_path(issue_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -1545,17 +1926,7 @@ class GcdComicCovers(BasePlugin):
 
     def _write_json(self, path, data):
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(data, ensure_ascii=True, indent=2)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            path.write_text(text, encoding="utf-8")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+        atomic_write_json(path, data, mode=0o600)
 
     def _state_path(self):
         return self._cache_dir() / "state.json"
@@ -1715,3 +2086,38 @@ def _clean_text(value):
     value = re.sub(r"<[^>]+>", " ", str(value or ""))
     value = html.unescape(value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _canonical_provider_url(value, provider):
+    """Canonicalize an approved provider URL without permitting authority changes."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError("GCD provider URL is missing")
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("GCD provider URL authority is invalid") from exc
+    if provider == "gcd":
+        allowed = host == "comics.org" or host.endswith(".comics.org")
+    elif provider == "comicvine_api":
+        allowed = host == "comicvine.gamespot.com" and parsed.path.startswith("/api/")
+    elif provider == "cover":
+        allowed = (
+            host == "comics.org"
+            or host.endswith(".comics.org")
+            or host == "comicvine.gamespot.com"
+            or host.endswith(".comicvine.gamespot.com")
+        )
+    else:
+        raise RuntimeError("GCD provider URL type is invalid")
+    if (
+        not allowed
+        or parsed.scheme.lower() not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+    ):
+        raise RuntimeError("GCD provider URL is outside approved HTTPS authorities")
+    return urlunparse(("https", host, parsed.path or "/", "", parsed.query, ""))
