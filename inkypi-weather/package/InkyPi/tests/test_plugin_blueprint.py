@@ -1,5 +1,6 @@
 import ast
 from contextlib import contextmanager
+from html.parser import HTMLParser
 from io import BytesIO
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ from flask import Flask
 from jinja2 import ChoiceLoader, FileSystemLoader
 from PIL import Image
 import pytest
+from werkzeug.datastructures import MultiDict
 
 import blueprints.plugin as plugin_blueprint
 import blueprints.playlist as playlist_blueprint
@@ -267,14 +269,20 @@ def test_display_instance_force_refresh_skips_sports_dashboard_force_mode():
 
 @pytest.fixture
 def theme_page_client_factory(monkeypatch):
-    def create(*, settings=None, supports_day_night_theme=True):
+    def create(
+        *,
+        settings=None,
+        supports_day_night_theme=True,
+        plugin_id="themed",
+        settings_template="base_plugin/settings.html",
+    ):
         manifest = SimpleNamespace(
             capabilities=SimpleNamespace(
                 supports_day_night_theme=supports_day_night_theme,
             ),
         )
         plugin_config = {
-            "id": "themed",
+            "id": plugin_id,
             "display_name": "Themed Plugin",
             "_manifest": manifest,
         }
@@ -284,11 +292,11 @@ def theme_page_client_factory(monkeypatch):
                 "start_time": "00:00",
                 "end_time": "24:00",
                 "plugins": [{
-                    "plugin_id": "themed",
+                    "plugin_id": plugin_id,
                     "name": "Home",
                     "plugin_settings": dict(settings or {}),
                     "refresh": {"interval": 300},
-                    "instance_uuid": "themed-home-uuid",
+                    "instance_uuid": f"{plugin_id}-home-uuid",
                 }],
             }],
         })
@@ -297,16 +305,21 @@ def theme_page_client_factory(monkeypatch):
             def get_playlist_manager(self):
                 return manager
 
-            def get_plugin(self, plugin_id):
-                return plugin_config if plugin_id == "themed" else None
+            def get_plugin(self, requested_plugin_id):
+                return plugin_config if requested_plugin_id == plugin_id else None
 
         class Plugin:
             def generate_settings_template(self):
-                return {
-                    "settings_template": "base_plugin/settings.html",
+                template_params = {
+                    "settings_template": settings_template,
                     "frame_styles": [],
                     "supports_day_night_theme": False,
                 }
+                if plugin_id == "steam_charts":
+                    template_params["chart_modes"] = {
+                        "new_trending": {"label": "Trending"},
+                    }
+                return template_params
 
         monkeypatch.setattr(
             plugin_blueprint,
@@ -340,8 +353,196 @@ def _assert_selected_theme(html, expected):
     selector = _theme_selector(html)
     assert selector is not None
     assert html.count('name="themeMode"') == 1
+    assert html.count('id="themeMode"') == 1
     assert selector.count(" selected") == 1
     assert f'<option value="{expected}" selected>' in selector
+
+
+class _SettingsFormSelectParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.in_settings_form = False
+        self.current_select = None
+        self.selects = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "form" and attributes.get("id") == "settingsForm":
+            self.in_settings_form = True
+            return
+        if not self.in_settings_form:
+            return
+        if tag == "select" and attributes.get("name"):
+            self.current_select = {
+                "name": attributes["name"],
+                "options": [],
+            }
+        elif tag == "option" and self.current_select is not None:
+            self.current_select["options"].append(
+                (attributes.get("value", ""), "selected" in attributes),
+            )
+
+    def handle_endtag(self, tag):
+        if tag == "select" and self.current_select is not None:
+            options = self.current_select["options"]
+            value = next(
+                (option_value for option_value, selected in options if selected),
+                options[0][0] if options else "",
+            )
+            self.selects.append((self.current_select["name"], value))
+            self.current_select = None
+        elif tag == "form" and self.in_settings_form:
+            self.in_settings_form = False
+
+
+def _settings_form_html(html):
+    match = re.search(
+        r'<form\b[^>]*\bid\s*=\s*["\']settingsForm["\'][^>]*>.*?</form>',
+        html,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    return match.group(0)
+
+
+def _submitted_select_fields(html, *, theme_mode):
+    parser = _SettingsFormSelectParser()
+    parser.feed(_settings_form_html(html))
+    theme_indexes = [
+        index
+        for index, (name, _value) in enumerate(parser.selects)
+        if name == "themeMode"
+    ]
+    assert theme_indexes
+    canonical_theme_index = theme_indexes[-1]
+
+    fields = MultiDict()
+    for index, (name, value) in enumerate(parser.selects):
+        fields.add(name, theme_mode if index == canonical_theme_index else value)
+    return fields
+
+
+BUILTIN_THEME_SETTINGS = [
+    pytest.param(
+        "box_office_top_movies",
+        {"themeMode": "paper"},
+        "day",
+        id="box-office-paper",
+    ),
+    pytest.param(
+        "china_box_office_top_movies",
+        {"themeMode": "cinema"},
+        "night",
+        id="china-box-office-cinema",
+    ),
+    pytest.param(
+        "live_radar",
+        {"themeMode": "dark"},
+        "night",
+        id="live-radar-dark",
+    ),
+    pytest.param(
+        "species_radar",
+        {"themeMode": "comic"},
+        "day",
+        id="species-radar-comic",
+    ),
+    pytest.param(
+        "steam_charts",
+        {"themeMode": "midnight"},
+        "night",
+        id="steam-charts-midnight",
+    ),
+    pytest.param(
+        "tech_pulse",
+        {"themeMode": "paper"},
+        "day",
+        id="tech-pulse-paper",
+    ),
+    pytest.param(
+        "us_tv_hot_shows",
+        {"themeMode": "streaming"},
+        "night",
+        id="us-tv-streaming",
+    ),
+    pytest.param(
+        "daily_wiki_page",
+        {"theme": "paper"},
+        "day",
+        id="daily-wiki-theme-alias",
+    ),
+    pytest.param(
+        "sports_dashboard",
+        {"sportsDashboardTheme": "night"},
+        "night",
+        id="sports-dashboard-theme-alias",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "saved_settings", "expected_theme"),
+    BUILTIN_THEME_SETTINGS,
+)
+def test_builtin_theme_settings_render_one_canonical_selector(
+    theme_page_client_factory,
+    plugin_id,
+    saved_settings,
+    expected_theme,
+):
+    client = theme_page_client_factory(
+        plugin_id=plugin_id,
+        settings=saved_settings,
+        settings_template=f"{plugin_id}/settings.html",
+    )
+
+    response = client.get(f"/plugin/{plugin_id}?instance=Home")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    _assert_selected_theme(html, expected_theme)
+    settings_form = _settings_form_html(html)
+    assert re.search(r'name\s*=\s*["\']theme["\']', settings_form) is None
+    assert re.search(r'id\s*=\s*["\']theme["\']', settings_form) is None
+    assert "sportsDashboardTheme" not in settings_form
+    assert re.search(
+        r'getElementById\(\s*["\']themeMode["\']',
+        settings_form,
+    ) is None
+    assert re.search(r"\blet\s+themeMode\b", settings_form) is None
+    assert re.search(r"\bthemeMode\s*:", settings_form) is None
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "saved_settings", "_expected_theme"),
+    BUILTIN_THEME_SETTINGS,
+)
+def test_builtin_theme_settings_parse_submitted_night_once(
+    theme_page_client_factory,
+    plugin_id,
+    saved_settings,
+    _expected_theme,
+):
+    client = theme_page_client_factory(
+        plugin_id=plugin_id,
+        settings=saved_settings,
+        settings_template=f"{plugin_id}/settings.html",
+    )
+    response = client.get(f"/plugin/{plugin_id}?instance=Home")
+    assert response.status_code == 200
+
+    submitted_fields = _submitted_select_fields(
+        response.get_data(as_text=True),
+        theme_mode="night",
+    )
+    assert submitted_fields.getlist("themeMode") == ["night"]
+    parsed_form = app_utils.parse_form(submitted_fields)
+    parsed_theme_fields = {
+        key: parsed_form[key]
+        for key in plugin_blueprint._PLUGIN_THEME_SETTING_KEYS
+        if key in parsed_form
+    }
+    assert parsed_theme_fields == {"themeMode": "night"}
 
 
 def test_new_plugin_page_defaults_theme_to_auto(theme_page_client_factory):

@@ -23,14 +23,6 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="theme">Theme</label>
-  <select id="theme" name="theme" class="form-input">
-    <option value="paper" selected>Paper</option>
-    <option value="dark">Dark</option>
-  </select>
-</div>
-
-<div class="form-group">
   <label><input type="checkbox" name="showImage" id="showImage" value="true" checked> Show daily image</label>
   <input type="hidden" name="showImage" value="false">
 </div>
@@ -57,7 +49,7 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
-      const ids = ['language', 'fallbackLanguage', 'theme', 'fontFamily'];
+      const ids = ['language', 'fallbackLanguage', 'fontFamily'];
       ids.forEach((id) => {
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) {

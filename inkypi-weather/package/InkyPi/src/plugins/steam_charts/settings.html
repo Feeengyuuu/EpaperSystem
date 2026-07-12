@@ -23,15 +23,6 @@
 </div>
 
 <div class="form-group">
-    <label for="themeMode" class="form-label">Display Theme:</label>
-    <select id="themeMode" name="themeMode" class="form-input">
-        <option value="auto" selected>Auto Day/Night</option>
-        <option value="day">Day</option>
-        <option value="night">Deep Night</option>
-    </select>
-</div>
-
-<div class="form-group">
     <label for="showImages" class="form-label">Show Game Images:</label>
     <div class="toggle-container">
         <input type="hidden" id="showImagesHidden" name="showImages" value="false">
@@ -50,7 +41,6 @@
         const showImagesToggle = document.getElementById('showImages');
         let mode = "new_trending";
         let itemsCount = "5";
-        let themeMode = "auto";
         let showImages = true;
 
         if (loadPluginSettings) {
@@ -59,7 +49,6 @@
                 mode = 'most_played';
             }
             itemsCount = pluginSettings.itemsCount || "5";
-            themeMode = pluginSettings.themeMode || "auto";
             showImages = pluginSettings.showImages !== "false" && pluginSettings.showImages !== false;
         }
 
@@ -67,6 +56,5 @@
         syncShowImagesToggle(showImagesToggle);
         document.getElementById('mode').value = mode;
         document.getElementById('itemsCount').value = itemsCount;
-        document.getElementById('themeMode').value = themeMode;
     });
 </script>

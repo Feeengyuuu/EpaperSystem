@@ -74,15 +74,6 @@
     </select>
 </div>
 
-<div class="form-group">
-    <label for="themeMode" class="form-label">Display theme:</label>
-    <select id="themeMode" name="themeMode" class="form-input">
-        <option value="auto" selected>Auto day/night</option>
-        <option value="cinema">Cinema dark</option>
-        <option value="paper">Light paper</option>
-    </select>
-</div>
-
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
@@ -98,7 +89,6 @@
             document.getElementById('tmdbBearerToken').value = pluginSettings.tmdbBearerToken || '';
             document.getElementById('tmdbApiKey').value = pluginSettings.tmdbApiKey || '';
             document.getElementById('cacheHours').value = pluginSettings.cacheHours || '6';
-            document.getElementById('themeMode').value = pluginSettings.themeMode || 'auto';
         }
     });
 </script>

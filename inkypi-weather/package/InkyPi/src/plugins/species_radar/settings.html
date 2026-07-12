@@ -26,17 +26,6 @@
 </div>
 
 <div class="form-group">
-    <label class="form-label">Appearance</label>
-    <div class="form-group">
-        <label for="themeMode">Theme:</label>
-        <select id="themeMode" name="themeMode" class="form-input">
-            <option value="auto">Auto day / night</option>
-            <option value="comic">Comic day</option>
-            <option value="night">Comic night</option>
-        </select>
-    </div>
-</div>
-<div class="form-group">
     <label class="form-label">GBIF Search</label>
     <div class="form-group">
         <label for="radiusKm">Radius:</label>
@@ -121,7 +110,6 @@
         let map, marker;
 
         if (loadPluginSettings) {
-            document.getElementById('themeMode').value = pluginSettings.themeMode || 'auto';
             document.getElementById('locationSource').value = pluginSettings.locationSource || 'weather';
             document.getElementById('latitude').value = pluginSettings.latitude || '';
             document.getElementById('longitude').value = pluginSettings.longitude || '';
@@ -144,7 +132,6 @@
             latitude = +pluginSettings.latitude || latitude;
             longitude = +pluginSettings.longitude || longitude;
         } else {
-            document.getElementById('themeMode').value = 'auto';
             document.getElementById('locationSource').value = 'weather';
             document.getElementById('latitude').value = '';
             document.getElementById('longitude').value = '';
