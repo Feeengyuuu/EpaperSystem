@@ -18,7 +18,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
-from utils.safe_image import ImageLimits, safe_open_image_response
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -862,6 +862,19 @@ class DailyWikiPage(BasePlugin):
         draw.line((cx, cy - radius, cx, cy + radius), fill=palette["rule"], width=1)
 
     def _download_image(self, image_url, target_size, settings):
+        cache_path = self._media_cache_path(image_url)
+        cached = self._open_cached_media(cache_path)
+        if cached is not None:
+            cached.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
+            return cached
+
+        theme_render_only = self._enabled(
+            settings.get("_theme_render_only"),
+            default=False,
+        )
+        if theme_render_only:
+            return None
+
         max_bytes = self._int(settings.get("maxImageBytes"), 10_000_000, 1_000_000, 20_000_000)
         try:
             response = get_http_session().get(
@@ -876,10 +889,48 @@ class DailyWikiPage(BasePlugin):
                 draft_size=(target_size[0] * 3, target_size[1] * 3),
             ).convert("RGB")
             loaded.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
+            self._write_cached_media(cache_path, loaded)
             return loaded
         except Exception as exc:
             logger.warning("DailyWikiPage image download failed: %s", exc)
             return None
+
+    def _media_cache_path(self, image_url):
+        digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()
+        return self._cache_dir() / "media" / f"{digest}.png"
+
+    def _open_cached_media(self, path):
+        if not path.is_file() or path.is_symlink():
+            return None
+        try:
+            cached = safe_open_image(path)
+            try:
+                return cached.convert("RGB")
+            finally:
+                cached.close()
+        except Exception as exc:
+            logger.warning("Could not read DailyWikiPage media cache %s: %s", path, exc)
+            return None
+
+    def _write_cached_media(self, path, image):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            image.save(tmp, format="PNG")
+            tmp.replace(path)
+        except PermissionError:
+            image.save(path, format="PNG")
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        except Exception as exc:
+            logger.warning("Could not write DailyWikiPage media cache %s: %s", path, exc)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _first_most_read_article(self, feed):
         mostread = feed.get("mostread") if isinstance(feed.get("mostread"), dict) else {}
         articles = mostread.get("articles") if isinstance(mostread.get("articles"), list) else []

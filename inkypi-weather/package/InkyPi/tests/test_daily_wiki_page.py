@@ -1,6 +1,8 @@
 import hashlib
+import os
 import sys
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -60,6 +62,59 @@ def canonical_theme(mode):
 
 def image_digest(image):
     return hashlib.sha256(image.tobytes()).hexdigest()
+
+
+DAILY_MEDIA_URL = "https://media.example.test/daily.png"
+HISTORY_MEDIA_URL = "https://media.example.test/history.png"
+
+
+class FakeImageResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.headers = {"Content-Length": str(len(payload))}
+        self.closed = False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size):
+        for offset in range(0, len(self._payload), chunk_size):
+            yield self._payload[offset : offset + chunk_size]
+
+    def close(self):
+        self.closed = True
+
+
+class RecordingImageSession:
+    def __init__(self, payloads=None, *, forbidden=False):
+        self.payloads = payloads or {}
+        self.forbidden = forbidden
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if self.forbidden:
+            raise AssertionError(f"unexpected HTTP GET: {url}")
+        return FakeImageResponse(self.payloads[url])
+
+
+def png_bytes(color):
+    output = BytesIO()
+    Image.new("RGB", (96, 72), color).save(output, format="PNG")
+    return output.getvalue()
+
+
+def media_payload(plugin, current, language, settings):
+    payload = plugin._payload_from_feed(sample_feed(), language, settings)
+    payload["date"] = current.strftime("%Y-%m-%d")
+    payload["image_url"] = DAILY_MEDIA_URL
+    payload["history_image_url"] = HISTORY_MEDIA_URL
+    return payload
+
+
+def media_cache_path(tmp_path, url):
+    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    return tmp_path / "media" / f"{key}.png"
 
 
 def sample_feed():
@@ -299,22 +354,18 @@ def test_daily_wiki_theme_only_opposite_palette_reuses_warm_source_cache(
     def fake_fetch(current, language, _fallback_language, settings):
         nonlocal fetch_calls
         fetch_calls += 1
-        payload = plugin._payload_from_feed(sample_feed(), language, settings)
-        payload["date"] = current.strftime("%Y-%m-%d")
-        return payload
+        return media_payload(plugin, current, language, settings)
 
     monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
     monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
     monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
-    monkeypatch.setattr(
-        plugin,
-        "_download_image",
-        lambda _url, target_size, _settings: Image.new(
-            "RGB",
-            target_size,
-            (90, 120, 150),
-        ),
+    warm_session = RecordingImageSession(
+        {
+            DAILY_MEDIA_URL: png_bytes((30, 90, 160)),
+            HISTORY_MEDIA_URL: png_bytes((180, 120, 45)),
+        }
     )
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: warm_session)
 
     day_settings = {
         "language": "en",
@@ -328,9 +379,26 @@ def test_daily_wiki_theme_only_opposite_palette_reuses_warm_source_cache(
         "_theme_render_only": True,
     }
     day = plugin.generate_image(day_settings, FakeDeviceConfig())
+
+    assert [url for url, _kwargs in warm_session.calls] == [
+        DAILY_MEDIA_URL,
+        HISTORY_MEDIA_URL,
+    ]
+    assert all(call[1]["stream"] is True for call in warm_session.calls)
+    assert all(call[1]["timeout"] == (5, 12) for call in warm_session.calls)
+    cached_media = [
+        media_cache_path(tmp_path, DAILY_MEDIA_URL),
+        media_cache_path(tmp_path, HISTORY_MEDIA_URL),
+    ]
+
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
     night = plugin.generate_image(night_settings, FakeDeviceConfig())
 
     assert fetch_calls == 1
+    assert forbidden_session.calls == []
+    assert all(path.is_file() for path in cached_media)
+    assert all(len(path.stem) == 64 and path.stem.isalnum() for path in cached_media)
     assert plugin._cache_key("2026-06-25", day_settings, "en", "") == plugin._cache_key(
         "2026-06-25",
         night_settings,
@@ -341,6 +409,162 @@ def test_daily_wiki_theme_only_opposite_palette_reuses_warm_source_cache(
     assert plugin._palette({**day_settings, "theme": "paper"}) == plugin._palette(
         day_settings,
     )
+
+
+def test_daily_wiki_normal_render_reuses_cached_media_without_http(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda current, language, _fallback, settings: media_payload(
+            plugin,
+            current,
+            language,
+            settings,
+        ),
+    )
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    warm_session = RecordingImageSession(
+        {
+            DAILY_MEDIA_URL: png_bytes((30, 90, 160)),
+            HISTORY_MEDIA_URL: png_bytes((180, 120, 45)),
+        }
+    )
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: warm_session)
+    settings = {"language": "en", "_inkypi_theme": canonical_theme("day")}
+
+    plugin.generate_image(settings, FakeDeviceConfig())
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+    plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert len(warm_session.calls) == 2
+    assert forbidden_session.calls == []
+
+
+def test_daily_wiki_theme_only_reads_stale_cached_media_without_http(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda current, language, _fallback, settings: media_payload(
+            plugin,
+            current,
+            language,
+            settings,
+        ),
+    )
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    plugin._daily_payload({"language": "en"}, now)
+    for url, payload in (
+        (DAILY_MEDIA_URL, png_bytes((30, 90, 160))),
+        (HISTORY_MEDIA_URL, png_bytes((180, 120, 45))),
+    ):
+        path = media_cache_path(tmp_path, url)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        os.utime(path, (1, 1))
+
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+    image = plugin.generate_image(
+        {
+            "language": "en",
+            "_inkypi_theme": canonical_theme("night"),
+            "_theme_render_only": True,
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert forbidden_session.calls == []
+
+
+def test_daily_wiki_theme_only_with_warm_source_and_cold_media_stays_offline(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+    fetch_calls = 0
+
+    def fake_fetch(current, language, _fallback, settings):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return media_payload(plugin, current, language, settings)
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    plugin._daily_payload({"language": "en"}, now)
+    assert not (tmp_path / "media").exists()
+
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+    image = plugin.generate_image(
+        {
+            "language": "en",
+            "_inkypi_theme": canonical_theme("night"),
+            "_theme_render_only": True,
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert fetch_calls == 1
+    assert forbidden_session.calls == []
+
+
+def test_daily_wiki_theme_only_with_corrupt_media_stays_offline(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda current, language, _fallback, settings: media_payload(
+            plugin,
+            current,
+            language,
+            settings,
+        ),
+    )
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    plugin._daily_payload({"language": "en"}, now)
+    for url in (DAILY_MEDIA_URL, HISTORY_MEDIA_URL):
+        path = media_cache_path(tmp_path, url)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"not a valid image")
+
+    forbidden_session = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden_session)
+    image = plugin.generate_image(
+        {
+            "language": "en",
+            "_inkypi_theme": canonical_theme("night"),
+            "_theme_render_only": True,
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert forbidden_session.calls == []
 
 
 def test_render_page_returns_display_image(tmp_path, monkeypatch):
