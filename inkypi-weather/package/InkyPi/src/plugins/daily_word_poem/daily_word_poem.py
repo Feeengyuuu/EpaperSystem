@@ -19,7 +19,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
-from utils.theme_utils import get_theme_context, get_theme_palette
+from utils.theme_utils import get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -477,7 +477,7 @@ class DailyWordPoem(BasePlugin):
         now = self._localized_now(device_config)
         payload = self._daily_payload(settings, now)
         self._write_daily_word_context(payload, now)
-        theme_context = get_theme_context(device_config, now=now)
+        theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
         return self._render(dimensions, settings, payload, now, theme_context)
 
     def _display_dimensions(self, device_config):
@@ -499,9 +499,13 @@ class DailyWordPoem(BasePlugin):
         cache_file = self._cache_dir() / "daily.json"
         cached = _safe_json_load(cache_file, {})
 
-        if cached.get("cache_key") == cache_key and not _enabled(settings.get("force_refresh")):
+        theme_render_only = _enabled(settings.get("_theme_render_only"))
+        force_refresh = _enabled(settings.get("force_refresh")) and not theme_render_only
+        if cached.get("cache_key") == cache_key and not force_refresh:
             cached["from_cache"] = True
             return cached
+        if theme_render_only:
+            raise RuntimeError("Theme-only redraw requires a warm Daily Word cache.")
 
         payload = {
             "cache_key": cache_key,
@@ -887,6 +891,20 @@ class DailyWordPoem(BasePlugin):
         return image
 
     def _page_palette(self, settings, theme_context=None):
+        injected_theme = settings.get("_inkypi_theme") if isinstance(settings, dict) else None
+        if isinstance(injected_theme, dict) and isinstance(injected_theme.get("palette"), dict):
+            palette = injected_theme["palette"]
+            mode = injected_theme.get("mode", "day")
+            theme_label = "MIDNIGHT READING" if mode == "night" else "DAY READING"
+            return (
+                palette["background"],
+                palette["ink"],
+                palette["accent"],
+                palette["muted"],
+                palette["rule"],
+                theme_label,
+            )
+
         palette = get_theme_palette(theme_context)
         mode = (theme_context or {}).get("mode", "day") if isinstance(theme_context, dict) else "day"
 

@@ -19,7 +19,6 @@ from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
-from utils.theme_utils import get_theme_context, get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -315,16 +314,25 @@ class DailyKnowledge(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
+        settings = settings or {}
         dimensions = self.get_dimensions(device_config)
 
         tz_name = device_config.get_config("timezone") or DEFAULT_TIMEZONE
         now = self._now_for_timezone(tz_name)
-        payload = self._daily_payload(settings or {}, device_config, now)
+        payload = self._daily_payload(settings, device_config, now)
         self._write_daily_context(payload, now)
 
-        theme = get_theme_context(device_config, now=now)
-        palette = get_theme_palette(theme)
-        return self._render_page(dimensions, payload, settings or {}, now, palette)
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
+        canonical = theme["palette"]
+        accent = canonical["accent"]
+        panel = canonical["panel"]
+        palette = {
+            **canonical,
+            "dim": canonical["muted"],
+            "cyan": accent,
+            "gold": tuple(round((primary * 3 + surface) / 4) for primary, surface in zip(accent, panel)),
+        }
+        return self._render_page(dimensions, payload, settings, now, palette)
 
     def _now_for_timezone(self, tz_name):
         for candidate in (tz_name, DEFAULT_TIMEZONE):
@@ -340,11 +348,14 @@ class DailyKnowledge(BasePlugin):
         cache_file = self._cache_dir() / "daily.json"
         cache_key = self._cache_key(date_key, settings, language)
         cache = self._read_json(cache_file, {})
-        force_refresh = self._enabled(settings.get("force_refresh"), default=False)
+        theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        force_refresh = self._enabled(settings.get("force_refresh"), default=False) and not theme_render_only
 
         if cache.get("schema") == CACHE_SCHEMA_VERSION and cache.get("cache_key") == cache_key and not force_refresh:
             cache["from_cache"] = True
             return cache
+        if theme_render_only:
+            raise RuntimeError("Theme-only redraw requires a warm Daily Knowledge cache.")
 
         facts = []
         if self._enabled(settings.get("use_useless_facts"), default=True):
@@ -601,7 +612,13 @@ class DailyKnowledge(BasePlugin):
         pad_x = max(14, width // 34)
         pad_y = max(12, height // 12)
 
-        draw.rounded_rectangle((x, y, x + width, y + height), radius=8, outline=palette["rule"], width=1)
+        draw.rounded_rectangle(
+            (x, y, x + width, y + height),
+            radius=8,
+            fill=palette.get("panel", palette["background"]),
+            outline=palette["rule"],
+            width=1,
+        )
         draw.rectangle((x, y, x + 5, y + height), fill=accent)
 
         draw.text((x + pad_x, y + pad_y), title, font=title_font, fill=accent)

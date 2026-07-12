@@ -1,9 +1,12 @@
+import hashlib
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.epaper_pet.epaper_pet as pet_module
 from plugins.epaper_pet.epaper_pet import DEFAULT_CONTEXT_PLUGIN_IDS, EpaperPet
 
 
@@ -12,11 +15,38 @@ def _plugin():
 
 
 class _FakeDeviceConfig:
-    def __init__(self, keys=None):
+    def __init__(self, keys=None, resolution=(800, 480), theme_mode="day"):
         self.keys = keys or {}
+        self.resolution = resolution
+        self.theme_mode = theme_mode
 
     def load_env_key(self, key):
         return self.keys.get(key, "")
+
+    def get_resolution(self):
+        return self.resolution
+
+    def get_config(self, key=None, default=None):
+        values = {
+            "orientation": "horizontal",
+            "timezone": "UTC",
+            "theme_mode": self.theme_mode,
+        }
+        if key is None:
+            return values
+        return values.get(key, default)
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def _state(now):
@@ -119,7 +149,7 @@ def test_hungry_pet_hunts_and_eats_its_catch():
 def test_ai_context_includes_daily_visual_pose_library():
     plugin = _plugin()
     now = datetime(2026, 5, 30, 15, 0, tzinfo=timezone.utc)
-    settings = {"language": "zh-Hans", "_theme_context": {"mode": "night"}}
+    settings = {"language": "zh-Hans", "_inkypi_theme": {"mode": "night"}}
     state = {
         "pet_id": "visual-mochi",
         "name": "Mochi",
@@ -159,6 +189,88 @@ def test_ai_context_includes_daily_visual_pose_library():
     assert "visual_state" in variation["must_consider"]
     assert variation["pose_focus"]
     assert variation["daily_motion_theme"]
+
+
+def test_pet_palette_anchors_all_structural_roles_to_injected_context():
+    theme = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+
+    palette = pet_module._pet_palette("happy", theme)
+
+    for role in ("background", "panel", "ink", "muted", "rule", "accent"):
+        assert palette[role] == theme["palette"][role]
+    assert palette["border"] == theme["palette"]["ink"]
+    assert set(palette["bar_colors"]) == {"food", "happiness", "energy", "cleanliness", "health"}
+
+
+def test_theme_only_redraw_keeps_pet_state_bytes_and_skips_lifecycle(tmp_path, monkeypatch):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    now = datetime(2026, 7, 11, 15, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now", lambda _device_config: now)
+    settings = {
+        "pet_id": "robot-test",
+        "pet_name": "Loki",
+        "language": "en",
+        "autonomous_care": "on",
+        "ai_dialogue": "on",
+        "ai_each_render": "on",
+        "_theme_render_only": True,
+    }
+    state = _state(now)
+    state["last_event_key"] = "quiet-watch"
+    state_file = tmp_path / "robot-test.json"
+    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    before = state_file.read_bytes()
+    calls = {name: 0 for name in ("elapsed", "care", "event", "ai", "finalize", "save")}
+
+    def recorder(name, result=None):
+        def record(*_args, **_kwargs):
+            calls[name] += 1
+            return result
+
+        return record
+
+    monkeypatch.setattr(plugin, "_apply_elapsed", recorder("elapsed", False))
+    monkeypatch.setattr(plugin, "_apply_autonomous_care", recorder("care", False))
+    monkeypatch.setattr(plugin, "_apply_autonomous_event", recorder("event"))
+    monkeypatch.setattr(plugin, "_maybe_generate_ai_message", recorder("ai", False))
+    monkeypatch.setattr(plugin, "_finalize_state", recorder("finalize"))
+    monkeypatch.setattr(plugin, "_save_state", recorder("save"))
+    day = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+
+    day_image = plugin.generate_image({**settings, "_inkypi_theme": day}, _FakeDeviceConfig(theme_mode="night"))
+    night_image = plugin.generate_image({**settings, "_inkypi_theme": night}, _FakeDeviceConfig(theme_mode="day"))
+
+    assert calls == {"elapsed": 0, "care": 0, "event": 0, "ai": 0, "finalize": 0, "save": 0}
+    assert state_file.read_bytes() == before
+    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
 
 def test_free_auto_uses_groq_then_local_without_openai_paid_fallback():

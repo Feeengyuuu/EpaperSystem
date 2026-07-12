@@ -1,9 +1,11 @@
+import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageChops, ImageDraw
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -79,6 +81,18 @@ def make_plugin(tmp_path):
     plugin = SpeciesRadar({"id": "species_radar"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def occurrence(**overrides):
@@ -434,6 +448,117 @@ def test_display_payload_rotates_daily_discovery_pool_without_repeating(tmp_path
     assert reset_state["discarded"] == [1]
 
 
+def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_ensure_display_common_name", lambda _observation: None)
+    monkeypatch.setattr(plugin, "_shuffled_display_indices", lambda values: [1, 0, 2])
+    monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    observations = [
+        plugin._observation_from_occurrence(
+            occurrence(
+                key=501 + index,
+                taxonKey=501 + index,
+                speciesKey=501 + index,
+                vernacularName=f"cached species {index}",
+                scientificName=f"Species fixture {index}",
+                species=f"Species fixture {index}",
+                common_name_zh=f"缓存物种{index}",
+            ),
+            location,
+        )
+        for index in range(3)
+    ]
+    calls = {"provider": 0}
+
+    def warm_payload(*_args):
+        calls["provider"] += 1
+        return {
+            "schema": "species-radar-v2",
+            "source": "GBIF",
+            "location": location,
+            "radius_km": 25,
+            "observations": observations,
+            "category_counts": plugin._category_counts(observations),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", warm_payload)
+    settings = {
+        "latitude": str(location["latitude"]),
+        "longitude": str(location["longitude"]),
+        "locationName": location["name"],
+        "showObservationMap": "false",
+        "themeMode": "night",
+    }
+    plugin.generate_image(settings, DummyDeviceConfig())
+    rotation_path = tmp_path / "display_rotation.json"
+    rotation_before = rotation_path.read_bytes()
+    selected_key = plugin._read_display_state()["selected_key"]
+
+    def fail_provider(*_args, **_kwargs):
+        calls["provider"] += 1
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fail_provider)
+    rendered_heroes = []
+    original_render = plugin._render_page
+
+    def record_render(dimensions, payload, render_settings, now, device_config=None):
+        rendered_heroes.append(plugin._observation_identity(payload["observations"][0]))
+        return original_render(dimensions, payload, render_settings, now, device_config)
+
+    monkeypatch.setattr(plugin, "_render_page", record_render)
+    day = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+
+    day_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": day}, DummyDeviceConfig())
+    night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, DummyDeviceConfig())
+
+    assert calls == {"provider": 1}
+    assert rotation_path.read_bytes() == rotation_before
+    assert rendered_heroes == [selected_key, selected_key]
+    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_daily_cache_miss_fails_without_provider_calls(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    calls = {"provider": 0}
+
+    def fake_provider(*_args):
+        calls["provider"] += 1
+        return {}
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_provider)
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin._daily_payload(
+            {"_theme_render_only": True},
+            datetime(2026, 7, 11, 9, 0, tzinfo=timezone.utc),
+            {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"},
+        )
+
+    assert calls == {"provider": 0}
+
+
 def test_display_payload_resets_random_pool_when_cache_bucket_changes(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     now = datetime(2026, 6, 27, tzinfo=timezone.utc)
@@ -616,13 +741,22 @@ def test_google_observation_map_url_uses_marker_and_existing_key_alias(tmp_path)
     assert query["markers"][0].endswith("37.55000,-121.99000")
 
 
-def test_palette_uses_comic_process_color_tokens(tmp_path):
+def test_palette_uses_canonical_roles_without_changing_category_tokens(tmp_path):
     plugin = make_plugin(tmp_path)
-    palette = plugin._palette({})
+    theme = _canonical_theme(
+        "day",
+        background=(255, 255, 255),
+        panel=(255, 255, 255),
+        ink=(10, 12, 15),
+        muted=(74, 78, 84),
+        rule=(185, 188, 194),
+        accent=(24, 92, 150),
+    )
+    palette = plugin._palette({"_inkypi_theme": theme})
 
-    assert palette["paper"] == COMIC_PAPER
-    assert palette["ink"] == COMIC_INK
-    assert palette["accent"] == COMIC_BLUE
+    assert palette["paper"] == theme["palette"]["background"]
+    assert palette["ink"] == theme["palette"]["ink"]
+    assert palette["accent"] == theme["palette"]["accent"]
     assert CATEGORY_STYLES["植物"]["color"] == COMIC_GREEN
     assert CATEGORY_STYLES["植物"]["light"] == COMIC_PANEL_GREEN
     assert CATEGORY_STYLES["鸟类"]["color"] == COMIC_BLUE
@@ -762,25 +896,39 @@ def test_header_pixel_background_asset_is_transparent():
     assert art.getchannel("A").getbbox() is not None
 
 
-def test_palette_supports_explicit_comic_night_theme(tmp_path):
+def test_palette_supports_injected_night_theme_over_legacy_alias(tmp_path):
     plugin = make_plugin(tmp_path)
-    palette = plugin._palette({"themeMode": "night"})
+    theme = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+    palette = plugin._palette({"themeMode": "comic", "_inkypi_theme": theme})
 
     assert palette["night"] is True
-    assert palette["paper"] == COMIC_NIGHT_PAPER
-    assert palette["ink"] == COMIC_NIGHT_INK
-    assert palette["accent"] == COMIC_CYAN
+    assert palette["paper"] == theme["palette"]["background"]
+    assert palette["panel"] == theme["palette"]["panel"]
+    assert palette["ink"] == theme["palette"]["ink"]
+    assert palette["muted"] == theme["palette"]["muted"]
+    assert palette["rule"] == theme["palette"]["rule"]
+    assert palette["accent"] == theme["palette"]["accent"]
 
 
-def test_palette_auto_switches_by_local_hour_without_playlist_duplication(tmp_path):
+def test_palette_switches_from_resolved_canonical_context_without_playlist_duplication(tmp_path):
     plugin = make_plugin(tmp_path)
-    day = plugin._palette({"themeMode": "auto", "timezone": "UTC"}, datetime(2026, 6, 27, 12, tzinfo=timezone.utc))
-    night = plugin._palette({"themeMode": "auto", "timezone": "UTC"}, datetime(2026, 6, 27, 20, tzinfo=timezone.utc))
+    day_theme = plugin.resolve_theme({"themeMode": "day"}, {"timezone": "UTC"}, now=datetime(2026, 6, 27, 12, tzinfo=timezone.utc))
+    night_theme = plugin.resolve_theme({"themeMode": "night"}, {"timezone": "UTC"}, now=datetime(2026, 6, 27, 20, tzinfo=timezone.utc))
+    day = plugin._palette({"_inkypi_theme": day_theme})
+    night = plugin._palette({"_inkypi_theme": night_theme})
 
     assert day["night"] is False
-    assert day["paper"] == COMIC_PAPER
+    assert day["paper"] == day_theme["palette"]["background"]
     assert night["night"] is True
-    assert night["paper"] == COMIC_NIGHT_PAPER
+    assert night["paper"] == night_theme["palette"]["background"]
 
 def test_render_page_draws_header_pixel_background(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
@@ -799,7 +947,20 @@ def test_render_page_draws_header_pixel_background(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
     monkeypatch.setattr(plugin, "_draw_header_pixel_background", lambda _canvas, box: boxes.append(tuple(int(value) for value in box)) or True)
 
-    image = plugin._render_page((800, 480), payload, {}, now)
+    image = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": _canonical_theme(
+            "day",
+            background=(255, 255, 255),
+            panel=(255, 255, 255),
+            ink=(10, 12, 15),
+            muted=(74, 78, 84),
+            rule=(185, 188, 194),
+            accent=(24, 92, 150),
+        )},
+        now,
+    )
 
     assert image.size == (800, 480)
     assert boxes
@@ -874,7 +1035,20 @@ def test_render_page_uses_title_wordmark_asset(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
     monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda _canvas, x, y, size: calls.append((x, y, size)) or True)
 
-    image = plugin._render_page((800, 480), payload, {}, now)
+    image = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": _canonical_theme(
+            "day",
+            background=(255, 255, 255),
+            panel=(255, 255, 255),
+            ink=(10, 12, 15),
+            muted=(74, 78, 84),
+            rule=(185, 188, 194),
+            accent=(24, 92, 150),
+        )},
+        now,
+    )
 
     assert image.size == (800, 480)
     assert calls[0][2] == TITLE_WORDMARK_DISPLAY_SIZE
@@ -897,7 +1071,20 @@ def test_empty_page_uses_title_wordmark_asset(tmp_path, monkeypatch):
         lambda _canvas, x, y, size: calls.append((x, y, size)) or True,
     )
 
-    image = plugin._render_page((800, 480), payload, {}, now)
+    image = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": _canonical_theme(
+            "day",
+            background=(255, 255, 255),
+            panel=(255, 255, 255),
+            ink=(10, 12, 15),
+            muted=(74, 78, 84),
+            rule=(185, 188, 194),
+            accent=(24, 92, 150),
+        )},
+        now,
+    )
 
     assert image.size == (800, 480)
     assert calls[0][2] == TITLE_WORDMARK_EMPTY_DISPLAY_SIZE

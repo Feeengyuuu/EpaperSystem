@@ -1,3 +1,4 @@
+import hashlib
 import sys
 import types
 import json
@@ -138,6 +139,18 @@ def _plugin():
     return SportsDashboard({"id": "sports_dashboard"})
 
 
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
+
+
 def test_league_accent_palettes_are_distinct():
     for palette in (DAY_COLORS, DEEP_NIGHT_COLORS):
         assert palette["worldcup_accent"] != palette["nba_accent"]
@@ -155,6 +168,62 @@ def test_league_accent_palettes_are_distinct():
         assert palette["msi_accent"] != palette["ewc_accent"]
         assert palette["msi_tag"] != palette["lpl_tag"]
         assert palette["msi_tag"] != palette["ewc_tag"]
+
+
+def test_canonical_theme_roles_override_structure_without_collapsing_league_accents():
+    plugin = _plugin()
+    theme = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+
+    colors = plugin._sports_dashboard_colors(theme)
+
+    assert colors is not DAY_COLORS
+    assert colors["paper"] == theme["palette"]["background"]
+    assert colors["panel"] == theme["palette"]["panel"]
+    assert colors["panel2"] == theme["palette"]["panel"]
+    assert colors["text"] == theme["palette"]["ink"]
+    assert colors["muted"] == theme["palette"]["muted"]
+    assert colors["line"] == theme["palette"]["rule"]
+    assert colors["border"] == theme["palette"]["rule"]
+    assert colors["blue"] == theme["palette"]["accent"]
+    assert len({colors[key] for key in ("worldcup_accent", "nba_accent", "lpl_accent", "lck_accent")}) == 4
+
+
+def test_explicit_mode_resolves_manifest_palette_for_direct_generate_fallback():
+    day_palette = {
+        "background": (239, 234, 222),
+        "panel": (218, 210, 192),
+        "ink": (18, 20, 22),
+        "muted": (70, 72, 76),
+        "rule": (124, 120, 112),
+        "accent": (174, 40, 52),
+    }
+    night_palette = {
+        "background": (8, 10, 13),
+        "panel": (23, 27, 33),
+        "ink": (245, 246, 248),
+        "muted": (178, 182, 190),
+        "rule": (58, 64, 72),
+        "accent": (74, 188, 236),
+    }
+    manifest = types.SimpleNamespace(theme=types.SimpleNamespace(day=day_palette, night=night_palette))
+    plugin = SportsDashboard({"id": "sports_dashboard", "_manifest": manifest})
+
+    context = plugin._sports_dashboard_theme_context(
+        {"sportsDashboardTheme": "day"},
+        FakeDeviceConfig(timezone="UTC"),
+        datetime(2026, 7, 11, 9, 0, tzinfo=timezone.utc),
+    )
+
+    assert context["mode"] == "day"
+    assert context["palette"] == day_palette
 
 
 def test_offseason_hub_sport_accents_are_distinct_comic_palette_colors():
@@ -13271,6 +13340,75 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
     assert image.getpixel((620, 120)) != DAY_COLORS["paper"]
     assert DEEP_NIGHT_COLORS["paper"] != DAY_COLORS["paper"]
     assert COLORS["paper"] == DAY_COLORS["paper"]
+
+
+def test_theme_only_injected_palettes_use_cached_stubs_without_provider_and_reset_colors(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    provider_calls = {"count": 0}
+
+    def fail_http_session():
+        provider_calls["count"] += 1
+        raise AssertionError("theme-only redraw must not open a provider session")
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", fail_http_session)
+    plugin._try_worldcup_scoreboard_panel = lambda *args, **kwargs: None
+    plugin._try_worldcup_football_data_panel = lambda _settings, _device_config, dimensions, *_args: Image.new(
+        "RGB", dimensions, COLORS["paper"]
+    )
+    plugin._try_worldcup_api_panel = lambda *args, **kwargs: None
+    plugin._load_lpl_events = lambda _settings, _timezone_info: (
+        SportsDashboard._parse_lpl_events(_sample_payload(), la),
+        "CACHE",
+    )
+    plugin._attach_lpl_odds = lambda events, *_args: events
+    plugin._load_lck_events = lambda _settings, _timezone_info: ([], "CACHE")
+    plugin._load_nba_events = lambda _settings, _timezone_info: (
+        SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
+        "CACHE",
+    )
+    plugin._attach_nba_odds = lambda events, *_args: events
+    plugin._attach_lpl_realtime_info = lambda selected, settings, **_kwargs: selected
+    plugin._write_nba_live_state = lambda *_args, **_kwargs: None
+    plugin._write_lpl_live_state = lambda *_args, **_kwargs: None
+    plugin._load_team_logo = lambda *_args, **_kwargs: None
+    plugin._should_show_offseason_hub_panel = lambda *_args, **_kwargs: False
+    settings = {
+        "sportsDashboardTheme": "night",
+        "localTimezone": "America/Los_Angeles",
+        "worldCupTopHeight": "208",
+        "valveEsportsEnabled": "false",
+        "ewcSidebarEnabled": "false",
+        "lckEnabled": "false",
+        "msiEnabled": "false",
+        "_theme_render_only": True,
+    }
+    day = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+
+    day_image = plugin.generate_image({**settings, "_inkypi_theme": day}, FakeDeviceConfig())
+    assert _ACTIVE_COLORS.get() is DAY_COLORS
+    night_image = plugin.generate_image({**settings, "_inkypi_theme": night}, FakeDeviceConfig())
+
+    assert provider_calls == {"count": 0}
+    assert _ACTIVE_COLORS.get() is DAY_COLORS
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
 
 def test_uploaded_brand_logos_are_loaded_from_local_assets():

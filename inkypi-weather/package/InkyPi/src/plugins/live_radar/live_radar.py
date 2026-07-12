@@ -20,7 +20,6 @@ from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
-from utils.theme_utils import get_theme_context
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +198,8 @@ class LiveRadar(BasePlugin):
         cache_seconds = self._int_setting(settings, "cacheSeconds", 60, 20, 3600)
         timeout = self._int_setting(settings, "timeoutSeconds", 20, 5, 45)
         fetch_avatars = self._bool_setting(settings.get("fetchAvatars"), True)
-        force_refresh = self._bool_setting(settings.get("forceRefresh"), False)
+        theme_render_only = self._bool_setting(settings.get("_theme_render_only"), False)
+        force_refresh = self._bool_setting(settings.get("forceRefresh"), False) and not theme_render_only
         show_snapshots = self._bool_setting(settings.get("showSnapshots"), True)
         snapshot_cache_seconds = self._int_setting(settings, "snapshotCacheSeconds", cache_seconds, 30, 1800)
         avatar_cache_seconds = self._int_setting(settings, "avatarCacheSeconds", AVATAR_CACHE_SECONDS, 300, 7 * 24 * 3600)
@@ -210,14 +210,13 @@ class LiveRadar(BasePlugin):
         warning = ""
         from_cache = False
 
-        if (
-            not force_refresh
-            and cache_entry
-            and now_ts - float(cache_entry.get("fetched_at") or 0) < cache_seconds
-            and isinstance(cache_entry.get("results"), list)
-        ):
+        cached_results = cache_entry.get("results") if isinstance(cache_entry, dict) else None
+        cache_is_fresh = now_ts - float(cache_entry.get("fetched_at") or 0) < cache_seconds if cache_entry else False
+        if isinstance(cached_results, list) and (theme_render_only or (not force_refresh and cache_is_fresh)):
             results = cache_entry["results"]
             from_cache = True
+        elif theme_render_only:
+            raise RuntimeError("Theme-only redraw requires a warm LiveRadar status cache.")
         else:
             try:
                 results = self._fetch_statuses(rooms, api_url, timeout, fetch_avatars)
@@ -1880,35 +1879,26 @@ class LiveRadar(BasePlugin):
         return fill, ink, theme["ink"]
 
     def _theme(self, settings, device_config):
-        requested = str((settings or {}).get("themeMode") or "auto").strip().lower()
-        if requested == "auto":
-            requested = "dark" if get_theme_context(device_config).get("mode") == "night" else "light"
-        if requested in {"light", "day", "paper"}:
-            return {
-                "mode": "light",
-                "bg": (255, 255, 255),
-                "ink": (0, 0, 0),
-                "muted": (0, 0, 0),
-                "line": (0, 0, 0),
-                "panel": (255, 255, 255),
-                "live_fill": (255, 255, 255),
-                "live_ink": (0, 0, 0),
-                "live_muted": (0, 0, 0),
-                "live_line": (0, 0, 0),
-                "replay_fill": (255, 255, 255),
-            }
+        settings = settings or {}
+        context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config)
+        palette = context["palette"]
+        mode = "dark" if context.get("mode") == "night" else "light"
+        panel = palette["panel"]
+        accent = palette["accent"]
+        replay_fill = tuple(round((surface * 7 + highlight) / 8) for surface, highlight in zip(panel, accent))
         return {
-            "mode": "dark",
-            "bg": (0, 0, 0),
-            "ink": (255, 255, 255),
-            "muted": (255, 255, 255),
-            "line": (255, 255, 255),
-            "panel": (0, 0, 0),
-            "live_fill": (255, 255, 255),
-            "live_ink": (0, 0, 0),
-            "live_muted": (0, 0, 0),
-            "live_line": (255, 255, 255),
-            "replay_fill": (0, 0, 0),
+            "mode": mode,
+            "bg": palette["background"],
+            "ink": palette["ink"],
+            "muted": palette["muted"],
+            "line": palette["rule"],
+            "panel": panel,
+            "accent": accent,
+            "live_fill": panel,
+            "live_ink": palette["ink"],
+            "live_muted": palette["ink"] if mode == "light" else palette["muted"],
+            "live_line": palette["ink"] if mode == "light" else accent,
+            "replay_fill": replay_fill,
         }
 
     def _parse_rooms(self, settings):

@@ -29,7 +29,7 @@ from utils.image_utils import text_width
 from utils.http_client import get_http_client
 from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
 from utils.plugin_cache import read_json, write_json
-from utils.theme_utils import get_theme_context, get_theme_palette
+from utils.theme_utils import get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -825,6 +825,7 @@ class DailyAINews(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
+        settings = settings or {}
         dimensions = self.get_dimensions(device_config)
 
         tz_name = device_config.get_config("timezone") or "America/Los_Angeles"
@@ -833,12 +834,14 @@ class DailyAINews(BasePlugin):
         try:
             brief = self._get_brief(settings, device_config, now)
         except Exception as exc:
+            if _enabled(settings.get("_theme_render_only")):
+                raise
             logger.exception("Daily AI news failed")
             brief = self._fallback_brief(settings, now, str(exc))
 
         brief = self._simplify_chinese_payload(brief)
         self._write_news_context(brief, now)
-        theme_context = get_theme_context(device_config, now=now)
+        theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
         return self._render(dimensions, settings, brief, now, theme_context)
 
     def _write_news_context(self, brief: dict[str, Any], now: datetime) -> None:
@@ -879,7 +882,8 @@ class DailyAINews(BasePlugin):
         model = (settings.get("model") or DEFAULT_MODEL).strip()
         feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = _parse_int(settings.get("max_items"), 22, 6, 40)
-        cache_only_render = _enabled(settings.get("_cached_render_only") or settings.get("cached_render_only"))
+        theme_render_only = _enabled(settings.get("_theme_render_only"))
+        cache_only_render = theme_render_only or _enabled(settings.get("_cached_render_only") or settings.get("cached_render_only"))
         force_refresh = _enabled(settings.get("force_refresh")) and not cache_only_render
         date_key = now.strftime("%Y-%m-%d")
         cache_key = self._cache_key(date_key, model, feeds_text, max_items, settings.get("region_focus"))
@@ -892,6 +896,8 @@ class DailyAINews(BasePlugin):
             if cache_only_render and not cache_matches_current_settings:
                 cached["warning"] = "仅重渲染显示，复用现有新闻缓存。"
             return cached
+        if theme_render_only:
+            raise RuntimeError("Theme-only redraw requires a warm Daily AI News cache.")
 
         recent_titles = self._load_recent_news_titles(now)
         items = self._drop_stale_items(self._fetch_items(feeds_text, max_items), now)
@@ -2019,17 +2025,30 @@ class DailyAINews(BasePlugin):
         payload = self._simplify_chinese_payload(payload)
         brief = payload.get("brief") or {}
 
-        palette = get_theme_palette(theme_context)
-        bg = palette["background"]
-        header_bg = palette["header"]
-        ink = palette["ink"]
-        muted = palette["muted"]
-        dim = palette["dim"]
-        rule = palette["rule"]
-        red = palette["red"]
-        gold = palette["gold"]
-        cyan = palette["cyan"]
-        green = palette["green"]
+        canonical = theme_context.get("palette") if isinstance(theme_context, dict) else None
+        if isinstance(canonical, dict):
+            bg = canonical["background"]
+            header_bg = canonical["panel"]
+            ink = canonical["ink"]
+            muted = canonical["muted"]
+            dim = muted
+            rule = canonical["rule"]
+            red = canonical["accent"]
+            gold = tuple(round((accent * 3 + secondary) / 4) for accent, secondary in zip(red, muted))
+            cyan = tuple(round((accent + secondary) / 2) for accent, secondary in zip(red, muted))
+            green = tuple(round((accent + secondary * 3) / 4) for accent, secondary in zip(red, muted))
+        else:
+            palette = get_theme_palette(theme_context)
+            bg = palette["background"]
+            header_bg = palette["header"]
+            ink = palette["ink"]
+            muted = palette["muted"]
+            dim = palette["dim"]
+            rule = palette["rule"]
+            red = palette["red"]
+            gold = palette["gold"]
+            cyan = palette["cyan"]
+            green = palette["green"]
 
         img = self._base_background(dimensions, bg, (theme_context or {}).get("mode", "day"))
         draw = ImageDraw.Draw(img)

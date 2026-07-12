@@ -16,7 +16,6 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
 from utils.app_utils import bounded_int, get_base_ui_font, get_font
 from utils.image_utils import text_width
-from utils.theme_utils import get_theme_context
 
 try:
     import pytz
@@ -1007,7 +1006,7 @@ def _pet_palette(mood: str | None = None, theme: Any = None) -> dict[str, Any]:
     mood_key = str(mood or "").lower()
     if night:
         mood_accent = PET_NIGHT_MOOD_COLORS.get(mood_key, PET_NIGHT_BLUE)
-        return {
+        palette = {
             "mode": "night",
             "background": PET_NIGHT_PAPER,
             "panel": PET_NIGHT_PANEL,
@@ -1032,33 +1031,70 @@ def _pet_palette(mood: str | None = None, theme: Any = None) -> dict[str, Any]:
             "face_back_mix": 0.16,
             "halftone_mix": 0.18,
         }
+    else:
+        mood_accent = PET_MOOD_COLORS.get(mood_key, PET_BLUE)
+        palette = {
+            "mode": "day",
+            "background": PET_PAPER,
+            "panel": PET_PANEL,
+            "panel_blue": PET_PANEL_BLUE,
+            "panel_yellow": PET_PANEL_YELLOW,
+            "panel_green": PET_PANEL_GREEN,
+            "ink": PET_INK,
+            "muted": PET_MUTED,
+            "rule": PET_RULE,
+            "border": PET_INK,
+            "blue": PET_BLUE,
+            "yellow": PET_YELLOW,
+            "orange": PET_ORANGE,
+            "red": PET_RED,
+            "green": PET_GREEN,
+            "purple": PET_PURPLE,
+            "brown": PET_BROWN,
+            "accent": mood_accent,
+            "bar_colors": PET_BAR_COLORS,
+            "badge_mix": 0.18,
+            "bar_track_mix": 0.10,
+            "face_back_mix": 0.10,
+            "halftone_mix": 0.20,
+        }
 
-    mood_accent = PET_MOOD_COLORS.get(mood_key, PET_BLUE)
-    return {
-        "mode": "day",
-        "background": PET_PAPER,
-        "panel": PET_PANEL,
-        "panel_blue": PET_PANEL_BLUE,
-        "panel_yellow": PET_PANEL_YELLOW,
-        "panel_green": PET_PANEL_GREEN,
-        "ink": PET_INK,
-        "muted": PET_MUTED,
-        "rule": PET_RULE,
-        "border": PET_INK,
-        "blue": PET_BLUE,
-        "yellow": PET_YELLOW,
-        "orange": PET_ORANGE,
-        "red": PET_RED,
-        "green": PET_GREEN,
-        "purple": PET_PURPLE,
-        "brown": PET_BROWN,
-        "accent": mood_accent,
-        "bar_colors": PET_BAR_COLORS,
-        "badge_mix": 0.18,
-        "bar_track_mix": 0.10,
-        "face_back_mix": 0.10,
-        "halftone_mix": 0.20,
-    }
+    canonical = theme.get("palette") if isinstance(theme, dict) else None
+    if not isinstance(canonical, dict):
+        return palette
+
+    panel = canonical["panel"]
+    accent = canonical["accent"]
+    muted = canonical["muted"]
+    palette.update(
+        {
+            "background": canonical["background"],
+            "panel": panel,
+            "panel_blue": _blend_rgb(accent, panel, 0.10),
+            "panel_yellow": _blend_rgb(accent, panel, 0.18),
+            "panel_green": _blend_rgb(muted, panel, 0.14),
+            "ink": canonical["ink"],
+            "muted": muted,
+            "rule": canonical["rule"],
+            "border": canonical["ink"],
+            "blue": accent,
+            "yellow": _blend_rgb(accent, muted, 0.82),
+            "orange": _blend_rgb(accent, muted, 0.72),
+            "red": _blend_rgb(accent, muted, 0.92),
+            "green": _blend_rgb(accent, muted, 0.58),
+            "purple": _blend_rgb(accent, muted, 0.46),
+            "brown": _blend_rgb(accent, muted, 0.34),
+            "accent": accent,
+            "bar_colors": {
+                "food": _blend_rgb(accent, muted, 0.92),
+                "happiness": _blend_rgb(accent, muted, 0.80),
+                "energy": accent,
+                "cleanliness": _blend_rgb(accent, muted, 0.62),
+                "health": _blend_rgb(accent, muted, 0.48),
+            },
+        }
+    )
+    return palette
 
 
 def _enabled(value: Any, default: bool = False) -> bool:
@@ -1159,25 +1195,30 @@ class EpaperPet(BasePlugin):
         return bp
 
     def generate_image(self, settings, device_config):
+        settings = settings or {}
         dimensions = self.get_dimensions(device_config)
 
         now = self._now(device_config)
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
+        render_settings = dict(settings)
+        render_settings["_inkypi_theme"] = theme
         state = self._load_state(settings, now)
-        changed = self._apply_elapsed(state, settings, now, device_config)
-        if not changed and self._should_hunt_now(state, settings):
-            changed = self._apply_autonomous_care(state, settings, now, device_config)
+        if _enabled(settings.get("_theme_render_only"), False):
+            return self._render(dimensions, render_settings, state, now)
+
+        changed = self._apply_elapsed(state, render_settings, now, device_config)
+        if not changed and self._should_hunt_now(state, render_settings):
+            changed = self._apply_autonomous_care(state, render_settings, now, device_config)
         if not changed and self._needs_initial_event(state):
-            self._apply_autonomous_event(state, settings, now, steps=0, device_config=device_config)
+            self._apply_autonomous_event(state, render_settings, now, steps=0, device_config=device_config)
             changed = True
-        elif not changed and _enabled(settings.get("ai_dialogue"), False) and _enabled(settings.get("ai_each_render"), True):
-            changed = self._maybe_generate_ai_message(state, settings, now, device_config)
+        elif not changed and _enabled(render_settings.get("ai_dialogue"), False) and _enabled(render_settings.get("ai_each_render"), True):
+            changed = self._maybe_generate_ai_message(state, render_settings, now, device_config)
 
-        self._finalize_state(state, settings, now)
+        self._finalize_state(state, render_settings, now)
         if changed:
-            self._save_state(settings, state)
+            self._save_state(render_settings, state)
 
-        render_settings = dict(settings or {})
-        render_settings["_theme_context"] = get_theme_context(device_config, now=now)
         return self._render(dimensions, render_settings, state, now)
 
     def _language(self, settings) -> str:
@@ -1934,8 +1975,8 @@ class EpaperPet(BasePlugin):
         base_message = state.get("message", "")
         ambient_context = self._ambient_context(settings, now)
         prompt_settings = dict(settings or {})
-        if device_config is not None:
-            prompt_settings["_theme_context"] = get_theme_context(device_config, now=now)
+        if device_config is not None and not isinstance(prompt_settings.get("_inkypi_theme"), dict):
+            prompt_settings["_inkypi_theme"] = self.resolve_theme(prompt_settings, device_config, now=now)
         attempts: list[dict[str, Any]] = []
         fallback_from = ""
         fallback_reason = ""
@@ -2173,7 +2214,7 @@ class EpaperPet(BasePlugin):
         pose_key = self._resolve_state_image_key(mood_id, activity_id)
         pose = PET_POSE_LIBRARY.get(pose_key, PET_POSE_LIBRARY["calm"])
         activity_pose_key = PET_ACTIVITY_IMAGE_MAP.get(_pet_state_lookup_key(activity_id))
-        theme_context = settings.get("_theme_context") if isinstance(settings, dict) else {}
+        theme_context = settings.get("_inkypi_theme") if isinstance(settings, dict) else {}
         theme_mode = _theme_mode(theme_context)
         return {
             "identity": dict(PET_PHYSICAL_IDENTITY),
@@ -2887,7 +2928,7 @@ class EpaperPet(BasePlugin):
     def _render(self, dimensions, settings, state: dict[str, Any], now: datetime):
         width, height = dimensions
         mood = state.get("mood") or "calm"
-        palette = _pet_palette(mood, settings.get("_theme_context"))
+        palette = _pet_palette(mood, settings.get("_inkypi_theme"))
         border = palette["border"]
         image = Image.new("RGB", dimensions, palette["background"])
         draw = ImageDraw.Draw(image)

@@ -1,8 +1,10 @@
+import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageStat
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -12,6 +14,36 @@ from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IM
 
 def _plugin():
     return DailyAINews({"id": "daily_ai_news"})
+
+
+class _ThemeDeviceConfig:
+    def get_resolution(self):
+        return (800, 480)
+
+    def get_config(self, key=None, default=None):
+        values = {
+            "orientation": "horizontal",
+            "timezone": "America/Los_Angeles",
+            "theme_mode": "day",
+        }
+        if key is None:
+            return values
+        return values.get(key, default)
+
+    def load_env_key(self, _key):
+        return ""
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def test_effective_feeds_expands_legacy_bbc_only_settings():
@@ -460,6 +492,109 @@ def test_base_background_uses_plain_theme_color_in_night_mode():
 
     assert img.getpixel((0, 0)) == bg
     assert img.getpixel((7, 5)) == bg
+
+
+def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monkeypatch, tmp_path):
+    plugin = _plugin()
+    device = _ThemeDeviceConfig()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    items = [
+        {
+            "source": "中国新闻网要闻" if index < 4 else "BBC世界",
+            "source_section": "mainland" if index < 4 else "world",
+            "title": f"测试新闻 {index}",
+            "summary": f"测试摘要 {index}",
+            "published": "",
+            "link": "",
+        }
+        for index in range(8)
+    ]
+    monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: items)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda *_args: {})
+    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+
+    plugin.generate_image(settings, device)
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    monkeypatch.setattr(plugin, "_fetch_items", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", fail_provider)
+    monkeypatch.setattr(plugin, "_summarize_with_ai", fail_provider)
+    day = _canonical_theme(
+        "day",
+        background=(242, 237, 226),
+        panel=(224, 216, 198),
+        ink=(20, 22, 24),
+        muted=(72, 74, 78),
+        rule=(130, 126, 118),
+        accent=(176, 42, 54),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(7, 9, 12),
+        panel=(22, 26, 32),
+        ink=(245, 246, 248),
+        muted=(178, 182, 190),
+        rule=(58, 64, 72),
+        accent=(76, 190, 238),
+    )
+
+    day_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": day}, device)
+    night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, device)
+
+    assert day_image.getpixel((0, 479)) == day["palette"]["background"]
+    assert day_image.getpixel((0, 0)) == day["palette"]["panel"]
+    assert night_image.getpixel((0, 479)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_brief_cache_miss_fails_without_provider_calls(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    calls = {"items": 0}
+
+    def fake_items(*_args):
+        calls["items"] += 1
+        return []
+
+    monkeypatch.setattr(plugin, "_fetch_items", fake_items)
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin._get_brief(
+            {"_theme_render_only": True, "feed_urls": daily_ai_news_module.DEFAULT_FEEDS},
+            _ThemeDeviceConfig(),
+            datetime(2026, 7, 11, 9, 0),
+        )
+
+    assert calls == {"items": 0}
+
+
+def test_theme_only_generate_propagates_cold_cache_failure(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    monkeypatch.setattr(plugin, "_fetch_items", fail_provider)
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin.generate_image(
+            {
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme(
+                    "day",
+                    background=(255, 255, 255),
+                    panel=(255, 255, 255),
+                    ink=(10, 12, 15),
+                    muted=(74, 78, 84),
+                    rule=(185, 188, 194),
+                    accent=(24, 92, 150),
+                ),
+            },
+            _ThemeDeviceConfig(),
+        )
 
 
 def test_market_summary_parts_keep_previous_us_close_label_and_values():

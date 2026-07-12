@@ -1,9 +1,11 @@
+import hashlib
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -34,6 +36,18 @@ def _plugin(tmp_path):
     plugin = DailyWordPoem({"id": "daily_word_poem"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
@@ -243,6 +257,36 @@ def test_page_palette_switches_between_day_and_midnight(tmp_path):
     assert night[-1] == "MIDNIGHT READING"
 
 
+def test_injected_palette_is_authoritative_over_legacy_style_colors(tmp_path):
+    plugin = _plugin(tmp_path)
+    theme = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+    settings = {
+        "_inkypi_theme": theme,
+        "backgroundColor": "#010203",
+        "textColor": "#040506",
+        "accentColor": "#070809",
+    }
+
+    bg, text, accent, muted, faint, label = plugin._page_palette(settings, theme)
+
+    assert (bg, text, accent, muted, faint) == (
+        theme["palette"]["background"],
+        theme["palette"]["ink"],
+        theme["palette"]["accent"],
+        theme["palette"]["muted"],
+        theme["palette"]["rule"],
+    )
+    assert label == "DAY READING"
+
+
 def _sample_payload():
     return {
         "word": {
@@ -395,3 +439,74 @@ def test_cached_payload_is_reused_without_network(tmp_path):
     assert "quote" in first
     assert second["from_cache"] is True
     assert calls == {"dictionary": 1, "wikiquote": 1}
+
+
+def test_theme_only_warm_daily_cache_changes_only_palette_without_network(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    device = FakeDeviceConfig()
+    plugin._fetch_dictionary_entry = lambda word: {"word": word, "definition": "Cached definition."}
+    plugin._fetch_wikiquote_quote = lambda _date_key: {
+        "text": "Cached quote.",
+        "author": "Fixture",
+        "topic": "Wikiquote QOTD",
+        "source": "Wikiquote QOTD",
+    }
+    legacy_style = {
+        "themeMode": "night",
+        "backgroundColor": "#010203",
+        "textColor": "#040506",
+        "accentColor": "#070809",
+    }
+    plugin.generate_image(legacy_style, device)
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fail_provider)
+    day = _canonical_theme(
+        "day",
+        background=(241, 236, 225),
+        panel=(221, 213, 196),
+        ink=(19, 21, 23),
+        muted=(73, 75, 79),
+        rule=(128, 124, 116),
+        accent=(180, 44, 58),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+
+    day_image = plugin.generate_image({**legacy_style, "_theme_render_only": True, "_inkypi_theme": day}, device)
+    night_image = plugin.generate_image({**legacy_style, "_theme_render_only": True, "_inkypi_theme": night}, device)
+
+    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_daily_cache_miss_fails_without_provider_calls(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    calls = {"dictionary": 0, "wikiquote": 0}
+
+    def fake_dictionary(*_args):
+        calls["dictionary"] += 1
+        return {}
+
+    def fake_wikiquote(*_args):
+        calls["wikiquote"] += 1
+        return {}
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", fake_dictionary)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fake_wikiquote)
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin._daily_payload({"_theme_render_only": True}, datetime(2026, 7, 11, 9, 0))
+
+    assert calls == {"dictionary": 0, "wikiquote": 0}

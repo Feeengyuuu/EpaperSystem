@@ -39,11 +39,6 @@ except Exception:  # pragma: no cover - compatibility with older image_utils lay
         left, top, right, bottom = draw.textbbox((0, 0), str(text), font=font)
         return right - left
 
-try:
-    from utils.theme_utils import get_theme_context
-except Exception:  # pragma: no cover - theme_utils can be unavailable in lightweight local previews.
-    get_theme_context = None
-
 logger = logging.getLogger(__name__)
 
 SECRET_QUERY_PARAM_RE = re.compile(r"([?&](?:apiKey|api_key|apikey|key|token)=)[^&\s]+", re.IGNORECASE)
@@ -2329,26 +2324,35 @@ class SportsDashboardCommonMixin:
         self._draw_lpl_sidebar(image, left_width, lol_selected, lol_source_state, now, league_key=lol_league_key)
         return image
 
-    @staticmethod
-    def _sports_dashboard_theme_context(settings, device_config, now):
-        requested = str(settings.get("sportsDashboardTheme") or "").strip().lower()
-        if requested in {"night", "dark", "midnight", "deep-night", "deep_night"}:
-            return {"mode": "night", "source": "sports_dashboard", "reason": "forced night"}
-        if requested in {"day", "light", "paper"}:
-            return {"mode": "day", "source": "sports_dashboard", "reason": "forced day"}
-        if get_theme_context:
-            try:
-                return get_theme_context(device_config, now)
-            except Exception as exc:
-                logger.warning("SportsDashboard theme context failed: %s", exc)
-        local_time = now.timetz().replace(tzinfo=None)
-        mode = "day" if 7 <= local_time.hour < 19 else "night"
-        return {"mode": mode, "source": "sports_dashboard", "reason": "local fallback"}
+    def _sports_dashboard_theme_context(self, settings, device_config, now):
+        settings = settings or {}
+        injected = settings.get("_inkypi_theme")
+        if isinstance(injected, Mapping):
+            return injected
+        return self.resolve_theme(settings, device_config, now=now)
 
     @staticmethod
     def _sports_dashboard_colors(theme_context):
         mode = str((theme_context or {}).get("mode") or "day").strip().lower()
-        return DEEP_NIGHT_COLORS if mode == "night" else DAY_COLORS
+        colors = dict(DEEP_NIGHT_COLORS if mode == "night" else DAY_COLORS)
+        palette = (theme_context or {}).get("palette")
+        if not isinstance(palette, Mapping):
+            return colors
+        colors.update(
+            {
+                "paper": palette["background"],
+                "panel": palette["panel"],
+                "panel2": palette["panel"],
+                "text": palette["ink"],
+                "paper_text": palette["background"],
+                "muted": palette["muted"],
+                "line": palette["rule"],
+                "border": palette["rule"],
+                "blue": palette["accent"],
+                "accent": palette["accent"],
+            }
+        )
+        return colors
 
     @staticmethod
     def _display_dimensions(device_config):

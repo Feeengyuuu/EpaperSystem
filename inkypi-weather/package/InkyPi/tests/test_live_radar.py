@@ -1,3 +1,4 @@
+import hashlib
 import sys
 import time
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PIL import Image, ImageDraw
+import pytest
 
 import plugins.live_radar.live_radar as live_radar_module
 from plugins.live_radar.live_radar import (
@@ -54,6 +56,18 @@ def _memory_cache(plugin):
     plugin._read_cache = lambda key: cache.get(key, {})
     plugin._write_cache = lambda key, data: cache.__setitem__(key, data)
     return cache
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def test_parse_rooms_text_accepts_card_lines():
@@ -477,6 +491,124 @@ def test_generate_image_renders_card_wall_without_network():
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 0, 0)
     assert any(pixel != (0, 0, 0) for pixel in image.crop((10, 10, 790, 470)).getdata())
+
+
+def test_theme_uses_injected_palette_over_conflicting_legacy_alias():
+    plugin = _plugin()
+    context = _canonical_theme(
+        "day",
+        background=(242, 237, 226),
+        panel=(224, 216, 198),
+        ink=(20, 22, 24),
+        muted=(72, 74, 78),
+        rule=(130, 126, 118),
+        accent=(176, 42, 54),
+    )
+
+    theme = plugin._theme({"themeMode": "dark", "_inkypi_theme": context}, FakeDeviceConfig(mode="night"))
+
+    assert theme["mode"] == "light"
+    assert theme["bg"] == context["palette"]["background"]
+    assert theme["panel"] == context["palette"]["panel"]
+    assert theme["ink"] == context["palette"]["ink"]
+    assert theme["muted"] == context["palette"]["muted"]
+    assert theme["line"] == context["palette"]["rule"]
+
+
+def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
+    plugin = _plugin()
+    cache = _memory_cache(plugin)
+    calls = {"statuses": 0}
+
+    def warm_statuses(*_args):
+        calls["statuses"] += 1
+        return [
+            {
+                "ok": True,
+                "platform": "twitch",
+                "id": "xqc",
+                "status": {"isLive": False, "title": "Offline", "owner": "xQc", "heatValue": 0},
+            }
+        ]
+
+    plugin._fetch_statuses = warm_statuses
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "themeMode": "dark",
+        "fetchAvatars": "false",
+        "showSnapshots": "false",
+        "cacheSeconds": "20",
+    }
+    plugin.generate_image(settings, FakeDeviceConfig(mode="night"))
+    assert calls == {"statuses": 1}
+    for entry in cache.values():
+        entry["fetched_at"] = 0
+
+    def fail_provider(*_args, **_kwargs):
+        calls["statuses"] += 1
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    plugin._fetch_statuses = fail_provider
+    day = _canonical_theme(
+        "day",
+        background=(242, 237, 226),
+        panel=(224, 216, 198),
+        ink=(20, 22, 24),
+        muted=(72, 74, 78),
+        rule=(130, 126, 118),
+        accent=(176, 42, 54),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(7, 9, 12),
+        panel=(22, 26, 32),
+        ink=(245, 246, 248),
+        muted=(178, 182, 190),
+        rule=(58, 64, 72),
+        accent=(76, 190, 238),
+    )
+
+    day_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": day}, FakeDeviceConfig(mode="night"))
+    night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, FakeDeviceConfig(mode="day"))
+
+    assert calls == {"statuses": 1}
+    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_status_cache_miss_fails_without_provider_calls():
+    plugin = _plugin()
+    _memory_cache(plugin)
+    calls = {"statuses": 0}
+
+    def fake_statuses(*_args):
+        calls["statuses"] += 1
+        return []
+
+    plugin._fetch_statuses = fake_statuses
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin.generate_image(
+            {
+                "roomsText": "twitch|xqc|xQc",
+                "fetchAvatars": "false",
+                "showSnapshots": "false",
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme(
+                    "day",
+                    background=(255, 255, 255),
+                    panel=(255, 255, 255),
+                    ink=(0, 0, 0),
+                    muted=(74, 78, 84),
+                    rule=(185, 188, 194),
+                    accent=(24, 92, 150),
+                ),
+            },
+            FakeDeviceConfig(mode="day"),
+        )
+
+    assert calls == {"statuses": 0}
 
 
 def test_title_logo_renders_without_outer_box_in_both_themes():
@@ -913,10 +1045,10 @@ def test_light_theme_live_cards_use_white_shell():
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
 
     assert plugin._card_palette("live", theme) == (
-        (255, 255, 255),
-        (0, 0, 0),
-        (0, 0, 0),
-        (0, 0, 0),
+        theme["panel"],
+        theme["ink"],
+        theme["ink"],
+        theme["ink"],
     )
 
 

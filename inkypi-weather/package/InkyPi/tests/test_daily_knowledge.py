@@ -1,8 +1,10 @@
+import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -38,6 +40,18 @@ def _plugin(tmp_path):
     plugin = DailyKnowledge({"id": "daily_knowledge"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
+    palette = {
+        "background": background,
+        "panel": panel,
+        "ink": ink,
+        "muted": muted,
+        "rule": rule,
+        "accent": accent,
+    }
+    return {"mode": mode, "palette": palette, "css": {}}
 
 
 def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
@@ -147,6 +161,83 @@ def test_daily_payload_fetches_once_then_reuses_cache(tmp_path, monkeypatch):
     assert first["from_cache"] is False
     assert second["from_cache"] is True
     assert calls == {"useless": 1, "world": 1}
+
+
+def test_theme_only_warm_daily_cache_uses_injected_palette_without_provider_calls(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    device = FakeDeviceConfig()
+    calls = {"useless": 0, "world": 0}
+
+    def fake_useless(_settings, _language):
+        calls["useless"] += 1
+        return knowledge_module.KnowledgeFact("Useless Fact", "Cached fact one.", "fixture")
+
+    def fake_world(_settings, _device_config, _language):
+        calls["world"] += 1
+        return knowledge_module.KnowledgeFact("World Fun Fact", "Cached fact two.", "fixture")
+
+    monkeypatch.setattr(plugin, "_fetch_useless_fact", fake_useless)
+    monkeypatch.setattr(plugin, "_fetch_world_fun_fact", fake_world)
+    settings = {"language": "en", "themeMode": "night"}
+    plugin.generate_image(settings, device)
+    warm_calls = dict(calls)
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("theme-only redraw must not call a provider")
+
+    monkeypatch.setattr(plugin, "_fetch_useless_fact", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_world_fun_fact", fail_provider)
+    day = _canonical_theme(
+        "day",
+        background=(240, 235, 224),
+        panel=(220, 212, 194),
+        ink=(18, 20, 22),
+        muted=(74, 76, 80),
+        rule=(126, 122, 114),
+        accent=(178, 48, 60),
+    )
+    night = _canonical_theme(
+        "night",
+        background=(8, 10, 13),
+        panel=(24, 28, 34),
+        ink=(246, 247, 249),
+        muted=(180, 184, 192),
+        rule=(60, 66, 74),
+        accent=(70, 188, 236),
+    )
+
+    day_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": day}, device)
+    night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, device)
+
+    assert calls == warm_calls
+    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_daily_cache_miss_fails_without_provider_calls(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    calls = {"useless": 0, "world": 0}
+
+    def fake_useless(*_args):
+        calls["useless"] += 1
+        return None
+
+    def fake_world(*_args):
+        calls["world"] += 1
+        return None
+
+    monkeypatch.setattr(plugin, "_fetch_useless_fact", fake_useless)
+    monkeypatch.setattr(plugin, "_fetch_world_fun_fact", fake_world)
+
+    with pytest.raises(RuntimeError, match="warm .*cache"):
+        plugin._daily_payload(
+            {"_theme_render_only": True, "language": "en"},
+            FakeDeviceConfig(),
+            datetime(2026, 7, 11, 9, 0),
+        )
+
+    assert calls == {"useless": 0, "world": 0}
 
 
 def test_chinese_fallback_uses_two_fresh_sentences_per_day(tmp_path):

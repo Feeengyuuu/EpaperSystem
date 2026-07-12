@@ -142,12 +142,16 @@ class SpeciesRadar(BasePlugin):
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
         now = datetime.now(timezone.utc)
-        location = self._resolve_location(settings, device_config)
-        payload = self._daily_payload(settings, now, location)
-        payload = self._display_payload(payload, settings, now)
-        payload["theme_mode"] = self._theme_mode(settings, now, device_config)
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
+        render_settings = dict(settings)
+        render_settings["_inkypi_theme"] = theme
+        theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        location = self._resolve_location(render_settings, device_config)
+        payload = self._daily_payload(render_settings, now, location)
+        payload = self._display_payload(payload, render_settings, now, advance=not theme_render_only)
+        payload["theme_mode"] = theme["mode"]
         self._write_context(payload, now)
-        return self._render_page(dimensions, payload, settings, now, device_config)
+        return self._render_page(dimensions, payload, render_settings, now, device_config)
 
     def _display_dimensions(self, device_config):
         dimensions = device_config.get_resolution()
@@ -158,13 +162,16 @@ class SpeciesRadar(BasePlugin):
     def _daily_payload(self, settings, now, location):
         cache_key = self._cache_key(settings, now, location)
         cache = self._read_cache()
-        force_refresh = self._enabled(settings.get("forceRefresh") or settings.get("force_refresh"), default=False)
+        theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        force_refresh = self._enabled(settings.get("forceRefresh") or settings.get("force_refresh"), default=False) and not theme_render_only
         if cache.get("schema") == CACHE_SCHEMA_VERSION and cache.get("cache_key") == cache_key and not force_refresh:
             cached = cache.get("payload")
             if isinstance(cached, dict):
                 payload = dict(cached)
                 payload["source_state"] = "cache"
                 return payload
+        if theme_render_only:
+            raise RuntimeError("Theme-only redraw requires a warm SpeciesRadar cache.")
 
         try:
             payload = self._fetch_live_payload(settings, now, location)
@@ -181,18 +188,28 @@ class SpeciesRadar(BasePlugin):
             return payload
         return self._fallback_payload(location, cache_key)
 
-    def _display_payload(self, payload, settings, now):
+    def _display_payload(self, payload, settings, now, advance=True):
         observations = list(payload.get("observations") or [])
         if len(observations) < 2:
             return payload
-        index = self._next_display_index(payload, observations, now)
+        if advance:
+            index = self._next_display_index(payload, observations, now)
+        else:
+            state = self._read_display_state()
+            pool_key = self._discovery_pool_key(payload, observations, now)
+            index = None
+            if state.get("pool_key") == pool_key and state.get("count") == len(observations):
+                index = self._coerce_display_index(state.get("selected_index"), len(observations))
+            if index is None:
+                index = 0
         if index <= 0 or index >= len(observations):
             selected = observations[0]
             reordered = observations
         else:
             selected = observations[index]
             reordered = [selected] + observations[:index] + observations[index + 1:]
-        self._ensure_display_common_name(selected)
+        if advance:
+            self._ensure_display_common_name(selected)
         display_payload = dict(payload)
         display_payload["observations"] = reordered
         display_payload["display_pool_size"] = len(observations)
@@ -1868,38 +1885,24 @@ LIMIT 8
         return text.replace("http://", "").replace("https://", "")
 
     def _palette(self, settings, now=None, device_config=None):
-        if self._theme_mode(settings, now, device_config) == "night":
-            return {
-                "paper": COMIC_NIGHT_PAPER,
-                "panel": COMIC_NIGHT_PANEL,
-                "ink": COMIC_NIGHT_INK,
-                "dim": COMIC_NIGHT_DIM,
-                "muted": COMIC_NIGHT_MUTED,
-                "accent": COMIC_CYAN,
-                "rule": COMIC_NIGHT_RULE,
-                "night": True,
-            }
+        settings = settings or {}
+        context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config or settings, now=now)
+        canonical = context["palette"]
         return {
-            "paper": COMIC_PAPER,
-            "panel": COMIC_PANEL,
-            "ink": COMIC_INK,
-            "dim": (55, 50, 39),
-            "muted": COMIC_MUTED,
-            "accent": COMIC_BLUE,
-            "rule": COMIC_RULE,
-            "night": False,
+            "paper": canonical["background"],
+            "panel": canonical["panel"],
+            "ink": canonical["ink"],
+            "dim": canonical["muted"],
+            "muted": canonical["muted"],
+            "accent": canonical["accent"],
+            "rule": canonical["rule"],
+            "night": context.get("mode") == "night",
         }
 
     def _theme_mode(self, settings, now=None, device_config=None):
         settings = settings or {}
-        mode = self._clean_text(settings.get("themeMode") or settings.get("theme_mode") or settings.get("theme") or "auto").casefold()
-        if mode in {"night", "dark", "black"}:
-            return "night"
-        if mode in {"comic", "day", "light"}:
-            return "comic"
-        if not now or not (device_config or settings.get("timezone")):
-            return "comic"
-        return "night" if self._is_night(now, settings, device_config) else "comic"
+        context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config or settings, now=now)
+        return "night" if context.get("mode") == "night" else "day"
 
     def _is_night(self, now, settings=None, device_config=None):
         local_now = self._local_datetime(now, settings or {}, device_config)
