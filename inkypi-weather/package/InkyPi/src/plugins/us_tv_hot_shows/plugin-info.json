@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f4eef6", "accent": "#7d4aa1"}, "night": {"background": "#140d19", "accent": "#be86df"}},
     "display_name": "US TV Hot Shows",
     "id": "us_tv_hot_shows",
     "class": "UsTvHotShows",

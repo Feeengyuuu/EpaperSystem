@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#edf5f7", "accent": "#147995"}, "night": {"background": "#071418", "accent": "#63c8e3"}},
     "display_name": "Sky Radar",
     "id": "flight_radar",
     "class": "FlightRadar",

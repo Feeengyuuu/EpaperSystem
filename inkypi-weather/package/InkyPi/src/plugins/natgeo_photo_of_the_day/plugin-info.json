@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#f5f0dd", "accent": "#d39a00"}, "night": {"background": "#171407", "accent": "#ffd34e"}},
     "display_name": "NatGeo & Discovery Daily Photos",
     "id": "natgeo_photo_of_the_day",
     "class": "NatGeoPhotoOfTheDay"

@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#f0f4ec", "accent": "#3f7550"}, "night": {"background": "#0b150e", "accent": "#82c895"}},
   "display_name": "Flow Progress",
   "id": "flow_progress",
   "class": "FlowProgress",

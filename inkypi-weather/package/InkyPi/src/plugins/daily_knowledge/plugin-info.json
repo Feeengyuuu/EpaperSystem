@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#f1ede2", "accent": "#7b5b24"}, "night": {"background": "#15120c", "accent": "#d6b56b"}},
   "display_name": "Daily Knowledge",
   "id": "daily_knowledge",
   "class": "DailyKnowledge"

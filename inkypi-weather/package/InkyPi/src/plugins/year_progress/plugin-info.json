@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#f2f0e8", "accent": "#6c6a35"}, "night": {"background": "#14130b", "accent": "#bbb86a"}},
   "display_name": "Year Progress",
   "id": "year_progress",
   "class": "YearProgress"

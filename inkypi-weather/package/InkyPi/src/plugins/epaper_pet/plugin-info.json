@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#fff2dd", "accent": "#d4672d"}, "night": {"background": "#1a1009", "accent": "#ff9c62"}},
     "display_name": "E-Paper Pet",
     "id": "epaper_pet",
     "class": "EpaperPet",

@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#eef5fa", "accent": "#2c6fa3"}, "night": {"background": "#07131d", "accent": "#70baf0"}},
     "display_name": "Mini Weather",
     "id": "mini_weather",
     "class": "MiniWeather",

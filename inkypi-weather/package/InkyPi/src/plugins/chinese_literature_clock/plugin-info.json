@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f3ead8", "accent": "#8f3d2f"}, "night": {"background": "#17100d", "accent": "#d98270"}},
     "display_name": "中文文学报时",
     "id": "chinese_literature_clock",
     "class": "ChineseLiteratureClock",

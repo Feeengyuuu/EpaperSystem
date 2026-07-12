@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#edf5f8", "accent": "#2285aa"}, "night": {"background": "#07161b", "accent": "#68c8e6"}},
   "display_name": "Telegram Digest",
   "id": "telegram_digest",
   "class": "TelegramDigest",

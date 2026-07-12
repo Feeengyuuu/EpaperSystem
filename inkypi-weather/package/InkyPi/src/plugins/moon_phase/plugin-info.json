@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f0f1f5", "accent": "#5d63a6"}, "night": {"background": "#080a17", "accent": "#a2a9ff"}},
     "display_name": "Moon Phase",
     "id": "moon_phase",
     "class": "MoonPhase",

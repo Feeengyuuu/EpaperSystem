@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#efeafd", "accent": "#5b34c4"}, "night": {"background": "#0d0a1a", "accent": "#a98cff"}},
     "display_name": "AI Image Multiverse",
     "id": "ai_image_multiverse",
     "class": "AIImageMultiverse"

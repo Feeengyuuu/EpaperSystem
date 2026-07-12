@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#eaf1f6", "accent": "#176b9b"}, "night": {"background": "#07131a", "accent": "#62b5e8"}},
     "display_name": "Steam Charts",
     "id": "steam_charts",
     "class": "SteamCharts",

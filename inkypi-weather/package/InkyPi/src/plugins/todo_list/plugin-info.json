@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#f4f1e9", "accent": "#6d6250"}, "night": {"background": "#14120e", "accent": "#b9aa8e"}},
   "display_name": "To-Do List",
   "id": "todo_list",
   "class": "TodoList"

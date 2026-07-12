@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f1f4ec", "accent": "#3d7a45"}, "night": {"background": "#0b150c", "accent": "#7fd58a"}},
     "display_name": "Stock Tracker",
     "id": "stocktracker",
     "class": "StockTracker",

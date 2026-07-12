@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#fff0f5", "accent": "#df4f8f"}, "night": {"background": "#1b0b13", "accent": "#ff88b9"}},
     "display_name": "Pixiv R-18 Ranking",
     "id": "pixiv_r18_ranking",
     "class": "PixivR18Ranking",

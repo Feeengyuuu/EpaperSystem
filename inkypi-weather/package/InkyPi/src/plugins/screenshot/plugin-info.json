@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#edf2f5", "accent": "#436e86"}, "night": {"background": "#0b1318", "accent": "#83b8d3"}},
     "display_name": "Screenshot",
     "id": "screenshot",
     "class": "Screenshot"

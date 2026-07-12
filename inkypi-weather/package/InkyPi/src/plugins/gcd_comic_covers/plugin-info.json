@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "media", "day": {"background": "#f2eee6", "accent": "#306d84"}, "night": {"background": "#0d1417", "accent": "#6cb8d0"}},
   "display_name": "GCD Comic Covers",
   "id": "gcd_comic_covers",
   "class": "GcdComicCovers",

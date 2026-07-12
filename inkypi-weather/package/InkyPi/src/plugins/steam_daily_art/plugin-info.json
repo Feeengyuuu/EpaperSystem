@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "media", "day": {"background": "#eaf1f5", "accent": "#245f86"}, "night": {"background": "#08131a", "accent": "#6bacd5"}},
   "display_name": "Steam Daily Art",
   "id": "steam_daily_art",
   "class": "SteamDailyArt",

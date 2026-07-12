@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#fff6d8", "accent": "#007a5e"}, "night": {"background": "#101815", "accent": "#66d5aa"}},
     "display_name": "Bambu Monitor",
     "id": "bambu_monitor",
     "class": "BambuMonitor",

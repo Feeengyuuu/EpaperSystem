@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#fff1d7", "accent": "#d64d2e"}, "night": {"background": "#17100f", "accent": "#ff8062"}},
     "display_name": "Daily Comic",
     "id": "comic",
     "class": "Comic"

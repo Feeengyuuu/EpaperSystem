@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f1f4f0", "accent": "#246b55"}, "night": {"background": "#08130f", "accent": "#75c9aa"}},
     "display_name": "Clock",
     "id": "clock",
     "class": "Clock"

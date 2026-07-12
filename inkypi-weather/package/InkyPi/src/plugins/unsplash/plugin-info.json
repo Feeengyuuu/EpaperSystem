@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#f3efea", "accent": "#66574c"}, "night": {"background": "#12100e", "accent": "#b7a99f"}},
     "display_name": "Unsplash",
     "id": "unsplash",
     "class": "Unsplash"

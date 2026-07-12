@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f6f0e8", "accent": "#cc5a24"}, "night": {"background": "#180f0a", "accent": "#ff9a66"}},
     "display_name": "RSS Feed",
     "id": "rss",
     "class": "Rss"

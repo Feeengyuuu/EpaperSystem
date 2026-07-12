@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "ui", "day": {"background": "#f6f1e8", "accent": "#4f46a5"}, "night": {"background": "#11121b", "accent": "#9fa8ff"}},
     "display_name": "AI Text",
     "id": "ai_text",
     "class": "AIText"

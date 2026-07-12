@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#f4efe5", "accent": "#7c3aed"}, "night": {"background": "#0f1020", "accent": "#b69cff"}},
     "display_name": "AI Image",
     "id": "ai_image",
     "class": "AIImage"

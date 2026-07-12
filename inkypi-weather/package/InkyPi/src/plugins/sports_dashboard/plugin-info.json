@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": true},
+  "capabilities": {"supports_live_refresh": true, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#edf4ef", "accent": "#087b4e"}, "night": {"background": "#07140d", "accent": "#50c98a"}},
   "display_name": "Sports Dashboard",
   "id": "sports_dashboard",
   "class": "SportsDashboard"

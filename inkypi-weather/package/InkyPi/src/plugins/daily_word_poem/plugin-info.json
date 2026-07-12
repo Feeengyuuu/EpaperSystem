@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "ui", "day": {"background": "#f5eadf", "accent": "#944e3c"}, "night": {"background": "#180f0c", "accent": "#db8d79"}},
   "display_name": "Daily Word & Quote",
   "id": "daily_word_poem",
   "class": "DailyWordPoem"

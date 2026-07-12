@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "theme": {"presentation": "media", "day": {"background": "#f4eee5", "accent": "#8a5130"}, "night": {"background": "#15100d", "accent": "#d7a071"}},
   "display_name": "Daily Art",
   "id": "daily_art",
   "class": "DailyArt",

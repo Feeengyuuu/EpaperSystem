@@ -1,6 +1,7 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "theme": {"presentation": "media", "day": {"background": "#eef3eb", "accent": "#537b41"}, "night": {"background": "#0e160b", "accent": "#94cb7c"}},
     "display_name": "Image Folder",
     "id": "image_folder",
     "class": "ImageFolder"
