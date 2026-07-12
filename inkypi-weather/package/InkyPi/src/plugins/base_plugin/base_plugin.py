@@ -1,8 +1,9 @@
 import logging
 import os
+from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_registry import plugin_supports_day_night_theme
-from plugins.plugin_settings import resolve_refresh_on_display
+from plugins.plugin_settings import resolve_refresh_on_display_for_config
 from runtime.refresh_contracts import thaw_payload
 from utils.app_utils import resolve_path, get_fonts, resolve_dimensions
 from utils.browser_renderer import get_browser_renderer
@@ -63,7 +64,28 @@ class BasePlugin:
 
     def wants_refresh_on_display(self, settings):
         """Return whether cached playlist display should refresh this plugin instance."""
-        return resolve_refresh_on_display(settings, self.config)
+        return resolve_refresh_on_display_for_config(settings, self.config)
+
+    def presentation_mode(self, settings) -> PresentationMode:
+        """Return the safe default for plugins without an audited presentation bank."""
+        return PresentationMode.NO_CHANGE
+
+    def reconcile_presentation_receipt(self, settings, receipt) -> None:
+        """Idempotent default for plugins without committed presentation state."""
+        return None
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        """Reject unsupported preparation without invoking the normal renderer."""
+        raise NotImplementedError(
+            "presentation preparation is not supported by this plugin"
+        )
 
     def get_live_refresh_state(self, settings, current_dt):
         """Return live refresh state for scheduler cache refresh, or None when inactive."""

@@ -4,7 +4,7 @@ import inspect
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 import threading
 import time
 import uuid
@@ -14,6 +14,7 @@ from PIL import Image, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.newspaper.newspaper import Newspaper
+from plugins import plugin_registry, plugin_settings
 from plugins.plugin_settings import PluginSettingError
 from src.model import Playlist, PlaylistManager, RefreshInfo
 from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest, PluginTheme
@@ -77,6 +78,156 @@ def test_refresh_on_display_settings_defaults_have_runtime_fallback():
     expected_plugin_ids = _settings_default_refresh_on_display_plugin_ids()
 
     assert expected_plugin_ids <= _refresh_on_display_plugin_info_ids()
+
+
+@pytest.mark.parametrize(
+    ("settings", "plugin_config", "expected"),
+    [
+        ({}, {"id": "manifest-default", "refresh_on_display": True}, True),
+        (
+            {"refreshOnDisplay": True},
+            {"id": "saved-true", "refresh_on_display": False},
+            True,
+        ),
+        (
+            {"refreshOnDisplay": False},
+            {"id": "saved-false", "refresh_on_display": True},
+            False,
+        ),
+        (
+            {},
+            {
+                "id": "manifest-object",
+                "_manifest": SimpleNamespace(refresh_on_display=True),
+            },
+            True,
+        ),
+        ({"mediaRotationMode": "rotate"}, {"id": "newspaper"}, True),
+        ({}, {"id": "newspaper"}, True),
+        ({"mediaRotationMode": "single"}, {"id": "newspaper"}, False),
+        (
+            {"mediaRotationMode": "rotate"},
+            {"id": "newspaper", "refresh_on_display": False},
+            False,
+        ),
+        (
+            {"mediaRotationMode": "rotate", "refreshOnDisplay": False},
+            {"id": "newspaper", "refresh_on_display": True},
+            False,
+        ),
+    ],
+)
+def test_refresh_on_display_for_config_preserves_strict_precedence(
+    settings,
+    plugin_config,
+    expected,
+):
+    assert (
+        plugin_settings.resolve_refresh_on_display_for_config(
+            settings,
+            plugin_config,
+        )
+        is expected
+    )
+
+
+def test_refresh_on_display_for_config_rejects_invalid_saved_value():
+    with pytest.raises(PluginSettingError, match="refreshOnDisplay"):
+        plugin_settings.resolve_refresh_on_display_for_config(
+            {"refreshOnDisplay": "sometimes"},
+            {"id": "newspaper", "refresh_on_display": True},
+        )
+
+
+def test_refresh_on_display_for_config_restores_dynamic_thirteenth_newspaper():
+    manifest_default_ids = {
+        "backtothedate",
+        "daily_art",
+        "daily_wiki_page",
+        "gcd_comic_covers",
+        "live_radar",
+        "magazine_covers",
+        "pixiv_r18_ranking",
+        "simple_calendar",
+        "species_radar",
+        "steam_daily_art",
+        "tech_pulse",
+    }
+    no_display_trigger_ids = {
+        "bambu_monitor",
+        "box_office_top_movies",
+        "china_box_office_top_movies",
+        "daily_word_poem",
+        "sports_dashboard",
+        "steam_charts",
+        "stocktracker",
+        "weather",
+    }
+    rows = []
+    for plugin_id in sorted(manifest_default_ids | no_display_trigger_ids):
+        rows.append(
+            (
+                plugin_id,
+                {},
+                {
+                    "id": plugin_id,
+                    "refresh_on_display": plugin_id in manifest_default_ids,
+                },
+            )
+        )
+    rows.extend(
+        [
+            (
+                "daily_ai_news",
+                {"refreshOnDisplay": True},
+                {"id": "daily_ai_news", "refresh_on_display": False},
+            ),
+            (
+                "newspaper",
+                {"mediaRotationMode": "rotate"},
+                {"id": "newspaper"},
+            ),
+        ]
+    )
+
+    effective_ids = {
+        plugin_id
+        for plugin_id, settings, plugin_config in rows
+        if plugin_settings.resolve_refresh_on_display_for_config(
+            settings,
+            plugin_config,
+        )
+    }
+
+    assert effective_ids == manifest_default_ids | {
+        "daily_ai_news",
+        "newspaper",
+    }
+    assert len(effective_ids - {"newspaper"}) == 12
+    assert len(effective_ids) == 13
+
+
+def test_presentation_capability_lookup_is_metadata_only(monkeypatch):
+    manifest = SimpleNamespace(
+        capabilities=SimpleNamespace(supports_presentation_refresh=True),
+    )
+    monkeypatch.setattr(
+        plugin_registry,
+        "get_plugin_instance",
+        lambda *_args, **_kwargs: pytest.fail("capability lookup instantiated plugin"),
+    )
+    monkeypatch.setattr(
+        plugin_registry.importlib,
+        "import_module",
+        lambda *_args, **_kwargs: pytest.fail("capability lookup imported plugin"),
+    )
+
+    assert plugin_registry.plugin_supports_presentation_refresh(
+        {"id": "prepared", "_manifest": manifest}
+    ) is True
+    assert plugin_registry.plugin_supports_presentation_refresh(
+        {"id": "legacy-metadata-free"}
+    ) is False
 
 
 def test_refresh_task_routes_every_plugin_render_through_theme_wrapper():

@@ -40,6 +40,16 @@ def plugin_supports_day_night_theme(plugin_config):
     return bool(getattr(capabilities, "supports_day_night_theme", False))
 
 
+def plugin_supports_presentation_refresh(plugin_config):
+    """Read the opt-in presentation capability without importing plugin code."""
+
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    if manifest is None:
+        return False
+    capabilities = getattr(manifest, "capabilities", None)
+    return bool(getattr(capabilities, "supports_presentation_refresh", False))
+
+
 def load_plugins(plugins_config):
     """Register plugin metadata without importing plugin modules."""
     PLUGIN_CONFIGS.clear()

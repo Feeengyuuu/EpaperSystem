@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -30,6 +31,7 @@ def _write_plugin(
     class_name="Example",
     schema_version=2,
     supports_live_refresh=False,
+    supports_presentation_refresh=_UNSET,
     supports_day_night_theme=_UNSET,
     theme=_UNSET,
     source="class Example:\n    pass\n",
@@ -47,6 +49,10 @@ def _write_plugin(
         payload["capabilities"] = {
             "supports_live_refresh": supports_live_refresh,
         }
+        if supports_presentation_refresh is not _UNSET:
+            payload["capabilities"]["supports_presentation_refresh"] = (
+                supports_presentation_refresh
+            )
         if supports_day_night_theme is not _UNSET:
             payload["capabilities"]["supports_day_night_theme"] = (
                 supports_day_night_theme
@@ -74,9 +80,172 @@ def test_v2_manifest_declares_live_refresh_without_import(tmp_path, monkeypatch)
     manifest = PluginManifest.from_path(manifest_path)
 
     assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_presentation_refresh is False
     assert manifest.capabilities.supports_day_night_theme is False
     assert manifest.theme is None
     assert imported == []
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_v2_manifest_declares_presentation_capability_without_import(
+    tmp_path,
+    monkeypatch,
+    enabled,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=enabled,
+    )
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+
+    manifest = PluginManifest.from_path(manifest_path)
+
+    assert manifest.capabilities.supports_presentation_refresh is enabled
+    assert imported == []
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_v2_manifest_rejects_coerced_presentation_refresh_booleans(
+    tmp_path,
+    value,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=value,
+    )
+
+    with pytest.raises(TypeError, match="supports_presentation_refresh"):
+        PluginManifest.from_path(manifest_path)
+
+
+def test_presentation_contract_types_are_frozen_and_detach_mutable_image():
+    presentation = importlib.import_module("plugins.base_plugin.presentation")
+    request = presentation.PresentationRequestContext(
+        request_id="a" * 32,
+        requested_at=" 2026-07-12T10:00:00+00:00 ",
+        origin_display_commit_id=" display-commit ",
+        last_receipt=None,
+    )
+    source_image = Image.new("RGB", (1, 1), "red")
+    preparation = presentation.PresentationPreparation(
+        request_id=request.request_id,
+        image=source_image,
+        changed=True,
+    )
+    source_image.putpixel((0, 0), (0, 0, 255))
+
+    assert [mode.value for mode in presentation.PresentationMode] == [
+        "no_change",
+        "prepared_bank",
+        "legacy_async",
+    ]
+    assert request.requested_at == "2026-07-12T10:00:00+00:00"
+    assert request.origin_display_commit_id == "display-commit"
+    assert preparation.image is not source_image
+    assert preparation.image.getpixel((0, 0)) == (255, 0, 0)
+    with pytest.raises(FrozenInstanceError):
+        request.request_id = "b" * 32
+    with pytest.raises(FrozenInstanceError):
+        preparation.changed = False
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("request_id", 1, TypeError),
+        ("request_id", "request", ValueError),
+        ("requested_at", None, TypeError),
+        ("requested_at", "not-a-timestamp", ValueError),
+        ("origin_display_commit_id", 1, TypeError),
+        ("origin_display_commit_id", "  ", ValueError),
+        ("last_receipt", object(), TypeError),
+    ],
+)
+def test_presentation_request_context_strictly_validates_required_fields(
+    field,
+    value,
+    error,
+):
+    presentation = importlib.import_module("plugins.base_plugin.presentation")
+    values = {
+        "request_id": "a" * 32,
+        "requested_at": "2026-07-12T10:00:00+00:00",
+        "origin_display_commit_id": "display-commit",
+        "last_receipt": None,
+    }
+    values[field] = value
+
+    with pytest.raises(error, match=field):
+        presentation.PresentationRequestContext(**values)
+
+
+@pytest.mark.parametrize(
+    ("request_id", "image", "changed", "error"),
+    [
+        (1, None, False, TypeError),
+        ("request", None, False, ValueError),
+        ("a" * 32, object(), True, TypeError),
+        ("a" * 32, None, 1, TypeError),
+        ("a" * 32, None, True, ValueError),
+        ("a" * 32, Image.new("RGB", (1, 1)), False, ValueError),
+    ],
+)
+def test_presentation_preparation_strictly_validates_image_contract(
+    request_id,
+    image,
+    changed,
+    error,
+):
+    presentation = importlib.import_module("plugins.base_plugin.presentation")
+
+    with pytest.raises(error):
+        presentation.PresentationPreparation(
+            request_id=request_id,
+            image=image,
+            changed=changed,
+        )
+
+
+def test_base_presentation_defaults_do_not_render_or_select_legacy_async():
+    from plugins.base_plugin.base_plugin import BasePlugin
+
+    presentation = importlib.import_module("plugins.base_plugin.presentation")
+    rendered = []
+    plugin = BasePlugin.__new__(BasePlugin)
+    plugin.config = {
+        "id": "ordinary",
+        "_manifest": type(
+            "Manifest",
+            (),
+            {
+                "capabilities": type(
+                    "Capabilities",
+                    (),
+                    {"supports_presentation_refresh": True},
+                )()
+            },
+        )(),
+    }
+    plugin.generate_image = lambda *_args, **_kwargs: rendered.append(True)
+    request = presentation.PresentationRequestContext(
+        request_id="a" * 32,
+        requested_at="2026-07-12T10:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    assert plugin.presentation_mode({}) is presentation.PresentationMode.NO_CHANGE
+    assert plugin.reconcile_presentation_receipt({}, None) is None
+    assert plugin.reconcile_presentation_receipt({}, None) is None
+    with pytest.raises(NotImplementedError, match="presentation"):
+        plugin.prepare_presentation(
+            {},
+            {},
+            request=request,
+            resolved_theme_context={},
+        )
+    assert rendered == []
 
 
 def test_v2_manifest_parses_theme_contract(tmp_path):
@@ -317,6 +486,7 @@ def test_v1_capability_inspection_uses_ast_without_executing_source(tmp_path):
 
     assert manifest.schema_version == 1
     assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_presentation_refresh is False
     assert manifest.capabilities.supports_day_night_theme is False
     assert manifest.theme is None
     assert not marker.exists()
