@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.runtime import runtime_state
 from src.runtime.runtime_state import (
     LastGoodCacheState,
     RefreshLane,
@@ -45,6 +46,32 @@ class ManualTimer:
     def fire(self):
         if not self.cancelled:
             self.callback()
+
+
+def presentation_request(request_id="a" * 32, **changes):
+    values = {
+        "request_id": request_id,
+        "requested_at": "2026-07-09T10:00:00+00:00",
+        "structural_generation": 4,
+        "settings_revision": 9,
+        "origin_theme_mode": "day",
+        "origin_display_commit_id": "display-origin",
+    }
+    values.update(changes)
+    return runtime_state.PresentationRequestState(**values)
+
+
+def presentation_receipt(request_id="a" * 32, **changes):
+    values = {
+        "request_id": request_id,
+        "committed_at": "2026-07-09T10:05:00+00:00",
+        "display_commit_id": "display-committed",
+        "structural_generation": 4,
+        "settings_revision": 9,
+        "theme_mode": "night",
+    }
+    values.update(changes)
+    return runtime_state.PresentationCommitReceipt(**values)
 
 
 def test_data_live_theme_success_clocks_are_independent(tmp_path):
@@ -159,7 +186,7 @@ def test_schema_v1_migrates_cache_success_without_claiming_theme_as_data_success
     snapshot = RuntimeStateStore(path).snapshot()
     state = snapshot.instances["one"]
 
-    assert snapshot.schema_version == 2
+    assert snapshot.schema_version == 3
     assert state.data.last_attempt_at == "2026-07-09T10:00:00+00:00"
     assert state.data.last_failure_at == "2026-07-09T10:02:00+00:00"
     assert state.data.last_success_at is None
@@ -168,7 +195,7 @@ def test_schema_v1_migrates_cache_success_without_claiming_theme_as_data_success
     assert state.last_good_cache is None
     assert state.legacy_cache_success_at == "2026-07-09T10:01:00+00:00"
     assert state.last_success_at == "2026-07-09T10:01:00+00:00"
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
 
 
 def test_schema_v2_roundtrip_preserves_lane_and_last_good_state(tmp_path):
@@ -206,6 +233,333 @@ def test_schema_v2_roundtrip_preserves_lane_and_last_good_state(tmp_path):
     assert state.theme.last_success_at == "2026-07-09T10:04:00+00:00"
     assert state.data.last_failure_at == "2026-07-09T10:05:00+00:00"
     assert state.last_good_cache == cache
+
+
+def test_schema_v2_migrates_with_empty_presentation_state(tmp_path):
+    path = tmp_path / "runtime.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "updated_at": "2026-07-09T10:06:00+00:00",
+                "display": {
+                    "state": "committed",
+                    "commit_id": "display-1",
+                    "instance_uuid": "one",
+                },
+                "instances": {
+                    "one": {
+                        "lanes": {
+                            "data": {
+                                "last_attempt_at": "2026-07-09T10:00:00+00:00",
+                                "last_success_at": "2026-07-09T10:01:00+00:00",
+                                "last_failure_at": None,
+                                "last_error": None,
+                                "next_retry_at": None,
+                            },
+                            "live": {},
+                            "theme": {},
+                        },
+                        "last_good_cache": None,
+                        "legacy_cache_success_at": None,
+                        "tombstoned_at": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = RuntimeStateStore(path).snapshot()
+    state = snapshot.instances["one"]
+
+    assert snapshot.schema_version == 3
+    assert state.data.last_success_at == "2026-07-09T10:01:00+00:00"
+    assert state.presentation == runtime_state.RefreshLaneState()
+    assert state.presentation_request is None
+    assert state.presentation_receipt is None
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
+
+
+def test_schema_v3_roundtrip_preserves_pending_prepared_request(tmp_path):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+    request = presentation_request()
+
+    assert store.request_presentation("one", request) is True
+    store.record_attempt(
+        "one",
+        "2026-07-09T10:01:00+00:00",
+        lane=runtime_state.RefreshLane.PRESENTATION,
+    )
+    store.record_failure(
+        "one",
+        "2026-07-09T10:02:00+00:00",
+        "bank temporarily unavailable",
+        "2026-07-09T10:03:00+00:00",
+        lane=runtime_state.RefreshLane.PRESENTATION,
+    )
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            request.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "night",
+        )
+        is True
+    )
+    prepared = store.snapshot().instances["one"].presentation_request
+    store.flush()
+
+    loaded = RuntimeStateStore(path).snapshot().instances["one"]
+
+    assert loaded.presentation_request == prepared
+    assert loaded.presentation_request.prepared_at == "2026-07-09T10:04:00+00:00"
+    assert loaded.presentation_request.prepared_theme_mode == "night"
+    assert loaded.presentation.last_attempt_at == "2026-07-09T10:01:00+00:00"
+    assert loaded.presentation.last_failure_at == "2026-07-09T10:02:00+00:00"
+    assert loaded.presentation.next_retry_at == "2026-07-09T10:03:00+00:00"
+    assert loaded.presentation_receipt is None
+    assert loaded.latest_activity_at() == "2026-07-09T10:04:00+00:00"
+    with pytest.raises(FrozenInstanceError):
+        loaded.presentation_request.prepared_at = "mutated"
+
+    for invalid_request_id in ("A" * 32, "g" * 32, "a" * 31, "a" * 33):
+        with pytest.raises(ValueError):
+            presentation_request(invalid_request_id)
+    for field in ("structural_generation", "settings_revision"):
+        for invalid_revision in (True, 0, -1, 1.5):
+            with pytest.raises((TypeError, ValueError)):
+                presentation_request(**{field: invalid_revision})
+    for invalid_theme in ("dusk", "DAY"):
+        with pytest.raises(ValueError):
+            presentation_request(origin_theme_mode=invalid_theme)
+        with pytest.raises(ValueError):
+            presentation_request(
+                prepared_at="2026-07-09T10:04:00+00:00",
+                prepared_theme_mode=invalid_theme,
+            )
+    for invalid_timestamp in ("", "not-an-iso-timestamp"):
+        with pytest.raises(ValueError):
+            presentation_request(requested_at=invalid_timestamp)
+        with pytest.raises(ValueError):
+            presentation_request(prepared_at=invalid_timestamp)
+
+
+def test_presentation_commit_atomically_records_receipt_lane_success_and_last_good(
+    tmp_path,
+):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+    request = presentation_request()
+    receipt = presentation_receipt()
+    last_good = LastGoodCacheState(
+        theme_mode="night",
+        structural_generation=4,
+        settings_revision=9,
+        promoted_at="2026-07-09T10:05:00+00:00",
+    )
+    assert store.request_presentation("one", request) is True
+    store.record_failure(
+        "one",
+        "2026-07-09T10:02:00+00:00",
+        "transient",
+        "2026-07-09T10:03:00+00:00",
+        lane=runtime_state.RefreshLane.PRESENTATION,
+    )
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            request.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "night",
+        )
+        is True
+    )
+    before = store.snapshot()
+
+    assert (
+        store.commit_presentation(
+            "one",
+            receipt,
+            last_good_cache=last_good,
+        )
+        is True
+    )
+    after = store.snapshot()
+
+    assert before.instances["one"].presentation_request is not None
+    assert before.instances["one"].presentation_receipt is None
+    assert after is not before
+    assert after.instances["one"].presentation_request is None
+    assert after.instances["one"].presentation_receipt == receipt
+    assert after.instances["one"].presentation.last_success_at == "2026-07-09T10:05:00+00:00"
+    assert after.instances["one"].presentation.next_retry_at is None
+    assert after.instances["one"].last_good_cache == last_good
+    assert after.instances["one"].latest_activity_at() == receipt.committed_at
+    store.flush()
+    assert RuntimeStateStore(path).snapshot().instances["one"] == after.instances["one"]
+    with pytest.raises(FrozenInstanceError):
+        after.instances["one"].presentation_receipt.committed_at = "mutated"
+
+    for invalid_request_id in ("A" * 32, "g" * 32, "a" * 31, "a" * 33):
+        with pytest.raises(ValueError):
+            presentation_receipt(invalid_request_id)
+    for field in ("structural_generation", "settings_revision"):
+        for invalid_revision in (True, 0, -1, 1.5):
+            with pytest.raises((TypeError, ValueError)):
+                presentation_receipt(**{field: invalid_revision})
+    with pytest.raises(ValueError):
+        presentation_receipt(theme_mode="dusk")
+    for invalid_timestamp in ("", "not-an-iso-timestamp"):
+        with pytest.raises(ValueError):
+            presentation_receipt(committed_at=invalid_timestamp)
+
+
+def test_stale_request_id_cannot_prepare_or_commit_newer_request(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    old_request = presentation_request("a" * 32, settings_revision=8)
+    current_request = presentation_request("b" * 32, settings_revision=9)
+
+    assert store.request_presentation("one", old_request) is True
+    assert store.request_presentation("one", current_request) is True
+    before_stale_prepare = store.snapshot()
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            old_request.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "night",
+        )
+        is False
+    )
+    assert store.snapshot() is before_stale_prepare
+
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            current_request.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "night",
+        )
+        is True
+    )
+    before_stale_commit = store.snapshot()
+    assert (
+        store.commit_presentation(
+            "one",
+            presentation_receipt("a" * 32, settings_revision=8),
+            last_good_cache=LastGoodCacheState(
+                theme_mode="night",
+                structural_generation=4,
+                settings_revision=8,
+                promoted_at="2026-07-09T10:05:00+00:00",
+            ),
+        )
+        is False
+    )
+    assert store.snapshot() is before_stale_commit
+    assert store.snapshot().instances["one"].presentation_request.request_id == current_request.request_id
+
+    before_current_clear = store.snapshot()
+    assert (
+        store.clear_stale_presentation(
+            "one",
+            structural_generation=4,
+            settings_revision=9,
+        )
+        is False
+    )
+    assert store.snapshot() is before_current_clear
+    assert (
+        store.clear_stale_presentation(
+            "one",
+            structural_generation=5,
+            settings_revision=9,
+        )
+        is True
+    )
+    assert store.snapshot().instances["one"].presentation_request is None
+    for invalid_revision in (True, 0, -1, 1.5):
+        with pytest.raises((TypeError, ValueError)):
+            store.clear_stale_presentation(
+                "one",
+                structural_generation=invalid_revision,
+                settings_revision=9,
+            )
+
+
+def test_unresolved_request_is_coalesced_without_resetting_retry(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    original = presentation_request("a" * 32)
+    duplicate = presentation_request(
+        "b" * 32,
+        requested_at="2026-07-09T10:06:00+00:00",
+        origin_theme_mode="night",
+        origin_display_commit_id="display-later",
+    )
+
+    assert store.request_presentation("one", original) is True
+    store.record_attempt(
+        "one",
+        "2026-07-09T10:01:00+00:00",
+        lane=runtime_state.RefreshLane.PRESENTATION,
+    )
+    store.record_failure(
+        "one",
+        "2026-07-09T10:02:00+00:00",
+        "transient",
+        "2026-07-09T10:03:00+00:00",
+        lane=runtime_state.RefreshLane.PRESENTATION,
+    )
+    before_coalesce = store.snapshot()
+
+    assert store.request_presentation("one", duplicate) is False
+    assert store.snapshot() is before_coalesce
+    state = store.snapshot().instances["one"]
+    assert state.presentation_request == original
+    assert state.presentation.last_attempt_at == "2026-07-09T10:01:00+00:00"
+    assert state.presentation.last_failure_at == "2026-07-09T10:02:00+00:00"
+    assert state.presentation.next_retry_at == "2026-07-09T10:03:00+00:00"
+
+    before_wrong_satisfaction = store.snapshot()
+    assert (
+        store.satisfy_presentation_no_change(
+            "one",
+            duplicate.request_id,
+            "2026-07-09T10:07:00+00:00",
+        )
+        is False
+    )
+    assert store.snapshot() is before_wrong_satisfaction
+    with pytest.raises(ValueError):
+        store.mark_presentation_prepared(
+            "one",
+            original.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "dusk",
+        )
+    with pytest.raises(ValueError):
+        store.satisfy_presentation_no_change(
+            "one",
+            original.request_id,
+            "not-an-iso-timestamp",
+        )
+
+    assert (
+        store.satisfy_presentation_no_change(
+            "one",
+            original.request_id,
+            "2026-07-09T10:07:00+00:00",
+        )
+        is True
+    )
+    satisfied = store.snapshot().instances["one"]
+    assert satisfied.presentation_request is None
+    assert satisfied.presentation_receipt is None
+    assert satisfied.presentation.last_success_at == "2026-07-09T10:07:00+00:00"
+    assert satisfied.presentation.next_retry_at is None
+    assert satisfied.presentation.last_failure_at == "2026-07-09T10:02:00+00:00"
 
 
 def test_failure_does_not_advance_success_time(tmp_path):
@@ -343,7 +697,7 @@ def test_store_round_trips_display_and_instance_state(tmp_path):
     assert loaded.display_state == "committed"
     assert loaded.display_commit_id == "commit-1"
     assert loaded.displayed_instance_uuid == "one"
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
 
 
 def test_prune_keeps_current_instances_and_only_64_recent_tombstones(tmp_path):

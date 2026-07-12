@@ -21,16 +21,18 @@ except ImportError:  # pragma: no cover - top-level runtime import in production
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PERSISTENCE_INTERVAL_SECONDS = 5.0
 MAX_TOMBSTONES = 64
 _UNSET = object()
+_LOWERCASE_HEX = frozenset("0123456789abcdef")
 
 
 class RefreshLane(str, Enum):
     DATA = "data"
     LIVE = "live"
     THEME = "theme"
+    PRESENTATION = "presentation"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,114 @@ class RefreshLaneState:
     last_failure_at: str | None = None
     last_error: str | None = None
     next_retry_at: str | None = None
+
+
+def _validated_request_id(value) -> str:
+    if not isinstance(value, str):
+        raise TypeError("request_id must be a string")
+    if len(value) != 32 or any(character not in _LOWERCASE_HEX for character in value):
+        raise ValueError("request_id must be 32 lowercase hexadecimal characters")
+    return value
+
+
+def _validated_positive_integer(value, field) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{field} must be positive")
+    return value
+
+
+def _validated_theme_mode(value, field) -> str | None:
+    if value not in {None, "day", "night"}:
+        raise ValueError(f"{field} must be None, 'day', or 'night'")
+    return value
+
+
+def _validated_iso_timestamp(value, field) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must not be empty")
+    try:
+        datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO timestamp") from exc
+    return normalized
+
+
+def _validated_non_empty_text(value, field) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must not be empty")
+    return normalized
+
+
+@dataclass(frozen=True)
+class PresentationRequestState:
+    request_id: str
+    requested_at: str
+    structural_generation: int
+    settings_revision: int
+    origin_theme_mode: str | None
+    origin_display_commit_id: str
+    prepared_at: str | None = None
+    prepared_theme_mode: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _validated_request_id(self.request_id))
+        object.__setattr__(
+            self,
+            "requested_at",
+            _validated_iso_timestamp(self.requested_at, "requested_at"),
+        )
+        for field_name in ("structural_generation", "settings_revision"):
+            _validated_positive_integer(getattr(self, field_name), field_name)
+        _validated_theme_mode(self.origin_theme_mode, "origin_theme_mode")
+        object.__setattr__(
+            self,
+            "origin_display_commit_id",
+            _validated_non_empty_text(
+                self.origin_display_commit_id,
+                "origin_display_commit_id",
+            ),
+        )
+        if self.prepared_at is not None:
+            object.__setattr__(
+                self,
+                "prepared_at",
+                _validated_iso_timestamp(self.prepared_at, "prepared_at"),
+            )
+        _validated_theme_mode(self.prepared_theme_mode, "prepared_theme_mode")
+
+
+@dataclass(frozen=True)
+class PresentationCommitReceipt:
+    request_id: str
+    committed_at: str
+    display_commit_id: str
+    structural_generation: int
+    settings_revision: int
+    theme_mode: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _validated_request_id(self.request_id))
+        object.__setattr__(
+            self,
+            "committed_at",
+            _validated_iso_timestamp(self.committed_at, "committed_at"),
+        )
+        object.__setattr__(
+            self,
+            "display_commit_id",
+            _validated_non_empty_text(self.display_commit_id, "display_commit_id"),
+        )
+        for field_name in ("structural_generation", "settings_revision"):
+            _validated_positive_integer(getattr(self, field_name), field_name)
+        _validated_theme_mode(self.theme_mode, "theme_mode")
 
 
 @dataclass(frozen=True)
@@ -73,6 +183,9 @@ class InstanceRuntimeState:
     data: RefreshLaneState = field(default_factory=RefreshLaneState)
     live: RefreshLaneState = field(default_factory=RefreshLaneState)
     theme: RefreshLaneState = field(default_factory=RefreshLaneState)
+    presentation: RefreshLaneState = field(default_factory=RefreshLaneState)
+    presentation_request: PresentationRequestState | None = None
+    presentation_receipt: PresentationCommitReceipt | None = None
     last_good_cache: LastGoodCacheState | None = None
     legacy_cache_success_at: str | None = None
     tombstoned_at: str | None = None
@@ -101,7 +214,7 @@ class InstanceRuntimeState:
     def latest_activity_at(self) -> str:
         values = [
             value
-            for lane in (self.data, self.live, self.theme)
+            for lane in (self.data, self.live, self.theme, self.presentation)
             for value in (
                 lane.last_attempt_at,
                 lane.last_success_at,
@@ -116,6 +229,15 @@ class InstanceRuntimeState:
                 if self.last_good_cache is not None
                 else None,
                 self.legacy_cache_success_at,
+                self.presentation_request.requested_at
+                if self.presentation_request is not None
+                else None,
+                self.presentation_request.prepared_at
+                if self.presentation_request is not None
+                else None,
+                self.presentation_receipt.committed_at
+                if self.presentation_receipt is not None
+                else None,
             )
             if value is not None
         )
@@ -261,6 +383,155 @@ class RuntimeStateStore:
             ),
         )
 
+    def request_presentation(
+        self,
+        instance_uuid,
+        request: PresentationRequestState,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        if not isinstance(request, PresentationRequestState):
+            raise TypeError("request must be PresentationRequestState")
+
+        def update(previous):
+            current = previous.presentation_request
+            if (
+                current is not None
+                and current.structural_generation == request.structural_generation
+                and current.settings_revision == request.settings_revision
+            ):
+                return previous
+            return replace(previous, presentation_request=request)
+
+        return self._cas_update_instance(
+            instance_uuid,
+            request.requested_at,
+            update,
+        )
+
+    def mark_presentation_prepared(
+        self,
+        instance_uuid,
+        request_id,
+        prepared_at,
+        theme_mode,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        request_id = _validated_request_id(request_id)
+        prepared_at = _validated_iso_timestamp(prepared_at, "prepared_at")
+        theme_mode = _validated_theme_mode(theme_mode, "theme_mode")
+
+        def update(previous):
+            current = previous.presentation_request
+            if current is None or current.request_id != request_id:
+                return previous
+            return replace(
+                previous,
+                presentation_request=replace(
+                    current,
+                    prepared_at=prepared_at,
+                    prepared_theme_mode=theme_mode,
+                ),
+            )
+
+        return self._cas_update_instance(instance_uuid, prepared_at, update)
+
+    def commit_presentation(
+        self,
+        instance_uuid,
+        receipt: PresentationCommitReceipt,
+        *,
+        last_good_cache,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        if not isinstance(receipt, PresentationCommitReceipt):
+            raise TypeError("receipt must be PresentationCommitReceipt")
+        if not isinstance(last_good_cache, LastGoodCacheState):
+            raise TypeError("last_good_cache must be LastGoodCacheState")
+
+        def update(previous):
+            current = previous.presentation_request
+            if (
+                current is None
+                or current.prepared_at is None
+                or current.request_id != receipt.request_id
+                or current.structural_generation != receipt.structural_generation
+                or current.settings_revision != receipt.settings_revision
+                or current.prepared_theme_mode != receipt.theme_mode
+            ):
+                return previous
+            return replace(
+                previous,
+                presentation=replace(
+                    previous.presentation,
+                    last_success_at=receipt.committed_at,
+                    next_retry_at=None,
+                ),
+                presentation_request=None,
+                presentation_receipt=receipt,
+                last_good_cache=last_good_cache,
+            )
+
+        return self._cas_update_instance(
+            instance_uuid,
+            receipt.committed_at,
+            update,
+        )
+
+    def satisfy_presentation_no_change(
+        self,
+        instance_uuid,
+        request_id,
+        succeeded_at,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        request_id = _validated_request_id(request_id)
+        succeeded_at = _validated_iso_timestamp(succeeded_at, "succeeded_at")
+
+        def update(previous):
+            current = previous.presentation_request
+            if current is None or current.request_id != request_id:
+                return previous
+            return replace(
+                previous,
+                presentation=replace(
+                    previous.presentation,
+                    last_success_at=succeeded_at,
+                    next_retry_at=None,
+                ),
+                presentation_request=None,
+            )
+
+        return self._cas_update_instance(instance_uuid, succeeded_at, update)
+
+    def clear_stale_presentation(
+        self,
+        instance_uuid,
+        *,
+        structural_generation,
+        settings_revision,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        structural_generation = _validated_positive_integer(
+            structural_generation,
+            "structural_generation",
+        )
+        settings_revision = _validated_positive_integer(
+            settings_revision,
+            "settings_revision",
+        )
+        cleared_at = self._now_iso()
+
+        def update(previous):
+            current = previous.presentation_request
+            if current is None or (
+                current.structural_generation == structural_generation
+                and current.settings_revision == settings_revision
+            ):
+                return previous
+            return replace(previous, presentation_request=None)
+
+        return self._cas_update_instance(instance_uuid, cleared_at, update)
+
     def set_display_state(
         self,
         state,
@@ -299,7 +570,7 @@ class RuntimeStateStore:
         try:
             return RefreshLane(value)
         except (TypeError, ValueError) as exc:
-            raise ValueError("lane must be data, live, or theme") from exc
+            raise ValueError("lane must be data, live, theme, or presentation") from exc
 
     @staticmethod
     def _replace_lane(state, lane, **changes) -> InstanceRuntimeState:
@@ -379,6 +650,9 @@ class RuntimeStateStore:
         return wrote
 
     def _update_instance(self, instance_uuid, updated_at, update) -> None:
+        self._cas_update_instance(instance_uuid, updated_at, update)
+
+    def _cas_update_instance(self, instance_uuid, updated_at, update) -> bool:
         with self._state_lock:
             previous = self._snapshot.instances.get(
                 instance_uuid,
@@ -386,7 +660,7 @@ class RuntimeStateStore:
             )
             candidate_state = update(previous)
             if candidate_state == previous:
-                return
+                return False
             instances = dict(self._snapshot.instances)
             instances[instance_uuid] = candidate_state
             self._publish_locked(
@@ -397,6 +671,7 @@ class RuntimeStateStore:
                 )
             )
         self._persist_if_due()
+        return True
 
     def _publish_locked(self, snapshot) -> None:
         self._snapshot = snapshot
@@ -552,6 +827,12 @@ class RuntimeStateStore:
                     "last_good_cache": cls._serialize_last_good_cache(
                         state.last_good_cache
                     ),
+                    "presentation_request": cls._serialize_presentation_request(
+                        state.presentation_request
+                    ),
+                    "presentation_receipt": cls._serialize_presentation_receipt(
+                        state.presentation_receipt
+                    ),
                     "legacy_cache_success_at": state.legacy_cache_success_at,
                     "tombstoned_at": state.tombstoned_at,
                 }
@@ -580,12 +861,40 @@ class RuntimeStateStore:
             "promoted_at": state.promoted_at,
         }
 
+    @staticmethod
+    def _serialize_presentation_request(state: PresentationRequestState | None):
+        if state is None:
+            return None
+        return {
+            "request_id": state.request_id,
+            "requested_at": state.requested_at,
+            "structural_generation": state.structural_generation,
+            "settings_revision": state.settings_revision,
+            "origin_theme_mode": state.origin_theme_mode,
+            "origin_display_commit_id": state.origin_display_commit_id,
+            "prepared_at": state.prepared_at,
+            "prepared_theme_mode": state.prepared_theme_mode,
+        }
+
+    @staticmethod
+    def _serialize_presentation_receipt(state: PresentationCommitReceipt | None):
+        if state is None:
+            return None
+        return {
+            "request_id": state.request_id,
+            "committed_at": state.committed_at,
+            "display_commit_id": state.display_commit_id,
+            "structural_generation": state.structural_generation,
+            "settings_revision": state.settings_revision,
+            "theme_mode": state.theme_mode,
+        }
+
     @classmethod
     def _deserialize(cls, payload) -> RuntimeStateSnapshot:
         if not isinstance(payload, dict):
             raise ValueError("runtime state must be a JSON object")
         schema_version = payload.get("schema_version")
-        if schema_version not in {1, SCHEMA_VERSION}:
+        if schema_version not in {1, 2, SCHEMA_VERSION}:
             raise ValueError("unsupported runtime state schema")
         raw_instances = payload.get("instances", {})
         if not isinstance(raw_instances, dict):
@@ -597,8 +906,10 @@ class RuntimeStateStore:
                 raise ValueError("runtime instance state must be an object")
             if schema_version == 1:
                 instances[instance_uuid] = cls._deserialize_v1_instance(raw_state)
-            else:
+            elif schema_version == 2:
                 instances[instance_uuid] = cls._deserialize_v2_instance(raw_state)
+            else:
+                instances[instance_uuid] = cls._deserialize_v3_instance(raw_state)
         instances = cls._cap_loaded_tombstones(instances)
 
         raw_display = payload.get("display", {})
@@ -680,6 +991,24 @@ class RuntimeStateStore:
         )
 
     @classmethod
+    def _deserialize_v3_instance(cls, raw_state) -> InstanceRuntimeState:
+        raw_lanes = raw_state.get("lanes", {})
+        if not isinstance(raw_lanes, dict):
+            raise ValueError("runtime lanes must be an object")
+        return replace(
+            cls._deserialize_v2_instance(raw_state),
+            presentation=cls._deserialize_lane(
+                raw_lanes.get(RefreshLane.PRESENTATION.value, {})
+            ),
+            presentation_request=cls._deserialize_presentation_request(
+                raw_state.get("presentation_request")
+            ),
+            presentation_receipt=cls._deserialize_presentation_receipt(
+                raw_state.get("presentation_receipt")
+            ),
+        )
+
+    @classmethod
     def _deserialize_lane(cls, raw_state) -> RefreshLaneState:
         if not isinstance(raw_state, dict):
             raise ValueError("runtime lane state must be an object")
@@ -720,6 +1049,38 @@ class RuntimeStateStore:
                 raw_state.get("promoted_at"),
                 "last_good_cache promoted_at",
             ),
+        )
+
+    @staticmethod
+    def _deserialize_presentation_request(raw_state):
+        if raw_state is None:
+            return None
+        if not isinstance(raw_state, dict):
+            raise ValueError("presentation_request must be an object or null")
+        return PresentationRequestState(
+            request_id=raw_state.get("request_id"),
+            requested_at=raw_state.get("requested_at"),
+            structural_generation=raw_state.get("structural_generation"),
+            settings_revision=raw_state.get("settings_revision"),
+            origin_theme_mode=raw_state.get("origin_theme_mode"),
+            origin_display_commit_id=raw_state.get("origin_display_commit_id"),
+            prepared_at=raw_state.get("prepared_at"),
+            prepared_theme_mode=raw_state.get("prepared_theme_mode"),
+        )
+
+    @staticmethod
+    def _deserialize_presentation_receipt(raw_state):
+        if raw_state is None:
+            return None
+        if not isinstance(raw_state, dict):
+            raise ValueError("presentation_receipt must be an object or null")
+        return PresentationCommitReceipt(
+            request_id=raw_state.get("request_id"),
+            committed_at=raw_state.get("committed_at"),
+            display_commit_id=raw_state.get("display_commit_id"),
+            structural_generation=raw_state.get("structural_generation"),
+            settings_revision=raw_state.get("settings_revision"),
+            theme_mode=raw_state.get("theme_mode"),
         )
 
     @staticmethod
