@@ -21,6 +21,7 @@ class DueReason(str, Enum):
     BOOTSTRAP_MISSING = "bootstrap_missing"
     INTERVAL = "interval"
     SCHEDULED = "scheduled"
+    PRESENTATION = "presentation"
     LIVE = "live"
     THEME = "theme"
 
@@ -65,6 +66,7 @@ class DueEvaluation:
 class AdmissionState:
     consecutive_data_admissions: int = 0
     last_soft_data_admitted_monotonic: float | None = None
+    last_soft_renderer_admitted_monotonic: float | None = None
 
 
 @dataclass(frozen=True)
@@ -110,26 +112,54 @@ def choose_refresh_candidate(
     """Admit at most one deterministically ordered refresh candidate."""
     data = sorted(data_candidates, key=_candidate_order)
     auxiliary = sorted(auxiliary_candidates, key=_candidate_order)
+    data_instance_uuids = {
+        candidate.instance.instance_uuid for candidate in data
+    }
+    auxiliary = [
+        candidate
+        for candidate in auxiliary
+        if not (
+            candidate.lane is RefreshLane.PRESENTATION
+            and candidate.instance.instance_uuid in data_instance_uuids
+        )
+    ]
 
     if tier is ResourceTier.HARD:
         return AdmissionDecision(None, state)
 
     if tier is ResourceTier.SOFT:
-        if not data or not _soft_spacing_elapsed(
+        presentation = [
+            candidate
+            for candidate in auxiliary
+            if candidate.lane is RefreshLane.PRESENTATION
+        ]
+        if (not data and not presentation) or not _soft_spacing_elapsed(
             state,
             now_monotonic,
             thresholds,
         ):
             return AdmissionDecision(None, state)
+        if data and (
+            not presentation or state.consecutive_data_admissions < 3
+        ):
+            return AdmissionDecision(
+                data[0],
+                replace(
+                    state,
+                    consecutive_data_admissions=min(
+                        3,
+                        max(0, state.consecutive_data_admissions) + 1,
+                    ),
+                    last_soft_data_admitted_monotonic=now_monotonic,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
         return AdmissionDecision(
-            data[0],
+            presentation[0],
             replace(
                 state,
-                consecutive_data_admissions=min(
-                    3,
-                    max(0, state.consecutive_data_admissions) + 1,
-                ),
-                last_soft_data_admitted_monotonic=now_monotonic,
+                consecutive_data_admissions=0,
+                last_soft_renderer_admitted_monotonic=now_monotonic,
             ),
         )
 
@@ -210,6 +240,53 @@ def evaluate_data_due(
             last_attempt_at=last_attempt,
         ),
         tuple(invalid_fields),
+    )
+
+
+def evaluate_presentation_due(
+    instance: PluginInstanceSnapshot,
+    runtime_state: InstanceRuntimeState,
+    has_displayable_cache: bool,
+    resolved_theme_mode: str | None,
+    now: datetime,
+) -> DueEvaluation:
+    """Evaluate provider-free presentation work from immutable state."""
+    request = runtime_state.presentation_request
+    lane = runtime_state.presentation
+    if not has_displayable_cache or request is None:
+        return DueEvaluation(None)
+    if (
+        request.structural_generation != instance.structural_generation
+        or request.settings_revision != instance.settings_revision
+    ):
+        return DueEvaluation(None)
+    receipt = runtime_state.presentation_receipt
+    if receipt is not None and receipt.request_id == request.request_id:
+        return DueEvaluation(None)
+    if (
+        request.prepared_at is not None
+        and request.prepared_theme_mode == resolved_theme_mode
+    ):
+        return DueEvaluation(None)
+
+    next_retry = _parse_lane_time(lane.next_retry_at, now)
+    if (
+        next_retry is not None
+        and _instant_key(next_retry) > _instant_key(now)
+    ):
+        return DueEvaluation(None)
+
+    due_since = _parse_lane_time(request.requested_at, now)
+    if due_since is None:
+        return DueEvaluation(None)
+    return DueEvaluation(
+        DueCandidate(
+            instance=instance,
+            lane=RefreshLane.PRESENTATION,
+            due_since=due_since,
+            reason=DueReason.PRESENTATION,
+            last_attempt_at=_parse_lane_time(lane.last_attempt_at, now),
+        )
     )
 
 
@@ -372,7 +449,14 @@ def _soft_spacing_elapsed(
     now_monotonic: float,
     thresholds: ResourceThresholds,
 ) -> bool:
-    last_admitted = state.last_soft_data_admitted_monotonic
+    admitted_at = (
+        state.last_soft_data_admitted_monotonic,
+        state.last_soft_renderer_admitted_monotonic,
+    )
+    last_admitted = max(
+        (value for value in admitted_at if value is not None),
+        default=None,
+    )
     return last_admitted is None or (
         now_monotonic - last_admitted >= thresholds.soft_spacing_seconds
     )

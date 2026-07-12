@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytz
 
+import src.runtime.refresh_policy as refresh_policy
 from src.model import PluginInstanceSnapshot
 from src.runtime.refresh_policy import (
     AdmissionState,
@@ -21,6 +22,8 @@ from src.runtime.refresh_policy import (
 from src.runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
+    PresentationCommitReceipt,
+    PresentationRequestState,
     RefreshLane,
     RefreshLaneState,
 )
@@ -80,6 +83,41 @@ def _candidate(
         ),
         reason=reason,
         last_attempt_at=last_attempt_at,
+    )
+
+
+def _presentation_request(
+    *,
+    request_id: str = "a" * 32,
+    requested_at: datetime | None = None,
+    structural_generation: int = 3,
+    settings_revision: int = 7,
+    prepared_at: datetime | None = None,
+    prepared_theme_mode: str | None = None,
+) -> PresentationRequestState:
+    return PresentationRequestState(
+        request_id=request_id,
+        requested_at=(
+            datetime(2026, 7, 11, 11, 0, tzinfo=UTC)
+            if requested_at is None
+            else requested_at
+        ).isoformat(),
+        structural_generation=structural_generation,
+        settings_revision=settings_revision,
+        origin_theme_mode="day",
+        origin_display_commit_id="display-origin",
+        prepared_at=(
+            prepared_at.isoformat() if prepared_at is not None else None
+        ),
+        prepared_theme_mode=prepared_theme_mode,
+    )
+
+
+def _presentation_candidate(instance_uuid: str) -> DueCandidate:
+    return _candidate(
+        instance_uuid,
+        lane=RefreshLane.PRESENTATION,
+        reason=refresh_policy.DueReason.PRESENTATION,
     )
 
 
@@ -519,6 +557,228 @@ def test_boolean_interval_is_invalid_without_tight_loop():
 
     assert result.candidate is None
     assert result.invalid_fields == ("refresh.interval",)
+
+
+def test_presentation_due_requires_cache_request_revision_and_retry_deadline():
+    now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    requested_at = datetime(2026, 7, 11, 11, 0, tzinfo=UTC)
+    last_attempt = datetime(2026, 7, 11, 11, 30, tzinfo=UTC)
+    instance = _instance()
+    request = _presentation_request(requested_at=requested_at)
+    due = refresh_policy.evaluate_presentation_due(
+        instance,
+        InstanceRuntimeState(
+            presentation=_lane(attempt=last_attempt, retry=now),
+            presentation_request=request,
+        ),
+        has_displayable_cache=True,
+        resolved_theme_mode="day",
+        now=now,
+    )
+
+    assert due.invalid_fields == ()
+    assert due.candidate is not None
+    assert due.candidate.lane is RefreshLane.PRESENTATION
+    assert due.candidate.reason is refresh_policy.DueReason.PRESENTATION
+    assert due.candidate.due_since == requested_at
+    assert due.candidate.last_attempt_at == last_attempt
+
+    matching_receipt = PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=datetime(
+            2026, 7, 11, 11, 45, tzinfo=UTC
+        ).isoformat(),
+        display_commit_id="display-committed",
+        structural_generation=3,
+        settings_revision=7,
+        theme_mode="day",
+    )
+    not_due = (
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(presentation_request=request),
+            has_displayable_cache=False,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(),
+            has_displayable_cache=True,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(
+                presentation_request=_presentation_request(
+                    structural_generation=4
+                )
+            ),
+            has_displayable_cache=True,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(
+                presentation_request=_presentation_request(
+                    settings_revision=8
+                )
+            ),
+            has_displayable_cache=True,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(
+                presentation=_lane(retry=now + timedelta(seconds=1)),
+                presentation_request=request,
+            ),
+            has_displayable_cache=True,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+        refresh_policy.evaluate_presentation_due(
+            instance,
+            InstanceRuntimeState(
+                presentation_request=request,
+                presentation_receipt=matching_receipt,
+            ),
+            has_displayable_cache=True,
+            resolved_theme_mode="day",
+            now=now,
+        ),
+    )
+
+    assert all(result.candidate is None for result in not_due)
+
+
+def test_prepared_request_is_not_renderer_due_until_displayed():
+    now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    requested_at = datetime(2026, 7, 11, 11, 0, tzinfo=UTC)
+    prepared_at = datetime(2026, 7, 11, 11, 30, tzinfo=UTC)
+    runtime_state = InstanceRuntimeState(
+        presentation=_lane(attempt=prepared_at),
+        presentation_request=_presentation_request(
+            requested_at=requested_at,
+            prepared_at=prepared_at,
+            prepared_theme_mode="day",
+        ),
+    )
+
+    matching_theme = refresh_policy.evaluate_presentation_due(
+        _instance(),
+        runtime_state,
+        has_displayable_cache=True,
+        resolved_theme_mode="day",
+        now=now,
+    )
+    changed_theme = refresh_policy.evaluate_presentation_due(
+        _instance(),
+        runtime_state,
+        has_displayable_cache=True,
+        resolved_theme_mode="night",
+        now=now,
+    )
+
+    assert matching_theme.candidate is None
+    assert changed_theme.candidate is not None
+    assert changed_theme.candidate.lane is RefreshLane.PRESENTATION
+    assert changed_theme.candidate.reason is refresh_policy.DueReason.PRESENTATION
+    assert changed_theme.candidate.due_since == requested_at
+    assert changed_theme.candidate.last_attempt_at == prepared_at
+
+
+def test_data_has_same_instance_priority_over_pending_presentation():
+    data = _candidate("shared-instance")
+    presentation = _presentation_candidate("shared-instance")
+    state = AdmissionState(consecutive_data_admissions=3)
+
+    decision = choose_refresh_candidate(
+        [data],
+        [presentation],
+        tier=ResourceTier.HEALTHY,
+        state=state,
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == data
+    assert decision.candidate.lane is RefreshLane.DATA
+    assert decision.state.consecutive_data_admissions == 3
+
+
+def test_soft_admits_spaced_three_data_then_one_presentation_but_never_live_theme():
+    data = [_candidate("soft-data")]
+    auxiliary = [
+        _presentation_candidate("soft-presentation"),
+        _candidate("soft-live", lane=RefreshLane.LIVE, reason=DueReason.LIVE),
+        _candidate(
+            "soft-theme",
+            lane=RefreshLane.THEME,
+            reason=DueReason.THEME,
+        ),
+    ]
+    thresholds = ResourceThresholds(soft_spacing_seconds=10.0)
+    state = AdmissionState()
+    selected_lanes = []
+
+    for now_monotonic in range(100, 180, 10):
+        decision = choose_refresh_candidate(
+            data,
+            auxiliary,
+            tier=ResourceTier.SOFT,
+            state=state,
+            now_monotonic=float(now_monotonic),
+            thresholds=thresholds,
+        )
+        assert decision.candidate is not None
+        selected_lanes.append(decision.candidate.lane)
+        state = decision.state
+
+        too_soon = choose_refresh_candidate(
+            data,
+            auxiliary,
+            tier=ResourceTier.SOFT,
+            state=state,
+            now_monotonic=now_monotonic + 9.99,
+            thresholds=thresholds,
+        )
+        assert too_soon.candidate is None
+        assert too_soon.state == state
+
+    assert selected_lanes == [
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.PRESENTATION,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.PRESENTATION,
+    ]
+    assert state.last_soft_renderer_admitted_monotonic == 170.0
+
+
+def test_hard_admits_no_presentation():
+    state = AdmissionState(
+        consecutive_data_admissions=3,
+        last_soft_data_admitted_monotonic=100.0,
+    )
+
+    decision = choose_refresh_candidate(
+        [],
+        [_presentation_candidate("hard-presentation")],
+        tier=ResourceTier.HARD,
+        state=state,
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate is None
+    assert decision.state == state
 
 
 def test_hard_threshold_wins_over_soft_threshold():
