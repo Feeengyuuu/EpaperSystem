@@ -291,3 +291,101 @@ def test_health_collection_triggers_only_lightweight_due_cache_maintenance(tmp_p
     collector.collect_once()
 
     assert calls == ["maintenance"]
+
+
+def _independent_refresh_health_collector(tmp_path):
+    active = SimpleNamespace(
+        command_id="sensitive-command-id",
+        kind="cache_refresh",
+        source="scheduler",
+        plugin_id="secret-plugin-name",
+        instance_uuid="sensitive-instance-uuid",
+        intent=SimpleNamespace(value="theme_redraw"),
+        started_monotonic=120.0,
+        deadline_monotonic=180.0,
+        settings={"api_key": "secret"},
+        error="provider exploded with secret text",
+    )
+    refresh_task = SimpleNamespace(
+        lifecycle=SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(
+                state=SimpleNamespace(value="running"),
+                changed_at_monotonic=100.0,
+            )
+        ),
+        runtime_state=SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(
+                display_state="committed",
+                display_commit_id="a" * 32,
+                displayed_instance_uuid="sensitive-instance-uuid",
+                updated_at="2026-07-11T22:00:00+00:00",
+            )
+        ),
+        refresh_queue=SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(
+                depth=0,
+                capacity=32,
+                rejected_total=0,
+                superseded_total=0,
+                accepting=True,
+            )
+        ),
+        scheduler_snapshot=lambda: SimpleNamespace(last_attempt_monotonic=150.0),
+        active_operation_snapshot=lambda: active,
+        refresh_health_snapshot=lambda: {
+            "resource_tier": "healthy",
+            "due_counts": {"data": 2, "live": 1, "theme": 1},
+            "oldest_data_overdue_seconds": 90.0,
+        },
+        _scheduler_poll_seconds=lambda: 30.0,
+    )
+    config_status = SimpleNamespace(
+        valid=True,
+        writable=True,
+        source="primary",
+        version=2,
+        degraded_reason=None,
+    )
+    publisher = HealthPublisher(release_id="release-test")
+    collector = HealthCollector(
+        publisher,
+        refresh_task=refresh_task,
+        device_config=SimpleNamespace(
+            _config_store=SimpleNamespace(
+                current=lambda: SimpleNamespace(status=config_status)
+            ),
+            get_config=lambda _key, default=None: default,
+        ),
+        runtime_paths=SimpleNamespace(data_dir=Path(tmp_path)),
+        dev_mode=False,
+        startup_state=lambda: {
+            "degraded": True,
+            "reasons": {"provider": "provider exploded with secret text"},
+        },
+    )
+    return collector, publisher
+
+
+def test_health_exposes_only_aggregate_tier_due_counts_and_active_intent(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(tmp_path)
+
+    collector.collect_once()
+    scheduler = publisher.snapshot().components["scheduler"]
+
+    assert scheduler["resource_tier"] == "healthy"
+    assert dict(scheduler["due_counts"]) == {"data": 2, "live": 1, "theme": 1}
+    assert scheduler["oldest_data_overdue_seconds"] == 90.0
+    assert scheduler["active_intent"] == "theme_redraw"
+    assert "active_command_id" not in scheduler
+
+
+def test_health_never_exposes_instance_uuid_name_settings_or_error_text(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(tmp_path)
+
+    collector.collect_once()
+    rendered = repr(publisher.snapshot().components)
+
+    assert "sensitive-instance-uuid" not in rendered
+    assert "secret-plugin-name" not in rendered
+    assert "api_key" not in rendered
+    assert "provider exploded with secret text" not in rendered

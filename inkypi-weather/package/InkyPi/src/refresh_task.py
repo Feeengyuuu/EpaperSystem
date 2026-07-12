@@ -8,7 +8,7 @@ import hashlib
 import psutil
 import pytz
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import (
@@ -28,15 +28,37 @@ from runtime.refresh_contracts import (
     JobStatus,
     LifecycleState,
     RefreshCommand,
+    RefreshIntent,
     TaskCancelled,
     TaskContext,
     TaskDeadlineExceeded,
     thaw_payload,
 )
+from runtime.cache_catalog import (
+    CacheCatalog,
+    DisplayCacheCandidate,
+    authoritative_cache_path,
+)
 from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.refresh_policy import (
+    AdmissionState,
+    DueCandidate,
+    DueReason,
+    ResourceSample,
+    ResourceThresholds,
+    ResourceTier,
+    classify_resource_tier,
+    choose_refresh_candidate,
+    evaluate_data_due,
+)
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.render_arbiter import RenderArbiter
-from runtime.runtime_state import RuntimeStateStore
+from runtime.runtime_state import (
+    InstanceRuntimeState,
+    LastGoodCacheState,
+    RefreshLane,
+    RuntimeStateStore,
+)
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 from PIL import Image, ImageDraw, ImageFont
 
@@ -63,6 +85,7 @@ class ActiveOperationSnapshot:
     command_id: str
     kind: str
     source: str
+    intent: str
     plugin_id: str
     instance_uuid: str | None
     started_monotonic: float
@@ -71,6 +94,10 @@ class ActiveOperationSnapshot:
 
 class _StaleSelection(TaskCancelled):
     """A rendered playlist result no longer matches its immutable selection."""
+
+
+class _CacheUnavailable(TaskCancelled):
+    """A previously eligible display cache disappeared or became invalid."""
 
 
 def _setting_enabled(value):
@@ -327,6 +354,13 @@ class RefreshTask:
                 wall_clock=wall_clock,
             )
         )
+        self.cache_catalog = CacheCatalog(
+            os.path.join(self.device_config.plugin_image_dir, ".refresh-cache")
+        )
+        self._admission_state = AdmissionState()
+        self._resource_tier = None
+        self._due_counts = {lane.value: 0 for lane in RefreshLane}
+        self._oldest_data_overdue_seconds = None
         self._display_transactions_enabled = False
         bind_runtime_state = getattr(display_manager, "bind_runtime_state", None)
         if callable(bind_runtime_state):
@@ -412,6 +446,15 @@ class RefreshTask:
         """Return the current immutable command deadline without taking a lock."""
 
         return self._active_operation
+
+    def refresh_health_snapshot(self):
+        """Return aggregate refresh diagnostics without instance-owned details."""
+        tier = getattr(self._resource_tier, "value", self._resource_tier)
+        return {
+            "resource_tier": "unknown" if tier is None else str(tier),
+            "due_counts": dict(self._due_counts),
+            "oldest_data_overdue_seconds": self._oldest_data_overdue_seconds,
+        }
 
     @property
     def restart_request(self):
@@ -563,15 +606,12 @@ class RefreshTask:
                 self.scheduler_state.set_next_attempt(now + 30.0)
                 return None
             current_dt = self._get_current_datetime()
-            command = self._select_scheduled_command(current_dt)
+            command = self._select_cached_display_command(current_dt)
             if command is not None:
                 self.refresh_queue.submit(command)
-            skip_uuid = command.instance_uuid if command is not None else None
-            for background_command in self._select_background_commands(
-                current_dt,
-                skip_instance_uuid=skip_uuid,
-            ):
-                self.refresh_queue.submit(background_command)
+            refresh_command = self._select_independent_refresh_command(current_dt)
+            if refresh_command is not None:
+                self.refresh_queue.submit(refresh_command)
             self.scheduler_state.set_next_attempt(now + self._scheduler_poll_seconds())
             return command
         except Exception as error:
@@ -631,6 +671,7 @@ class RefreshTask:
                     selection.playlist_name,
                     selection.instance,
                     source=CommandSource.SCHEDULER,
+                    intent=RefreshIntent.THEME_REDRAW,
                     force=False,
                     display_cached_only=True,
                     priority=80,
@@ -661,6 +702,7 @@ class RefreshTask:
                 selection.playlist_name,
                 selection.instance,
                 source=CommandSource.SCHEDULER,
+                intent=RefreshIntent.DISPLAY_CACHE,
                 display_cached_only=True,
                 priority=50,
             )
@@ -705,6 +747,7 @@ class RefreshTask:
             active.name,
             displayed,
             source=CommandSource.LIVE,
+            intent=RefreshIntent.LIVE_REFRESH,
             display_cached_only=True,
             priority=70,
         )
@@ -774,12 +817,377 @@ class RefreshTask:
                 active.name,
                 item[4],
                 source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
                 display_cached_only=False,
                 priority=10,
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
             )
             for item in selected
+        )
+
+    def _active_cache_candidates(self, active, theme_context):
+        """Resolve exact, decodable cache candidates outside the model lock."""
+        if active is None:
+            return {}
+        runtime_instances = self.runtime_state.snapshot().instances
+        candidates = {}
+        for instance in active.plugins:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            resolved_theme = _resolved_theme_context_for_instance(
+                instance,
+                plugin_config,
+                self.device_config,
+                current_dt=None,
+            )
+            theme_mode = (
+                resolved_theme.get("mode")
+                if isinstance(resolved_theme, Mapping)
+                else None
+            )
+            candidate = self.cache_catalog.resolve(
+                instance,
+                theme_mode,
+                runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()),
+            )
+            if candidate is not None:
+                candidates[instance.instance_uuid] = candidate
+        return candidates
+
+    def _select_cached_display_command(self, current_dt) -> RefreshCommand | None:
+        """Select one random eligible cache without loading plugin code."""
+        manager = self.device_config.get_playlist_manager()
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is None:
+            return None
+        theme_context = get_theme_context(self.device_config, now=current_dt)
+        if self._has_theme_changed(theme_context, current_dt):
+            # The exact displayed theme refresh owns this transition.  Avoid
+            # queueing an opposite-theme DISPLAY_CACHE command that could
+            # absorb its cache-only follow-up and lose the pinned context.
+            return None
+        candidates = self._active_cache_candidates(active, theme_context)
+        latest_refresh = self.device_config.get_refresh_info()
+        try:
+            interval = float(
+                self.device_config.get_config(
+                    "plugin_cycle_interval_seconds",
+                    default=DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+        selection = manager.select_next_active_instance(
+            current_dt,
+            latest_refresh=latest_refresh.get_refresh_datetime(),
+            interval_seconds=interval,
+            eligible_instance_uuids=frozenset(candidates),
+        )
+        if selection is None:
+            return None
+        candidate = candidates.get(selection.instance.instance_uuid)
+        if candidate is None or (
+            candidate.structural_generation
+            != selection.instance.structural_generation
+            or candidate.settings_revision != selection.instance.settings_revision
+        ):
+            return None
+        return self._playlist_command(
+            selection.playlist_name,
+            selection.instance,
+            source=CommandSource.SCHEDULER,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=50,
+            current_dt=current_dt,
+            cache_theme_mode=candidate.theme_mode,
+        )
+
+    def _resource_sample(self) -> ResourceSample:
+        """Read memory and swap once for one scheduler admission decision."""
+        try:
+            memory = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+        except Exception:
+            logger.exception("Could not sample resources for refresh admission.")
+            return ResourceSample(available_mb=None, swap_percent=None)
+        return ResourceSample(
+            available_mb=getattr(memory, "available", 0) / (1024 * 1024),
+            swap_percent=getattr(swap, "percent", None),
+        )
+
+    def _resource_thresholds(self) -> ResourceThresholds:
+        return ResourceThresholds(
+            soft_min_available_mb=max(
+                0.0,
+                self._config_float(
+                    "background_cache_refresh_min_available_mb",
+                    DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB,
+                ),
+            ),
+            soft_max_swap_percent=self._config_float(
+                "background_cache_refresh_max_swap_percent",
+                DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT,
+            ),
+            hard_min_available_mb=max(
+                0.0,
+                self._config_float(
+                    "memory_watchdog_min_available_mb",
+                    DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB,
+                ),
+            ),
+            hard_max_swap_percent=self._config_float(
+                "memory_watchdog_max_swap_percent",
+                DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT,
+            ),
+            soft_spacing_seconds=max(
+                0.0,
+                self._config_float(
+                    "independent_refresh_soft_spacing_seconds",
+                    60.0,
+                ),
+            ),
+        )
+
+    def _select_independent_refresh_command(
+        self,
+        current_dt,
+    ) -> RefreshCommand | None:
+        """Admit at most one ordinary renderer command for this probe."""
+        manager = self.device_config.get_playlist_manager()
+        active = manager.snapshot_active_playlist(current_dt)
+        theme_context = get_theme_context(self.device_config, now=current_dt)
+        if active is None:
+            self._theme_due_candidate(
+                manager,
+                None,
+                {},
+                theme_context,
+                current_dt,
+            )
+            self._due_counts = {lane.value: 0 for lane in RefreshLane}
+            self._oldest_data_overdue_seconds = None
+            return None
+
+        cache_candidates = self._active_cache_candidates(active, theme_context)
+        runtime_instances = self.runtime_state.snapshot().instances
+        data_candidates = []
+        for instance in active.plugins:
+            evaluation = evaluate_data_due(
+                instance,
+                runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()),
+                instance.instance_uuid in cache_candidates,
+                current_dt,
+            )
+            if evaluation.invalid_fields:
+                logger.warning(
+                    "Ignoring invalid refresh cadence fields. | plugin_id: %s | fields: %s",
+                    instance.plugin_id,
+                    ",".join(evaluation.invalid_fields),
+                )
+            if evaluation.candidate is not None:
+                data_candidates.append(evaluation.candidate)
+
+        thresholds = self._resource_thresholds()
+        tier = classify_resource_tier(self._resource_sample(), thresholds)
+        live_candidates = self._live_due_candidates(
+            active,
+            runtime_instances,
+            current_dt,
+            tier,
+        )
+        theme_candidate = self._theme_due_candidate(
+            manager,
+            active,
+            runtime_instances,
+            theme_context,
+            current_dt,
+        )
+        auxiliary_candidates = list(live_candidates)
+        if theme_candidate is not None:
+            auxiliary_candidates.append(theme_candidate)
+        decision = choose_refresh_candidate(
+            data_candidates,
+            auxiliary_candidates,
+            tier=tier,
+            state=self._admission_state,
+            now_monotonic=self._clock(),
+            thresholds=thresholds,
+        )
+        self._admission_state = decision.state
+        self._resource_tier = tier
+        self._due_counts = {
+            RefreshLane.DATA.value: len(data_candidates),
+            RefreshLane.LIVE.value: len(live_candidates),
+            RefreshLane.THEME.value: int(theme_candidate is not None),
+        }
+        if data_candidates:
+            oldest = min(candidate.due_since for candidate in data_candidates)
+            self._oldest_data_overdue_seconds = max(
+                0.0,
+                (current_dt - oldest).total_seconds(),
+            )
+        else:
+            self._oldest_data_overdue_seconds = None
+        candidate = decision.candidate
+        if candidate is None:
+            return None
+        if candidate.lane is RefreshLane.THEME:
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.SCHEDULER,
+                intent=RefreshIntent.THEME_REDRAW,
+                force=False,
+                display_cached_only=False,
+                priority=80,
+                kind=CommandKind.CACHE_REFRESH,
+                theme_context=theme_context,
+                theme_render_only=True,
+                current_dt=current_dt,
+                expected_displayed_instance_uuid=candidate.instance.instance_uuid,
+            )
+        if candidate.lane is RefreshLane.LIVE:
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.LIVE,
+                intent=RefreshIntent.LIVE_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=70,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                expected_displayed_instance_uuid=candidate.instance.instance_uuid,
+            )
+        return self._playlist_command(
+            active.name,
+            candidate.instance,
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DATA_REFRESH,
+            force=False,
+            display_cached_only=False,
+            priority=10,
+            kind=CommandKind.CACHE_REFRESH,
+            current_dt=current_dt,
+        )
+
+    def _live_due_candidates(self, active, runtime_instances, current_dt, tier):
+        """Return exact-display live candidates admitted only in the healthy tier."""
+        if tier is not ResourceTier.HEALTHY:
+            return []
+        displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+        if displayed_uuid is None:
+            return []
+        candidates = []
+        for instance in active.plugins:
+            if instance.instance_uuid != displayed_uuid:
+                continue
+            if self._snapshot_background_cache_disabled(instance):
+                continue
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if not plugin_supports_live_refresh(plugin_config):
+                continue
+            live_state = self._snapshot_live_refresh_state(instance, current_dt)
+            if not live_state:
+                continue
+            runtime = runtime_instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            ).live
+            next_retry = self._parse_iso_datetime(runtime.next_retry_at)
+            if next_retry is not None:
+                next_retry = self._align_datetime_tz(next_retry, current_dt)
+                if current_dt < next_retry:
+                    continue
+            last_success = self._parse_iso_datetime(runtime.last_success_at)
+            if last_success is None:
+                due_since = current_dt
+            else:
+                last_success = self._align_datetime_tz(last_success, current_dt)
+                due_since = last_success + timedelta(
+                    seconds=live_state["interval_seconds"]
+                )
+                if current_dt < due_since:
+                    continue
+            last_attempt = self._parse_iso_datetime(runtime.last_attempt_at)
+            if last_attempt is not None:
+                last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+            candidates.append(
+                DueCandidate(
+                    instance=instance,
+                    lane=RefreshLane.LIVE,
+                    due_since=due_since,
+                    reason=DueReason.LIVE,
+                    last_attempt_at=last_attempt,
+                )
+            )
+        return candidates
+
+    def _theme_due_candidate(
+        self,
+        manager,
+        active,
+        runtime_instances,
+        theme_context,
+        current_dt,
+    ):
+        """Resolve one exact displayed auto-theme transition without fallback."""
+        if not self._has_theme_changed(theme_context, current_dt):
+            return None
+        displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+        eligible_instance_uuids = set()
+        if active is not None:
+            for instance in active.plugins:
+                plugin_config = self.device_config.get_plugin(instance.plugin_id)
+                resolved_theme = _resolved_theme_context_for_instance(
+                    instance,
+                    plugin_config,
+                    self.device_config,
+                    current_dt=current_dt,
+                )
+                if (
+                    resolved_theme is not None
+                    and resolved_theme.get("requested_mode") == "auto"
+                ):
+                    eligible_instance_uuids.add(instance.instance_uuid)
+        selection = None
+        if active is not None and displayed_uuid is not None:
+            selection = manager.select_theme_instance(
+                current_dt,
+                displayed_instance_uuid=displayed_uuid,
+                displayed_playlist=None,
+                displayed_plugin_id=None,
+                displayed_name=None,
+                is_eligible=lambda instance: (
+                    instance.instance_uuid in eligible_instance_uuids
+                ),
+                allow_fallback=False,
+            )
+        if selection is None:
+            self._persist_active_theme(theme_context, current_dt)
+            self._write_device_config()
+            return None
+
+        state = runtime_instances.get(
+            selection.instance.instance_uuid,
+            InstanceRuntimeState(),
+        ).theme
+        next_retry = self._parse_iso_datetime(state.next_retry_at)
+        if next_retry is not None:
+            next_retry = self._align_datetime_tz(next_retry, current_dt)
+            if current_dt < next_retry:
+                return None
+        last_attempt = self._parse_iso_datetime(state.last_attempt_at)
+        if last_attempt is not None:
+            last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+        return DueCandidate(
+            instance=selection.instance,
+            lane=RefreshLane.THEME,
+            due_since=current_dt,
+            reason=DueReason.THEME,
+            last_attempt_at=last_attempt,
         )
 
     def _snapshot_live_refresh_state(self, instance, current_dt, plugin=None):
@@ -862,7 +1270,9 @@ class RefreshTask:
         if str(instance.plugin_id).strip() != "sports_dashboard":
             return False
         settings = instance.settings or {}
-        return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled", False))
+        if "backgroundCacheRefreshEnabled" not in settings:
+            return False
+        return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled"))
 
     def _get_plugin_for_snapshot(self, instance, *, require_live_refresh=False):
         plugin_config = self.device_config.get_plugin(instance.plugin_id)
@@ -942,10 +1352,12 @@ class RefreshTask:
             self._clock,
         )
         self._execution_local.context = context
+        active_intent = getattr(command.intent, "value", command.intent)
         self._active_operation = ActiveOperationSnapshot(
             command_id=command.id,
             kind=command.kind.value,
             source=command.source.value,
+            intent="unknown" if active_intent is None else str(active_intent),
             plugin_id=command.plugin_id,
             instance_uuid=command.instance_uuid,
             started_monotonic=self._clock(),
@@ -973,6 +1385,13 @@ class RefreshTask:
                     entry.job.id,
                     JobStatus.ABANDONED,
                     error_code="deadline_expired",
+                    error=str(error),
+                )
+            except _CacheUnavailable as error:
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="cache_unavailable",
                     error=str(error),
                 )
             except _StaleSelection as error:
@@ -1029,10 +1448,13 @@ class RefreshTask:
                 else:
                     finished = self.refresh_queue.finish(entry.job.id, JobStatus.SUCCEEDED)
                     try:
-                        retry_key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
+                        lane = self._lane_for_intent(command.intent)
+                        retry_key = (
+                            self._lane_retry_key(command.instance_uuid, lane)
+                            if command.instance_uuid is not None and lane is not None
+                            else command.instance_uuid or RetryRegistry.GLOBAL_KEY
+                        )
                         self.retry_registry.mark_success(retry_key)
-                        if retry_key != RetryRegistry.GLOBAL_KEY:
-                            self.retry_registry.mark_success(RetryRegistry.GLOBAL_KEY)
                         self.scheduler_state.record_success()
                     except Exception:
                         logger.exception("Refresh success bookkeeping failed")
@@ -1064,18 +1486,74 @@ class RefreshTask:
         ).isoformat()
 
     def _record_runtime_attempt(self, command):
-        if command.instance_uuid is None:
+        lane = self._lane_for_intent(command.intent)
+        if command.instance_uuid is None or lane is None:
             return
         try:
             self.runtime_state.record_attempt(
                 command.instance_uuid,
                 self._runtime_now_iso(),
+                lane=lane,
             )
         except Exception:
             logger.exception(
                 "Runtime refresh attempt state could not be recorded. | instance_uuid: %s",
                 command.instance_uuid,
             )
+
+    @staticmethod
+    def _lane_for_intent(intent):
+        return {
+            RefreshIntent.DATA_REFRESH: RefreshLane.DATA,
+            RefreshIntent.LIVE_REFRESH: RefreshLane.LIVE,
+            RefreshIntent.THEME_REDRAW: RefreshLane.THEME,
+        }.get(intent)
+
+    @staticmethod
+    def _lane_retry_key(instance_uuid, lane):
+        return f"{instance_uuid}:{lane.value}"
+
+    def _record_intent_success(
+        self,
+        command,
+        instance,
+        current_dt,
+        theme_mode,
+    ):
+        lane = self._lane_for_intent(command.intent)
+        if lane is None or command.instance_uuid is None:
+            return
+        promoted_at = current_dt.isoformat()
+        last_good = LastGoodCacheState(
+            theme_mode=theme_mode,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=promoted_at,
+        )
+        self.runtime_state.record_success(
+            command.instance_uuid,
+            promoted_at,
+            lane=lane,
+            last_good_cache=last_good,
+        )
+        self.retry_registry.mark_success(
+            self._lane_retry_key(command.instance_uuid, lane)
+        )
+
+    def _record_intent_failure(self, command, error, current_dt):
+        lane = self._lane_for_intent(command.intent)
+        if lane is None or command.instance_uuid is None:
+            return None
+        retry_key = self._lane_retry_key(command.instance_uuid, lane)
+        delay = self.retry_registry.mark_failure(retry_key, self._clock())
+        self.runtime_state.record_failure(
+            command.instance_uuid,
+            current_dt.isoformat(),
+            error,
+            (current_dt + timedelta(seconds=delay)).isoformat(),
+            lane=lane,
+        )
+        return delay
 
     def _record_runtime_success(self, instance_uuid, succeeded_at):
         try:
@@ -1159,6 +1637,19 @@ class RefreshTask:
             resolved = self._resolve_playlist_command(command)
             if resolved is None:
                 raise _StaleSelection("playlist selection is stale")
+            if command.intent is RefreshIntent.DISPLAY_CACHE:
+                image = self._load_catalog_display_image(command, resolved)
+                self._set_render_metadata(
+                    False,
+                    False,
+                    self.device_config.get_plugin(command.plugin_id),
+                )
+                return self._commit_command_result(
+                    command,
+                    resolved,
+                    image,
+                    self._get_current_datetime(),
+                )
             image = self._render_playlist_command(command, resolved, context)
             # Cache promotion is plugin-owned work too. Reacquiring the same
             # canonical lease closes the render->commit gap against deletion
@@ -1192,6 +1683,35 @@ class RefreshTask:
             context.raise_if_cancelled()
         self._set_render_metadata(True, False, getattr(plugin, "config", plugin_config))
         return self._commit_command_result(command, None, image, self._get_current_datetime())
+
+    def _load_catalog_display_image(self, command, resolved):
+        """Revalidate and copy an authoritative cache without plugin execution."""
+        theme_mode = command.payload.get("cache_theme_mode")
+        candidate = DisplayCacheCandidate(
+            instance_uuid=command.instance_uuid,
+            structural_generation=command.structural_generation,
+            settings_revision=command.settings_revision,
+            theme_mode=theme_mode,
+            cache_path=authoritative_cache_path(
+                self.cache_catalog.cache_root,
+                command.instance_uuid,
+                command.structural_generation,
+                command.settings_revision,
+                theme_mode,
+            ),
+            promoted_at=None,
+        )
+        if not self.cache_catalog.validate(candidate):
+            raise _CacheUnavailable("display cache is unavailable")
+        try:
+            image = _load_image_copy(candidate.cache_path)
+        except Exception as error:
+            self.cache_catalog.invalidate(candidate)
+            raise _CacheUnavailable("display cache is unavailable") from error
+        if not self.cache_catalog.validate(candidate):
+            image.close()
+            raise _CacheUnavailable("display cache changed while loading")
+        return image
 
     def _render_playlist_command(self, command, resolved, context):
         instance = resolved.instance
@@ -1231,6 +1751,11 @@ class RefreshTask:
             else:
                 if (
                     command.kind is CommandKind.CACHE_REFRESH
+                    and command.intent not in {
+                        RefreshIntent.DATA_REFRESH,
+                        RefreshIntent.LIVE_REFRESH,
+                        RefreshIntent.THEME_REDRAW,
+                    }
                     and self._cache_refresh_under_resource_pressure()
                 ):
                     self._set_render_metadata(False, False, plugin_config)
@@ -1505,16 +2030,7 @@ class RefreshTask:
             if expected_displayed_uuid != command.instance_uuid:
                 return False
             displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
-            if displayed_uuid is not None:
-                return displayed_uuid == expected_displayed_uuid
-            latest_refresh = self.device_config.get_refresh_info()
-            return (
-                latest_refresh.refresh_type == "Playlist"
-                and latest_refresh.playlist == command.payload.get("playlist_name")
-                and latest_refresh.plugin_id == command.plugin_id
-                and latest_refresh.plugin_instance
-                == command.payload.get("instance_name")
-            )
+            return displayed_uuid == expected_displayed_uuid
         if command.source is not CommandSource.LIVE:
             return True
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
@@ -1573,6 +2089,7 @@ class RefreshTask:
             )
             theme_mode = _resolved_theme_mode(command.payload)
             stage_path = None
+            promoted_for_intent = False
             if generated and cacheable:
                 stage_path = self._staging_cache_path(instance, theme_mode)
                 _save_image_atomic(image, stage_path)
@@ -1589,10 +2106,33 @@ class RefreshTask:
                         except OSError:
                             logger.warning("Could not remove stale staged cache: %s", stage_path)
                 self._require_fresh_selection(command, context)
-                if not theme_only:
-                    self._record_runtime_success(
-                        instance.instance_uuid,
-                        current_dt.isoformat(),
+                promoted_for_intent = True
+            elif (
+                command.intent is RefreshIntent.THEME_REDRAW
+                and self._exact_cache_is_valid(instance, theme_mode)
+            ):
+                promoted_for_intent = True
+
+            if promoted_for_intent:
+                self._record_intent_success(
+                    command,
+                    instance,
+                    current_dt,
+                    theme_mode,
+                )
+                if command.intent is RefreshIntent.LIVE_REFRESH:
+                    self._enqueue_live_display_followup(
+                        command,
+                        resolved_snapshot,
+                        current_dt,
+                        theme_mode,
+                    )
+                elif command.intent is RefreshIntent.THEME_REDRAW:
+                    self._enqueue_theme_display_followup(
+                        command,
+                        resolved_snapshot,
+                        current_dt,
+                        theme_mode,
                     )
 
             image_hash = compute_image_hash(image)
@@ -1609,6 +2149,7 @@ class RefreshTask:
                 (
                     command.source is CommandSource.LIVE
                     or command.payload.get("theme_render_only") is True
+                    or command.payload.get("preserve_rotation_anchor") is True
                 )
                 and latest_refresh.refresh_time
                 and not self._display_target_changed(latest_refresh, refresh_info)
@@ -1696,6 +2237,79 @@ class RefreshTask:
             )
         return image
 
+    def _enqueue_live_display_followup(
+        self,
+        command,
+        resolved_snapshot,
+        current_dt,
+        theme_mode,
+    ):
+        """Queue an exact cache-only display after a successful visible live refresh."""
+        if not self._live_display_target_is_current(command):
+            return None
+        instance = resolved_snapshot.instance
+        followup = self._playlist_command(
+            resolved_snapshot.playlist_name,
+            instance,
+            source=CommandSource.LIVE,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=75,
+            kind=CommandKind.DISPLAY,
+            current_dt=current_dt,
+            resolved_theme_context=command.payload.get("resolved_theme_context"),
+            cache_theme_mode=theme_mode,
+            expected_displayed_instance_uuid=instance.instance_uuid,
+        )
+        return self.refresh_queue.submit(followup)
+
+    def _enqueue_theme_display_followup(
+        self,
+        command,
+        resolved_snapshot,
+        current_dt,
+        theme_mode,
+    ):
+        """Queue the cache-only display half of an exact theme transition."""
+        if not self._live_display_target_is_current(command):
+            return None
+        instance = resolved_snapshot.instance
+        followup = self._playlist_command(
+            resolved_snapshot.playlist_name,
+            instance,
+            source=CommandSource.SCHEDULER,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=85,
+            kind=CommandKind.DISPLAY,
+            theme_context=command.payload.get("theme_context"),
+            current_dt=current_dt,
+            resolved_theme_context=command.payload.get("resolved_theme_context"),
+            cache_theme_mode=theme_mode,
+            expected_displayed_instance_uuid=instance.instance_uuid,
+            preserve_rotation_anchor=True,
+        )
+        return self.refresh_queue.submit(followup)
+
+    def _exact_cache_is_valid(self, instance, theme_mode):
+        candidate = DisplayCacheCandidate(
+            instance_uuid=instance.instance_uuid,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            theme_mode=theme_mode,
+            cache_path=authoritative_cache_path(
+                self.cache_catalog.cache_root,
+                instance.instance_uuid,
+                instance.structural_generation,
+                instance.settings_revision,
+                theme_mode,
+            ),
+            promoted_at=None,
+        )
+        return self.cache_catalog.validate(candidate)
+
     @staticmethod
     def _abort_details(error):
         if isinstance(error, TaskDeadlineExceeded):
@@ -1730,11 +2344,21 @@ class RefreshTask:
                 error,
             )
         self.scheduler_state.record_failure(error)
+        lane = self._lane_for_intent(command.intent)
+        if command.instance_uuid is not None and lane is not None:
+            self._record_intent_failure(
+                command,
+                error,
+                self._get_current_datetime(),
+            )
+            self.scheduler_state.set_next_attempt(
+                self._clock() + self._scheduler_poll_seconds()
+            )
+            return
         key = command.instance_uuid or RetryRegistry.GLOBAL_KEY
         delay = self.retry_registry.mark_failure(key, self._clock())
         self._record_runtime_failure(command, error, delay)
-        next_delay = self._scheduler_poll_seconds() if command.source is CommandSource.LIVE else delay
-        self.scheduler_state.set_next_attempt(self._clock() + next_delay)
+        self.scheduler_state.set_next_attempt(self._clock() + delay)
 
     def _signal_completion(self, actual_job_id):
         ready = []
@@ -1858,6 +2482,7 @@ class RefreshTask:
                 deadline_monotonic=deadline,
                 force=True,
                 priority=100,
+                intent=RefreshIntent.MANUAL_RENDER,
             )
         if isinstance(refresh_action, PlaylistRefresh):
             snapshot = refresh_action.plugin_instance.snapshot()
@@ -1865,6 +2490,11 @@ class RefreshTask:
                 refresh_action.playlist.name,
                 snapshot,
                 source=CommandSource.MANUAL,
+                intent=(
+                    RefreshIntent.MANUAL_RENDER
+                    if refresh_action.force or not refresh_action.display_cached_only
+                    else RefreshIntent.DISPLAY_CACHE
+                ),
                 force=refresh_action.force,
                 display_cached_only=refresh_action.display_cached_only,
                 priority=100,
@@ -1895,6 +2525,7 @@ class RefreshTask:
         instance,
         *,
         source,
+        intent,
         force=False,
         display_cached_only=True,
         priority=50,
@@ -1905,6 +2536,9 @@ class RefreshTask:
         current_dt=None,
         resolved_theme_context=None,
         require_active=True,
+        cache_theme_mode=None,
+        expected_displayed_instance_uuid=None,
+        preserve_rotation_anchor=False,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -1923,7 +2557,10 @@ class RefreshTask:
             payload["theme_context"] = theme_context
         if theme_render_only:
             payload["theme_render_only"] = True
+        if theme_render_only or expected_displayed_instance_uuid is not None:
             payload["expected_displayed_instance_uuid"] = instance.instance_uuid
+        if preserve_rotation_anchor:
+            payload["preserve_rotation_anchor"] = True
         if resolved_theme_context is None:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             resolved_theme_context = _resolved_theme_context_for_instance(
@@ -1936,6 +2573,8 @@ class RefreshTask:
             resolved_theme_context = thaw_payload(resolved_theme_context)
         if resolved_theme_context is not None:
             payload["resolved_theme_context"] = resolved_theme_context
+        if RefreshIntent(intent) is RefreshIntent.DISPLAY_CACHE:
+            payload["cache_theme_mode"] = cache_theme_mode
         return RefreshCommand.create(
             kind=kind,
             source=source,
@@ -1948,6 +2587,7 @@ class RefreshTask:
             deadline_monotonic=deadline_monotonic,
             force=force,
             priority=priority,
+            intent=intent,
         )
 
     def _rejected_manual_job(self, refresh_action, error):
@@ -2037,7 +2677,7 @@ class RefreshTask:
         expected_settings_revision=None,
         require_active=True,
     ):
-        """Queue an immutable active-playlist display command by UUID."""
+        """Queue an immutable, cache-only playlist display command by UUID."""
         if not self.running and self.refresh_queue.snapshot().accepting:
             raise RuntimeError("Background refresh task is not running")
         current_dt = self._get_current_datetime()
@@ -2089,14 +2729,48 @@ class RefreshTask:
                 )
         if instance is None:
             raise ValueError(f"Playlist instance not found or changed: {instance_uuid}")
+        if force or not display_cached_only:
+            logger.info(
+                "Ignoring legacy playlist display render flags; display is cache-only. | "
+                "instance_uuid: %s",
+                instance.instance_uuid,
+            )
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        resolved_theme = _resolved_theme_context_for_instance(
+            instance,
+            plugin_config,
+            self.device_config,
+            current_dt=current_dt,
+        )
+        resolved_theme_mode = (
+            resolved_theme.get("mode")
+            if isinstance(resolved_theme, Mapping)
+            else None
+        )
+        runtime_instance = self.runtime_state.snapshot().instances.get(
+            instance.instance_uuid,
+            InstanceRuntimeState(),
+        )
+        candidate = self.cache_catalog.resolve(
+            instance,
+            resolved_theme_mode,
+            runtime_instance,
+        )
         command = self._playlist_command(
             playlist_name,
             instance,
             source=CommandSource.MANUAL,
-            force=force,
-            display_cached_only=display_cached_only,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
             priority=100,
             require_active=bool(require_active),
+            current_dt=current_dt,
+            cache_theme_mode=(
+                candidate.theme_mode
+                if candidate is not None
+                else resolved_theme_mode
+            ),
         )
         job = self.refresh_queue.submit(command)
         return self._job_payload(self.refresh_queue.get_entry(job.id))
@@ -2157,7 +2831,8 @@ class RefreshTask:
         if not callable(get_manager):
             return
         try:
-            payload = get_manager().to_dict()
+            manager = get_manager()
+            payload = manager.to_dict()
             current_instance_uuids = {
                 plugin["instance_uuid"]
                 for playlist in payload.get("playlists", [])
@@ -2165,8 +2840,103 @@ class RefreshTask:
                 if plugin.get("instance_uuid")
             }
             self.runtime_state.prune(current_instance_uuids)
+            snapshots = tuple(
+                snapshot
+                for instance_uuid in sorted(current_instance_uuids)
+                if (snapshot := manager.snapshot_instance(instance_uuid)) is not None
+            )
+            self._migrate_runtime_instances(snapshots)
         except Exception:
             logger.exception("Runtime instance tombstones could not be pruned")
+
+    def _migrate_runtime_instances(self, instances):
+        """Seed empty lane clocks and exact cache metadata without config writes."""
+        for instance in instances:
+            current = self.runtime_state.snapshot().instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            data_seed = None
+            if current.data.last_success_at is None:
+                parsed = self._parse_iso_datetime(instance.latest_refresh_time)
+                if parsed is not None:
+                    data_seed = str(instance.latest_refresh_time).strip()
+            last_good = None
+            if current.last_good_cache is None:
+                last_good = self._discover_exact_last_good_cache(instance)
+            if data_seed is None and last_good is None:
+                continue
+
+            def update(previous):
+                candidate = previous
+                if data_seed is not None and previous.data.last_success_at is None:
+                    candidate = replace(
+                        candidate,
+                        data=replace(candidate.data, last_success_at=data_seed),
+                    )
+                if last_good is not None and previous.last_good_cache is None:
+                    candidate = replace(candidate, last_good_cache=last_good)
+                return candidate
+
+            self.runtime_state._update_instance(
+                instance.instance_uuid,
+                self._runtime_now_iso(),
+                update,
+            )
+
+    def _discover_exact_last_good_cache(self, instance):
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        resolved_theme = _resolved_theme_context_for_instance(
+            instance,
+            plugin_config,
+            self.device_config,
+            current_dt=self._get_current_datetime(),
+        )
+        preferred_mode = (
+            resolved_theme.get("mode")
+            if isinstance(resolved_theme, Mapping)
+            else None
+        )
+        modes = []
+        for mode in (preferred_mode, None, "day", "night"):
+            if mode not in modes:
+                modes.append(mode)
+        discovered = []
+        for preference, mode in enumerate(modes):
+            cache_path = authoritative_cache_path(
+                self.cache_catalog.cache_root,
+                instance.instance_uuid,
+                instance.structural_generation,
+                instance.settings_revision,
+                mode,
+            )
+            candidate = DisplayCacheCandidate(
+                instance_uuid=instance.instance_uuid,
+                structural_generation=instance.structural_generation,
+                settings_revision=instance.settings_revision,
+                theme_mode=mode,
+                cache_path=cache_path,
+                promoted_at=None,
+            )
+            if not self.cache_catalog.validate(candidate):
+                continue
+            try:
+                promoted_at = datetime.fromtimestamp(
+                    os.path.getmtime(cache_path),
+                    tz=timezone.utc,
+                ).isoformat()
+            except OSError:
+                continue
+            discovered.append((promoted_at, -preference, mode))
+        if not discovered:
+            return None
+        promoted_at, _preference, mode = max(discovered)
+        return LastGoodCacheState(
+            theme_mode=mode,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=promoted_at,
+        )
 
     def _get_current_datetime(self):
         """Retrieves the current datetime based on the device's configured timezone."""
@@ -2362,6 +3132,7 @@ class RefreshTask:
                 active.name,
                 instance,
                 source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
                 force=force,
                 display_cached_only=False,
                 priority=10,
@@ -2586,7 +3357,12 @@ class RefreshTask:
             value = int(raw_value)
         except (TypeError, ValueError):
             value = DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS
-        return max(1, min(20, value))
+        if value > 1:
+            logger.info(
+                "Clamping legacy background cache refresh pass limit to one. | configured: %s",
+                value,
+            )
+        return 1
 
     def _cache_refresh_under_resource_pressure(self, allow_high_swap=False):
         min_available_mb = self.device_config.get_config(

@@ -252,21 +252,6 @@ def plugin_env(tmp_path):
     )
 
 
-def test_display_instance_force_refresh_skips_sports_dashboard_force_mode():
-    assert plugin_blueprint._display_instance_force_refresh(
-        "sports_dashboard",
-        cache_refresh_busy=False,
-    ) is False
-    assert plugin_blueprint._display_instance_force_refresh(
-        "newspaper",
-        cache_refresh_busy=False,
-    ) is True
-    assert plugin_blueprint._display_instance_force_refresh(
-        "newspaper",
-        cache_refresh_busy=True,
-    ) is False
-
-
 @pytest.fixture
 def theme_page_client_factory(monkeypatch):
     def create(
@@ -817,8 +802,8 @@ def test_display_submits_only_the_resolved_immutable_uuid(plugin_env):
         "submit_display",
         "home-uuid",
         {
-            "force": True,
-            "display_cached_only": False,
+            "force": False,
+            "display_cached_only": True,
             "expected_playlist_name": "Default",
             "expected_generation": 1,
             "expected_settings_revision": 1,
@@ -826,6 +811,30 @@ def test_display_submits_only_the_resolved_immutable_uuid(plugin_env):
         },
     )
     assert not any(event[0] == "submit_manual" for event in plugin_env.events)
+
+
+def test_manual_display_is_cache_only_and_update_now_remains_separate_refresh(
+    plugin_env,
+):
+    display_response = plugin_env.client.post(
+        "/display_plugin_instance",
+        json={
+            "playlist_name": "Default",
+            "plugin_id": "weather",
+            "plugin_instance": "Home",
+        },
+    )
+    update_response = plugin_env.client.post(
+        "/update_now",
+        data={"plugin_id": "weather", "city": "Seattle"},
+    )
+
+    assert display_response.status_code == 202
+    assert update_response.status_code == 202
+    display = next(event for event in plugin_env.events if event[0] == "submit_display")
+    assert display[2]["force"] is False
+    assert display[2]["display_cached_only"] is True
+    assert ("submit_manual", "ManualRefresh") in plugin_env.events
 
 
 def test_update_uses_resolved_cas_then_cancel_write_and_signal(plugin_env):

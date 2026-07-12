@@ -1,3 +1,4 @@
+import ast
 import json
 import inspect
 from contextlib import contextmanager
@@ -24,11 +25,15 @@ from runtime.refresh_contracts import (
     JobStatus,
     LifecycleState,
     RefreshCommand,
+    RefreshIntent,
     TaskCancelled,
     TaskContext,
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
+from runtime.cache_catalog import authoritative_cache_path
+from runtime.refresh_policy import ResourceSample
 from runtime.render_arbiter import RenderArbiter
+from runtime.runtime_state import LastGoodCacheState, RefreshLane
 from runtime.long_task_executor import (
     current_instance_identity,
     current_task_context,
@@ -1333,8 +1338,10 @@ def test_manual_update_runs_after_in_flight_playlist_refresh(monkeypatch):
 
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     device_config.config["manual_update_timeout_seconds"] = 1
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     display_manager = BlockingDisplayManager()
     task = RefreshTask(device_config, display_manager=display_manager)
+    _write_runtime_cache(task, plugin_instance)
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
         lambda config: CapturePlugin(calls),
@@ -1894,7 +1901,7 @@ def test_playlist_worker_uses_previous_cache_for_non_cacheable_display(monkeypat
         assert saved.getpixel((0, 0)) == (0, 0, 0)
 
 
-def test_playlist_worker_rejects_invalid_explicit_refresh_on_display(monkeypatch):
+def test_cache_only_playlist_worker_does_not_evaluate_refresh_on_display(monkeypatch):
     tmp_path = make_test_dir("invalid-refresh-on-display-worker")
     plugin_data = _runtime_plugin_data(
         "base_plugin",
@@ -1908,11 +1915,9 @@ def test_playlist_worker_rejects_invalid_explicit_refresh_on_display(monkeypatch
         playlist.plugins[0],
         Image.new("RGB", (2, 1), "black"),
     )
-    plugin = BasePlugin({"id": "base_plugin", "refresh_on_display": False})
-    plugin.generate_image = lambda *_args: Image.new("RGB", (2, 1), "white")
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
-        lambda _config: plugin,
+        lambda _config: pytest.fail("cache-only display instantiated a plugin"),
     )
 
     task.start()
@@ -1925,9 +1930,8 @@ def test_playlist_worker_rejects_invalid_explicit_refresh_on_display(monkeypatch
         )
         result = task.wait_for_job(job["id"], timeout=1.0)
 
-        assert result["status"] == "failed"
-        assert "refreshOnDisplay must be true or false" in result["error"]
-        assert task.display_manager.calls == []
+        assert result["status"] == "completed"
+        assert task.display_manager.calls
     finally:
         task.stop(join_timeout=1.0)
 
@@ -2385,8 +2389,10 @@ def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(m
     Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
 
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     display_manager = BlockingDisplayManager()
     task = RefreshTask(device_config, display_manager=display_manager)
+    _write_runtime_cache(task, plugin_instance)
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
         lambda config: CapturePlugin(calls),
@@ -2579,6 +2585,7 @@ def test_playlist_command_pins_full_plugin_context_and_theme_cache_suffix(
         playlist.name,
         instance,
         source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DATA_REFRESH,
         current_dt=datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc),
     )
 
@@ -2612,6 +2619,7 @@ def test_theme_unaware_command_keeps_exact_legacy_unsuffixed_cache_identity():
         playlist.name,
         instance,
         source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
     )
 
     assert "resolved_theme_context" not in command.payload
@@ -2665,6 +2673,7 @@ def test_pinned_mode_survives_environment_flip_through_render_stage_and_commit(
         playlist.name,
         instance,
         source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DATA_REFRESH,
         force=True,
         display_cached_only=False,
         current_dt=datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc),
@@ -3025,29 +3034,32 @@ def test_theme_transition_is_stale_if_display_changes_during_render(
     assert device_config.write_count == 0
 
 
-def test_theme_transition_without_runtime_uuid_uses_exact_refresh_info_target(
+def test_theme_transition_without_runtime_uuid_does_not_use_refresh_info_fallback(
     monkeypatch,
 ):
     task, device_config, playlist, configs = _theme_transition_runtime(
         "theme-transition-refresh-info-compat"
     )
     current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
-    target = playlist.plugins[0].snapshot()
     task.runtime_state.set_display_state(
         "committed",
         instance_uuid=None,
         changed_at=current_dt.isoformat(),
     )
+    _prepare_independent_theme_candidate(task, playlist, current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
     monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
-    command = task._select_scheduled_command(current_dt)
-    result = task._execute_command(command)
+    command = task._select_independent_refresh_command(current_dt)
 
-    assert command.payload["expected_displayed_instance_uuid"] == target.instance_uuid
-    assert result is not None
-    assert len(plugin.calls) == 1
+    assert command is None
+    assert plugin.calls == []
     assert device_config.config["active_theme"] == "night"
 
 
@@ -3167,6 +3179,7 @@ def test_manual_force_display_still_renders_under_display_pressure(monkeypatch):
         playlist.name,
         instance,
         source=CommandSource.MANUAL,
+        intent=RefreshIntent.MANUAL_RENDER,
         force=True,
         display_cached_only=True,
         require_active=True,
@@ -3337,7 +3350,7 @@ def test_theme_retry_cooldown_does_not_block_independently_due_background_data(
     assert device_config.config["active_theme_refresh_failure"] == failure
 
 
-def test_ordinary_next_display_lazily_builds_theme_cache_without_data_success(
+def test_ordinary_next_display_uses_last_good_theme_cache_without_generation(
     monkeypatch,
 ):
     tmp_path = make_test_dir("theme-lazy-next-display")
@@ -3371,25 +3384,23 @@ def test_ordinary_next_display_lazily_builds_theme_cache_without_data_success(
     device_config.get_plugin = lambda _plugin_id: plugin_config
     instance = playlist.plugins[0].snapshot()
     _write_runtime_theme_cache(task, instance, "day")
+    seeded_at = current_dt - timedelta(minutes=10)
+    _seed_theme_last_good(task, instance, "day", seeded_at)
     plugin = ThemeOnlyRecordingPlugin(plugin_config, color="white")
     monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
-    command = task._select_scheduled_command(current_dt)
+    command = task._select_cached_display_command(current_dt)
     result = task._execute_command(command)
 
     assert result is not None
     assert command.payload.get("theme_render_only") is None
-    assert plugin.calls[0]["theme_render_only"] is True
-    assert plugin.calls[0]["settings"] == {
-        "id": "themed_plugin",
-        "themeMode": "auto",
-        "_inkypiDisplayRender": True,
-    }
+    assert command.payload["cache_theme_mode"] == "day"
+    assert plugin.calls == []
     state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
-    assert state is None or state.last_success_at is None
+    assert state.data.last_success_at == seeded_at.isoformat()
     assert device_config.refresh_info.refresh_time == current_dt.isoformat()
-    assert Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert not Path(task._snapshot_cache_path(instance, "night")).exists()
     assert not Path(task._staging_cache_path(instance, "night")).exists()
 
 
@@ -3532,11 +3543,14 @@ def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(
         tmp_path,
         playlists=[active, inactive],
     )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     target = device_config.playlist_manager.resolve_plugin_instance_snapshot(
         "Inactive",
         "inactive",
         "Inactive",
     ).instance
+    _write_runtime_cache(task, target)
+    _write_runtime_cache(task, active.plugins[0])
     calls = []
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
@@ -3558,12 +3572,7 @@ def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(
         result = task.wait_for_job(job["id"], timeout=1.0)
 
         assert result["status"] == "completed"
-        assert calls[-1] == {
-            "id": "inactive",
-            "forceRefresh": True,
-            "force_refresh": True,
-            "_inkypiDisplayRender": True,
-        }
+        assert calls == []
         assert device_config.refresh_info.playlist == "Inactive"
     finally:
         task.stop(join_timeout=1.0)
@@ -3995,53 +4004,45 @@ def test_live_due_background_policy_remains_reachable(monkeypatch):
 
 
 def test_live_failures_never_delay_the_playlist_rotation_deadline(monkeypatch):
-    anchor_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
-    clock = RuntimeClock(monotonic=0.0, wall=anchor_dt.timestamp())
-    task, _device_config, _playlist, sports, ordinary = (
-        _make_scheduler_fairness_task(
+    task, device_config, _playlist, sports, current_dt, _anchor = (
+        _sports_live_runtime(
             "scheduler-live-failure-fairness",
-            refresh_time=anchor_dt.isoformat(),
-            clock=clock,
+            background_value=True,
         )
     )
     task.retry_registry = RetryRegistry(jitter=lambda delay: delay)
     monkeypatch.setattr(
-        task,
-        "_get_current_datetime",
-        lambda: datetime.fromtimestamp(clock.wall_time(), tz=timezone.utc),
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
     )
     monkeypatch.setattr(
         task,
-        "_snapshot_live_refresh_due",
-        lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
+    command = task._select_independent_refresh_command(current_dt)
+    assert command.intent is RefreshIntent.LIVE_REFRESH
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
-        lambda _device_config, **_kwargs: False,
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(RuntimeError("live render failed")),
     )
-    monkeypatch.setattr(task, "_select_background_commands", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
-    attempts = []
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
 
-    def execute(command):
-        attempts.append((clock.monotonic(), command.source, command.instance_uuid))
-        if command.source is CommandSource.LIVE:
-            raise RuntimeError("live render failed")
-
-    monkeypatch.setattr(task, "_execute_command", execute)
-
-    task._run_one_iteration_for_test()
-    for _ in range(10):
-        clock.advance(30)
-        task._run_one_iteration_for_test()
-
-    assert attempts == [
-        (0.0, CommandSource.LIVE, sports.instance_uuid),
-        (30.0, CommandSource.LIVE, sports.instance_uuid),
-        (90.0, CommandSource.LIVE, sports.instance_uuid),
-        (210.0, CommandSource.LIVE, sports.instance_uuid),
-        (300.0, CommandSource.SCHEDULER, ordinary.instance_uuid),
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.FAILED
+    assert [entry.key for entry in task.retry_registry.snapshot()] == [
+        f"{sports.instance_uuid}:live"
     ]
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=6)
+    ).isoformat()
+    display = task._select_cached_display_command(current_dt)
+    assert display is not None
+    assert display.intent is RefreshIntent.DISPLAY_CACHE
 
 
 def test_theme_refresh_failure_default_retry_cooldown_is_600_seconds():
@@ -4338,10 +4339,14 @@ def test_signal_config_change_wakes_and_reprobes_scheduled_selection(monkeypatch
         task.signal_config_change()
 
         deadline = time.monotonic() + 1.0
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert calls
+        task.signal_config_change()
+        deadline = time.monotonic() + 1.0
         while not task.display_manager.calls and time.monotonic() < deadline:
             time.sleep(0.01)
         assert task.display_manager.calls
-        assert calls
     finally:
         task.stop(join_timeout=1.0)
 
@@ -4362,6 +4367,21 @@ def _make_blocked_playlist_task(monkeypatch, name):
     return task, device_config.playlist_manager, render_started, allow_render, plugin, tmp_path
 
 
+def _submit_blocked_playlist_render(task, manager):
+    instance = manager.snapshot_instance(manager.first_instance_uuid())
+    command = task._playlist_command(
+        "DailyDoseOfDay",
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.MANUAL_RENDER,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+    )
+    job = task.refresh_queue.submit(command)
+    return task._job_payload(task.refresh_queue.get_entry(job.id))
+
+
 def test_deleted_instance_result_is_discarded_after_render(monkeypatch):
     task, manager, render_started, allow_render, _plugin, tmp_path = _make_blocked_playlist_task(
         monkeypatch,
@@ -4373,7 +4393,7 @@ def test_deleted_instance_result_is_discarded_after_render(monkeypatch):
             manager.snapshot_instance(instance_uuid)
         ))
         original_cache = cache_path.read_bytes()
-        job = task.submit_playlist_display(instance_uuid)
+        job = _submit_blocked_playlist_render(task, manager)
         assert render_started.wait(1.0)
 
         manager.delete_plugin_instance(instance_uuid)
@@ -4400,7 +4420,7 @@ def test_settings_revision_changed_during_render_discards_all_side_effects(monke
         before = manager.snapshot_instance(instance_uuid)
         cache_path = Path(task.cache_path_for_snapshot(before))
         original_cache = cache_path.read_bytes()
-        job = task.submit_playlist_display(instance_uuid)
+        job = _submit_blocked_playlist_render(task, manager)
         assert render_started.wait(1.0)
 
         manager.update_plugin_instance(
@@ -4435,6 +4455,7 @@ def test_render_failure_after_instance_deletion_is_stale_without_theme_write(mon
             "DailyDoseOfDay",
             instance,
             source=CommandSource.SCHEDULER,
+            intent=RefreshIntent.THEME_REDRAW,
             force=True,
             display_cached_only=False,
             theme_context={"mode": "night", "source": "weather", "reason": "sunset"},
@@ -4486,6 +4507,13 @@ def test_theme_render_exception_in_run_records_cooldown_then_success_clears(monk
         changed_at="2026-05-26T22:07:00+00:00",
     )
     current_dt = [datetime(2026, 5, 26, 22, 8, tzinfo=timezone.utc)]
+    _write_runtime_theme_cache(task, displayed, "day")
+    _seed_theme_last_good(
+        task,
+        displayed.snapshot(),
+        "day",
+        current_dt[0] - timedelta(minutes=10),
+    )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt[0])
     monkeypatch.setattr(
         "src.refresh_task.get_theme_context",
@@ -4511,6 +4539,9 @@ def test_theme_render_exception_in_run_records_cooldown_then_success_clears(monk
     task._run_one_iteration_for_test()
 
     assert len(plugin.calls) == 2
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    task._process_queue_entry(followup)
     assert device_config.config["active_theme"] == "night"
     assert device_config.config["active_theme_refresh_failure"] is None
 
@@ -4583,7 +4614,7 @@ def test_bounded_stop_marks_forced_exit_when_render_does_not_cooperate(monkeypat
         task.thread.join(timeout=1.0)
 
 
-def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
+def test_cache_only_display_validates_each_visible_side_effect(monkeypatch):
     tmp_path = make_test_dir("runtime-validation-before-side-effects")
     playlist = _runtime_playlist(_runtime_plugin_data(latest_refresh_time="2999-01-01T00:00:00+00:00"))
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
@@ -4638,9 +4669,11 @@ def test_each_visible_playlist_side_effect_has_fresh_validation(monkeypatch):
         result = task.wait_for_job(job["id"], timeout=1.0)
 
         assert result["status"] == "completed"
-        for side_effect in ("cache", "display", "timestamp", "config"):
+        for side_effect in ("display", "config"):
             index = events.index(side_effect)
             assert events[index - 1] == "validate"
+        assert "cache" not in events
+        assert "timestamp" not in events
     finally:
         task.stop(join_timeout=1.0)
 
@@ -4672,6 +4705,7 @@ def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeyp
         playlist.name,
         instance,
         source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.THEME_REDRAW,
         force=False,
         display_cached_only=True,
         theme_context={"mode": "night", "source": "weather", "reason": "sunset"},
@@ -4737,7 +4771,7 @@ def test_running_playlist_cancel_finishes_canceled_not_succeeded(monkeypatch):
     )
     try:
         instance_uuid = manager.first_instance_uuid()
-        job = task.submit_playlist_display(instance_uuid)
+        job = _submit_blocked_playlist_render(task, manager)
         assert render_started.wait(1.0)
 
         assert task.refresh_queue.cancel_instance(instance_uuid) == 1
@@ -4763,6 +4797,7 @@ def test_cancel_requested_after_execute_cannot_kill_worker_or_finish_succeeded(m
         playlist.name,
         instance,
         source=CommandSource.MANUAL,
+        intent=RefreshIntent.MANUAL_RENDER,
     )
     submitted = task.refresh_queue.submit(command)
     entry = task.refresh_queue.take(timeout=0)
@@ -4885,6 +4920,7 @@ def test_process_queue_entry_binds_context_and_immutable_instance_identity(monke
         playlist.name,
         instance,
         source=CommandSource.MANUAL,
+        intent=RefreshIntent.MANUAL_RENDER,
     )
     submitted = task.refresh_queue.submit(command)
     entry = task.refresh_queue.take(timeout=0)
@@ -4942,6 +4978,7 @@ def test_cancel_arriving_during_failure_bookkeeping_finishes_canceled(monkeypatc
         playlist.name,
         instance,
         source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DATA_REFRESH,
     )
     submitted = task.refresh_queue.submit(command)
     entry = task.refresh_queue.take(timeout=0)
@@ -5026,13 +5063,13 @@ def test_manual_failure_then_success_clears_global_retry_streak(monkeypatch):
     assert task.retry_registry.snapshot() == ()
 
 
-def test_instance_success_clears_prior_global_selection_retry(monkeypatch):
+def test_instance_success_does_not_clear_prior_global_selection_retry(monkeypatch):
     tmp_path = make_test_dir("runtime-global-retry-success")
     playlist = _runtime_playlist(_runtime_plugin_data())
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     monkeypatch.setattr(
         task,
-        "_select_scheduled_command",
+        "_select_cached_display_command",
         lambda _current_dt: (_ for _ in ()).throw(RuntimeError("selection")),
     )
 
@@ -5046,6 +5083,7 @@ def test_instance_success_clears_prior_global_selection_retry(monkeypatch):
         playlist.name,
         instance,
         source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
         kind=CommandKind.CACHE_REFRESH,
     )
     submitted = task.refresh_queue.submit(command)
@@ -5054,7 +5092,9 @@ def test_instance_success_clears_prior_global_selection_retry(monkeypatch):
     task._process_queue_entry(entry)
 
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
-    assert task.retry_registry.snapshot() == ()
+    assert [entry.key for entry in task.retry_registry.snapshot()] == [
+        RetryRegistry.GLOBAL_KEY
+    ]
 
 
 def test_success_bookkeeping_error_cannot_kill_worker_after_terminalization(monkeypatch):
@@ -5185,7 +5225,7 @@ def _capture_manual_error(task, action, errors):
         errors.append(error)
 
 
-def test_background_candidates_are_individual_cache_commands(monkeypatch):
+def test_legacy_background_candidates_are_clamped_to_one_cache_command(monkeypatch):
     tmp_path = make_test_dir("runtime-background-command-per-candidate")
     playlist = _runtime_playlist(
         _runtime_plugin_data("one", "One", latest_refresh_time=None),
@@ -5199,11 +5239,9 @@ def test_background_candidates_are_individual_cache_commands(monkeypatch):
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
     )
 
-    assert len(commands) == 2
+    assert len(commands) == 1
     assert all(command.kind is CommandKind.CACHE_REFRESH for command in commands)
-    assert {command.instance_uuid for command in commands} == {
-        instance.instance_uuid for instance in playlist.plugins
-    }
+    assert commands[0].instance_uuid == playlist.plugins[0].instance_uuid
 
 
 def test_legacy_background_trigger_executes_on_single_command_worker(monkeypatch):
@@ -5404,7 +5442,7 @@ def test_background_selection_waits_for_runtime_retry_deadline():
     assert due[0].instance_uuid == instance.instance_uuid
 
 
-def test_runtime_worker_records_attempt_failure_without_advancing_legacy_success(
+def test_runtime_worker_records_data_failure_without_advancing_seeded_model_success(
     monkeypatch,
 ):
     class ExplodingPlugin:
@@ -5429,14 +5467,24 @@ def test_runtime_worker_records_attempt_failure_without_advancing_legacy_success
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
-        job = task.submit_playlist_display(instance.instance_uuid, force=True)
+        command = task._playlist_command(
+            playlist.name,
+            device_config.playlist_manager.snapshot_instance(instance.instance_uuid),
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DATA_REFRESH,
+            force=False,
+            display_cached_only=False,
+            kind=CommandKind.CACHE_REFRESH,
+        )
+        submitted = task.refresh_queue.submit(command)
+        job = task._job_payload(task.refresh_queue.get_entry(submitted.id))
         result = task.wait_for_job(job["id"], timeout=1.0)
 
         state = task.runtime_state.snapshot().instances[instance.instance_uuid]
         assert result["status"] == "failed"
         assert state.last_attempt_at is not None
         assert state.last_failure_at is not None
-        assert state.last_success_at is None
+        assert state.data.last_success_at == legacy_success
         assert device_config.playlist_manager.snapshot_instance(
             instance.instance_uuid
         ).latest_refresh_time == legacy_success
@@ -5460,7 +5508,17 @@ def test_generated_cache_success_uses_runtime_state_not_user_config(monkeypatch)
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
-        job = task.submit_playlist_display(instance.instance_uuid, force=True)
+        command = task._playlist_command(
+            playlist.name,
+            device_config.playlist_manager.snapshot_instance(instance.instance_uuid),
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DATA_REFRESH,
+            force=False,
+            display_cached_only=False,
+            kind=CommandKind.CACHE_REFRESH,
+        )
+        submitted = task.refresh_queue.submit(command)
+        job = task._job_payload(task.refresh_queue.get_entry(submitted.id))
         result = task.wait_for_job(job["id"], timeout=1.0)
 
         state = task.runtime_state.snapshot().instances[instance.instance_uuid]
@@ -5492,3 +5550,1108 @@ def test_stop_flushes_runtime_state_synchronously_after_entering_drain():
 
     assert task.stop(join_timeout=0) is True
     assert states == [LifecycleState.DRAINING]
+
+
+def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch):
+    tmp_path = make_test_dir("cache-only-random-display")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id="old",
+        plugin_instance="Old",
+        refresh_time="2026-07-11T11:00:00+00:00",
+        image_hash="old",
+    )
+    for instance in playlist.plugins:
+        _write_runtime_cache(task, instance)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: (_ for _ in ()).throw(
+            AssertionError("cache display must not instantiate a plugin")
+        ),
+    )
+
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+    result = task._execute_command(command)
+
+    assert result is not None
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert len(task.display_manager.calls) == 1
+
+
+def test_random_selection_passes_only_catalog_eligible_uuids_to_model():
+    tmp_path = make_test_dir("cache-only-random-eligibility")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+        _runtime_plugin_data("three", "Three"),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    expected = {
+        playlist.plugins[0].instance_uuid,
+        playlist.plugins[2].instance_uuid,
+    }
+    _write_runtime_cache(task, playlist.plugins[0])
+    corrupt = Path(task.cache_path_for_snapshot(playlist.plugins[1].snapshot()))
+    corrupt.parent.mkdir(parents=True, exist_ok=True)
+    corrupt.write_bytes(b"not-a-png")
+    _write_runtime_cache(task, playlist.plugins[2])
+    manager = device_config.playlist_manager
+    original_select = manager.select_next_active_instance
+    observed = []
+
+    def select_with_observation(*args, **kwargs):
+        observed.append(kwargs["eligible_instance_uuids"])
+        return original_select(*args, **kwargs)
+
+    manager.select_next_active_instance = select_with_observation
+
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert command is not None
+    assert observed == [frozenset(expected)]
+    assert command.instance_uuid in expected
+
+
+@pytest.mark.parametrize("cache_state", ["missing", "corrupt"])
+def test_missing_or_corrupt_cache_skips_candidate_without_placeholder_or_provider_call(
+    monkeypatch,
+    cache_state,
+):
+    tmp_path = make_test_dir(f"cache-only-{cache_state}")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    if cache_state == "corrupt":
+        corrupt = Path(task.cache_path_for_snapshot(playlist.plugins[0].snapshot()))
+        corrupt.parent.mkdir(parents=True, exist_ok=True)
+        corrupt.write_bytes(b"not-a-png")
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: (_ for _ in ()).throw(
+            AssertionError("cache miss must not instantiate a plugin")
+        ),
+    )
+
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert command is None
+    assert task.display_manager.calls == []
+    assert device_config.write_count == 0
+
+
+def test_no_displayable_candidates_keep_current_display_and_rotation_anchor():
+    tmp_path = make_test_dir("cache-only-empty-eligibility")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    anchor = "2026-07-11T11:00:00+00:00"
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=playlist.plugins[0].plugin_id,
+        plugin_instance=playlist.plugins[0].name,
+        refresh_time=anchor,
+        image_hash="current",
+    )
+    playlist.current_plugin_index = 0
+    playlist.plugin_rotation_queue = [playlist.plugins[1].instance_uuid]
+    playlist.plugin_rotation_pool = [
+        instance.instance_uuid for instance in playlist.plugins
+    ]
+    playlist.plugin_rotation_recent_history = [playlist.plugins[0].instance_uuid]
+    before_rotation = (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert command is None
+    assert device_config.refresh_info.refresh_time == anchor
+    assert before_rotation == (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+    assert task.display_manager.calls == []
+
+
+def test_cache_disappearing_after_selection_cancels_without_refresh_failure():
+    tmp_path = make_test_dir("cache-only-toctou-miss")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    cache_path = _write_runtime_cache(task, playlist.plugins[0])
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+    cache_path.unlink()
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    result = task.refresh_queue.get_entry(submitted.id).job
+
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "cache_unavailable"
+    assert task.runtime_state.snapshot().instances == {}
+    scheduler = task.scheduler_snapshot()
+    assert scheduler.last_failure_wall is None
+    assert scheduler.last_error is None
+    assert scheduler.retry_entries == ()
+    assert task.display_manager.calls == []
+    assert device_config.write_count == 0
+
+
+def test_production_playlist_commands_always_have_explicit_intent():
+    tree = ast.parse(inspect.getsource(refresh_task_module))
+    missing = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = None
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        if name not in {"_playlist_command", "create"}:
+            continue
+        if name == "create" and not (
+            isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "RefreshCommand"
+        ):
+            continue
+        if not any(keyword.arg == "intent" for keyword in node.keywords):
+            missing.append((name, node.lineno))
+
+    assert missing == []
+
+
+def test_scheduler_enqueues_at_most_one_refresh_candidate_per_probe(monkeypatch):
+    tmp_path = make_test_dir("independent-single-admission")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None),
+        _runtime_plugin_data("two", "Two", latest_refresh_time=None),
+        _runtime_plugin_data("three", "Three", latest_refresh_time=None),
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+        raising=False,
+    )
+
+    task._schedule_if_due()
+    entries = []
+    while (entry := task.refresh_queue.take(timeout=0)) is not None:
+        entries.append(entry)
+
+    assert len(entries) == 1
+    assert entries[0].command.kind is CommandKind.CACHE_REFRESH
+    assert entries[0].command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_display_and_due_refresh_for_same_instance_are_distinct_serial_commands(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("independent-display-and-refresh")
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "one",
+            "One",
+            latest_refresh_time=(current_dt - timedelta(hours=2)).isoformat(),
+            interval=60,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=2)
+    ).isoformat()
+    _write_runtime_cache(task, playlist.plugins[0])
+    task.runtime_state.record_success(
+        playlist.plugins[0].instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+        raising=False,
+    )
+
+    task._schedule_if_due()
+    commands = []
+    while (entry := task.refresh_queue.take(timeout=0)) is not None:
+        commands.append(entry.command)
+
+    assert [command.intent for command in commands] == [
+        RefreshIntent.DISPLAY_CACHE,
+        RefreshIntent.DATA_REFRESH,
+    ]
+    assert {command.instance_uuid for command in commands} == {
+        playlist.plugins[0].instance_uuid
+    }
+
+
+def test_soft_pressure_makes_spaced_fair_progress_across_ordinary_instances(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("independent-soft-fairness")
+    clock = RuntimeClock()
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None),
+        _runtime_plugin_data("two", "Two", latest_refresh_time=None),
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+        raising=False,
+    )
+
+    first = task._select_independent_refresh_command(current_dt)
+    immediate = task._select_independent_refresh_command(current_dt)
+    task._record_runtime_attempt(first)
+    clock.advance(60)
+    second = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=60)
+    )
+
+    assert first.intent is RefreshIntent.DATA_REFRESH
+    assert immediate is None
+    assert second.intent is RefreshIntent.DATA_REFRESH
+    assert second.instance_uuid != first.instance_uuid
+
+
+def test_hard_pressure_still_rotates_valid_caches_without_generation(monkeypatch):
+    tmp_path = make_test_dir("independent-hard-display")
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None)
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=2)
+    ).isoformat()
+    _write_runtime_cache(task, playlist.plugins[0])
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=60, swap_percent=80),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: (_ for _ in ()).throw(
+            AssertionError("hard-tier cache display must not render")
+        ),
+    )
+
+    display = task._select_cached_display_command(current_dt)
+    refresh = task._select_independent_refresh_command(current_dt)
+    result = task._execute_command(display)
+
+    assert display.intent is RefreshIntent.DISPLAY_CACHE
+    assert refresh is None
+    assert result is not None
+    assert len(task.display_manager.calls) == 1
+
+
+def test_data_failure_a_does_not_delay_due_instance_b_or_global_poll(monkeypatch):
+    tmp_path = make_test_dir("independent-failure-isolation")
+    clock = RuntimeClock()
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None),
+        _runtime_plugin_data("two", "Two", latest_refresh_time=None),
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+        raising=False,
+    )
+    first = task._select_independent_refresh_command(current_dt)
+    submitted = task.refresh_queue.submit(first)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(RuntimeError("instance offline")),
+    )
+
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    clock.advance(task._scheduler_poll_seconds())
+    second = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=task._scheduler_poll_seconds())
+    )
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.FAILED
+    assert second is not None
+    assert second.instance_uuid != first.instance_uuid
+    assert task.scheduler_snapshot().next_attempt_monotonic == (
+        clock.monotonic()
+    )
+
+
+def test_live_and_theme_failure_do_not_cool_data_lane(monkeypatch):
+    tmp_path = make_test_dir("independent-lane-failure-isolation")
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None)
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    instance = playlist.plugins[0].snapshot()
+    live = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.LIVE,
+        intent=RefreshIntent.LIVE_REFRESH,
+        kind=CommandKind.CACHE_REFRESH,
+    )
+    theme = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.THEME_REDRAW,
+        kind=CommandKind.CACHE_REFRESH,
+        theme_render_only=True,
+    )
+    task._record_intent_failure(live, RuntimeError("live failed"), current_dt)
+    task._record_intent_failure(theme, RuntimeError("theme failed"), current_dt)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+        raising=False,
+    )
+
+    selected = task._select_independent_refresh_command(current_dt)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert selected.intent is RefreshIntent.DATA_REFRESH
+    assert state.data.next_retry_at is None
+    assert state.live.next_retry_at is not None
+    assert state.theme.next_retry_at is not None
+
+
+def test_background_max_per_pass_above_one_is_compatibly_clamped_without_config_write():
+    tmp_path = make_test_dir("independent-max-per-pass-clamp")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["background_cache_refresh_max_per_pass"] = 9
+    task = RefreshTask(device_config, display_manager=None)
+
+    assert task._background_cache_refresh_max_per_pass() == 1
+    assert device_config.config["background_cache_refresh_max_per_pass"] == 9
+    assert device_config.write_count == 0
+
+
+def _sports_live_runtime(name, *, background_value="missing"):
+    tmp_path = make_test_dir(name)
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    plugin_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports",
+        latest_refresh_time=current_dt.isoformat(),
+        interval=3600,
+    )
+    plugin_data["plugin_settings"].update(
+        {"worldCupLiveRefreshEnabled": "true"}
+    )
+    if background_value != "missing":
+        plugin_data["plugin_settings"]["backgroundCacheRefreshEnabled"] = (
+            background_value
+        )
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    manifest = PluginManifest(
+        schema_version=2,
+        id="sports_dashboard",
+        class_name="SportsDashboard",
+        display_name="Sports Dashboard",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=True),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": manifest,
+    }
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(minutes=2)).isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=instance.instance_uuid,
+        changed_at=(current_dt - timedelta(minutes=1)).isoformat(),
+    )
+    anchor = (current_dt - timedelta(minutes=1)).isoformat()
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=instance.plugin_id,
+        plugin_instance=instance.name,
+        refresh_time=anchor,
+        image_hash="old",
+    )
+    return task, device_config, playlist, instance, current_dt, anchor
+
+
+def _assert_sports_normal_selected(monkeypatch, background_value):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            f"sports-normal-{background_value}",
+            background_value=background_value,
+        )
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([], live_state=None),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.instance_uuid == instance.instance_uuid
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_sports_normal_interval_is_selected_when_background_flag_is_missing(
+    monkeypatch,
+):
+    _assert_sports_normal_selected(monkeypatch, "missing")
+
+
+def test_sports_normal_interval_is_selected_when_background_flag_is_false(
+    monkeypatch,
+):
+    _assert_sports_normal_selected(monkeypatch, False)
+
+
+@pytest.mark.parametrize(
+    ("enabled", "hook_active", "displayed", "sample", "expected_live"),
+    [
+        (True, True, True, ResourceSample(512, 0), True),
+        (True, False, True, ResourceSample(512, 0), False),
+        (True, True, False, ResourceSample(512, 0), False),
+        (True, True, True, ResourceSample(100, 0), False),
+        (False, True, True, ResourceSample(512, 0), False),
+    ],
+)
+def test_sports_live_requires_enabled_hook_displayed_uuid_and_healthy_tier(
+    monkeypatch,
+    enabled,
+    hook_active,
+    displayed,
+    sample,
+    expected_live,
+):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-live-gates",
+            background_value=enabled,
+        )
+    )
+    if not displayed:
+        task.runtime_state.set_display_state(
+            "committed",
+            instance_uuid="different-instance",
+            changed_at=current_dt.isoformat(),
+        )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state=(
+                {"active": True, "interval_seconds": 60}
+                if hook_active
+                else None
+            ),
+        ),
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert (command is not None) is expected_live
+    if expected_live:
+        assert command.intent is RefreshIntent.LIVE_REFRESH
+
+
+def test_explicit_false_legacy_background_flag_is_live_master_off_only(
+    monkeypatch,
+):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-live-master-off-data-on",
+            background_value=False,
+        )
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_sports_live_success_queues_cache_only_followup_without_moving_anchor(
+    monkeypatch,
+):
+    task, device_config, _playlist, instance, current_dt, anchor = (
+        _sports_live_runtime(
+            "sports-live-followup",
+            background_value=True,
+        )
+    )
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            calls,
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    followup = task.refresh_queue.take(timeout=0)
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert followup.command.instance_uuid == instance.instance_uuid
+    task._process_queue_entry(followup)
+    assert calls == ["sports_dashboard"]
+    assert device_config.refresh_info.refresh_time == anchor
+
+
+def test_sports_live_success_does_not_advance_normal_data_cadence(monkeypatch):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-live-lane-clock",
+            background_value=True,
+        )
+    )
+    data_success = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].data.last_success_at
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert state.data.last_success_at == data_success
+    assert state.live.last_success_at == current_dt.isoformat()
+
+
+def _seed_theme_last_good(task, instance, mode, succeeded_at):
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        succeeded_at.isoformat(),
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode=mode,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=succeeded_at.isoformat(),
+        ),
+    )
+
+
+def _prepare_independent_theme_candidate(task, playlist, current_dt):
+    snapshots = [instance.snapshot() for instance in playlist.plugins]
+    for instance in snapshots:
+        _write_runtime_theme_cache(task, instance, "day")
+        _seed_theme_last_good(
+            task,
+            instance,
+            "day",
+            current_dt - timedelta(minutes=10),
+        )
+    return snapshots[0]
+
+
+def test_theme_redraw_is_cache_refresh_intent_not_display_intent(monkeypatch):
+    task, _device_config, playlist, _configs = _theme_transition_runtime(
+        "independent-theme-intent"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command.kind is CommandKind.CACHE_REFRESH
+    assert command.intent is RefreshIntent.THEME_REDRAW
+    assert command.source is CommandSource.SCHEDULER
+    assert command.instance_uuid == instance.instance_uuid
+    assert command.force is False
+
+
+def test_theme_redraw_sets_theme_render_only_and_preserves_data_live_clocks(
+    monkeypatch,
+):
+    task, _device_config, playlist, configs = _theme_transition_runtime(
+        "independent-theme-lane-clocks"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
+    live_success = current_dt - timedelta(minutes=9)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        live_success.isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    after = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert command.payload["theme_render_only"] is True
+    assert before.data.last_success_at == after.data.last_success_at
+    assert before.live.last_success_at == after.live.last_success_at
+    assert after.theme.last_success_at == current_dt.isoformat()
+    assert after.last_good_cache.theme_mode == "night"
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+
+
+def test_theme_redraw_preserves_rotation_anchor_and_exact_displayed_no_fallback(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "independent-theme-exact-display"
+    )
+    instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
+    anchor = device_config.refresh_info.refresh_time
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
+    task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    assert device_config.refresh_info.refresh_time == anchor
+
+    missing, missing_config, missing_playlist, _missing_configs = (
+        _theme_transition_runtime(
+            "independent-theme-no-refresh-info-fallback",
+            displayed_uuid=None,
+        )
+    )
+    _prepare_independent_theme_candidate(missing, missing_playlist, current_dt)
+    monkeypatch.setattr(
+        missing,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert missing._select_independent_refresh_command(current_dt) is None
+    assert missing_config.config["active_theme"] == "night"
+    assert missing_config.write_count == 1
+
+
+@pytest.mark.parametrize("source_mode", ["day", None])
+def test_media_theme_redraw_reuses_opposite_or_legacy_uuid_cache_with_zero_provider_calls(
+    monkeypatch,
+    source_mode,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        f"independent-theme-media-{source_mode or 'legacy'}"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    instance = playlist.plugins[0].snapshot()
+    configs["displayed"]["_manifest"] = _theme_manifest(
+        "displayed",
+        presentation="media",
+    )
+    device_config.get_resolution = lambda: (40, 24)
+    source = Image.new("RGB", (40, 24), (180, 20, 30))
+    source_path = Path(task._snapshot_cache_path(instance, source_mode))
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source.save(source_path)
+    _seed_theme_last_good(
+        task,
+        instance,
+        source_mode,
+        current_dt - timedelta(minutes=10),
+    )
+    fallback = playlist.plugins[1].snapshot()
+    _write_runtime_theme_cache(task, fallback, "day")
+    _seed_theme_last_good(
+        task,
+        fallback,
+        "day",
+        current_dt - timedelta(minutes=10),
+    )
+    provider_calls = []
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: provider_calls.append("provider") or plugin,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    assert plugin.calls == []
+    assert provider_calls == ["provider"]
+    assert Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert device_config.refresh_info.refresh_time == "2026-07-11T21:59:00+00:00"
+
+
+def test_nonvisible_opposite_cache_is_last_good_not_lazy_display_generation(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("nonvisible-opposite-last-good")
+    plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
+    plugin_data["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "night", "active_theme": "night"})
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id="previous_plugin",
+        plugin_instance="Previous Plugin",
+        refresh_time=(current_dt - timedelta(minutes=10)).isoformat(),
+        image_hash="previous",
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": _theme_manifest(plugin_id),
+    }
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="another-visible-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(task, instance, "day")
+    _seed_theme_last_good(
+        task,
+        instance,
+        "day",
+        current_dt - timedelta(minutes=10),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    command = task._select_cached_display_command(current_dt)
+    result = task._execute_command(command)
+
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.payload["cache_theme_mode"] == "day"
+    assert result is not None
+    assert not Path(task._snapshot_cache_path(instance, "night")).exists()
+
+
+def test_theme_failure_cools_theme_lane_only_and_keeps_last_good(monkeypatch):
+    task, _device_config, playlist, configs = _theme_transition_runtime(
+        "independent-theme-failure-lane"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
+    live_success = current_dt - timedelta(minutes=9)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        live_success.isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_independent_refresh_command(current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    failed = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.FAILED
+    assert failed.data.last_success_at == before.data.last_success_at
+    assert failed.live.last_success_at == before.live.last_success_at
+    assert failed.theme.next_retry_at is not None
+    assert failed.last_good_cache == before.last_good_cache
+
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    next_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+    assert next_command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_startup_seeds_data_clock_from_valid_model_latest_refresh_only(monkeypatch):
+    tmp_path = make_test_dir("startup-data-clock-seed")
+    valid_time = "2026-07-11T20:00:00+00:00"
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "valid_latest",
+            "Valid Latest",
+            latest_refresh_time=valid_time,
+        ),
+        _runtime_plugin_data(
+            "invalid_latest",
+            "Invalid Latest",
+            latest_refresh_time="not-a-timestamp",
+        ),
+        _runtime_plugin_data(
+            "missing_latest",
+            "Missing Latest",
+            latest_refresh_time=None,
+        ),
+    )
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    monkeypatch.setattr(task.runtime_state, "flush", lambda: True)
+
+    task._prune_runtime_state()
+    states = task.runtime_state.snapshot().instances
+
+    assert states[playlist.plugins[0].instance_uuid].data.last_success_at == valid_time
+    assert states.get(playlist.plugins[1].instance_uuid) is None
+    assert states.get(playlist.plugins[2].instance_uuid) is None
+
+
+def test_startup_discovers_only_valid_exact_revision_last_good_cache(monkeypatch):
+    tmp_path = make_test_dir("startup-last-good-discovery")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("valid_cache", "Valid Cache"),
+        _runtime_plugin_data("invalid_cache", "Invalid Cache"),
+    )
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    valid = playlist.plugins[0].snapshot()
+    invalid = playlist.plugins[1].snapshot()
+    valid_path = Path(task._snapshot_cache_path(valid, "day"))
+    valid_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (2, 1), "white").save(valid_path)
+    corrupt_current = Path(task._snapshot_cache_path(invalid, "night"))
+    corrupt_current.write_bytes(b"not-an-image")
+    stale_path = Path(
+        authoritative_cache_path(
+            task.cache_catalog.cache_root,
+            invalid.instance_uuid,
+            invalid.structural_generation,
+            invalid.settings_revision + 1,
+            "day",
+        )
+    )
+    Image.new("RGB", (2, 1), "black").save(stale_path)
+    monkeypatch.setattr(task.runtime_state, "flush", lambda: True)
+
+    task._prune_runtime_state()
+    states = task.runtime_state.snapshot().instances
+
+    assert states[valid.instance_uuid].last_good_cache.theme_mode == "day"
+    assert states[valid.instance_uuid].last_good_cache.structural_generation == 1
+    assert states[valid.instance_uuid].last_good_cache.settings_revision == 1
+    assert states[invalid.instance_uuid].last_good_cache is None
+
+
+def test_startup_migration_does_not_write_playlist_or_user_settings(monkeypatch):
+    tmp_path = make_test_dir("startup-migration-read-only-config")
+    plugin_data = _runtime_plugin_data(
+        "migration_target",
+        "Migration Target",
+        latest_refresh_time="2026-07-11T20:00:00+00:00",
+    )
+    plugin_data["plugin_settings"].update({"city": "Seattle", "units": "metric"})
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance)
+    before_manager = device_config.get_playlist_manager().to_dict()
+    before_config = dict(device_config.config)
+    monkeypatch.setattr(task.runtime_state, "flush", lambda: True)
+
+    task._prune_runtime_state()
+
+    assert device_config.write_count == 0
+    assert device_config.get_playlist_manager().to_dict() == before_manager
+    assert device_config.config == before_config

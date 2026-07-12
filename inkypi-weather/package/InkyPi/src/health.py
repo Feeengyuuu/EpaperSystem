@@ -411,7 +411,6 @@ class HealthCollector:
             return {
                 "state": snapshot.display_state,
                 "commit_id": snapshot.display_commit_id,
-                "instance_uuid": snapshot.displayed_instance_uuid,
                 "updated_at": snapshot.updated_at,
             }
         except Exception as error:
@@ -450,13 +449,27 @@ class HealthCollector:
         try:
             snapshot = self.refresh_task.scheduler_snapshot()
             active = self.refresh_task.active_operation_snapshot()
+            aggregate = self.refresh_task.refresh_health_snapshot()
+            due_counts = aggregate.get("due_counts", {})
+            active_intent = None if active is None else active.intent
+            active_intent = getattr(active_intent, "value", active_intent)
             return {
                 "heartbeat_monotonic": snapshot.last_attempt_monotonic,
                 "tick_seconds": self.refresh_task._scheduler_poll_seconds(),
                 "active_deadline_monotonic": (
                     None if active is None else active.deadline_monotonic
                 ),
-                "active_command_id": None if active is None else active.command_id,
+                "resource_tier": str(aggregate.get("resource_tier", "unknown")),
+                "due_counts": {
+                    lane: max(0, int(due_counts.get(lane, 0)))
+                    for lane in ("data", "live", "theme")
+                },
+                "oldest_data_overdue_seconds": aggregate.get(
+                    "oldest_data_overdue_seconds"
+                ),
+                "active_intent": (
+                    None if active_intent is None else str(active_intent)
+                ),
             }
         except Exception as error:
             return {

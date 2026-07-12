@@ -52,14 +52,6 @@ def _signal_config_change():
         refresh_task.signal_config_change()
 
 
-def _display_instance_force_refresh(plugin_id, cache_refresh_busy):
-    if cache_refresh_busy:
-        return False
-    if str(plugin_id or "").strip() == "sports_dashboard":
-        return False
-    return True
-
-
 def _serialize_job(job):
     if job is None:
         return None
@@ -494,27 +486,10 @@ def display_plugin_instance():
             )
         snapshot = selection.instance
 
-        cache_refresh_busy = bool(getattr(refresh_task, "cache_refresh_in_progress", lambda: False)())
-        if cache_refresh_busy:
-            logger.info(
-                "Cache refresh already running; displaying cached plugin instance image. | "
-                "plugin_instance: '%s'",
-                snapshot.name,
-            )
-        force_refresh = _display_instance_force_refresh(
-            snapshot.plugin_id,
-            cache_refresh_busy,
-        )
-        if snapshot.plugin_id == "sports_dashboard" and not cache_refresh_busy:
-            logger.info(
-                "Using cache-friendly display refresh for SportsDashboard. | "
-                "plugin_instance: '%s'",
-                snapshot.name,
-            )
         job = refresh_task.submit_playlist_display(
             snapshot.instance_uuid,
-            force=force_refresh,
-            display_cached_only=cache_refresh_busy,
+            force=False,
+            display_cached_only=True,
             expected_playlist_name=selection.playlist_name,
             expected_generation=snapshot.structural_generation,
             expected_settings_revision=snapshot.settings_revision,
