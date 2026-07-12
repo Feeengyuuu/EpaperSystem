@@ -512,6 +512,7 @@ class RefreshQueue:
             and left.force == right.force
             and left.priority == right.priority
             and left.payload == right.payload
+            and left.intent == right.intent
         )
 
     @classmethod

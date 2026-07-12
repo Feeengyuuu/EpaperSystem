@@ -436,6 +436,71 @@ def test_two_transition_none_intents_preserve_legacy_coalescing_until_c():
 
 
 @pytest.mark.parametrize(
+    ("first_intent", "second_intent"),
+    [
+        (RefreshIntent.DATA_REFRESH, RefreshIntent.LIVE_REFRESH),
+        (RefreshIntent.DATA_REFRESH, None),
+        (None, RefreshIntent.DATA_REFRESH),
+    ],
+)
+def test_idempotency_key_intent_change_is_a_conflict(
+    first_intent,
+    second_intent,
+):
+    queue = make_queue()
+    first = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="keyed-intent-conflict",
+        idempotency_key="keyed-intent-conflict",
+        payload={"operation": "same"},
+        intent=first_intent,
+    )
+    second = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="keyed-intent-conflict",
+        idempotency_key="keyed-intent-conflict",
+        payload={"operation": "same"},
+        intent=second_intent,
+    )
+    accepted = queue.submit(first)
+
+    with pytest.raises(IdempotencyConflictError) as conflict:
+        queue.submit(second)
+
+    assert conflict.value.job.status is JobStatus.REJECTED
+    assert conflict.value.job.error_code == "idempotency_conflict"
+    assert queue.get_job(accepted.id).status is JobStatus.QUEUED
+
+
+@pytest.mark.parametrize(
+    ("first_intent", "second_intent"),
+    [
+        (RefreshIntent.DATA_REFRESH, RefreshIntent.LIVE_REFRESH),
+        (RefreshIntent.DATA_REFRESH, None),
+        (None, RefreshIntent.DATA_REFRESH),
+    ],
+)
+def test_command_id_intent_change_is_a_conflict(
+    first_intent,
+    second_intent,
+):
+    queue = make_queue()
+    first = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="command-id-intent-conflict",
+        intent=first_intent,
+    )
+    accepted = queue.submit(first)
+
+    with pytest.raises(DuplicateCommandConflictError) as conflict:
+        queue.submit(replace(first, intent=second_intent))
+
+    assert conflict.value.job.status is JobStatus.REJECTED
+    assert conflict.value.job.error_code == "duplicate_command_conflict"
+    assert queue.get_job(accepted.id).status is JobStatus.QUEUED
+
+
+@pytest.mark.parametrize(
     ("incoming_revision", "supersedes"),
     [(1, False), (2, False), (3, True)],
 )

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
+from zoneinfo import ZoneInfo
+
+import pytz
 
 from src.model import PluginInstanceSnapshot
 from src.runtime.refresh_policy import (
@@ -245,6 +248,247 @@ def test_data_retry_does_not_read_live_or_theme_retry_deadlines():
     assert data_retry.candidate is None
 
 
+def test_spring_forward_interval_uses_elapsed_time_not_wall_clock():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 3, 8, 3, 15, tzinfo=los_angeles)
+    last_success = datetime(2026, 3, 8, 1, 45, tzinfo=los_angeles)
+
+    result = evaluate_data_due(
+        _instance(refresh={"interval": 3600}),
+        InstanceRuntimeState(data=_lane(success=last_success)),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is None
+
+
+def test_fall_back_interval_uses_elapsed_time_and_preserves_due_fold():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 11, 1, 1, 30, tzinfo=los_angeles, fold=1)
+    last_success = datetime(
+        2026,
+        11,
+        1,
+        1,
+        15,
+        tzinfo=los_angeles,
+        fold=0,
+    )
+
+    result = evaluate_data_due(
+        _instance(refresh={"interval": 3600}),
+        InstanceRuntimeState(data=_lane(success=last_success)),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.reason is DueReason.INTERVAL
+    assert result.candidate.due_since.fold == 1
+    assert result.candidate.due_since.astimezone(UTC) == datetime(
+        2026,
+        11,
+        1,
+        9,
+        15,
+        tzinfo=UTC,
+    )
+
+
+def test_retry_deadline_uses_absolute_time_across_fall_fold():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    instance = _instance(refresh={"interval": 60})
+    last_success = datetime(2026, 11, 1, 0, 0, tzinfo=los_angeles)
+
+    expired_retry = evaluate_data_due(
+        instance,
+        InstanceRuntimeState(
+            data=_lane(
+                success=last_success,
+                retry=datetime(
+                    2026,
+                    11,
+                    1,
+                    1,
+                    45,
+                    tzinfo=los_angeles,
+                    fold=0,
+                ),
+            )
+        ),
+        has_displayable_cache=True,
+        now=datetime(
+            2026,
+            11,
+            1,
+            1,
+            30,
+            tzinfo=los_angeles,
+            fold=1,
+        ),
+    )
+    future_retry = evaluate_data_due(
+        instance,
+        InstanceRuntimeState(
+            data=_lane(
+                success=last_success,
+                retry=datetime(
+                    2026,
+                    11,
+                    1,
+                    1,
+                    15,
+                    tzinfo=los_angeles,
+                    fold=1,
+                ),
+            )
+        ),
+        has_displayable_cache=True,
+        now=datetime(
+            2026,
+            11,
+            1,
+            1,
+            45,
+            tzinfo=los_angeles,
+            fold=0,
+        ),
+    )
+
+    assert expired_retry.candidate is not None
+    assert future_retry.candidate is None
+
+
+def test_fall_back_schedule_uses_second_ambiguous_occurrence():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 11, 1, 2, 0, tzinfo=los_angeles)
+    last_success = datetime(
+        2026,
+        11,
+        1,
+        1,
+        45,
+        tzinfo=los_angeles,
+        fold=0,
+    )
+
+    result = evaluate_data_due(
+        _instance(refresh={"scheduled": "01:30"}),
+        InstanceRuntimeState(data=_lane(success=last_success)),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.reason is DueReason.SCHEDULED
+    assert result.candidate.due_since.fold == 1
+    assert result.candidate.due_since.astimezone(UTC) == datetime(
+        2026,
+        11,
+        1,
+        9,
+        30,
+        tzinfo=UTC,
+    )
+
+
+def test_fall_back_schedule_uses_first_occurrence_before_second_exists():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    now = datetime(
+        2026,
+        11,
+        1,
+        1,
+        45,
+        tzinfo=los_angeles,
+        fold=0,
+    )
+
+    result = evaluate_data_due(
+        _instance(refresh={"scheduled": "01:30"}),
+        InstanceRuntimeState(
+            data=_lane(
+                success=datetime(2026, 10, 31, 2, 0, tzinfo=los_angeles)
+            )
+        ),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.reason is DueReason.SCHEDULED
+    assert result.candidate.due_since.fold == 0
+    assert result.candidate.due_since.astimezone(UTC) == datetime(
+        2026,
+        11,
+        1,
+        8,
+        30,
+        tzinfo=UTC,
+    )
+
+
+def test_nonexistent_schedule_returns_previous_valid_occurrence():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 3, 8, 4, 0, tzinfo=los_angeles)
+
+    result = evaluate_data_due(
+        _instance(refresh={"scheduled": "02:30"}),
+        InstanceRuntimeState(),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.reason is DueReason.SCHEDULED
+    assert result.candidate.due_since == datetime(
+        2026,
+        3,
+        7,
+        2,
+        30,
+        tzinfo=los_angeles,
+    )
+
+
+def test_pytz_nonexistent_schedule_returns_previous_valid_occurrence():
+    los_angeles = pytz.timezone("America/Los_Angeles")
+    now = los_angeles.localize(datetime(2026, 3, 8, 4, 0), is_dst=True)
+    expected = los_angeles.localize(
+        datetime(2026, 3, 7, 2, 30),
+        is_dst=False,
+    )
+
+    result = evaluate_data_due(
+        _instance(refresh={"scheduled": "02:30"}),
+        InstanceRuntimeState(),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.reason is DueReason.SCHEDULED
+    assert result.candidate.due_since.astimezone(UTC) == expected.astimezone(UTC)
+
+
+def test_naive_interval_remains_naive_without_system_timezone_conversion():
+    now = datetime(2026, 7, 11, 12, 0)
+
+    result = evaluate_data_due(
+        _instance(refresh={"interval": 3600}),
+        InstanceRuntimeState(
+            data=_lane(success=datetime(2026, 7, 11, 10, 0))
+        ),
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.due_since == datetime(2026, 7, 11, 11, 0)
+    assert result.candidate.due_since.tzinfo is None
+
+
 def test_invalid_interval_and_schedule_return_diagnostics_without_tight_loop():
     result = evaluate_data_due(
         _instance(
@@ -263,6 +507,18 @@ def test_invalid_interval_and_schedule_return_diagnostics_without_tight_loop():
         "refresh.interval",
         "refresh.scheduled",
     )
+
+
+def test_boolean_interval_is_invalid_without_tight_loop():
+    result = evaluate_data_due(
+        _instance(refresh={"interval": True}),
+        InstanceRuntimeState(),
+        has_displayable_cache=True,
+        now=datetime(2026, 7, 11, 12, 0, tzinfo=UTC),
+    )
+
+    assert result.candidate is None
+    assert result.invalid_fields == ("refresh.interval",)
 
 
 def test_hard_threshold_wins_over_soft_threshold():
@@ -590,3 +846,78 @@ def test_data_candidates_order_bootstrap_before_due_since():
 
     assert with_bootstrap.candidate == bootstrap
     assert cadence_only.candidate == old_interval
+
+
+def test_candidate_order_uses_absolute_instants_across_fall_fold():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    first_instant = _candidate(
+        "first-instant",
+        due_since=datetime(
+            2026,
+            11,
+            1,
+            1,
+            45,
+            tzinfo=los_angeles,
+            fold=0,
+        ),
+    )
+    second_instant = _candidate(
+        "second-instant",
+        due_since=datetime(
+            2026,
+            11,
+            1,
+            1,
+            15,
+            tzinfo=los_angeles,
+            fold=1,
+        ),
+    )
+    shared_due = datetime(2026, 11, 1, 0, 0, tzinfo=los_angeles)
+    first_attempt = _candidate(
+        "first-attempt",
+        due_since=shared_due,
+        last_attempt_at=datetime(
+            2026,
+            11,
+            1,
+            1,
+            45,
+            tzinfo=los_angeles,
+            fold=0,
+        ),
+    )
+    second_attempt = _candidate(
+        "second-attempt",
+        due_since=shared_due,
+        last_attempt_at=datetime(
+            2026,
+            11,
+            1,
+            1,
+            15,
+            tzinfo=los_angeles,
+            fold=1,
+        ),
+    )
+    common = {
+        "tier": ResourceTier.HEALTHY,
+        "state": AdmissionState(),
+        "now_monotonic": 1000.0,
+        "thresholds": ResourceThresholds(),
+    }
+
+    due_order = choose_refresh_candidate(
+        [second_instant, first_instant],
+        [],
+        **common,
+    )
+    attempt_order = choose_refresh_candidate(
+        [second_attempt, first_attempt],
+        [],
+        **common,
+    )
+
+    assert due_order.candidate == first_instant
+    assert attempt_order.candidate == first_attempt
