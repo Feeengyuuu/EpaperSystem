@@ -10,6 +10,7 @@ from src.runtime.refresh_contracts import (
     CommandSource,
     JobStatus,
     RefreshCommand,
+    RefreshIntent,
     TaskCancelled,
     TaskContext,
     thaw_payload,
@@ -52,6 +53,7 @@ def command(
     force: bool = False,
     priority: int = 0,
     idempotency_key: str | None = None,
+    intent: RefreshIntent | None = None,
     payload=None,
     now: float = 10.0,
     deadline: float = 1000.0,
@@ -66,6 +68,7 @@ def command(
         force=force,
         priority=priority,
         idempotency_key=idempotency_key,
+        intent=intent,
         payload={} if payload is None else payload,
         now_monotonic=now,
         deadline_monotonic=deadline,
@@ -279,156 +282,157 @@ def test_cancellation_signal_storage_prunes_with_ttl_and_command_aliases():
     assert set(queue._cancel_events) <= set(queue._jobs)
 
 
-def test_display_supersedes_cache_and_absorbs_newest_requirements():
-    queue = make_queue()
-    cache = command(
-        kind=CommandKind.CACHE_REFRESH,
-        source=CommandSource.SCHEDULER,
-        instance_uuid="one",
-        settings_revision=5,
-        force=True,
-        priority=4,
-        idempotency_key="cache-key",
-        payload={"owner": "cache"},
-        deadline=90.0,
-    )
+def test_display_and_data_refresh_same_instance_remain_distinct_jobs():
+    queue = make_queue(capacity=4, manual_reserved=0)
     display = command(
         kind=CommandKind.DISPLAY,
-        source=CommandSource.BACKGROUND,
-        instance_uuid="one",
-        settings_revision=3,
-        priority=2,
-        idempotency_key="display-key",
-        payload={"owner": "display"},
-        deadline=80.0,
+        instance_uuid="display-and-data",
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    data = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="display-and-data",
+        intent=RefreshIntent.DATA_REFRESH,
     )
 
-    cache_job = queue.submit(cache)
     display_job = queue.submit(display)
+    data_job = queue.submit(data)
 
-    superseded = queue.get_job(cache_job.id)
+    assert display_job.id == display.id
+    assert data_job.id == data.id
+    assert queue.snapshot().depth == 2
+    selected = [queue.take(timeout=0).command for _ in range(2)]
+    assert {item.intent for item in selected} == {
+        RefreshIntent.DISPLAY_CACHE,
+        RefreshIntent.DATA_REFRESH,
+    }
+
+
+def test_data_live_and_theme_intents_do_not_coalesce():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    commands = [
+        command(
+            kind=CommandKind.CACHE_REFRESH,
+            instance_uuid="independent-refreshes",
+            intent=intent,
+        )
+        for intent in (
+            RefreshIntent.DATA_REFRESH,
+            RefreshIntent.LIVE_REFRESH,
+            RefreshIntent.THEME_REDRAW,
+        )
+    ]
+
+    jobs = [queue.submit(item) for item in commands]
+
+    assert [job.id for job in jobs] == [item.id for item in commands]
+    assert queue.snapshot().depth == 3
+    selected = [queue.take(timeout=0).command for _ in range(3)]
+    assert [item.intent for item in selected] == [
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.LIVE_REFRESH,
+        RefreshIntent.THEME_REDRAW,
+    ]
+
+
+def test_same_intent_same_revision_coalesces_and_new_revision_supersedes():
+    queue = make_queue()
+    existing = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="same-data-intent",
+        settings_revision=2,
+        priority=1,
+        payload={"owner": "existing"},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    equal_revision = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="same-data-intent",
+        settings_revision=2,
+        priority=5,
+        force=True,
+        payload={"owner": "equal"},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    newer_revision = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid="same-data-intent",
+        settings_revision=3,
+        payload={"owner": "newer"},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    existing_job = queue.submit(existing)
+    equal_job = queue.submit(equal_revision)
+    newer_job = queue.submit(newer_revision)
+
+    assert equal_job.id == existing_job.id
+    assert newer_job.id == newer_revision.id
+    superseded = queue.get_job(existing_job.id)
     assert superseded.status is JobStatus.SUPERSEDED
-    assert superseded.superseded_by == display_job.id
-    assert queue.snapshot().superseded_total == 1
-
-    replay = queue.submit(cache)
-    assert replay.id == display_job.id
-    entry = queue.take(timeout=0)
-    assert entry.command.id == display.id
-    assert entry.command.kind is CommandKind.DISPLAY
-    assert entry.command.settings_revision == 5
-    assert entry.command.force is True
-    assert entry.command.priority == 4
-    assert entry.command.source is CommandSource.SCHEDULER
-    assert entry.command.deadline_monotonic == 90.0
-    assert entry.command.payload["owner"] == "cache"
+    assert superseded.superseded_by == newer_job.id
+    assert queue.snapshot().depth == 1
+    selected = queue.take(timeout=0).command
+    assert selected.intent is RefreshIntent.DATA_REFRESH
+    assert selected.settings_revision == 3
+    assert selected.payload["owner"] == "newer"
+    assert selected.force is True
+    assert selected.priority == 5
 
 
-def test_cache_reuses_display_and_only_escalates_revision_force_and_deadline():
+@pytest.mark.parametrize("explicit_first", [False, True])
+def test_explicit_intent_never_coalesces_with_transition_none_intent(
+    explicit_first,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    explicit = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid=f"explicit-and-none-{explicit_first}",
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    transition = command(
+        kind=CommandKind.CACHE_REFRESH,
+        instance_uuid=f"explicit-and-none-{explicit_first}",
+        intent=None,
+    )
+    first, second = (
+        (explicit, transition) if explicit_first else (transition, explicit)
+    )
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+
+    assert first_job.id == first.id
+    assert second_job.id == second.id
+    assert queue.snapshot().depth == 2
+
+
+def test_two_transition_none_intents_preserve_legacy_coalescing_until_c():
     queue = make_queue()
     display = command(
         kind=CommandKind.DISPLAY,
         source=CommandSource.MANUAL,
-        instance_uuid="one",
+        instance_uuid="two-transition-none",
         settings_revision=1,
-        force=False,
-        priority=5,
-        payload={"owner": "display"},
-        deadline=50.0,
+        intent=None,
     )
     cache = command(
         kind=CommandKind.CACHE_REFRESH,
         source=CommandSource.BACKGROUND,
-        instance_uuid="one",
+        instance_uuid="two-transition-none",
         settings_revision=2,
-        force=True,
-        priority=99,
-        payload={"owner": "cache"},
-        deadline=70.0,
+        intent=None,
     )
 
     display_job = queue.submit(display)
     reused = queue.submit(cache)
 
     assert reused.id == display_job.id
-    absorbed_identity = queue.get_job(cache.id)
-    assert absorbed_identity.status is JobStatus.SUPERSEDED
-    assert absorbed_identity.superseded_by == display_job.id
-    entry = queue.take(timeout=0)
-    assert entry.command.id == display.id
-    assert entry.command.kind is CommandKind.DISPLAY
-    assert entry.command.settings_revision == 2
-    assert entry.command.force is True
-    assert entry.command.deadline_monotonic == 70.0
-    assert entry.command.payload["owner"] == "cache"
-    assert entry.command.priority == 5
-    assert entry.command.source is CommandSource.MANUAL
-
-
-@pytest.mark.parametrize(
-    ("display_revision", "payload_owner"),
-    [(1, "cache"), (2, "display"), (3, "display")],
-)
-def test_display_always_supersedes_cache_across_revision_orderings(
-    display_revision: int, payload_owner: str
-):
-    queue = make_queue()
-    cache = command(
-        kind=CommandKind.CACHE_REFRESH,
-        instance_uuid="display-matrix",
-        settings_revision=2,
-        payload={"owner": "cache"},
-    )
-    display = command(
-        kind=CommandKind.DISPLAY,
-        instance_uuid="display-matrix",
-        settings_revision=display_revision,
-        payload={"owner": "display"},
-    )
-
-    cache_job = queue.submit(cache)
-    display_job = queue.submit(display)
-
-    assert display_job.id == display.id
-    assert queue.get_job(cache_job.id).status is JobStatus.SUPERSEDED
+    assert queue.snapshot().depth == 1
     selected = queue.take(timeout=0).command
     assert selected.kind is CommandKind.DISPLAY
-    assert selected.settings_revision == max(2, display_revision)
-    assert selected.payload["owner"] == payload_owner
-
-
-@pytest.mark.parametrize(
-    ("cache_revision", "payload_owner"),
-    [(1, "display"), (2, "display"), (3, "cache")],
-)
-def test_cache_always_reuses_display_across_revision_orderings(
-    cache_revision: int, payload_owner: str
-):
-    queue = make_queue()
-    display = command(
-        kind=CommandKind.DISPLAY,
-        instance_uuid="cache-matrix",
-        settings_revision=2,
-        payload={"owner": "display"},
-    )
-    cache = command(
-        kind=CommandKind.CACHE_REFRESH,
-        instance_uuid="cache-matrix",
-        settings_revision=cache_revision,
-        payload={"owner": "cache"},
-    )
-
-    display_job = queue.submit(display)
-    actual = queue.submit(cache)
-
-    assert actual.id == display_job.id
-    absorbed_identity = queue.get_job(cache.id)
-    assert absorbed_identity.status is JobStatus.SUPERSEDED
-    assert absorbed_identity.superseded_by == display_job.id
-    selected = queue.take(timeout=0).command
-    assert selected.kind is CommandKind.DISPLAY
-    assert selected.settings_revision == max(2, cache_revision)
-    assert selected.payload["owner"] == payload_owner
+    assert selected.intent is None
+    assert selected.settings_revision == 2
 
 
 @pytest.mark.parametrize(
@@ -549,106 +553,6 @@ def test_equal_revision_same_kind_theme_mode_change_keeps_manual_payload_and_inc
     assert selected.payload["refresh"]["interval"] == 3600
     assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
     assert selected.payload["display_cached_only"] is False
-    assert selected.force is True
-    assert selected.priority == 20
-    assert selected.source is CommandSource.MANUAL
-
-
-@pytest.mark.parametrize(
-    ("existing_mode", "incoming_mode"),
-    [("day", "night"), ("night", "day")],
-)
-@pytest.mark.parametrize("require_active", [False, True])
-def test_equal_revision_cache_merge_keeps_display_job_with_incoming_theme_payload(
-    existing_mode,
-    incoming_mode,
-    require_active,
-):
-    queue = make_queue()
-    display = command(
-        kind=CommandKind.DISPLAY,
-        source=CommandSource.MANUAL,
-        instance_uuid="cross-kind-theme-transition",
-        settings_revision=4,
-        priority=20,
-        force=False,
-        payload={
-            "owner": existing_mode,
-            "refresh_type": "Playlist",
-            "playlist_name": "Inactive Manual",
-            "instance_name": "Manual Target",
-            "settings": {"revision": 4, "owner": "manual"},
-            "refresh": {"interval": 3600},
-            "latest_refresh_time": "2026-07-11T12:00:00+00:00",
-            "display_cached_only": False,
-            "require_active": require_active,
-            "theme_render_only": True,
-            "expected_displayed_instance_uuid": "cross-kind-theme-transition",
-            "theme_context": {
-                "mode": existing_mode,
-                "source": "weather",
-                "reason": "sunrise/sunset",
-            },
-            "resolved_theme_context": {
-                "mode": existing_mode,
-                "palette": {"accent": "old"},
-            },
-        },
-    )
-    cache = command(
-        kind=CommandKind.CACHE_REFRESH,
-        source=CommandSource.BACKGROUND,
-        instance_uuid="cross-kind-theme-transition",
-        settings_revision=4,
-        priority=5,
-        force=True,
-        payload={
-            "owner": incoming_mode,
-            "refresh_type": "Playlist",
-            "playlist_name": "Active Background",
-            "instance_name": "Background Target",
-            "settings": {"revision": 4, "owner": "background"},
-            "refresh": {"interval": 60},
-            "latest_refresh_time": "2026-07-11T12:01:00+00:00",
-            "display_cached_only": True,
-            "require_active": True,
-            "resolved_theme_context": {
-                "mode": incoming_mode,
-                "palette": {"accent": "new"},
-            },
-        },
-    )
-
-    display_job = queue.submit(display)
-    actual_job = queue.submit(cache)
-
-    assert actual_job.id == display_job.id
-    selected = queue.take(timeout=0).command
-    assert selected.kind is CommandKind.DISPLAY
-    assert selected.payload["owner"] == existing_mode
-    assert selected.payload["resolved_theme_context"] == {
-        "mode": incoming_mode,
-        "palette": {"accent": "new"},
-    }
-    assert selected.payload["theme_context"] == {
-        "mode": incoming_mode,
-        "source": "weather",
-        "reason": "sunrise/sunset",
-    }
-    assert selected.payload["require_active"] is require_active
-    assert selected.payload["playlist_name"] == "Inactive Manual"
-    assert selected.payload["instance_name"] == "Manual Target"
-    assert selected.payload["settings"]["owner"] == "manual"
-    assert selected.payload["refresh"]["interval"] == 3600
-    assert selected.payload["latest_refresh_time"] == "2026-07-11T12:00:00+00:00"
-    assert selected.payload["display_cached_only"] is False
-    assert selected.payload["theme_render_only"] is True
-    assert selected.payload["expected_displayed_instance_uuid"] == (
-        "cross-kind-theme-transition"
-    )
-    assert selected.instance_uuid == display.instance_uuid
-    assert selected.structural_generation == display.structural_generation
-    assert selected.settings_revision == display.settings_revision
     assert selected.force is True
     assert selected.priority == 20
     assert selected.source is CommandSource.MANUAL

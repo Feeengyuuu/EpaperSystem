@@ -713,6 +713,7 @@ class RefreshQueue:
             and existing.instance_uuid == incoming.instance_uuid
             and existing.plugin_id == incoming.plugin_id
             and existing.structural_generation == incoming.structural_generation
+            and existing.intent == incoming.intent
         )
 
     def _merged_command(
