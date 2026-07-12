@@ -2,13 +2,30 @@ from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.backtothedate.presentation_bank import (
+    MAX_HISTORY_URLS,
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    PosterPresentationBank,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+    validate_state_payload_size,
+    validate_state_shape,
+)
+from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_session
-import json
 import logging
-import os
 import random
 import re
 
@@ -42,6 +59,7 @@ POSTER_DETAIL_CANDIDATE_LIMIT = 8
 THEME_PAGE_SAMPLE_LIMIT = 4
 DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_POSTER_COUNT = 3
+STATELESS_PREVIEW_SETTING = "_inkypiStatelessPreview"
 
 
 class _PosterLinkParser(HTMLParser):
@@ -120,52 +138,287 @@ class BacktotheDate(BasePlugin):
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
         attempts = self._safe_int(settings.get("attempts"), 8, minimum=1, maximum=20)
+        if get_presentation_instance_uuid(settings) is None:
+            if settings.get(STATELESS_PREVIEW_SETTING) is not True:
+                raise RuntimeError(
+                    "BacktotheDate playlist rendering requires trusted instance identity"
+                )
+            return self._generate_stateless_preview(settings, dimensions, attempts)
+        bank = self._presentation_bank(settings, dimensions)
+        document, profile = bank.load_for_data()
+        ready = bank.ready_records(document, profile, prune=True)
         errors = []
 
-        forced_poster = self._forced_poster_from_settings(settings)
-        if forced_poster:
-            image = self._load_poster_image(forced_poster["image_url"], dimensions)
-            if not image:
-                raise RuntimeError(f"Could not load forced Chinese poster image: {forced_poster['image_url']}")
-            image = self._normalize_image(image)
-            rendered = self._compose_single_display_image(forced_poster, image, dimensions, settings)
-            self._remember_success([forced_poster])
-            logger.info(
-                "Selected forced Chinese poster preview: %s | %s",
-                forced_poster.get("title") or forced_poster["page_url"],
-                forced_poster["image_url"],
-            )
-            return rendered
-
-        if self._fit_mode(settings) in {"triptych", "three_vertical", "three_posters", "gallery"}:
+        protected_missing = bank.missing_protected_records(profile, ready)
+        for record in protected_missing:
             try:
-                return self._generate_triptych_image(settings, dimensions, attempts)
+                image = self._load_poster_image(record["image_url"], dimensions)
             except Exception as exc:
-                logger.warning("BacktotheDate triptych generation failed; falling back to single poster: %s", exc)
-                errors.append(str(exc))
+                raise RuntimeError(
+                    "Could not rehydrate protected BacktotheDate media"
+                ) from exc
+            if image is None:
+                raise RuntimeError(
+                    "Could not rehydrate protected BacktotheDate current/pending media"
+                )
+            bank.ingest(profile, record, image)
+        if protected_missing:
+            bank.save(document)
+            ready = bank.ready_records(document, profile, prune=True)
+            if bank.missing_protected_records(profile, ready):
+                raise RuntimeError(
+                    "Protected BacktotheDate current/pending media remains unavailable"
+                )
 
-        for _ in range(attempts):
+        forced_poster = self._forced_poster_from_settings(settings)
+        target = 1 if forced_poster else READY_TARGET
+        refill_threshold = 1 if forced_poster else REFILL_THRESHOLD
+        maximum_attempts = target + attempts
+        tries = 0
+        refill_bank = len(ready) < refill_threshold
+        while refill_bank and len(ready) < target and tries < maximum_attempts:
+            tries += 1
             try:
-                poster = self._select_random_poster(settings)
+                poster = forced_poster or self._select_random_poster(settings)
+                poster = bank.normalize_poster(poster)
+                if any(item["image_url"] == poster["image_url"] for item in ready):
+                    if forced_poster:
+                        break
+                    continue
                 image = self._load_poster_image(poster["image_url"], dimensions)
-                if image:
-                    image, posters = self._compose_display_image(poster, image, dimensions, settings)
-                    self._remember_success(posters)
-                    logger.info(
-                        "Selected Chinese poster: %s | %s",
-                        poster.get("title") or poster["page_url"],
-                        poster["image_url"],
-                    )
-                    return image
+                if image is not None:
+                    record = bank.ingest(profile, poster, image)
+                    ready.append(record)
+                    if len(ready) >= target:
+                        break
+                    continue
                 errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
             except Exception as exc:
                 logger.warning("BacktotheDate poster attempt failed: %s", exc)
                 errors.append(str(exc))
 
-        detail = "; ".join(errors[-3:])
-        raise RuntimeError(f"Could not fetch a Chinese poster image. {detail}")
+        latest = self._read_state()
+        for key in ("max_page", "max_page_checked_at"):
+            if key in latest:
+                document[key] = latest[key]
+        bank.save(document)
+        ready = bank.ready_records(document, profile, prune=True)
+        if not ready:
+            detail = "; ".join(errors[-3:])
+            raise RuntimeError(f"Could not hydrate a Chinese poster bank. {detail}")
 
-    def _generate_triptych_image(self, settings, dimensions, attempts):
+        current = bank.ensure_current(
+            document,
+            profile,
+            ready,
+            self._fit_mode(settings),
+        )
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            current,
+            dimensions,
+            settings,
+        )
+        logger.info(
+            "BacktotheDate bank ready: %s decoded posters; DATA kept current selection",
+            len(ready),
+        )
+        return image
+
+    def presentation_mode(self, settings):
+        return PresentationMode.PREPARED_BANK
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        dimensions = self._display_dimensions(device_config)
+        bank = self._presentation_bank(settings, dimensions)
+        document, profile = bank.load_warm()
+        bank.apply_trusted_origin(document, profile, request)
+        ready = bank.ready_records(document, profile, prune=False)
+
+        pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None:
+            discarded_page_keys, discarded_image_keys = bank.discarded_keys(document)
+            selection = bank.choose_selection(
+                profile,
+                ready,
+                self._fit_mode(settings),
+                discarded_page_keys,
+                discarded_image_keys,
+            )
+        else:
+            selection = pending
+
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            selection,
+            dimensions,
+            settings,
+        )
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError(
+                "BacktotheDate receipt reconciliation requires trusted instance identity"
+            )
+        document = self._read_state()
+        validate_state_shape(document)
+        changed = PosterPresentationBank.reconcile_document(
+            document,
+            receipt,
+            self._normalize_history_url,
+            instance_uuid,
+        )
+        if changed:
+            self._write_state(document)
+        return None
+
+    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
+        poster_images = bank.selection_media(profile, selection)
+        if len(poster_images) == TRIPTYCH_POSTER_COUNT:
+            return self._compose_triptych_display_image(
+                poster_images,
+                dimensions,
+                settings,
+            )
+        poster, image = poster_images[0]
+        return self._compose_single_display_image(
+            poster,
+            image,
+            dimensions,
+            settings,
+        )
+
+    def _presentation_bank(self, settings, dimensions):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError(
+                "BacktotheDate presentation bank requires trusted instance identity"
+            )
+        source_urls = self._source_theme_urls(settings)
+        fit_mode = self._fit_mode(settings)
+        profile_key = settings_key(settings, source_urls, fit_mode)
+        base_fingerprint = settings_fingerprint(
+            settings,
+            source_urls,
+            fit_mode,
+            dimensions,
+        )
+        fingerprint = instance_profile_fingerprint(base_fingerprint, instance_uuid)
+        return PosterPresentationBank(
+            self._state_path(),
+            self._legacy_state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base_fingerprint,
+            profile_settings_key=profile_key,
+            instance_uuid=instance_uuid,
+            normalize_history_url=self._normalize_history_url,
+        )
+
+    def _presentation_media_dir(self):
+        return self.cache_dir(leaf="presentation-media")
+
+    def _generate_stateless_preview(self, settings, dimensions, attempts):
+        preview_settings = dict(settings)
+        preview_settings["maxPage"] = self._safe_int(
+            preview_settings.get("maxPage"),
+            DEFAULT_MAX_PAGE,
+            minimum=0,
+            maximum=10000,
+        )
+        forced_poster = self._forced_poster_from_settings(preview_settings)
+        if forced_poster:
+            image = self._load_poster_image(forced_poster["image_url"], dimensions)
+            if image is None:
+                raise RuntimeError(
+                    f"Could not load forced Chinese poster image: {forced_poster['image_url']}"
+                )
+            return self._compose_single_display_image(
+                forced_poster,
+                self._normalize_image(image),
+                dimensions,
+                preview_settings,
+            )
+
+        errors = []
+        if self._fit_mode(preview_settings) in {
+            "triptych",
+            "three_vertical",
+            "three_posters",
+            "gallery",
+        }:
+            try:
+                return self._generate_triptych_image(
+                    preview_settings,
+                    dimensions,
+                    attempts,
+                    remember=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "BacktotheDate stateless triptych preview failed; falling back: %s",
+                    exc,
+                )
+                errors.append(str(exc))
+
+        for _ in range(attempts):
+            try:
+                poster = self._select_random_poster(preview_settings)
+                image = self._load_poster_image(poster["image_url"], dimensions)
+                if image is not None:
+                    return self._compose_display_image(
+                        poster,
+                        self._normalize_image(image),
+                        dimensions,
+                        preview_settings,
+                    )[0]
+                errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
+            except Exception as exc:
+                logger.warning("BacktotheDate stateless preview attempt failed: %s", exc)
+                errors.append(str(exc))
+        raise RuntimeError(
+            f"Could not fetch a Chinese poster preview. {'; '.join(errors[-3:])}"
+        )
+
+    def _generate_triptych_image(
+        self,
+        settings,
+        dimensions,
+        attempts,
+        *,
+        remember=True,
+    ):
         selected = []
         seen_urls = set()
         max_attempts = max(attempts * 3, TRIPTYCH_POSTER_COUNT * 3)
@@ -185,7 +438,8 @@ class BacktotheDate(BasePlugin):
             image = self._normalize_image(image)
 
             if not self._is_portrait(image):
-                self._remember_success([poster])
+                if remember:
+                    self._remember_success([poster])
                 logger.info(
                     "Selected landscape Chinese poster as single display: %s | %s",
                     poster.get("title") or poster["page_url"],
@@ -202,7 +456,8 @@ class BacktotheDate(BasePlugin):
             raise RuntimeError(f"Only found {len(poster_images)} portrait posters for triptych layout.")
 
         posters = [poster for poster, _image in poster_images]
-        self._remember_success(posters)
+        if remember:
+            self._remember_success(posters)
         logger.info(
             "Selected Chinese poster triptych: %s",
             " | ".join((poster.get("title") or poster["page_url"]) for poster in posters),
@@ -214,19 +469,11 @@ class BacktotheDate(BasePlugin):
         if not image_url:
             return None
 
-        image_url = urljoin(BASE_URL, image_url)
-        parsed_image = urlparse(image_url)
-        if parsed_image.netloc.lower() != urlparse(BASE_URL).netloc.lower():
-            raise RuntimeError("Forced Chinese poster preview URL must come from chineseposters.net.")
-        if not IMAGE_PATH_RE.search(parsed_image.path):
-            raise RuntimeError("Forced Chinese poster preview URL must be a Chinese Posters image asset.")
+        image_url = self._canonical_provider_url(image_url, kind="image")
 
         page_url = str(settings.get("posterPageUrl") or "").strip()
         if page_url:
-            page_url = urljoin(BASE_URL, page_url)
-            parsed_page = urlparse(page_url)
-            if parsed_page.netloc.lower() != urlparse(BASE_URL).netloc.lower() or not POSTER_PATH_RE.match(parsed_page.path):
-                page_url = image_url
+            page_url = self._canonical_provider_url(page_url, kind="page")
         else:
             page_url = image_url
 
@@ -235,6 +482,35 @@ class BacktotheDate(BasePlugin):
             "image_url": image_url,
             "title": _clean_text(settings.get("posterTitle") or "Chinese poster preview"),
         }
+
+    def _canonical_provider_url(self, value, *, kind):
+        raw = str(value or "").strip()
+        if not raw:
+            raise RuntimeError("BacktotheDate provider URL is missing")
+        parsed = urlparse(urljoin(BASE_URL, raw))
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("BacktotheDate provider URL authority is invalid") from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or (parsed.hostname or "").lower() != "chineseposters.net"
+            or parsed.username is not None
+            or parsed.password is not None
+            or port is not None
+        ):
+            raise RuntimeError("BacktotheDate provider URL authority is invalid")
+        if kind == "image":
+            valid_path = IMAGE_PATH_RE.fullmatch(parsed.path) is not None
+        elif kind == "page":
+            valid_path = POSTER_PATH_RE.match(parsed.path) is not None
+        else:
+            raise ValueError(f"Unknown BacktotheDate provider URL kind: {kind}")
+        if not valid_path:
+            raise RuntimeError("BacktotheDate provider URL path is invalid")
+        return urlunparse(
+            ("https", "chineseposters.net", parsed.path, "", parsed.query, "")
+        )
 
     def _display_dimensions(self, device_config):
         return self.get_dimensions(device_config)
@@ -425,11 +701,11 @@ class BacktotheDate(BasePlugin):
         by_url = {}
         for link in parser.links:
             href = link.get("href") or ""
-            parsed_path = urlparse(urljoin(BASE_URL, href)).path
-            if not POSTER_PATH_RE.match(parsed_path):
+            try:
+                url = self._canonical_provider_url(href, kind="page")
+            except RuntimeError:
                 continue
 
-            url = urljoin(BASE_URL, href)
             existing = by_url.get(url)
             title = link.get("title") or ""
             if not existing or (title and not existing.get("title")):
@@ -440,20 +716,18 @@ class BacktotheDate(BasePlugin):
     def _extract_poster_data(self, html_text, page_url):
         parser = _PosterDetailParser()
         parser.feed(html_text or "")
+        page_url = self._canonical_provider_url(page_url, kind="page")
 
         image_url = None
         image_alt = ""
         for image in parser.images:
             src = image.get("src") or ""
-            if IMAGE_PATH_RE.search(src):
-                image_url = urljoin(BASE_URL, src)
-                image_alt = image.get("alt") or ""
-                break
-
-        if not image_url:
-            match = IMAGE_PATH_RE.search(html_text or "")
-            if match:
-                image_url = urljoin(BASE_URL, match.group(0))
+            try:
+                image_url = self._canonical_provider_url(src, kind="image")
+            except RuntimeError:
+                continue
+            image_alt = image.get("alt") or ""
+            break
 
         title = parser.title or _clean_text(image_alt)
         return {
@@ -601,31 +875,48 @@ class BacktotheDate(BasePlugin):
         return response.text
 
     def _state_path(self):
+        return self.data_dir() / ".backtothedate_state.json"
+
+    def _legacy_state_path(self):
         return self.cache_dir() / ".backtothedate_state.json"
 
     def _read_state(self):
         path = self._state_path()
+        legacy_path = self._legacy_state_path()
         try:
-            if path.is_file():
-                return json.loads(path.read_text(encoding="utf-8"))
+            path.lstat()
+            durable_exists = True
+        except FileNotFoundError:
+            durable_exists = False
+        except OSError as exc:
+            raise RuntimeError(f"Could not safely inspect BacktotheDate state {path}") from exc
+        if not durable_exists and legacy_path != path:
+            try:
+                legacy_path.lstat()
+                path = legacy_path
+                durable_exists = True
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not safely inspect BacktotheDate state {legacy_path}"
+                ) from exc
+        if not durable_exists:
+            return {}
+        try:
+            return read_bounded_json_object(path)
+        except RuntimeError:
+            raise
         except Exception as exc:
-            logger.warning("Could not read BacktotheDate state %s: %s", path, exc)
-        return {}
+            raise RuntimeError(f"Could not safely read BacktotheDate state {path}") from exc
 
     def _write_state(self, state):
+        if not isinstance(state, dict):
+            raise TypeError("BacktotheDate state must be a dictionary")
+        validate_state_payload_size(state)
         path = self._state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(state, indent=2, sort_keys=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            path.write_text(text, encoding="utf-8")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+        atomic_write_json(path, state, mode=0o600)
 
     def _remember_success(self, posters):
         if isinstance(posters, dict):
@@ -674,7 +965,7 @@ class BacktotheDate(BasePlugin):
                 continue
             result.append(url)
             seen.add(normalized)
-        return result
+        return result[-MAX_HISTORY_URLS:]
 
     def _url_list(self, value):
         if isinstance(value, list):

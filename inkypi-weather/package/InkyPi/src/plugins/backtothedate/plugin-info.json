@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
     "theme": {"presentation": "media", "day": {"background": "#f3ead8", "accent": "#a0522d"}, "night": {"background": "#17100b", "accent": "#e29a66"}},
     "display_name": "BacktotheDate",
     "id": "backtothedate",
