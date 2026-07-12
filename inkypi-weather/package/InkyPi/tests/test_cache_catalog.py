@@ -3,7 +3,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
+import pytest
 
+from src.runtime import cache_catalog as cache_catalog_module
 from src.runtime.cache_catalog import (
     CacheCatalog,
     DisplayCacheCandidate,
@@ -162,3 +164,116 @@ def test_candidate_path_cannot_escape_refresh_cache_root(tmp_path):
         promoted_at=None,
     )
     assert catalog.validate(linked) is False
+
+
+def test_validation_rejects_symlink_swap_before_pillow_decode(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-cache"
+    inside = Path(
+        authoritative_cache_path(root, "instance-one", 2, 5, None)
+    )
+    outside = tmp_path / "outside.png"
+    _write_png(inside, "white")
+    outside.write_bytes(inside.read_bytes())
+    inside_stat = inside.stat()
+    os.utime(
+        outside,
+        ns=(inside_stat.st_atime_ns, inside_stat.st_mtime_ns),
+    )
+    candidate = DisplayCacheCandidate(
+        instance_uuid="instance-one",
+        structural_generation=2,
+        settings_revision=5,
+        theme_mode=None,
+        cache_path=str(inside),
+        promoted_at=None,
+    )
+    real_open = cache_catalog_module.Image.open
+    swapped = False
+
+    probe = inside.parent / "symlink-probe"
+    try:
+        probe.symlink_to(Path("..") / outside.name)
+    except OSError as exc:
+        pytest.skip(f"file symlinks are unavailable on this platform: {exc}")
+    else:
+        probe.unlink()
+
+    def swap_before_decode(target, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            inside.unlink()
+            inside.symlink_to(Path("..") / outside.name)
+            swapped = True
+            assert inside.is_symlink()
+        return real_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(cache_catalog_module.Image, "open", swap_before_decode)
+
+    assert CacheCatalog(root).validate(candidate) is False
+    assert swapped is True
+
+
+def test_validation_binds_decode_to_opened_file_descriptor(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-cache"
+    inside = Path(
+        authoritative_cache_path(root, "instance-one", 2, 5, None)
+    )
+    replacement = tmp_path / "replacement.png"
+    _write_png(inside, "white")
+    replacement.write_bytes(inside.read_bytes())
+    inside_stat = inside.stat()
+    os.utime(
+        replacement,
+        ns=(inside_stat.st_atime_ns, inside_stat.st_mtime_ns),
+    )
+    candidate = DisplayCacheCandidate(
+        instance_uuid="instance-one",
+        structural_generation=2,
+        settings_revision=5,
+        theme_mode=None,
+        cache_path=str(inside),
+        promoted_at=None,
+    )
+    real_image_open = cache_catalog_module.Image.open
+    real_os_open = cache_catalog_module.os.open
+    real_fstat = cache_catalog_module.os.fstat
+    open_calls = []
+    fstat_calls = []
+    swapped = False
+
+    def observed_os_open(*args, **kwargs):
+        open_calls.append((args, kwargs))
+        return real_os_open(*args, **kwargs)
+
+    def observed_fstat(fd):
+        fstat_calls.append(fd)
+        return real_fstat(fd)
+
+    def replace_before_decode(target, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            os.replace(replacement, inside)
+            swapped = True
+        return real_image_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(cache_catalog_module.os, "open", observed_os_open)
+    monkeypatch.setattr(cache_catalog_module.os, "fstat", observed_fstat)
+    monkeypatch.setattr(
+        cache_catalog_module.Image,
+        "open",
+        replace_before_decode,
+    )
+
+    result = CacheCatalog(root).validate(candidate)
+
+    assert result is False
+    assert open_calls
+    assert len(fstat_calls) >= 2
+    if os.name != "nt":
+        assert swapped is True

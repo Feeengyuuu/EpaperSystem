@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import stat as stat_module
 import threading
 
 from PIL import Image
@@ -37,6 +38,13 @@ class DisplayCacheCandidate:
     theme_mode: str | None
     cache_path: str
     promoted_at: str | None
+
+
+@dataclass(frozen=True)
+class _BoundCacheFile:
+    fd: int
+    file_stat: os.stat_result
+    root_stat: os.stat_result
 
 
 def _positive_int(value, field_name) -> int:
@@ -213,51 +221,201 @@ class CacheCatalog:
         ):
             return False
 
+        bound = self._open_bound_cache_file(path)
+        if bound is None:
+            return False
         try:
-            if path.is_symlink() or not path.is_file():
+            cache_key = (
+                str(path),
+                bound.file_stat.st_mtime_ns,
+                bound.file_stat.st_size,
+            )
+            with self._validation_lock:
+                cached = self._validation_cache.get(cache_key)
+            if cached is not None:
+                if not cached:
+                    return False
+                return self._descriptor_still_matches_path(path, bound)
+
+            valid = self._decode_bound_png(bound.fd)
+            if not self._descriptor_still_matches_path(path, bound):
                 return False
-            if path.resolve(strict=True).parent != self.cache_root.resolve(strict=False):
-                return False
-            stat = path.stat()
+
+            with self._validation_lock:
+                self._validation_cache = {
+                    key: value
+                    for key, value in self._validation_cache.items()
+                    if key[0] != str(path)
+                }
+                self._validation_cache[cache_key] = valid
+            return valid
+        finally:
+            os.close(bound.fd)
+
+    def _open_bound_cache_file(self, path: Path) -> _BoundCacheFile | None:
+        if os.name == "posix":
+            return self._open_bound_cache_file_posix(path)
+        return self._open_bound_cache_file_fallback(path)
+
+    def _open_bound_cache_file_posix(
+        self,
+        path: Path,
+    ) -> _BoundCacheFile | None:
+        root_fd = None
+        file_fd = None
+        root_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        file_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
+        try:
+            root_fd = os.open(os.fspath(self.cache_root), root_flags)
+            root_stat = os.fstat(root_fd)
+            if not stat_module.S_ISDIR(root_stat.st_mode):
+                return None
+            file_fd = os.open(path.name, file_flags, dir_fd=root_fd)
+            file_stat = os.fstat(file_fd)
+            path_stat = os.stat(
+                path.name,
+                dir_fd=root_fd,
+                follow_symlinks=False,
+            )
+            if (
+                not self._safe_regular_file_stat(file_stat)
+                or not self._safe_regular_file_stat(path_stat)
+                or not self._same_file_snapshot(file_stat, path_stat)
+            ):
+                return None
+            result_fd = file_fd
+            file_fd = None
+            return _BoundCacheFile(result_fd, file_stat, root_stat)
+        except (OSError, TypeError, NotImplementedError):
+            return None
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if root_fd is not None:
+                os.close(root_fd)
+
+    def _open_bound_cache_file_fallback(
+        self,
+        path: Path,
+    ) -> _BoundCacheFile | None:
+        file_fd = None
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOINHERIT", 0)
+        )
+        try:
+            root_before = os.lstat(self.cache_root)
+            path_before = os.lstat(path)
+            if (
+                not self._safe_directory_stat(root_before)
+                or not self._safe_regular_file_stat(path_before)
+            ):
+                return None
+            file_fd = os.open(os.fspath(path), flags)
+            file_stat = os.fstat(file_fd)
+            path_after = os.lstat(path)
+            root_after = os.lstat(self.cache_root)
+            if (
+                not self._safe_regular_file_stat(file_stat)
+                or not self._safe_regular_file_stat(path_after)
+                or not self._safe_directory_stat(root_after)
+                or not self._same_identity(root_before, root_after)
+                or not self._same_file_snapshot(path_before, file_stat)
+                or not self._same_file_snapshot(file_stat, path_after)
+            ):
+                return None
+            result_fd = file_fd
+            file_fd = None
+            return _BoundCacheFile(result_fd, file_stat, root_before)
+        except (OSError, TypeError, NotImplementedError):
+            return None
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+
+    def _descriptor_still_matches_path(
+        self,
+        path: Path,
+        bound: _BoundCacheFile,
+    ) -> bool:
+        try:
+            final_file_stat = os.fstat(bound.fd)
+            final_path_stat = os.lstat(path)
+            final_root_stat = os.lstat(self.cache_root)
         except OSError:
             return False
+        return (
+            self._safe_regular_file_stat(final_file_stat)
+            and self._safe_regular_file_stat(final_path_stat)
+            and self._safe_directory_stat(final_root_stat)
+            and self._same_file_snapshot(bound.file_stat, final_file_stat)
+            and self._same_file_snapshot(final_file_stat, final_path_stat)
+            and self._same_identity(bound.root_stat, final_root_stat)
+        )
 
-        cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-        with self._validation_lock:
-            cached = self._validation_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        valid = False
+    @staticmethod
+    def _decode_bound_png(fd: int) -> bool:
+        duplicate_fd = None
         try:
-            with Image.open(path) as source:
-                copied = source.copy()
-            try:
-                copied.load()
-                valid = True
-            finally:
-                copied.close()
+            duplicate_fd = os.dup(fd)
+            stream = os.fdopen(duplicate_fd, "rb")
+            duplicate_fd = None
+            with stream:
+                with Image.open(stream) as source:
+                    copied = source.copy()
+                try:
+                    copied.load()
+                    return True
+                finally:
+                    copied.close()
         except Exception:
-            valid = False
-
-        try:
-            final_stat = path.stat()
-        except OSError:
             return False
-        if (final_stat.st_mtime_ns, final_stat.st_size) != (
-            stat.st_mtime_ns,
-            stat.st_size,
-        ):
-            return False
+        finally:
+            if duplicate_fd is not None:
+                os.close(duplicate_fd)
 
-        with self._validation_lock:
-            self._validation_cache = {
-                key: value
-                for key, value in self._validation_cache.items()
-                if key[0] != str(path)
-            }
-            self._validation_cache[cache_key] = valid
-        return valid
+    @classmethod
+    def _safe_regular_file_stat(cls, value) -> bool:
+        return stat_module.S_ISREG(value.st_mode) and not cls._is_link_like(value)
+
+    @classmethod
+    def _safe_directory_stat(cls, value) -> bool:
+        return stat_module.S_ISDIR(value.st_mode) and not cls._is_link_like(value)
+
+    @staticmethod
+    def _is_link_like(value) -> bool:
+        reparse_flag = getattr(
+            stat_module,
+            "FILE_ATTRIBUTE_REPARSE_POINT",
+            0,
+        )
+        attributes = getattr(value, "st_file_attributes", 0)
+        return stat_module.S_ISLNK(value.st_mode) or bool(
+            reparse_flag and attributes & reparse_flag
+        )
+
+    @staticmethod
+    def _same_identity(left, right) -> bool:
+        return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+    @classmethod
+    def _same_file_snapshot(cls, left, right) -> bool:
+        return (
+            cls._same_identity(left, right)
+            and left.st_size == right.st_size
+            and left.st_mtime_ns == right.st_mtime_ns
+        )
 
     def invalidate(self, candidate: DisplayCacheCandidate) -> None:
         try:
