@@ -602,17 +602,19 @@ class RefreshTask:
         try:
             self.scheduler_state.record_attempt()
             self._attempt_count += 1
-            if self._memory_watchdog_should_restart():
-                self.scheduler_state.set_next_attempt(now + 30.0)
-                return None
+            restart_requested = self._memory_watchdog_should_restart()
             current_dt = self._get_current_datetime()
             command = self._select_cached_display_command(current_dt)
             if command is not None:
                 self.refresh_queue.submit(command)
-            refresh_command = self._select_independent_refresh_command(current_dt)
-            if refresh_command is not None:
-                self.refresh_queue.submit(refresh_command)
-            self.scheduler_state.set_next_attempt(now + self._scheduler_poll_seconds())
+            if restart_requested:
+                self._resource_tier = ResourceTier.HARD
+            else:
+                refresh_command = self._select_independent_refresh_command(current_dt)
+                if refresh_command is not None:
+                    self.refresh_queue.submit(refresh_command)
+            next_delay = 30.0 if restart_requested else self._scheduler_poll_seconds()
+            self.scheduler_state.set_next_attempt(now + next_delay)
             return command
         except Exception as error:
             self.scheduler_state.record_failure(error)
@@ -1701,16 +1703,10 @@ class RefreshTask:
             ),
             promoted_at=None,
         )
-        if not self.cache_catalog.validate(candidate):
-            raise _CacheUnavailable("display cache is unavailable")
-        try:
-            image = _load_image_copy(candidate.cache_path)
-        except Exception as error:
+        image = self.cache_catalog.load_image(candidate)
+        if image is None:
             self.cache_catalog.invalidate(candidate)
-            raise _CacheUnavailable("display cache is unavailable") from error
-        if not self.cache_catalog.validate(candidate):
-            image.close()
-            raise _CacheUnavailable("display cache changed while loading")
+            raise _CacheUnavailable("display cache is unavailable")
         return image
 
     def _render_playlist_command(self, command, resolved, context):
@@ -2261,6 +2257,7 @@ class RefreshTask:
             resolved_theme_context=command.payload.get("resolved_theme_context"),
             cache_theme_mode=theme_mode,
             expected_displayed_instance_uuid=instance.instance_uuid,
+            coalescing_scope=f"live-followup:{command.id}",
         )
         return self.refresh_queue.submit(followup)
 
@@ -2290,6 +2287,7 @@ class RefreshTask:
             cache_theme_mode=theme_mode,
             expected_displayed_instance_uuid=instance.instance_uuid,
             preserve_rotation_anchor=True,
+            coalescing_scope=f"theme-followup:{command.id}",
         )
         return self.refresh_queue.submit(followup)
 
@@ -2539,6 +2537,7 @@ class RefreshTask:
         cache_theme_mode=None,
         expected_displayed_instance_uuid=None,
         preserve_rotation_anchor=False,
+        coalescing_scope=None,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -2588,6 +2587,7 @@ class RefreshTask:
             force=force,
             priority=priority,
             intent=intent,
+            coalescing_scope=coalescing_scope,
         )
 
     def _rejected_manual_job(self, refresh_action, error):

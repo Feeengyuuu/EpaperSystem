@@ -147,6 +147,7 @@ class RefreshCommand:
     idempotency_key: str | None
     payload: Mapping[str, Any] = field(compare=False, repr=False)
     intent: RefreshIntent | None = None
+    coalescing_scope: str | None = None
 
     @classmethod
     def create(
@@ -165,6 +166,7 @@ class RefreshCommand:
         priority=0,
         idempotency_key=None,
         intent=None,
+        coalescing_scope=None,
     ):
         return cls(
             id=uuid4().hex,
@@ -181,6 +183,9 @@ class RefreshCommand:
             idempotency_key=idempotency_key,
             payload=freeze_payload({} if payload is None else payload),
             intent=None if intent is None else RefreshIntent(intent),
+            coalescing_scope=(
+                None if coalescing_scope is None else str(coalescing_scope)
+            ),
         )
 
 

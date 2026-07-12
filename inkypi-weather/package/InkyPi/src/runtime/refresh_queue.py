@@ -513,6 +513,7 @@ class RefreshQueue:
             and left.priority == right.priority
             and left.payload == right.payload
             and left.intent == right.intent
+            and left.coalescing_scope == right.coalescing_scope
         )
 
     @classmethod
@@ -715,6 +716,7 @@ class RefreshQueue:
             and existing.plugin_id == incoming.plugin_id
             and existing.structural_generation == incoming.structural_generation
             and existing.intent == incoming.intent
+            and existing.coalescing_scope == incoming.coalescing_scope
         )
 
     def _merged_command(

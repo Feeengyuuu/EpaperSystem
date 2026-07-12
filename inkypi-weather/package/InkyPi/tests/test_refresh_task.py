@@ -5591,6 +5591,55 @@ def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch)
     assert len(task.display_manager.calls) == 1
 
 
+def test_catalog_display_never_reopens_path_after_bound_validation(monkeypatch):
+    tmp_path = make_test_dir("cache-only-bound-descriptor")
+    playlist = _runtime_playlist(_runtime_plugin_data("one", "One"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    cache_path = _write_runtime_cache(
+        task,
+        playlist.plugins[0],
+        Image.new("RGB", (2, 1), "red"),
+    )
+    replacement = tmp_path / "replacement.png"
+    Image.new("RGB", (2, 1), "blue").save(replacement)
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+    original_bytes = cache_path.read_bytes()
+    replacement_bytes = replacement.read_bytes()
+    real_path_loader = refresh_task_module._load_image_copy
+    reopen_count = 0
+
+    def swap_for_reopen_then_restore(path):
+        nonlocal reopen_count
+        reopen_count += 1
+        Path(path).write_bytes(replacement_bytes)
+        try:
+            return real_path_loader(path)
+        finally:
+            Path(path).write_bytes(original_bytes)
+
+    monkeypatch.setattr(
+        refresh_task_module,
+        "_load_image_copy",
+        swap_for_reopen_then_restore,
+    )
+
+    image = task._load_catalog_display_image(command, resolved=None)
+
+    try:
+        assert image.getpixel((0, 0)) == (255, 0, 0)
+        assert reopen_count == 0
+    finally:
+        image.close()
+
+
 def test_random_selection_passes_only_catalog_eligible_uuids_to_model():
     tmp_path = make_test_dir("cache-only-random-eligibility")
     playlist = _runtime_playlist(
@@ -5927,6 +5976,49 @@ def test_hard_pressure_still_rotates_valid_caches_without_generation(monkeypatch
     assert len(task.display_manager.calls) == 1
 
 
+def test_watchdog_restart_still_displays_valid_cache_and_blocks_generation(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("watchdog-hard-cache-display")
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None)
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=2)
+    ).isoformat()
+    _write_runtime_cache(task, playlist.plugins[0])
+
+    def request_restart():
+        task._restart_request = {"reason": "memory_pressure"}
+        return True
+
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", request_restart)
+    monkeypatch.setattr(
+        task,
+        "_select_independent_refresh_command",
+        lambda _now: pytest.fail("hard-tier watchdog admitted renderer generation"),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: pytest.fail("hard-tier cache display instantiated a plugin"),
+    )
+
+    processed = task._run_one_iteration_for_test()
+
+    assert processed is not None
+    assert processed.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert task.restart_request["reason"] == "memory_pressure"
+    assert len(task.display_manager.calls) == 1
+
+
 def test_data_failure_a_does_not_delay_due_instance_b_or_global_poll(monkeypatch):
     tmp_path = make_test_dir("independent-failure-isolation")
     clock = RuntimeClock()
@@ -6249,6 +6341,62 @@ def test_sports_live_success_queues_cache_only_followup_without_moving_anchor(
     assert device_config.refresh_info.refresh_time == anchor
 
 
+def test_live_exact_followup_does_not_merge_with_pending_manual_display(
+    monkeypatch,
+):
+    task, _device_config, playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-live-exact-followup-scope",
+            background_value=True,
+        )
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    live = task._select_independent_refresh_command(current_dt)
+    task.refresh_queue.submit(live)
+    running_live = task.refresh_queue.take(timeout=0)
+    manual = task._playlist_command(
+        playlist.name,
+        instance.snapshot(),
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        display_cached_only=True,
+        priority=100,
+        current_dt=current_dt,
+        cache_theme_mode=None,
+        require_active=False,
+    )
+    task.refresh_queue.submit(manual)
+
+    task._process_queue_entry(running_live)
+    entries = [
+        task.refresh_queue.take(timeout=0),
+        task.refresh_queue.take(timeout=0),
+    ]
+    assert all(entry is not None for entry in entries)
+    pending = [entry.command for entry in entries]
+    exact = next(command for command in pending if command.source is CommandSource.LIVE)
+    retained_manual = next(
+        command for command in pending if command.source is CommandSource.MANUAL
+    )
+
+    assert retained_manual.payload["require_active"] is False
+    assert exact.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
+    assert exact.coalescing_scope is not None
+    assert exact.coalescing_scope != retained_manual.coalescing_scope
+
+
 def test_sports_live_success_does_not_advance_normal_data_cadence(monkeypatch):
     task, _device_config, _playlist, instance, current_dt, _anchor = (
         _sports_live_runtime(
@@ -6368,6 +6516,62 @@ def test_theme_redraw_sets_theme_render_only_and_preserves_data_live_clocks(
     assert after.last_good_cache.theme_mode == "night"
     followup = task.refresh_queue.take(timeout=0)
     assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+
+
+def test_theme_exact_followup_does_not_merge_with_pending_manual_display(
+    monkeypatch,
+):
+    task, _device_config, playlist, configs = _theme_transition_runtime(
+        "independent-theme-exact-followup-scope"
+    )
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    theme = task._select_independent_refresh_command(current_dt)
+    task.refresh_queue.submit(theme)
+    running_theme = task.refresh_queue.take(timeout=0)
+    manual = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        display_cached_only=True,
+        priority=100,
+        current_dt=current_dt,
+        cache_theme_mode="day",
+        require_active=False,
+    )
+    task.refresh_queue.submit(manual)
+
+    task._process_queue_entry(running_theme)
+    entries = [
+        task.refresh_queue.take(timeout=0),
+        task.refresh_queue.take(timeout=0),
+    ]
+    assert all(entry is not None for entry in entries)
+    pending = [entry.command for entry in entries]
+    exact = next(
+        command for command in pending if command.source is CommandSource.SCHEDULER
+    )
+    retained_manual = next(
+        command for command in pending if command.source is CommandSource.MANUAL
+    )
+
+    assert retained_manual.payload["require_active"] is False
+    assert retained_manual.payload["cache_theme_mode"] == "day"
+    assert exact.payload["cache_theme_mode"] == "night"
+    assert exact.payload["resolved_theme_context"]["mode"] == "night"
+    assert exact.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
+    assert exact.payload["preserve_rotation_anchor"] is True
+    assert exact.coalescing_scope is not None
+    assert exact.coalescing_scope != retained_manual.coalescing_scope
 
 
 def test_theme_redraw_preserves_rotation_anchor_and_exact_displayed_no_fallback(

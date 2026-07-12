@@ -190,35 +190,8 @@ class CacheCatalog:
         return None
 
     def validate(self, candidate: DisplayCacheCandidate) -> bool:
-        if not isinstance(candidate, DisplayCacheCandidate):
-            return False
-        try:
-            expected = authoritative_cache_path(
-                self.cache_root,
-                candidate.instance_uuid,
-                candidate.structural_generation,
-                candidate.settings_revision,
-                candidate.theme_mode,
-            )
-        except (TypeError, ValueError):
-            return False
-
-        path = Path(os.path.abspath(os.fspath(candidate.cache_path)))
-        expected_path = Path(os.path.abspath(expected))
-        if os.path.normcase(str(path)) != os.path.normcase(str(expected_path)):
-            return False
-        identity = parse_authoritative_cache_path(self.cache_root, path)
-        if identity is None:
-            return False
-        expected_prefix = hashlib.sha256(
-            candidate.instance_uuid.encode("utf-8")
-        ).hexdigest()[:32]
-        if identity != CachePathIdentity(
-            uuid_hash_prefix=expected_prefix,
-            structural_generation=candidate.structural_generation,
-            settings_revision=candidate.settings_revision,
-            theme_mode=candidate.theme_mode,
-        ):
+        path = self._candidate_path(candidate)
+        if path is None:
             return False
 
         bound = self._open_bound_cache_file(path)
@@ -241,16 +214,78 @@ class CacheCatalog:
             if not self._descriptor_still_matches_path(path, bound):
                 return False
 
-            with self._validation_lock:
-                self._validation_cache = {
-                    key: value
-                    for key, value in self._validation_cache.items()
-                    if key[0] != str(path)
-                }
-                self._validation_cache[cache_key] = valid
+            self._record_validation(path, cache_key, valid)
             return valid
         finally:
             os.close(bound.fd)
+
+    def load_image(self, candidate: DisplayCacheCandidate):
+        """Decode and return a copy from the same validated, bound file descriptor."""
+        path = self._candidate_path(candidate)
+        if path is None:
+            return None
+        bound = self._open_bound_cache_file(path)
+        if bound is None:
+            return None
+        image = None
+        try:
+            image = self._copy_bound_png(bound.fd)
+            if image is None:
+                return None
+            if not self._descriptor_still_matches_path(path, bound):
+                image.close()
+                return None
+            cache_key = (
+                str(path),
+                bound.file_stat.st_mtime_ns,
+                bound.file_stat.st_size,
+            )
+            self._record_validation(path, cache_key, True)
+            return image
+        finally:
+            os.close(bound.fd)
+
+    def _candidate_path(self, candidate: DisplayCacheCandidate) -> Path | None:
+        if not isinstance(candidate, DisplayCacheCandidate):
+            return None
+        try:
+            expected = authoritative_cache_path(
+                self.cache_root,
+                candidate.instance_uuid,
+                candidate.structural_generation,
+                candidate.settings_revision,
+                candidate.theme_mode,
+            )
+        except (TypeError, ValueError):
+            return None
+
+        path = Path(os.path.abspath(os.fspath(candidate.cache_path)))
+        expected_path = Path(os.path.abspath(expected))
+        if os.path.normcase(str(path)) != os.path.normcase(str(expected_path)):
+            return None
+        identity = parse_authoritative_cache_path(self.cache_root, path)
+        if identity is None:
+            return None
+        expected_prefix = hashlib.sha256(
+            candidate.instance_uuid.encode("utf-8")
+        ).hexdigest()[:32]
+        if identity != CachePathIdentity(
+            uuid_hash_prefix=expected_prefix,
+            structural_generation=candidate.structural_generation,
+            settings_revision=candidate.settings_revision,
+            theme_mode=candidate.theme_mode,
+        ):
+            return None
+        return path
+
+    def _record_validation(self, path: Path, cache_key, valid: bool) -> None:
+        with self._validation_lock:
+            self._validation_cache = {
+                key: value
+                for key, value in self._validation_cache.items()
+                if key[0] != str(path)
+            }
+            self._validation_cache[cache_key] = bool(valid)
 
     def _open_bound_cache_file(self, path: Path) -> _BoundCacheFile | None:
         if os.name == "posix":
@@ -366,7 +401,16 @@ class CacheCatalog:
 
     @staticmethod
     def _decode_bound_png(fd: int) -> bool:
+        copied = CacheCatalog._copy_bound_png(fd)
+        if copied is None:
+            return False
+        copied.close()
+        return True
+
+    @staticmethod
+    def _copy_bound_png(fd: int):
         duplicate_fd = None
+        copied = None
         try:
             duplicate_fd = os.dup(fd)
             stream = os.fdopen(duplicate_fd, "rb")
@@ -374,13 +418,12 @@ class CacheCatalog:
             with stream:
                 with Image.open(stream) as source:
                     copied = source.copy()
-                try:
-                    copied.load()
-                    return True
-                finally:
-                    copied.close()
+                copied.load()
+                return copied
         except Exception:
-            return False
+            if copied is not None:
+                copied.close()
+            return None
         finally:
             if duplicate_fd is not None:
                 os.close(duplicate_fd)

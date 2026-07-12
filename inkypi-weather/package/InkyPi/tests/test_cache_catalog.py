@@ -277,3 +277,27 @@ def test_validation_binds_decode_to_opened_file_descriptor(
     assert len(fstat_calls) >= 2
     if os.name != "nt":
         assert swapped is True
+
+
+def test_load_image_returns_a_copy_from_the_validated_bound_descriptor(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    path = authoritative_cache_path(root, "instance-one", 2, 5, None)
+    _write_png(path, "red")
+    candidate = DisplayCacheCandidate(
+        instance_uuid="instance-one",
+        structural_generation=2,
+        settings_revision=5,
+        theme_mode=None,
+        cache_path=path,
+        promoted_at=None,
+    )
+
+    loader = getattr(CacheCatalog(root), "load_image", None)
+
+    assert callable(loader)
+    image = loader(candidate)
+    assert image is not None
+    try:
+        assert image.getpixel((0, 0)) == (255, 0, 0)
+    finally:
+        image.close()
