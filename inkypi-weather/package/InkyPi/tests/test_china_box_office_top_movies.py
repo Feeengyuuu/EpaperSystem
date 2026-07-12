@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from pathlib import Path
 
@@ -31,6 +32,30 @@ class EnvDeviceConfig(DummyDeviceConfig):
         return self.values.get(key)
 
 
+def canonical_theme(mode):
+    palette = {
+        "background": (255, 240, 223) if mode == "day" else (18, 13, 11),
+        "panel": (255, 255, 255) if mode == "day" else (0, 0, 0),
+        "ink": (10, 12, 15) if mode == "day" else (255, 255, 255),
+        "muted": (74, 78, 84) if mode == "day" else (194, 196, 202),
+        "rule": (185, 188, 194) if mode == "day" else (46, 48, 56),
+        "accent": (182, 59, 34) if mode == "day" else (255, 121, 91),
+    }
+    return {
+        "mode": mode,
+        "requested_mode": "auto",
+        "palette": palette,
+        "css": {
+            role: "#{:02x}{:02x}{:02x}".format(*color)
+            for role, color in palette.items()
+        },
+    }
+
+
+def image_digest(image):
+    return hashlib.sha256(image.tobytes()).hexdigest()
+
+
 def test_north_america_cache_invalidates_when_tmdb_credentials_appear(
     monkeypatch,
     tmp_path,
@@ -60,6 +85,76 @@ def test_north_america_cache_invalidates_when_tmdb_credentials_appear(
     )
 
     assert len(load_calls) == 2
+
+
+def test_china_box_office_uses_injected_canonical_palette_and_source_only_cache_key():
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    day_theme = canonical_theme("day")
+    settings = {"themeMode": "cinema", "_inkypi_theme": day_theme}
+
+    palette = plugin._palette(settings)
+
+    assert palette == {
+        "mode": "paper",
+        "paper": day_theme["palette"]["background"],
+        "ink": day_theme["palette"]["ink"],
+        "muted": day_theme["palette"]["muted"],
+        "accent": day_theme["palette"]["accent"],
+        "localized": day_theme["palette"]["accent"],
+        "line": day_theme["palette"]["rule"],
+        "outline": day_theme["palette"]["ink"],
+        "shadow": day_theme["palette"]["panel"],
+    }
+    assert plugin._palette({**settings, "themeMode": "paper"}) == palette
+    assert plugin._cache_key(settings, (800, 480), 5) == plugin._cache_key(
+        {
+            **settings,
+            "themeMode": "paper",
+            "_inkypi_theme": canonical_theme("night"),
+        },
+        (480, 800),
+        5,
+    )
+
+
+def test_china_box_office_theme_only_opposite_palette_reuses_warm_source_cache(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_CHINA_BOX_OFFICE_CACHE", str(tmp_path))
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    calls = {"load": 0, "enrich": 0, "posters": 0}
+
+    def fake_load_movies(_settings, _items_count):
+        calls["load"] += 1
+        return [BoxOfficeMovie(rank=1, title="Theme Test Movie")], "The Numbers"
+
+    def fake_enrich(*_args, **_kwargs):
+        calls["enrich"] += 1
+
+    def fake_download(*_args, **_kwargs):
+        calls["posters"] += 1
+
+    monkeypatch.setattr(plugin, "_load_movies", fake_load_movies)
+    monkeypatch.setattr(plugin, "_enrich_with_tmdb", fake_enrich)
+    monkeypatch.setattr(plugin, "_download_posters", fake_download)
+    monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args: None)
+
+    day = plugin.generate_image(
+        {"themeMode": "cinema", "_inkypi_theme": canonical_theme("day")},
+        DummyDeviceConfig(),
+    )
+    night = plugin.generate_image(
+        {
+            "themeMode": "paper",
+            "_inkypi_theme": canonical_theme("night"),
+            "_theme_render_only": True,
+        },
+        DummyDeviceConfig(),
+    )
+
+    assert calls == {"load": 1, "enrich": 1, "posters": 1}
+    assert image_digest(day) != image_digest(night)
 
 
 def test_parse_report_links():

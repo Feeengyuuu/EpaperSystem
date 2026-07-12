@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from pathlib import Path
 
@@ -18,6 +19,30 @@ class DummyDeviceConfig:
 
     def load_env_key(self, _key):
         return None
+
+
+def canonical_theme(mode):
+    palette = {
+        "background": (244, 238, 246) if mode == "day" else (20, 13, 25),
+        "panel": (255, 255, 255) if mode == "day" else (0, 0, 0),
+        "ink": (10, 12, 15) if mode == "day" else (255, 255, 255),
+        "muted": (74, 78, 84) if mode == "day" else (194, 196, 202),
+        "rule": (185, 188, 194) if mode == "day" else (46, 48, 56),
+        "accent": (125, 74, 161) if mode == "day" else (190, 134, 223),
+    }
+    return {
+        "mode": mode,
+        "requested_mode": "auto",
+        "palette": palette,
+        "css": {
+            role: "#{:02x}{:02x}{:02x}".format(*color)
+            for role, color in palette.items()
+        },
+    }
+
+
+def image_digest(image):
+    return hashlib.sha256(image.tobytes()).hexdigest()
 
 
 def test_shows_from_tmdb_results_uses_localized_title():
@@ -55,6 +80,72 @@ def test_base_discover_params_defaults_to_us_english():
     assert params["with_origin_country"] == "US"
     assert params["with_original_language"] == "en"
     assert params["language"] == "zh-CN"
+
+
+def test_us_tv_uses_injected_canonical_palette_and_source_only_cache_key():
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    day_theme = canonical_theme("day")
+    settings = {"themeMode": "streaming", "_inkypi_theme": day_theme}
+
+    palette = plugin._palette(settings)
+
+    assert palette == {
+        "mode": "paper",
+        "paper": day_theme["palette"]["background"],
+        "ink": day_theme["palette"]["ink"],
+        "muted": day_theme["palette"]["muted"],
+        "accent": day_theme["palette"]["accent"],
+        "localized": day_theme["palette"]["accent"],
+        "line": day_theme["palette"]["rule"],
+        "outline": day_theme["palette"]["ink"],
+        "shadow": day_theme["palette"]["panel"],
+    }
+    assert plugin._palette({**settings, "themeMode": "paper"}) == palette
+    assert plugin._cache_key(settings, (800, 480), 5) == plugin._cache_key(
+        {
+            **settings,
+            "themeMode": "paper",
+            "_inkypi_theme": canonical_theme("night"),
+        },
+        (480, 800),
+        5,
+    )
+
+
+def test_us_tv_theme_only_opposite_palette_reuses_warm_source_cache(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_US_TV_HOT_SHOWS_CACHE", str(tmp_path))
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    calls = {"load": 0, "posters": 0}
+
+    def fake_load_shows(_settings, _items_count):
+        calls["load"] += 1
+        return [BoxOfficeMovie(rank=1, title="Theme Test Show")], "TMDb US TV On Air"
+
+    def fake_download(*_args, **_kwargs):
+        calls["posters"] += 1
+
+    monkeypatch.setattr(plugin, "_load_shows", fake_load_shows)
+    monkeypatch.setattr(plugin, "_download_posters", fake_download)
+    monkeypatch.setattr(plugin, "_write_us_tv_context", lambda *_args: None)
+
+    day = plugin.generate_image(
+        {"themeMode": "streaming", "_inkypi_theme": canonical_theme("day")},
+        DummyDeviceConfig(),
+    )
+    night = plugin.generate_image(
+        {
+            "themeMode": "paper",
+            "_inkypi_theme": canonical_theme("night"),
+            "_theme_render_only": True,
+        },
+        DummyDeviceConfig(),
+    )
+
+    assert calls == {"load": 1, "posters": 1}
+    assert image_digest(day) != image_digest(night)
 
 
 def test_render_chart_smoke(monkeypatch):

@@ -125,7 +125,10 @@ class DailyWikiPage(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
-        settings = settings or {}
+        settings = dict(settings or {})
+        settings["_inkypi_theme"] = settings.get(
+            "_inkypi_theme"
+        ) or self.resolve_theme(settings, device_config)
         now = self._now_for_device(device_config)
         payload = self._daily_payload(settings, now)
         self._write_context(payload, now)
@@ -147,12 +150,22 @@ class DailyWikiPage(BasePlugin):
         cache_key = self._cache_key(date_key, settings, language, fallback_language)
         cache = self._read_cache()
         force_refresh = self._enabled(settings.get("forceRefresh") or settings.get("force_refresh"), default=False)
-        if cache.get("schema") == CACHE_SCHEMA_VERSION and cache.get("cache_key") == cache_key and not force_refresh:
-            cached = cache.get("payload")
-            if isinstance(cached, dict):
-                payload = dict(cached)
-                payload["source_state"] = "cache"
-                return payload
+        cached = cache.get("payload")
+        source_cache_ready = (
+            cache.get("schema") == CACHE_SCHEMA_VERSION
+            and cache.get("cache_key") == cache_key
+            and isinstance(cached, dict)
+        )
+        if source_cache_ready and (
+            bool(settings.get("_theme_render_only")) or not force_refresh
+        ):
+            payload = dict(cached)
+            payload["source_state"] = "cache"
+            return payload
+        if settings.get("_theme_render_only"):
+            raise RuntimeError(
+                "Daily Wiki theme-only render requires matching cached source data."
+            )
 
         try:
             payload = self._fetch_live_payload(now, language, fallback_language, settings)
@@ -1326,12 +1339,20 @@ class DailyWikiPage(BasePlugin):
         return " / ".join(str(part).upper() for part in parts if part)
 
     def _palette(self, settings):
-        if str(settings.get("theme") or "paper").strip().lower() == "dark":
-            return {"background": (18, 20, 22), "panel": (27, 29, 32), "ink": (239, 238, 230), "dim": (185, 187, 181), "muted": (125, 130, 132), "accent": (232, 196, 113), "rule": (66, 69, 72)}
-        return {"background": (232, 226, 214), "panel": (222, 215, 200), "ink": (18, 20, 19), "dim": (58, 60, 56), "muted": (74, 70, 62), "accent": (102, 56, 24), "rule": (124, 111, 92)}
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        palette = theme["palette"]
+        return {
+            "background": tuple(palette["background"]),
+            "panel": tuple(palette["panel"]),
+            "ink": tuple(palette["ink"]),
+            "dim": tuple(palette["muted"]),
+            "muted": tuple(palette["muted"]),
+            "accent": tuple(palette["accent"]),
+            "rule": tuple(palette["rule"]),
+        }
 
     def _cache_key(self, date_key, settings, language, fallback_language):
-        parts = [CACHE_SCHEMA_VERSION, date_key, language, fallback_language or "", str(self._enabled(settings.get("showImage"), True)), str(self._enabled(settings.get("showOnThisDay"), True)), str(settings.get("theme") or "paper")]
+        parts = [CACHE_SCHEMA_VERSION, date_key, language, fallback_language or "", str(self._enabled(settings.get("showImage"), True)), str(self._enabled(settings.get("showOnThisDay"), True))]
         return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
     def _cache_dir(self):

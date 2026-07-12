@@ -117,11 +117,15 @@ class TechPulse(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
+        settings = dict(settings or {})
+        settings["_inkypi_theme"] = settings.get(
+            "_inkypi_theme"
+        ) or self.resolve_theme(settings, device_config)
         dimensions = self.get_dimensions(device_config)
         now = self._now_for_device(device_config)
-        payload = self._payload(settings or {}, now)
+        payload = self._payload(settings, now)
         self._write_context(payload, now)
-        return self._render_page(dimensions, payload, settings or {}, now)
+        return self._render_page(dimensions, payload, settings, now)
 
     def _payload(self, settings, now):
         feed = self._feed(settings)
@@ -132,6 +136,16 @@ class TechPulse(BasePlugin):
         cache_file = self._cache_dir() / "state.json"
         cache = self._read_json(cache_file, {})
         force_refresh = self._enabled(settings.get("forceRefresh"), default=False)
+
+        if settings.get("_theme_render_only"):
+            if self._valid_cache(cache, cache_key):
+                cached = dict(cache)
+                cached["status"] = dict(cached.get("status") or {})
+                cached["status"]["source_state"] = "cache"
+                return cached
+            raise RuntimeError(
+                "Tech Pulse theme-only render requires matching cached source data."
+            )
 
         if not force_refresh and self._is_fresh_cache(cache, cache_key, now, refresh_minutes):
             cached = dict(cache)
@@ -360,7 +374,15 @@ class TechPulse(BasePlugin):
         preview_top = y0 + int(118 * scale)
         preview_bottom = meta_y - int(8 * scale)
         if preview_bottom > preview_top + int(42 * scale):
-            self._draw_hn_story_preview(image, draw, (x0 + pad, preview_top, x1 - pad, preview_bottom), preview_story or story, palette, scale)
+            self._draw_hn_story_preview(
+                image,
+                draw,
+                (x0 + pad, preview_top, x1 - pad, preview_bottom),
+                preview_story or story,
+                palette,
+                scale,
+                not bool(settings.get("_theme_render_only")),
+            )
 
         meta_line = []
         if self._enabled(settings.get("showDomain"), default=True):
@@ -452,11 +474,24 @@ class TechPulse(BasePlugin):
         self._draw_text(draw, (label_x, y0 + int(3 * scale)), label_text, label_font, palette["muted"])
         self._draw_text(draw, (value_x, y0 + int(17 * scale)), value_text, metric_font, palette["ink"])
 
-    def _draw_hn_story_preview(self, image, draw, box, story, palette, scale):
+    def _draw_hn_story_preview(
+        self,
+        image,
+        draw,
+        box,
+        story,
+        palette,
+        scale,
+        allow_fetch=True,
+    ):
         x0, y0, x1, y1 = [int(value) for value in box]
         width = max(1, x1 - x0)
         height = max(1, y1 - y0)
-        preview = self._story_preview_image(story)
+        preview = (
+            self._story_preview_image(story)
+            if allow_fetch
+            else self._story_preview_image(story, allow_fetch=False)
+        )
         if preview is None:
             preview = self._fallback_story_preview((width, height), palette, scale, story)
         try:
@@ -470,12 +505,14 @@ class TechPulse(BasePlugin):
         except Exception as exc:
             logger.debug("Could not draw story preview: %s", exc)
 
-    def _story_preview_image(self, story=None):
+    def _story_preview_image(self, story=None, allow_fetch=True):
         for preview_url in self._story_preview_candidate_urls(story):
             cache_path = self._story_preview_cache_path(preview_url)
             cached = self._load_story_preview_cache(cache_path)
             if cached is not None:
                 return cached
+            if not allow_fetch:
+                continue
             captured = self._capture_story_preview_page(preview_url)
             if captured is None:
                 continue
@@ -542,26 +579,26 @@ class TechPulse(BasePlugin):
 
     def _fallback_story_preview(self, size, palette, scale, story=None):
         width, height = [max(1, int(value)) for value in size]
-        preview = Image.new("RGB", (width, height), (246, 248, 250))
+        preview = Image.new("RGB", (width, height), palette["background"])
         draw = ImageDraw.Draw(preview)
         top_h = max(18, min(height // 3, int(24 * scale)))
-        draw.rectangle((0, 0, width, top_h), fill=(26, 30, 36))
+        draw.rectangle((0, 0, width, top_h), fill=palette["ink"])
         title_font = self._load_font(DEFAULT_FONT, max(9, int(11 * scale)), "bold")
         small_font = self._load_font(DEFAULT_FONT, max(8, int(9 * scale)))
         tiny_font = self._load_font(DEFAULT_FONT, max(7, int(8 * scale)))
         domain = self._domain(self._story_preview_url(story)) or "target page"
-        self._draw_text(draw, (int(8 * scale), int(5 * scale)), self._fit_text(draw, domain, title_font, width - int(16 * scale)), title_font, (246, 248, 250))
+        self._draw_text(draw, (int(8 * scale), int(5 * scale)), self._fit_text(draw, domain, title_font, width - int(16 * scale)), title_font, palette["background"])
         body_y = top_h + int(8 * scale)
         card = (int(7 * scale), body_y, width - int(7 * scale), height - int(7 * scale))
-        draw.rounded_rectangle(card, radius=max(4, int(6 * scale)), fill=(255, 255, 255), outline=(208, 215, 222), width=1)
+        draw.rounded_rectangle(card, radius=max(4, int(6 * scale)), fill=palette["panel"], outline=palette["rule"], width=1)
         title = self._clean_text((story or {}).get("title")) if isinstance(story, dict) else ""
-        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(8 * scale)), self._fit_text(draw, title or "Story target page", title_font, width - int(32 * scale)), title_font, (31, 35, 40))
-        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(27 * scale)), "Preview unavailable", small_font, (87, 96, 106))
+        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(8 * scale)), self._fit_text(draw, title or "Story target page", title_font, width - int(32 * scale)), title_font, palette["ink"])
+        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(27 * scale)), "Preview unavailable", small_font, palette["muted"])
         y = body_y + int(46 * scale)
         for line in (self._story_preview_url(story), "HN title target page"):
             if y + int(10 * scale) > height - int(8 * scale):
                 break
-            self._draw_text(draw, (card[0] + int(9 * scale), y), self._fit_text(draw, line, tiny_font, width - int(32 * scale)), tiny_font, (36, 41, 47))
+            self._draw_text(draw, (card[0] + int(9 * scale), y), self._fit_text(draw, line, tiny_font, width - int(32 * scale)), tiny_font, palette["ink"])
             y += int(14 * scale)
         return preview
 
@@ -629,37 +666,21 @@ class TechPulse(BasePlugin):
         draw.line((0, int(height * 0.78), width, int(height * 0.78)), fill=palette["rule"], width=1)
 
     def _palette(self, settings):
-        mode = str(settings.get("themeMode") or settings.get("theme_mode") or "dark").strip().lower()
-        if mode == "paper":
-            return {
-                "background": (245, 240, 226),
-                "panel": (255, 251, 241),
-                "row": (250, 245, 233),
-                "metric": (244, 237, 220),
-                "chip": (239, 230, 211),
-                "grid": (234, 225, 207),
-                "rule": (202, 188, 160),
-                "ink": (24, 27, 31),
-                "muted": (91, 96, 104),
-                "dim": (128, 128, 128),
-                "orange": (255, 102, 0),
-                "amber": (176, 102, 12),
-                "cyan": (0, 108, 135),
-            }
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        roles = {
+            name: tuple(value)
+            for name, value in theme["palette"].items()
+        }
         return {
-            "background": (10, 12, 15),
-            "panel": (18, 21, 27),
-            "row": (24, 28, 35),
-            "metric": (28, 31, 37),
-            "chip": (30, 34, 42),
-            "grid": (15, 18, 23),
-            "rule": (47, 54, 65),
-            "ink": (241, 236, 224),
-            "muted": (151, 158, 168),
-            "dim": (95, 101, 112),
-            "orange": (255, 102, 0),
-            "amber": (255, 183, 79),
-            "cyan": (105, 210, 235),
+            **roles,
+            "row": roles["panel"],
+            "metric": roles["panel"],
+            "chip": roles["panel"],
+            "grid": roles["rule"],
+            "dim": roles["muted"],
+            "orange": roles["accent"],
+            "amber": roles["accent"],
+            "cyan": roles["accent"],
         }
 
     def _write_context(self, payload, now):

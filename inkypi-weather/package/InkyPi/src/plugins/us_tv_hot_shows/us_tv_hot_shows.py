@@ -34,7 +34,10 @@ class UsTvHotShows(BoxOfficeTopMovies):
         return params
 
     def generate_image(self, settings, device_config):
-        settings = settings or {}
+        settings = dict(settings or {})
+        settings["_inkypi_theme"] = settings.get(
+            "_inkypi_theme"
+        ) or self.resolve_theme(settings, device_config)
         self._device_config_for_source = device_config
         self._settings_for_source = settings
         dimensions = self._display_dimensions(device_config)
@@ -47,8 +50,19 @@ class UsTvHotShows(BoxOfficeTopMovies):
         source_label = "TMDb US On Air"
         generated_at = self._now_for_device(device_config)
         stale = False
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        source_cache_ready = (
+            cache.get("cache_key") == cache_key and bool(cache.get("shows"))
+        )
 
-        if self._cache_is_fresh(cache, cache_key, cache_hours):
+        if theme_render_only and not source_cache_ready:
+            self._device_config_for_source = None
+            self._settings_for_source = None
+            raise RuntimeError(
+                "US TV theme-only render requires matching cached source data."
+            )
+
+        if theme_render_only or self._cache_is_fresh(cache, cache_key, cache_hours):
             shows = [BoxOfficeMovie.from_dict(item) for item in cache.get("shows", [])]
             source_label = cache.get("source_label") or source_label
             generated_at = self._local_cached_datetime(cache.get("generated_at"), generated_at) or generated_at
@@ -400,29 +414,18 @@ class UsTvHotShows(BoxOfficeTopMovies):
         return f"近期在播 TOP {count}"
 
     def _palette(self, settings):
-        mode = (settings.get("themeMode") or "auto").lower()
-        if mode == "paper":
-            return {
-                "mode": "paper",
-                "paper": (239, 235, 224),
-                "ink": (31, 34, 38),
-                "muted": (88, 88, 80),
-                "accent": (33, 123, 190),
-                "localized": (126, 81, 51),
-                "line": (209, 200, 184),
-                "outline": (38, 40, 42),
-                "shadow": (224, 217, 202),
-            }
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        palette = theme["palette"]
         return {
-            "mode": "streaming",
-            "paper": (15, 18, 20),
-            "ink": (239, 235, 223),
-            "muted": (170, 172, 163),
-            "accent": (42, 138, 210),
-            "localized": (232, 181, 90),
-            "line": (55, 62, 64),
-            "outline": (220, 224, 214),
-            "shadow": (10, 12, 14),
+            "mode": "streaming" if theme["mode"] == "night" else "paper",
+            "paper": tuple(palette["background"]),
+            "ink": tuple(palette["ink"]),
+            "muted": tuple(palette["muted"]),
+            "accent": tuple(palette["accent"]),
+            "localized": tuple(palette["accent"]),
+            "line": tuple(palette["rule"]),
+            "outline": tuple(palette["ink"]),
+            "shadow": tuple(palette["panel"]),
         }
 
     def _write_us_tv_context(self, shows, source_label, generated_at, stale):
@@ -442,16 +445,14 @@ class UsTvHotShows(BoxOfficeTopMovies):
             ttl_seconds=8 * 60 * 60,
         )
 
-    def _cache_key(self, settings, dimensions, items_count):
+    def _cache_key(self, settings, _dimensions, items_count):
         raw = "|".join([
             STATE_VERSION,
-            str(dimensions),
             str(items_count),
             settings.get("sourceMode") or "tmdb_us_on_air",
             str(self._bounded_int(settings.get("activeWindowDays"), 45, 7, 180)),
             settings.get("tmdbLanguage") or "zh-CN",
             "en" if settings.get("withOriginalLanguage") is None else str(settings.get("withOriginalLanguage")),
-            settings.get("themeMode") or "auto",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

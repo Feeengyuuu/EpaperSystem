@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,30 @@ def _plugin(tmp_path):
     plugin = TechPulse({"id": "tech_pulse"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def canonical_theme(mode):
+    palette = {
+        "background": (238, 241, 245) if mode == "day" else (12, 17, 28),
+        "panel": (255, 255, 255) if mode == "day" else (0, 0, 0),
+        "ink": (10, 12, 15) if mode == "day" else (255, 255, 255),
+        "muted": (74, 78, 84) if mode == "day" else (194, 196, 202),
+        "rule": (185, 188, 194) if mode == "day" else (46, 48, 56),
+        "accent": (69, 95, 149) if mode == "day" else (135, 159, 224),
+    }
+    return {
+        "mode": mode,
+        "requested_mode": "auto",
+        "palette": palette,
+        "css": {
+            role: "#{:02x}{:02x}{:02x}".format(*color)
+            for role, color in palette.items()
+        },
+    }
+
+
+def image_digest(image):
+    return hashlib.sha256(image.tobytes()).hexdigest()
 
 
 def test_default_font_is_yahei_but_explicit_lxgw_is_preserved(tmp_path, monkeypatch):
@@ -239,6 +264,72 @@ def test_payload_reuses_fresh_cache_without_live_fetch(tmp_path, monkeypatch):
 
     assert payload["status"]["source_state"] == "cache"
     assert payload["stories"][0]["title"] == "Cached story"
+
+
+def test_tech_pulse_theme_only_uses_stale_source_cache_without_network(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
+    stale_now = now - timedelta(hours=3)
+    story = plugin._parse_story_item(_story(10, "Cached theme story"), now=now)
+    story["rank"] = 1
+    cache = plugin._build_payload(
+        "topstories",
+        [story],
+        "live",
+        stale_now,
+        [HN_DOCS_URL],
+    )
+    cache["cache_key"] = plugin._cache_key("topstories", 5, None)
+    (tmp_path / "state.json").write_text(json.dumps(cache), encoding="utf-8")
+    calls = {"fetch": 0, "preview": 0}
+
+    def forbidden_fetch(*_args, **_kwargs):
+        calls["fetch"] += 1
+        raise AssertionError("theme-only render must not fetch Hacker News")
+
+    def forbidden_preview(_url):
+        calls["preview"] += 1
+        return None
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden_fetch)
+    monkeypatch.setattr(plugin, "_capture_story_preview_page", forbidden_preview)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+
+    day_settings = {
+        "feed": "topstories",
+        "maxStories": "5",
+        "themeMode": "paper",
+        "_inkypi_theme": canonical_theme("day"),
+        "_theme_render_only": True,
+    }
+    night_settings = {
+        **day_settings,
+        "_inkypi_theme": canonical_theme("night"),
+    }
+    day = plugin.generate_image(day_settings, FakeDeviceConfig())
+    night = plugin.generate_image(night_settings, FakeDeviceConfig())
+
+    expected_day = canonical_theme("day")["palette"]
+    assert plugin._palette(day_settings) == {
+        **expected_day,
+        "row": expected_day["panel"],
+        "metric": expected_day["panel"],
+        "chip": expected_day["panel"],
+        "grid": expected_day["rule"],
+        "dim": expected_day["muted"],
+        "orange": expected_day["accent"],
+        "amber": expected_day["accent"],
+        "cyan": expected_day["accent"],
+    }
+    assert plugin._palette({**day_settings, "themeMode": "dark"}) == plugin._palette(
+        day_settings,
+    )
+    assert calls == {"fetch": 0, "preview": 0}
+    assert image_digest(day) != image_digest(night)
 
 
 def test_payload_uses_stale_cache_when_live_fetch_fails(tmp_path, monkeypatch):

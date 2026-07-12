@@ -1,3 +1,4 @@
+import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,30 @@ def make_plugin(tmp_path):
 def luma(color):
     red, green, blue = color[:3]
     return (red * 299 + green * 587 + blue * 114) / 1000
+
+
+def canonical_theme(mode):
+    palette = {
+        "background": (244, 240, 230) if mode == "day" else (16, 21, 27),
+        "panel": (255, 255, 255) if mode == "day" else (0, 0, 0),
+        "ink": (10, 12, 15) if mode == "day" else (255, 255, 255),
+        "muted": (74, 78, 84) if mode == "day" else (194, 196, 202),
+        "rule": (185, 188, 194) if mode == "day" else (46, 48, 56),
+        "accent": (56, 95, 143) if mode == "day" else (121, 174, 230),
+    }
+    return {
+        "mode": mode,
+        "requested_mode": "auto",
+        "palette": palette,
+        "css": {
+            role: "#{:02x}{:02x}{:02x}".format(*color)
+            for role, color in palette.items()
+        },
+    }
+
+
+def image_digest(image):
+    return hashlib.sha256(image.tobytes()).hexdigest()
 
 
 def sample_feed():
@@ -261,6 +286,61 @@ def test_daily_payload_fetches_once_then_uses_cache(tmp_path, monkeypatch):
     assert first["source_state"] == "live"
     assert second["source_state"] == "cache"
     assert calls["fetch"] == 1
+
+
+def test_daily_wiki_theme_only_opposite_palette_reuses_warm_source_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+    fetch_calls = 0
+
+    def fake_fetch(current, language, _fallback_language, settings):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        payload = plugin._payload_from_feed(sample_feed(), language, settings)
+        payload["date"] = current.strftime("%Y-%m-%d")
+        return payload
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin,
+        "_download_image",
+        lambda _url, target_size, _settings: Image.new(
+            "RGB",
+            target_size,
+            (90, 120, 150),
+        ),
+    )
+
+    day_settings = {
+        "language": "en",
+        "theme": "dark",
+        "_inkypi_theme": canonical_theme("day"),
+    }
+    night_settings = {
+        "language": "en",
+        "theme": "paper",
+        "_inkypi_theme": canonical_theme("night"),
+        "_theme_render_only": True,
+    }
+    day = plugin.generate_image(day_settings, FakeDeviceConfig())
+    night = plugin.generate_image(night_settings, FakeDeviceConfig())
+
+    assert fetch_calls == 1
+    assert plugin._cache_key("2026-06-25", day_settings, "en", "") == plugin._cache_key(
+        "2026-06-25",
+        night_settings,
+        "en",
+        "",
+    )
+    assert image_digest(day) != image_digest(night)
+    assert plugin._palette({**day_settings, "theme": "paper"}) == plugin._palette(
+        day_settings,
+    )
 
 
 def test_render_page_returns_display_image(tmp_path, monkeypatch):
@@ -1320,16 +1400,22 @@ def test_history_title_offset_moves_header_up_from_previous_tuning():
 def test_year_label_offset_moves_years_up_by_ten_pixels():
     assert YEAR_LABEL_Y_OFFSET == -10
 
-def test_paper_palette_uses_epaper_readable_contrast(tmp_path):
+def test_canonical_palettes_use_epaper_readable_contrast(tmp_path):
     plugin = make_plugin(tmp_path)
-    palette = plugin._palette({"theme": "paper"})
-    background_luma = luma(palette["background"])
+    day_theme = canonical_theme("day")
+    night_theme = canonical_theme("night")
+    day = plugin._palette({"theme": "dark", "_inkypi_theme": day_theme})
+    night = plugin._palette({"theme": "paper", "_inkypi_theme": night_theme})
 
-    assert max(palette["background"]) <= 235
-    assert background_luma - luma(palette["ink"]) >= 195
-    assert background_luma - luma(palette["muted"]) >= 145
-    assert background_luma - luma(palette["accent"]) >= 155
-    assert background_luma - luma(palette["rule"]) >= 105
+    assert day == {**day_theme["palette"], "dim": day_theme["palette"]["muted"]}
+    assert night == {
+        **night_theme["palette"],
+        "dim": night_theme["palette"]["muted"],
+    }
+    assert luma(day["background"]) - luma(day["ink"]) >= 200
+    assert luma(day["background"]) - luma(day["muted"]) >= 140
+    assert luma(night["ink"]) - luma(night["background"]) >= 200
+    assert luma(night["muted"]) - luma(night["background"]) >= 140
     assert EPAPER_RULE_WIDTH >= 2
 
 

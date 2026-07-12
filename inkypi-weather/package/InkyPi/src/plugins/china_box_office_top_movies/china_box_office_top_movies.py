@@ -672,29 +672,18 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         return "Data: official/TMDb | Posters pending TMDb"
 
     def _palette(self, settings):
-        mode = (settings.get("themeMode") or "auto").lower()
-        if mode == "paper":
-            return {
-                "mode": "paper",
-                "paper": (240, 235, 222),
-                "ink": (34, 34, 31),
-                "muted": (95, 87, 74),
-                "accent": (184, 39, 48),
-                "localized": (124, 72, 55),
-                "line": (210, 199, 181),
-                "outline": (39, 39, 36),
-                "shadow": (224, 216, 198),
-            }
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        palette = theme["palette"]
         return {
-            "mode": "cinema",
-            "paper": (18, 20, 22),
-            "ink": (240, 234, 220),
-            "muted": (178, 169, 150),
-            "accent": (224, 56, 54),
-            "localized": (232, 190, 118),
-            "line": (66, 62, 56),
-            "outline": (236, 222, 188),
-            "shadow": (12, 14, 15),
+            "mode": "cinema" if theme["mode"] == "night" else "paper",
+            "paper": tuple(palette["background"]),
+            "ink": tuple(palette["ink"]),
+            "muted": tuple(palette["muted"]),
+            "accent": tuple(palette["accent"]),
+            "localized": tuple(palette["accent"]),
+            "line": tuple(palette["rule"]),
+            "outline": tuple(palette["ink"]),
+            "shadow": tuple(palette["panel"]),
         }
 
     def _write_box_office_context(self, movies, source_label, generated_at, stale):
@@ -720,10 +709,9 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             ttl_seconds=8 * 60 * 60,
         )
 
-    def _cache_key(self, settings, dimensions, items_count, device_config=None):
+    def _cache_key(self, settings, _dimensions, items_count, device_config=None):
         raw = "|".join([
             STATE_VERSION,
-            str(dimensions),
             str(items_count),
             settings.get("sourceMode") or "the_numbers",
             settings.get("chartUrl") or DEFAULT_CHART_URL,
@@ -732,7 +720,6 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
             "tmdb-configured" if self._tmdb_auth(settings, device_config) else "tmdb-missing",
-            settings.get("themeMode") or "auto",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

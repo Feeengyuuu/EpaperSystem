@@ -166,7 +166,10 @@ class BoxOfficeTopMovies(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
-        settings = settings or {}
+        settings = dict(settings or {})
+        settings["_inkypi_theme"] = settings.get(
+            "_inkypi_theme"
+        ) or self.resolve_theme(settings, device_config)
         dimensions = self._display_dimensions(device_config)
         items_count = self._bounded_int(settings.get("itemsCount"), 5, 1, MAX_ITEMS)
         cache_hours = self._bounded_int(settings.get("cacheHours"), 6, 1, 48)
@@ -177,8 +180,17 @@ class BoxOfficeTopMovies(BasePlugin):
         source_label = "The Numbers"
         generated_at = self._now_for_device(device_config)
         stale = False
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        source_cache_ready = (
+            cache.get("cache_key") == cache_key and bool(cache.get("movies"))
+        )
 
-        if self._cache_is_fresh(cache, cache_key, cache_hours):
+        if theme_render_only and not source_cache_ready:
+            raise RuntimeError(
+                "Box office theme-only render requires matching cached source data."
+            )
+
+        if theme_render_only or self._cache_is_fresh(cache, cache_key, cache_hours):
             movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
             source_label = cache.get("source_label") or source_label
             generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
@@ -992,29 +1004,18 @@ class BoxOfficeTopMovies(BasePlugin):
         return source_mode in CHINA_SOURCE_MODES or str(source_label or "") == MAOYAN_SOURCE_LABEL
 
     def _palette(self, settings):
-        mode = (settings.get("themeMode") or "auto").lower()
-        if mode == "paper":
-            return {
-                "mode": "paper",
-                "paper": (239, 233, 215),
-                "ink": (32, 35, 36),
-                "muted": (91, 85, 74),
-                "accent": (176, 41, 45),
-                "localized": (115, 72, 58),
-                "line": (208, 198, 178),
-                "outline": (40, 40, 38),
-                "shadow": (224, 216, 196),
-            }
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        palette = theme["palette"]
         return {
-            "mode": "cinema",
-            "paper": (18, 21, 24),
-            "ink": (239, 233, 218),
-            "muted": (177, 169, 151),
-            "accent": (222, 61, 56),
-            "localized": (232, 188, 120),
-            "line": (65, 63, 59),
-            "outline": (236, 222, 188),
-            "shadow": (12, 14, 16),
+            "mode": "cinema" if theme["mode"] == "night" else "paper",
+            "paper": tuple(palette["background"]),
+            "ink": tuple(palette["ink"]),
+            "muted": tuple(palette["muted"]),
+            "accent": tuple(palette["accent"]),
+            "localized": tuple(palette["accent"]),
+            "line": tuple(palette["rule"]),
+            "outline": tuple(palette["ink"]),
+            "shadow": tuple(palette["panel"]),
         }
 
     def _write_box_office_context(self, movies, source_label, generated_at, stale):
@@ -1037,10 +1038,9 @@ class BoxOfficeTopMovies(BasePlugin):
     def _display_dimensions(self, device_config):
         return self.get_dimensions(device_config)
 
-    def _cache_key(self, settings, dimensions, items_count, device_config=None):
+    def _cache_key(self, settings, _dimensions, items_count, device_config=None):
         raw = "|".join([
             STATE_VERSION,
-            str(dimensions),
             str(items_count),
             settings.get("sourceMode") or "the_numbers",
             settings.get("chartUrl") or DEFAULT_CHART_URL,
@@ -1050,7 +1050,6 @@ class BoxOfficeTopMovies(BasePlugin):
             settings.get("localizedLanguage") or "zh-CN",
             str(self._truthy(settings.get("showLocalizedTitles"), True)),
             "tmdb-configured" if self._tmdb_auth(settings, device_config) else "tmdb-missing",
-            settings.get("themeMode") or "auto",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
