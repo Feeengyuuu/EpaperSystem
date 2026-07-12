@@ -1,7 +1,11 @@
 import calendar
 import hashlib
+import json
 import logging
 import os
+import re
+import stat
+import time
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,6 +18,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import read_contexts
 from utils.app_utils import get_base_ui_font, get_font
+from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -21,6 +26,16 @@ logger = logging.getLogger(__name__)
 LEGACY_CALENDAR_DIR = Path("/usr/local/inkypi/src/static/calendar")
 DEFAULT_DATA_DIR = Path("/var/lib/inkypi/data")
 DURABLE_CALENDAR_SUBDIR = Path("plugins/simple_calendar/calendars")
+EVENT_SNAPSHOT_SUBDIR = Path("plugins/simple_calendar/event_snapshots")
+EVENT_SNAPSHOT_VERSION = 1
+EVENT_SNAPSHOT_MAX_BYTES = 256 * 1024
+EVENT_SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+EVENT_SNAPSHOT_MAX_EVENTS = 512
+EVENT_SNAPSHOT_RETENTION_SECONDS = 62 * 24 * 60 * 60
+EVENT_SNAPSHOT_TITLE_MAX_CHARS = 256
+EVENT_SNAPSHOT_LABEL_MAX_CHARS = 16
+EVENT_SNAPSHOT_TIME_MAX_CHARS = 16
+EVENT_SNAPSHOT_FILENAME_RE = re.compile(r"[0-9a-f]{64}\.json\Z")
 
 DEFAULT_HOLIDAY_CALENDARS = [
     {
@@ -564,8 +579,12 @@ class SimpleCalendar(BasePlugin):
         language = self._get_locale_key(settings.get("language") or settings.get("locale", "en"))
         locale_data = LOCALE_DATA.get(language)
 
+        theme_palette = self._canonical_theme_palette(settings.get("_inkypi_theme"))
         primary_color = self._parse_color(settings.get("primaryColor"), (230, 26, 26))
         highlight_color = self._parse_color(settings.get("highlightColor"), (163, 13, 13))
+        if theme_palette:
+            primary_color = theme_palette["accent"]
+            highlight_color = theme_palette["accent"]
         layout_position = settings.get("layoutPosition", "left").lower()
         theme_render_only = self._setting_enabled(settings.get("_theme_render_only"))
         holiday_events = self._get_calendar_events(
@@ -589,6 +608,7 @@ class SimpleCalendar(BasePlugin):
             weather_panel_background_path,
             date_hero_overlay_enabled,
             reference_dt,
+            theme_palette,
         )
 
     # ------------------------------------------------------------------
@@ -608,6 +628,7 @@ class SimpleCalendar(BasePlugin):
         weather_panel_background_path=None,
         date_hero_overlay_enabled=False,
         reference_dt=None,
+        theme_palette=None,
     ):
         W, H = dimensions
         holiday_events = holiday_events or []
@@ -625,9 +646,21 @@ class SimpleCalendar(BasePlugin):
         surface = (255, 255, 255)
         panel_bg = (248, 248, 247)
         divider = (220, 220, 220)
-        white = (255, 255, 255)
+        selected_text = (255, 255, 255)
         text_color = (0, 0, 0)
         muted_text = (132, 132, 132)
+        if theme_palette:
+            accent = theme_palette["accent"]
+            surface = theme_palette["background"]
+            panel_bg = theme_palette["panel"]
+            divider = theme_palette["rule"]
+            text_color = theme_palette["ink"]
+            muted_text = theme_palette["muted"]
+            selected_text = self._highest_contrast_color(
+                highlight_color,
+                theme_palette["background"],
+                theme_palette["ink"],
+            )
 
         img = Image.new("RGB", (W, H), surface)
         draw = ImageDraw.Draw(img)
@@ -724,6 +757,7 @@ class SimpleCalendar(BasePlugin):
             int(panel_w * 0.84),
             text_color,
             muted_text,
+            theme_palette,
         )
         draw.text((panel_cx, weekday_y), weekday_str, fill=muted_text, font=clean_weekday_font, anchor="mm")
         draw.text((panel_cx, day_y), day_str, fill=text_color, font=clean_day_font, anchor="mm")
@@ -806,7 +840,7 @@ class SimpleCalendar(BasePlugin):
         grid_top_y = header_y + int(header_font_size * 1.4)
         draw.line(
             [(grid_left, grid_top_y - int(header_font_size * 0.40)), (grid_right_edge, grid_top_y - int(header_font_size * 0.40))],
-            fill=(232, 232, 232),
+            fill=divider,
             width=max(int(W * 0.0018), 1),
         )
         event_list_h = int(cal_h * 0.19) if upcoming_event_rows else 0
@@ -833,7 +867,7 @@ class SimpleCalendar(BasePlugin):
                     )
                     draw.text(
                         (col_cx, row_cy), str(day),
-                        fill=white, font=day_font, anchor="mm",
+                        fill=selected_text, font=day_font, anchor="mm",
                     )
                 else:
                     draw.text(
@@ -848,6 +882,7 @@ class SimpleCalendar(BasePlugin):
                         row_cy + today_circle_r * 0.62 + 8,
                         min(col_w, row_h),
                         selected=day == selected_date.day,
+                        selected_color=selected_text,
                     )
 
         self._draw_holiday_list(
@@ -1185,24 +1220,497 @@ class SimpleCalendar(BasePlugin):
         *,
         allow_remote=True,
     ):
+        sources = []
+        if self._holidays_enabled(settings):
+            sources.extend(self._get_holiday_sources(settings))
+        if self._personal_calendars_enabled(settings):
+            sources.extend(self._get_personal_calendar_sources(settings))
+
+        local_sources = [
+            source
+            for source in sources
+            if not self._calendar_source_requires_network(source)
+        ]
+        remote_sources = [
+            source
+            for source in sources
+            if self._calendar_source_requires_network(source)
+        ]
+        local_events, _local_failures = self._fetch_calendar_sources(
+            local_sources,
+            selected_date,
+            tz,
+        )
+        local_events = self._normalize_snapshot_events(local_events)
+
+        if allow_remote:
+            remote_events, remote_failures = self._fetch_calendar_sources(
+                remote_sources,
+                selected_date,
+                tz,
+            )
+            if remote_failures:
+                remote_events = self._read_event_snapshot(
+                    remote_sources,
+                    selected_date,
+                    tz,
+                )
+            else:
+                remote_events = self._normalize_snapshot_events(remote_events)
+                if remote_sources:
+                    remote_events = self._write_event_snapshot(
+                        remote_sources,
+                        selected_date,
+                        tz,
+                        remote_events,
+                    )
+        elif remote_sources:
+            remote_events = self._read_event_snapshot(
+                remote_sources,
+                selected_date,
+                tz,
+            )
+        else:
+            remote_events = []
+
+        return self._dedupe_holiday_events(local_events + remote_events)
+
+    def _fetch_calendar_sources(self, sources, selected_date, tz):
         events = []
-        events.extend(
-            self._get_holiday_events(
-                settings,
+        failures = []
+        for source in sources:
+            try:
+                events.extend(self._fetch_holiday_events(source, selected_date, tz))
+            except Exception as exc:
+                failures.append(source)
+                self._log_calendar_source_failure(source, exc)
+        return events, failures
+
+    @staticmethod
+    def _log_calendar_source_failure(source, exc):
+        label = " ".join(str((source or {}).get("label") or "configured").split())
+        label = label[:32] or "configured"
+        kind = str((source or {}).get("kind") or "configured").strip().lower()
+        if kind not in {"holiday", "personal"}:
+            kind = "configured"
+        logger.warning(
+            "Calendar source unavailable label=%s kind=%s error_type=%s status=unavailable",
+            label,
+            kind,
+            type(exc).__name__,
+        )
+
+    def _write_event_snapshot(self, sources, selected_date, tz, events):
+        fingerprint = self._event_snapshot_fingerprint(sources, selected_date, tz)
+        snapshot_path = self._event_snapshot_path(fingerprint, create=True)
+        normalized = self._normalize_snapshot_events(events)
+        serialized = [self._serialize_snapshot_event(event) for event in normalized]
+        payload = self._event_snapshot_payload(
+            fingerprint,
+            selected_date,
+            tz,
+            serialized,
+        )
+        while serialized and self._event_snapshot_size(payload) > EVENT_SNAPSHOT_MAX_BYTES:
+            serialized.pop()
+            payload = self._event_snapshot_payload(
+                fingerprint,
                 selected_date,
                 tz,
-                allow_remote=allow_remote,
+                serialized,
             )
+        if self._event_snapshot_size(payload) > EVENT_SNAPSHOT_MAX_BYTES:
+            raise RuntimeError("Remote calendar event snapshot exceeds its size limit")
+
+        self._prune_event_snapshots(snapshot_path.parent)
+        stored_bytes = self._event_snapshot_storage_bytes(
+            snapshot_path.parent,
+            exclude=snapshot_path,
         )
-        events.extend(
-            self._get_personal_calendar_events(
-                settings,
-                selected_date,
-                tz,
-                allow_remote=allow_remote,
+        if stored_bytes + self._event_snapshot_size(payload) > EVENT_SNAPSHOT_MAX_TOTAL_BYTES:
+            raise RuntimeError("Remote calendar event snapshot byte budget is exhausted")
+        try:
+            atomic_write_json(snapshot_path, payload, mode=0o600)
+        except OSError as exc:
+            raise RuntimeError(
+                "Remote calendar event snapshot could not be written"
+            ) from exc
+        self._assert_snapshot_regular_file(snapshot_path)
+        self._prune_event_snapshots(snapshot_path.parent)
+        return normalized[: len(serialized)]
+
+    def _read_event_snapshot(self, sources, selected_date, tz):
+        fingerprint = self._event_snapshot_fingerprint(sources, selected_date, tz)
+        snapshot_path = self._event_snapshot_path(fingerprint, create=False)
+        raw = self._read_event_snapshot_bytes(snapshot_path)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                "Remote calendar event snapshot is corrupt; refusing theme-only redraw"
+            ) from exc
+
+        expected_month = selected_date.strftime("%Y-%m")
+        expected_timezone = getattr(tz, "zone", None) or str(tz)
+        if (
+            not isinstance(payload, dict)
+            or payload.get("version") != EVENT_SNAPSHOT_VERSION
+            or payload.get("source_fingerprint") != fingerprint
+            or payload.get("month") != expected_month
+            or payload.get("timezone") != expected_timezone
+        ):
+            raise RuntimeError(
+                "Remote calendar event snapshot does not match this calendar; "
+                "refusing theme-only redraw"
             )
-        )
+        serialized = payload.get("events")
+        if not isinstance(serialized, list) or len(serialized) > EVENT_SNAPSHOT_MAX_EVENTS:
+            raise RuntimeError(
+                "Remote calendar event snapshot has invalid bounds; "
+                "refusing theme-only redraw"
+            )
+        try:
+            events = [self._deserialize_snapshot_event(event) for event in serialized]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "Remote calendar event snapshot has invalid events; "
+                "refusing theme-only redraw"
+            ) from exc
         return self._dedupe_holiday_events(events)
+
+    @staticmethod
+    def _event_snapshot_payload(fingerprint, selected_date, tz, serialized):
+        return {
+            "version": EVENT_SNAPSHOT_VERSION,
+            "source_fingerprint": fingerprint,
+            "month": selected_date.strftime("%Y-%m"),
+            "timezone": getattr(tz, "zone", None) or str(tz),
+            "events": serialized,
+        }
+
+    @staticmethod
+    def _event_snapshot_size(payload):
+        return len(
+            (json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n").encode(
+                "utf-8"
+            )
+        )
+
+    @staticmethod
+    def _event_snapshot_fingerprint(sources, selected_date, tz):
+        descriptors = []
+        for source in sources:
+            descriptors.append(
+                {
+                    "url": str(source.get("url") or "").strip(),
+                    "label": str(source.get("label") or "").strip(),
+                    "color": list(source.get("color") or ()),
+                    "kind": str(source.get("kind") or "").strip(),
+                }
+            )
+        seed = {
+            "month": selected_date.strftime("%Y-%m"),
+            "timezone": getattr(tz, "zone", None) or str(tz),
+            "sources": descriptors,
+        }
+        encoded = json.dumps(
+            seed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _event_snapshot_path(cls, fingerprint, *, create):
+        filename = f"{fingerprint}.json"
+        if not EVENT_SNAPSHOT_FILENAME_RE.fullmatch(filename):
+            raise RuntimeError("Calendar event snapshot fingerprint is unsafe")
+
+        data_root = Path(
+            os.environ.get("INKYPI_DATA_DIR") or DEFAULT_DATA_DIR
+        ).expanduser().absolute()
+        directory = (data_root / EVENT_SNAPSHOT_SUBDIR).absolute()
+        try:
+            if create:
+                data_root.mkdir(parents=True, exist_ok=True)
+            cls._assert_snapshot_path(data_root, directory)
+            if create:
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            cls._assert_snapshot_directory(
+                data_root,
+                directory,
+                required=create,
+            )
+            if create and os.name != "nt":
+                os.chmod(directory, 0o700)
+            target = directory / filename
+            cls._assert_snapshot_path(data_root, target)
+            if os.path.lexists(target):
+                cls._assert_snapshot_regular_file(target)
+        except RuntimeError:
+            raise
+        except OSError as exc:
+            raise RuntimeError("Calendar event snapshot storage is unsafe") from exc
+        return target
+
+    @staticmethod
+    def _assert_snapshot_path(root, target):
+        root = root.absolute()
+        target = target.absolute()
+        try:
+            relative = target.relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError("Calendar event snapshot path escaped its root") from exc
+
+        current = root
+        candidates = [root]
+        for part in relative.parts:
+            current = current / part
+            candidates.append(current)
+        for candidate in candidates:
+            if not os.path.lexists(candidate):
+                continue
+            info = os.lstat(candidate)
+            if stat.S_ISLNK(info.st_mode):
+                raise RuntimeError("Calendar event snapshot paths cannot use symlinks")
+
+        if os.path.lexists(root):
+            root_info = os.lstat(root)
+            if not stat.S_ISDIR(root_info.st_mode):
+                raise RuntimeError("Calendar event snapshot root is not a directory")
+            resolved_root = root.resolve(strict=True)
+            resolved_target = target.resolve(strict=False)
+            try:
+                resolved_target.relative_to(resolved_root)
+            except ValueError as exc:
+                raise RuntimeError(
+                    "Calendar event snapshot path escaped its resolved root"
+                ) from exc
+
+    @classmethod
+    def _assert_snapshot_directory(cls, root, directory, *, required):
+        cls._assert_snapshot_path(root, directory)
+        if not os.path.lexists(directory):
+            if required:
+                raise RuntimeError("Calendar event snapshot directory is missing")
+            return
+        info = os.lstat(directory)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("Calendar event snapshot directory is unsafe")
+
+    @staticmethod
+    def _assert_snapshot_regular_file(path):
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError as exc:
+            raise RuntimeError("Calendar event snapshot file is missing") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise RuntimeError("Calendar event snapshot file is unsafe")
+
+    @classmethod
+    def _read_event_snapshot_bytes(cls, snapshot_path):
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = None
+        try:
+            descriptor = os.open(snapshot_path, flags)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "Remote calendar event snapshot is missing; refusing theme-only redraw"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                "Remote calendar event snapshot is unsafe; refusing theme-only redraw"
+            ) from exc
+
+        try:
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise RuntimeError(
+                        "Remote calendar event snapshot is unsafe; "
+                        "refusing theme-only redraw"
+                    )
+                raw = handle.read(EVENT_SNAPSHOT_MAX_BYTES + 1)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if len(raw) > EVENT_SNAPSHOT_MAX_BYTES:
+            raise RuntimeError(
+                "Remote calendar event snapshot is oversized; refusing theme-only redraw"
+            )
+        return raw
+
+    @staticmethod
+    def _prune_event_snapshots(directory):
+        try:
+            directory_info = os.lstat(directory)
+            if stat.S_ISLNK(directory_info.st_mode) or not stat.S_ISDIR(
+                directory_info.st_mode
+            ):
+                return
+            candidates = list(directory.iterdir())
+        except OSError:
+            return
+
+        now = time.time()
+        for candidate in candidates:
+            if not EVENT_SNAPSHOT_FILENAME_RE.fullmatch(candidate.name):
+                continue
+            try:
+                info = os.lstat(candidate)
+            except OSError:
+                continue
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                continue
+            if now - info.st_mtime <= EVENT_SNAPSHOT_RETENTION_SECONDS:
+                continue
+            try:
+                current = os.lstat(candidate)
+                if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(
+                    current.st_mode
+                ):
+                    continue
+                candidate.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "Calendar event snapshot cleanup failed "
+                    "error_type=%s status=retained",
+                    type(exc).__name__,
+                )
+
+    @staticmethod
+    def _event_snapshot_storage_bytes(directory, *, exclude=None):
+        try:
+            directory_info = os.lstat(directory)
+            if stat.S_ISLNK(directory_info.st_mode) or not stat.S_ISDIR(
+                directory_info.st_mode
+            ):
+                return 0
+            candidates = list(directory.iterdir())
+        except OSError:
+            return 0
+
+        total = 0
+        for candidate in candidates:
+            if candidate == exclude or not EVENT_SNAPSHOT_FILENAME_RE.fullmatch(
+                candidate.name
+            ):
+                continue
+            try:
+                info = os.lstat(candidate)
+            except OSError:
+                continue
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                continue
+            total += max(0, int(info.st_size))
+        return total
+
+    def _normalize_snapshot_events(self, events):
+        normalized = []
+        for event in events or []:
+            item = self._normalize_snapshot_event(event)
+            if item is not None:
+                normalized.append(item)
+        return self._dedupe_holiday_events(normalized)[:EVENT_SNAPSHOT_MAX_EVENTS]
+
+    def _normalize_snapshot_event(self, event):
+        if not isinstance(event, dict):
+            return None
+        event_date = event.get("date")
+        if isinstance(event_date, datetime):
+            event_date = event_date.date()
+        if not isinstance(event_date, date):
+            return None
+
+        title = self._clean_event_title(event.get("title"))[
+            :EVENT_SNAPSHOT_TITLE_MAX_CHARS
+        ]
+        label = " ".join(str(event.get("label") or "").split())[
+            :EVENT_SNAPSHOT_LABEL_MAX_CHARS
+        ]
+        time_label = " ".join(str(event.get("time") or "").split())[
+            :EVENT_SNAPSHOT_TIME_MAX_CHARS
+        ]
+        kind = str(event.get("kind") or "holiday").strip().lower()
+        if kind not in {"holiday", "personal"}:
+            kind = "holiday"
+        try:
+            color = tuple(int(channel) for channel in event.get("color") or ())
+        except (TypeError, ValueError):
+            color = ()
+        if len(color) != 3 or any(channel < 0 or channel > 255 for channel in color):
+            color = (80, 80, 80)
+
+        normalized = {
+            "date": event_date,
+            "title": title,
+            "label": label,
+            "color": color,
+            "kind": kind,
+            "time": time_label,
+        }
+        starts_at = event.get("starts_at")
+        if isinstance(starts_at, datetime):
+            normalized["starts_at"] = starts_at
+        return normalized
+
+    @staticmethod
+    def _serialize_snapshot_event(event):
+        serialized = {
+            "date": event["date"].isoformat(),
+            "title": event["title"],
+            "label": event["label"],
+            "color": list(event["color"]),
+            "kind": event["kind"],
+            "time": event.get("time", ""),
+        }
+        if event.get("starts_at"):
+            serialized["starts_at"] = event["starts_at"].isoformat()
+        return serialized
+
+    @staticmethod
+    def _deserialize_snapshot_event(event):
+        if not isinstance(event, dict):
+            raise TypeError("event must be an object")
+        title = event.get("title")
+        label = event.get("label")
+        time_label = event.get("time", "")
+        kind = event.get("kind")
+        color = event.get("color")
+        if (
+            not isinstance(title, str)
+            or len(title) > EVENT_SNAPSHOT_TITLE_MAX_CHARS
+            or not isinstance(label, str)
+            or len(label) > EVENT_SNAPSHOT_LABEL_MAX_CHARS
+            or not isinstance(time_label, str)
+            or len(time_label) > EVENT_SNAPSHOT_TIME_MAX_CHARS
+            or kind not in {"holiday", "personal"}
+            or not isinstance(color, list)
+            or len(color) != 3
+            or any(
+                not isinstance(channel, int) or not 0 <= channel <= 255
+                for channel in color
+            )
+        ):
+            raise ValueError("invalid event fields")
+        event_date = date.fromisoformat(str(event.get("date")))
+        restored = {
+            "date": event_date,
+            "title": title,
+            "label": label,
+            "color": tuple(color),
+            "kind": kind,
+            "time": time_label,
+        }
+        if event.get("starts_at") is not None:
+            starts_at = datetime.fromisoformat(str(event["starts_at"]))
+            if starts_at.tzinfo is None:
+                raise ValueError("starts_at must include a timezone")
+            restored["starts_at"] = starts_at
+        return restored
 
     def _get_holiday_events(
         self,
@@ -1225,8 +1733,8 @@ class SimpleCalendar(BasePlugin):
                 continue
             try:
                 events.extend(self._fetch_holiday_events(source, selected_date, tz))
-            except Exception:
-                logger.exception("Failed to fetch holiday calendar: %s", source.get("label") or source.get("url"))
+            except Exception as exc:
+                self._log_calendar_source_failure(source, exc)
 
         return self._dedupe_holiday_events(events)
 
@@ -1287,8 +1795,8 @@ class SimpleCalendar(BasePlugin):
                 continue
             try:
                 events.extend(self._fetch_holiday_events(source, selected_date, tz))
-            except Exception:
-                logger.exception("Failed to fetch personal calendar: %s", source.get("label") or source.get("url"))
+            except Exception as exc:
+                self._log_calendar_source_failure(source, exc)
         return events
 
     def _personal_calendars_enabled(self, settings):
@@ -1322,10 +1830,14 @@ class SimpleCalendar(BasePlugin):
     def _calendar_source_requires_network(source):
         url = str((source or {}).get("url") or "").strip()
         parsed = urlparse(url)
-        is_local_path = parsed.scheme == "file" or (
-            not parsed.scheme and url.startswith("/")
-        )
-        return not is_local_path
+        if parsed.scheme == "file":
+            if parsed.netloc.lower() not in {"", "localhost"}:
+                return True
+            decoded_path = unquote(parsed.path or "").replace("\\", "/")
+            return decoded_path.startswith("//")
+        if url.startswith("\\\\") or (not parsed.scheme and parsed.netloc):
+            return True
+        return not (not parsed.scheme and Path(url).is_absolute())
 
     def _fetch_holiday_events(self, source, selected_date, tz):
         content = self._read_calendar_source(source["url"])
@@ -1337,12 +1849,12 @@ class SimpleCalendar(BasePlugin):
         parsed = urlparse(url)
         if parsed.scheme == "file":
             path_text = unquote(parsed.path)
-            if parsed.netloc:
+            if parsed.netloc and parsed.netloc.lower() != "localhost":
                 path_text = f"//{parsed.netloc}{path_text}"
             if os.name == "nt" and path_text.startswith("/") and len(path_text) > 2 and path_text[2] == ":":
                 path_text = path_text[1:]
             return self._read_local_calendar_path(Path(path_text))
-        if not parsed.scheme and url.startswith("/"):
+        if url.startswith("\\\\") or (not parsed.scheme and Path(url).is_absolute()):
             return self._read_local_calendar_path(Path(url))
         response = get_http_session().get(
             url,
@@ -1838,7 +2350,17 @@ class SimpleCalendar(BasePlugin):
         ]
         return self._merge_same_day_events(upcoming)[:limit]
 
-    def _draw_focus_holiday(self, draw, events, x, y, max_width, text_color, muted_text):
+    def _draw_focus_holiday(
+        self,
+        draw,
+        events,
+        x,
+        y,
+        max_width,
+        text_color,
+        muted_text,
+        theme_palette=None,
+    ):
         if not events:
             return
 
@@ -1871,14 +2393,28 @@ class SimpleCalendar(BasePlugin):
         red = (166, 31, 36)
         red_dark = (101, 26, 31)
         gold = (239, 195, 95)
+        lower_rail = (111, 74, 39)
+        corner = (217, 177, 90)
+        if theme_palette:
+            shadow = muted_text
+            paper = theme_palette["panel"]
+            paper_light = theme_palette["background"]
+            border = theme_palette["rule"]
+            ink = text_color
+            rail = theme_palette["rule"]
+            red = theme_palette["accent"]
+            red_dark = text_color
+            gold = theme_palette["accent"]
+            lower_rail = theme_palette["rule"]
+            corner = theme_palette["accent"]
 
         draw.rounded_rectangle([left + 5, top + 5, right + 5, bottom + 5], radius=8, fill=shadow)
         draw.rounded_rectangle([left, top, right, bottom], radius=8, fill=paper, outline=border, width=2)
         draw.rounded_rectangle([left + 4, top + 4, right - 4, bottom - 4], radius=6, outline=paper_light, width=1)
         draw.rectangle([left + 8, top + 8, left + 14, bottom - 8], fill=red)
         draw.line([(left + 20, top + 30), (right - 22, top + 30)], fill=rail, width=1)
-        draw.line([(left + 20, bottom - 11), (right - 22, bottom - 11)], fill=(111, 74, 39), width=1)
-        draw.polygon([(right - 18, top), (right, top), (right, top + 18)], fill=(217, 177, 90), outline=border)
+        draw.line([(left + 20, bottom - 11), (right - 22, bottom - 11)], fill=lower_rail, width=1)
+        draw.polygon([(right - 18, top), (right, top), (right, top + 18)], fill=corner, outline=border)
         for dot_y in (top + 18, bottom - 18):
             draw.ellipse([right - 17, dot_y - 2, right - 13, dot_y + 2], fill=gold, outline=border)
 
@@ -1910,13 +2446,22 @@ class SimpleCalendar(BasePlugin):
         for line_index, title_line in enumerate(title_lines or [""]):
             draw.text((title_cx, first_title_y + line_index * 16), title_line, fill=ink, font=text_font, anchor="mm")
 
-    def _draw_holiday_markers(self, draw, events, x, y, cell_size, selected=False):
+    def _draw_holiday_markers(
+        self,
+        draw,
+        events,
+        x,
+        y,
+        cell_size,
+        selected=False,
+        selected_color=(255, 255, 255),
+    ):
         radius = max(int(cell_size * 0.055), 3)
         gap = radius * 3
         shown = events[:3]
         start_x = x - gap * (len(shown) - 1) / 2
         for index, event in enumerate(shown):
-            color = (255, 255, 255) if selected else event.get("color", (80, 80, 80))
+            color = selected_color if selected else event.get("color", (80, 80, 80))
             cx = start_x + gap * index
             draw.ellipse([cx - radius, y - radius, cx + radius, y + radius], fill=color)
 
@@ -2119,6 +2664,65 @@ class SimpleCalendar(BasePlugin):
         if locale_data:
             return locale_data["headers"]
         return ["S", "M", "T", "W", "T", "F", "S"]
+
+    @classmethod
+    def _canonical_theme_palette(cls, theme):
+        roles = theme.get("palette") if isinstance(theme, dict) else None
+        if not isinstance(roles, dict):
+            return None
+        fallbacks = {
+            "background": (255, 255, 255),
+            "panel": (248, 248, 247),
+            "ink": (0, 0, 0),
+            "muted": (132, 132, 132),
+            "rule": (220, 220, 220),
+            "accent": (230, 26, 26),
+        }
+        return {
+            role: cls._coerce_palette_color(roles.get(role), fallback)
+            for role, fallback in fallbacks.items()
+        }
+
+    @staticmethod
+    def _coerce_palette_color(value, fallback):
+        if isinstance(value, (list, tuple)) and len(value) == 3:
+            try:
+                channels = tuple(int(channel) for channel in value)
+            except (TypeError, ValueError):
+                return fallback
+            if all(0 <= channel <= 255 for channel in channels):
+                return channels
+        try:
+            return ImageColor.getrgb(str(value))
+        except Exception:
+            return fallback
+
+    @classmethod
+    def _highest_contrast_color(cls, background, first, second):
+        return max(
+            (first, second),
+            key=lambda candidate: cls._contrast_ratio(background, candidate),
+        )
+
+    @classmethod
+    def _contrast_ratio(cls, first, second):
+        lighter, darker = sorted(
+            (cls._relative_luminance(first), cls._relative_luminance(second)),
+            reverse=True,
+        )
+        return (lighter + 0.05) / (darker + 0.05)
+
+    @staticmethod
+    def _relative_luminance(color):
+        channels = []
+        for channel in color:
+            value = channel / 255
+            channels.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
 
     @staticmethod
     def _parse_color(value, fallback):

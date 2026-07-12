@@ -1,6 +1,9 @@
 from datetime import date, datetime
+import json
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import icalendar
@@ -10,6 +13,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.simple_calendar import simple_calendar as calendar_module
 from plugins.simple_calendar.simple_calendar import LOCALE_DATA, SimpleCalendar
 
 
@@ -440,6 +444,533 @@ def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
         ),
         ("raise_for_status",),
     ]
+
+
+def _remote_calendar_settings():
+    return {
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
+        "holidayCalendarLabels[]": ["HOL"],
+        "holidayCalendarColors[]": ["#345995"],
+        "showPersonalCalendars": "true",
+        "personalCalendarURLs[]": ["https://example.com/personal.ics"],
+        "personalCalendarLabels[]": ["ME"],
+        "personalCalendarColors[]": ["#2e7d32"],
+    }
+
+
+def test_remote_event_snapshot_replays_holiday_and_personal_events_without_network(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    calls = []
+
+    def fetch(source, _selected_date, _tz):
+        calls.append(source["url"])
+        if source["kind"] == "holiday":
+            return [{
+                "date": date(2026, 7, 4),
+                "title": "Independence Day",
+                "label": source["label"],
+                "color": source["color"],
+                "kind": "holiday",
+                "time": "",
+            }]
+        return [{
+            "date": date(2026, 7, 14),
+            "title": "Dentist",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": "personal",
+            "time": "8:30a",
+            "starts_at": tz.localize(datetime(2026, 7, 14, 8, 30)),
+        }]
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", fetch)
+    data_events = plugin._get_calendar_events(
+        _remote_calendar_settings(), selected_date, tz
+    )
+    assert calls == [
+        "https://example.com/holidays.ics",
+        "https://example.com/personal.ics",
+    ]
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError("theme-only redraw attempted calendar network access")
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", fail_network)
+    theme_events = plugin._get_calendar_events(
+        _remote_calendar_settings(), selected_date, tz, allow_remote=False
+    )
+
+    assert theme_events == data_events
+    assert {event["kind"] for event in theme_events} == {"holiday", "personal"}
+    snapshot_files = list(
+        (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    )
+    assert len(snapshot_files) == 1
+    snapshot_text = snapshot_files[0].read_text(encoding="utf-8")
+    assert "example.com" not in snapshot_text
+
+
+def test_corrupt_remote_event_snapshot_refuses_theme_only_redraw(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda source, *_args: [{
+            "date": date(2026, 7, 4),
+            "title": "Independence Day",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }],
+    )
+    plugin._get_calendar_events(_remote_calendar_settings(), selected_date, tz)
+    snapshot_path = next(
+        (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    )
+    snapshot_path.write_bytes(b'{"version": 1, "events": [')
+
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("theme-only redraw attempted calendar network access")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="event snapshot"):
+        plugin._get_calendar_events(
+            _remote_calendar_settings(), selected_date, tz, allow_remote=False
+        )
+
+
+def test_remote_event_snapshot_is_normalized_and_bounded(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+
+    def many_events(source, *_args):
+        return [
+            {
+                "date": date(2026, 7, (index % 28) + 1),
+                "title": f"{index:04d}-" + "event" * 300,
+                "label": source["label"] + "-label" * 20,
+                "color": source["color"],
+                "kind": source["kind"],
+                "time": "12:34pm-and-extra-data",
+            }
+            for index in range(600)
+        ]
+
+    settings = _remote_calendar_settings()
+    settings.update({"showPersonalCalendars": "false"})
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", many_events)
+
+    events = plugin._get_calendar_events(settings, selected_date, tz)
+
+    assert 0 < len(events) <= 512
+    assert all(len(event["title"]) <= 256 for event in events)
+    assert all(len(event["label"]) <= 16 for event in events)
+    assert all(len(event.get("time", "")) <= 16 for event in events)
+    snapshot_path = next(
+        (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    )
+    assert snapshot_path.stat().st_size <= 256 * 1024
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert len(payload["events"]) == len(events)
+
+
+def test_data_refresh_replays_complete_snapshot_when_one_remote_source_fails(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = _remote_calendar_settings()
+
+    def full_fetch(source, *_args):
+        return [{
+            "date": date(2026, 7, 4 if source["kind"] == "holiday" else 14),
+            "title": "Holiday" if source["kind"] == "holiday" else "Dentist",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }]
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", full_fetch)
+    full_events = plugin._get_calendar_events(settings, selected_date, tz)
+    snapshot_path = next(
+        (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    )
+    original_snapshot = snapshot_path.read_bytes()
+
+    def partial_fetch(source, *_args):
+        if source["kind"] == "personal":
+            raise TimeoutError("private provider timed out")
+        return [{
+            "date": date(2026, 7, 5),
+            "title": "Partial replacement must not render",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }]
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", partial_fetch)
+    data_retry_events = plugin._get_calendar_events(settings, selected_date, tz)
+    theme_events = plugin._get_calendar_events(
+        settings, selected_date, tz, allow_remote=False
+    )
+
+    assert data_retry_events == full_events
+    assert theme_events == full_events
+    assert snapshot_path.read_bytes() == original_snapshot
+
+
+def test_cold_partial_remote_failure_refuses_data_render_and_redacts_logs(
+    tmp_path, monkeypatch, caplog
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    private_token = "VERY_PRIVATE_TOKEN_123"
+    settings = _remote_calendar_settings()
+    settings["personalCalendarURLs[]"] = [
+        f"https://example.com/private.ics?token={private_token}"
+    ]
+
+    def partial_fetch(source, *_args):
+        if source["kind"] == "personal":
+            raise RuntimeError(f"provider rejected token {private_token}")
+        return [{
+            "date": date(2026, 7, 4),
+            "title": "Partial holiday",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }]
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", partial_fetch)
+    caplog.set_level(logging.WARNING)
+
+    with pytest.raises(RuntimeError, match="event snapshot"):
+        plugin._get_calendar_events(settings, selected_date, tz)
+
+    assert private_token not in caplog.text
+    assert "example.com" not in caplog.text
+    assert "label=ME" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+
+
+def _configured_remote_sources(plugin, settings):
+    sources = []
+    if plugin._holidays_enabled(settings):
+        sources.extend(plugin._get_holiday_sources(settings))
+    if plugin._personal_calendars_enabled(settings):
+        sources.extend(plugin._get_personal_calendar_sources(settings))
+    return [
+        source
+        for source in sources
+        if plugin._calendar_source_requires_network(source)
+    ]
+
+
+def _symlink_or_skip(link, target, *, target_is_directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {type(exc).__name__}")
+
+
+def test_snapshot_fingerprint_cannot_escape_snapshot_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    with pytest.raises(RuntimeError, match="snapshot"):
+        plugin._event_snapshot_path("../escape", create=True)
+
+
+def test_snapshot_write_rejects_symlink_directory(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    snapshot_parent = data_root / "plugins" / "simple_calendar"
+    snapshot_parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _symlink_or_skip(
+        snapshot_parent / "event_snapshots",
+        outside,
+        target_is_directory=True,
+    )
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_root))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    settings = _remote_calendar_settings()
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda source, *_args: [{
+            "date": date(2026, 7, 4),
+            "title": "Safe event",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }],
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot"):
+        plugin._get_calendar_events(
+            settings,
+            date(2026, 7, 11),
+            pytz.timezone("America/Los_Angeles"),
+        )
+
+    assert list(outside.iterdir()) == []
+
+
+def test_snapshot_read_rejects_symlink_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    settings = _remote_calendar_settings()
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda source, *_args: [{
+            "date": date(2026, 7, 4),
+            "title": "Safe event",
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }],
+    )
+    plugin._get_calendar_events(settings, selected_date, tz)
+    snapshot_path = next(
+        (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    )
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(snapshot_path.read_bytes())
+    snapshot_path.unlink()
+    _symlink_or_skip(snapshot_path, outside)
+
+    with pytest.raises(RuntimeError, match="snapshot"):
+        plugin._get_calendar_events(
+            settings, selected_date, tz, allow_remote=False
+        )
+
+
+def test_snapshot_reader_uses_bounded_read_instead_of_path_read_bytes(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    settings = _remote_calendar_settings()
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    sources = _configured_remote_sources(plugin, settings)
+    fingerprint = plugin._event_snapshot_fingerprint(sources, selected_date, tz)
+    snapshot_path = plugin._event_snapshot_path(fingerprint, create=True)
+    snapshot_path.write_bytes(b"x" * (256 * 1024 + 2))
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unbounded Path.read_bytes used")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="oversized"):
+        plugin._read_event_snapshot(sources, selected_date, tz)
+
+
+def test_snapshot_prune_only_removes_expired_safe_regular_hash_files(tmp_path):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    directory = tmp_path / "snapshots"
+    directory.mkdir()
+    safe_old = directory / ("a" * 64 + ".json")
+    unsafe_name = directory / "notes.json"
+    directory_entry = directory / ("b" * 64 + ".json")
+    safe_old.write_text("{}", encoding="utf-8")
+    unsafe_name.write_text("{}", encoding="utf-8")
+    directory_entry.mkdir()
+    old = time.time() - 63 * 24 * 60 * 60
+    os.utime(safe_old, (old, old))
+    os.utime(unsafe_name, (old, old))
+    os.utime(directory_entry, (old, old))
+
+    plugin._prune_event_snapshots(directory)
+
+    assert not safe_old.exists()
+    assert unsafe_name.exists()
+    assert directory_entry.is_dir()
+
+
+def test_nine_active_remote_snapshot_configurations_all_remain_replayable(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    settings_list = []
+
+    def fetch(source, *_args):
+        return [{
+            "date": date(2026, 7, 4),
+            "title": source["url"].rsplit("/", 1)[-1],
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }]
+
+    monkeypatch.setattr(plugin, "_fetch_holiday_events", fetch)
+    for index in range(9):
+        settings = {
+            "showHolidays": "true",
+            "holidayPreset": "custom",
+            "holidayCalendarURLs[]": [f"https://example.com/{index}.ics"],
+            "holidayCalendarLabels[]": [f"C{index}"],
+        }
+        settings_list.append(settings)
+        plugin._get_calendar_events(settings, selected_date, tz)
+
+    snapshot_dir = (
+        tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots"
+    )
+    assert len(list(snapshot_dir.glob("*.json"))) == 9
+    for index, settings in enumerate(settings_list):
+        replay = plugin._get_calendar_events(
+            settings, selected_date, tz, allow_remote=False
+        )
+        assert [event["title"] for event in replay] == [f"{index}.ics"]
+
+
+def test_snapshot_total_byte_budget_rejects_new_data_without_deleting_existing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    first = {
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/first.ics"],
+        "holidayCalendarLabels[]": ["FIRST"],
+    }
+    second = {
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/second.ics"],
+        "holidayCalendarLabels[]": ["SECOND"],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda source, *_args: [{
+            "date": date(2026, 7, 4),
+            "title": source["label"],
+            "label": source["label"],
+            "color": source["color"],
+            "kind": source["kind"],
+            "time": "",
+        }],
+    )
+    first_events = plugin._get_calendar_events(first, selected_date, tz)
+    snapshot_dir = (
+        tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots"
+    )
+    first_snapshot = next(snapshot_dir.glob("*.json"))
+    monkeypatch.setattr(
+        calendar_module,
+        "EVENT_SNAPSHOT_MAX_TOTAL_BYTES",
+        first_snapshot.stat().st_size + 1,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="byte budget"):
+        plugin._get_calendar_events(second, selected_date, tz)
+
+    assert list(snapshot_dir.glob("*.json")) == [first_snapshot]
+    assert plugin._get_calendar_events(
+        first, selected_date, tz, allow_remote=False
+    ) == first_events
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file://calendar-host/share/private.ics",
+        "file://192.0.2.10/share/private.ics",
+        "file:////calendar-host/share/private.ics",
+        r"file:\\calendar-host\share\private.ics",
+        "file://localhost//calendar-host/share/private.ics",
+        "file://localhost/%2Fcalendar-host/share/private.ics",
+        r"\\calendar-host\share\private.ics",
+    ],
+)
+def test_file_host_and_unc_calendar_sources_require_network(url):
+    assert SimpleCalendar._calendar_source_requires_network({"url": url}) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["file:///var/lib/inkypi/calendars/local.ics", "file://localhost/var/lib/inkypi/calendars/local.ics"],
+)
+def test_only_empty_or_localhost_file_authorities_are_local(url):
+    assert SimpleCalendar._calendar_source_requires_network({"url": url}) is False
+
+
+def test_theme_only_reads_localhost_file_calendar_directly(tmp_path, monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    ics_path = tmp_path / "local.ics"
+    ics_path.write_text(
+        """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20260721
+DTEND;VALUE=DATE:20260722
+SUMMARY:Offline local event
+END:VEVENT
+END:VCALENDAR
+""",
+        encoding="utf-8",
+    )
+    localhost_url = ics_path.as_uri().replace("file:///", "file://localhost/")
+    settings = {
+        "holidayPreset": "off",
+        "showPersonalCalendars": "true",
+        "personalCalendarURLs[]": [localhost_url],
+        "personalCalendarLabels[]": ["LOCAL"],
+    }
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: (_ for _ in ()).throw(AssertionError("network called")),
+    )
+
+    events = plugin._get_calendar_events(
+        settings, date(2026, 7, 11), tz, allow_remote=False
+    )
+
+    assert [event["title"] for event in events] == ["Offline local event"]
 
 
 def test_extract_personal_monthly_rrule_expands_current_month():

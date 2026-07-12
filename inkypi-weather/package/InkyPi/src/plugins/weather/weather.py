@@ -236,7 +236,7 @@ class Weather(BasePlugin):
             return None
         suffix = icon_code[-1] if icon_code[-1:] in {"d", "n"} else "d"
         numeric_code = icon_code[:-1] if icon_code[-1:] in {"d", "n"} else icon_code
-        if numeric_code == "01":
+        if numeric_code in {"01", "022"}:
             return "clear_night" if suffix == "n" else "clear_day"
         if numeric_code in {"02", "03", "04"}:
             return "cloudy"

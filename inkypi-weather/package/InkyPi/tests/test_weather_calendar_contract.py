@@ -3,6 +3,8 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.simple_calendar.simple_calendar import SimpleCalendar
@@ -114,6 +116,16 @@ def test_weather_context_icon_mapping_keeps_partly_cloudy_out_of_clear_sky():
     assert Weather._background_slug_for_icon_code("02d") == "cloudy"
 
 
+@pytest.mark.parametrize(
+    ("icon_code", "expected_slug"),
+    [("022d", "clear_day"), ("022n", "clear_night")],
+)
+def test_weather_context_maps_mainly_clear_icons_to_canonical_background_slug(
+    icon_code, expected_slug
+):
+    assert Weather._background_slug_for_icon_code(icon_code) == expected_slug
+
+
 def test_calendar_theme_only_uses_compatible_stale_weather_context_without_http(
     tmp_path, monkeypatch
 ):
@@ -145,10 +157,11 @@ def test_calendar_theme_only_uses_compatible_stale_weather_context_without_http(
     assert Path(path).name == "snow.png"
 
 
-def test_calendar_theme_only_skips_remote_ics_and_weather_http(
+def test_calendar_theme_only_refuses_remote_redraw_without_event_snapshot(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", str(tmp_path / "empty-context"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
     session = RecordingSession(weather_code=0)
     monkeypatch.setattr(
         "plugins.simple_calendar.simple_calendar.get_http_session",
@@ -164,26 +177,105 @@ def test_calendar_theme_only_skips_remote_ics_and_weather_http(
 
     monkeypatch.setattr(plugin, "_render_calendar", capture_render)
 
-    result = plugin.generate_image(
-        {
-            "_theme_render_only": True,
-            "showHolidays": "true",
-            "holidayPreset": "custom",
-            "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
-            "showPersonalCalendars": "true",
-            "personalCalendarURLs[]": ["https://example.com/personal.ics"],
-            "weatherLatitude": "37.5",
-            "weatherLongitude": "-122.0",
-            "weatherPanelFallback": "cloudy",
-            "weatherPanelBackgroundStyle": "classic",
+    with pytest.raises(RuntimeError, match="event snapshot"):
+        plugin.generate_image(
+            {
+                "_theme_render_only": True,
+                "showHolidays": "true",
+                "holidayPreset": "custom",
+                "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
+                "showPersonalCalendars": "true",
+                "personalCalendarURLs[]": ["https://example.com/personal.ics"],
+                "weatherLatitude": "37.5",
+                "weatherLongitude": "-122.0",
+                "weatherPanelFallback": "cloudy",
+                "weatherPanelBackgroundStyle": "classic",
+            },
+            FakeDeviceConfig(),
+        )
+
+    assert session.calls == []
+    assert captured == {}
+
+
+def _calendar_theme(mode):
+    palettes = {
+        "day": {
+            "background": (245, 240, 229),
+            "panel": (236, 230, 215),
+            "ink": (20, 27, 31),
+            "muted": (75, 82, 84),
+            "rule": (160, 154, 137),
+            "accent": (46, 106, 118),
         },
+        "night": {
+            "background": (11, 21, 24),
+            "panel": (18, 32, 36),
+            "ink": (236, 243, 239),
+            "muted": (172, 187, 181),
+            "rule": (72, 91, 87),
+            "accent": (105, 185, 197),
+        },
+    }
+    return {"mode": mode, "palette": palettes[mode]}
+
+
+def _relative_luminance(color):
+    channels = []
+    for channel in color:
+        value = channel / 255
+        channels.append(
+            value / 12.92
+            if value <= 0.04045
+            else ((value + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(first, second):
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_calendar_canonical_palette_changes_pixels_with_readable_contrast(monkeypatch):
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.read_contexts", lambda *args, **kwargs: []
+    )
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    base_settings = {
+        "customDate": "2026-07-11",
+        "holidayPreset": "off",
+        "weatherPanelBackground": "false",
+        "dateHeroOverlays": "false",
+    }
+
+    day = plugin.generate_image(
+        {**base_settings, "_inkypi_theme": _calendar_theme("day")},
+        FakeDeviceConfig(),
+    )
+    night = plugin.generate_image(
+        {**base_settings, "_inkypi_theme": _calendar_theme("night")},
         FakeDeviceConfig(),
     )
 
-    assert result == "rendered"
-    assert session.calls == []
-    assert captured["events"] == []
-    assert Path(captured["background_path"]).name == "cloudy.png"
+    assert day.tobytes() != night.tobytes()
+    for image, theme in (
+        (day, _calendar_theme("day")),
+        (night, _calendar_theme("night")),
+    ):
+        palette = theme["palette"]
+        colors = {
+            color
+            for _count, color in image.getcolors(
+                maxcolors=image.width * image.height
+            )
+        }
+        assert palette["background"] in colors
+        assert palette["panel"] in colors
+        assert palette["ink"] in colors
+        assert _contrast_ratio(palette["background"], palette["ink"]) >= 4.5
 
 
 def test_calendar_normal_render_still_uses_open_meteo_when_context_is_missing(

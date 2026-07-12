@@ -479,6 +479,280 @@ def _cached_status():
     }
 
 
+def _theme_context(mode):
+    palettes = {
+        "day": {
+            "background": (244, 238, 214),
+            "panel": (252, 248, 232),
+            "ink": (18, 24, 29),
+            "muted": (78, 82, 84),
+            "rule": (150, 142, 118),
+            "accent": (12, 126, 92),
+        },
+        "night": {
+            "background": (9, 18, 22),
+            "panel": (18, 31, 35),
+            "ink": (238, 244, 240),
+            "muted": (174, 188, 181),
+            "rule": (69, 91, 84),
+            "accent": (102, 213, 170),
+        },
+    }
+    return {
+        "requested_mode": "auto",
+        "mode": mode,
+        "palette": palettes[mode],
+        "css": {},
+        "source": "test",
+        "reason": "test",
+    }
+
+
+def test_theme_only_warm_cache_is_provider_free_and_byte_stable(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    settings.update(
+        {
+            "cacheSeconds": 60,
+            "cameraEnabled": True,
+            "_theme_render_only": True,
+            "_inkypi_theme": _theme_context("night"),
+        }
+    )
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(
+        cache_file,
+        {"fetched_at": bambu_module.time.time(), "status": _cached_status()},
+    )
+    original_cache = Path(cache_file).read_bytes()
+    calls = {"mqtt": 0, "camera": 0, "write": 0}
+
+    def fake_fetch(*args, **kwargs):
+        calls["mqtt"] += 1
+        return {"print": {"gcode_state": "IDLE"}}
+
+    def fake_camera(*args, **kwargs):
+        calls["camera"] += 1
+
+    def fake_write(*args, **kwargs):
+        calls["write"] += 1
+
+    monkeypatch.setattr(plugin, "_fetch_report", fake_fetch)
+    monkeypatch.setattr(plugin, "_attach_camera_frame", fake_camera)
+    monkeypatch.setattr(plugin, "_write_cache", fake_write)
+
+    image = plugin.generate_image(settings, _BambuDeviceConfig())
+
+    assert calls == {"mqtt": 0, "camera": 0, "write": 0}
+    assert Path(cache_file).read_bytes() == original_cache
+    assert image.info.get("inkypi_skip_cache") is not True
+
+
+def test_theme_only_expired_cache_stays_stale_and_non_cacheable(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    settings.update(
+        {
+            "cacheSeconds": 60,
+            "cameraEnabled": True,
+            "_theme_render_only": True,
+            "_inkypi_theme": _theme_context("night"),
+        }
+    )
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(
+        cache_file,
+        {
+            "fetched_at": bambu_module.time.time() - 61,
+            "status": _cached_status(),
+        },
+    )
+    original_cache = Path(cache_file).read_bytes()
+    rendered = {}
+
+    def capture_status(status, dimensions):
+        rendered.update(status)
+        return Image.new("RGB", dimensions)
+
+    monkeypatch.setattr(plugin, "_render_status", capture_status)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("theme-only called MQTT")
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_attach_camera_frame",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("theme-only called camera")
+        ),
+    )
+
+    image = plugin.generate_image(settings, _BambuDeviceConfig())
+
+    assert rendered["source"] == "stale"
+    assert "warning" in rendered
+    assert image.info["inkypi_skip_cache"] is True
+    assert Path(cache_file).read_bytes() == original_cache
+
+
+def test_theme_only_cold_cache_stays_local_and_preserves_offline_semantics(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    settings.update(
+        {
+            "cameraEnabled": True,
+            "_theme_render_only": True,
+            "_inkypi_theme": _theme_context("night"),
+        }
+    )
+    calls = {"mqtt": 0, "camera": 0, "write": 0}
+
+    def count_call(name):
+        def inner(*args, **kwargs):
+            calls[name] += 1
+            raise AssertionError(f"theme-only called {name}")
+
+        return inner
+
+    monkeypatch.setattr(plugin, "_fetch_report", count_call("mqtt"))
+    monkeypatch.setattr(plugin, "_attach_camera_frame", count_call("camera"))
+    monkeypatch.setattr(plugin, "_write_cache", count_call("write"))
+
+    image = plugin.generate_image(settings, _BambuDeviceConfig())
+
+    assert calls == {"mqtt": 0, "camera": 0, "write": 0}
+    assert image.info["inkypi_skip_cache"] is True
+    assert not (tmp_path / "cache").exists()
+
+
+def test_canonical_theme_palette_overrides_legacy_mode_and_changes_pixels(tmp_path):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    settings.update({"cacheSeconds": 3600, "cameraEnabled": False})
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(
+        cache_file,
+        {"fetched_at": bambu_module.time.time(), "status": _cached_status()},
+    )
+
+    day_settings = {
+        **settings,
+        "themeMode": "night",
+        "_inkypi_theme": _theme_context("day"),
+    }
+    night_settings = {
+        **settings,
+        "themeMode": "day",
+        "_inkypi_theme": _theme_context("night"),
+    }
+
+    day = plugin.generate_image(day_settings, _BambuDeviceConfig())
+    night = plugin.generate_image(night_settings, _BambuDeviceConfig())
+
+    assert day.getpixel((0, 0)) == _theme_context("day")["palette"]["background"]
+    assert night.getpixel((0, 0)) == _theme_context("night")["palette"]["background"]
+    assert day.tobytes() != night.tobytes()
+    assert bambu_module._ACTIVE_COLORS.get() is None
+
+
+def test_canonical_night_palette_recolors_neutral_wordmark_ink(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    night_ink = _theme_context("night")["palette"]["ink"]
+    monkeypatch.setattr(plugin, "_load_bambulab_logo", lambda: None)
+    monkeypatch.setattr(
+        plugin,
+        "_load_title_wordmark",
+        lambda: Image.new("RGBA", TITLE_WORDMARK_SIZE, (0, 0, 0, 255)),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_section_wordmark",
+        lambda title: Image.new("RGBA", SECTION_WORDMARK_IMAGES[title][1], (0, 0, 0, 255)),
+    )
+    settings = {
+        "demoMode": True,
+        "_inkypi_theme": _theme_context("night"),
+    }
+
+    image = plugin.generate_image(settings, _BambuDeviceConfig())
+
+    assert image.getpixel((23, 14)) == night_ink
+    assert image.getpixel((32, 72)) == night_ink
+
+
+def test_night_theme_black_and_white_filaments_keep_data_colors_and_contrast_borders(
+    tmp_path,
+):
+    plugin = _plugin(tmp_path)
+    colors = bambu_module._render_colors(_theme_context("night"))
+    token = bambu_module._ACTIVE_COLORS.set(colors)
+    try:
+        image = Image.new("RGB", (34, 18), colors["panel"])
+        draw = ImageDraw.Draw(image)
+        plugin._draw_filament_color_chip(draw, (2, 2, 14, 14), "111111FF")
+        plugin._draw_filament_color_chip(draw, (19, 2, 31, 14), "FFFFFFFF")
+        black_fill = image.getpixel((8, 8))
+        black_border = image.getpixel((2, 2))
+        white_fill = image.getpixel((25, 8))
+        white_border = image.getpixel((19, 2))
+    finally:
+        bambu_module._ACTIVE_COLORS.reset(token)
+
+    assert black_fill != colors["ink"]
+    assert white_fill != colors["ink"]
+    assert bambu_module.BambuMonitor._luma(white_fill) - bambu_module.BambuMonitor._luma(black_fill) > 180
+    assert abs(
+        bambu_module.BambuMonitor._luma(black_border)
+        - bambu_module.BambuMonitor._luma(black_fill)
+    ) > 100
+    assert abs(
+        bambu_module.BambuMonitor._luma(white_border)
+        - bambu_module.BambuMonitor._luma(white_fill)
+    ) > 100
+
+
+def _wcag_contrast(first, second):
+    def luminance(color):
+        channels = []
+        for channel in color:
+            value = channel / 255
+            channels.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_night_theme_badges_choose_the_higher_contrast_text_candidate(tmp_path):
+    plugin = _plugin(tmp_path)
+    colors = bambu_module._render_colors(_theme_context("night"))
+    token = bambu_module._ACTIVE_COLORS.set(colors)
+    try:
+        fills = [
+            plugin._source_color("cache"),
+            plugin._status_color("RUNNING", 0),
+        ]
+        for fill in fills:
+            chosen = plugin._contrast_text(fill)
+            candidate_ratios = {
+                candidate: _wcag_contrast(fill, candidate)
+                for candidate in (colors["ink"], colors["paper"])
+            }
+            assert candidate_ratios[chosen] == max(candidate_ratios.values())
+            assert candidate_ratios[chosen] >= 4.5 or all(
+                ratio < 4.5 for ratio in candidate_ratios.values()
+            )
+    finally:
+        bambu_module._ACTIVE_COLORS.reset(token)
+
+
 def test_generate_image_passes_machine_identity_settings_to_live_status(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     settings = _connected_settings()
