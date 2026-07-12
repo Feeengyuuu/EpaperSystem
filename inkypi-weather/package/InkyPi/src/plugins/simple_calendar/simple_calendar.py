@@ -567,7 +567,13 @@ class SimpleCalendar(BasePlugin):
         primary_color = self._parse_color(settings.get("primaryColor"), (230, 26, 26))
         highlight_color = self._parse_color(settings.get("highlightColor"), (163, 13, 13))
         layout_position = settings.get("layoutPosition", "left").lower()
-        holiday_events = self._get_calendar_events(settings, selected_date, tz)
+        theme_render_only = self._setting_enabled(settings.get("_theme_render_only"))
+        holiday_events = self._get_calendar_events(
+            settings,
+            selected_date,
+            tz,
+            allow_remote=not theme_render_only,
+        )
         weather_panel_background_path = self._get_weather_panel_background_path(settings, device_config, selected_date)
         date_hero_overlay_enabled = self._date_hero_overlay_enabled(settings)
 
@@ -940,9 +946,12 @@ class SimpleCalendar(BasePlugin):
         if not self._weather_panel_background_enabled(settings):
             return None
 
+        theme_render_only = self._setting_enabled(settings.get("_theme_render_only"))
         source = "context"
-        slug = self._read_weather_context_background_slug()
-        if not slug:
+        slug = self._read_weather_context_background_slug(
+            include_stale=theme_render_only
+        )
+        if not slug and not theme_render_only:
             source = "open-meteo"
             weather_settings = self._find_weather_source_settings(settings, device_config)
             slug = self._fetch_current_weather_background_slug(weather_settings) if weather_settings else None
@@ -961,12 +970,12 @@ class SimpleCalendar(BasePlugin):
             return True
         return self._setting_enabled(settings.get("weatherPanelBackground"))
 
-    def _read_weather_context_background_slug(self):
+    def _read_weather_context_background_slug(self, *, include_stale=False):
         try:
             entries = read_contexts(
                 ["weather"],
                 max_age_seconds=WEATHER_PANEL_CONTEXT_MAX_AGE_SECONDS,
-                include_stale=False,
+                include_stale=include_stale,
             )
         except Exception as exc:
             logger.debug("Could not read weather context for Simple Calendar: %s", exc)
@@ -976,6 +985,14 @@ class SimpleCalendar(BasePlugin):
             payload = entry.get("payload") if isinstance(entry, dict) else {}
             if not isinstance(payload, dict):
                 continue
+            slug = self._normalize_weather_background_slug(
+                payload.get("background_slug")
+            )
+            if slug:
+                return slug
+            slug = self._weather_icon_to_background_slug(payload.get("icon_code"))
+            if slug:
+                return slug
             for key in ("weather_background_slug", "weather_background_path", "weather_background_file"):
                 slug = self._normalize_weather_background_slug(payload.get(key))
                 if slug:
@@ -1160,13 +1177,41 @@ class SimpleCalendar(BasePlugin):
         except (TypeError, ValueError):
             return None
 
-    def _get_calendar_events(self, settings, selected_date, tz):
+    def _get_calendar_events(
+        self,
+        settings,
+        selected_date,
+        tz,
+        *,
+        allow_remote=True,
+    ):
         events = []
-        events.extend(self._get_holiday_events(settings, selected_date, tz))
-        events.extend(self._get_personal_calendar_events(settings, selected_date, tz))
+        events.extend(
+            self._get_holiday_events(
+                settings,
+                selected_date,
+                tz,
+                allow_remote=allow_remote,
+            )
+        )
+        events.extend(
+            self._get_personal_calendar_events(
+                settings,
+                selected_date,
+                tz,
+                allow_remote=allow_remote,
+            )
+        )
         return self._dedupe_holiday_events(events)
 
-    def _get_holiday_events(self, settings, selected_date, tz):
+    def _get_holiday_events(
+        self,
+        settings,
+        selected_date,
+        tz,
+        *,
+        allow_remote=True,
+    ):
         if not self._holidays_enabled(settings):
             return []
 
@@ -1176,6 +1221,8 @@ class SimpleCalendar(BasePlugin):
 
         events = []
         for source in sources:
+            if not allow_remote and self._calendar_source_requires_network(source):
+                continue
             try:
                 events.extend(self._fetch_holiday_events(source, selected_date, tz))
             except Exception:
@@ -1223,12 +1270,21 @@ class SimpleCalendar(BasePlugin):
             })
         return sources
 
-    def _get_personal_calendar_events(self, settings, selected_date, tz):
+    def _get_personal_calendar_events(
+        self,
+        settings,
+        selected_date,
+        tz,
+        *,
+        allow_remote=True,
+    ):
         if not self._personal_calendars_enabled(settings):
             return []
 
         events = []
         for source in self._get_personal_calendar_sources(settings):
+            if not allow_remote and self._calendar_source_requires_network(source):
+                continue
             try:
                 events.extend(self._fetch_holiday_events(source, selected_date, tz))
             except Exception:
@@ -1261,6 +1317,15 @@ class SimpleCalendar(BasePlugin):
                 "kind": "personal",
             })
         return sources
+
+    @staticmethod
+    def _calendar_source_requires_network(source):
+        url = str((source or {}).get("url") or "").strip()
+        parsed = urlparse(url)
+        is_local_path = parsed.scheme == "file" or (
+            not parsed.scheme and url.startswith("/")
+        )
+        return not is_local_path
 
     def _fetch_holiday_events(self, source, selected_date, tz):
         content = self._read_calendar_source(source["url"])

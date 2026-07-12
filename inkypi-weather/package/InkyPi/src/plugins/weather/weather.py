@@ -190,6 +190,16 @@ class Weather(BasePlugin):
                 for item in forecast[:4]
             ],
         }
+        icon_code = self._normalize_context_icon_code(
+            template_params.get("current_day_icon")
+        )
+        background_slug = self._background_slug_for_icon_code(icon_code)
+        if icon_code:
+            payload["icon_code"] = icon_code
+        if background_slug:
+            payload["background_slug"] = background_slug
+            # Keep the established consumer alias during the schema migration.
+            payload["weather_background_slug"] = background_slug
         astronomy = template_params.get("astronomy")
         if isinstance(astronomy, dict):
             payload["astronomy"] = {
@@ -206,6 +216,42 @@ class Weather(BasePlugin):
             generated_at=generated_at,
             ttl_seconds=2 * 60 * 60,
         )
+
+    @staticmethod
+    def _normalize_context_icon_code(value):
+        icon_code = os.path.splitext(
+            os.path.basename(str(value or "").strip())
+        )[0].lower()
+        if not icon_code:
+            return None
+        suffix = icon_code[-1] if icon_code[-1:] in {"d", "n"} else ""
+        numeric_code = icon_code[:-1] if suffix else icon_code
+        if not numeric_code.isdigit():
+            return None
+        return f"{numeric_code}{suffix}"
+
+    @staticmethod
+    def _background_slug_for_icon_code(icon_code):
+        if not icon_code:
+            return None
+        suffix = icon_code[-1] if icon_code[-1:] in {"d", "n"} else "d"
+        numeric_code = icon_code[:-1] if icon_code[-1:] in {"d", "n"} else icon_code
+        if numeric_code == "01":
+            return "clear_night" if suffix == "n" else "clear_day"
+        if numeric_code in {"02", "03", "04"}:
+            return "cloudy"
+        if numeric_code in {
+            "09", "10", "51", "53", "55", "56", "57", "61",
+            "63", "65", "66", "67", "80", "81", "82",
+        }:
+            return "rain"
+        if numeric_code in {"11", "95", "96", "99"}:
+            return "thunderstorm"
+        if numeric_code in {"13", "71", "73", "75", "77", "85", "86"}:
+            return "snow"
+        if numeric_code in {"45", "48", "50"}:
+            return "fog"
+        return None
 
     def parse_weather_data(self, weather_data, aqi_data, tz, units, time_format, lat):
         current = weather_data.get("current")
