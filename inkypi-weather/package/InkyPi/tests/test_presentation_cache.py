@@ -250,16 +250,22 @@ def test_corrupt_and_non_png_files_are_rejected(tmp_path, kind):
     assert cache.load_image(candidate) is None
 
 
-def test_png_over_dimension_and_pixel_limits_is_rejected(tmp_path):
+def test_png_dimension_and_pixel_limits_enforce_exact_boundaries(tmp_path):
     root = tmp_path / ".refresh-presentation"
-    dimension_candidate = _candidate(root)
-    _write_png(dimension_candidate.cache_path, size=(8193, 1))
-    pixel_candidate = _candidate(root, request_id=OTHER_REQUEST_ID)
-    _write_png(pixel_candidate.cache_path, size=(4096, 2000))
+    dimension_boundary = _candidate(root, request_id=f"{1:032x}")
+    dimension_over = _candidate(root, request_id=f"{2:032x}")
+    pixel_boundary = _candidate(root, request_id=f"{3:032x}")
+    pixel_over = _candidate(root, request_id=f"{4:032x}")
+    _write_png(dimension_boundary.cache_path, size=(4096, 1))
+    _write_png(dimension_over.cache_path, size=(4097, 1))
+    _write_png(pixel_boundary.cache_path, size=(2000, 1000))
+    _write_png(pixel_over.cache_path, size=(2001, 1000))
     cache = PresentationCache(root)
 
-    assert cache.validate(dimension_candidate) is False
-    assert cache.validate(pixel_candidate) is False
+    assert cache.validate(dimension_boundary) is True
+    assert cache.validate(dimension_over) is False
+    assert cache.validate(pixel_boundary) is True
+    assert cache.validate(pixel_over) is False
 
 
 def test_png_over_byte_limit_is_rejected(tmp_path, monkeypatch):
@@ -270,10 +276,22 @@ def test_png_over_byte_limit_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(
         presentation_cache_module,
         "MAX_PRESENTATION_FILE_BYTES",
+        size,
+    )
+    assert PresentationCache(root).validate(candidate) is True
+    monkeypatch.setattr(
+        presentation_cache_module,
+        "MAX_PRESENTATION_FILE_BYTES",
         size - 1,
     )
 
     assert PresentationCache(root).validate(candidate) is False
+
+
+def test_prepared_png_limits_match_the_reviewed_runtime_budget():
+    assert presentation_cache_module.MAX_PRESENTATION_FILE_BYTES == 8 * 1024 * 1024
+    assert presentation_cache_module.MAX_PRESENTATION_PIXELS == 2_000_000
+    assert presentation_cache_module.MAX_PRESENTATION_DIMENSION == 4096
 
 
 def test_expired_file_is_not_valid_or_loadable_but_can_be_removed(tmp_path):
@@ -289,6 +307,18 @@ def test_expired_file_is_not_valid_or_loadable_but_can_be_removed(tmp_path):
     assert cache.load_image(candidate) is None
     assert cache.remove(candidate) is True
     assert not Path(candidate.cache_path).exists()
+
+
+def test_future_mtime_is_not_valid_or_loadable(tmp_path):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    _write_png(candidate.cache_path)
+    future = Path(candidate.cache_path).stat().st_mtime + 60 * 60
+    os.utime(candidate.cache_path, (future, future))
+    cache = PresentationCache(root)
+
+    assert cache.validate(candidate) is False
+    assert cache.load_image(candidate) is None
 
 
 def test_load_revalidates_after_a_prior_successful_validation(tmp_path):
@@ -389,6 +419,71 @@ def test_save_is_atomic_private_and_failure_preserves_old_file(
 
     assert path.read_bytes() == original
     assert not list(root.glob(f".{path.name}.*.tmp"))
+
+
+def test_save_post_replace_root_identity_error_is_best_effort(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    cache = PresentationCache(root)
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(candidate, image)
+    real_root_check = cache._root_still_matches
+    root_checks = 0
+
+    def fail_post_replace_check(bound_root):
+        nonlocal root_checks
+        root_checks += 1
+        if root_checks == 3:
+            raise OSError("simulated post-replace root identity error")
+        return real_root_check(bound_root)
+
+    monkeypatch.setattr(cache, "_root_still_matches", fail_post_replace_check)
+
+    with Image.new("RGB", (8, 8), "blue") as image:
+        cache.save(candidate, image)
+
+    loaded = PresentationCache(root).load_image(candidate)
+    assert loaded is not None
+    try:
+        assert loaded.getpixel((0, 0)) == (0, 0, 255)
+    finally:
+        loaded.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="directory fsync publish proof is POSIX-only")
+def test_save_post_replace_directory_fsync_error_is_best_effort(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    cache = PresentationCache(root)
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(candidate, image)
+    real_fsync = presentation_cache_module.os.fsync
+    fsync_calls = 0
+
+    def fail_directory_fsync(fd):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("simulated post-replace directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(presentation_cache_module.os, "fsync", fail_directory_fsync)
+
+    with Image.new("RGB", (8, 8), "blue") as image:
+        cache.save(candidate, image)
+
+    loaded = PresentationCache(root).load_image(candidate)
+    assert loaded is not None
+    try:
+        assert loaded.getpixel((0, 0)) == (0, 0, 255)
+    finally:
+        loaded.close()
 
 
 def test_save_refuses_a_third_file_for_one_instance(tmp_path):
@@ -498,6 +593,114 @@ def test_remove_does_not_delete_a_replacement_file(tmp_path, monkeypatch):
     assert path.exists()
     with Image.open(path) as remaining:
         assert remaining.getpixel((0, 0)) == (0, 0, 255)
+
+
+@pytest.mark.parametrize("backend", ["posix", "fallback"])
+def test_remove_restores_canonical_after_post_quarantine_stat_error(
+    tmp_path,
+    monkeypatch,
+    backend,
+):
+    if backend == "posix" and os.name != "posix":
+        pytest.skip("descriptor-relative POSIX removal requires POSIX")
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    _write_png(candidate.cache_path, "red")
+    replacement = tmp_path / "replacement.png"
+    _write_png(replacement, "blue")
+    original = Path(candidate.cache_path).read_bytes()
+    replacement_bytes = replacement.read_bytes()
+    cache = PresentationCache(root)
+    if backend == "fallback":
+        monkeypatch.setattr(
+            cache,
+            "_open_bound_cache_file",
+            cache._open_bound_cache_file_fallback,
+        )
+    stat_name = "stat" if backend == "posix" else "lstat"
+    real_stat = getattr(presentation_cache_module.os, stat_name)
+
+    def fail_quarantine_stat(target, *args, **kwargs):
+        if str(target).endswith(".remove"):
+            raise OSError("simulated post-quarantine stat failure")
+        return real_stat(target, *args, **kwargs)
+
+    monkeypatch.setattr(
+        presentation_cache_module.os,
+        stat_name,
+        fail_quarantine_stat,
+    )
+
+    assert cache.remove(candidate) is False
+    assert Path(candidate.cache_path).read_bytes() == original
+    assert replacement.read_bytes() == replacement_bytes
+    assert not list(root.glob(".*.remove"))
+
+
+@pytest.mark.parametrize("backend", ["posix", "fallback"])
+def test_remove_retains_and_reports_tombstone_when_restore_fails(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    backend,
+):
+    if backend == "posix" and os.name != "posix":
+        pytest.skip("descriptor-relative POSIX removal requires POSIX")
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    _write_png(candidate.cache_path, "red")
+    original = Path(candidate.cache_path).read_bytes()
+    cache = PresentationCache(root)
+    if backend == "fallback":
+        monkeypatch.setattr(
+            cache,
+            "_open_bound_cache_file",
+            cache._open_bound_cache_file_fallback,
+        )
+    stat_name = "stat" if backend == "posix" else "lstat"
+    real_stat = getattr(presentation_cache_module.os, stat_name)
+
+    def fail_quarantine_stat(target, *args, **kwargs):
+        if str(target).endswith(".remove"):
+            raise OSError("simulated post-quarantine stat failure")
+        return real_stat(target, *args, **kwargs)
+
+    def fail_restore(*args, **kwargs):
+        raise OSError("simulated restore failure")
+
+    monkeypatch.setattr(
+        presentation_cache_module.os,
+        stat_name,
+        fail_quarantine_stat,
+    )
+    monkeypatch.setattr(presentation_cache_module.os, "link", fail_restore)
+
+    with caplog.at_level("ERROR", logger=presentation_cache_module.__name__):
+        assert cache.remove(candidate) is False
+
+    assert not Path(candidate.cache_path).exists()
+    tombstones = list(root.glob(".*.remove"))
+    assert len(tombstones) == 1
+    assert tombstones[0].read_bytes() == original
+    assert str(tombstones[0]) in caplog.text
+
+
+@pytest.mark.skipif(os.name != "posix", reason="directory fsync commit proof is POSIX-only")
+def test_remove_reports_success_when_directory_fsync_fails_after_unlink(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    _write_png(candidate.cache_path)
+
+    def fail_fsync(_fd):
+        raise OSError("simulated post-unlink fsync failure")
+
+    monkeypatch.setattr(presentation_cache_module.os, "fsync", fail_fsync)
+
+    assert PresentationCache(root).remove(candidate) is True
+    assert not Path(candidate.cache_path).exists()
 
 
 def test_fallback_open_rejects_root_identity_change(tmp_path, monkeypatch):

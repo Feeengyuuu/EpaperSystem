@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import errno
 import hashlib
 import io
+import logging
 import os
 from pathlib import Path
 import re
@@ -23,9 +24,9 @@ PRESENTATION_MAX_AGE_SECONDS = 24 * 60 * 60
 MAX_PRESENTATION_FILES_PER_INSTANCE = 2
 MAX_PRESENTATION_FILES = 64
 MAX_PRESENTATION_TOTAL_BYTES = 64 * 1024 * 1024
-MAX_PRESENTATION_FILE_BYTES = 64 * 1024 * 1024
-MAX_PRESENTATION_PIXELS = 8_000_000
-MAX_PRESENTATION_DIMENSION = 8192
+MAX_PRESENTATION_FILE_BYTES = 8 * 1024 * 1024
+MAX_PRESENTATION_PIXELS = 2_000_000
+MAX_PRESENTATION_DIMENSION = 4096
 
 _THEME_MODES = {None, "day", "night"}
 _REQUEST_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -37,6 +38,7 @@ _CACHE_NAME_RE = re.compile(
     r"(?P<request_id>[0-9a-f]{32})\.png$"
 )
 _SAVE_LOCK = threading.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -431,16 +433,39 @@ class PresentationCache:
                 os.replace(self.cache_root / temporary_name, path)
             temporary_created = False
             replaced = True
-            if not self._root_still_matches(root):
-                raise OSError("presentation cache root identity changed after publish")
-            if root.fd is not None:
-                os.fsync(root.fd)
+            self._best_effort_finalize_publish(path, root)
         except BaseException:
             if raw_fd is not None:
                 os.close(raw_fd)
             if temporary_created and not replaced:
                 self._unlink_child(temporary_name, root)
             raise
+
+    def _best_effort_finalize_publish(self, path: Path, root: _BoundRoot) -> None:
+        try:
+            root_matches = self._root_still_matches(root)
+        except Exception as error:
+            _LOGGER.warning(
+                "Prepared presentation publish committed but root identity recheck failed: %s",
+                path,
+                exc_info=error,
+            )
+        else:
+            if not root_matches:
+                _LOGGER.warning(
+                    "Prepared presentation publish committed but root identity changed: %s",
+                    path,
+                )
+        if root.fd is None:
+            return
+        try:
+            os.fsync(root.fd)
+        except Exception as error:
+            _LOGGER.warning(
+                "Prepared presentation publish committed but directory fsync failed: %s",
+                path,
+                exc_info=error,
+            )
 
     @staticmethod
     def _write_all(fd: int, payload: bytes) -> None:
@@ -606,7 +631,7 @@ class PresentationCache:
         if file_stat.st_size <= 0 or file_stat.st_size > MAX_PRESENTATION_FILE_BYTES:
             return False
         age_ns = time.time_ns() - file_stat.st_mtime_ns
-        return age_ns <= PRESENTATION_MAX_AGE_SECONDS * 1_000_000_000
+        return 0 <= age_ns <= PRESENTATION_MAX_AGE_SECONDS * 1_000_000_000
 
     @classmethod
     def _encode_safe_png(cls, image) -> bytes:
@@ -693,22 +718,36 @@ class PresentationCache:
     def _remove_posix(self, path: Path, bound: _BoundCacheFile) -> bool:
         root = _BoundRoot(bound.root_stat, bound.root_fd)
         tombstone = f".{path.name}.{secrets.token_hex(8)}.remove"
-        os.replace(
-            path.name,
-            tombstone,
-            src_dir_fd=bound.root_fd,
-            dst_dir_fd=bound.root_fd,
-        )
-        moved_stat = os.stat(
-            tombstone,
-            dir_fd=bound.root_fd,
-            follow_symlinks=False,
-        )
-        if not self._same_file_snapshot(bound.file_stat, moved_stat):
-            self._restore_quarantined_child(tombstone, path.name, root)
-            return False
-        os.unlink(tombstone, dir_fd=bound.root_fd)
-        os.fsync(bound.root_fd)
+        quarantined = False
+        try:
+            os.replace(
+                path.name,
+                tombstone,
+                src_dir_fd=bound.root_fd,
+                dst_dir_fd=bound.root_fd,
+            )
+            quarantined = True
+            moved_stat = os.stat(
+                tombstone,
+                dir_fd=bound.root_fd,
+                follow_symlinks=False,
+            )
+            if not self._same_file_snapshot(bound.file_stat, moved_stat) or not self._root_still_matches(root):
+                self._restore_or_report_child(tombstone, path.name, root)
+                return False
+            os.unlink(tombstone, dir_fd=bound.root_fd)
+        except BaseException:
+            if quarantined:
+                self._restore_or_report_child(tombstone, path.name, root)
+            raise
+        try:
+            os.fsync(bound.root_fd)
+        except OSError as error:
+            _LOGGER.warning(
+                "Prepared presentation removal committed but directory fsync failed: %s",
+                path,
+                exc_info=error,
+            )
         return True
 
     def _remove_fallback(self, path: Path, bound: _BoundCacheFile) -> bool:
@@ -716,16 +755,23 @@ class PresentationCache:
         # open.  Close only after the final descriptor/path/root comparison,
         # then verify the identity again after the atomic quarantine rename.
         tombstone = self.cache_root / f".{path.name}.{secrets.token_hex(8)}.remove"
-        os.replace(path, tombstone)
-        moved_stat = os.lstat(tombstone)
-        if not self._same_file_snapshot(bound.file_stat, moved_stat):
-            self._restore_quarantined_path(tombstone, path)
-            return False
-        root_after = os.lstat(self.cache_root)
-        if not self._safe_directory_stat(root_after) or not self._same_identity(bound.root_stat, root_after):
-            self._restore_quarantined_path(tombstone, path)
-            return False
-        os.unlink(tombstone)
+        quarantined = False
+        try:
+            os.replace(path, tombstone)
+            quarantined = True
+            moved_stat = os.lstat(tombstone)
+            if not self._same_file_snapshot(bound.file_stat, moved_stat):
+                self._restore_or_report_path(tombstone, path)
+                return False
+            root_after = os.lstat(self.cache_root)
+            if not self._safe_directory_stat(root_after) or not self._same_identity(bound.root_stat, root_after):
+                self._restore_or_report_path(tombstone, path)
+                return False
+            os.unlink(tombstone)
+        except BaseException:
+            if quarantined:
+                self._restore_or_report_path(tombstone, path)
+            raise
         return True
 
     def _restore_quarantined_child(
@@ -733,7 +779,7 @@ class PresentationCache:
         tombstone: str,
         destination: str,
         root: _BoundRoot,
-    ) -> None:
+    ) -> bool:
         try:
             os.link(
                 tombstone,
@@ -742,20 +788,49 @@ class PresentationCache:
                 dst_dir_fd=root.fd,
                 follow_symlinks=False,
             )
-        except (FileExistsError, OSError):
-            return
-        self._unlink_child(tombstone, root)
+        except OSError:
+            return False
+        try:
+            self._unlink_child(tombstone, root)
+        except OSError:
+            return False
+        return True
 
     @staticmethod
-    def _restore_quarantined_path(tombstone: Path, destination: Path) -> None:
+    def _restore_quarantined_path(tombstone: Path, destination: Path) -> bool:
         try:
             os.link(tombstone, destination, follow_symlinks=False)
-        except (FileExistsError, OSError):
-            return
+        except OSError:
+            return False
         try:
             os.unlink(tombstone)
         except OSError:
-            pass
+            return False
+        return True
+
+    def _restore_or_report_child(
+        self,
+        tombstone: str,
+        destination: str,
+        root: _BoundRoot,
+    ) -> bool:
+        restored = self._restore_quarantined_child(tombstone, destination, root)
+        if not restored:
+            self._report_retained_tombstone(self.cache_root / tombstone)
+        return restored
+
+    def _restore_or_report_path(self, tombstone: Path, destination: Path) -> bool:
+        restored = self._restore_quarantined_path(tombstone, destination)
+        if not restored:
+            self._report_retained_tombstone(tombstone)
+        return restored
+
+    @staticmethod
+    def _report_retained_tombstone(tombstone: Path) -> None:
+        _LOGGER.error(
+            "Prepared presentation canonical path could not be restored; tombstone retained for recovery: %s",
+            tombstone,
+        )
 
     @classmethod
     def _safe_regular_file_stat(cls, value) -> bool:
