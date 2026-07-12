@@ -457,6 +457,11 @@ class RuntimeStateStore:
                 or current.structural_generation != receipt.structural_generation
                 or current.settings_revision != receipt.settings_revision
                 or current.prepared_theme_mode != receipt.theme_mode
+                or last_good_cache.structural_generation
+                != receipt.structural_generation
+                or last_good_cache.settings_revision != receipt.settings_revision
+                or last_good_cache.theme_mode != receipt.theme_mode
+                or last_good_cache.promoted_at != receipt.committed_at
             ):
                 return previous
             return replace(

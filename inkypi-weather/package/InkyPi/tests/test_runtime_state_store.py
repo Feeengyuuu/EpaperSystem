@@ -416,6 +416,75 @@ def test_presentation_commit_atomically_records_receipt_lane_success_and_last_go
             presentation_receipt(committed_at=invalid_timestamp)
 
 
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        {"structural_generation": 5},
+        {"settings_revision": 10},
+        {"theme_mode": "day"},
+        {"promoted_at": "2026-07-09T10:05:01+00:00"},
+    ],
+    ids=(
+        "structural-generation",
+        "settings-revision",
+        "theme-mode",
+        "promoted-at",
+    ),
+)
+def test_presentation_commit_rejects_mismatched_last_good_metadata_without_publication(
+    tmp_path,
+    mismatch,
+):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    existing_last_good = LastGoodCacheState(
+        theme_mode="day",
+        structural_generation=3,
+        settings_revision=8,
+        promoted_at="2026-07-09T09:00:00+00:00",
+    )
+    store.record_success(
+        "one",
+        "2026-07-09T09:00:00+00:00",
+        last_good_cache=existing_last_good,
+    )
+    request = presentation_request()
+    receipt = presentation_receipt()
+    assert store.request_presentation("one", request) is True
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            request.request_id,
+            "2026-07-09T10:04:00+00:00",
+            "night",
+        )
+        is True
+    )
+    last_good_values = {
+        "theme_mode": receipt.theme_mode,
+        "structural_generation": receipt.structural_generation,
+        "settings_revision": receipt.settings_revision,
+        "promoted_at": receipt.committed_at,
+    }
+    last_good_values.update(mismatch)
+    mismatched_last_good = LastGoodCacheState(**last_good_values)
+    before = store.snapshot()
+
+    assert (
+        store.commit_presentation(
+            "one",
+            receipt,
+            last_good_cache=mismatched_last_good,
+        )
+        is False
+    )
+    assert store.snapshot() is before
+    state = store.snapshot().instances["one"]
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_receipt is None
+    assert state.last_good_cache == existing_last_good
+
+
 def test_stale_request_id_cannot_prepare_or_commit_newer_request(tmp_path):
     store = RuntimeStateStore(tmp_path / "runtime.json")
     old_request = presentation_request("a" * 32, settings_revision=8)
