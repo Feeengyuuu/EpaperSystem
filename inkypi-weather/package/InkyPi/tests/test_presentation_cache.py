@@ -453,6 +453,59 @@ def test_save_post_replace_root_identity_error_is_best_effort(
         loaded.close()
 
 
+def test_save_commit_survives_close_helper_error(tmp_path, monkeypatch, caplog):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    cache = PresentationCache(root)
+    real_close_root = cache._close_bound_root
+
+    def close_then_raise(bound_root):
+        real_close_root(bound_root)
+        raise OSError("simulated root close failure after commit")
+
+    monkeypatch.setattr(cache, "_close_bound_root", close_then_raise)
+
+    with caplog.at_level("WARNING", logger=presentation_cache_module.__name__):
+        with Image.new("RGB", (8, 8), "blue") as image:
+            cache.save(candidate, image)
+
+    loaded = PresentationCache(root).load_image(candidate)
+    assert loaded is not None
+    try:
+        assert loaded.getpixel((0, 0)) == (0, 0, 255)
+    finally:
+        loaded.close()
+    assert "root close failure after commit" in caplog.text
+
+
+def test_save_precommit_error_is_not_masked_by_close_error(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    cache = PresentationCache(root)
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(candidate, image)
+    original = Path(candidate.cache_path).read_bytes()
+    real_close_root = cache._close_bound_root
+
+    def fail_publish(*args, **kwargs):
+        raise OSError("simulated precommit publish failure")
+
+    def close_then_raise(bound_root):
+        real_close_root(bound_root)
+        raise OSError("simulated cleanup close failure")
+
+    monkeypatch.setattr(presentation_cache_module.os, "replace", fail_publish)
+    monkeypatch.setattr(cache, "_close_bound_root", close_then_raise)
+
+    with Image.new("RGB", (8, 8), "blue") as image:
+        with pytest.raises(OSError, match="precommit publish failure"):
+            cache.save(candidate, image)
+    assert Path(candidate.cache_path).read_bytes() == original
+
+
 @pytest.mark.skipif(os.name != "posix", reason="directory fsync publish proof is POSIX-only")
 def test_save_post_replace_directory_fsync_error_is_best_effort(
     tmp_path,
@@ -701,6 +754,111 @@ def test_remove_reports_success_when_directory_fsync_fails_after_unlink(
 
     assert PresentationCache(root).remove(candidate) is True
     assert not Path(candidate.cache_path).exists()
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_remove_result_survives_close_helper_error(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    committed,
+):
+    root = tmp_path / ".refresh-presentation"
+    candidate = _candidate(root)
+    _write_png(candidate.cache_path)
+    path = Path(candidate.cache_path)
+    path_stat = path.stat()
+    root_stat = root.stat()
+    bound = presentation_cache_module._BoundCacheFile(
+        fd=123_456,
+        file_stat=path_stat,
+        root_stat=root_stat,
+        root_fd=123_457,
+    )
+    cache = PresentationCache(root)
+
+    def injected_remove(_path, _bound):
+        if not committed:
+            raise OSError("simulated precommit quarantine failure")
+        path.unlink()
+        return True
+
+    def close_then_raise(_bound):
+        raise OSError("simulated descriptor close failure")
+
+    monkeypatch.setattr(cache, "_open_bound_cache_file", lambda _path: bound)
+    monkeypatch.setattr(cache, "_descriptor_still_matches_path", lambda *_args: True)
+    monkeypatch.setattr(cache, "_remove_posix", injected_remove)
+    monkeypatch.setattr(cache, "_close_bound_cache_file", close_then_raise)
+
+    with caplog.at_level("WARNING", logger=presentation_cache_module.__name__):
+        assert cache.remove(candidate) is committed
+
+    assert path.exists() is not committed
+    assert "descriptor close failure" in caplog.text
+
+
+def test_close_bound_root_warns_after_real_close_error(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    path = tmp_path / "descriptor.bin"
+    path.write_bytes(b"x")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    bound_root = presentation_cache_module._BoundRoot(path.stat(), fd)
+    cache = PresentationCache(tmp_path / ".refresh-presentation")
+    real_close = presentation_cache_module.os.close
+
+    def real_close_then_raise(target_fd):
+        real_close(target_fd)
+        raise OSError("simulated root descriptor close error")
+
+    monkeypatch.setattr(presentation_cache_module.os, "close", real_close_then_raise)
+
+    with caplog.at_level("WARNING", logger=presentation_cache_module.__name__):
+        cache._close_bound_root(bound_root)
+
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    assert "root descriptor close error" in caplog.text
+
+
+def test_close_bound_file_attempts_both_descriptors_after_close_errors(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    path = tmp_path / "descriptor.bin"
+    path.write_bytes(b"x")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    file_fd = os.open(path, flags)
+    root_fd = os.open(path, flags)
+    bound = presentation_cache_module._BoundCacheFile(
+        fd=file_fd,
+        file_stat=os.fstat(file_fd),
+        root_stat=os.fstat(root_fd),
+        root_fd=root_fd,
+    )
+    cache = PresentationCache(tmp_path / ".refresh-presentation")
+    real_close = presentation_cache_module.os.close
+    closed = []
+
+    def real_close_then_raise(target_fd):
+        real_close(target_fd)
+        closed.append(target_fd)
+        raise OSError(f"simulated descriptor close error {target_fd}")
+
+    monkeypatch.setattr(presentation_cache_module.os, "close", real_close_then_raise)
+
+    with caplog.at_level("WARNING", logger=presentation_cache_module.__name__):
+        cache._close_bound_cache_file(bound)
+
+    assert closed == [file_fd, root_fd]
+    for fd in (file_fd, root_fd):
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    assert caplog.text.count("simulated descriptor close error") == 2
 
 
 def test_fallback_open_rejects_root_identity_change(tmp_path, monkeypatch):

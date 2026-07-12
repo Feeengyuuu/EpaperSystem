@@ -150,7 +150,13 @@ class PresentationCache:
                 self._check_capacity(path, candidate, len(payload), root)
                 self._atomic_publish(path, payload, root)
             finally:
-                self._close_bound_root(root)
+                try:
+                    self._close_bound_root(root)
+                except OSError as error:
+                    _LOGGER.warning(
+                        "Prepared presentation root cleanup failed without changing the save result (%s)",
+                        error,
+                    )
 
     def validate(self, candidate: PreparedPresentationCandidate) -> bool:
         path = self._candidate_path(candidate)
@@ -228,7 +234,13 @@ class PresentationCache:
             return False
         finally:
             if bound_open:
-                self._close_bound_cache_file(bound)
+                try:
+                    self._close_bound_cache_file(bound)
+                except OSError as error:
+                    _LOGGER.warning(
+                        "Prepared presentation descriptor cleanup failed without changing the remove result (%s)",
+                        error,
+                    )
 
     def _candidate_path(
         self,
@@ -316,7 +328,14 @@ class PresentationCache:
     @staticmethod
     def _close_bound_root(root: _BoundRoot) -> None:
         if root.fd is not None:
-            os.close(root.fd)
+            try:
+                os.close(root.fd)
+            except OSError as error:
+                _LOGGER.warning(
+                    "Prepared presentation root descriptor close failed for fd %s (%s)",
+                    root.fd,
+                    error,
+                )
 
     def _root_still_matches(self, root: _BoundRoot) -> bool:
         try:
@@ -587,12 +606,24 @@ class PresentationCache:
 
     @staticmethod
     def _close_bound_cache_file(bound: _BoundCacheFile) -> None:
-        try:
-            if bound.fd >= 0:
+        if bound.fd >= 0:
+            try:
                 os.close(bound.fd)
-        finally:
-            if bound.root_fd is not None:
+            except OSError as error:
+                _LOGGER.warning(
+                    "Prepared presentation file descriptor close failed for fd %s (%s)",
+                    bound.fd,
+                    error,
+                )
+        if bound.root_fd is not None:
+            try:
                 os.close(bound.root_fd)
+            except OSError as error:
+                _LOGGER.warning(
+                    "Prepared presentation root descriptor close failed for fd %s (%s)",
+                    bound.root_fd,
+                    error,
+                )
 
     def _descriptor_still_matches_path(
         self,
