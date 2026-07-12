@@ -13,6 +13,11 @@ import pytest
 from PIL import Image, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    PresentationRequestContext,
+)
 from plugins.newspaper.newspaper import Newspaper
 from plugins import plugin_registry, plugin_settings
 from plugins.plugin_settings import PluginSettingError
@@ -32,14 +37,25 @@ from runtime.refresh_contracts import (
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.cache_catalog import authoritative_cache_path
+from runtime.presentation_cache import (
+    PreparedPresentationCandidate,
+    PresentationCache,
+    prepared_presentation_path,
+)
 from runtime.refresh_policy import ResourceSample
 from runtime.render_arbiter import RenderArbiter
-from runtime.runtime_state import LastGoodCacheState, RefreshLane
+from runtime.runtime_state import (
+    LastGoodCacheState,
+    PresentationCommitReceipt,
+    PresentationRequestState,
+    RefreshLane,
+)
 from runtime.long_task_executor import (
     current_instance_identity,
     current_task_context,
 )
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
+from utils.image_utils import compute_image_hash
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
@@ -7010,3 +7026,1426 @@ def test_startup_migration_does_not_write_playlist_or_user_settings(monkeypatch)
     assert device_config.write_count == 0
     assert device_config.get_playlist_manager().to_dict() == before_manager
     assert device_config.config == before_config
+
+
+PRESENTATION_NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+
+
+def _presentation_manifest(plugin_id="presentation_plugin"):
+    return PluginManifest(
+        schema_version=2,
+        id=plugin_id,
+        class_name="PresentationPlugin",
+        display_name="Presentation Plugin",
+        refresh_on_display=True,
+        capabilities=PluginCapabilities(supports_presentation_refresh=True),
+        raw={},
+    )
+
+
+class PresentationTransactionDisplayManager:
+    def __init__(self, *, after_display=None):
+        self.calls = []
+        self.bound_runtime_state = None
+        self.after_display = after_display
+
+    def bind_runtime_state(self, runtime_state):
+        self.bound_runtime_state = runtime_state
+        return object()
+
+    def display_image(
+        self,
+        image,
+        image_settings=(),
+        *,
+        task_context=None,
+        logical_target=None,
+        instance_revision=None,
+    ):
+        commit_id = uuid.uuid4().hex
+        committed_at = PRESENTATION_NOW.isoformat()
+        call = {
+            "commit_id": commit_id,
+            "committed_at": committed_at,
+            "image": image.copy(),
+            "image_settings": tuple(image_settings),
+            "task_context": task_context,
+            "logical_target": dict(logical_target or {}),
+            "instance_revision": instance_revision,
+        }
+        self.calls.append(call)
+        if self.bound_runtime_state is not None:
+            self.bound_runtime_state.set_display_state(
+                "committed",
+                commit_id,
+                instance_uuid=call["logical_target"].get("instance_uuid"),
+                changed_at=committed_at,
+            )
+        if self.after_display is not None:
+            self.after_display(self, call)
+        return SimpleNamespace(commit_id=commit_id, committed_at=committed_at)
+
+
+class PresentationBankPlugin(DelegatingThemeWrapper):
+    def __init__(self, *, changed=True, prepared_color="white", data_color="gray"):
+        self.changed = changed
+        self.prepared_color = prepared_color
+        self.data_color = data_color
+        self.events = []
+        self.contexts = []
+        self.config = {}
+
+    def presentation_mode(self, settings):
+        self.events.append(("mode", dict(settings or {})))
+        return PresentationMode.PREPARED_BANK
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        self.events.append(("reconcile", receipt))
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        assert isinstance(request, PresentationRequestContext)
+        self.events.append(("prepare", request.request_id))
+        self.contexts.append(request)
+        image = Image.new("RGB", (32, 16), self.prepared_color) if self.changed else None
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=self.changed,
+        )
+
+    def generate_image(self, settings, device_config):
+        self.events.append(("generate", dict(settings or {})))
+        return Image.new("RGB", (32, 16), self.data_color)
+
+
+class NoChangePresentationPlugin(PresentationBankPlugin):
+    def presentation_mode(self, settings):
+        self.events.append(("mode", dict(settings or {})))
+        return PresentationMode.NO_CHANGE
+
+    def prepare_presentation(self, *args, **kwargs):
+        pytest.fail("NO_CHANGE must not call the preparation hook")
+
+
+class LegacyPresentationPlugin(PresentationBankPlugin):
+    def presentation_mode(self, settings):
+        self.events.append(("mode", dict(settings or {})))
+        return PresentationMode.LEGACY_ASYNC
+
+    def prepare_presentation(self, *args, **kwargs):
+        pytest.fail("LEGACY_ASYNC must remain disabled")
+
+
+def _make_presentation_task(
+    name,
+    *,
+    plugin_count=1,
+    latest_refresh_time="2999-01-01T00:00:00+00:00",
+    interval=3600,
+    clock=None,
+    display_manager=None,
+):
+    tmp_path = make_test_dir(name)
+    plugins = [
+        _runtime_plugin_data(
+            f"presentation_plugin_{index}",
+            f"Presentation Plugin {index}",
+            latest_refresh_time=latest_refresh_time,
+            interval=interval,
+        )
+        for index in range(plugin_count)
+    ]
+    for plugin in plugins:
+        plugin["plugin_settings"]["refreshOnDisplay"] = True
+    playlist = _runtime_playlist(*plugins, name="Presentation Playlist")
+    clock = clock or RuntimeClock()
+    device_config = RuntimeDeviceConfig(tmp_path, [playlist])
+    device_config.config.update(
+        {
+            "active_theme": "day",
+            "theme_mode": "day",
+            "plugin_cycle_interval_seconds": 60,
+        }
+    )
+    manifests = {plugin["plugin_id"]: _presentation_manifest(plugin["plugin_id"]) for plugin in plugins}
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": True,
+        "_manifest": manifests[plugin_id],
+    }
+    display_manager = display_manager or PresentationTransactionDisplayManager()
+    task = RefreshTask(
+        device_config,
+        display_manager,
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    return task, device_config, clock, playlist, display_manager
+
+
+def _install_display_provider_plugin_sentinels(monkeypatch):
+    def plugin_sentinel(*_args, **_kwargs):
+        pytest.fail("DISPLAY_CACHE instantiated a plugin")
+
+    def provider_sentinel(*_args, **_kwargs):
+        pytest.fail("DISPLAY_CACHE reached a provider/live hook")
+
+    monkeypatch.setattr(refresh_task_module, "get_plugin_instance", plugin_sentinel)
+    monkeypatch.setattr(
+        refresh_task_module,
+        "_plugin_live_refresh_state",
+        provider_sentinel,
+    )
+
+
+def _seed_presentation_request(
+    task,
+    instance,
+    *,
+    request_id=None,
+    requested_at=PRESENTATION_NOW,
+    origin_commit_id="origin-display-commit",
+    origin_theme_mode=None,
+):
+    request = PresentationRequestState(
+        request_id=request_id or uuid.uuid4().hex,
+        requested_at=requested_at.isoformat(),
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        origin_theme_mode=origin_theme_mode,
+        origin_display_commit_id=origin_commit_id,
+    )
+    assert task.runtime_state.request_presentation(instance.instance_uuid, request)
+    return request
+
+
+def _prepared_presentation_candidate(task, instance, request, theme_mode=None):
+    root = Path(task.device_config.plugin_image_dir) / ".refresh-presentation"
+    return PreparedPresentationCandidate(
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=theme_mode,
+        request_id=request.request_id,
+        cache_path=prepared_presentation_path(
+            root,
+            instance.instance_uuid,
+            instance.structural_generation,
+            instance.settings_revision,
+            theme_mode,
+            request.request_id,
+        ),
+    )
+
+
+def _seed_prepared_presentation(
+    task,
+    instance,
+    request,
+    *,
+    image=None,
+    theme_mode=None,
+):
+    candidate = _prepared_presentation_candidate(
+        task,
+        instance,
+        request,
+        theme_mode,
+    )
+    PresentationCache(Path(task.device_config.plugin_image_dir) / ".refresh-presentation").save(
+        candidate,
+        image or Image.new("RGB", (32, 16), "white"),
+    )
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        request.request_id,
+        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
+        theme_mode,
+    )
+    return candidate
+
+
+def _non_presentation_lane_bytes(state):
+    return json.dumps(
+        {lane: getattr(state, lane).__dict__ for lane in ("data", "live", "theme")},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _seed_independent_lane_clocks(task, instance):
+    for lane, offset in (
+        (RefreshLane.DATA, 10),
+        (RefreshLane.LIVE, 20),
+        (RefreshLane.THEME, 30),
+    ):
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (PRESENTATION_NOW - timedelta(minutes=offset)).isoformat(),
+            lane=lane,
+        )
+
+
+def _queue_and_process(task, command):
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.job.id == submitted.id
+    task._process_queue_entry(entry)
+    return task.refresh_queue.get_entry(submitted.id)
+
+
+def _normal_cache_display_command(task, playlist, instance, *, source=CommandSource.SCHEDULER):
+    return task._playlist_command(
+        playlist.name,
+        instance,
+        source=source,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=50 if source is CommandSource.SCHEDULER else 100,
+        current_dt=PRESENTATION_NOW,
+        cache_theme_mode=None,
+    )
+
+
+def _presentation_followup_command(task, playlist, instance, request):
+    return task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=65,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        cache_theme_mode=None,
+        expected_displayed_instance_uuid=instance.instance_uuid,
+        preserve_rotation_anchor=True,
+        coalescing_scope=f"presentation-followup:{request.request_id}",
+        allow_prepared_presentation=True,
+        presentation_request_id=request.request_id,
+    )
+
+
+def test_normal_cache_commit_records_one_coalesced_presentation_request(monkeypatch):
+    task, device_config, clock, playlist, _display = _make_presentation_task("presentation-normal-display-request")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    now = [PRESENTATION_NOW]
+    device_config.refresh_info.refresh_time = (now[0] - timedelta(minutes=2)).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    task._schedule_if_due()
+    first = task.refresh_queue.take(timeout=0)
+    assert first is not None
+    assert first.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert first.command.allow_prepared_presentation is True
+    task._process_queue_entry(first)
+    original = task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request
+
+    assert original is not None
+    device_config.refresh_info.refresh_time = (now[0] - timedelta(minutes=2)).isoformat()
+    clock.advance(61)
+    now[0] += timedelta(seconds=61)
+    task._schedule_if_due()
+    second = task.refresh_queue.take(timeout=0)
+    assert second is not None
+    assert second.command.intent is RefreshIntent.DISPLAY_CACHE
+    task._process_queue_entry(second)
+
+    assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == original
+
+
+def test_manual_cache_display_records_request_but_live_theme_followups_do_not(
+    monkeypatch,
+):
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    results = {}
+    for label, source, scope, expected_request in (
+        ("manual", CommandSource.MANUAL, None, True),
+        ("live", CommandSource.LIVE, "live-followup:source-command", False),
+        (
+            "theme",
+            CommandSource.SCHEDULER,
+            "theme-followup:source-command",
+            False,
+        ),
+    ):
+        task, _config, _clock, playlist, _display = _make_presentation_task(f"presentation-{label}-display-rule")
+        instance = playlist.plugins[0].snapshot()
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+        task.runtime_state.set_display_state(
+            "committed",
+            f"{label}-origin",
+            instance_uuid=instance.instance_uuid,
+            changed_at=PRESENTATION_NOW.isoformat(),
+        )
+        command = task._playlist_command(
+            playlist.name,
+            instance,
+            source=source,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=100 if label == "manual" else 75,
+            current_dt=PRESENTATION_NOW,
+            cache_theme_mode=None,
+            expected_displayed_instance_uuid=(None if label == "manual" else instance.instance_uuid),
+            preserve_rotation_anchor=label == "theme",
+            coalescing_scope=scope,
+        )
+
+        assert command.allow_prepared_presentation is expected_request
+        _queue_and_process(task, command)
+        state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
+        results[label] = None if state is None else state.presentation_request
+
+    assert results["manual"] is not None
+    assert results["live"] is None
+    assert results["theme"] is None
+
+
+def test_display_cache_never_instantiates_plugin_with_pending_presentation(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-pending-display-cache")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _normal_cache_display_command(task, playlist, instance),
+    )
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert display.calls[0]["image"].getpixel((0, 0)) == (0, 0, 0)
+    assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == request
+
+
+def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-data-wins",
+        latest_refresh_time=None,
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    prior_request = _seed_presentation_request(
+        task,
+        instance,
+        requested_at=PRESENTATION_NOW - timedelta(minutes=40),
+        origin_commit_id="prior-origin-display",
+    )
+    prior_prepared_at = (PRESENTATION_NOW - timedelta(minutes=30)).isoformat()
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        prior_request.request_id,
+        prior_prepared_at,
+        None,
+    )
+    prior_receipt = PresentationCommitReceipt(
+        request_id=prior_request.request_id,
+        committed_at=(PRESENTATION_NOW - timedelta(minutes=20)).isoformat(),
+        display_commit_id="prior-prepared-display",
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=None,
+    )
+    assert task.runtime_state.commit_presentation(
+        instance.instance_uuid,
+        prior_receipt,
+        last_good_cache=LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=prior_receipt.committed_at,
+        ),
+    )
+    request = _seed_presentation_request(task, instance)
+    plugin = PresentationBankPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.command.intent is RefreshIntent.DATA_REFRESH
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert state.data.last_success_at is not None
+    assert state.presentation.last_success_at == prior_receipt.committed_at
+    assert state.presentation_request == request
+    assert [event[0] for event in plugin.events] == [
+        "mode",
+        "reconcile",
+        "generate",
+    ]
+    assert plugin.events[1][1] == prior_receipt
+
+
+def test_presentation_prepare_does_not_promote_last_good_or_change_lane_success(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-prepare-only")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    _seed_independent_lane_clocks(task, instance)
+    baseline_last_good = LastGoodCacheState(
+        theme_mode=None,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        promoted_at=(PRESENTATION_NOW - timedelta(minutes=10)).isoformat(),
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        baseline_last_good.promoted_at,
+        lane=RefreshLane.DATA,
+        last_good_cache=baseline_last_good,
+    )
+    request = _seed_presentation_request(task, instance)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    before_lanes = _non_presentation_lane_bytes(before)
+    plugin = PresentationBankPlugin(prepared_color="white")
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.command.intent is RefreshIntent.PRESENTATION_REFRESH
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    candidate = _prepared_presentation_candidate(task, instance, request)
+
+    assert state.presentation_request.prepared_at is not None
+    assert state.presentation.last_success_at is None
+    assert state.last_good_cache == baseline_last_good
+    assert _non_presentation_lane_bytes(state) == before_lanes
+    assert PresentationCache(Path(task.device_config.plugin_image_dir) / ".refresh-presentation").validate(candidate)
+    assert display.calls == []
+    origin_receipt = PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=request.requested_at,
+        display_commit_id=request.origin_display_commit_id,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=request.origin_theme_mode,
+    )
+    assert plugin.events[:3] == [
+        ("mode", dict(instance.settings)),
+        ("reconcile", origin_receipt),
+        ("prepare", request.request_id),
+    ]
+    assert plugin.contexts == [
+        PresentationRequestContext(
+            request_id=request.request_id,
+            requested_at=request.requested_at,
+            origin_display_commit_id=request.origin_display_commit_id,
+            last_receipt=None,
+        )
+    ]
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup is not None
+    assert followup.command.coalescing_scope == (f"presentation-followup:{request.request_id}")
+
+
+def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_selection(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-origin-before-prior-receipt"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    _seed_independent_lane_clocks(task, instance)
+    prior_request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="a" * 32,
+        requested_at=PRESENTATION_NOW - timedelta(minutes=20),
+        origin_commit_id="prior-origin-display",
+        origin_theme_mode="night",
+    )
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        prior_request.request_id,
+        (PRESENTATION_NOW - timedelta(minutes=15)).isoformat(),
+        "night",
+    )
+    prior_receipt = PresentationCommitReceipt(
+        request_id=prior_request.request_id,
+        committed_at=(PRESENTATION_NOW - timedelta(minutes=10)).isoformat(),
+        display_commit_id="prior-prepared-display",
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode="night",
+    )
+    assert task.runtime_state.commit_presentation(
+        instance.instance_uuid,
+        prior_receipt,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="night",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=prior_receipt.committed_at,
+        ),
+    )
+    request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="b" * 32,
+        origin_commit_id="current-origin-display",
+        origin_theme_mode="day",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    plugin = PresentationBankPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+
+    origin_receipt = PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=request.requested_at,
+        display_commit_id=request.origin_display_commit_id,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=request.origin_theme_mode,
+    )
+    assert plugin.events[:4] == [
+        ("mode", dict(instance.settings)),
+        ("reconcile", origin_receipt),
+        ("reconcile", prior_receipt),
+        ("prepare", request.request_id),
+    ]
+
+
+def test_prepared_followup_commit_records_receipt_success_and_preserves_anchor(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task("presentation-followup-commit")
+    instance = playlist.plugins[0].snapshot()
+    canonical = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), "black"),
+    )
+    _seed_independent_lane_clocks(task, instance)
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    anchor = (PRESENTATION_NOW - timedelta(minutes=5)).isoformat()
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=instance.plugin_id,
+        plugin_instance=instance.name,
+        refresh_time=anchor,
+        image_hash=compute_image_hash(Image.new("RGB", (32, 16), "black")),
+    )
+    before_lanes = _non_presentation_lane_bytes(task.runtime_state.snapshot().instances[instance.instance_uuid])
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert state.presentation_request is None
+    assert state.presentation_receipt == PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=display.calls[0]["committed_at"],
+        display_commit_id=display.calls[0]["commit_id"],
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=None,
+    )
+    assert state.presentation.last_success_at == display.calls[0]["committed_at"]
+    assert state.last_good_cache.promoted_at == display.calls[0]["committed_at"]
+    assert _non_presentation_lane_bytes(state) == before_lanes
+    assert device_config.refresh_info.refresh_time == anchor
+    assert Image.open(canonical).getpixel((0, 0)) == (255, 255, 255)
+    assert not Path(candidate.cache_path).exists()
+
+
+def test_changed_target_keeps_prepared_item_for_next_normal_selection(monkeypatch):
+    other_uuid = str(uuid.uuid4())
+
+    def change_target(manager, call):
+        manager.bound_runtime_state.set_display_state(
+            "committed",
+            "new-target-commit",
+            instance_uuid=other_uuid,
+            changed_at=(PRESENTATION_NOW + timedelta(seconds=2)).isoformat(),
+        )
+
+    display = PresentationTransactionDisplayManager(after_display=change_target)
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-target-changed",
+        display_manager=display,
+    )
+    instance = playlist.plugins[0].snapshot()
+    canonical = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), "black"),
+    )
+    _seed_independent_lane_clocks(task, instance)
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    original_refresh = device_config.refresh_info
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    before_lanes = _non_presentation_lane_bytes(before)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.CANCELED
+    assert len(display.calls) == 1
+    assert state.presentation_request == before.presentation_request
+    assert state.presentation_receipt is None
+    assert state.presentation.last_success_at is None
+    assert _non_presentation_lane_bytes(state) == before_lanes
+    assert Path(candidate.cache_path).exists()
+    assert Image.open(canonical).getpixel((0, 0)) == (0, 0, 0)
+    assert device_config.refresh_info is original_refresh
+
+
+def test_normal_display_consuming_prepared_item_does_not_request_a_second_item(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-normal-consume")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    command = _normal_cache_display_command(task, playlist, instance)
+    assert command.allow_prepared_presentation is True
+    result = _queue_and_process(task, command)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert state.presentation_request is None
+    assert state.presentation_receipt.request_id == request.request_id
+    assert state.presentation.last_success_at == display.calls[0]["committed_at"]
+    assert not Path(candidate.cache_path).exists()
+
+
+def test_same_pixel_prepared_item_gets_a_new_display_commit_receipt(monkeypatch):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-same-pixel-commit")
+    instance = playlist.plugins[0].snapshot()
+    pixels = Image.new("RGB", (32, 16), "black")
+    _write_runtime_cache(task, instance, pixels)
+    request = _seed_presentation_request(
+        task,
+        instance,
+        origin_commit_id="same-pixel-origin-commit",
+    )
+    _seed_prepared_presentation(task, instance, request, image=pixels)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    _queue_and_process(
+        task,
+        _normal_cache_display_command(task, playlist, instance),
+    )
+    receipt = task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_receipt
+
+    assert len(display.calls) == 1
+    assert receipt.display_commit_id == display.calls[0]["commit_id"]
+    assert receipt.display_commit_id != request.origin_display_commit_id
+
+
+def test_corrupt_prepared_png_cools_only_presentation_and_keeps_authoritative_cache(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-corrupt-prepared")
+    instance = playlist.plugins[0].snapshot()
+    canonical = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), "black"),
+    )
+    authoritative_bytes = canonical.read_bytes()
+    _seed_independent_lane_clocks(task, instance)
+    baseline_last_good = LastGoodCacheState(
+        theme_mode=None,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        promoted_at=(PRESENTATION_NOW - timedelta(minutes=10)).isoformat(),
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        baseline_last_good.promoted_at,
+        lane=RefreshLane.DATA,
+        last_good_cache=baseline_last_good,
+    )
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(task, instance, request)
+    Path(candidate.cache_path).write_bytes(b"not-a-png")
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    before_lanes = _non_presentation_lane_bytes(before)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _normal_cache_display_command(task, playlist, instance),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.CANCELED
+    assert display.calls == []
+    assert canonical.read_bytes() == authoritative_bytes
+    assert state.last_good_cache == baseline_last_good
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_request.prepared_at is None
+    assert state.presentation_request.prepared_theme_mode is None
+    assert state.presentation.last_failure_at is not None
+    assert state.presentation.next_retry_at is not None
+    assert state.presentation.last_success_at is None
+    assert _non_presentation_lane_bytes(state) == before_lanes
+
+
+@pytest.mark.parametrize("restart_state", ["requested", "prepared"])
+def test_restart_replays_requested_or_prepared_presentation_without_duplicate_selection(
+    monkeypatch,
+    restart_state,
+):
+    task, device_config, clock, playlist, _display = _make_presentation_task(f"presentation-restart-{restart_state}")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    request = _seed_presentation_request(task, instance)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    if restart_state == "prepared":
+        _seed_prepared_presentation(task, instance, request)
+    assert task.runtime_state.flush()
+
+    plugin = PresentationBankPlugin()
+    first_restart = RefreshTask(
+        device_config,
+        PresentationTransactionDisplayManager(),
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    if restart_state == "requested":
+        monkeypatch.setattr(
+            refresh_task_module,
+            "get_plugin_instance",
+            lambda _config: plugin,
+        )
+        monkeypatch.setattr(
+            first_restart,
+            "_get_current_datetime",
+            lambda: PRESENTATION_NOW,
+        )
+        monkeypatch.setattr(
+            first_restart,
+            "_select_cached_display_command",
+            lambda _now: None,
+        )
+        monkeypatch.setattr(
+            first_restart,
+            "_memory_watchdog_should_restart",
+            lambda: False,
+        )
+        monkeypatch.setattr(
+            first_restart,
+            "_resource_sample",
+            lambda: ResourceSample(available_mb=512, swap_percent=0),
+        )
+        first_restart._schedule_if_due()
+        prepared_entry = first_restart.refresh_queue.take(timeout=0)
+        assert prepared_entry is not None
+        assert prepared_entry.command.intent is RefreshIntent.PRESENTATION_REFRESH
+        first_restart._process_queue_entry(prepared_entry)
+        assert first_restart.runtime_state.flush()
+
+    second_display = PresentationTransactionDisplayManager()
+    second_restart = RefreshTask(
+        device_config,
+        second_display,
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    _queue_and_process(
+        second_restart,
+        _normal_cache_display_command(
+            second_restart,
+            playlist,
+            instance,
+        ),
+    )
+    state = second_restart.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert state.presentation_request is None
+    assert state.presentation_receipt.request_id == request.request_id
+    assert len(second_display.calls) == 1
+    assert [event[0] for event in plugin.events].count("prepare") == (1 if restart_state == "requested" else 0)
+
+
+def test_hard_pressure_rotates_cache_without_presentation_renderer(monkeypatch):
+    task, device_config, _clock, playlist, display = _make_presentation_task("presentation-hard-pressure")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    device_config.refresh_info.refresh_time = (PRESENTATION_NOW - timedelta(minutes=2)).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=60, swap_percent=80),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.command.intent is RefreshIntent.DISPLAY_CACHE
+    task._process_queue_entry(entry)
+
+    assert len(display.calls) == 1
+    assert task.refresh_queue.take(timeout=0) is None
+    assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == request
+
+
+def test_soft_pressure_makes_bounded_data_and_presentation_progress(monkeypatch):
+    clock = RuntimeClock()
+    task, _config, _unused, playlist, display = _make_presentation_task(
+        "presentation-soft-fairness",
+        plugin_count=4,
+        latest_refresh_time=None,
+        clock=clock,
+    )
+    instances = [plugin.snapshot() for plugin in playlist.plugins]
+    presentation_instance = instances[-1]
+    _write_runtime_cache(
+        task,
+        presentation_instance,
+        Image.new("RGB", (32, 16), "black"),
+    )
+    task.runtime_state.record_success(
+        presentation_instance.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    request = _seed_presentation_request(task, presentation_instance)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=presentation_instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    before_lanes = _non_presentation_lane_bytes(
+        task.runtime_state.snapshot().instances[presentation_instance.instance_uuid]
+    )
+    plugins = {instance.plugin_id: PresentationBankPlugin() for instance in instances}
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda config: plugins[config["id"]],
+    )
+    current_dt = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt[0])
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+
+    intents = []
+    for _ in range(4):
+        task._schedule_if_due()
+        entry = task.refresh_queue.take(timeout=0)
+        assert entry is not None
+        intents.append(entry.command.intent)
+        task._process_queue_entry(entry)
+        clock.advance(60)
+        current_dt[0] += timedelta(seconds=60)
+
+    state = task.runtime_state.snapshot().instances[presentation_instance.instance_uuid]
+    assert intents == [
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.PRESENTATION_REFRESH,
+    ]
+    assert state.presentation_request.prepared_at is not None
+    assert state.presentation.last_success_at is None
+    assert _non_presentation_lane_bytes(state) == before_lanes
+    assert display.calls == []
+
+
+def test_presentation_no_change_succeeds_at_committed_origin_without_display(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-no-change-origin")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    _seed_independent_lane_clocks(task, instance)
+    prior_request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="c" * 32,
+        requested_at=PRESENTATION_NOW - timedelta(minutes=20),
+        origin_commit_id="no-change-prior-origin",
+    )
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        prior_request.request_id,
+        (PRESENTATION_NOW - timedelta(minutes=15)).isoformat(),
+        None,
+    )
+    prior_receipt = PresentationCommitReceipt(
+        request_id=prior_request.request_id,
+        committed_at=(PRESENTATION_NOW - timedelta(minutes=10)).isoformat(),
+        display_commit_id="no-change-prior-prepared",
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=None,
+    )
+    assert task.runtime_state.commit_presentation(
+        instance.instance_uuid,
+        prior_receipt,
+        last_good_cache=LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=prior_receipt.committed_at,
+        ),
+    )
+    request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="d" * 32,
+        origin_commit_id="no-change-current-origin",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    before_lanes = _non_presentation_lane_bytes(task.runtime_state.snapshot().instances[instance.instance_uuid])
+    plugin = NoChangePresentationPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    origin_receipt = PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=request.requested_at,
+        display_commit_id=request.origin_display_commit_id,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=request.origin_theme_mode,
+    )
+
+    assert state.presentation_request is None
+    assert state.presentation.last_success_at == request.requested_at
+    assert state.presentation_receipt == prior_receipt
+    assert _non_presentation_lane_bytes(state) == before_lanes
+    assert plugin.events == [
+        ("mode", dict(instance.settings)),
+        ("reconcile", origin_receipt),
+        ("reconcile", prior_receipt),
+    ]
+    assert display.calls == []
+
+
+def test_invalid_refresh_on_display_is_safe_false_after_scheduler_display_probe(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task("presentation-invalid-trigger")
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugins[0].settings["refreshOnDisplay"] = "sometimes"
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (PRESENTATION_NOW - timedelta(minutes=2)).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
+
+    assert len(display.calls) == 1
+    assert state is None or state.presentation_request is None
+    assert task.scheduler_snapshot().last_error is None
+
+
+def test_legacy_async_presentation_mode_fails_closed_without_renderer(monkeypatch):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-legacy-disabled")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    request = _seed_presentation_request(task, instance)
+    plugin = LegacyPresentationPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task.refresh_queue.get_entry(entry.job.id).job.status is JobStatus.FAILED
+    assert state.presentation_request == request
+    assert state.presentation.last_failure_at is not None
+    assert state.presentation.next_retry_at is not None
+    assert state.presentation.last_success_at is None
+    assert [event[0] for event in plugin.events] == ["mode"]
+    assert display.calls == []
+
+
+def test_presentation_commit_cas_false_retains_prepared_candidate(monkeypatch):
+    task, _config, _clock, playlist, display = _make_presentation_task("presentation-commit-cas-false")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    monkeypatch.setattr(task.runtime_state, "commit_presentation", lambda *a, **k: False)
+
+    result = _queue_and_process(
+        task,
+        _normal_cache_display_command(task, playlist, instance),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.CANCELED
+    assert len(display.calls) == 1
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_receipt is None
+    assert state.presentation.last_success_at is None
+    assert Path(candidate.cache_path).exists()
+
+
+@pytest.mark.parametrize("failure_point", ["display", "commit"])
+def test_prepared_display_exception_cools_only_presentation_and_schedules_exact_retry(
+    monkeypatch,
+    failure_point,
+):
+    def fail_after_display(_manager, _call):
+        if failure_point == "display":
+            raise RuntimeError("prepared display failed")
+
+    display = PresentationTransactionDisplayManager(after_display=fail_after_display)
+    task, _config, clock, playlist, _display = _make_presentation_task(
+        f"presentation-{failure_point}-exception",
+        display_manager=display,
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    _seed_independent_lane_clocks(task, instance)
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(task, instance, request)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    before_lanes = _non_presentation_lane_bytes(
+        task.runtime_state.snapshot().instances[instance.instance_uuid]
+    )
+    if failure_point == "commit":
+        def fail_commit(*_args, **_kwargs):
+            raise RuntimeError("presentation commit failed")
+
+        monkeypatch.setattr(task.runtime_state, "commit_presentation", fail_commit)
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+    failed_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.FAILED
+    assert _non_presentation_lane_bytes(failed_state) == before_lanes
+    assert failed_state.presentation.last_failure_at is not None
+    assert failed_state.presentation.next_retry_at is not None
+    assert failed_state.presentation_request.request_id == request.request_id
+    assert failed_state.presentation_request.prepared_at is not None
+    assert Path(candidate.cache_path).exists()
+    assert task.refresh_queue.take(timeout=0) is None
+
+    clock.advance(3601)
+    now[0] += timedelta(seconds=3601)
+    task._schedule_if_due()
+    retry = task.refresh_queue.take(timeout=0)
+
+    assert retry is not None
+    assert retry.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert retry.command.payload["presentation_request_id"] == request.request_id
+    assert retry.command.coalescing_scope == f"presentation-followup:{request.request_id}"
+    assert retry.command.allow_prepared_presentation is True
+
+
+def test_presentation_commit_published_then_raised_finishes_as_committed(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task(
+        "presentation-commit-published-then-raised"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(task, instance, request)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    original_commit = task.runtime_state.commit_presentation
+
+    def commit_then_raise(*args, **kwargs):
+        assert original_commit(*args, **kwargs) is True
+        raise RuntimeError("runtime persistence failed after publication")
+
+    monkeypatch.setattr(
+        task.runtime_state,
+        "commit_presentation",
+        commit_then_raise,
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert state.presentation_request is None
+    assert state.presentation_receipt.request_id == request.request_id
+    assert state.presentation.last_failure_at is None
+    assert not Path(candidate.cache_path).exists()
+
+
+def test_exact_presentation_followup_with_revoked_capability_never_falls_back(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "presentation-capability-revoked"
+    )
+    instance = playlist.plugins[0].snapshot()
+    canonical = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), "black"),
+    )
+    authoritative_bytes = canonical.read_bytes()
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(task, instance, request)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    revoked = PluginManifest(
+        schema_version=2,
+        id=instance.plugin_id,
+        class_name="PresentationPlugin",
+        display_name="Presentation Plugin",
+        refresh_on_display=True,
+        capabilities=PluginCapabilities(supports_presentation_refresh=False),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": True,
+        "_manifest": revoked,
+    }
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.CANCELED
+    assert display.calls == []
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_receipt is None
+    assert Path(candidate.cache_path).exists()
+    assert canonical.read_bytes() == authoritative_bytes

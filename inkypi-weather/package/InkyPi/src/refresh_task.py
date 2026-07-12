@@ -15,8 +15,17 @@ from plugins.plugin_registry import (
     get_plugin_instance,
     plugin_supports_day_night_theme,
     plugin_supports_live_refresh,
+    plugin_supports_presentation_refresh,
 )
-from plugins.plugin_settings import PluginSettingError
+from plugins.plugin_settings import (
+    PluginSettingError,
+    resolve_refresh_on_display_for_config,
+)
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    PresentationRequestContext,
+)
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from utils.image_utils import compute_image_hash
 from utils.app_utils import get_base_ui_font, resolve_dimensions
@@ -39,6 +48,11 @@ from runtime.cache_catalog import (
     DisplayCacheCandidate,
     authoritative_cache_path,
 )
+from runtime.presentation_cache import (
+    PreparedPresentationCandidate,
+    PresentationCache,
+    prepared_presentation_path,
+)
 from runtime.refresh_queue import QueueEntry, RefreshQueue
 from runtime.refresh_policy import (
     AdmissionState,
@@ -50,12 +64,15 @@ from runtime.refresh_policy import (
     classify_resource_tier,
     choose_refresh_candidate,
     evaluate_data_due,
+    evaluate_presentation_due,
 )
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.render_arbiter import RenderArbiter
 from runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
+    PresentationCommitReceipt,
+    PresentationRequestState,
     RefreshLane,
     RuntimeStateStore,
 )
@@ -98,6 +115,21 @@ class _StaleSelection(TaskCancelled):
 
 class _CacheUnavailable(TaskCancelled):
     """A previously eligible display cache disappeared or became invalid."""
+
+
+class _PreparedDisplayFailure(RuntimeError):
+    """A prepared image failed after selection and needs presentation retry."""
+
+    def __init__(self, error):
+        super().__init__(str(error))
+        self.original_error = error
+
+
+@dataclass(frozen=True)
+class _PreparedDisplaySelection:
+    candidate: PreparedPresentationCandidate
+    request: PresentationRequestState
+    theme_mode: str | None
 
 
 def _setting_enabled(value):
@@ -357,6 +389,12 @@ class RefreshTask:
         self.cache_catalog = CacheCatalog(
             os.path.join(self.device_config.plugin_image_dir, ".refresh-cache")
         )
+        self.presentation_cache = PresentationCache(
+            os.path.join(
+                self.device_config.plugin_image_dir,
+                ".refresh-presentation",
+            )
+        )
         self._admission_state = AdmissionState()
         self._resource_tier = None
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
@@ -604,7 +642,9 @@ class RefreshTask:
             self._attempt_count += 1
             restart_requested = self._memory_watchdog_should_restart()
             current_dt = self._get_current_datetime()
-            command = self._select_cached_display_command(current_dt)
+            command = self._select_prepared_display_retry_command(current_dt)
+            if command is None:
+                command = self._select_cached_display_command(current_dt)
             if command is not None:
                 self.refresh_queue.submit(command)
             if restart_requested:
@@ -906,6 +946,66 @@ class RefreshTask:
             cache_theme_mode=candidate.theme_mode,
         )
 
+    def _select_prepared_display_retry_command(
+        self,
+        current_dt,
+    ) -> RefreshCommand | None:
+        """Retry a failed exact prepared display after presentation backoff."""
+        manager = self.device_config.get_playlist_manager()
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is None:
+            return None
+        runtime_snapshot = self.runtime_state.snapshot()
+        displayed_uuid = runtime_snapshot.displayed_instance_uuid
+        if displayed_uuid is None:
+            return None
+        instance = next(
+            (
+                candidate
+                for candidate in active.plugins
+                if candidate.instance_uuid == displayed_uuid
+            ),
+            None,
+        )
+        if instance is None:
+            return None
+        state = runtime_snapshot.instances.get(instance.instance_uuid)
+        if state is None or state.presentation.last_failure_at is None:
+            return None
+        request = state.presentation_request
+        if request is None or request.prepared_at is None:
+            return None
+        next_retry = self._parse_iso_datetime(state.presentation.next_retry_at)
+        if next_retry is None or next_retry > current_dt:
+            return None
+        plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(
+            instance
+        )
+        if (
+            not plugin_supports_presentation_refresh(plugin_config)
+            or request.structural_generation != instance.structural_generation
+            or request.settings_revision != instance.settings_revision
+            or request.prepared_theme_mode != theme_mode
+        ):
+            return None
+        return self._playlist_command(
+            active.name,
+            instance,
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=65,
+            kind=CommandKind.DISPLAY,
+            current_dt=current_dt,
+            cache_theme_mode=theme_mode,
+            expected_displayed_instance_uuid=instance.instance_uuid,
+            preserve_rotation_anchor=True,
+            coalescing_scope=f"presentation-followup:{request.request_id}",
+            allow_prepared_presentation=True,
+            presentation_request_id=request.request_id,
+        )
+
     def _resource_sample(self) -> ResourceSample:
         """Read memory and swap once for one scheduler admission decision."""
         try:
@@ -975,10 +1075,15 @@ class RefreshTask:
         cache_candidates = self._active_cache_candidates(active, theme_context)
         runtime_instances = self.runtime_state.snapshot().instances
         data_candidates = []
+        presentation_candidates = []
         for instance in active.plugins:
+            runtime_instance = runtime_instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
             evaluation = evaluate_data_due(
                 instance,
-                runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()),
+                runtime_instance,
                 instance.instance_uuid in cache_candidates,
                 current_dt,
             )
@@ -990,6 +1095,27 @@ class RefreshTask:
                 )
             if evaluation.candidate is not None:
                 data_candidates.append(evaluation.candidate)
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if not plugin_supports_presentation_refresh(plugin_config):
+                continue
+            resolved_theme_context = _resolved_theme_context_for_instance(
+                instance,
+                plugin_config,
+                self.device_config,
+                current_dt=current_dt,
+            )
+            resolved_theme_mode = (
+                resolved_theme_context.get("mode") if isinstance(resolved_theme_context, Mapping) else None
+            )
+            presentation = evaluate_presentation_due(
+                instance,
+                runtime_instance,
+                instance.instance_uuid in cache_candidates,
+                resolved_theme_mode,
+                current_dt,
+            )
+            if presentation.candidate is not None:
+                presentation_candidates.append(presentation.candidate)
 
         thresholds = self._resource_thresholds()
         tier = classify_resource_tier(self._resource_sample(), thresholds)
@@ -1007,6 +1133,7 @@ class RefreshTask:
             current_dt,
         )
         auxiliary_candidates = list(live_candidates)
+        auxiliary_candidates.extend(presentation_candidates)
         if theme_candidate is not None:
             auxiliary_candidates.append(theme_candidate)
         decision = choose_refresh_candidate(
@@ -1021,6 +1148,7 @@ class RefreshTask:
         self._resource_tier = tier
         self._due_counts = {
             RefreshLane.DATA.value: len(data_candidates),
+            RefreshLane.PRESENTATION.value: len(presentation_candidates),
             RefreshLane.LIVE.value: len(live_candidates),
             RefreshLane.THEME.value: int(theme_candidate is not None),
         }
@@ -1062,6 +1190,22 @@ class RefreshTask:
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
                 expected_displayed_instance_uuid=candidate.instance.instance_uuid,
+            )
+        if candidate.lane is RefreshLane.PRESENTATION:
+            request = runtime_instances[candidate.instance.instance_uuid].presentation_request
+            if request is None:
+                return None
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.PRESENTATION_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=20,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                presentation_request_id=request.request_id,
             )
         return self._playlist_command(
             active.name,
@@ -1403,6 +1547,23 @@ class RefreshTask:
                     error_code="stale_selection",
                     error=str(error),
                 )
+            except _PreparedDisplayFailure as error:
+                try:
+                    self._record_presentation_failure(
+                        command,
+                        error.original_error,
+                        self._get_current_datetime(),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Prepared display failure bookkeeping also failed"
+                    )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.FAILED,
+                    error_code="presentation_display_failed",
+                    error=str(error.original_error),
+                )
             except TaskCancelled as error:
                 finished = self.refresh_queue.finish(
                     entry.job.id,
@@ -1507,6 +1668,7 @@ class RefreshTask:
     def _lane_for_intent(intent):
         return {
             RefreshIntent.DATA_REFRESH: RefreshLane.DATA,
+            RefreshIntent.PRESENTATION_REFRESH: RefreshLane.PRESENTATION,
             RefreshIntent.LIVE_REFRESH: RefreshLane.LIVE,
             RefreshIntent.THEME_REDRAW: RefreshLane.THEME,
         }.get(intent)
@@ -1586,12 +1748,14 @@ class RefreshTask:
         self,
         state,
         *,
+        commit_id=None,
         instance_uuid=None,
         changed_at=None,
     ):
         try:
             self.runtime_state.set_display_state(
                 state,
+                commit_id,
                 instance_uuid=instance_uuid,
                 changed_at=changed_at,
             )
@@ -1640,17 +1804,39 @@ class RefreshTask:
             if resolved is None:
                 raise _StaleSelection("playlist selection is stale")
             if command.intent is RefreshIntent.DISPLAY_CACHE:
-                image = self._load_catalog_display_image(command, resolved)
+                image, prepared_selection = self._load_catalog_display_image(
+                    command,
+                    resolved,
+                )
                 self._set_render_metadata(
                     False,
                     False,
                     self.device_config.get_plugin(command.plugin_id),
                 )
-                return self._commit_command_result(
+                try:
+                    return self._commit_command_result(
+                        command,
+                        resolved,
+                        image,
+                        self._get_current_datetime(),
+                        prepared_selection=prepared_selection,
+                    )
+                except (
+                    TaskDeadlineExceeded,
+                    _CacheUnavailable,
+                    _StaleSelection,
+                    TaskCancelled,
+                ):
+                    raise
+                except Exception as error:
+                    if prepared_selection is None:
+                        raise
+                    raise _PreparedDisplayFailure(error) from error
+            if command.intent is RefreshIntent.PRESENTATION_REFRESH:
+                return self._render_presentation_command(
                     command,
                     resolved,
-                    image,
-                    self._get_current_datetime(),
+                    context,
                 )
             image = self._render_playlist_command(command, resolved, context)
             # Cache promotion is plugin-owned work too. Reacquiring the same
@@ -1687,7 +1873,59 @@ class RefreshTask:
         return self._commit_command_result(command, None, image, self._get_current_datetime())
 
     def _load_catalog_display_image(self, command, resolved):
-        """Revalidate and copy an authoritative cache without plugin execution."""
+        """Load prepared or authoritative bytes without plugin execution."""
+        instance = None if resolved is None else resolved.instance
+        if command.allow_prepared_presentation and instance is not None:
+            plugin_config, _theme_context, resolved_theme_mode = self._latest_presentation_theme(instance)
+            expected_request_id = command.payload.get("presentation_request_id")
+            if not plugin_supports_presentation_refresh(plugin_config):
+                if expected_request_id is not None:
+                    raise _StaleSelection("presentation capability is no longer enabled")
+            else:
+                state = self.runtime_state.snapshot().instances.get(
+                    instance.instance_uuid,
+                    InstanceRuntimeState(),
+                )
+                request = state.presentation_request
+                if expected_request_id is not None and (request is None or request.request_id != expected_request_id):
+                    raise _StaleSelection("presentation display request was replaced")
+                if (
+                    request is not None
+                    and request.structural_generation == instance.structural_generation
+                    and request.settings_revision == instance.settings_revision
+                    and request.prepared_at is not None
+                    and request.prepared_theme_mode == resolved_theme_mode
+                ):
+                    candidate = self._presentation_candidate(
+                        instance,
+                        request,
+                        resolved_theme_mode,
+                    )
+                    image = self.presentation_cache.load_image(candidate)
+                    if image is None:
+                        error = RuntimeError("prepared presentation cache is missing or corrupt")
+                        cleared_at = self._get_current_datetime().isoformat()
+                        if not self.runtime_state.clear_prepared_presentation(
+                            instance.instance_uuid,
+                            request.request_id,
+                            cleared_at,
+                        ):
+                            raise _StaleSelection("prepared presentation changed during validation")
+                        self._record_presentation_failure(
+                            command,
+                            error,
+                            self._get_current_datetime(),
+                        )
+                        self.presentation_cache.remove(candidate)
+                        raise _CacheUnavailable(str(error))
+                    return image, _PreparedDisplaySelection(
+                        candidate=candidate,
+                        request=request,
+                        theme_mode=resolved_theme_mode,
+                    )
+                if expected_request_id is not None:
+                    raise _StaleSelection("exact prepared presentation is no longer displayable")
+
         theme_mode = command.payload.get("cache_theme_mode")
         candidate = DisplayCacheCandidate(
             instance_uuid=command.instance_uuid,
@@ -1707,7 +1945,238 @@ class RefreshTask:
         if image is None:
             self.cache_catalog.invalidate(candidate)
             raise _CacheUnavailable("display cache is unavailable")
-        return image
+        if resolved is None:
+            return image
+        return image, None
+
+    def _latest_presentation_theme(self, instance):
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        resolved_theme_context = _resolved_theme_context_for_instance(
+            instance,
+            plugin_config,
+            self.device_config,
+            current_dt=self._get_current_datetime(),
+        )
+        resolved_theme_mode = (
+            resolved_theme_context.get("mode") if isinstance(resolved_theme_context, Mapping) else None
+        )
+        return plugin_config, resolved_theme_context, resolved_theme_mode
+
+    def _presentation_candidate(self, instance, request, theme_mode):
+        return PreparedPresentationCandidate(
+            instance_uuid=instance.instance_uuid,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            theme_mode=theme_mode,
+            request_id=request.request_id,
+            cache_path=prepared_presentation_path(
+                self.presentation_cache.cache_root,
+                instance.instance_uuid,
+                instance.structural_generation,
+                instance.settings_revision,
+                theme_mode,
+                request.request_id,
+            ),
+        )
+
+    def _record_presentation_failure(self, command, error, current_dt):
+        presentation_command = replace(
+            command,
+            intent=RefreshIntent.PRESENTATION_REFRESH,
+        )
+        self.scheduler_state.record_failure(error)
+        self._record_intent_failure(
+            presentation_command,
+            error,
+            current_dt,
+        )
+        self.scheduler_state.set_next_attempt(self._clock() + self._scheduler_poll_seconds())
+
+    def _render_presentation_command(self, command, resolved, context):
+        """Prepare provider-free presentation bytes on the shared worker."""
+        selection = self._require_fresh_selection(command, context)
+        instance = selection.instance
+        state = self.runtime_state.snapshot().instances.get(
+            instance.instance_uuid,
+            InstanceRuntimeState(),
+        )
+        request = state.presentation_request
+        expected_request_id = command.payload.get("presentation_request_id")
+        if (
+            request is None
+            or request.request_id != expected_request_id
+            or request.structural_generation != instance.structural_generation
+            or request.settings_revision != instance.settings_revision
+        ):
+            raise _StaleSelection("presentation request changed before prepare")
+
+        plugin_config, resolved_theme_context, theme_mode = self._latest_presentation_theme(instance)
+        if not plugin_supports_presentation_refresh(plugin_config):
+            raise _StaleSelection("presentation capability is no longer enabled")
+        plugin = get_plugin_instance(plugin_config)
+        settings = thaw_payload(instance.settings)
+        with self.render_arbiter.lease(command.plugin_id, context):
+            context.raise_if_cancelled()
+            mode = PresentationMode(plugin.presentation_mode(settings))
+            if mode is PresentationMode.LEGACY_ASYNC:
+                raise RuntimeError("legacy async presentation refresh is disabled")
+            origin_receipt = PresentationCommitReceipt(
+                request_id=request.request_id,
+                committed_at=request.requested_at,
+                display_commit_id=request.origin_display_commit_id,
+                structural_generation=request.structural_generation,
+                settings_revision=request.settings_revision,
+                theme_mode=request.origin_theme_mode,
+            )
+            plugin.reconcile_presentation_receipt(
+                settings,
+                origin_receipt,
+            )
+            prior_receipt = state.presentation_receipt
+            if prior_receipt is not None:
+                plugin.reconcile_presentation_receipt(
+                    settings,
+                    prior_receipt,
+                )
+            if mode is PresentationMode.NO_CHANGE:
+                if not self.runtime_state.satisfy_presentation_no_change(
+                    instance.instance_uuid,
+                    request.request_id,
+                    request.requested_at,
+                ):
+                    raise _StaleSelection("presentation request changed before no-change commit")
+                self.retry_registry.mark_success(
+                    self._lane_retry_key(
+                        instance.instance_uuid,
+                        RefreshLane.PRESENTATION,
+                    )
+                )
+                return None
+
+            request_context = PresentationRequestContext(
+                request_id=request.request_id,
+                requested_at=request.requested_at,
+                origin_display_commit_id=request.origin_display_commit_id,
+                last_receipt=prior_receipt,
+            )
+            preparation = plugin.prepare_presentation(
+                settings,
+                self.device_config,
+                request=request_context,
+                resolved_theme_context=(
+                    thaw_payload(resolved_theme_context) if resolved_theme_context is not None else None
+                ),
+            )
+            if not isinstance(preparation, PresentationPreparation):
+                raise TypeError("prepare_presentation must return PresentationPreparation")
+            if preparation.request_id != request.request_id:
+                raise ValueError("presentation preparation returned a different request id")
+            context.raise_if_cancelled()
+
+        if not preparation.changed:
+            if not self.runtime_state.satisfy_presentation_no_change(
+                instance.instance_uuid,
+                request.request_id,
+                request.requested_at,
+            ):
+                raise _StaleSelection("presentation request changed before no-change commit")
+            self.retry_registry.mark_success(
+                self._lane_retry_key(
+                    instance.instance_uuid,
+                    RefreshLane.PRESENTATION,
+                )
+            )
+            return None
+
+        candidate = self._presentation_candidate(
+            instance,
+            request,
+            theme_mode,
+        )
+        self.presentation_cache.save(candidate, preparation.image)
+        try:
+            self._require_fresh_selection(command, context)
+            if not self._presentation_request_is_current(
+                instance,
+                request.request_id,
+                theme_mode=theme_mode,
+                require_prepared=False,
+            ):
+                raise _StaleSelection("presentation request changed before prepared publication")
+            prepared_at = self._get_current_datetime().isoformat()
+            if not self.runtime_state.mark_presentation_prepared(
+                instance.instance_uuid,
+                request.request_id,
+                prepared_at,
+                theme_mode,
+            ):
+                raise _StaleSelection("presentation request changed before prepared publication")
+        except BaseException:
+            self.presentation_cache.remove(candidate)
+            raise
+
+        self._enqueue_presentation_display_followup(
+            command,
+            selection,
+            request,
+            theme_mode,
+        )
+        return preparation.image
+
+    def _presentation_request_is_current(
+        self,
+        instance,
+        request_id,
+        *,
+        theme_mode,
+        require_prepared,
+    ):
+        state = self.runtime_state.snapshot().instances.get(
+            instance.instance_uuid,
+            InstanceRuntimeState(),
+        )
+        request = state.presentation_request
+        if (
+            request is None
+            or request.request_id != request_id
+            or request.structural_generation != instance.structural_generation
+            or request.settings_revision != instance.settings_revision
+        ):
+            return False
+        if require_prepared and (request.prepared_at is None or request.prepared_theme_mode != theme_mode):
+            return False
+        _plugin_config, _theme_context, current_theme_mode = self._latest_presentation_theme(instance)
+        return current_theme_mode == theme_mode
+
+    def _enqueue_presentation_display_followup(
+        self,
+        command,
+        resolved_snapshot,
+        request,
+        theme_mode,
+    ):
+        snapshot = self.runtime_state.snapshot()
+        instance = resolved_snapshot.instance
+        if snapshot.displayed_instance_uuid != instance.instance_uuid:
+            return None
+        followup = self._playlist_command(
+            resolved_snapshot.playlist_name,
+            instance,
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DISPLAY_CACHE,
+            force=False,
+            display_cached_only=True,
+            priority=65,
+            kind=CommandKind.DISPLAY,
+            current_dt=self._get_current_datetime(),
+            cache_theme_mode=theme_mode,
+            expected_displayed_instance_uuid=instance.instance_uuid,
+            preserve_rotation_anchor=True,
+            coalescing_scope=f"presentation-followup:{request.request_id}",
+            allow_prepared_presentation=True,
+            presentation_request_id=request.request_id,
+        )
+        return self.refresh_queue.submit(followup)
 
     def _render_playlist_command(self, command, resolved, context):
         instance = resolved.instance
@@ -1728,6 +2197,21 @@ class RefreshTask:
 
         with self.render_arbiter.lease(command.plugin_id, context):
             context.raise_if_cancelled()
+            if (
+                command.intent is RefreshIntent.DATA_REFRESH
+                and plugin_supports_presentation_refresh(plugin_config)
+                and PresentationMode(plugin.presentation_mode(settings)) is PresentationMode.PREPARED_BANK
+            ):
+                receipt = (
+                    self.runtime_state.snapshot()
+                    .instances.get(
+                        instance.instance_uuid,
+                        InstanceRuntimeState(),
+                    )
+                    .presentation_receipt
+                )
+                if receipt is not None:
+                    plugin.reconcile_presentation_receipt(settings, receipt)
             display_under_pressure = (
                 command.kind is CommandKind.DISPLAY
                 and display_cached_only
@@ -2071,9 +2555,25 @@ class RefreshTask:
                 pass
         return tuple(sorted(set(paths)))
 
-    def _commit_command_result(self, command, resolved_snapshot, image, current_dt):
+    def _commit_command_result(
+        self,
+        command,
+        resolved_snapshot,
+        image,
+        current_dt,
+        *,
+        prepared_selection=None,
+    ):
         context = self._current_task_context(command)
         context.raise_if_cancelled()
+        if prepared_selection is not None:
+            return self._commit_prepared_display_result(
+                command,
+                resolved_snapshot,
+                image,
+                current_dt,
+                prepared_selection,
+            )
         if resolved_snapshot is not None:
             if image is None:
                 return None
@@ -2157,10 +2657,13 @@ class RefreshTask:
             refresh_record = RefreshInfo(**refresh_info)
             theme_context = command.payload.get("theme_context")
             thawed_theme_context = thaw_payload(theme_context) if theme_context else None
+            display_commit = None
+            display_was_invoked = False
             if command.kind is CommandKind.DISPLAY:
                 self._require_fresh_selection(command, context)
                 if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
-                    self._display_image(
+                    display_was_invoked = True
+                    display_commit = self._display_image(
                         image,
                         context=context,
                         image_settings=getattr(self._execution_local, "image_settings", ()),
@@ -2190,11 +2693,17 @@ class RefreshTask:
                 if thawed_theme_context:
                     self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_device_config()
-                if not self._display_transactions_enabled:
-                    self._record_runtime_display_state(
-                        "committed",
-                        instance_uuid=instance.instance_uuid,
-                        changed_at=current_dt.isoformat(),
+                commit_id, committed_at = self._display_commit_evidence(
+                    display_commit,
+                    instance.instance_uuid,
+                    current_dt,
+                    display_was_invoked=display_was_invoked,
+                )
+                if command.allow_prepared_presentation:
+                    self._request_presentation_after_display(
+                        instance,
+                        commit_id,
+                        committed_at,
                     )
             return image
 
@@ -2233,6 +2742,238 @@ class RefreshTask:
             )
         return image
 
+    def _commit_prepared_display_result(
+        self,
+        command,
+        resolved_snapshot,
+        image,
+        current_dt,
+        prepared_selection,
+    ):
+        """Commit prepared bytes only after a fresh display transaction."""
+        context = self._current_task_context(command)
+        instance = resolved_snapshot.instance
+        self._require_fresh_selection(command, context)
+        display_commit = self._display_image(
+            image,
+            context=context,
+            image_settings=getattr(
+                self._execution_local,
+                "image_settings",
+                (),
+            ),
+            logical_target={
+                "kind": "playlist",
+                "playlist": resolved_snapshot.playlist_name,
+                "plugin_id": instance.plugin_id,
+                "plugin_instance": instance.name,
+                "instance_uuid": instance.instance_uuid,
+            },
+            instance_revision=(
+                instance.structural_generation,
+                instance.settings_revision,
+            ),
+        )
+        commit_id, committed_at = self._display_commit_evidence(
+            display_commit,
+            instance.instance_uuid,
+            current_dt,
+            display_was_invoked=True,
+        )
+        self._require_fresh_selection(command, context)
+        display_snapshot = self.runtime_state.snapshot()
+        if (
+            display_snapshot.display_state != "committed"
+            or display_snapshot.display_commit_id != commit_id
+            or display_snapshot.displayed_instance_uuid != instance.instance_uuid
+        ):
+            raise _StaleSelection("prepared display target changed after display commit")
+        if not self._presentation_request_is_current(
+            instance,
+            prepared_selection.request.request_id,
+            theme_mode=prepared_selection.theme_mode,
+            require_prepared=True,
+        ):
+            raise _StaleSelection("prepared presentation changed after display commit")
+
+        stage_path = self._staging_cache_path(
+            instance,
+            prepared_selection.theme_mode,
+        )
+        _save_image_atomic(image, stage_path)
+        try:
+            self._require_fresh_selection(command, context)
+            if not self._presentation_request_is_current(
+                instance,
+                prepared_selection.request.request_id,
+                theme_mode=prepared_selection.theme_mode,
+                require_prepared=True,
+            ):
+                raise _StaleSelection("prepared presentation changed before cache promotion")
+            canonical_path = self._snapshot_cache_path(
+                instance,
+                prepared_selection.theme_mode,
+            )
+            os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
+            os.replace(stage_path, canonical_path)
+            stage_path = None
+        finally:
+            if stage_path and os.path.exists(stage_path):
+                try:
+                    os.remove(stage_path)
+                except OSError:
+                    logger.warning(
+                        "Could not remove stale prepared stage: %s",
+                        stage_path,
+                    )
+
+        image_hash = compute_image_hash(image)
+        latest_refresh = self.device_config.get_refresh_info()
+        refresh_info = {
+            "refresh_type": "Playlist",
+            "playlist": resolved_snapshot.playlist_name,
+            "plugin_id": instance.plugin_id,
+            "plugin_instance": instance.name,
+            "refresh_time": current_dt.isoformat(),
+            "image_hash": image_hash,
+        }
+        if (
+            command.payload.get("preserve_rotation_anchor") is True
+            and latest_refresh.refresh_time
+            and not self._display_target_changed(latest_refresh, refresh_info)
+        ):
+            refresh_info["refresh_time"] = latest_refresh.refresh_time
+        self.device_config.refresh_info = RefreshInfo(**refresh_info)
+        self._write_device_config()
+
+        receipt = PresentationCommitReceipt(
+            request_id=prepared_selection.request.request_id,
+            committed_at=committed_at,
+            display_commit_id=commit_id,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            theme_mode=prepared_selection.theme_mode,
+        )
+        last_good = LastGoodCacheState(
+            theme_mode=prepared_selection.theme_mode,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=committed_at,
+        )
+        try:
+            committed = self.runtime_state.commit_presentation(
+                instance.instance_uuid,
+                receipt,
+                last_good_cache=last_good,
+            )
+        except Exception:
+            published = self.runtime_state.snapshot().instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            if (
+                published.presentation_request is not None
+                or published.presentation_receipt != receipt
+                or published.last_good_cache != last_good
+            ):
+                raise
+            logger.warning(
+                "Presentation receipt was published before persistence raised. | instance_uuid: %s | request_id: %s",
+                instance.instance_uuid,
+                receipt.request_id,
+            )
+            committed = True
+        if not committed:
+            raise _StaleSelection("prepared presentation changed before receipt commit")
+        self.retry_registry.mark_success(
+            self._lane_retry_key(
+                instance.instance_uuid,
+                RefreshLane.PRESENTATION,
+            )
+        )
+        if not self.presentation_cache.remove(prepared_selection.candidate):
+            logger.warning(
+                "Committed prepared presentation could not be removed. | instance_uuid: %s | request_id: %s",
+                instance.instance_uuid,
+                prepared_selection.request.request_id,
+            )
+        return image
+
+    def _display_commit_evidence(
+        self,
+        display_commit,
+        instance_uuid,
+        current_dt,
+        *,
+        display_was_invoked,
+    ):
+        commit_id = getattr(display_commit, "commit_id", None)
+        committed_at = getattr(display_commit, "committed_at", None)
+        if isinstance(commit_id, str) and commit_id and isinstance(committed_at, str) and committed_at:
+            return commit_id, committed_at
+
+        snapshot = self.runtime_state.snapshot()
+        if (
+            not display_was_invoked
+            and snapshot.display_state == "committed"
+            and snapshot.display_commit_id
+            and snapshot.displayed_instance_uuid == instance_uuid
+        ):
+            return snapshot.display_commit_id, current_dt.isoformat()
+
+        commit_id = uuid4().hex
+        committed_at = current_dt.isoformat()
+        self._record_runtime_display_state(
+            "committed",
+            commit_id=commit_id,
+            instance_uuid=instance_uuid,
+            changed_at=committed_at,
+        )
+        return commit_id, committed_at
+
+    def _request_presentation_after_display(
+        self,
+        instance,
+        display_commit_id,
+        committed_at,
+    ):
+        """Record one coalesced request using metadata-only trigger resolution."""
+        plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(instance)
+        if not plugin_supports_presentation_refresh(plugin_config):
+            return False
+        try:
+            requested = resolve_refresh_on_display_for_config(
+                thaw_payload(instance.settings),
+                plugin_config,
+            )
+        except PluginSettingError as error:
+            logger.warning(
+                "Ignoring invalid refresh-on-display setting during presentation request. | plugin_id: %s | error: %s",
+                instance.plugin_id,
+                error,
+            )
+            return False
+        except Exception:
+            logger.exception(
+                "Presentation trigger resolution failed closed. | plugin_id: %s",
+                instance.plugin_id,
+            )
+            return False
+        if not requested:
+            return False
+        request = PresentationRequestState(
+            request_id=uuid4().hex,
+            requested_at=committed_at,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            origin_theme_mode=theme_mode,
+            origin_display_commit_id=display_commit_id,
+        )
+        return self.runtime_state.request_presentation(
+            instance.instance_uuid,
+            request,
+        )
+
     def _enqueue_live_display_followup(
         self,
         command,
@@ -2258,6 +2999,7 @@ class RefreshTask:
             cache_theme_mode=theme_mode,
             expected_displayed_instance_uuid=instance.instance_uuid,
             coalescing_scope=f"live-followup:{command.id}",
+            allow_prepared_presentation=False,
         )
         return self.refresh_queue.submit(followup)
 
@@ -2288,6 +3030,7 @@ class RefreshTask:
             expected_displayed_instance_uuid=instance.instance_uuid,
             preserve_rotation_anchor=True,
             coalescing_scope=f"theme-followup:{command.id}",
+            allow_prepared_presentation=False,
         )
         return self.refresh_queue.submit(followup)
 
@@ -2538,6 +3281,8 @@ class RefreshTask:
         expected_displayed_instance_uuid=None,
         preserve_rotation_anchor=False,
         coalescing_scope=None,
+        allow_prepared_presentation=None,
+        presentation_request_id=None,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -2574,6 +3319,16 @@ class RefreshTask:
             payload["resolved_theme_context"] = resolved_theme_context
         if RefreshIntent(intent) is RefreshIntent.DISPLAY_CACHE:
             payload["cache_theme_mode"] = cache_theme_mode
+        if presentation_request_id is not None:
+            payload["presentation_request_id"] = str(presentation_request_id)
+        normalized_intent = RefreshIntent(intent)
+        if allow_prepared_presentation is None:
+            allow_prepared_presentation = (
+                normalized_intent is RefreshIntent.DISPLAY_CACHE
+                and source in {CommandSource.MANUAL, CommandSource.SCHEDULER}
+                and coalescing_scope is None
+                and expected_displayed_instance_uuid is None
+            )
         return RefreshCommand.create(
             kind=kind,
             source=source,
@@ -2588,6 +3343,7 @@ class RefreshTask:
             priority=priority,
             intent=intent,
             coalescing_scope=coalescing_scope,
+            allow_prepared_presentation=allow_prepared_presentation,
         )
 
     def _rejected_manual_job(self, refresh_action, error):

@@ -514,6 +514,8 @@ class RefreshQueue:
             and left.payload == right.payload
             and left.intent == right.intent
             and left.coalescing_scope == right.coalescing_scope
+            and left.allow_prepared_presentation
+            == right.allow_prepared_presentation
         )
 
     @classmethod
@@ -717,6 +719,8 @@ class RefreshQueue:
             and existing.structural_generation == incoming.structural_generation
             and existing.intent == incoming.intent
             and existing.coalescing_scope == incoming.coalescing_scope
+            and existing.allow_prepared_presentation
+            == incoming.allow_prepared_presentation
         )
 
     def _merged_command(

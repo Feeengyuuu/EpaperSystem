@@ -54,10 +54,14 @@ def command(
     priority: int = 0,
     idempotency_key: str | None = None,
     intent: RefreshIntent | None = None,
+    allow_prepared_presentation: bool | None = None,
     payload=None,
     now: float = 10.0,
     deadline: float = 1000.0,
 ) -> RefreshCommand:
+    kwargs = {}
+    if allow_prepared_presentation is not None:
+        kwargs["allow_prepared_presentation"] = allow_prepared_presentation
     return RefreshCommand.create(
         kind=kind,
         source=source,
@@ -72,6 +76,7 @@ def command(
         payload={} if payload is None else payload,
         now_monotonic=now,
         deadline_monotonic=deadline,
+        **kwargs,
     )
 
 
@@ -2147,3 +2152,124 @@ def test_quiesce_rejects_fresh_expired_submission_but_exact_replay_still_wins():
     with pytest.raises(QueueStoppingError) as invalid_stopping:
         queue.submit(invalid_fresh)
     assert invalid_stopping.value.job.error_code == "refresh_service_stopping"
+
+
+def test_presentation_refresh_command_is_immutable_non_forced_background_work():
+    presentation = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-instance",
+        force=False,
+        priority=20,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        allow_prepared_presentation=False,
+    )
+
+    assert presentation.kind is CommandKind.CACHE_REFRESH
+    assert presentation.source is CommandSource.BACKGROUND
+    assert presentation.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert presentation.force is False
+    assert presentation.allow_prepared_presentation is False
+    with pytest.raises(FrozenInstanceError):
+        presentation.allow_prepared_presentation = True
+
+
+def test_presentation_queue_coalesces_by_intent_without_absorbing_exact_display():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    first = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-coalescing",
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        priority=20,
+    )
+    duplicate = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-coalescing",
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        priority=20,
+    )
+    exact_display = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-coalescing",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        priority=65,
+        allow_prepared_presentation=True,
+    )
+    exact_display = replace(
+        exact_display,
+        coalescing_scope="presentation-followup:0123456789abcdef0123456789abcdef",
+    )
+
+    first_job = queue.submit(first)
+    duplicate_job = queue.submit(duplicate)
+    display_job = queue.submit(exact_display)
+
+    assert duplicate_job.id == first_job.id
+    assert display_job.id != first_job.id
+    assert queue.snapshot().depth == 2
+
+
+def test_prepared_presentation_eligibility_changes_command_replay_identity():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    original = command(
+        instance_uuid="presentation-replay-eligibility",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=False,
+    )
+    queue.submit(original)
+
+    with pytest.raises(DuplicateCommandConflictError):
+        queue.submit(
+            replace(
+                original,
+                allow_prepared_presentation=True,
+            )
+        )
+
+
+def test_prepared_presentation_eligibility_changes_idempotent_request_identity():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    original = command(
+        instance_uuid="presentation-idempotency-eligibility",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        idempotency_key="presentation-eligibility-key",
+        allow_prepared_presentation=False,
+    )
+    queue.submit(original)
+
+    with pytest.raises(IdempotencyConflictError):
+        queue.submit(
+            replace(
+                original,
+                id="presentation-idempotency-eligibility-replay",
+                allow_prepared_presentation=True,
+            )
+        )
+
+
+def test_differing_prepared_presentation_eligibility_never_coalesces():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    authoritative_only = command(
+        instance_uuid="presentation-coalescing-eligibility",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=False,
+    )
+    prepared_eligible = command(
+        instance_uuid="presentation-coalescing-eligibility",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=True,
+    )
+
+    first = queue.submit(authoritative_only)
+    second = queue.submit(prepared_eligible)
+
+    assert second.id != first.id
+    assert queue.snapshot().depth == 2
+    entries = [queue.take(timeout=0), queue.take(timeout=0)]
+    assert {entry.command.allow_prepared_presentation for entry in entries} == {
+        False,
+        True,
+    }

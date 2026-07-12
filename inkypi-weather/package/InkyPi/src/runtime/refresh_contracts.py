@@ -37,6 +37,7 @@ class CommandSource(str, Enum):
 class RefreshIntent(str, Enum):
     DISPLAY_CACHE = "display_cache"
     DATA_REFRESH = "data_refresh"
+    PRESENTATION_REFRESH = "presentation_refresh"
     LIVE_REFRESH = "live_refresh"
     THEME_REDRAW = "theme_redraw"
     MANUAL_RENDER = "manual_render"
@@ -148,6 +149,7 @@ class RefreshCommand:
     payload: Mapping[str, Any] = field(compare=False, repr=False)
     intent: RefreshIntent | None = None
     coalescing_scope: str | None = None
+    allow_prepared_presentation: bool = False
 
     @classmethod
     def create(
@@ -167,6 +169,7 @@ class RefreshCommand:
         idempotency_key=None,
         intent=None,
         coalescing_scope=None,
+        allow_prepared_presentation=False,
     ):
         return cls(
             id=uuid4().hex,
@@ -186,6 +189,7 @@ class RefreshCommand:
             coalescing_scope=(
                 None if coalescing_scope is None else str(coalescing_scope)
             ),
+            allow_prepared_presentation=bool(allow_prepared_presentation),
         )
 
 
