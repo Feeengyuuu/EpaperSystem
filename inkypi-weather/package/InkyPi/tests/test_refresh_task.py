@@ -18,6 +18,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     PresentationRequestContext,
 )
+from plugins.base_plugin import presentation as presentation_contract
 from plugins.newspaper.newspaper import Newspaper
 from plugins import plugin_registry, plugin_settings
 from plugins.plugin_settings import PluginSettingError
@@ -7031,6 +7032,50 @@ def test_startup_migration_does_not_write_playlist_or_user_settings(monkeypatch)
 PRESENTATION_NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
 
 
+def test_presentation_instance_identity_rejects_missing_and_json_spoofed_values():
+    reserved_key = presentation_contract._PRESENTATION_INSTANCE_IDENTITY_KEY
+    spoofed = json.loads(
+        json.dumps(
+            {
+                reserved_key: {
+                    "instance_uuid": "json-controlled-instance",
+                }
+            }
+        )
+    )
+
+    assert presentation_contract.get_presentation_instance_uuid({}) is None
+    assert presentation_contract.get_presentation_instance_uuid(spoofed) is None
+
+
+def test_presentation_instance_identity_binding_overwrites_spoof_without_mutation():
+    reserved_key = presentation_contract._PRESENTATION_INSTANCE_IDENTITY_KEY
+    instance_uuid = "trusted-playlist-instance"
+    original = {
+        "city": "Fremont",
+        reserved_key: "json-spoof",
+    }
+    before = dict(original)
+
+    bound = presentation_contract.bind_presentation_instance_identity(
+        original,
+        instance_uuid,
+    )
+
+    assert bound is not original
+    assert original == before
+    assert bound["city"] == "Fremont"
+    assert bound[reserved_key] != "json-spoof"
+    assert presentation_contract.get_presentation_instance_uuid(bound) == instance_uuid
+    assert instance_uuid not in repr(bound[reserved_key])
+
+
+@pytest.mark.parametrize("instance_uuid", [None, "", "   ", " padded-instance "])
+def test_presentation_instance_identity_binding_rejects_invalid_uuid(instance_uuid):
+    with pytest.raises((TypeError, ValueError), match="instance_uuid"):
+        presentation_contract.bind_presentation_instance_identity({}, instance_uuid)
+
+
 def _presentation_manifest(plugin_id="presentation_plugin"):
     return PluginManifest(
         schema_version=2,
@@ -7093,13 +7138,20 @@ class PresentationBankPlugin(DelegatingThemeWrapper):
         self.data_color = data_color
         self.events = []
         self.contexts = []
+        self.identity_events = []
         self.config = {}
 
     def presentation_mode(self, settings):
+        self.identity_events.append(
+            ("mode", presentation_contract.get_presentation_instance_uuid(settings))
+        )
         self.events.append(("mode", dict(settings or {})))
         return PresentationMode.PREPARED_BANK
 
     def reconcile_presentation_receipt(self, settings, receipt):
+        self.identity_events.append(
+            ("reconcile", presentation_contract.get_presentation_instance_uuid(settings))
+        )
         self.events.append(("reconcile", receipt))
 
     def prepare_presentation(
@@ -7111,6 +7163,9 @@ class PresentationBankPlugin(DelegatingThemeWrapper):
         resolved_theme_context,
     ):
         assert isinstance(request, PresentationRequestContext)
+        self.identity_events.append(
+            ("prepare", presentation_contract.get_presentation_instance_uuid(settings))
+        )
         self.events.append(("prepare", request.request_id))
         self.contexts.append(request)
         image = Image.new("RGB", (32, 16), self.prepared_color) if self.changed else None
@@ -7121,8 +7176,41 @@ class PresentationBankPlugin(DelegatingThemeWrapper):
         )
 
     def generate_image(self, settings, device_config):
+        self.identity_events.append(
+            ("generate", presentation_contract.get_presentation_instance_uuid(settings))
+        )
         self.events.append(("generate", dict(settings or {})))
         return Image.new("RGB", (32, 16), self.data_color)
+
+
+class BaseCopyIdentityPlugin(BasePlugin):
+    def __init__(self):
+        self.config = {}
+        self.events = []
+        self.identity_events = []
+
+    def resolve_theme(self, settings, device_config, now=None):
+        return {"mode": "day"}
+
+    def presentation_mode(self, settings):
+        self.identity_events.append(
+            ("mode", presentation_contract.get_presentation_instance_uuid(settings))
+        )
+        self.events.append(("mode", dict(settings or {})))
+        return PresentationMode.PREPARED_BANK
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        self.identity_events.append(
+            ("reconcile", presentation_contract.get_presentation_instance_uuid(settings))
+        )
+        self.events.append(("reconcile", receipt))
+
+    def generate_image(self, settings, device_config):
+        self.identity_events.append(
+            ("generate", presentation_contract.get_presentation_instance_uuid(settings))
+        )
+        self.events.append(("generate", dict(settings or {})))
+        return Image.new("RGB", (32, 16), "gray")
 
 
 class NoChangePresentationPlugin(PresentationBankPlugin):
@@ -7444,7 +7532,7 @@ def test_display_cache_never_instantiates_plugin_with_pending_presentation(
 def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
     monkeypatch,
 ):
-    task, _config, _clock, playlist, _display = _make_presentation_task(
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
         "presentation-data-wins",
         latest_refresh_time=None,
     )
@@ -7482,7 +7570,82 @@ def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
         ),
     )
     request = _seed_presentation_request(task, instance)
-    plugin = PresentationBankPlugin()
+    plugin = BaseCopyIdentityPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.command.intent is RefreshIntent.DATA_REFRESH
+    payload_before = json.dumps(
+        refresh_task_module.thaw_payload(entry.command.payload),
+        sort_keys=True,
+    )
+    playlist_before = json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    )
+    task._process_queue_entry(entry)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert state.data.last_success_at is not None
+    assert state.presentation.last_success_at == prior_receipt.committed_at
+    assert state.presentation_request == request
+    assert [event[0] for event in plugin.events] == [
+        "mode",
+        "reconcile",
+        "generate",
+    ]
+    assert plugin.events[1][1] == prior_receipt
+    assert plugin.identity_events == [
+        ("mode", instance.instance_uuid),
+        ("reconcile", instance.instance_uuid),
+        ("generate", instance.instance_uuid),
+    ]
+    assert json.dumps(
+        refresh_task_module.thaw_payload(entry.command.payload),
+        sort_keys=True,
+    ) == payload_before
+    assert json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    ) == playlist_before
+
+
+def test_non_presentation_capable_data_render_receives_no_trusted_identity(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "non-presentation-data-identity",
+        latest_refresh_time=None,
+    )
+    instance = playlist.plugins[0].snapshot()
+    manifest = PluginManifest(
+        schema_version=2,
+        id=instance.plugin_id,
+        class_name="OrdinaryPlugin",
+        display_name="Ordinary Plugin",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_presentation_refresh=False),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": manifest,
+    }
+    plugin = BaseCopyIdentityPlugin()
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
@@ -7502,17 +7665,96 @@ def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
     assert entry is not None
     assert entry.command.intent is RefreshIntent.DATA_REFRESH
     task._process_queue_entry(entry)
-    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
 
-    assert state.data.last_success_at is not None
-    assert state.presentation.last_success_at == prior_receipt.committed_at
-    assert state.presentation_request == request
-    assert [event[0] for event in plugin.events] == [
-        "mode",
-        "reconcile",
-        "generate",
-    ]
-    assert plugin.events[1][1] == prior_receipt
+    assert plugin.identity_events == [("generate", None)]
+
+
+@pytest.mark.parametrize(
+    ("intent", "source", "kind", "force", "theme_render_only"),
+    [
+        (
+            RefreshIntent.LIVE_REFRESH,
+            CommandSource.LIVE,
+            CommandKind.CACHE_REFRESH,
+            False,
+            False,
+        ),
+        (
+            RefreshIntent.THEME_REDRAW,
+            CommandSource.SCHEDULER,
+            CommandKind.CACHE_REFRESH,
+            False,
+            True,
+        ),
+        (
+            RefreshIntent.MANUAL_RENDER,
+            CommandSource.MANUAL,
+            CommandKind.DISPLAY,
+            True,
+            False,
+        ),
+    ],
+)
+def test_presentation_capable_playlist_renderer_binds_identity_before_generate(
+    monkeypatch,
+    intent,
+    source,
+    kind,
+    force,
+    theme_render_only,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        f"presentation-{intent.value}-identity"
+    )
+    instance = playlist.plugins[0].snapshot()
+    plugin = BaseCopyIdentityPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    task.runtime_state.set_display_state(
+        "committed",
+        "theme-redraw-origin",
+        instance_uuid=instance.instance_uuid,
+        changed_at=PRESENTATION_NOW.isoformat(),
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=source,
+        intent=intent,
+        force=force,
+        display_cached_only=not force,
+        priority=85,
+        kind=kind,
+        theme_render_only=theme_render_only,
+        current_dt=PRESENTATION_NOW,
+    )
+    payload_before = json.dumps(
+        refresh_task_module.thaw_payload(command.payload),
+        sort_keys=True,
+    )
+    playlist_before = json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    )
+    config_before = json.dumps(device_config.config, sort_keys=True)
+
+    result = _queue_and_process(task, command)
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert plugin.identity_events == [("generate", instance.instance_uuid)]
+    assert json.dumps(
+        refresh_task_module.thaw_payload(command.payload),
+        sort_keys=True,
+    ) == payload_before
+    assert json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    ) == playlist_before
+    assert json.dumps(device_config.config, sort_keys=True) == config_before
 
 
 def test_presentation_prepare_does_not_promote_last_good_or_change_lane_success(
@@ -7580,8 +7822,12 @@ def test_presentation_prepare_does_not_promote_last_good_or_change_lane_success(
         settings_revision=instance.settings_revision,
         theme_mode=request.origin_theme_mode,
     )
-    assert plugin.events[:3] == [
-        ("mode", dict(instance.settings)),
+    assert [event[0] for event in plugin.events[:3]] == [
+        "mode",
+        "reconcile",
+        "prepare",
+    ]
+    assert plugin.events[1:] == [
         ("reconcile", origin_receipt),
         ("prepare", request.request_id),
     ]
@@ -7601,7 +7847,7 @@ def test_presentation_prepare_does_not_promote_last_good_or_change_lane_success(
 def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_selection(
     monkeypatch,
 ):
-    task, _config, _clock, playlist, _display = _make_presentation_task(
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
         "presentation-origin-before-prior-receipt"
     )
     instance = playlist.plugins[0].snapshot()
@@ -7670,6 +7916,14 @@ def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_select
     task._schedule_if_due()
     entry = task.refresh_queue.take(timeout=0)
     assert entry is not None
+    payload_before = json.dumps(
+        refresh_task_module.thaw_payload(entry.command.payload),
+        sort_keys=True,
+    )
+    playlist_before = json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    )
     task._process_queue_entry(entry)
 
     origin_receipt = PresentationCommitReceipt(
@@ -7680,12 +7934,31 @@ def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_select
         settings_revision=instance.settings_revision,
         theme_mode=request.origin_theme_mode,
     )
-    assert plugin.events[:4] == [
-        ("mode", dict(instance.settings)),
+    assert [event[0] for event in plugin.events[:4]] == [
+        "mode",
+        "reconcile",
+        "reconcile",
+        "prepare",
+    ]
+    assert plugin.events[1:4] == [
         ("reconcile", origin_receipt),
         ("reconcile", prior_receipt),
         ("prepare", request.request_id),
     ]
+    assert plugin.identity_events[:4] == [
+        ("mode", instance.instance_uuid),
+        ("reconcile", instance.instance_uuid),
+        ("reconcile", instance.instance_uuid),
+        ("prepare", instance.instance_uuid),
+    ]
+    assert json.dumps(
+        refresh_task_module.thaw_payload(entry.command.payload),
+        sort_keys=True,
+    ) == payload_before
+    assert json.dumps(
+        device_config.get_playlist_manager().to_dict(),
+        sort_keys=True,
+    ) == playlist_before
 
 
 def test_prepared_followup_commit_records_receipt_success_and_preserves_anchor(
@@ -8182,8 +8455,12 @@ def test_presentation_no_change_succeeds_at_committed_origin_without_display(
     assert state.presentation.last_success_at == request.requested_at
     assert state.presentation_receipt == prior_receipt
     assert _non_presentation_lane_bytes(state) == before_lanes
-    assert plugin.events == [
-        ("mode", dict(instance.settings)),
+    assert [event[0] for event in plugin.events] == [
+        "mode",
+        "reconcile",
+        "reconcile",
+    ]
+    assert plugin.events[1:] == [
         ("reconcile", origin_receipt),
         ("reconcile", prior_receipt),
     ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -12,6 +13,50 @@ from runtime.runtime_state import PresentationCommitReceipt
 
 
 _LOWERCASE_HEX = frozenset("0123456789abcdef")
+_PRESENTATION_INSTANCE_IDENTITY_KEY = "_inkypi_presentation_instance_identity"
+
+
+class _TrustedPresentationInstanceIdentity:
+    """An in-process identity marker that persisted JSON cannot reproduce."""
+
+    __slots__ = ("instance_uuid",)
+
+    def __init__(self, instance_uuid: str):
+        self.instance_uuid = instance_uuid
+
+    def __repr__(self) -> str:
+        return "<trusted-presentation-instance>"
+
+
+def _validated_instance_uuid(value) -> str:
+    if not isinstance(value, str):
+        raise TypeError("instance_uuid must be a string")
+    normalized = value.strip()
+    if not normalized or normalized != value:
+        raise ValueError("instance_uuid must be non-empty without surrounding whitespace")
+    return value
+
+
+def bind_presentation_instance_identity(settings, instance_uuid) -> dict:
+    """Return an execution-only settings copy bound to one playlist instance."""
+
+    trusted_identity = _TrustedPresentationInstanceIdentity(
+        _validated_instance_uuid(instance_uuid)
+    )
+    bound = dict(settings or {})
+    bound[_PRESENTATION_INSTANCE_IDENTITY_KEY] = trusted_identity
+    return bound
+
+
+def get_presentation_instance_uuid(settings) -> str | None:
+    """Read only runtime-bound identity; raw JSON values are deliberately ignored."""
+
+    if not isinstance(settings, Mapping):
+        return None
+    trusted_identity = settings.get(_PRESENTATION_INSTANCE_IDENTITY_KEY)
+    if type(trusted_identity) is not _TrustedPresentationInstanceIdentity:
+        return None
+    return trusted_identity.instance_uuid
 
 
 def _validated_request_id(value) -> str:

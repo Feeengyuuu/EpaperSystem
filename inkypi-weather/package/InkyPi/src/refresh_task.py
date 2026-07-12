@@ -25,6 +25,7 @@ from plugins.base_plugin.presentation import (
     PresentationMode,
     PresentationPreparation,
     PresentationRequestContext,
+    bind_presentation_instance_identity,
 )
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from utils.image_utils import compute_image_hash
@@ -2014,7 +2015,10 @@ class RefreshTask:
         if not plugin_supports_presentation_refresh(plugin_config):
             raise _StaleSelection("presentation capability is no longer enabled")
         plugin = get_plugin_instance(plugin_config)
-        settings = thaw_payload(instance.settings)
+        settings = bind_presentation_instance_identity(
+            thaw_payload(instance.settings),
+            instance.instance_uuid,
+        )
         with self.render_arbiter.lease(command.plugin_id, context):
             context.raise_if_cancelled()
             mode = PresentationMode(plugin.presentation_mode(settings))
@@ -2185,6 +2189,11 @@ class RefreshTask:
             raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
         plugin = get_plugin_instance(plugin_config)
         settings = thaw_payload(instance.settings)
+        if plugin_supports_presentation_refresh(plugin_config):
+            settings = bind_presentation_instance_identity(
+                settings,
+                instance.instance_uuid,
+            )
         current_dt = self._get_current_datetime()
         resolved_theme_context = command.payload.get("resolved_theme_context")
         theme_mode = _resolved_theme_mode(command.payload)
