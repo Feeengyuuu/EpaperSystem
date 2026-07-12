@@ -435,6 +435,35 @@ class RuntimeStateStore:
 
         return self._cas_update_instance(instance_uuid, prepared_at, update)
 
+    def clear_prepared_presentation(
+        self,
+        instance_uuid,
+        request_id,
+        cleared_at,
+    ) -> bool:
+        instance_uuid = self._instance_uuid(instance_uuid)
+        request_id = _validated_request_id(request_id)
+        cleared_at = _validated_iso_timestamp(cleared_at, "cleared_at")
+
+        def update(previous):
+            current = previous.presentation_request
+            if (
+                current is None
+                or current.request_id != request_id
+                or current.prepared_at is None
+            ):
+                return previous
+            return replace(
+                previous,
+                presentation_request=replace(
+                    current,
+                    prepared_at=None,
+                    prepared_theme_mode=None,
+                ),
+            )
+
+        return self._cas_update_instance(instance_uuid, cleared_at, update)
+
     def commit_presentation(
         self,
         instance_uuid,

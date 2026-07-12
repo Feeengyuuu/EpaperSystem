@@ -1,6 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -629,6 +629,268 @@ def test_unresolved_request_is_coalesced_without_resetting_retry(tmp_path):
     assert satisfied.presentation.last_success_at == "2026-07-09T10:07:00+00:00"
     assert satisfied.presentation.next_retry_at is None
     assert satisfied.presentation.last_failure_at == "2026-07-09T10:02:00+00:00"
+
+
+def test_matching_clear_prepared_presentation_reopens_request_for_renderer(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    request = presentation_request(
+        prepared_at="2026-07-09T10:04:00+00:00",
+        prepared_theme_mode="night",
+    )
+    assert store.request_presentation("one", request) is True
+    before = store.snapshot()
+
+    assert (
+        store.clear_prepared_presentation(
+            "one",
+            request.request_id,
+            "2026-07-09T10:05:00+00:00",
+        )
+        is True
+    )
+
+    after = store.snapshot()
+    assert after is not before
+    assert after.updated_at == "2026-07-09T10:05:00+00:00"
+    assert after.instances["one"].presentation_request == replace(
+        request,
+        prepared_at=None,
+        prepared_theme_mode=None,
+    )
+
+
+def test_clear_prepared_presentation_preserves_all_other_runtime_state(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    for index, lane in enumerate(
+        (RefreshLane.DATA, RefreshLane.LIVE, RefreshLane.THEME),
+    ):
+        prefix = f"2026-07-09T0{index + 1}"
+        store.record_attempt("one", f"{prefix}:00:00+00:00", lane=lane)
+        store.record_success("one", f"{prefix}:01:00+00:00", lane=lane)
+        store.record_failure(
+            "one",
+            f"{prefix}:02:00+00:00",
+            f"{lane.value} failure",
+            f"{prefix}:03:00+00:00",
+            lane=lane,
+        )
+
+    previous_request = presentation_request(
+        "b" * 32,
+        requested_at="2026-07-09T04:00:00+00:00",
+        structural_generation=3,
+        settings_revision=8,
+    )
+    previous_receipt = presentation_receipt(
+        "b" * 32,
+        committed_at="2026-07-09T04:05:00+00:00",
+        structural_generation=3,
+        settings_revision=8,
+    )
+    previous_last_good = LastGoodCacheState(
+        theme_mode="night",
+        structural_generation=3,
+        settings_revision=8,
+        promoted_at=previous_receipt.committed_at,
+    )
+    assert store.request_presentation("one", previous_request) is True
+    assert (
+        store.mark_presentation_prepared(
+            "one",
+            previous_request.request_id,
+            "2026-07-09T04:04:00+00:00",
+            "night",
+        )
+        is True
+    )
+    assert (
+        store.commit_presentation(
+            "one",
+            previous_receipt,
+            last_good_cache=previous_last_good,
+        )
+        is True
+    )
+
+    current_request = presentation_request(
+        requested_at="2026-07-09T05:00:00+00:00",
+        prepared_at="2026-07-09T05:04:00+00:00",
+        prepared_theme_mode="day",
+    )
+    assert store.request_presentation("one", current_request) is True
+    store.record_attempt(
+        "one",
+        "2026-07-09T05:01:00+00:00",
+        lane=RefreshLane.PRESENTATION,
+    )
+    store.record_failure(
+        "one",
+        "2026-07-09T05:02:00+00:00",
+        "presentation failure",
+        "2026-07-09T05:03:00+00:00",
+        lane=RefreshLane.PRESENTATION,
+    )
+    store.prune(set(), tombstoned_at="2026-07-09T05:05:00+00:00")
+    before = store.snapshot()
+    before_state = before.instances["one"]
+
+    assert (
+        store.clear_prepared_presentation(
+            "one",
+            current_request.request_id,
+            "2026-07-09T05:06:00+00:00",
+        )
+        is True
+    )
+
+    after_state = store.snapshot().instances["one"]
+    assert after_state == replace(
+        before_state,
+        presentation_request=replace(
+            current_request,
+            prepared_at=None,
+            prepared_theme_mode=None,
+        ),
+    )
+    assert after_state.data == before_state.data
+    assert after_state.live == before_state.live
+    assert after_state.theme == before_state.theme
+    assert after_state.presentation == before_state.presentation
+    assert after_state.presentation_receipt == previous_receipt
+    assert after_state.last_good_cache == previous_last_good
+    assert after_state.tombstoned_at == before_state.tombstoned_at
+
+
+def test_clear_prepared_presentation_noops_do_not_publish_or_persist(
+    tmp_path,
+    monkeypatch,
+):
+    writes = []
+
+    def record_write(path, payload, *, mode=0o600):
+        writes.append((path, payload, mode))
+
+    monkeypatch.setattr("src.runtime.runtime_state.atomic_write_json", record_write)
+
+    missing = RuntimeStateStore(
+        tmp_path / "missing.json",
+        clock=FakeClock().monotonic_time,
+        timer_factory=ManualTimer,
+    )
+    before_missing = missing.snapshot()
+    writes_before_missing = len(writes)
+    assert (
+        missing.clear_prepared_presentation(
+            "missing",
+            "a" * 32,
+            "2026-07-09T10:05:00+00:00",
+        )
+        is False
+    )
+    assert missing.snapshot() is before_missing
+    assert len(writes) == writes_before_missing
+
+    unprepared = RuntimeStateStore(
+        tmp_path / "unprepared.json",
+        clock=FakeClock().monotonic_time,
+        timer_factory=ManualTimer,
+    )
+    request = presentation_request()
+    assert unprepared.request_presentation("one", request) is True
+    before_unprepared = unprepared.snapshot()
+    writes_before_unprepared = len(writes)
+    assert (
+        unprepared.clear_prepared_presentation(
+            "one",
+            request.request_id,
+            "2026-07-09T10:05:00+00:00",
+        )
+        is False
+    )
+    assert unprepared.snapshot() is before_unprepared
+    assert len(writes) == writes_before_unprepared
+
+    prepared = RuntimeStateStore(
+        tmp_path / "prepared.json",
+        clock=FakeClock().monotonic_time,
+        timer_factory=ManualTimer,
+    )
+    prepared_request = presentation_request(
+        prepared_at="2026-07-09T10:04:00+00:00",
+        prepared_theme_mode="night",
+    )
+    assert prepared.request_presentation("one", prepared_request) is True
+    before_stale = prepared.snapshot()
+    writes_before_stale = len(writes)
+    assert (
+        prepared.clear_prepared_presentation(
+            "one",
+            "b" * 32,
+            "2026-07-09T10:05:00+00:00",
+        )
+        is False
+    )
+    assert prepared.snapshot() is before_stale
+    assert len(writes) == writes_before_stale
+
+
+def test_clear_prepared_presentation_validates_all_inputs(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    valid_request_id = "a" * 32
+    valid_cleared_at = "2026-07-09T10:05:00+00:00"
+
+    for invalid_instance_uuid in (None, 1, "", " \t "):
+        with pytest.raises((TypeError, ValueError)):
+            store.clear_prepared_presentation(
+                invalid_instance_uuid,
+                valid_request_id,
+                valid_cleared_at,
+            )
+    for invalid_request_id in (None, "A" * 32, "g" * 32, "a" * 31, "a" * 33):
+        with pytest.raises((TypeError, ValueError)):
+            store.clear_prepared_presentation(
+                "one",
+                invalid_request_id,
+                valid_cleared_at,
+            )
+    for invalid_cleared_at in (None, "", " \t ", "not-an-iso-timestamp"):
+        with pytest.raises((TypeError, ValueError)):
+            store.clear_prepared_presentation(
+                "one",
+                valid_request_id,
+                invalid_cleared_at,
+            )
+
+
+def test_cleared_prepared_marker_round_trips_through_serialization(tmp_path):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+    request = presentation_request(
+        prepared_at="2026-07-09T10:04:00+00:00",
+        prepared_theme_mode="night",
+    )
+    assert store.request_presentation("one", request) is True
+    assert (
+        store.clear_prepared_presentation(
+            "one",
+            request.request_id,
+            "2026-07-09T10:05:00+00:00",
+        )
+        is True
+    )
+    cleared = store.snapshot().instances["one"].presentation_request
+    store.flush()
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    serialized_request = payload["instances"]["one"]["presentation_request"]
+    loaded = RuntimeStateStore(path).snapshot().instances["one"].presentation_request
+
+    assert serialized_request["prepared_at"] is None
+    assert serialized_request["prepared_theme_mode"] is None
+    assert loaded == cleared
+    assert loaded.request_id == request.request_id
+    assert loaded.prepared_at is None
+    assert loaded.prepared_theme_mode is None
 
 
 def test_failure_does_not_advance_success_time(tmp_path):
