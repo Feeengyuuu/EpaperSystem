@@ -1,6 +1,9 @@
 import hashlib
+import os
 import sys
+import time
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -453,7 +456,6 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
     monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_ensure_display_common_name", lambda _observation: None)
     monkeypatch.setattr(plugin, "_shuffled_display_indices", lambda values: [1, 0, 2])
-    monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
     location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
     observations = [
         plugin._observation_from_occurrence(
@@ -488,10 +490,54 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
         "latitude": str(location["latitude"]),
         "longitude": str(location["longitude"]),
         "locationName": location["name"],
-        "showObservationMap": "false",
+        "googleMapsApiKey": "test-map-key",
         "themeMode": "night",
     }
+    photo_color = (70, 130, 90)
+    map_color = (28, 104, 150)
+    image_payloads = {}
+    for key, color, size in (
+        ("photo", photo_color, (600, 400)),
+        ("map", map_color, (390, 172)),
+    ):
+        buffer = BytesIO()
+        Image.new("RGB", size, color).save(buffer, "PNG")
+        image_payloads[key] = buffer.getvalue()
+
+    class ImageResponse:
+        headers = {}
+
+        def __init__(self, data):
+            self.data = data
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield self.data
+
+        def close(self):
+            return None
+
+    warm_http_calls = []
+
+    class WarmSession:
+        def get(self, url, **_kwargs):
+            warm_http_calls.append(url)
+            key = "map" if str(url).startswith(species_mod.GOOGLE_STATIC_MAPS_URL) else "photo"
+            return ImageResponse(image_payloads[key])
+
+    monkeypatch.setattr(species_mod, "get_http_session", lambda: WarmSession())
     plugin.generate_image(settings, DummyDeviceConfig())
+    assert warm_http_calls
+    photo_cache_files = list(tmp_path.rglob("photo_*.png"))
+    map_cache_files = list(tmp_path.rglob("map_*.png"))
+    assert photo_cache_files
+    assert map_cache_files
+    stale_time = time.time() - 8 * 24 * 60 * 60
+    for cache_file in [*photo_cache_files, *map_cache_files]:
+        os.utime(cache_file, (stale_time, stale_time))
     rotation_path = tmp_path / "display_rotation.json"
     rotation_before = rotation_path.read_bytes()
     selected_key = plugin._read_display_state()["selected_key"]
@@ -501,6 +547,13 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
         raise AssertionError("theme-only redraw must not call a provider")
 
     monkeypatch.setattr(plugin, "_fetch_live_payload", fail_provider)
+    theme_http_calls = []
+
+    def fail_http():
+        theme_http_calls.append("session")
+        raise AssertionError("theme-only media must not acquire an HTTP session")
+
+    monkeypatch.setattr(species_mod, "get_http_session", fail_http)
     rendered_heroes = []
     original_render = plugin._render_page
 
@@ -532,11 +585,104 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
     night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, DummyDeviceConfig())
 
     assert calls == {"provider": 1}
+    assert theme_http_calls == []
     assert rotation_path.read_bytes() == rotation_before
     assert rendered_heroes == [selected_key, selected_key]
     assert day_image.getpixel((0, 0)) == day["palette"]["background"]
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_render_uses_photo_and_map_placeholders_on_cold_or_corrupt_cache_without_http(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    observation = plugin._observation_from_occurrence(occurrence(), location)
+    settings = {
+        "latitude": str(location["latitude"]),
+        "longitude": str(location["longitude"]),
+        "locationName": location["name"],
+        "googleMapsApiKey": "test-map-key",
+        "_theme_render_only": True,
+        "_inkypi_theme": _canonical_theme(
+            "day",
+            background=(241, 236, 225),
+            panel=(221, 213, 196),
+            ink=(19, 21, 23),
+            muted=(73, 75, 79),
+            rule=(128, 124, 116),
+            accent=(180, 44, 58),
+        ),
+    }
+    now = datetime.now(timezone.utc)
+    cache_key = plugin._cache_key(settings, now, location)
+    plugin._write_cache(
+        {
+            "schema": "species-radar-v2",
+            "cache_key": cache_key,
+            "generated_at": now.isoformat(),
+            "payload": {
+                "schema": "species-radar-v2",
+                "cache_key": cache_key,
+                "source": "GBIF",
+                "location": location,
+                "radius_km": 25,
+                "observations": [observation],
+                "category_counts": plugin._category_counts([observation]),
+            },
+        }
+    )
+    photo_digest = hashlib.sha1(observation["image_url"].encode("utf-8")).hexdigest()[:18]
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    (photo_dir / f"photo_{photo_digest}.png").write_bytes(b"not an image")
+    http_calls = []
+
+    def fail_http():
+        http_calls.append("session")
+        raise AssertionError("theme-only media must not acquire an HTTP session")
+
+    monkeypatch.setattr(species_mod, "get_http_session", fail_http)
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert image.size == (800, 480)
+    assert http_calls == []
+
+
+def test_photo_download_survives_managed_cache_write_failure(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    buffer = BytesIO()
+    Image.new("RGB", (80, 60), (70, 130, 90)).save(buffer, "PNG")
+
+    class ImageResponse:
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield buffer.getvalue()
+
+        def close(self):
+            return None
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return ImageResponse()
+
+    monkeypatch.setattr(species_mod, "get_http_session", lambda: Session())
+    monkeypatch.setattr(
+        plugin,
+        "_write_photo_cache",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("cache is read-only")),
+    )
+
+    image = plugin._download_image("https://example.com/cache-write-failure.png", (80, 60))
+
+    assert image is not None
+    assert image.size == (80, 60)
 
 
 def test_theme_only_daily_cache_miss_fails_without_provider_calls(tmp_path, monkeypatch):

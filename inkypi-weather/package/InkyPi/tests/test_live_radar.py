@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -575,6 +576,126 @@ def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
     assert day_image.getpixel((0, 0)) == day["palette"]["background"]
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
+
+
+def test_theme_only_render_reads_stale_cover_and_avatar_disk_cache_without_http(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    cover_url = "https://covers.test/theme-only-live.jpg"
+    avatar_url = "https://avatars.test/theme-only-live.png"
+    settings = {
+        "roomsText": "twitch|xqc|xQc|fav",
+        "cacheSeconds": "20",
+        "snapshotCacheSeconds": "30",
+        "avatarCacheSeconds": "300",
+        "_theme_render_only": True,
+        "_inkypi_theme": _canonical_theme(
+            "day",
+            background=(242, 237, 226),
+            panel=(224, 216, 198),
+            ink=(20, 22, 24),
+            muted=(72, 74, 78),
+            rule=(130, 126, 118),
+            accent=(176, 42, 54),
+        ),
+    }
+    rooms = plugin._parse_rooms(settings)
+    plugin._write_cache(
+        plugin._cache_key(rooms, live_radar_module.DEFAULT_API_URL, True),
+        {
+            "fetched_at": 0,
+            "results": [
+                {
+                    "ok": True,
+                    "platform": "twitch",
+                    "id": "xqc",
+                    "status": {
+                        "isLive": True,
+                        "title": "Cached media stays visible",
+                        "owner": "xQc",
+                        "heatValue": 12345,
+                        "cover": cover_url,
+                        "avatar": avatar_url,
+                    },
+                }
+            ],
+        },
+    )
+    cover_color = (31, 101, 181)
+    avatar_color = (211, 61, 101)
+    Image.new("RGB", (160, 90), cover_color).save(plugin._cover_cache_path(cover_url), "PNG")
+    Image.new("RGB", (64, 64), avatar_color).save(plugin._avatar_cache_path(avatar_url), "PNG")
+    stale_time = time.time() - 7 * 24 * 60 * 60
+    os.utime(plugin._cover_cache_path(cover_url), (stale_time, stale_time))
+    os.utime(plugin._avatar_cache_path(avatar_url), (stale_time, stale_time))
+    http_calls = []
+
+    def fail_http():
+        http_calls.append("session")
+        raise AssertionError("theme-only media must not acquire an HTTP session")
+
+    monkeypatch.setattr(live_radar_module, "get_http_session", fail_http)
+
+    image = plugin.generate_image(settings, FakeDeviceConfig(mode="night"))
+
+    assert http_calls == []
+    pixels = set(image.get_flattened_data())
+    assert cover_color in pixels
+    assert avatar_color in pixels
+
+
+def test_theme_only_render_uses_media_placeholders_for_missing_or_corrupt_cache_without_http(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    cover_url = "https://covers.test/corrupt-theme-only.jpg"
+    avatar_url = "https://avatars.test/missing-theme-only.png"
+    settings = {
+        "roomsText": "twitch|xqc|xQc|fav",
+        "_theme_render_only": True,
+        "_inkypi_theme": _canonical_theme(
+            "night",
+            background=(7, 9, 12),
+            panel=(22, 26, 32),
+            ink=(245, 246, 248),
+            muted=(178, 182, 190),
+            rule=(58, 64, 72),
+            accent=(76, 190, 238),
+        ),
+    }
+    rooms = plugin._parse_rooms(settings)
+    plugin._write_cache(
+        plugin._cache_key(rooms, live_radar_module.DEFAULT_API_URL, True),
+        {
+            "fetched_at": 0,
+            "results": [
+                {
+                    "ok": True,
+                    "platform": "twitch",
+                    "id": "xqc",
+                    "status": {
+                        "isLive": True,
+                        "title": "Placeholder path",
+                        "owner": "xQc",
+                        "cover": cover_url,
+                        "avatar": avatar_url,
+                    },
+                }
+            ],
+        },
+    )
+    plugin._cover_cache_path(cover_url).write_bytes(b"not an image")
+    http_calls = []
+
+    def fail_http():
+        http_calls.append("session")
+        raise AssertionError("theme-only media must not acquire an HTTP session")
+
+    monkeypatch.setattr(live_radar_module, "get_http_session", fail_http)
+
+    image = plugin.generate_image(settings, FakeDeviceConfig(mode="night"))
+
+    assert image.size == (800, 480)
+    assert http_calls == []
 
 
 def test_theme_only_status_cache_miss_fails_without_provider_calls():

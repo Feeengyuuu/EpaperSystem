@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -22,6 +23,8 @@ from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
+
+_THEME_RENDER_ONLY_MEDIA = ContextVar("live_radar_theme_render_only_media", default=False)
 
 DEFAULT_API_URL = "https://liveradar.pages.dev/api/status/batch"
 DEFAULT_ROOMS_TEXT = "\n".join(
@@ -252,7 +255,11 @@ class LiveRadar(BasePlugin):
                 "snapshot_cache_seconds": snapshot_cache_seconds,
                 "avatar_cache_seconds": avatar_cache_seconds,
             }
-            return self._render_dashboard(cards, dimensions, theme, generated_at, from_cache, warning, layout)
+            media_token = _THEME_RENDER_ONLY_MEDIA.set(theme_render_only)
+            try:
+                return self._render_dashboard(cards, dimensions, theme, generated_at, from_cache, warning, layout)
+            finally:
+                _THEME_RENDER_ONLY_MEDIA.reset(media_token)
         except Exception as exc:
             logger.exception("LiveRadar dashboard render failed: %s", exc)
             try:
@@ -2049,8 +2056,13 @@ class LiveRadar(BasePlugin):
 
         cache_path = self._cover_cache_path(url)
         cached = self._open_cached_cover(cache_path) if cache_path.exists() else None
-        if cached and time.time() - cache_path.stat().st_mtime < max(30, int(cache_seconds or 90)):
+        if cached and (
+            _THEME_RENDER_ONLY_MEDIA.get()
+            or time.time() - cache_path.stat().st_mtime < max(30, int(cache_seconds or 90))
+        ):
             return cached
+        if _THEME_RENDER_ONLY_MEDIA.get():
+            return None
 
         try:
             session = get_http_session()
@@ -2074,8 +2086,13 @@ class LiveRadar(BasePlugin):
 
         cache_path = self._avatar_cache_path(url)
         cached = self._open_cached_avatar(cache_path) if cache_path.exists() else None
-        if cached and time.time() - cache_path.stat().st_mtime < max(300, int(cache_seconds or AVATAR_CACHE_SECONDS)):
+        if cached and (
+            _THEME_RENDER_ONLY_MEDIA.get()
+            or time.time() - cache_path.stat().st_mtime < max(300, int(cache_seconds or AVATAR_CACHE_SECONDS))
+        ):
             return cached
+        if _THEME_RENDER_ONLY_MEDIA.get():
+            return None
 
         try:
             session = get_http_session()

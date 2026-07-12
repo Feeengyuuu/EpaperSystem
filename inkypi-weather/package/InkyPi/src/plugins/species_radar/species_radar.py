@@ -9,7 +9,9 @@ import os
 import random
 import re
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlencode
 try:
@@ -26,6 +28,7 @@ from utils.app_utils import (
     get_available_font_names,
     get_base_ui_font,
 )
+from utils.cache_manager import CacheBudget
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
@@ -70,11 +73,23 @@ DEFAULT_RADIUS_KM = 25
 DEFAULT_LOOKBACK_DAYS = 365
 DEFAULT_REFRESH_HOURS = 6
 DEFAULT_MAP_CACHE_HOURS = 24
+DEFAULT_PHOTO_CACHE_HOURS = 24
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 DEFAULT_NIGHT_START_HOUR = 18
 DEFAULT_NIGHT_END_HOUR = 6
 EARTH_RADIUS_KM = 6371.0088
+PHOTO_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 256, 64 * 1024 * 1024)
+PHOTO_IMAGE_LIMITS = ImageLimits(
+    max_bytes=12 * 1024 * 1024,
+    max_width=8192,
+    max_height=8192,
+    max_pixels=32 * 1024 * 1024,
+)
+_MEDIA_RENDER_CONTEXT = ContextVar(
+    "species_radar_media_render_context",
+    default=(False, DEFAULT_PHOTO_CACHE_HOURS),
+)
 MICROSOFT_YAHEI_FONT = "Microsoft YaHei"
 DEFAULT_FONT = MICROSOFT_YAHEI_FONT
 DEFAULT_CJK_FONT = MICROSOFT_YAHEI_FONT
@@ -151,7 +166,21 @@ class SpeciesRadar(BasePlugin):
         payload = self._display_payload(payload, render_settings, now, advance=not theme_render_only)
         payload["theme_mode"] = theme["mode"]
         self._write_context(payload, now)
-        return self._render_page(dimensions, payload, render_settings, now, device_config)
+        media_token = _MEDIA_RENDER_CONTEXT.set(
+            (
+                theme_render_only,
+                self._int(
+                    settings.get("photoCacheHours"),
+                    DEFAULT_PHOTO_CACHE_HOURS,
+                    1,
+                    30 * 24,
+                ),
+            )
+        )
+        try:
+            return self._render_page(dimensions, payload, render_settings, now, device_config)
+        finally:
+            _MEDIA_RENDER_CONTEXT.reset(media_token)
 
     def _display_dimensions(self, device_config):
         dimensions = device_config.get_resolution()
@@ -1538,12 +1567,51 @@ LIMIT 8
     def _download_image(self, url, target_size):
         if not url:
             return None
+        theme_render_only, cache_hours = _MEDIA_RENDER_CONTEXT.get()
+        cache_file = self._photo_cache_file(url)
+        cached = self._open_cached_photo(cache_file)
+        if cached is not None:
+            try:
+                is_fresh = time.time() - cache_file.stat().st_mtime < cache_hours * 3600
+            except OSError:
+                is_fresh = False
+            if theme_render_only or is_fresh:
+                return cached
+        if theme_render_only:
+            return None
         try:
             response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(5, 20), stream=True)
-            return safe_open_image_response(response).convert("RGB")
+            loaded = safe_open_image_response(response, limits=PHOTO_IMAGE_LIMITS).convert("RGB")
+            loaded.thumbnail((2048, 2048), Image.LANCZOS)
+            try:
+                self._write_photo_cache(cache_file, loaded)
+            except Exception as exc:
+                logger.warning("Could not cache SpeciesRadar image %s: %s", url, exc)
+            return loaded
         except Exception as exc:
             logger.warning("Could not download SpeciesRadar image %s: %s", url, exc)
-            return None
+            return cached
+
+    def _photo_cache_namespace(self):
+        return self.managed_cache_namespace(self._cache_dir() / "photos", PHOTO_CACHE_BUDGET)
+
+    def _photo_cache_file(self, url):
+        digest = hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:18]
+        return self._photo_cache_namespace().path(f"photo_{digest}", ".png")
+
+    @staticmethod
+    def _open_cached_photo(path):
+        try:
+            if path.is_file():
+                return safe_open_image(path, limits=PHOTO_IMAGE_LIMITS).convert("RGB")
+        except Exception as exc:
+            logger.debug("Could not use cached SpeciesRadar photo %s: %s", path, exc)
+        return None
+
+    def _write_photo_cache(self, path, image):
+        buffer = BytesIO()
+        image.save(buffer, "PNG")
+        self._photo_cache_namespace().put_bytes(path.stem, buffer.getvalue(), suffix=path.suffix)
 
     def _load_observation_map(self, settings, device_config, observation, target_size):
         key = self._google_maps_api_key(settings, device_config)
@@ -1555,14 +1623,20 @@ LIMIT 8
 
         cache_hours = self._int(settings.get("mapCacheHours"), DEFAULT_MAP_CACHE_HOURS, 1, 168)
         cache_file = self._map_cache_file(url)
+        theme_render_only = _MEDIA_RENDER_CONTEXT.get()[0]
+        cached = None
         try:
-            if cache_file.is_file() and time.time() - cache_file.stat().st_mtime < cache_hours * 3600:
-                return safe_open_image(
+            if cache_file.is_file():
+                cached = safe_open_image(
                     cache_file,
                     limits=ImageLimits(max_bytes=3 * 1024 * 1024),
                 ).convert("RGB")
+                if theme_render_only or time.time() - cache_file.stat().st_mtime < cache_hours * 3600:
+                    return cached
         except Exception as exc:
             logger.debug("Could not use cached SpeciesRadar observation map: %s", exc)
+        if theme_render_only:
+            return None
 
         timeout = self._int(settings.get("mapTimeoutSeconds"), 8, 3, 15)
         try:
