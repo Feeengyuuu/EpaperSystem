@@ -2,13 +2,45 @@ import json
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.simple_calendar.simple_calendar import SimpleCalendar
+from plugins.weather import weather as weather_module
 from plugins.weather.weather import Weather
+
+
+@pytest.mark.parametrize(
+    ("endpoint_name", "expected_path", "expected_query"),
+    [
+        (
+            "WEATHER_URL",
+            "/data/3.0/onecall",
+            "lat={lat}&lon={long}&units={units}&exclude=minutely&appid={api_key}",
+        ),
+        (
+            "AIR_QUALITY_URL",
+            "/data/2.5/air_pollution",
+            "lat={lat}&lon={long}&appid={api_key}",
+        ),
+        (
+            "GEOCODING_URL",
+            "/geo/1.0/reverse",
+            "lat={lat}&lon={long}&limit=1&appid={api_key}",
+        ),
+    ],
+)
+def test_openweather_endpoints_use_https_without_changing_request_contract(
+    endpoint_name, expected_path, expected_query
+):
+    endpoint = urlsplit(getattr(weather_module, endpoint_name))
+
+    assert endpoint.scheme == "https"
+    assert endpoint.path == expected_path
+    assert endpoint.query == expected_query
 
 
 class FakeDeviceConfig:
