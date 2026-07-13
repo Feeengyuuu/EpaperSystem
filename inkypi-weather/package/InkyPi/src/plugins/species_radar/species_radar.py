@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import html
+import http.client
 import json
 import logging
 import math
 import os
 import random
 import re
+import socket
+import ssl
 import time
+from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlsplit
 try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover - older Python fallback
@@ -22,15 +26,31 @@ except Exception:  # pragma: no cover - older Python fallback
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
 from plugins.context_cache import write_context
+from plugins.species_radar.presentation_bank import (
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    SpeciesPresentationBank,
+    atomic_write_bounded_json,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+    validate_species_target,
+)
+from security.ssrf import get_ssrf_policy
 from utils.app_utils import (
     coerce_bool,
     get_available_font_names,
     get_base_ui_font,
 )
 from utils.cache_manager import CacheBudget
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
-from utils.http_client import get_http_session
+from utils.safe_image import ImageLimits, safe_open_image
 from utils.image_utils import text_width
 
 logger = logging.getLogger(__name__)
@@ -78,6 +98,9 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 DEFAULT_NIGHT_START_HOUR = 18
 DEFAULT_NIGHT_END_HOUR = 6
+MAX_DATA_SECONDS = 75
+MAX_PROVIDER_REDIRECTS = 4
+MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
 EARTH_RADIUS_KM = 6371.0088
 PHOTO_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 256, 64 * 1024 * 1024)
 PHOTO_IMAGE_LIMITS = ImageLimits(
@@ -90,6 +113,15 @@ _MEDIA_RENDER_CONTEXT = ContextVar(
     "species_radar_media_render_context",
     default=(False, DEFAULT_PHOTO_CACHE_HOURS),
 )
+_PERSISTENT_WRITES_ENABLED = ContextVar(
+    "species_radar_persistent_writes_enabled",
+    default=True,
+)
+_PREPARED_MEDIA_CONTEXT = ContextVar(
+    "species_radar_prepared_media_context",
+    default=None,
+)
+_DATA_DEADLINE = ContextVar("species_radar_data_deadline", default=None)
 MICROSOFT_YAHEI_FONT = "Microsoft YaHei"
 DEFAULT_FONT = MICROSOFT_YAHEI_FONT
 DEFAULT_CJK_FONT = MICROSOFT_YAHEI_FONT
@@ -140,6 +172,103 @@ CATEGORY_STYLES = {
 }
 
 
+class _PinnedHTTPSResponse:
+    """Small HTTPS response whose socket is pinned to approved DNS addresses."""
+
+    def __init__(self, response, connection, url, *, deadline, clock, timeout):
+        self._response = response
+        self._connection = connection
+        self.url = url
+        self.status_code = int(response.status)
+        self.headers = response.headers
+        self._deadline = deadline
+        self._clock = clock
+        self._timeout = float(timeout)
+
+    @classmethod
+    def open(cls, approved, *, headers, deadline, clock, timeout):
+        last_error = None
+        for address in approved.addresses:
+            raw_socket = None
+            tls_socket = None
+            try:
+                _remaining_timeout(deadline, clock, timeout)
+                raw_socket = socket.create_connection(
+                    (address, approved.port),
+                    timeout=_remaining_timeout(deadline, clock, min(5.0, timeout)),
+                )
+                _remaining_timeout(deadline, clock, timeout)
+                raw_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                tls_socket = ssl.create_default_context().wrap_socket(
+                    raw_socket,
+                    server_hostname=approved.hostname,
+                )
+                _remaining_timeout(deadline, clock, timeout)
+                raw_socket = None
+                tls_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                parsed = urlsplit(approved.normalized_url)
+                target = parsed.path or "/"
+                if parsed.query:
+                    target = f"{target}?{parsed.query}"
+                authority = getattr(approved, "authority", approved.hostname)
+                lines = [f"GET {target} HTTP/1.1", f"Host: {authority}"]
+                for name, value in headers.items():
+                    name = str(name)
+                    value = str(value)
+                    if name.lower() in {"host", "connection"}:
+                        continue
+                    if not name or "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+                        raise RuntimeError("Species request headers are invalid")
+                    lines.append(f"{name}: {value}")
+                lines.append("Connection: close")
+                _remaining_timeout(deadline, clock, timeout)
+                tls_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                tls_socket.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+                _remaining_timeout(deadline, clock, timeout)
+                tls_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                response = http.client.HTTPResponse(tls_socket)
+                response.begin()
+                _remaining_timeout(deadline, clock, timeout)
+                return cls(
+                    response,
+                    tls_socket,
+                    approved.normalized_url,
+                    deadline=deadline,
+                    clock=clock,
+                    timeout=timeout,
+                )
+            except RuntimeError:
+                if tls_socket is not None:
+                    tls_socket.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                raise
+            except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+                if tls_socket is not None:
+                    tls_socket.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                last_error = exc
+        raise RuntimeError("Species approved target could not be reached") from last_error
+
+    def iter_content(self, chunk_size):
+        while True:
+            self._connection.settimeout(
+                _remaining_timeout(self._deadline, self._clock, self._timeout)
+            )
+            chunk = self._response.read(chunk_size)
+            _remaining_timeout(self._deadline, self._clock, self._timeout)
+            if not chunk:
+                return
+            yield chunk
+
+    def close(self):
+        try:
+            self._response.close()
+        finally:
+            self._connection.close()
+
+
 class SpeciesRadar(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
@@ -155,8 +284,23 @@ class SpeciesRadar(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        if get_presentation_instance_uuid(settings) is not None:
+            if settings.get("_theme_render_only") is True:
+                token = _PERSISTENT_WRITES_ENABLED.set(False)
+                try:
+                    return self._generate_theme_only(settings, device_config)
+                finally:
+                    _PERSISTENT_WRITES_ENABLED.reset(token)
+            return self._generate_banked_data(settings, device_config)
+        token = _PERSISTENT_WRITES_ENABLED.set(False)
+        try:
+            return self._generate_stateless_preview(settings, device_config)
+        finally:
+            _PERSISTENT_WRITES_ENABLED.reset(token)
+
+    def _generate_stateless_preview(self, settings, device_config):
         dimensions = self._display_dimensions(device_config)
-        now = datetime.now(timezone.utc)
+        now = self._now_utc()
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
         render_settings = dict(settings)
         render_settings["_inkypi_theme"] = theme
@@ -178,9 +322,478 @@ class SpeciesRadar(BasePlugin):
             )
         )
         try:
-            return self._render_page(dimensions, payload, render_settings, now, device_config)
+            image = self._render_page(dimensions, payload, render_settings, now, device_config)
+            source_state = str(payload.get("source_state") or "").lower()
+            image.info["inkypi_source_provenance"] = (
+                "placeholder"
+                if not (payload.get("observations") or []) or source_state == "local"
+                else ("stale_cache" if source_state == "cache" else "live")
+            )
+            return image
         finally:
             _MEDIA_RENDER_CONTEXT.reset(media_token)
+
+    def presentation_mode(self, settings):
+        del settings
+        return PresentationMode.PREPARED_BANK
+
+    def _generate_banked_data(self, settings, device_config):
+        dimensions = self._display_dimensions(device_config)
+        now = self._now_utc()
+        location = self._resolve_location(settings, device_config)
+        bucket_key = self._refresh_bucket(now, settings)
+        bank = self._presentation_bank(settings, dimensions, bucket_key, location)
+        deadline = self._monotonic() + MAX_DATA_SECONDS
+        def check_deadline():
+            self._check_data_deadline(deadline)
+
+        def check_or_rollback():
+            try:
+                check_deadline()
+            except Exception:
+                bank.rollback_pending_ingests()
+                raise
+
+        check_deadline()
+        document, profile = bank.load_for_data()
+        self._recover_protected_media(
+            bank,
+            document,
+            profile,
+            settings,
+            device_config,
+            deadline=deadline,
+        )
+        check_or_rollback()
+        ready = bank.ready_records(profile, prune=True)
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+        if profile.get("refill_in_progress") is True or len(ready) < READY_TARGET:
+            deadline_token = _DATA_DEADLINE.set(deadline)
+            try:
+                payload = self._daily_payload(settings, now, location)
+            finally:
+                _DATA_DEADLINE.reset(deadline_token)
+            check_or_rollback()
+            expected_cache_key = self._cache_key(settings, now, location)
+            stale_fallback = (
+                str(payload.get("source_state") or "").lower() == "cache"
+                and payload.get("cache_key") != expected_cache_key
+            )
+            source_observations = [] if stale_fallback else list(payload.get("observations") or [])
+            photo_count = 0
+            map_count = 0
+            existing = {record.get("observation_id") for record in profile.get("records") or []}
+            cursor = int(profile.get("refill_cursor") or 0)
+            if source_observations:
+                cursor %= len(source_observations)
+                observations = (
+                    source_observations[cursor:] + source_observations[:cursor]
+                )[:12]
+            else:
+                observations = []
+            for observation in observations:
+                try:
+                    check_or_rollback()
+                except Exception:
+                    bank.rollback_pending_ingests()
+                    raise
+                observation_id = self._observation_identity(observation)
+                if not observation_id or observation_id in existing:
+                    continue
+                photo = None
+                map_image = None
+                if observation.get("image_url") and photo_count < 8:
+                    photo_count += 1
+                    try:
+                        photo = self._download_image_for_data(
+                            observation.get("image_url"),
+                            dimensions,
+                            deadline=deadline,
+                        )
+                    except Exception as exc:
+                        if self._monotonic() >= deadline:
+                            bank.rollback_pending_ingests()
+                            raise RuntimeError("Species DATA deadline is exhausted") from exc
+                        logger.warning("Species photo candidate failed for %s: %s", observation_id, exc)
+                if (
+                    self._enabled(settings.get("showObservationMap"), default=True)
+                    and map_count < 4
+                ):
+                    map_count += 1
+                    try:
+                        map_image = self._load_map_for_data(
+                            settings,
+                            device_config,
+                            observation,
+                            (195, 86),
+                            deadline=deadline,
+                        )
+                    except Exception as exc:
+                        if self._monotonic() >= deadline:
+                            bank.rollback_pending_ingests()
+                            raise RuntimeError("Species DATA deadline is exhausted") from exc
+                        logger.warning("Species map candidate failed for %s: %s", observation_id, exc)
+                if observation.get("image_url") and photo is None:
+                    continue
+                try:
+                    record = bank.ingest(
+                        profile,
+                        observation,
+                        photo,
+                        map_image,
+                        deadline_check=check_deadline,
+                    )
+                except Exception as exc:
+                    if self._monotonic() >= deadline:
+                        bank.rollback_pending_ingests()
+                        raise RuntimeError("Species DATA deadline is exhausted") from exc
+                    logger.warning("Species bank candidate failed for %s: %s", observation_id, exc)
+                    continue
+                existing.add(record["observation_id"])
+                if len(bank.ready_records(profile, prune=False)) >= READY_TARGET:
+                    break
+            if source_observations:
+                profile["refill_cursor"] = (
+                    cursor + len(observations)
+                ) % len(source_observations)
+            check_or_rollback()
+            ready = bank.ready_records(profile, prune=True)
+            check_or_rollback()
+            profile["refill_in_progress"] = len(ready) < READY_TARGET
+        check_or_rollback()
+        bank.cleanup(document, profile, deadline_check=check_deadline)
+        check_or_rollback()
+        ready = bank.ready_records(profile, prune=True)
+        check_or_rollback()
+        if not ready:
+            raise RuntimeError("Species presentation bank is unavailable")
+        current = profile.get("current_selection")
+        needs_current_commit = current is None
+        if current is None:
+            current = bank.ensure_current(
+                document,
+                profile,
+                ready,
+                deadline_check=check_deadline,
+                persist=False,
+            )
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            current,
+            dimensions,
+            settings,
+            deadline_check=check_deadline,
+        )
+        check_or_rollback()
+        if needs_current_commit:
+            profile_before = deepcopy(profile)
+            try:
+                profile["current_selection"] = current
+                check_deadline()
+                bank.save(document, deadline_check=check_deadline)
+                check_deadline()
+            except Exception:
+                profile.clear()
+                profile.update(profile_before)
+                raise
+        check_or_rollback()
+        return image
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Species presentation requires trusted instance identity")
+        dimensions = self._display_dimensions(device_config)
+        bank = self._presentation_bank_for_request(instance_uuid, request.request_id)
+        if bank is None:
+            bank = self._presentation_bank_for_instance(instance_uuid)
+        if bank is None:
+            raise RuntimeError("Species presentation bank is cold")
+        document, profile = bank.load_warm()
+        pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None:
+            ready = bank.ready_records(profile, prune=False)
+            selection = bank.choose_selection(document, profile, ready)
+        else:
+            selection = pending
+        render_settings = dict(settings)
+        if resolved_theme_context is not None:
+            render_settings["_inkypi_theme"] = resolved_theme_context
+        image = self._render_bank_selection(bank, profile, selection, dimensions, render_settings)
+        if resolved_theme_context is not None and resolved_theme_context.get("mode") in {"day", "night"}:
+            image.info["inkypi_theme_mode"] = resolved_theme_context["mode"]
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(request_id=request.request_id, image=image, changed=True)
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Species receipt requires trusted instance identity")
+        bank = self._presentation_bank_for_request(instance_uuid, receipt.request_id)
+        if bank is None:
+            return None
+        try:
+            document, profile = bank.load_receipt_profile(receipt.request_id)
+        except RuntimeError:
+            return None
+        record = bank.reconcile_receipt(document, profile, receipt)
+        if record is not None:
+            payload = self._payload_for_bank_record(record, profile)
+            self._write_context(payload, _parse_iso_datetime(receipt.committed_at) or self._now_utc())
+        return None
+
+    def _generate_theme_only(self, settings, device_config):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        bank = self._presentation_bank_for_instance(instance_uuid)
+        if bank is None:
+            raise RuntimeError("Species theme redraw requires a warm bank")
+        document, profile = bank.load_warm()
+        del document
+        current = profile.get("current_selection")
+        if current is None:
+            raise RuntimeError("Species theme redraw has no current selection")
+        return self._render_bank_selection(
+            bank,
+            profile,
+            current,
+            self._display_dimensions(device_config),
+            settings,
+        )
+
+    def _render_bank_selection(
+        self,
+        bank,
+        profile,
+        selection,
+        dimensions,
+        settings,
+        *,
+        deadline_check=None,
+    ):
+        check = deadline_check or (lambda: None)
+        check()
+        record, photo, map_image = bank.selection_record(
+            profile,
+            selection,
+            load_media=True,
+            deadline_check=check,
+        )
+        check()
+        now = self._now_utc()
+        fetched_at = _parse_iso_datetime(record.get("fetched_at"))
+        age_seconds = None if fetched_at is None else (now - fetched_at).total_seconds()
+        is_fresh = (
+            record.get("bucket_key") == self._refresh_bucket(now, settings)
+            and age_seconds is not None
+            and 0 <= age_seconds <= DEFAULT_REFRESH_HOURS * 60 * 60
+        )
+        provenance = "fresh_cache" if is_fresh else "stale_cache"
+        render_record = {**record, "provenance": provenance}
+        check()
+        payload = self._payload_for_bank_record(render_record, profile)
+        payload["theme_mode"] = self._theme_mode(settings, now)
+        check()
+        media = {"__map__": map_image}
+        image_url = record["observation"].get("image_url")
+        if image_url and photo is not None:
+            media[image_url] = photo
+        token = _PREPARED_MEDIA_CONTEXT.set(media)
+        render_token = _MEDIA_RENDER_CONTEXT.set((True, DEFAULT_PHOTO_CACHE_HOURS))
+        try:
+            check()
+            image = self._render_page(
+                dimensions,
+                payload,
+                settings,
+                now,
+                None,
+            )
+            check()
+        finally:
+            _MEDIA_RENDER_CONTEXT.reset(render_token)
+            _PREPARED_MEDIA_CONTEXT.reset(token)
+        image.info["inkypi_source_provenance"] = provenance
+        check()
+        return image
+
+    def _payload_for_bank_record(self, record, profile):
+        observation = dict(record["observation"])
+        location_name = (
+            observation.get("radar_location_name")
+            or observation.get("location")
+            or DEFAULT_LOCATION_NAME
+        )
+        return {
+            "schema": CACHE_SCHEMA_VERSION,
+            "source": "GBIF",
+            "source_state": record.get("provenance") or "fresh_cache",
+            "observations": [observation],
+            "location": {"name": location_name},
+            "location_summary": location_name,
+            "location_counts": {location_name: 1},
+            "category_counts": {observation.get("category_label"): 1},
+            "radius_km": observation.get("radar_radius_km") or DEFAULT_RADIUS_KM,
+            "display_observation_key": record["observation_id"],
+            "display_rotation": "prepared_bank",
+            "bank_instance_uuid": profile.get("instance_uuid"),
+        }
+
+    def _presentation_bank(self, settings, dimensions, bucket_key, location):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Species bank requires trusted instance identity")
+        base = settings_fingerprint(settings, dimensions, bucket_key, location)
+        fingerprint = instance_profile_fingerprint(base, instance_uuid)
+        return SpeciesPresentationBank(
+            self._presentation_state_path(),
+            self._presentation_photo_dir(),
+            self._presentation_map_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base,
+            profile_settings_key=settings_key(settings),
+            instance_uuid=instance_uuid,
+            bucket_key=bucket_key,
+        )
+
+    def _presentation_bank_for_instance(self, instance_uuid):
+        if not instance_uuid:
+            return None
+        path = self._presentation_state_path()
+        if not path.exists():
+            return None
+        document = read_bounded_json_object(path)
+        fingerprint = (document.get("instance_profiles") or {}).get(instance_uuid)
+        profile = (document.get("profiles") or {}).get(fingerprint)
+        if not isinstance(profile, dict):
+            return None
+        return self._bank_from_profile(fingerprint, profile, instance_uuid)
+
+    def _presentation_bank_for_request(self, instance_uuid, request_id):
+        path = self._presentation_state_path()
+        if not path.exists():
+            return None
+        document = read_bounded_json_object(path)
+        for fingerprint, profile in (document.get("profiles") or {}).items():
+            if not isinstance(profile, dict) or profile.get("instance_uuid") != instance_uuid:
+                continue
+            pending = profile.get("pending_selection")
+            if isinstance(pending, dict) and pending.get("request_id") == request_id:
+                return self._bank_from_profile(fingerprint, profile, instance_uuid)
+        return None
+
+    def _bank_from_profile(self, fingerprint, profile, instance_uuid):
+        return SpeciesPresentationBank(
+            self._presentation_state_path(),
+            self._presentation_photo_dir(),
+            self._presentation_map_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=profile.get("settings_fingerprint") or "",
+            profile_settings_key=profile.get("settings_key") or "",
+            instance_uuid=instance_uuid,
+            bucket_key=profile.get("bucket_key") or "",
+        )
+
+    def _recover_protected_media(
+        self,
+        bank,
+        document,
+        profile,
+        settings,
+        device_config,
+        *,
+        deadline,
+    ):
+        changed = False
+        for record in bank.protected_records(profile):
+            photo_missing = False
+            map_missing = False
+            if record.get("photo_key"):
+                try:
+                    bank.load_photo(record)
+                except RuntimeError:
+                    photo_missing = True
+            if record.get("map_key"):
+                try:
+                    bank.load_map(record)
+                except RuntimeError:
+                    map_missing = True
+            if not photo_missing and not map_missing:
+                continue
+            observation = record["observation"]
+            try:
+                photo = None
+                if record.get("photo_key"):
+                    photo = (
+                        self._download_image_for_data(
+                            observation.get("image_url"),
+                            self._display_dimensions(device_config),
+                            deadline=deadline,
+                        )
+                        if photo_missing
+                        else bank.load_photo(record)
+                    )
+                map_image = None
+                if record.get("map_key"):
+                    map_image = (
+                        self._load_map_for_data(
+                            settings,
+                            device_config,
+                            observation,
+                            (195, 86),
+                            deadline=deadline,
+                        )
+                        if map_missing
+                        else bank.load_map(record)
+                    )
+                if photo_missing and photo is None:
+                    raise RuntimeError("photo recovery returned no image")
+                if map_missing and map_image is None:
+                    raise RuntimeError("map recovery returned no image")
+                bank.recover_media(
+                    profile,
+                    record,
+                    photo,
+                    map_image,
+                    deadline_check=lambda: self._check_data_deadline(deadline),
+                )
+                changed = True
+            except Exception as exc:
+                raise RuntimeError("Species protected media recovery failed") from exc
+        if changed:
+            bank.save(document)
+
+    def _presentation_state_path(self):
+        return self._cache_dir() / "presentation-state.json"
+
+    def _presentation_photo_dir(self):
+        return self._cache_dir() / "presentation-photos"
+
+    def _presentation_map_dir(self):
+        return self._cache_dir() / "presentation-maps"
+
+    @staticmethod
+    def _now_utc():
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _monotonic():
+        return time.monotonic()
+
+    def _check_data_deadline(self, deadline):
+        _remaining_timeout(deadline, self._monotonic, MAX_DATA_SECONDS)
 
     def _display_dimensions(self, device_config):
         dimensions = device_config.get_resolution()
@@ -347,6 +960,8 @@ class SpeciesRadar(BasePlugin):
         return value if isinstance(value, dict) else {}
 
     def _write_display_state(self, payload):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         try:
             self._write_json(self._display_state_path(), payload)
         except Exception as exc:
@@ -844,14 +1459,10 @@ class SpeciesRadar(BasePlugin):
             return self._to_simplified_chinese(cache.get(cache_key))
         try:
             query = self._wikidata_taxon_label_query(scientific_name)
-            response = get_http_session().get(
+            data = self._get_json(
                 WIKIDATA_SPARQL_URL,
                 params={"query": query, "format": "json"},
-                headers=WIKIDATA_HEADERS,
-                timeout=(5, 20),
             )
-            response.raise_for_status()
-            data = response.json()
             name = self._to_simplified_chinese(self._select_wikidata_chinese_label(data))
         except Exception as exc:
             logger.warning("Could not fetch Wikidata Chinese label for %s: %s", scientific_name, exc)
@@ -1564,9 +2175,159 @@ LIMIT 8
         bbox = image.getchannel("A").getbbox()
         return image.crop(bbox) if bbox else image
 
+    def _download_image_for_data(self, url, target_size, *, deadline):
+        del target_size
+        payload = self._download_provider_bytes(
+            url,
+            source="photo",
+            max_bytes=PHOTO_IMAGE_LIMITS.max_bytes,
+            timeout=20,
+            deadline=deadline,
+            headers=IMAGE_HEADERS,
+        )
+        self._check_data_deadline(deadline)
+        try:
+            with Image.open(BytesIO(payload)) as source:
+                self._check_data_deadline(deadline)
+                if (
+                    source.width > PHOTO_IMAGE_LIMITS.max_width
+                    or source.height > PHOTO_IMAGE_LIMITS.max_height
+                    or source.width * source.height > PHOTO_IMAGE_LIMITS.max_pixels
+                ):
+                    raise RuntimeError("Species photo dimensions exceed the safety limit")
+                source.load()
+                self._check_data_deadline(deadline)
+                result = source.convert("RGB")
+                self._check_data_deadline(deadline)
+                return result
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("Species photo could not be decoded") from exc
+
+    def _load_map_for_data(
+        self,
+        settings,
+        device_config,
+        observation,
+        target_size,
+        *,
+        deadline,
+    ):
+        key = self._google_maps_api_key(settings, device_config)
+        if not key:
+            return None
+        url = self._google_observation_map_url(settings, key, observation, target_size)
+        if not url:
+            return None
+        payload = self._download_provider_bytes(
+            url,
+            source="map",
+            max_bytes=PHOTO_IMAGE_LIMITS.max_bytes,
+            timeout=self._int(settings.get("mapTimeoutSeconds"), 8, 3, 15),
+            deadline=deadline,
+            headers=IMAGE_HEADERS,
+        )
+        self._check_data_deadline(deadline)
+        try:
+            with Image.open(BytesIO(payload)) as source:
+                self._check_data_deadline(deadline)
+                if source.width > 8192 or source.height > 8192 or source.width * source.height > 32_000_000:
+                    raise RuntimeError("Species map dimensions exceed the safety limit")
+                source.load()
+                self._check_data_deadline(deadline)
+                result = source.convert("RGB")
+                self._check_data_deadline(deadline)
+                return result
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("Species map could not be decoded") from exc
+
+    def _download_provider_bytes(
+        self,
+        url,
+        *,
+        source,
+        max_bytes,
+        timeout,
+        deadline=None,
+        headers=None,
+    ):
+        policy = get_ssrf_policy()
+        current_url = str(url or "").strip()
+        headers = dict(headers or REQUEST_HEADERS)
+        for redirect_count in range(MAX_PROVIDER_REDIRECTS + 1):
+            _remaining_timeout(deadline, self._monotonic, timeout)
+            approved = policy.resolve_and_validate(current_url)
+            _remaining_timeout(deadline, self._monotonic, timeout)
+            validate_species_target(approved, source)
+            response = self._request_approved_target(
+                approved,
+                headers=headers,
+                timeout=_remaining_timeout(deadline, self._monotonic, timeout),
+                deadline=deadline,
+            )
+            try:
+                response_url = str(getattr(response, "url", approved.normalized_url) or approved.normalized_url)
+                _remaining_timeout(deadline, self._monotonic, timeout)
+                final_hop = policy.resolve_and_validate(response_url)
+                _remaining_timeout(deadline, self._monotonic, timeout)
+                validate_species_target(final_hop, source)
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_PROVIDER_REDIRECTS:
+                        raise RuntimeError("Species provider redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("Species provider redirect has no Location")
+                    next_url = urljoin(final_hop.normalized_url, location)
+                    _remaining_timeout(deadline, self._monotonic, timeout)
+                    next_hop = policy.resolve_and_validate(next_url)
+                    _remaining_timeout(deadline, self._monotonic, timeout)
+                    validate_species_target(next_hop, source)
+                    current_url = next_hop.normalized_url
+                    continue
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"Species provider request failed with status {status}")
+                length = response.headers.get("Content-Length")
+                if length is not None:
+                    try:
+                        if int(length) > max_bytes:
+                            raise RuntimeError("Species provider response exceeds its object budget")
+                    except ValueError:
+                        pass
+                payload = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    _remaining_timeout(deadline, self._monotonic, timeout)
+                    if not chunk:
+                        continue
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("Species provider response exceeds its object budget")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("Species provider response is empty")
+                return bytes(payload)
+            finally:
+                response.close()
+        raise RuntimeError("Species provider redirect limit was exceeded")
+
+    def _request_approved_target(self, approved, *, headers, timeout, deadline):
+        return _PinnedHTTPSResponse.open(
+            approved,
+            headers=headers,
+            deadline=deadline,
+            clock=self._monotonic,
+            timeout=timeout,
+        )
+
     def _download_image(self, url, target_size):
         if not url:
             return None
+        prepared = _PREPARED_MEDIA_CONTEXT.get()
+        if isinstance(prepared, dict):
+            image = prepared.get(url)
+            return image.copy() if isinstance(image, Image.Image) else None
         theme_render_only, cache_hours = _MEDIA_RENDER_CONTEXT.get()
         cache_file = self._photo_cache_file(url)
         cached = self._open_cached_photo(cache_file)
@@ -1580,8 +2341,14 @@ LIMIT 8
         if theme_render_only:
             return None
         try:
-            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(5, 20), stream=True)
-            loaded = safe_open_image_response(response, limits=PHOTO_IMAGE_LIMITS).convert("RGB")
+            payload = self._download_provider_bytes(
+                url,
+                source="photo",
+                max_bytes=PHOTO_IMAGE_LIMITS.max_bytes,
+                timeout=20,
+                headers=IMAGE_HEADERS,
+            )
+            loaded = safe_open_image(BytesIO(payload), limits=PHOTO_IMAGE_LIMITS).convert("RGB")
             loaded.thumbnail((2048, 2048), Image.LANCZOS)
             try:
                 self._write_photo_cache(cache_file, loaded)
@@ -1597,6 +2364,8 @@ LIMIT 8
 
     def _photo_cache_file(self, url):
         digest = hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:18]
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return self._cache_dir() / "photos" / f"photo_{digest}.png"
         return self._photo_cache_namespace().path(f"photo_{digest}", ".png")
 
     @staticmethod
@@ -1609,11 +2378,17 @@ LIMIT 8
         return None
 
     def _write_photo_cache(self, path, image):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         buffer = BytesIO()
         image.save(buffer, "PNG")
         self._photo_cache_namespace().put_bytes(path.stem, buffer.getvalue(), suffix=path.suffix)
 
     def _load_observation_map(self, settings, device_config, observation, target_size):
+        prepared = _PREPARED_MEDIA_CONTEXT.get()
+        if isinstance(prepared, dict):
+            image = prepared.get("__map__")
+            return image.copy() if isinstance(image, Image.Image) else None
         key = self._google_maps_api_key(settings, device_config)
         if not key:
             return None
@@ -1640,13 +2415,19 @@ LIMIT 8
 
         timeout = self._int(settings.get("mapTimeoutSeconds"), 8, 3, 15)
         try:
-            response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(4, timeout), stream=True)
-            loaded = safe_open_image_response(
-                response,
-                limits=ImageLimits(max_bytes=3 * 1024 * 1024),
+            payload = self._download_provider_bytes(
+                url,
+                source="map",
+                max_bytes=3 * 1024 * 1024,
+                timeout=timeout,
+                headers=IMAGE_HEADERS,
+            )
+            loaded = safe_open_image(
+                BytesIO(payload), limits=ImageLimits(max_bytes=3 * 1024 * 1024)
             ).convert("RGB")
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            loaded.save(cache_file)
+            if _PERSISTENT_WRITES_ENABLED.get():
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                loaded.save(cache_file)
             return loaded
         except Exception as exc:
             logger.warning("SpeciesRadar Google map fetch failed: %s", exc)
@@ -1761,6 +2542,8 @@ LIMIT 8
         }
 
     def _write_context(self, payload, now):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         observations = payload.get("observations") or []
         hero = observations[0] if observations else {}
         try:
@@ -1812,7 +2595,12 @@ LIMIT 8
         return self._int(settings.get("refreshHours") or settings.get("refresh_hours"), DEFAULT_REFRESH_HOURS, 1, 24)
 
     def _cache_dir(self):
-        return self.cache_dir(env_var="INKYPI_SPECIES_RADAR_CACHE", leaf="cache", create=True, strip=True)
+        return self.cache_dir(
+            env_var="INKYPI_SPECIES_RADAR_CACHE",
+            leaf="cache",
+            create=_PERSISTENT_WRITES_ENABLED.get(),
+            strip=True,
+        )
 
     def _cache_path(self):
         return self._cache_dir() / "daily.json"
@@ -1827,6 +2615,8 @@ LIMIT 8
         return self._read_json(self._cache_path(), {})
 
     def _write_cache(self, payload):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         self._write_json(self._cache_path(), payload)
 
     def _read_vernacular_cache(self):
@@ -1838,34 +2628,39 @@ LIMIT 8
             path = Path(path)
             if not path.is_file():
                 return default
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = read_bounded_json_object(path)
             return data if isinstance(data, type(default)) else default
         except Exception as exc:
             logger.warning("Could not read SpeciesRadar cache %s: %s", path, exc)
             return default
 
     def _write_json(self, path, payload):
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            path.write_text(text, encoding="utf-8")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
+        atomic_write_bounded_json(Path(path), payload)
 
     def _get_json(self, url, params=None):
-        response = get_http_session().get(url, params=params, headers=REQUEST_HEADERS, timeout=(5, 20))
-        response.raise_for_status()
+        request_url = str(url)
+        if params:
+            separator = "&" if "?" in request_url else "?"
+            request_url = f"{request_url}{separator}{urlencode(params, doseq=True)}"
+        host = (urlsplit(request_url).hostname or "").lower()
+        source = "wikidata" if host == "query.wikidata.org" else "gbif"
+        payload = self._download_provider_bytes(
+            request_url,
+            source=source,
+            max_bytes=MAX_PROVIDER_JSON_BYTES,
+            timeout=20,
+            deadline=_DATA_DEADLINE.get(),
+            headers=WIKIDATA_HEADERS if source == "wikidata" else REQUEST_HEADERS,
+        )
         try:
-            return response.json()
-        except ValueError as exc:
+            value = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"response from {url} was not JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"response from {url} was not a JSON object")
+        return value
 
     def _bbox_for_radius(self, latitude, longitude, radius_km):
         lat_delta = radius_km / 111.32
@@ -2307,3 +3102,25 @@ LIMIT 8
             return int(float(value))
         except (TypeError, ValueError):
             return None
+
+
+def _parse_iso_datetime(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        result = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
+    return result.astimezone(timezone.utc)
+
+
+def _remaining_timeout(deadline, clock, configured):
+    configured = max(0.001, float(configured))
+    if deadline is None:
+        return configured
+    remaining = float(deadline) - float(clock())
+    if remaining <= 0:
+        raise RuntimeError("Species DATA deadline is exhausted")
+    return max(0.001, min(configured, remaining))

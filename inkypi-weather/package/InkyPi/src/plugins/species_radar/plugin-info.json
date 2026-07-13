@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true, "supports_presentation_refresh": true},
   "theme": {"presentation": "ui", "day": {"background": "#eef5ea", "accent": "#3d7c3a"}, "night": {"background": "#0b1609", "accent": "#7ed67a"}},
   "display_name": "Species Radar",
   "id": "species_radar",

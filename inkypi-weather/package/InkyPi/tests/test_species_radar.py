@@ -1,8 +1,9 @@
 import hashlib
+import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +14,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.species_radar.species_radar as species_mod  # noqa: E402
+from plugins.base_plugin.presentation import (  # noqa: E402
+    PresentationMode,
+    PresentationRequestContext,
+    bind_presentation_instance_identity,
+)
+from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 from plugins.species_radar.species_radar import (  # noqa: E402
     CATEGORY_STYLES,
     COMIC_BLUE,
@@ -84,6 +91,92 @@ def make_plugin(tmp_path):
     plugin = SpeciesRadar({"id": "species_radar"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def bound_species_settings(instance_uuid="species-instance", **overrides):
+    return bind_presentation_instance_identity(
+        {
+            "locationSource": "manual",
+            "latitude": "37.5485",
+            "longitude": "-121.9886",
+            "locationName": "Fremont, CA",
+            "radiusKm": "25",
+            "lookbackDays": "365",
+            "limit": "50",
+            "refreshHours": "6",
+            "showObservationMap": "true",
+            **overrides,
+        },
+        instance_uuid,
+    )
+
+
+def species_request(request_id, *, origin="origin-display"):
+    return PresentationRequestContext(
+        request_id=request_id,
+        requested_at="2026-07-12T10:00:00+00:00",
+        origin_display_commit_id=origin,
+        last_receipt=None,
+    )
+
+
+def species_receipt(
+    request_id,
+    *,
+    display="prepared-display",
+    committed_at="2026-07-12T10:01:00+00:00",
+):
+    return PresentationCommitReceipt(
+        request_id=request_id,
+        committed_at=committed_at,
+        display_commit_id=display,
+        structural_generation=1,
+        settings_revision=1,
+        theme_mode="day",
+    )
+
+
+def species_theme(mode="day"):
+    background = (15, 26, 14) if mode == "night" else (238, 245, 234)
+    ink = (245, 245, 230) if mode == "night" else (18, 26, 18)
+    return {
+        "mode": mode,
+        "palette": {
+            "background": background,
+            "panel": (28, 40, 27) if mode == "night" else (248, 251, 245),
+            "ink": ink,
+            "muted": (170, 185, 166) if mode == "night" else (91, 105, 88),
+            "rule": (89, 105, 86) if mode == "night" else (184, 197, 180),
+            "accent": (126, 214, 122) if mode == "night" else (61, 124, 58),
+        },
+    }
+
+
+def bank_observation(index, *, location_name="Fremont, CA", bucket="2026-07-12T06:00:00+00:00"):
+    return {
+        "gbif_key": str(index),
+        "taxon_key": str(3000 + index),
+        "species_key": str(3000 + index),
+        "scientific_name": f"Species example {index}",
+        "species": f"Species example {index}",
+        "display_name": f"Species {index}",
+        "common_name_zh": f"物种{index}",
+        "common_name_en": f"Species {index}",
+        "category_label": "鸟类",
+        "taxonomy_path": "动物界 / 鸟纲",
+        "event_date": "2026-07-12",
+        "latitude": 37.5 + index / 1000,
+        "longitude": -121.9,
+        "distance_km": float(index),
+        "location": location_name,
+        "radar_location_name": location_name,
+        "radar_location_label": location_name,
+        "radar_location_id": "primary",
+        "image_url": f"https://inaturalist-open-data.s3.amazonaws.com/photos/{index}/medium.jpg",
+        "photo_creator": "Observer",
+        "photo_license": "CC-BY",
+        "source_bucket": bucket,
+    }
 
 
 def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
@@ -522,14 +615,15 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
 
     warm_http_calls = []
 
-    class WarmSession:
-        def get(self, url, **_kwargs):
-            warm_http_calls.append(url)
-            key = "map" if str(url).startswith(species_mod.GOOGLE_STATIC_MAPS_URL) else "photo"
-            return ImageResponse(image_payloads[key])
+    def warm_download(url, **_kwargs):
+        warm_http_calls.append(url)
+        key = "map" if str(url).startswith(species_mod.GOOGLE_STATIC_MAPS_URL) else "photo"
+        return image_payloads[key]
 
-    monkeypatch.setattr(species_mod, "get_http_session", lambda: WarmSession())
-    plugin.generate_image(settings, DummyDeviceConfig())
+    monkeypatch.setattr(plugin, "_download_provider_bytes", warm_download)
+    # Exercise compatibility with a legacy warm cache directly; the public
+    # unbound preview path is intentionally write-free under PREPARED_BANK.
+    plugin._generate_stateless_preview(settings, DummyDeviceConfig())
     assert warm_http_calls
     photo_cache_files = list(tmp_path.rglob("photo_*.png"))
     map_cache_files = list(tmp_path.rglob("map_*.png"))
@@ -553,7 +647,7 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
         theme_http_calls.append("session")
         raise AssertionError("theme-only media must not acquire an HTTP session")
 
-    monkeypatch.setattr(species_mod, "get_http_session", fail_http)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: fail_http())
     rendered_heroes = []
     original_render = plugin._render_page
 
@@ -642,7 +736,7 @@ def test_theme_only_render_uses_photo_and_map_placeholders_on_cold_or_corrupt_ca
         http_calls.append("session")
         raise AssertionError("theme-only media must not acquire an HTTP session")
 
-    monkeypatch.setattr(species_mod, "get_http_session", fail_http)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: fail_http())
 
     image = plugin.generate_image(settings, DummyDeviceConfig())
 
@@ -668,11 +762,11 @@ def test_photo_download_survives_managed_cache_write_failure(tmp_path, monkeypat
         def close(self):
             return None
 
-    class Session:
-        def get(self, *_args, **_kwargs):
-            return ImageResponse()
-
-    monkeypatch.setattr(species_mod, "get_http_session", lambda: Session())
+    monkeypatch.setattr(
+        plugin,
+        "_download_provider_bytes",
+        lambda *_args, **_kwargs: buffer.getvalue(),
+    )
     monkeypatch.setattr(
         plugin,
         "_write_photo_cache",
@@ -1624,3 +1718,1077 @@ def test_render_page_returns_nonblank_800x480_image(tmp_path, monkeypatch):
     assert image.size == (800, 480)
     assert diff.getbbox() is not None
     assert image.getpixel((220, 210)) != image.getpixel((0, 0))
+
+
+# Prepared presentation-bank contract ---------------------------------------
+
+
+def _make_species_bank(tmp_path, *, instance_uuid="species-instance", bucket="2026-07-12T06:00:00+00:00", settings=None):
+    from plugins.species_radar.presentation_bank import (
+        SpeciesPresentationBank,
+        instance_profile_fingerprint,
+        settings_fingerprint,
+        settings_key,
+    )
+
+    settings = settings or bound_species_settings(instance_uuid)
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    base = settings_fingerprint(settings, (800, 480), bucket, location)
+    fingerprint = instance_profile_fingerprint(base, instance_uuid)
+    return SpeciesPresentationBank(
+        tmp_path / "presentation-state.json",
+        tmp_path / "presentation-photos",
+        tmp_path / "presentation-maps",
+        fingerprint=fingerprint,
+        base_fingerprint=base,
+        profile_settings_key=settings_key(settings),
+        instance_uuid=instance_uuid,
+        bucket_key=bucket,
+    )
+
+
+def _warm_species_bank(tmp_path, *, count=12, instance_uuid="species-instance"):
+    bank = _make_species_bank(tmp_path, instance_uuid=instance_uuid)
+    document, profile = bank.load_for_data()
+    for index in range(1, count + 1):
+        bank.ingest(
+            profile,
+            bank_observation(index),
+            Image.new("RGB", (320, 240), (index * 13 % 255, 80, 30)),
+            Image.new("RGB", (220, 90), (30, index * 11 % 255, 80)),
+            fetched_at="2026-07-12T08:00:00+00:00",
+        )
+    current = bank.ensure_current(document, profile, bank.ready_records(profile, prune=True))
+    bank.save(document)
+    return bank, document, profile, current
+
+
+def _species_profile(document, instance_uuid="species-instance"):
+    return document["profiles"][document["instance_profiles"][instance_uuid]]
+
+
+def _tree_digest(root):
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def _tree_snapshot(root):
+    root = Path(root)
+    if not root.exists():
+        return {}
+    snapshot = {".": ("dir", None)}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            snapshot[relative] = ("link", os.readlink(path))
+        elif path.is_dir():
+            snapshot[relative] = ("dir", None)
+        elif path.is_file():
+            snapshot[relative] = ("file", hashlib.sha256(path.read_bytes()).hexdigest())
+        else:
+            snapshot[relative] = ("special", None)
+    return snapshot
+
+
+def test_species_manifest_mode_cadence_and_bank_limits_match_contract():
+    from plugins.species_radar import presentation_bank
+
+    manifest_path = Path(__file__).resolve().parents[1] / "src/plugins/species_radar/plugin-info.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert SpeciesRadar({"id": "species_radar"}).presentation_mode({}) is PresentationMode.PREPARED_BANK
+    assert DEFAULT_REFRESH_HOURS * 60 * 60 == 21600
+    assert presentation_bank.READY_TARGET == 12
+    assert presentation_bank.REFILL_THRESHOLD == 4
+    assert presentation_bank.PHOTO_MAX_AGE_SECONDS == 30 * 24 * 60 * 60
+    assert presentation_bank.PHOTO_MAX_FILES == 256
+    assert presentation_bank.PHOTO_MAX_BYTES == 64 * 1024 * 1024
+    assert presentation_bank.MAP_MAX_FILES == 64
+    assert presentation_bank.MAP_MAX_BYTES == 64 * 1024 * 1024
+    assert presentation_bank.MEDIA_MAX_OBJECT_BYTES == 12 * 1024 * 1024
+    assert presentation_bank.MEDIA_MAX_DIMENSION == 8192
+    assert presentation_bank.MEDIA_MAX_PIXELS == 32_000_000
+    assert presentation_bank.MAX_STATE_BYTES == 4 * 1024 * 1024
+    assert presentation_bank.MAX_PROFILES == 64
+    assert presentation_bank.MAX_SEEN_IDS == 5000
+
+
+def test_species_fingerprint_defaults_pixels_location_language_layout_and_exclusions():
+    from plugins.species_radar.presentation_bank import settings_fingerprint
+
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    explicit = {
+        "locationSource": "weather",
+        "radiusKm": 25,
+        "lookbackDays": 365,
+        "limit": 50,
+        "refreshHours": 6,
+        "includeFremont": True,
+        "includeLuoyang": True,
+        "luoyangRadiusKm": 25,
+        "luoyangLookbackDays": 730,
+        "luoyangLimit": 50,
+        "showObservationMap": True,
+        "observationMapZoom": 12,
+        "googleMapType": "terrain",
+        "language": "zh-CN",
+        "layout": "default",
+    }
+    first = settings_fingerprint({}, (800, 480), "2026-07-12T06:00:00+00:00", location)
+    second = settings_fingerprint(explicit, (800, 480), "2026-07-12T06:00:00+00:00", location)
+
+    assert first == second
+    for changed in (
+        ({**explicit, "radiusKm": 30}, (800, 480), "2026-07-12T06:00:00+00:00", location),
+        ({**explicit, "language": "en"}, (800, 480), "2026-07-12T06:00:00+00:00", location),
+        ({**explicit, "layout": "compact"}, (800, 480), "2026-07-12T06:00:00+00:00", location),
+        ({**explicit, "includeLuoyang": False}, (800, 480), "2026-07-12T06:00:00+00:00", location),
+        ({**explicit, "luoyangLookbackDays": 365}, (800, 480), "2026-07-12T06:00:00+00:00", location),
+        (explicit, (480, 800), "2026-07-12T06:00:00+00:00", location),
+        (explicit, (800, 480), "2026-07-12T12:00:00+00:00", location),
+        (explicit, (800, 480), "2026-07-12T06:00:00+00:00", {**location, "latitude": 34.6197}),
+    ):
+        assert first != settings_fingerprint(*changed)
+    assert first == settings_fingerprint(
+        {**explicit, "googleMapsApiKey": "secret", "forceRefresh": True, "_theme_render_only": True},
+        (800, 480),
+        "2026-07-12T06:00:00+00:00",
+        location,
+    )
+    inherited = settings_fingerprint(
+        {"radiusKm": 31, "limit": 61},
+        (800, 480),
+        "2026-07-12T06:00:00+00:00",
+        location,
+    )
+    explicit_inheritance = settings_fingerprint(
+        {
+            "radiusKm": 31,
+            "limit": 61,
+            "luoyangRadiusKm": 31,
+            "luoyangLimit": 61,
+            "includeFremont": True,
+            "includeLuoyang": True,
+        },
+        (800, 480),
+        "2026-07-12T06:00:00+00:00",
+        location,
+    )
+    assert inherited == explicit_inheritance
+
+
+def test_species_instances_are_isolated_and_raw_json_cannot_spoof(tmp_path, monkeypatch):
+    first = _make_species_bank(tmp_path, instance_uuid="first")
+    second = _make_species_bank(tmp_path, instance_uuid="second")
+    first_doc, first_profile = first.load_for_data()
+    first.ingest(first_profile, bank_observation(1), Image.new("RGB", (80, 60), "red"), None)
+    first.save(first_doc)
+    second_doc, second_profile = second.load_for_data()
+    second.ingest(second_profile, bank_observation(2), Image.new("RGB", (80, 60), "blue"), None)
+    second.save(second_doc)
+    state = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+    assert state["instance_profiles"]["first"] != state["instance_profiles"]["second"]
+
+    plugin = make_plugin(tmp_path)
+    baseline = _tree_digest(tmp_path)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: plugin._fallback_payload({"name": "Fremont"}, "x"))
+    spoof = {"_inkypi_presentation_instance_identity": {"instance_uuid": "first"}}
+    plugin.generate_image(spoof, DummyDeviceConfig())
+    assert _tree_digest(tmp_path) == baseline
+
+
+def test_species_data_hydrates_without_advancing_bag_or_writing_displayed_context(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    payload = {
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "location_summary": "Fremont, CA",
+        "observations": [bank_observation(index) for index in range(1, 6)],
+        "category_counts": {},
+        "location_counts": {},
+    }
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: payload)
+    monkeypatch.setattr(plugin, "_download_image_for_data", lambda *_args, **_kwargs: Image.new("RGB", (80, 60), "green"))
+    monkeypatch.setattr(plugin, "_load_map_for_data", lambda *_args, **_kwargs: Image.new("RGB", (80, 40), "blue"))
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+    monkeypatch.setattr(plugin, "_next_display_index", lambda *_args: pytest.fail("DATA advanced display bag"))
+    monkeypatch.setattr(species_mod, "write_context", lambda *_args, **_kwargs: pytest.fail("DATA wrote displayed context"))
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+    state = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+    profile = _species_profile(state)
+
+    assert image.size == (800, 480)
+    assert len(profile["records"]) <= 12
+    assert profile["seen_ids"] == []
+    assert profile["pending_selection"] is None
+
+
+def test_species_prepare_is_provider_free_and_context_commits_only_exact_receipt(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    _warm_species_bank(tmp_path)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: pytest.fail("prepare fetched observations"))
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: pytest.fail("prepare opened HTTP"))
+    written = []
+    monkeypatch.setattr(species_mod, "write_context", lambda plugin_id, payload, **kwargs: written.append((plugin_id, payload, kwargs)))
+
+    prepared = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=species_request("a" * 32),
+        resolved_theme_context=species_theme("night"),
+    )
+    state_path = tmp_path / "presentation-state.json"
+    pending_state = json.loads(state_path.read_text(encoding="utf-8"))
+    pending = _species_profile(pending_state)["pending_selection"]
+    pending_record = next(
+        item for item in _species_profile(pending_state)["records"] if item["record_key"] == pending["record_key"]
+    )
+
+    assert prepared.changed is True
+    assert prepared.image.info["inkypi_theme_mode"] == "night"
+    assert written == []
+
+    baseline = state_path.read_bytes()
+    plugin.reconcile_presentation_receipt(settings, species_receipt("b" * 32))
+    plugin.reconcile_presentation_receipt(bound_species_settings("foreign"), species_receipt("a" * 32))
+    plugin.reconcile_presentation_receipt(settings, species_receipt("a" * 32, display="origin-display"))
+    assert state_path.read_bytes() == baseline
+    assert written == []
+
+    plugin.reconcile_presentation_receipt(settings, species_receipt("a" * 32))
+    committed = state_path.read_bytes()
+    plugin.reconcile_presentation_receipt(settings, species_receipt("a" * 32))
+    plugin.reconcile_presentation_receipt(
+        settings,
+        species_receipt("a" * 32, committed_at="2026-07-12T09:00:00+00:00"),
+    )
+    assert state_path.read_bytes() == committed
+    assert len(written) == 1
+    assert written[0][0] == "species_radar"
+    assert written[0][1]["scientific_name"] == pending_record["observation"]["scientific_name"]
+    final_profile = _species_profile(json.loads(committed.decode("utf-8")))
+    assert final_profile["seen_ids"][-1] == pending_record["observation_id"]
+    assert final_profile["displayed_context"]["observation_id"] == pending_record["observation_id"]
+
+
+def test_species_pending_survives_restart_theme_location_and_bucket(tmp_path, monkeypatch):
+    first = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    _warm_species_bank(tmp_path)
+    prepared = first.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=species_request("c" * 32),
+        resolved_theme_context=species_theme("day"),
+    )
+    state_path = tmp_path / "presentation-state.json"
+    pending = _species_profile(json.loads(state_path.read_text(encoding="utf-8")))["pending_selection"]
+
+    restarted = make_plugin(tmp_path)
+    monkeypatch.setattr(restarted, "_fetch_live_payload", lambda *_args: pytest.fail("restart used provider"))
+    changed = bound_species_settings(latitude="34.6197", longitude="112.4540", locationName="Luoyang")
+    second = restarted.prepare_presentation(
+        changed,
+        DummyDeviceConfig(),
+        request=species_request("c" * 32),
+        resolved_theme_context=species_theme("night"),
+    )
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    pending_after = next(
+        profile["pending_selection"]
+        for profile in after["profiles"].values()
+        if (profile.get("pending_selection") or {}).get("request_id") == "c" * 32
+    )
+
+    assert pending_after == pending
+    assert prepared.image.info["inkypi_theme_mode"] == "day"
+    assert second.image.info["inkypi_theme_mode"] == "night"
+    assert second.image.info["inkypi_source_provenance"] == "stale_cache"
+
+
+def test_species_location_and_bucket_mismatch_are_never_fresh(tmp_path):
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    record = bank.ingest(
+        profile,
+        bank_observation(1),
+        Image.new("RGB", (80, 60), "green"),
+        None,
+        fetched_at=(datetime.now(timezone.utc) - timedelta(hours=7)).isoformat(),
+    )
+    bank.save(document)
+    assert bank.ready_records(profile, prune=False)[0]["provenance"] == "stale_cache"
+
+    changed = _make_species_bank(
+        tmp_path,
+        bucket="2026-07-12T12:00:00+00:00",
+        settings=bound_species_settings(latitude="34.6197", longitude="112.4540", locationName="Luoyang"),
+    )
+    _doc, changed_profile = changed.load_for_data()
+    assert changed.ready_records(changed_profile, prune=False) == []
+    assert record["bucket_key"] == "2026-07-12T06:00:00+00:00"
+
+
+def test_species_media_limits_symlink_and_protected_cleanup_fail_closed(tmp_path):
+    from plugins.species_radar import presentation_bank
+
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    with pytest.raises(RuntimeError, match="dimensions|pixels"):
+        bank.ingest(
+            profile,
+            bank_observation(1),
+            Image.new("RGB", (presentation_bank.MEDIA_MAX_DIMENSION + 1, 1), "red"),
+            None,
+        )
+    record = bank.ingest(profile, bank_observation(2), Image.new("RGB", (80, 60), "blue"), None)
+    current = bank.ensure_current(document, profile, bank.ready_records(profile, prune=False))
+    bank.save(document)
+    photo_path = bank.photo_path(record)
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"outside")
+    photo_path.unlink()
+    try:
+        photo_path.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+    with pytest.raises(RuntimeError, match="regular|media|photo"):
+        bank.load_photo(record)
+    assert outside.read_bytes() == b"outside"
+
+    photo_path.unlink()
+    Image.new("RGB", (80, 60), "blue").save(photo_path)
+    old = (datetime.now(timezone.utc) - timedelta(days=31)).timestamp()
+    os.utime(photo_path, (old, old))
+    bank.cleanup(document, profile)
+    assert current["record_key"] == record["record_key"]
+    assert photo_path.is_file()
+
+
+def test_species_cross_profile_admission_never_evicts_protected_media(tmp_path, monkeypatch):
+    from plugins.species_radar import presentation_bank
+
+    first = _make_species_bank(tmp_path, instance_uuid="first")
+    first_document, first_profile = first.load_for_data()
+    first_record = first.ingest(
+        first_profile,
+        bank_observation(1),
+        Image.new("RGB", (80, 60), "red"),
+        None,
+    )
+    first.ensure_current(first_document, first_profile, first.ready_records(first_profile, prune=False))
+    first.save(first_document)
+    protected_path = first.photo_path(first_record)
+
+    second = _make_species_bank(tmp_path, instance_uuid="second")
+    _second_document, second_profile = second.load_for_data()
+    monkeypatch.setattr(presentation_bank, "PHOTO_MAX_FILES", 1)
+
+    with pytest.raises(RuntimeError, match="protected|budget"):
+        second.ingest(
+            second_profile,
+            bank_observation(2),
+            Image.new("RGB", (80, 60), "blue"),
+            None,
+        )
+    assert protected_path.is_file()
+
+
+def test_species_theme_only_and_unbound_preview_do_not_mutate_cache_tree(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    _warm_species_bank(tmp_path)
+    baseline = _tree_digest(tmp_path)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: pytest.fail("theme opened HTTP"))
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: pytest.fail("theme fetched observations"))
+
+    theme = plugin.generate_image(
+        bound_species_settings(_theme_render_only=True),
+        DummyDeviceConfig(),
+    )
+    assert theme.size == (800, 480)
+    assert _tree_digest(tmp_path) == baseline
+
+    preview_plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(preview_plugin, "_fetch_live_payload", lambda *_args: {
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "observations": [bank_observation(9)],
+        "category_counts": {},
+    })
+    monkeypatch.setattr(preview_plugin, "_download_image", lambda *_args: Image.new("RGB", (80, 60), "green"))
+    monkeypatch.setattr(preview_plugin, "_load_observation_map", lambda *_args: None)
+    preview_plugin.generate_image({}, DummyDeviceConfig())
+    assert _tree_digest(tmp_path) == baseline
+
+
+def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    payload = {
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "location_summary": "Fremont, CA",
+        "observations": [bank_observation(index) for index in range(1, 21)],
+        "category_counts": {},
+        "location_counts": {},
+    }
+    photos = []
+    maps = []
+    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: payload)
+    monkeypatch.setattr(
+        plugin,
+        "_download_image_for_data",
+        lambda url, _size, **_kwargs: photos.append(url) or Image.new("RGB", (80, 60), "green"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_map_for_data",
+        lambda _settings, _device, observation, _size, **_kwargs: maps.append(observation["gbif_key"])
+        or Image.new("RGB", (80, 40), "blue"),
+    )
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+
+    plugin.generate_image(settings, DummyDeviceConfig())
+    first = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+    first_profile = _species_profile(first)
+
+    assert len(first_profile["records"]) == 8
+    assert len(photos) == 8
+    assert len(maps) == 4
+    assert first_profile["seen_ids"] == []
+    assert first_profile["refill_cursor"] == 12
+    assert first_profile["refill_in_progress"] is True
+
+    plugin.generate_image(settings, DummyDeviceConfig())
+    second = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+    second_profile = _species_profile(second)
+    assert len(second_profile["records"]) == 12
+    assert len(photos) == 12
+    assert len(maps) == 8
+    assert second_profile["refill_in_progress"] is False
+
+
+def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    payload = {
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "observations": [bank_observation(index) for index in range(1, 20)],
+        "category_counts": {},
+    }
+    clock = {"value": 0.0}
+    calls = []
+    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: payload)
+    monkeypatch.setattr(plugin, "_monotonic", lambda: clock["value"])
+
+    def slow_photo(url, _size, *, deadline=None):
+        assert deadline is not None
+        assert clock["value"] < deadline
+        calls.append(url)
+        clock["value"] += 40.0
+        return Image.new("RGB", (80, 60), "green")
+
+    monkeypatch.setattr(plugin, "_download_image_for_data", slow_photo)
+    monkeypatch.setattr(plugin, "_load_map_for_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+    baseline = _tree_snapshot(tmp_path)
+
+    with pytest.raises(RuntimeError, match="deadline"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert len(calls) == 2
+    assert clock["value"] <= species_mod.MAX_DATA_SECONDS + 40.0
+    assert _tree_snapshot(tmp_path) == baseline
+
+
+def test_species_failed_photo_and_map_attempts_are_still_bounded(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    payload = {
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "observations": [bank_observation(index) for index in range(1, 20)],
+        "category_counts": {},
+    }
+    attempts = {"photo": 0, "map": 0}
+    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: payload)
+
+    def fail_photo(*_args, **_kwargs):
+        attempts["photo"] += 1
+        raise RuntimeError("photo offline")
+
+    def fail_map(*_args, **_kwargs):
+        attempts["map"] += 1
+        raise RuntimeError("map offline")
+
+    monkeypatch.setattr(plugin, "_download_image_for_data", fail_photo)
+    monkeypatch.setattr(plugin, "_load_map_for_data", fail_map)
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+
+    with pytest.raises(RuntimeError, match="bank|unavailable"):
+        plugin.generate_image(bound_species_settings(), DummyDeviceConfig())
+    assert attempts == {"photo": 8, "map": 4}
+
+
+class SpeciesApprovedTarget:
+    def __init__(self, url, *, host="api.gbif.org", address="93.184.216.34"):
+        self.normalized_url = url
+        self.scheme = urlparse(url).scheme
+        self.hostname = host
+        self.port = 443
+        self.addresses = (address,)
+        self.authority = host
+
+
+class SpeciesRedirectResponse:
+    def __init__(self, url, status=200, *, location=None, chunks=(b"{}",)):
+        self.url = url
+        self.status_code = status
+        self.headers = {} if location is None else {"Location": location}
+        self._chunks = chunks
+        self.body_read = False
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        self.body_read = True
+        yield from self._chunks
+
+    def close(self):
+        return None
+
+
+def test_species_redirect_private_and_unexpected_final_are_rejected_before_body(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    first = "https://api.gbif.org/v1/occurrence/search"
+    redirect = SpeciesRedirectResponse(first, 302, location="http://127.0.0.1/private")
+    final = SpeciesRedirectResponse("http://127.0.0.1/final", 200)
+    responses = iter((redirect, final))
+    calls = []
+
+    class Policy:
+        def resolve_and_validate(self, url):
+            if "127.0.0.1" in url:
+                raise RuntimeError("private address")
+            return SpeciesApprovedTarget(url)
+
+    monkeypatch.setattr(species_mod, "get_ssrf_policy", lambda: Policy())
+    monkeypatch.setattr(
+        plugin,
+        "_request_approved_target",
+        lambda approved, **kwargs: calls.append((approved, kwargs)) or next(responses),
+    )
+
+    with pytest.raises(RuntimeError, match="private"):
+        plugin._download_provider_bytes(first, source="gbif", max_bytes=1024, timeout=5)
+    assert len(calls) == 1
+    assert redirect.body_read is False
+
+    monkeypatch.setattr(plugin, "_request_approved_target", lambda *_args, **_kwargs: final)
+    with pytest.raises(RuntimeError, match="private"):
+        plugin._download_provider_bytes(first, source="gbif", max_bytes=1024, timeout=5)
+    assert final.body_read is False
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "169.254.169.254", "::ffff:127.0.0.1"])
+def test_species_provider_target_rejects_private_dns_and_wrong_source(address):
+    from plugins.species_radar.presentation_bank import validate_species_target
+
+    with pytest.raises(RuntimeError, match="public|address"):
+        validate_species_target(
+            SpeciesApprovedTarget("https://api.gbif.org/v1/species/1", address=address),
+            "gbif",
+        )
+    with pytest.raises(RuntimeError, match="source|authority"):
+        validate_species_target(
+            SpeciesApprovedTarget(
+                "https://maps.googleapis.com/maps/api/staticmap",
+                host="maps.googleapis.com",
+            ),
+            "gbif",
+        )
+
+
+def test_species_json_and_media_are_bounded_before_decode(tmp_path, monkeypatch):
+    from plugins.species_radar import presentation_bank
+
+    plugin = make_plugin(tmp_path)
+    response = SpeciesRedirectResponse(
+        "https://api.gbif.org/v1/occurrence/search",
+        chunks=(b"{" + b"x" * presentation_bank.MAX_STATE_BYTES, b"}"),
+    )
+    monkeypatch.setattr(plugin, "_request_approved_target", lambda *_args, **_kwargs: response)
+    with pytest.raises(RuntimeError, match="budget|size|exceeds"):
+        plugin._get_json("https://api.gbif.org/v1/occurrence/search")
+
+    bank = _make_species_bank(tmp_path)
+    state_path = bank.state_path
+    state_path.write_bytes(b"{" + b"x" * presentation_bank.MAX_STATE_BYTES + b"}")
+    with pytest.raises(RuntimeError, match="size"):
+        bank.load_for_data()
+
+
+def test_species_old_location_fallback_cannot_be_promoted_as_fresh_data(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    old = {
+        "schema": "species-radar-v2",
+        "cache_key": "old-location-and-bucket",
+        "source_state": "cache",
+        "source": "GBIF",
+        "location": {"name": "Luoyang"},
+        "location_summary": "Luoyang",
+        "observations": [bank_observation(1, location_name="Luoyang", bucket="2026-07-11T18:00:00+00:00")],
+        "category_counts": {},
+    }
+    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: old)
+    monkeypatch.setattr(plugin, "_download_image_for_data", lambda *_args, **_kwargs: Image.new("RGB", (80, 60), "green"))
+    monkeypatch.setattr(plugin, "_load_map_for_data", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="unavailable|fresh|bank"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+
+def test_species_cold_stateless_fallback_is_explicit_placeholder(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    image = plugin.generate_image({}, DummyDeviceConfig())
+
+    assert image.info["inkypi_source_provenance"] == "placeholder"
+    assert not (tmp_path / "daily.json").exists()
+
+
+def test_species_data_recovers_exact_protected_media_or_leaves_state_atomic(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, profile, current = _warm_species_bank(tmp_path)
+    record = next(item for item in profile["records"] if item["record_key"] == current["record_key"])
+    bank.photo_path(record).unlink()
+    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: pytest.fail("recovery refreshed source pool"))
+    monkeypatch.setattr(plugin, "_download_image_for_data", lambda *_args, **_kwargs: Image.new("RGB", (320, 240), "purple"))
+    monkeypatch.setattr(plugin, "_load_map_for_data", lambda *_args, **_kwargs: Image.new("RGB", (220, 90), "blue"))
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+
+    plugin.generate_image(settings, DummyDeviceConfig())
+    after = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    assert _species_profile(after)["current_selection"] == current
+    assert bank.photo_path(record).is_file()
+
+    bank.photo_path(record).unlink()
+    baseline = bank.state_path.read_bytes()
+    monkeypatch.setattr(plugin, "_download_image_for_data", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")))
+    with pytest.raises(RuntimeError, match="protected|recovery"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+    assert bank.state_path.read_bytes() == baseline
+
+
+def test_species_state_symlink_is_not_followed_or_replaced(tmp_path):
+    bank = _make_species_bank(tmp_path)
+    outside = tmp_path / "outside-state.json"
+    outside.write_text('{"sentinel":true}', encoding="utf-8")
+    try:
+        bank.state_path.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+
+    with pytest.raises(RuntimeError, match="safe|regular|state|symbolic"):
+        bank.load_for_data()
+    assert outside.read_text(encoding="utf-8") == '{"sentinel":true}'
+
+
+def test_species_vernacular_symlink_is_never_followed_or_replaced(tmp_path):
+    plugin = make_plugin(tmp_path)
+    outside = tmp_path / "outside-vernacular.json"
+    outside.write_text('{"sentinel":true}', encoding="utf-8")
+    target = plugin._vernacular_cache_path()
+    try:
+        target.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink unavailable")
+
+    assert plugin._read_vernacular_cache() == {}
+    with pytest.raises(RuntimeError, match="safe|regular|state|symbolic"):
+        plugin._write_json(target, {"unsafe": True})
+    assert target.is_symlink()
+    assert outside.read_text(encoding="utf-8") == '{"sentinel":true}'
+
+
+def test_species_ready_rejects_missing_photo_url_or_media(tmp_path):
+    bank = _make_species_bank(tmp_path)
+    _document, profile = bank.load_for_data()
+
+    missing_url = bank_observation(1)
+    missing_url["image_url"] = ""
+    with pytest.raises(RuntimeError, match="photo|URL|media"):
+        bank.ingest(profile, missing_url, None, None)
+    with pytest.raises(RuntimeError, match="photo|media"):
+        bank.ingest(profile, bank_observation(2), None, None)
+    assert bank.ready_records(profile, prune=False) == []
+
+
+def test_species_ingest_deadline_crossing_rolls_back_profile_and_media(tmp_path, monkeypatch):
+    bank = _make_species_bank(tmp_path)
+    _document, profile = bank.load_for_data()
+    baseline_profile = json.loads(json.dumps(profile))
+    baseline_tree = _tree_snapshot(tmp_path)
+    clock = {"value": 0.0}
+    original_encode = bank._encode_image
+
+    def delayed_encode(image):
+        payload = original_encode(image)
+        clock["value"] = 76.0
+        return payload
+
+    def check_deadline():
+        if clock["value"] >= 75.0:
+            raise RuntimeError("deadline exhausted")
+
+    monkeypatch.setattr(bank, "_encode_image", delayed_encode)
+    with pytest.raises(RuntimeError, match="deadline"):
+        bank.ingest(
+            profile,
+            bank_observation(1),
+            Image.new("RGB", (80, 60), "green"),
+            Image.new("RGB", (80, 40), "blue"),
+            deadline_check=check_deadline,
+        )
+    assert profile == baseline_profile
+    assert _tree_snapshot(tmp_path) == baseline_tree
+
+
+def test_species_photo_decode_cannot_cross_data_deadline(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    clock = {"value": 0.0}
+    buffer = BytesIO()
+    Image.new("RGB", (80, 60), "green").save(buffer, "PNG")
+
+    def delayed_download(*_args, **_kwargs):
+        clock["value"] = 76.0
+        return buffer.getvalue()
+
+    monkeypatch.setattr(plugin, "_monotonic", lambda: clock["value"])
+    monkeypatch.setattr(plugin, "_download_provider_bytes", delayed_download)
+    with pytest.raises(RuntimeError, match="deadline"):
+        plugin._download_image_for_data(
+            "https://inaturalist-open-data.s3.amazonaws.com/photos/1/medium.jpg",
+            (800, 480),
+            deadline=75.0,
+        )
+
+
+def test_species_photo_success_map_failure_is_fully_atomic(tmp_path, monkeypatch):
+    bank = _make_species_bank(tmp_path)
+    _document, profile = bank.load_for_data()
+    baseline_profile = json.loads(json.dumps(profile))
+    baseline_tree = _tree_snapshot(tmp_path)
+    monkeypatch.setattr(
+        bank.maps,
+        "put_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("map write failed")),
+    )
+
+    with pytest.raises(Exception, match="map write failed"):
+        bank.ingest(
+            profile,
+            bank_observation(1),
+            Image.new("RGB", (80, 60), "green"),
+            Image.new("RGB", (80, 40), "blue"),
+        )
+    assert profile == baseline_profile
+    assert _tree_snapshot(tmp_path) == baseline_tree
+
+
+def test_species_failed_admission_restores_evicted_victims(tmp_path, monkeypatch):
+    from plugins.species_radar import presentation_bank
+
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    bank.ingest(profile, bank_observation(1), Image.new("RGB", (80, 60), "red"), None)
+    bank.save(document)
+    baseline_profile = json.loads(json.dumps(profile))
+    baseline_tree = _tree_snapshot(tmp_path)
+    monkeypatch.setattr(presentation_bank, "PHOTO_MAX_FILES", 1)
+    original_put = bank.photos.put_bytes
+
+    def fail_new(key, payload, *, suffix=""):
+        if key != profile["records"][0]["photo_key"]:
+            raise OSError("new write failed")
+        return original_put(key, payload, suffix=suffix)
+
+    monkeypatch.setattr(bank.photos, "put_bytes", fail_new)
+    with pytest.raises(Exception, match="new write failed"):
+        bank.ingest(profile, bank_observation(2), Image.new("RGB", (80, 60), "blue"), None)
+    assert profile == baseline_profile
+    assert _tree_snapshot(tmp_path) == baseline_tree
+
+
+def test_species_media_root_symlink_never_touches_external_sentinel(tmp_path):
+    outside = tmp_path / "outside-media"
+    outside.mkdir()
+    sentinel = outside / "sentinel.bin"
+    sentinel.write_bytes(b"unchanged")
+    photo_root = tmp_path / "presentation-photos"
+    try:
+        photo_root.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlink unavailable")
+    bank = _make_species_bank(tmp_path)
+    _document, profile = bank.load_for_data()
+
+    with pytest.raises(RuntimeError, match="safe|root|link|reparse|directory"):
+        bank.ingest(profile, bank_observation(1), Image.new("RGB", (80, 60), "green"), None)
+    assert sentinel.read_bytes() == b"unchanged"
+    assert sorted(path.name for path in outside.iterdir()) == ["sentinel.bin"]
+
+
+def test_species_admission_counts_every_regular_file(tmp_path, monkeypatch):
+    from plugins.species_radar import presentation_bank
+
+    bank = _make_species_bank(tmp_path)
+    _document, profile = bank.load_for_data()
+    bank.photo_dir.mkdir(parents=True)
+    (bank.photo_dir / "unexpected.bin").write_bytes(b"counts-too")
+    monkeypatch.setattr(presentation_bank, "PHOTO_MAX_FILES", 1)
+
+    bank.ingest(profile, bank_observation(1), Image.new("RGB", (80, 60), "green"), None)
+    assert not (bank.photo_dir / "unexpected.bin").exists()
+    assert len([path for path in bank.photo_dir.iterdir() if path.is_file()]) == 1
+
+
+def test_species_unbound_preview_and_cold_theme_create_no_paths(tmp_path, monkeypatch):
+    preview_root = tmp_path / "preview-cold"
+    monkeypatch.setenv("INKYPI_SPECIES_RADAR_CACHE", str(preview_root))
+    plugin = SpeciesRadar({"id": "species_radar"})
+    payload = {
+        "schema": "species-radar-v2",
+        "source": "GBIF",
+        "location": {"name": "Fremont, CA"},
+        "observations": [bank_observation(1)],
+        "category_counts": {},
+    }
+    buffer = BytesIO()
+    Image.new("RGB", (80, 60), "green").save(buffer, "PNG")
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: payload)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: buffer.getvalue())
+    before = _tree_snapshot(preview_root)
+    image = plugin.generate_image({}, DummyDeviceConfig())
+    assert image.size == (800, 480)
+    assert _tree_snapshot(preview_root) == before == {}
+
+    theme_root = tmp_path / "theme-cold"
+    monkeypatch.setenv("INKYPI_SPECIES_RADAR_CACHE", str(theme_root))
+    cold = SpeciesRadar({"id": "species_radar"})
+    theme_before = _tree_snapshot(theme_root)
+    with pytest.raises(RuntimeError, match="warm|cold|bank"):
+        cold.generate_image(
+            bound_species_settings(_theme_render_only=True),
+            DummyDeviceConfig(),
+        )
+    assert _tree_snapshot(theme_root) == theme_before == {}
+
+
+def test_species_theme_only_recomputes_six_hour_freshness(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    bucket = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0).isoformat()
+    settings = bound_species_settings()
+    bank = _make_species_bank(tmp_path, bucket=bucket, settings=settings)
+    document, profile = bank.load_for_data()
+    bank.ingest(
+        profile,
+        bank_observation(1, bucket=bucket),
+        Image.new("RGB", (80, 60), "green"),
+        None,
+        fetched_at=now.isoformat(),
+    )
+    bank.ensure_current(document, profile, bank.ready_records(profile, prune=False))
+    bank.save(document)
+    plugin = make_plugin(tmp_path)
+    clock = {"now": now}
+    monkeypatch.setattr(plugin, "_now_utc", lambda: clock["now"])
+    monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
+
+    fresh = plugin.generate_image(
+        bound_species_settings(_theme_render_only=True),
+        DummyDeviceConfig(),
+    )
+    clock["now"] = now + timedelta(hours=7)
+    stale = plugin.generate_image(
+        bound_species_settings(_theme_render_only=True),
+        DummyDeviceConfig(),
+    )
+
+    assert fresh.info["inkypi_source_provenance"] == "fresh_cache"
+    assert stale.info["inkypi_source_provenance"] == "stale_cache"
+
+
+def test_species_ensure_current_save_deadline_is_atomic(tmp_path):
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    bank.ingest(
+        profile,
+        bank_observation(1),
+        Image.new("RGB", (80, 60), "green"),
+        None,
+    )
+    bank.save(document)
+    ready = bank.ready_records(profile, prune=False)
+    state_before = bank.state_path.read_bytes()
+    profile_before = json.loads(json.dumps(profile))
+    document_before = json.loads(json.dumps(document))
+    tree_before = _tree_snapshot(tmp_path)
+    checks = {"count": 0}
+
+    def cross_after_save():
+        checks["count"] += 1
+        if checks["count"] >= 5:
+            raise RuntimeError("deadline exhausted after ensure save")
+
+    with pytest.raises(RuntimeError, match="deadline"):
+        bank.ensure_current(
+            document,
+            profile,
+            ready,
+            deadline_check=cross_after_save,
+        )
+    assert bank.state_path.read_bytes() == state_before
+    assert profile == profile_before
+    assert document == document_before
+    assert _tree_snapshot(tmp_path) == tree_before
+
+
+def test_species_selection_decode_deadline_returns_no_record(tmp_path, monkeypatch):
+    bank, _document, profile, current = _warm_species_bank(tmp_path, count=1)
+    state_before = bank.state_path.read_bytes()
+    tree_before = _tree_snapshot(tmp_path)
+    clock = {"value": 0.0}
+    original_read = bank._read_media_payload
+
+    def delayed_read(*args, **kwargs):
+        payload = original_read(*args, **kwargs)
+        clock["value"] = 76.0
+        return payload
+
+    def check():
+        if clock["value"] >= 75.0:
+            raise RuntimeError("deadline exhausted during selection decode")
+
+    monkeypatch.setattr(bank, "_read_media_payload", delayed_read)
+    with pytest.raises(RuntimeError, match="deadline"):
+        bank.selection_record(
+            profile,
+            current,
+            load_media=True,
+            deadline_check=check,
+        )
+    assert bank.state_path.read_bytes() == state_before
+    assert _tree_snapshot(tmp_path) == tree_before
+
+
+def test_species_render_deadline_never_returns_image_or_mutates_state(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    bank, _document, profile, current = _warm_species_bank(tmp_path, count=1)
+    state_before = bank.state_path.read_bytes()
+    tree_before = _tree_snapshot(tmp_path)
+    clock = {"value": 0.0}
+
+    def delayed_render(*_args, **_kwargs):
+        clock["value"] = 76.0
+        return Image.new("RGB", (800, 480), "white")
+
+    def check():
+        if clock["value"] >= 75.0:
+            raise RuntimeError("deadline exhausted during render")
+
+    monkeypatch.setattr(plugin, "_render_page", delayed_render)
+    with pytest.raises(RuntimeError, match="deadline"):
+        plugin._render_bank_selection(
+            bank,
+            profile,
+            current,
+            (800, 480),
+            bound_species_settings(),
+            deadline_check=check,
+        )
+    assert bank.state_path.read_bytes() == state_before
+    assert _tree_snapshot(tmp_path) == tree_before
+
+
+def _expired_species_bank_with_photo_and_map(tmp_path):
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    bank.ingest(
+        profile,
+        bank_observation(1),
+        Image.new("RGB", (80, 60), "green"),
+        Image.new("RGB", (80, 40), "blue"),
+        fetched_at=(datetime.now(timezone.utc) - timedelta(days=31)).isoformat(),
+    )
+    bank.save(document)
+    return bank, document, profile
+
+
+@pytest.mark.parametrize("crossing_unlink", [1, 2])
+def test_species_cleanup_unlink_deadline_restores_everything(
+    tmp_path,
+    monkeypatch,
+    crossing_unlink,
+):
+    bank, document, profile = _expired_species_bank_with_photo_and_map(tmp_path)
+    state_before = bank.state_path.read_bytes()
+    profile_before = json.loads(json.dumps(profile))
+    document_before = json.loads(json.dumps(document))
+    tree_before = _tree_snapshot(tmp_path)
+    clock = {"value": 0.0}
+    unlinks = {"count": 0}
+    original_unlink = bank._safe_unlink
+
+    def delayed_unlink(path, root):
+        original_unlink(path, root)
+        unlinks["count"] += 1
+        if unlinks["count"] == crossing_unlink:
+            clock["value"] = 76.0
+
+    def check():
+        if clock["value"] >= 75.0:
+            raise RuntimeError("deadline exhausted during cleanup unlink")
+
+    monkeypatch.setattr(bank, "_safe_unlink", delayed_unlink)
+    with pytest.raises(RuntimeError, match="deadline"):
+        bank.cleanup(document, profile, deadline_check=check)
+    assert bank.state_path.read_bytes() == state_before
+    assert profile == profile_before
+    assert document == document_before
+    assert _tree_snapshot(tmp_path) == tree_before
+
+
+def test_species_cleanup_save_failure_restores_media_state_and_document(tmp_path, monkeypatch):
+    bank, document, profile = _expired_species_bank_with_photo_and_map(tmp_path)
+    state_before = bank.state_path.read_bytes()
+    profile_before = json.loads(json.dumps(profile))
+    document_before = json.loads(json.dumps(document))
+    tree_before = _tree_snapshot(tmp_path)
+    original_save = bank.save
+
+    def save_then_fail(*args, **kwargs):
+        original_save(*args, **kwargs)
+        raise RuntimeError("save failed after publish")
+
+    monkeypatch.setattr(bank, "save", save_then_fail)
+    with pytest.raises(RuntimeError, match="save failed"):
+        bank.cleanup(document, profile, deadline_check=lambda: None)
+    assert bank.state_path.read_bytes() == state_before
+    assert profile == profile_before
+    assert document == document_before
+    assert _tree_snapshot(tmp_path) == tree_before
