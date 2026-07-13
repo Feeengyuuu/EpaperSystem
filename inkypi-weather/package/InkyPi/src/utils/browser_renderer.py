@@ -5,10 +5,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import logging
+import math
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -16,6 +18,20 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 import weakref
 
+try:
+    from ..runtime.cache_lifecycle import (
+        CleanupBudget,
+        LifecycleAggregate,
+        LifecycleAllowance,
+        LifecycleBudget,
+    )
+except ImportError:  # pragma: no cover - production imports modules from src/
+    from runtime.cache_lifecycle import (
+        CleanupBudget,
+        LifecycleAggregate,
+        LifecycleAllowance,
+        LifecycleBudget,
+    )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from security.egress_proxy import EgressProxy
 from security.ssrf import ApprovedTarget, UnsafeTarget, get_ssrf_policy
@@ -32,6 +48,73 @@ MAX_HTML_BYTES = 5 * 1024 * 1024
 _GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
 _GLOBAL_RENDERER = None
 _GLOBAL_RENDERER_LOCK = threading.Lock()
+
+
+def _lifecycle_allowance(*, budget, allowance, aggregate, clock):
+    if allowance is not None:
+        if not isinstance(allowance, LifecycleAllowance):
+            raise TypeError("allowance must be a LifecycleAllowance")
+        if aggregate is not None and allowance.aggregate is not aggregate:
+            raise ValueError("allowance and aggregate must share the same counters")
+        return allowance
+    if isinstance(budget, CleanupBudget):
+        budget = budget.start(clock())
+    if not isinstance(budget, LifecycleBudget):
+        raise TypeError("budget must be a CleanupBudget or LifecycleBudget")
+    if aggregate is None:
+        aggregate = LifecycleAggregate()
+    elif not isinstance(aggregate, LifecycleAggregate):
+        raise TypeError("aggregate must be a LifecycleAggregate")
+    return LifecycleAllowance(budget, aggregate, clock=clock)
+
+
+def _is_reparse_point(info):
+    attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+    marker = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return bool(attributes & marker)
+
+
+def _stat_token(info):
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+    )
+
+
+def _browser_job_tree_size(path, *, allowance):
+    total_bytes = 0
+    scanned_entries = 0
+    stack = [Path(path)]
+    while stack:
+        directory = stack.pop()
+        try:
+            iterator = os.scandir(directory)
+        except FileNotFoundError:
+            return total_bytes, scanned_entries, False, False, False
+        except OSError:
+            return total_bytes, scanned_entries, False, False, True
+        with iterator:
+            for entry in iterator:
+                if not allowance.consume_scan():
+                    return total_bytes, scanned_entries, False, False, False
+                scanned_entries += 1
+                try:
+                    info = os.lstat(entry.path)
+                except FileNotFoundError:
+                    return total_bytes, scanned_entries, False, False, False
+                except OSError:
+                    return total_bytes, scanned_entries, False, False, True
+                if _is_reparse_point(info) or stat.S_ISLNK(info.st_mode):
+                    return total_bytes, scanned_entries, False, True, False
+                if stat.S_ISDIR(info.st_mode):
+                    stack.append(Path(entry.path))
+                elif stat.S_ISREG(info.st_mode):
+                    total_bytes += max(0, int(info.st_size))
+                else:
+                    return total_bytes, scanned_entries, False, True, False
+    return total_bytes, scanned_entries, True, False, False
 
 
 def find_browser_binary():
@@ -215,6 +298,202 @@ class BrowserRenderer:
                 self._proxy_finalizer()
             except Exception:
                 logger.exception("Browser egress proxy did not close cleanly")
+
+    def cleanup_abandoned_jobs(
+        self,
+        *,
+        now_epoch,
+        stale_seconds,
+        budget=None,
+        dry_run=False,
+        allowance=None,
+        aggregate=None,
+    ):
+        """Recover stale direct-child render jobs without racing Chromium."""
+
+        allowance = _lifecycle_allowance(
+            budget=budget,
+            allowance=allowance,
+            aggregate=aggregate,
+            clock=self._clock,
+        )
+        aggregate = allowance.aggregate
+        try:
+            now_epoch = float(now_epoch)
+            stale_seconds = float(stale_seconds)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("cleanup times must be finite numbers") from None
+        if not math.isfinite(now_epoch) or not math.isfinite(stale_seconds):
+            raise ValueError("cleanup times must be finite numbers")
+        stale_seconds = max(0.0, stale_seconds)
+
+        slot = _GLOBAL_BROWSER_SLOT
+        acquired = slot.acquire(blocking=False)
+        if not acquired:
+            allowance.mark_backlog()
+            return aggregate
+        try:
+            if self.active_processes:
+                allowance.mark_backlog()
+                return aggregate
+            if not allowance.can_delete(0):
+                return aggregate
+            try:
+                root_info = os.lstat(self.temp_root)
+                if (
+                    not stat.S_ISDIR(root_info.st_mode)
+                    or stat.S_ISLNK(root_info.st_mode)
+                    or _is_reparse_point(root_info)
+                ):
+                    aggregate.skipped_unsafe += 1
+                    allowance.mark_backlog()
+                    return aggregate
+                root = self.temp_root.resolve(strict=True)
+            except FileNotFoundError:
+                return aggregate
+            except OSError:
+                aggregate.error_count += 1
+                allowance.mark_backlog()
+                return aggregate
+
+            names = []
+            try:
+                with os.scandir(root) as iterator:
+                    while True:
+                        try:
+                            entry = next(iterator)
+                        except StopIteration:
+                            break
+                        if not allowance.consume_scan():
+                            return aggregate
+                        names.append(entry.name)
+            except OSError:
+                aggregate.error_count += 1
+                allowance.mark_backlog()
+                return aggregate
+            names.sort(
+                key=lambda name: (
+                    not name.startswith(".gc-render-"),
+                    name,
+                )
+            )
+            baseline_deleted_entries = aggregate.deleted_entries
+            baseline_deleted_bytes = aggregate.deleted_bytes
+            planned_entries = 0
+            planned_bytes = 0
+            for name in names:
+                if not allowance.can_delete(0):
+                    break
+                is_tombstone = name.startswith(".gc-render-") and len(name) > len(
+                    ".gc-render-"
+                )
+                is_render = name.startswith("render-") and len(name) > len("render-")
+                if not is_tombstone and not is_render:
+                    aggregate.skipped_unsafe += 1
+                    continue
+
+                candidate = root / name
+                try:
+                    info = os.lstat(candidate)
+                    if (
+                        not stat.S_ISDIR(info.st_mode)
+                        or stat.S_ISLNK(info.st_mode)
+                        or _is_reparse_point(info)
+                        or candidate.resolve(strict=True).parent != root
+                    ):
+                        aggregate.skipped_unsafe += 1
+                        continue
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    aggregate.error_count += 1
+                    allowance.mark_backlog()
+                    continue
+                if is_render and now_epoch - float(info.st_mtime) <= stale_seconds:
+                    aggregate.retained_recent += 1
+                    continue
+
+                size, _nested_scanned, complete, unsafe, failed = (
+                    _browser_job_tree_size(
+                        candidate,
+                        allowance=allowance,
+                    )
+                )
+                if failed:
+                    aggregate.error_count += 1
+                    allowance.mark_backlog()
+                    continue
+                if unsafe:
+                    aggregate.skipped_unsafe += 1
+                    continue
+                if not complete:
+                    allowance.mark_backlog()
+                    break
+
+                if (
+                    baseline_deleted_entries + planned_entries
+                    >= allowance.budget.max_deleted
+                    or baseline_deleted_bytes + planned_bytes + size
+                    > allowance.budget.max_deleted_bytes
+                ):
+                    allowance.mark_backlog()
+                    break
+                if not allowance.can_delete(0):
+                    break
+
+                planned_entries += 1
+                planned_bytes += size
+                aggregate.candidate_entries += 1
+                if dry_run:
+                    continue
+
+                expected_token = _stat_token(info)
+                removal_path = candidate
+                try:
+                    current_info = os.lstat(candidate)
+                    if (
+                        _stat_token(current_info) != expected_token
+                        or not stat.S_ISDIR(current_info.st_mode)
+                        or stat.S_ISLNK(current_info.st_mode)
+                        or _is_reparse_point(current_info)
+                        or candidate.resolve(strict=True).parent != root
+                    ):
+                        aggregate.skipped_unsafe += 1
+                        allowance.mark_backlog()
+                        continue
+                    if is_render:
+                        removal_path = root / f".gc-{name}"
+                        try:
+                            os.lstat(removal_path)
+                        except FileNotFoundError:
+                            pass
+                        else:
+                            aggregate.skipped_unsafe += 1
+                            allowance.mark_backlog()
+                            continue
+                        os.rename(candidate, removal_path)
+                    renamed_info = os.lstat(removal_path)
+                    if (
+                        _stat_token(renamed_info) != expected_token
+                        or not stat.S_ISDIR(renamed_info.st_mode)
+                        or stat.S_ISLNK(renamed_info.st_mode)
+                        or _is_reparse_point(renamed_info)
+                        or removal_path.resolve(strict=True).parent != root
+                    ):
+                        aggregate.skipped_unsafe += 1
+                        allowance.mark_backlog()
+                        continue
+                    shutil.rmtree(removal_path)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    aggregate.error_count += 1
+                    allowance.mark_backlog()
+                    continue
+                allowance.consume_delete(size)
+            return aggregate
+        finally:
+            slot.release()
 
     def _render(
         self,

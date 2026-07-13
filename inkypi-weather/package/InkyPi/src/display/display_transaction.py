@@ -6,13 +6,31 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
+import math
+import os
 from pathlib import Path
 import re
+import stat
 import threading
+import time
 from types import MappingProxyType
 from typing import Mapping
 from uuid import uuid4
 
+try:
+    from ..runtime.cache_lifecycle import (
+        CleanupBudget,
+        LifecycleAggregate,
+        LifecycleAllowance,
+        LifecycleBudget,
+    )
+except ImportError:  # pragma: no cover - production imports modules from src/
+    from runtime.cache_lifecycle import (
+        CleanupBudget,
+        LifecycleAggregate,
+        LifecycleAllowance,
+        LifecycleBudget,
+    )
 from utils.atomic_file import atomic_write_bytes, atomic_write_image, atomic_write_json
 from utils.image_utils import compute_image_hash
 from utils.safe_image import safe_open_image
@@ -25,6 +43,52 @@ MANIFEST_NAME = "display_manifest.json"
 OBJECTS_DIR_NAME = "objects"
 MAX_RETAINED_OBJECTS = 8
 _COMMIT_ID = re.compile(r"^[0-9a-f]{32}$")
+_ATOMIC_TEMP_TOKEN = re.compile(r"^[A-Za-z0-9_-]+$")
+_OBJECT_ATOMIC_TEMP = re.compile(
+    r"^\.[0-9a-f]{32}\.png\.[A-Za-z0-9_-]+\.tmp$"
+)
+
+
+def _display_lifecycle_allowance(*, budget, allowance, aggregate, clock):
+    if allowance is not None:
+        if not isinstance(allowance, LifecycleAllowance):
+            raise TypeError("allowance must be a LifecycleAllowance")
+        if aggregate is not None and allowance.aggregate is not aggregate:
+            raise ValueError("allowance and aggregate must share the same counters")
+        return allowance
+    if isinstance(budget, CleanupBudget):
+        budget = budget.start(clock())
+    if not isinstance(budget, LifecycleBudget):
+        raise TypeError("budget must be a CleanupBudget or LifecycleBudget")
+    if aggregate is None:
+        aggregate = LifecycleAggregate()
+    elif not isinstance(aggregate, LifecycleAggregate):
+        raise TypeError("aggregate must be a LifecycleAggregate")
+    return LifecycleAllowance(budget, aggregate, clock=clock)
+
+
+def _is_reparse_point(info):
+    attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+    marker = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return bool(attributes & marker)
+
+
+def _stat_token(info):
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+    )
+
+
+def _is_atomic_temp_for(name, target_name):
+    prefix = f".{target_name}."
+    suffix = ".tmp"
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return False
+    token = name[len(prefix) : -len(suffix)]
+    return bool(token and _ATOMIC_TEMP_TOKEN.fullmatch(token))
 
 
 class DisplayCommitUnknownError(RuntimeError):
@@ -223,8 +287,174 @@ class DisplayTransaction:
         except FileNotFoundError:
             return None
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
-            logger.warning("Ignoring invalid display manifest: %s", self.manifest_path, exc_info=True)
+            logger.warning("Ignoring invalid display manifest")
             return None
+
+    def maintenance(
+        self,
+        *,
+        now_epoch,
+        stale_seconds,
+        budget=None,
+        dry_run=False,
+        allowance=None,
+        aggregate=None,
+    ):
+        """Recover owned atomic residue while preserving display authority."""
+
+        allowance = _display_lifecycle_allowance(
+            budget=budget,
+            allowance=allowance,
+            aggregate=aggregate,
+            clock=time.monotonic,
+        )
+        aggregate = allowance.aggregate
+        try:
+            now_epoch = float(now_epoch)
+            stale_seconds = float(stale_seconds)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("maintenance times must be finite numbers") from None
+        if not math.isfinite(now_epoch) or not math.isfinite(stale_seconds):
+            raise ValueError("maintenance times must be finite numbers")
+        stale_seconds = max(0.0, stale_seconds)
+
+        with self._lock:
+            planning = {
+                "baseline_entries": aggregate.deleted_entries,
+                "baseline_bytes": aggregate.deleted_bytes,
+                "entries": 0,
+                "bytes": 0,
+            }
+            current = self.current()
+            if not allowance.can_delete(0):
+                return aggregate
+            if current is not None:
+                aggregate.retained_current += 1
+                stopped = self._prune_objects(
+                    current_path=current.image_path,
+                    allowance=allowance,
+                    dry_run=dry_run,
+                    planning=planning,
+                )
+                if stopped:
+                    return aggregate
+
+            display_root = Path(os.path.abspath(self.display_dir))
+            objects_root = Path(os.path.abspath(self.objects_dir))
+            compatibility_path = Path(os.path.abspath(self.compatibility_image_path))
+            display_targets = {self.manifest_path.name}
+            roots = []
+            if compatibility_path.parent == display_root:
+                display_targets.add(compatibility_path.name)
+            roots.append((display_root, frozenset(display_targets), False))
+            roots.append((objects_root, frozenset(), True))
+            for configured_root, target_names, object_temps in roots:
+                try:
+                    root_info = os.lstat(configured_root)
+                    if (
+                        not stat.S_ISDIR(root_info.st_mode)
+                        or stat.S_ISLNK(root_info.st_mode)
+                        or _is_reparse_point(root_info)
+                    ):
+                        aggregate.skipped_unsafe += 1
+                        allowance.mark_backlog()
+                        return aggregate
+                    root = configured_root.resolve(strict=True)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    aggregate.error_count += 1
+                    allowance.mark_backlog()
+                    return aggregate
+
+                names = []
+                try:
+                    with os.scandir(root) as iterator:
+                        while True:
+                            try:
+                                entry = next(iterator)
+                            except StopIteration:
+                                break
+                            if not allowance.consume_scan():
+                                return aggregate
+                            names.append(entry.name)
+                except OSError:
+                    aggregate.error_count += 1
+                    allowance.mark_backlog()
+                    return aggregate
+
+                for name in sorted(names):
+                    if not allowance.can_delete(0):
+                        return aggregate
+                    reserved = (
+                        bool(_OBJECT_ATOMIC_TEMP.fullmatch(name))
+                        if object_temps
+                        else any(
+                            _is_atomic_temp_for(name, target_name)
+                            for target_name in target_names
+                        )
+                    )
+                    if not reserved:
+                        continue
+
+                    candidate = root / name
+                    try:
+                        info = os.lstat(candidate)
+                        if (
+                            not stat.S_ISREG(info.st_mode)
+                            or stat.S_ISLNK(info.st_mode)
+                            or _is_reparse_point(info)
+                            or candidate.resolve(strict=True).parent != root
+                        ):
+                            aggregate.skipped_unsafe += 1
+                            continue
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        aggregate.error_count += 1
+                        continue
+
+                    if now_epoch - float(info.st_mtime) <= stale_seconds:
+                        aggregate.retained_recent += 1
+                        continue
+                    size = max(0, int(info.st_size))
+                    if (
+                        planning["baseline_entries"] + planning["entries"]
+                        >= allowance.budget.max_deleted
+                        or planning["baseline_bytes"] + planning["bytes"] + size
+                        > allowance.budget.max_deleted_bytes
+                    ):
+                        allowance.mark_backlog()
+                        return aggregate
+
+                    planning["entries"] += 1
+                    planning["bytes"] += size
+                    aggregate.candidate_entries += 1
+                    if dry_run:
+                        continue
+
+                    expected_token = _stat_token(info)
+                    try:
+                        current_info = os.lstat(candidate)
+                        if (
+                            _stat_token(current_info) != expected_token
+                            or not stat.S_ISREG(current_info.st_mode)
+                            or stat.S_ISLNK(current_info.st_mode)
+                            or _is_reparse_point(current_info)
+                            or candidate.resolve(strict=True).parent != root
+                        ):
+                            aggregate.skipped_unsafe += 1
+                            allowance.mark_backlog()
+                            continue
+                        candidate.unlink()
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        aggregate.error_count += 1
+                        allowance.mark_backlog()
+                        continue
+                    allowance.consume_delete(size)
+            return aggregate
 
     def recover(self, *, task_context) -> DisplayCommit | None:
         task_context.raise_if_cancelled()
@@ -320,7 +550,29 @@ class DisplayTransaction:
                 self.compatibility_image_path,
             )
 
-    def _prune_objects(self, *, current_path: Path) -> None:
+    def _prune_objects(
+        self,
+        *,
+        current_path: Path,
+        allowance=None,
+        dry_run=False,
+        planning=None,
+    ):
+        if allowance is not None:
+            if planning is None:
+                planning = {
+                    "baseline_entries": allowance.aggregate.deleted_entries,
+                    "baseline_bytes": allowance.aggregate.deleted_bytes,
+                    "entries": 0,
+                    "bytes": 0,
+                }
+            return self._prune_objects_bounded(
+                current_path=current_path,
+                allowance=allowance,
+                dry_run=dry_run,
+                planning=planning,
+            )
+
         candidates = []
         for path in self.objects_dir.glob("*.png"):
             try:
@@ -336,6 +588,114 @@ class DisplayTransaction:
                 path.unlink()
             except OSError:
                 logger.warning("Could not prune display object: %s", path)
+        return False
+
+    def _prune_objects_bounded(
+        self,
+        *,
+        current_path,
+        allowance,
+        dry_run,
+        planning,
+    ):
+        aggregate = allowance.aggregate
+        configured_root = Path(os.path.abspath(self.objects_dir))
+        try:
+            root_info = os.lstat(configured_root)
+            if (
+                not stat.S_ISDIR(root_info.st_mode)
+                or stat.S_ISLNK(root_info.st_mode)
+                or _is_reparse_point(root_info)
+            ):
+                aggregate.skipped_unsafe += 1
+                allowance.mark_backlog()
+                return True
+            root = configured_root.resolve(strict=True)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            aggregate.error_count += 1
+            allowance.mark_backlog()
+            return True
+
+        candidates = []
+        try:
+            with os.scandir(root) as iterator:
+                for entry in iterator:
+                    if not allowance.consume_scan():
+                        return True
+                    path = root / entry.name
+                    if path.suffix != ".png" or not _COMMIT_ID.fullmatch(path.stem):
+                        continue
+                    try:
+                        info = os.lstat(path)
+                        if (
+                            not stat.S_ISREG(info.st_mode)
+                            or stat.S_ISLNK(info.st_mode)
+                            or _is_reparse_point(info)
+                            or path.resolve(strict=True).parent != root
+                        ):
+                            aggregate.skipped_unsafe += 1
+                            continue
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        aggregate.error_count += 1
+                        continue
+                    candidates.append((int(info.st_mtime_ns), path.name, path, info))
+        except OSError:
+            aggregate.error_count += 1
+            allowance.mark_backlog()
+            return True
+
+        normalized_current = Path(os.path.abspath(current_path))
+        newest = sorted(candidates, reverse=True)[:MAX_RETAINED_OBJECTS]
+        keep = {normalized_current}
+        keep.update(path for _mtime, _name, path, _info in newest)
+        removable = sorted(
+            (candidate for candidate in candidates if candidate[2] not in keep),
+            key=lambda candidate: (candidate[0], candidate[1]),
+        )
+        for _mtime, _name, path, info in removable:
+            if not allowance.can_delete(0):
+                return True
+            size = max(0, int(info.st_size))
+            if (
+                planning["baseline_entries"] + planning["entries"]
+                >= allowance.budget.max_deleted
+                or planning["baseline_bytes"] + planning["bytes"] + size
+                > allowance.budget.max_deleted_bytes
+            ):
+                allowance.mark_backlog()
+                return True
+            planning["entries"] += 1
+            planning["bytes"] += size
+            aggregate.candidate_entries += 1
+            if dry_run:
+                continue
+
+            expected_token = _stat_token(info)
+            try:
+                current_info = os.lstat(path)
+                if (
+                    _stat_token(current_info) != expected_token
+                    or not stat.S_ISREG(current_info.st_mode)
+                    or stat.S_ISLNK(current_info.st_mode)
+                    or _is_reparse_point(current_info)
+                    or path.resolve(strict=True).parent != root
+                ):
+                    aggregate.skipped_unsafe += 1
+                    allowance.mark_backlog()
+                    continue
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                aggregate.error_count += 1
+                allowance.mark_backlog()
+                continue
+            allowance.consume_delete(size)
+        return False
 
     @staticmethod
     def _instance_uuid(logical_target: Mapping[str, object]) -> str | None:
