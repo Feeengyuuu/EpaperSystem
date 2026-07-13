@@ -33,7 +33,10 @@ def _config(count=26, *, duplicate_uuid=False):
         plugins.append({
             "plugin_id": f"plugin_{index:02d}",
             "name": f"Private instance {index}",
-            "plugin_settings": {"secret": f"secret-{index}"},
+            "plugin_settings": {
+                "secret": f"secret-{index}",
+                "refreshOnDisplay": False,
+            },
             "refresh": {"interval": 300},
             "instance_uuid": instance_uuid,
             "structural_generation": 2,
@@ -66,7 +69,15 @@ def _instance(acceptance):
     )[0]
 
 
-def _runtime(instance, timestamp, *, request=None, receipt=None, commit_id="a" * 32):
+def _runtime(
+    instance,
+    timestamp,
+    *,
+    request=None,
+    receipt=None,
+    commit_id="a" * 32,
+    presentation_success=None,
+):
     return {
         "schema_version": 4,
         "updated_at": timestamp,
@@ -87,7 +98,10 @@ def _runtime(instance, timestamp, *, request=None, receipt=None, commit_id="a" *
                     },
                     "live": {},
                     "theme": {},
-                    "presentation": {},
+                    "presentation": {
+                        "last_success_at": presentation_success,
+                        "next_retry_at": None,
+                    },
                 },
                 "last_good_cache": {
                     "theme_mode": "day",
@@ -99,6 +113,19 @@ def _runtime(instance, timestamp, *, request=None, receipt=None, commit_id="a" *
                 "presentation_receipt": receipt,
             },
         },
+    }
+
+
+def _presentation_request(instance, timestamp, *, request_id="request-123"):
+    return {
+        "request_id": request_id,
+        "requested_at": timestamp,
+        "origin_display_commit_id": "origin-display",
+        "origin_theme_mode": "day",
+        "structural_generation": instance.structural_generation,
+        "settings_revision": instance.settings_revision,
+        "prepared_at": None,
+        "prepared_theme_mode": None,
     }
 
 
@@ -168,7 +195,36 @@ def test_plan_selects_current_priority_winner_and_keeps_private_name_internal(ac
     assert len(plan) == 26
     assert plan[0].playlist_name == "Factory"
     assert plan[0].instance_name == "Private instance 0"
+    assert plan[0].expects_presentation_refresh is False
     assert "Private instance" not in json.dumps(plan[0].safe_identity())
+
+
+def test_plan_resolves_expected_presentation_from_settings_and_manifest(
+    acceptance,
+    tmp_path,
+):
+    config = _config()
+    first = config["playlist_config"]["playlists"][0]["plugins"][0]
+    first["plugin_settings"]["refreshOnDisplay"] = True
+    manifest_dir = tmp_path / first["plugin_id"]
+    manifest_dir.mkdir()
+    (manifest_dir / "plugin-info.json").write_text(
+        json.dumps({
+            "id": first["plugin_id"],
+            "refresh_on_display": False,
+            "capabilities": {"supports_presentation_refresh": True},
+        }),
+        encoding="utf-8",
+    )
+
+    plan = acceptance.build_acceptance_plan(
+        config,
+        now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+        plugin_root=tmp_path,
+    )
+
+    assert plan[0].expects_presentation_refresh is True
+    assert plan[1].expects_presentation_refresh is False
 
 
 def test_png_evidence_uses_rgb_pixels_and_requires_800_by_480(acceptance):
@@ -474,6 +530,7 @@ def _instance_for_plugin(acceptance, plugin_id):
         instance_uuid=base.instance_uuid,
         structural_generation=base.structural_generation,
         settings_revision=base.settings_revision,
+        expects_presentation_refresh=base.expects_presentation_refresh,
     )
 
 
@@ -920,6 +977,349 @@ def test_presentation_completion_requires_exact_receipt_and_final_commit(accepta
             request_id=request_id,
         )
     assert captured.value.code == "presentation_receipt_not_ready"
+
+
+def test_presentation_outcome_accepts_exact_no_change_lane_success(acceptance):
+    instance = _instance(acceptance)
+    requested_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    request = _presentation_request(instance, requested_at)
+    runtime = _runtime(
+        instance,
+        requested_at,
+        request=None,
+        receipt=None,
+        presentation_success=requested_at,
+    )
+    manifest = _manifest(instance, "c" * 64, requested_at)
+
+    evidence = acceptance.validate_presentation_outcome(
+        runtime,
+        manifest,
+        instance,
+        request=request,
+        expected_display_commit_id=manifest["commit_id"],
+    )
+
+    assert evidence == {
+        "completion": "no_change",
+        "request_id_hash": acceptance.hash_identifier(request["request_id"]),
+        "completed_at": requested_at,
+        "structural_generation": instance.structural_generation,
+        "settings_revision": instance.settings_revision,
+    }
+
+
+def test_presentation_no_change_rejects_display_drift(acceptance):
+    instance = _instance(acceptance)
+    requested_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    request = _presentation_request(instance, requested_at)
+    runtime = _runtime(
+        instance,
+        requested_at,
+        request=None,
+        receipt=None,
+        presentation_success=requested_at,
+    )
+    manifest = _manifest(instance, "c" * 64, requested_at)
+
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_presentation_outcome(
+            runtime,
+            manifest,
+            instance,
+            request=request,
+            expected_display_commit_id="different-display-commit",
+        )
+
+    assert captured.value.code == "presentation_no_change_display_drift"
+
+
+def test_atomic_presentation_no_change_requires_new_exact_display_marker(acceptance):
+    instance = _instance(acceptance)
+    committed_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    baseline = _runtime(
+        instance,
+        committed_at,
+        presentation_success="2026-07-13T18:00:00+00:00",
+    )
+    runtime = _runtime(
+        instance,
+        committed_at,
+        presentation_success=committed_at,
+    )
+    manifest = _manifest(instance, "c" * 64, committed_at)
+
+    evidence = acceptance.validate_atomic_presentation_no_change(
+        runtime,
+        baseline,
+        manifest,
+        instance,
+    )
+
+    assert evidence["completion"] == "no_change_atomic"
+    runtime["instances"][instance.instance_uuid]["presentation_receipt"] = {
+        "request_id": "unbound-fast-change",
+    }
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_atomic_presentation_no_change(
+            runtime,
+            baseline,
+            manifest,
+            instance,
+        )
+    assert captured.value.code == "presentation_atomic_changed_unbindable"
+    runtime["instances"][instance.instance_uuid]["presentation_receipt"] = None
+    baseline["instances"][instance.instance_uuid]["lanes"]["presentation"][
+        "last_success_at"
+    ] = committed_at
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_atomic_presentation_no_change(
+            runtime,
+            baseline,
+            manifest,
+            instance,
+        )
+    assert captured.value.code == "presentation_atomic_no_change_unproven"
+
+
+def test_presentation_outcome_rejects_request_replacement(acceptance):
+    instance = _instance(acceptance)
+    requested_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    expected = _presentation_request(instance, requested_at, request_id="expected-request")
+    replacement = _presentation_request(
+        instance,
+        requested_at,
+        request_id="replacement-request",
+    )
+    runtime = _runtime(instance, requested_at, request=replacement)
+    manifest = _manifest(instance, "c" * 64, requested_at)
+
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_presentation_outcome(
+            runtime,
+            manifest,
+            instance,
+            request=expected,
+            expected_display_commit_id=manifest["commit_id"],
+        )
+
+    assert captured.value.code == "presentation_request_replaced"
+
+
+def test_presentation_outcome_rejects_unproven_request_clear(acceptance):
+    instance = _instance(acceptance)
+    requested_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    request = _presentation_request(instance, requested_at)
+    runtime = _runtime(instance, requested_at, request=None, receipt=None)
+    manifest = _manifest(instance, "c" * 64, requested_at)
+
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_presentation_outcome(
+            runtime,
+            manifest,
+            instance,
+            request=request,
+            expected_display_commit_id=manifest["commit_id"],
+        )
+
+    assert captured.value.code == "presentation_request_cleared_unproven"
+
+
+def test_display_created_presentation_request_requires_exact_commit_and_time(acceptance):
+    instance = _instance(acceptance)
+    started_at = datetime(2026, 7, 13, 19, 1, 59, tzinfo=timezone.utc)
+    committed_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    manifest = _manifest(
+        instance,
+        "c" * 64,
+        committed_at,
+        commit_id="display-commit",
+    )
+    request = _presentation_request(instance, committed_at)
+    request["origin_display_commit_id"] = manifest["commit_id"]
+
+    acceptance.validate_display_created_presentation_request(
+        request,
+        instance,
+        manifest,
+        display_started_at=started_at,
+    )
+
+    request["origin_display_commit_id"] = "other-display"
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        acceptance.validate_display_created_presentation_request(
+            request,
+            instance,
+            manifest,
+            display_started_at=started_at,
+        )
+    assert captured.value.code == "presentation_request_origin_mismatch"
+
+
+def test_presentation_timeout_has_soft_admission_slack(acceptance):
+    ordinary = _instance_for_plugin(acceptance, "live_radar")
+    heavy = _instance_for_plugin(acceptance, "telegram_digest")
+
+    assert acceptance.presentation_timeout_for(ordinary) >= 360
+    assert acceptance.presentation_timeout_for(ordinary) > acceptance.ORDINARY_TIMEOUT_SECONDS
+    assert acceptance.presentation_timeout_for(heavy) >= acceptance.HEAVY_TIMEOUT_SECONDS
+
+
+def test_run_instance_records_prepared_request_consumed_by_exact_display(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    instance = _instance(acceptance)
+    requested_at = datetime(2026, 7, 13, 19, 1, tzinfo=timezone.utc).isoformat()
+    committed_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    request = _presentation_request(instance, requested_at)
+    request["prepared_at"] = requested_at
+    request["prepared_theme_mode"] = "day"
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(_runtime(instance, requested_at, request=request)),
+        encoding="utf-8",
+    )
+    baseline_manifest = _manifest(
+        instance,
+        "a" * 64,
+        requested_at,
+        commit_id="a" * 32,
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(baseline_manifest), encoding="utf-8")
+    final_commit = "b" * 32
+    receipt = {
+        "request_id": request["request_id"],
+        "committed_at": committed_at,
+        "display_commit_id": final_commit,
+        "structural_generation": instance.structural_generation,
+        "settings_revision": instance.settings_revision,
+        "theme_mode": "day",
+    }
+    final_runtime = _runtime(
+        instance,
+        committed_at,
+        receipt=receipt,
+        commit_id=final_commit,
+    )
+    final_manifest = _manifest(
+        instance,
+        "b" * 64,
+        committed_at,
+        commit_id=final_commit,
+    )
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=tmp_path / "unused-config.json",
+        runtime_state_path=runtime_path,
+        display_manifest_path=manifest_path,
+        output_dir=tmp_path / "evidence",
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "submit_job",
+        lambda *_args, **_kwargs: {"id": "job"},
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "poll_job",
+        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_data_evidence",
+        lambda *_args, **_kwargs: ({}, {"fresh": True}),
+    )
+    captures = []
+
+    def capture(*_args, **_kwargs):
+        captures.append(_kwargs["artifact_suffix"])
+        return (
+            final_runtime,
+            final_manifest,
+            {"hardware_written": True},
+            {"image": "display.png", "headers": "display.headers.json"},
+        )
+
+    monkeypatch.setattr(runner, "_capture_display", capture)
+
+    result = runner._run_instance(instance)
+
+    assert result["presentation_evidence"]["completion"] == "changed"
+    assert result["presentation_evidence"]["request_id_hash"] == acceptance.hash_identifier(
+        request["request_id"]
+    )
+    assert captures == ["display"]
+
+
+def test_run_instance_rejects_missing_expected_presentation_request(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    base = _instance(acceptance)
+    instance = acceptance.InstancePlan(
+        index=base.index,
+        playlist_name=base.playlist_name,
+        plugin_id=base.plugin_id,
+        instance_name=base.instance_name,
+        instance_uuid=base.instance_uuid,
+        structural_generation=base.structural_generation,
+        settings_revision=base.settings_revision,
+        expects_presentation_refresh=True,
+    )
+    timestamp = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(_runtime(instance, timestamp, request=None, receipt=None)),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(_manifest(instance, "a" * 64, timestamp)),
+        encoding="utf-8",
+    )
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=tmp_path / "unused-config.json",
+        runtime_state_path=runtime_path,
+        display_manifest_path=manifest_path,
+        output_dir=tmp_path / "evidence",
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "submit_job",
+        lambda *_args, **_kwargs: {"id": "job"},
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "poll_job",
+        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_data_evidence",
+        lambda *_args, **_kwargs: ({}, {"fresh": True}),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_capture_display",
+        lambda *_args, **_kwargs: (
+            _runtime(instance, timestamp, request=None, receipt=None),
+            _manifest(instance, "b" * 64, timestamp, commit_id="b" * 32),
+            {"hardware_written": True},
+            {"image": "display.png", "headers": "display.headers.json"},
+        ),
+    )
+
+    with pytest.raises(acceptance.EvidenceFailure) as captured:
+        runner._run_instance(instance)
+
+    assert captured.value.code == "presentation_request_missing"
 
 
 def test_safe_instance_result_never_serializes_name_uuid_settings_or_raw_error(acceptance):

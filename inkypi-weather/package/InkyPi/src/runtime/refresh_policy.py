@@ -112,17 +112,38 @@ def choose_refresh_candidate(
     """Admit at most one deterministically ordered refresh candidate."""
     data = sorted(data_candidates, key=_candidate_order)
     auxiliary = sorted(auxiliary_candidates, key=_candidate_order)
-    data_instance_uuids = {
-        candidate.instance.instance_uuid for candidate in data
+    data_by_instance_uuid = {
+        candidate.instance.instance_uuid: candidate for candidate in data
     }
-    auxiliary = [
-        candidate
-        for candidate in auxiliary
-        if not (
-            candidate.lane is RefreshLane.PRESENTATION
-            and candidate.instance.instance_uuid in data_instance_uuids
+    urgent_presentation = []
+    presentation_required_data = []
+    required_data_uuids = set()
+    filtered_auxiliary = []
+    for candidate in auxiliary:
+        data_candidate = data_by_instance_uuid.get(
+            candidate.instance.instance_uuid
         )
-    ]
+        if (
+            candidate.lane is RefreshLane.PRESENTATION
+            and data_candidate is not None
+        ):
+            data_attempt = data_candidate.last_attempt_at
+            if data_attempt is None or (
+                _instant_key(data_attempt)
+                <= _instant_key(candidate.due_since)
+            ):
+                # One data attempt gets priority for an exact instance so the
+                # presentation can use the freshest available bank/cache.
+                instance_uuid = data_candidate.instance.instance_uuid
+                if instance_uuid not in required_data_uuids:
+                    presentation_required_data.append(data_candidate)
+                    required_data_uuids.add(instance_uuid)
+                continue
+            # A short data interval must not suppress the same pending
+            # presentation forever after that attempt has already happened.
+            urgent_presentation.append(candidate)
+        filtered_auxiliary.append(candidate)
+    auxiliary = filtered_auxiliary
 
     if tier is ResourceTier.HARD:
         return AdmissionDecision(None, state)
@@ -139,6 +160,28 @@ def choose_refresh_candidate(
             thresholds,
         ):
             return AdmissionDecision(None, state)
+        if urgent_presentation:
+            return AdmissionDecision(
+                urgent_presentation[0],
+                replace(
+                    state,
+                    consecutive_data_admissions=0,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
+        if presentation_required_data:
+            return AdmissionDecision(
+                presentation_required_data[0],
+                replace(
+                    state,
+                    consecutive_data_admissions=min(
+                        3,
+                        max(0, state.consecutive_data_admissions) + 1,
+                    ),
+                    last_soft_data_admitted_monotonic=now_monotonic,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
         if data and (
             not presentation or state.consecutive_data_admissions < 3
         ):
@@ -163,6 +206,22 @@ def choose_refresh_candidate(
             ),
         )
 
+    if urgent_presentation:
+        return AdmissionDecision(
+            urgent_presentation[0],
+            replace(state, consecutive_data_admissions=0),
+        )
+    if presentation_required_data:
+        return AdmissionDecision(
+            presentation_required_data[0],
+            replace(
+                state,
+                consecutive_data_admissions=min(
+                    3,
+                    max(0, state.consecutive_data_admissions) + 1,
+                ),
+            ),
+        )
     if data and (
         not auxiliary or state.consecutive_data_admissions < 3
     ):

@@ -16,7 +16,11 @@ from runtime_paths import RuntimePaths
 def test_process_setup_preserves_inky_busy_wait_warning_filter(monkeypatch):
     import inkypi
 
-    monkeypatch.setattr(inkypi.logging.config, "fileConfig", lambda _path: None)
+    monkeypatch.setattr(
+        inkypi.logging.config,
+        "fileConfig",
+        lambda _path, **_kwargs: None,
+    )
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -24,6 +28,22 @@ def test_process_setup_preserves_inky_busy_wait_warning_filter(monkeypatch):
         warnings.warn("Busy Wait: Held high", UserWarning, stacklevel=1)
 
     assert caught == []
+
+
+def test_process_logging_preserves_preimported_operational_loggers(monkeypatch):
+    import inkypi
+
+    calls = []
+    monkeypatch.setattr(
+        inkypi.logging.config,
+        "fileConfig",
+        lambda path, **kwargs: calls.append((path, kwargs)),
+    )
+
+    inkypi._configure_process_logging()
+
+    assert len(calls) == 1
+    assert calls[0][1]["disable_existing_loggers"] is False
 
 
 def test_import_does_not_parse_cli_or_construct_or_start_services(monkeypatch):

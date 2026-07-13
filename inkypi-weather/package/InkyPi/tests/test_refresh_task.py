@@ -10360,6 +10360,50 @@ def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
     ) == playlist_before
 
 
+def test_soft_scheduler_prioritizes_presentation_after_post_request_data_attempt(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-soft-post-request-data-attempt",
+        plugin_count=2,
+        latest_refresh_time=None,
+        interval=120,
+    )
+    instances = [plugin.snapshot() for plugin in playlist.plugins]
+    unrelated, pending = instances
+    for instance in instances:
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+
+    request = _seed_presentation_request(
+        task,
+        pending,
+        requested_at=PRESENTATION_NOW - timedelta(minutes=1),
+    )
+    task.runtime_state.record_attempt(
+        pending.instance_uuid,
+        (PRESENTATION_NOW - timedelta(seconds=30)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _now: None)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+
+    assert unrelated.instance_uuid != pending.instance_uuid
+    assert entry is not None
+    assert entry.command.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert entry.command.source is CommandSource.BACKGROUND
+    assert entry.command.instance_uuid == pending.instance_uuid
+    assert entry.command.payload["presentation_request_id"] == request.request_id
+
+
 def test_non_presentation_capable_data_render_receives_no_trusted_identity(
     monkeypatch,
 ):

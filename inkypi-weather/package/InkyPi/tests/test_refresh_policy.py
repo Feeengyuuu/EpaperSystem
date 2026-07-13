@@ -710,6 +710,82 @@ def test_data_has_same_instance_priority_over_pending_presentation():
     assert decision.state.consecutive_data_admissions == 3
 
 
+def test_same_instance_presentation_runs_after_newer_data_attempt_under_soft_pressure():
+    requested_at = datetime(2026, 7, 11, 8, 0, tzinfo=UTC)
+    first_data = _candidate(
+        "shared-instance",
+        due_since=requested_at,
+    )
+    presentation = _candidate(
+        "shared-instance",
+        lane=RefreshLane.PRESENTATION,
+        reason=DueReason.PRESENTATION,
+        due_since=requested_at,
+    )
+    thresholds = ResourceThresholds(soft_spacing_seconds=60.0)
+
+    refreshed_data = _candidate(
+        "shared-instance",
+        due_since=requested_at,
+        last_attempt_at=requested_at + timedelta(seconds=1),
+    )
+    for tier in (ResourceTier.SOFT, ResourceTier.HEALTHY):
+        first = choose_refresh_candidate(
+            [first_data],
+            [presentation],
+            tier=tier,
+            state=AdmissionState(),
+            now_monotonic=100.0,
+            thresholds=thresholds,
+        )
+        assert first.candidate == first_data
+
+        second = choose_refresh_candidate(
+            [refreshed_data],
+            [presentation],
+            tier=tier,
+            state=first.state,
+            now_monotonic=160.0,
+            thresholds=thresholds,
+        )
+
+        assert second.candidate == presentation
+        assert second.state.consecutive_data_admissions == 0
+        if tier is ResourceTier.SOFT:
+            assert second.state.last_soft_renderer_admitted_monotonic == 160.0
+
+
+def test_pending_presentation_prioritizes_its_required_data_before_unrelated_backlog():
+    requested_at = datetime(2026, 7, 11, 9, 0, tzinfo=UTC)
+    unrelated = _candidate(
+        "older-unrelated",
+        due_since=requested_at - timedelta(hours=4),
+    )
+    matching = _candidate(
+        "shared-instance",
+        due_since=requested_at - timedelta(hours=1),
+        last_attempt_at=requested_at - timedelta(seconds=1),
+    )
+    presentation = _candidate(
+        "shared-instance",
+        lane=RefreshLane.PRESENTATION,
+        reason=DueReason.PRESENTATION,
+        due_since=requested_at,
+    )
+
+    for tier in (ResourceTier.SOFT, ResourceTier.HEALTHY):
+        decision = choose_refresh_candidate(
+            [unrelated, matching],
+            [presentation],
+            tier=tier,
+            state=AdmissionState(),
+            now_monotonic=100.0,
+            thresholds=ResourceThresholds(soft_spacing_seconds=60.0),
+        )
+
+        assert decision.candidate == matching
+
+
 def test_soft_admits_spaced_three_data_then_one_presentation_but_never_live_theme():
     data = [_candidate("soft-data")]
     auxiliary = [

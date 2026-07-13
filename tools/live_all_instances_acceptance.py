@@ -33,11 +33,13 @@ EXPECTED_INSTANCE_COUNT = 26
 EXPECTED_IMAGE_SIZE = (800, 480)
 ORDINARY_TIMEOUT_SECONDS = 240
 HEAVY_TIMEOUT_SECONDS = 600
+PRESENTATION_TIMEOUT_FLOOR_SECONDS = 420
 HTTP_TIMEOUT_SECONDS = 30
 STATE_SETTLE_SECONDS = 12
 POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_CACHE_ROOT = "/var/cache/inkypi"
 DEFAULT_DATA_ROOT = "/var/lib/inkypi/data"
+DEFAULT_PLUGIN_ROOT = "/opt/inkypi/current/src/plugins"
 HEALTH_RETRY_SECONDS = 20
 HEALTH_POLL_INTERVAL_SECONDS = 1.0
 HEALTH_EVENT_LIMIT = 128
@@ -185,6 +187,7 @@ class InstancePlan:
     instance_uuid: str
     structural_generation: int
     settings_revision: int
+    expects_presentation_refresh: bool
 
     @property
     def uuid_hash(self) -> str:
@@ -198,6 +201,7 @@ class InstancePlan:
             "uuid_hash": self.uuid_hash,
             "structural_generation": self.structural_generation,
             "settings_revision": self.settings_revision,
+            "presentation_expected": self.expects_presentation_refresh,
         }
 
     def request_payload(self) -> dict:
@@ -285,7 +289,66 @@ def _current_config_time(config: dict, now: datetime | None) -> datetime:
     return current.astimezone(zone)
 
 
-def build_acceptance_plan(config: dict, *, now: datetime | None = None) -> tuple[InstancePlan, ...]:
+def _strict_config_bool(value, *, code) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower() == "true"
+    raise AuditAbort(code)
+
+
+def _presentation_expectation(raw: dict, plugin_id: str, plugin_root) -> bool:
+    settings = raw.get("plugin_settings") or {}
+    if not isinstance(settings, dict):
+        raise AuditAbort("config_plugin_settings")
+    explicit = None
+    if "refreshOnDisplay" in settings:
+        explicit = _strict_config_bool(
+            settings["refreshOnDisplay"],
+            code="config_refresh_on_display",
+        )
+        if explicit is False:
+            return False
+
+    manifest_path = Path(plugin_root) / plugin_id / "plugin-info.json"
+    manifest = _read_json(
+        manifest_path,
+        code="plugin_manifest_read_failed",
+        abort=True,
+    )
+    if manifest.get("id") != plugin_id:
+        raise AuditAbort("plugin_manifest_id_mismatch")
+    if explicit is None:
+        if "refresh_on_display" in manifest:
+            expected = _strict_config_bool(
+                manifest["refresh_on_display"],
+                code="plugin_manifest_refresh_on_display",
+            )
+        else:
+            expected = bool(
+                plugin_id == "newspaper"
+                and str(settings.get("mediaRotationMode") or "rotate").lower()
+                != "single"
+            )
+    else:
+        expected = explicit
+    if not expected:
+        return False
+    capabilities = manifest.get("capabilities")
+    if (
+        not isinstance(capabilities, dict)
+        or capabilities.get("supports_presentation_refresh") is not True
+    ):
+        raise AuditAbort("plugin_manifest_presentation_capability")
+    return True
+
+
+def build_acceptance_plan(
+    config: dict,
+    *,
+    now: datetime | None = None,
+    plugin_root=DEFAULT_PLUGIN_ROOT,
+) -> tuple[InstancePlan, ...]:
     """Resolve the same current priority winner as PlaylistManager, then gate it."""
 
     if not isinstance(config, dict):
@@ -330,10 +393,11 @@ def build_acceptance_plan(config: dict, *, now: datetime | None = None) -> tuple
         if instance_uuid in seen_uuids:
             raise AuditAbort("config_duplicate_uuid", safe_details={"index": index})
         seen_uuids.add(instance_uuid)
+        plugin_id = _non_empty_text(raw.get("plugin_id"), code="config_plugin_id")
         plan.append(InstancePlan(
             index=index,
             playlist_name=playlist_name,
-            plugin_id=_non_empty_text(raw.get("plugin_id"), code="config_plugin_id"),
+            plugin_id=plugin_id,
             instance_name=_non_empty_text(raw.get("name"), code="config_instance_name"),
             instance_uuid=instance_uuid,
             structural_generation=_positive_revision(
@@ -343,6 +407,11 @@ def build_acceptance_plan(config: dict, *, now: datetime | None = None) -> tuple
             settings_revision=_positive_revision(
                 raw.get("settings_revision"),
                 code="config_settings_revision",
+            ),
+            expects_presentation_refresh=_presentation_expectation(
+                raw,
+                plugin_id,
+                plugin_root,
             ),
         ))
     return tuple(plan)
@@ -357,6 +426,7 @@ def plan_fingerprint(plan: tuple[InstancePlan, ...]) -> str:
             item.instance_uuid,
             item.structural_generation,
             item.settings_revision,
+            item.expects_presentation_refresh,
         )
         for item in plan
     ]
@@ -911,6 +981,171 @@ def validate_presentation_completion(
     }
 
 
+def _validated_presentation_request(request, instance: InstancePlan) -> dict:
+    if not isinstance(request, dict):
+        raise EvidenceFailure("presentation_request_shape")
+    if (
+        request.get("structural_generation") != instance.structural_generation
+        or request.get("settings_revision") != instance.settings_revision
+    ):
+        raise EvidenceFailure("presentation_request_revision_mismatch")
+    for field in ("request_id", "requested_at", "origin_display_commit_id"):
+        if not isinstance(request.get(field), str) or not request[field]:
+            raise EvidenceFailure("presentation_request_shape")
+    _parse_iso(request["requested_at"], code="presentation_request_time_invalid")
+    return request
+
+
+def validate_display_created_presentation_request(
+    request: dict,
+    instance: InstancePlan,
+    manifest: dict,
+    *,
+    display_started_at: datetime,
+) -> None:
+    request = _validated_presentation_request(request, instance)
+    commit_id = manifest.get("commit_id")
+    committed_at = manifest.get("committed_at")
+    if (
+        not isinstance(commit_id, str)
+        or not commit_id
+        or request.get("origin_display_commit_id") != commit_id
+    ):
+        raise EvidenceFailure("presentation_request_origin_mismatch")
+    if not isinstance(committed_at, str) or request.get("requested_at") != committed_at:
+        raise EvidenceFailure("presentation_request_time_mismatch")
+    requested_at = _parse_iso(
+        request.get("requested_at"),
+        code="presentation_request_time_invalid",
+    )
+    if display_started_at.tzinfo is None:
+        display_started_at = display_started_at.replace(tzinfo=timezone.utc)
+    if requested_at < display_started_at.astimezone(timezone.utc):
+        raise EvidenceFailure("presentation_request_predates_display")
+
+
+def validate_presentation_outcome(
+    runtime_state: dict,
+    manifest: dict,
+    instance: InstancePlan,
+    *,
+    request: dict,
+    expected_display_commit_id: str,
+) -> dict:
+    if not isinstance(expected_display_commit_id, str) or not expected_display_commit_id:
+        raise EvidenceFailure("presentation_display_commit_invalid")
+    expected = _validated_presentation_request(request, instance)
+    state = _instance_runtime(runtime_state, instance)
+    current = state.get("presentation_request")
+    if current is not None:
+        current = _validated_presentation_request(current, instance)
+        immutable_fields = (
+            "request_id",
+            "requested_at",
+            "origin_display_commit_id",
+            "origin_theme_mode",
+            "structural_generation",
+            "settings_revision",
+        )
+        if any(current.get(field) != expected.get(field) for field in immutable_fields):
+            raise EvidenceFailure("presentation_request_replaced")
+        raise EvidenceFailure("presentation_receipt_not_ready")
+
+    receipt = state.get("presentation_receipt")
+    if isinstance(receipt, dict) and receipt.get("request_id") == expected["request_id"]:
+        evidence = validate_presentation_completion(
+            runtime_state,
+            manifest,
+            instance,
+            request_id=expected["request_id"],
+        )
+        return {"completion": "changed", **evidence}
+
+    lanes = state.get("lanes")
+    presentation = lanes.get("presentation") if isinstance(lanes, dict) else None
+    if (
+        isinstance(presentation, dict)
+        and presentation.get("last_success_at") == expected["requested_at"]
+        and presentation.get("next_retry_at") is None
+    ):
+        display = runtime_state.get("display")
+        target = manifest.get("logical_target")
+        if (
+            manifest.get("commit_id") != expected_display_commit_id
+            or not isinstance(display, dict)
+            or display.get("commit_id") != expected_display_commit_id
+            or not isinstance(target, dict)
+            or target.get("instance_uuid") != instance.instance_uuid
+            or manifest.get("instance_revision")
+            != [instance.structural_generation, instance.settings_revision]
+        ):
+            raise EvidenceFailure("presentation_no_change_display_drift")
+        return {
+            "completion": "no_change",
+            "request_id_hash": hash_identifier(expected["request_id"]),
+            "completed_at": expected["requested_at"],
+            "structural_generation": expected["structural_generation"],
+            "settings_revision": expected["settings_revision"],
+        }
+    raise EvidenceFailure("presentation_request_cleared_unproven")
+
+
+def validate_atomic_presentation_no_change(
+    runtime_state: dict,
+    baseline_runtime_state: dict,
+    manifest: dict,
+    instance: InstancePlan,
+) -> dict:
+    state = _instance_runtime(runtime_state, instance)
+    baseline_state = _instance_runtime(baseline_runtime_state, instance)
+    if state.get("presentation_request") is not None:
+        raise EvidenceFailure("presentation_atomic_request_present")
+    if state.get("presentation_receipt") != baseline_state.get("presentation_receipt"):
+        raise EvidenceFailure("presentation_atomic_changed_unbindable")
+    committed_at = manifest.get("committed_at")
+    commit_id = manifest.get("commit_id")
+    if not isinstance(committed_at, str) or not committed_at:
+        raise EvidenceFailure("presentation_atomic_time_invalid")
+    _parse_iso(committed_at, code="presentation_atomic_time_invalid")
+    if not isinstance(commit_id, str) or not commit_id:
+        raise EvidenceFailure("presentation_display_commit_invalid")
+    lanes = state.get("lanes")
+    presentation = lanes.get("presentation") if isinstance(lanes, dict) else None
+    baseline_lanes = baseline_state.get("lanes")
+    baseline_presentation = (
+        baseline_lanes.get("presentation")
+        if isinstance(baseline_lanes, dict)
+        else None
+    )
+    if (
+        not isinstance(presentation, dict)
+        or presentation.get("last_success_at") != committed_at
+        or presentation.get("next_retry_at") is not None
+        or (
+            isinstance(baseline_presentation, dict)
+            and baseline_presentation.get("last_success_at") == committed_at
+        )
+    ):
+        raise EvidenceFailure("presentation_atomic_no_change_unproven")
+    display = runtime_state.get("display")
+    target = manifest.get("logical_target")
+    if (
+        not isinstance(display, dict)
+        or display.get("commit_id") != commit_id
+        or not isinstance(target, dict)
+        or target.get("instance_uuid") != instance.instance_uuid
+        or manifest.get("instance_revision")
+        != [instance.structural_generation, instance.settings_revision]
+    ):
+        raise EvidenceFailure("presentation_no_change_display_drift")
+    return {
+        "completion": "no_change_atomic",
+        "success_marker_at": committed_at,
+        "structural_generation": instance.structural_generation,
+        "settings_revision": instance.settings_revision,
+    }
+
+
 def safe_instance_result(
     instance: InstancePlan,
     *,
@@ -995,6 +1230,10 @@ def timeout_for(instance: InstancePlan) -> int:
     )
 
 
+def presentation_timeout_for(instance: InstancePlan) -> int:
+    return max(timeout_for(instance), PRESENTATION_TIMEOUT_FLOOR_SECONDS)
+
+
 class AcceptanceRunner:
     def __init__(
         self,
@@ -1007,6 +1246,7 @@ class AcceptanceRunner:
         output_dir,
         cache_root=DEFAULT_CACHE_ROOT,
         data_root=DEFAULT_DATA_ROOT,
+        plugin_root=DEFAULT_PLUGIN_ROOT,
         utcnow=lambda: datetime.now(timezone.utc),
         monotonic=time.monotonic,
         sleep=time.sleep,
@@ -1019,6 +1259,7 @@ class AcceptanceRunner:
         self.output_dir = Path(output_dir)
         self.cache_root = Path(cache_root)
         self.data_root = Path(data_root)
+        self.plugin_root = Path(plugin_root)
         self.utcnow = utcnow
         self.monotonic = monotonic
         self.sleep = sleep
@@ -1134,7 +1375,11 @@ class AcceptanceRunner:
 
     def _config_plan(self) -> tuple[InstancePlan, ...]:
         config = _read_json(self.config_path, code="config_read_failed", abort=True)
-        return build_acceptance_plan(config, now=self.utcnow())
+        return build_acceptance_plan(
+            config,
+            now=self.utcnow(),
+            plugin_root=self.plugin_root,
+        )
 
     def _assert_config_stable(self, expected_fingerprint: str) -> None:
         if plan_fingerprint(self._config_plan()) != expected_fingerprint:
@@ -1244,24 +1489,21 @@ class AcceptanceRunner:
 
             return runtime, manifest, evidence, artifacts
 
-    def _presentation_request_id(self, runtime, instance):
+    def _presentation_request(self, runtime, instance):
         state = _instance_runtime(runtime, instance)
         request = state.get("presentation_request")
         if request is None:
             return None
-        if not isinstance(request, dict):
-            raise EvidenceFailure("presentation_request_shape")
-        if (
-            request.get("structural_generation") != instance.structural_generation
-            or request.get("settings_revision") != instance.settings_revision
-        ):
-            raise EvidenceFailure("presentation_request_revision_mismatch")
-        request_id = request.get("request_id")
-        if not isinstance(request_id, str) or not request_id:
-            raise EvidenceFailure("presentation_request_shape")
-        return request_id
+        return _validated_presentation_request(request, instance)
 
-    def _wait_for_presentation(self, instance, request_id, timeout_seconds):
+    def _wait_for_presentation(
+        self,
+        instance,
+        request,
+        timeout_seconds,
+        *,
+        expected_display_commit_id,
+    ):
         deadline = self.monotonic() + timeout_seconds
         while True:
             self._ready(allow_transient_degraded=True)
@@ -1276,11 +1518,12 @@ class AcceptanceRunner:
                 abort=False,
             )
             try:
-                evidence = validate_presentation_completion(
+                evidence = validate_presentation_outcome(
                     runtime,
                     manifest,
                     instance,
-                    request_id=request_id,
+                    request=request,
+                    expected_display_commit_id=expected_display_commit_id,
                 )
                 return runtime, manifest, evidence
             except EvidenceFailure as error:
@@ -1337,6 +1580,15 @@ class AcceptanceRunner:
                     code="display_manifest_read_failed",
                     abort=False,
                 )
+            baseline_runtime = _read_json(
+                self.runtime_state_path,
+                code="runtime_state_read_failed",
+                abort=False,
+            )
+            baseline_request = self._presentation_request(
+                baseline_runtime,
+                instance,
+            )
             display_started_at = self.utcnow()
             if display_started_at.tzinfo is None:
                 display_started_at = display_started_at.replace(tzinfo=timezone.utc)
@@ -1364,29 +1616,76 @@ class AcceptanceRunner:
             )
 
             presentation_evidence = None
-            request_id = self._presentation_request_id(runtime, instance)
-            if request_id is not None:
+            current_request = self._presentation_request(runtime, instance)
+            presentation_request = None
+            presentation_origin = None
+            if baseline_request is not None:
+                presentation_origin = "preexisting"
+                if current_request is None:
+                    presentation_evidence = validate_presentation_outcome(
+                        runtime,
+                        manifest,
+                        instance,
+                        request=baseline_request,
+                        expected_display_commit_id=manifest.get("commit_id"),
+                    )
+                else:
+                    presentation_request = baseline_request
+            elif current_request is not None:
+                if not instance.expects_presentation_refresh:
+                    raise EvidenceFailure("presentation_request_unexpected")
+                validate_display_created_presentation_request(
+                    current_request,
+                    instance,
+                    manifest,
+                    display_started_at=display_started_at,
+                )
+                presentation_request = current_request
+                presentation_origin = "display_created"
+            elif instance.expects_presentation_refresh:
+                try:
+                    presentation_evidence = validate_atomic_presentation_no_change(
+                        runtime,
+                        baseline_runtime,
+                        manifest,
+                        instance,
+                    )
+                except EvidenceFailure as error:
+                    raise EvidenceFailure("presentation_request_missing") from error
+                presentation_origin = "display_created_atomic"
+            else:
+                presentation_evidence = {"completion": "not_applicable"}
+                presentation_origin = "disabled"
+
+            if presentation_request is not None:
                 _runtime, final_manifest, presentation_evidence = (
                     self._wait_for_presentation(
                         instance,
-                        request_id,
-                        timeout_seconds,
+                        presentation_request,
+                        presentation_timeout_for(instance),
+                        expected_display_commit_id=manifest.get("commit_id"),
                     )
                 )
-                _runtime, _manifest, final_display, final_artifacts = (
-                    self._capture_display(
-                        instance,
-                        baseline_manifest=manifest,
-                        artifact_suffix="final",
+                if presentation_evidence.get("completion") == "changed":
+                    _runtime, _manifest, final_display, final_artifacts = (
+                        self._capture_display(
+                            instance,
+                            baseline_manifest=manifest,
+                            artifact_suffix="final",
+                        )
                     )
-                )
-                if final_manifest.get("commit_id") != _manifest.get("commit_id"):
-                    raise EvidenceFailure("presentation_capture_commit_changed")
-                display_evidence["final"] = final_display
-                artifacts.update({
-                    "final_image": final_artifacts["image"],
-                    "final_headers": final_artifacts["headers"],
-                })
+                    if final_manifest.get("commit_id") != _manifest.get("commit_id"):
+                        raise EvidenceFailure("presentation_capture_commit_changed")
+                    display_evidence["final"] = final_display
+                    artifacts.update({
+                        "final_image": final_artifacts["image"],
+                        "final_headers": final_artifacts["headers"],
+                    })
+            if presentation_evidence is not None and presentation_origin is not None:
+                presentation_evidence = {
+                    **presentation_evidence,
+                    "request_origin": presentation_origin,
+                }
 
             return safe_instance_result(
                 instance,
@@ -1498,6 +1797,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--flask-secret", default="/var/lib/inkypi/config/flask_secret")
     parser.add_argument("--cache-root", default=DEFAULT_CACHE_ROOT)
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
+    parser.add_argument("--plugin-root", default=DEFAULT_PLUGIN_ROOT)
     parser.add_argument("--output-dir", default=None)
     return parser
 
@@ -1523,6 +1823,7 @@ def main(argv=None) -> int:
             output_dir=args.output_dir or _default_output_dir(),
             cache_root=args.cache_root,
             data_root=args.data_root,
+            plugin_root=args.plugin_root,
         )
         summary = runner.run()
     except AuditAbort as error:

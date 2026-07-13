@@ -37,6 +37,7 @@ def _config(count=26):
             "plugin_settings": {
                 "api_key": f"private-{index}",
                 "chat_id": f"private-chat-{index}",
+                "refreshOnDisplay": False,
             },
             "instance_uuid": f"{index + 1:032x}",
             "structural_generation": 2,

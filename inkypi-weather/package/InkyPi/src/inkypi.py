@@ -79,7 +79,10 @@ def display_startup_image_best_effort(app: Flask) -> bool:
 
 
 def _configure_process_logging() -> None:
-    logging.config.fileConfig(os.path.join(os.path.dirname(__file__), "config", "logging.conf"))
+    logging.config.fileConfig(
+        os.path.join(os.path.dirname(__file__), "config", "logging.conf"),
+        disable_existing_loggers=False,
+    )
     logging.getLogger("waitress.queue").setLevel(logging.ERROR)
     # Suppress the known noisy Inky hardware warning only when the process is
     # actually launched; importing the application remains side-effect free.
