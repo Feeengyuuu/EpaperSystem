@@ -6701,6 +6701,135 @@ def test_sports_live_success_does_not_advance_normal_data_cadence(monkeypatch):
     assert state.live.last_success_at == current_dt.isoformat()
 
 
+def _live_radar_runtime(name):
+    tmp_path = make_test_dir(name)
+    current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    plugin_data = _runtime_plugin_data(
+        "live_radar",
+        "LiveRadar",
+        latest_refresh_time=(current_dt - timedelta(seconds=90)).isoformat(),
+        interval=120,
+    )
+    plugin_data["plugin_settings"].update({"roomsText": "twitch|xqc|xQc", "fetchAvatars": False})
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    manifest = PluginManifest(
+        schema_version=2,
+        id="live_radar",
+        class_name="LiveRadar",
+        display_name="LiveRadar",
+        refresh_on_display=True,
+        capabilities=PluginCapabilities(
+            supports_live_refresh=True,
+            supports_presentation_refresh=True,
+        ),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": manifest,
+    }
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    data_success = (current_dt - timedelta(seconds=90)).isoformat()
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        data_success,
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(seconds=61)).isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=instance.instance_uuid,
+        changed_at=(current_dt - timedelta(seconds=30)).isoformat(),
+    )
+    anchor = (current_dt - timedelta(seconds=30)).isoformat()
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=instance.plugin_id,
+        plugin_instance=instance.name,
+        refresh_time=anchor,
+        image_hash="old",
+    )
+    return task, device_config, instance, current_dt, data_success, anchor
+
+
+def test_live_radar_live_lane_is_sixty_seconds_and_independent_of_saved_data_cadence(
+    monkeypatch,
+):
+    task, device_config, instance, current_dt, data_success, anchor = _live_radar_runtime(
+        "live-radar-independent-lanes"
+    )
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            calls,
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.instance_uuid == instance.instance_uuid
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    followup = task.refresh_queue.take(timeout=0)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert calls == ["live_radar"]
+    assert state.data.last_success_at == data_success
+    assert state.live.last_success_at == current_dt.isoformat()
+    assert device_config.refresh_info.refresh_time == anchor
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert followup.command.payload["expected_displayed_instance_uuid"] == (instance.instance_uuid)
+
+
+def test_live_radar_live_lane_never_targets_a_non_displayed_instance(monkeypatch):
+    task, _device_config, _instance, current_dt, _data_success, _anchor = _live_radar_runtime(
+        "live-radar-exact-display-only"
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+
+
 def _seed_theme_last_good(task, instance, mode, succeeded_at):
     task.runtime_state.record_success(
         instance.instance_uuid,

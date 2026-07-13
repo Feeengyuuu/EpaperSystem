@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import sys
 import time
@@ -12,6 +13,12 @@ from PIL import Image, ImageDraw
 import pytest
 
 import plugins.live_radar.live_radar as live_radar_module
+from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    read_source_provenance,
+)
 from plugins.live_radar.live_radar import (
     DEFAULT_ROOMS_TEXT,
     HEADER_ART_FILE,
@@ -69,6 +76,268 @@ def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
         "accent": accent,
     }
     return {"mode": mode, "palette": palette, "css": {}}
+
+
+def _status_result(*, ok=True, is_live=True):
+    return {
+        "ok": ok,
+        "platform": "twitch",
+        "id": "xqc",
+        "error": "provider unavailable" if not ok else "",
+        "status": {
+            "isLive": is_live,
+            "owner": "xQc",
+            "title": "Live now" if is_live else "Offline",
+            "heatValue": 100 if is_live else 0,
+        },
+    }
+
+
+def _tree_snapshot(root):
+    root = Path(root)
+    if not root.exists():
+        return None
+    return {
+        path.relative_to(root).as_posix(): (None if path.is_dir() else path.read_bytes())
+        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix())
+    }
+
+
+def test_live_radar_declares_explicit_no_change_presentation_mode():
+    plugin = _plugin()
+
+    assert "presentation_mode" in LiveRadar.__dict__
+    assert LiveRadar.__dict__["presentation_mode"] is not BasePlugin.presentation_mode
+    assert plugin.presentation_mode({"forceRefresh": True}) is PresentationMode.NO_CHANGE
+
+
+def test_live_refresh_state_activates_only_for_matching_cache_at_sixty_seconds(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin()
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "apiUrl": "https://provider.invalid/status",
+        "fetchAvatars": False,
+    }
+    current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    rooms = plugin._parse_rooms(settings)
+    cache_key = plugin._cache_key(rooms, settings["apiUrl"], False)
+    cache_path = plugin.cache_dir(leaf="cache") / f"{cache_key}.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "fetched_at": current_dt.timestamp() - 59,
+                "results": [_status_result()],
+            }
+        ),
+        encoding="utf-8",
+    )
+    plugin._fetch_statuses = lambda *_args, **_kwargs: pytest.fail("live hook called provider")
+    plugin._write_cache = lambda *_args, **_kwargs: pytest.fail("live hook wrote cache")
+
+    assert plugin.get_live_refresh_state(settings, current_dt) is None
+
+    cache_path.write_text(
+        json.dumps(
+            {
+                "fetched_at": current_dt.timestamp() - 60,
+                "results": [_status_result()],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = _tree_snapshot(cache_root)
+
+    assert plugin.get_live_refresh_state(settings, current_dt) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
+    assert _tree_snapshot(cache_root) == before
+
+
+def test_live_refresh_state_is_inactive_and_side_effect_free_without_rooms_or_cache(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin()
+    plugin._fetch_statuses = lambda *_args, **_kwargs: pytest.fail("live hook called provider")
+    plugin._write_cache = lambda *_args, **_kwargs: pytest.fail("live hook wrote cache")
+    current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+
+    assert plugin.get_live_refresh_state({}, current_dt) is None
+    assert not cache_root.exists()
+    assert (
+        plugin.get_live_refresh_state(
+            {"roomsText": "twitch|xqc|xQc", "fetchAvatars": False},
+            current_dt,
+        )
+        is None
+    )
+    assert not cache_root.exists()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"roomsJson": "[]"},
+        {"roomsJson": "not-json"},
+        {"roomsJson": "null"},
+        {"roomsJson": '{"rooms": {}}'},
+        {"roomsJson": "1"},
+        {"roomsJson": []},
+        {"roomsText": "   "},
+    ],
+    ids=[
+        "empty-array",
+        "invalid-json",
+        "json-null",
+        "wrong-rooms-type",
+        "wrong-root-type",
+        "native-empty-array",
+        "empty-rooms-text",
+    ],
+)
+def test_live_refresh_state_rejects_explicit_invalid_rooms_without_cache_access(
+    monkeypatch,
+    tmp_path,
+    settings,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin()
+    plugin._read_cache_read_only = lambda *_args, **_kwargs: pytest.fail(
+        "invalid explicit rooms reached cache lookup"
+    )
+
+    assert (
+        plugin.get_live_refresh_state(
+            settings,
+            datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+        )
+        is None
+    )
+    assert not cache_root.exists()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {
+            "roomsJson": json.dumps(
+                [{"platform": "twitch", "id": "xqc", "label": "xQc"}]
+            )
+        },
+        {"roomsJson": "[]", "roomsText": "twitch|xqc|xQc"},
+        {"roomsJson": "not-json", "roomsText": "twitch|xqc|xQc"},
+    ],
+    ids=["valid-json", "empty-json-valid-text", "invalid-json-valid-text"],
+)
+def test_live_refresh_state_keeps_explicit_valid_json_and_text_sources(settings):
+    plugin = _plugin()
+    current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    reads = []
+
+    def read_cache(cache_key):
+        reads.append(cache_key)
+        return {
+            "fetched_at": current_dt.timestamp() - 60,
+            "results": [_status_result()],
+        }
+
+    plugin._read_cache_read_only = read_cache
+
+    assert plugin.get_live_refresh_state(settings, current_dt) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize(
+    ("cache_age", "provider_result", "provider_error", "expected"),
+    [
+        (None, _status_result(), None, SourceProvenance.LIVE),
+        (10, None, None, SourceProvenance.FRESH_CACHE),
+        (120, None, RuntimeError("offline"), SourceProvenance.STALE_CACHE),
+        (None, [_status_result(ok=False)], None, SourceProvenance.LOCAL_FALLBACK),
+    ],
+    ids=["live", "fresh-cache", "stale-cache", "error-only-provider"],
+)
+def test_generate_image_attests_source_health(
+    monkeypatch,
+    cache_age,
+    provider_result,
+    provider_error,
+    expected,
+):
+    plugin = _plugin()
+    cache = _memory_cache(plugin)
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "cacheSeconds": 60,
+        "fetchAvatars": False,
+        "showSnapshots": False,
+    }
+    rooms = plugin._parse_rooms(settings)
+    key = plugin._cache_key(rooms, live_radar_module.DEFAULT_API_URL, False)
+    if cache_age is not None:
+        cache[key] = {
+            "fetched_at": time.time() - cache_age,
+            "results": [_status_result()],
+        }
+    if provider_error is not None:
+        plugin._fetch_statuses = lambda *_args, **_kwargs: (_ for _ in ()).throw(provider_error)
+    elif provider_result is not None:
+        results = provider_result if isinstance(provider_result, list) else [provider_result]
+        plugin._fetch_statuses = lambda *_args, **_kwargs: results
+    else:
+        plugin._fetch_statuses = lambda *_args, **_kwargs: pytest.fail("fresh cache called provider")
+    monkeypatch.setattr(
+        plugin,
+        "_render_dashboard",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+
+    image = plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert read_source_provenance(image) is expected
+    if expected is SourceProvenance.LOCAL_FALLBACK:
+        assert cache == {}
+
+
+def test_error_only_refresh_preserves_last_good_cache(monkeypatch):
+    plugin = _plugin()
+    cache = _memory_cache(plugin)
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "cacheSeconds": 20,
+        "fetchAvatars": False,
+        "showSnapshots": False,
+    }
+    rooms = plugin._parse_rooms(settings)
+    key = plugin._cache_key(rooms, live_radar_module.DEFAULT_API_URL, False)
+    last_good = {
+        "fetched_at": time.time() - 120,
+        "results": [_status_result()],
+    }
+    cache[key] = last_good
+    plugin._fetch_statuses = lambda *_args, **_kwargs: [_status_result(ok=False)]
+    monkeypatch.setattr(
+        plugin,
+        "_render_dashboard",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+
+    image = plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert cache[key] == last_good
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
 
 
 def test_parse_rooms_text_accepts_card_lines():

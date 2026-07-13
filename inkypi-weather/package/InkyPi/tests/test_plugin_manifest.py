@@ -449,21 +449,27 @@ def test_manifest_rejects_coerced_refresh_on_display_booleans(tmp_path, value):
         PluginManifest.from_path(manifest_path)
 
 
-def test_all_builtin_manifests_are_v2_and_only_sports_is_live():
+def test_all_builtin_manifests_are_v2_and_only_audited_plugins_are_live():
     manifests = _load_builtin_manifests()
 
     assert manifests
     assert all(item.schema_version == 2 for item in manifests)
-    assert {
-        item.id for item in manifests if item.capabilities.supports_live_refresh
-    } == {"sports_dashboard"}
+    assert {item.id for item in manifests if item.capabilities.supports_live_refresh} == {
+        "live_radar",
+        "sports_dashboard",
+    }
     assert all(
-        inspect_v1_capabilities(
-            PLUGIN_SOURCE_ROOT / item.id / f"{item.id}.py"
-        ).supports_live_refresh
+        inspect_v1_capabilities(PLUGIN_SOURCE_ROOT / item.id / f"{item.id}.py").supports_live_refresh
         for item in manifests
         if item.capabilities.supports_live_refresh
     )
+
+
+def test_live_radar_manifest_declares_live_and_presentation_capabilities():
+    manifest = PluginManifest.from_path(PLUGIN_SOURCE_ROOT / "live_radar" / "plugin-info.json")
+
+    assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_presentation_refresh is True
 
 
 def test_v1_capability_inspection_uses_ast_without_executing_source(tmp_path):

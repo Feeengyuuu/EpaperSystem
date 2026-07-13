@@ -17,6 +17,11 @@ import unicodedata
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -182,6 +187,45 @@ FAVORITE_PRIORITY = {
 
 
 class LiveRadar(BasePlugin):
+    def presentation_mode(self, settings):
+        del settings
+        return PresentationMode.NO_CHANGE
+
+    def get_live_refresh_state(self, settings, current_dt):
+        settings = settings or {}
+        explicit_rooms = {}
+        rooms_json = settings.get("roomsJson")
+        if rooms_json is not None and str(rooms_json).strip():
+            parsed_json_rooms = self._parse_rooms_json(rooms_json)
+            if parsed_json_rooms:
+                explicit_rooms["roomsJson"] = json.dumps(
+                    parsed_json_rooms,
+                    ensure_ascii=False,
+                )
+        rooms_text = settings.get("roomsText")
+        if rooms_text is not None and str(rooms_text).strip():
+            explicit_rooms["roomsText"] = rooms_text
+        if not explicit_rooms:
+            return None
+
+        rooms = self._parse_rooms(explicit_rooms)
+        if not rooms:
+            return None
+        api_url = str(settings.get("apiUrl") or DEFAULT_API_URL).strip() or DEFAULT_API_URL
+        fetch_avatars = self._bool_setting(settings.get("fetchAvatars"), True)
+        cache_entry = self._read_cache_read_only(self._cache_key(rooms, api_url, fetch_avatars))
+        results = cache_entry.get("results") if isinstance(cache_entry, dict) else None
+        if not self._results_have_success(results):
+            return None
+        try:
+            fetched_at = float(cache_entry.get("fetched_at"))
+            age_seconds = current_dt.timestamp() - fetched_at
+        except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+            return None
+        if not math.isfinite(age_seconds) or age_seconds < 60:
+            return None
+        return {"active": True, "interval_seconds": 60}
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["style_settings"] = False
@@ -205,31 +249,57 @@ class LiveRadar(BasePlugin):
         force_refresh = self._bool_setting(settings.get("forceRefresh"), False) and not theme_render_only
         show_snapshots = self._bool_setting(settings.get("showSnapshots"), True)
         snapshot_cache_seconds = self._int_setting(settings, "snapshotCacheSeconds", cache_seconds, 30, 1800)
-        avatar_cache_seconds = self._int_setting(settings, "avatarCacheSeconds", AVATAR_CACHE_SECONDS, 300, 7 * 24 * 3600)
+        avatar_cache_seconds = self._int_setting(
+            settings, "avatarCacheSeconds", AVATAR_CACHE_SECONDS, 300, 7 * 24 * 3600
+        )
 
         cache_key = self._cache_key(rooms, api_url, fetch_avatars)
         cache_entry = self._read_cache(cache_key)
         now_ts = time.time()
         warning = ""
         from_cache = False
+        provenance = SourceProvenance.LOCAL_FALLBACK
 
         cached_results = cache_entry.get("results") if isinstance(cache_entry, dict) else None
         cache_is_fresh = now_ts - float(cache_entry.get("fetched_at") or 0) < cache_seconds if cache_entry else False
-        if isinstance(cached_results, list) and (theme_render_only or (not force_refresh and cache_is_fresh)):
+        cache_has_success = self._results_have_success(cached_results)
+        if isinstance(cached_results, list) and (
+            theme_render_only or (cache_has_success and not force_refresh and cache_is_fresh)
+        ):
             results = cache_entry["results"]
             from_cache = True
+            provenance = (
+                SourceProvenance.FRESH_CACHE
+                if cache_has_success and cache_is_fresh
+                else SourceProvenance.STALE_CACHE
+                if cache_has_success
+                else SourceProvenance.LOCAL_FALLBACK
+            )
         elif theme_render_only:
             raise RuntimeError("Theme-only redraw requires a warm LiveRadar status cache.")
         else:
             try:
-                results = self._fetch_statuses(rooms, api_url, timeout, fetch_avatars)
-                self._write_cache(cache_key, {"fetched_at": now_ts, "results": results})
-            except Exception as exc:
-                logger.warning("LiveRadar status fetch failed: %s", exc)
-                if cache_entry and isinstance(cache_entry.get("results"), list):
-                    results = cache_entry["results"]
+                fetched_results = self._fetch_statuses(rooms, api_url, timeout, fetch_avatars)
+                if self._results_have_success(fetched_results):
+                    results = fetched_results
+                    self._write_cache(cache_key, {"fetched_at": now_ts, "results": results})
+                    provenance = SourceProvenance.LIVE
+                elif cache_has_success:
+                    results = cached_results
                     from_cache = True
                     warning = "STALE CACHE"
+                    provenance = SourceProvenance.STALE_CACHE
+                else:
+                    results = fetched_results
+                    warning = "FETCH ERROR"
+                    provenance = SourceProvenance.LOCAL_FALLBACK
+            except Exception as exc:
+                logger.warning("LiveRadar status fetch failed: %s", exc)
+                if cache_has_success:
+                    results = cached_results
+                    from_cache = True
+                    warning = "STALE CACHE"
+                    provenance = SourceProvenance.STALE_CACHE
                 else:
                     results = [
                         {
@@ -242,6 +312,7 @@ class LiveRadar(BasePlugin):
                         for room in rooms
                     ]
                     warning = "FETCH ERROR"
+                    provenance = SourceProvenance.LOCAL_FALLBACK
 
         generated_at = datetime.now(timezone.utc)
         try:
@@ -257,7 +328,16 @@ class LiveRadar(BasePlugin):
             }
             media_token = _THEME_RENDER_ONLY_MEDIA.set(theme_render_only)
             try:
-                return self._render_dashboard(cards, dimensions, theme, generated_at, from_cache, warning, layout)
+                image = self._render_dashboard(
+                    cards,
+                    dimensions,
+                    theme,
+                    generated_at,
+                    from_cache,
+                    warning,
+                    layout,
+                )
+                return attach_source_provenance(image, provenance)
             finally:
                 _THEME_RENDER_ONLY_MEDIA.reset(media_token)
         except Exception as exc:
@@ -266,7 +346,18 @@ class LiveRadar(BasePlugin):
                 theme = self._theme(settings, device_config)
             except Exception:
                 theme = self._fallback_theme()
-            return self._render_failure_dashboard(dimensions, theme, generated_at, exc)
+            image = self._render_failure_dashboard(dimensions, theme, generated_at, exc)
+            return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
+
+    @staticmethod
+    def _results_have_success(results):
+        return isinstance(results, list) and any(
+            isinstance(result, dict)
+            and result.get("ok", True) is not False
+            and not result.get("error")
+            and isinstance(result.get("status"), dict)
+            for result in results
+        )
 
     def _fetch_statuses(self, rooms, api_url, timeout, fetch_avatars):
         session = get_http_session()
@@ -2140,6 +2231,15 @@ class LiveRadar(BasePlugin):
     def _read_cache(self, cache_key):
         try:
             path = self._cache_path(cache_key)
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Could not read LiveRadar cache: %s", exc)
+        return {}
+
+    def _read_cache_read_only(self, cache_key):
+        try:
+            path = self.cache_dir(leaf="cache", create=False) / f"{cache_key}.json"
             if path.exists():
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
