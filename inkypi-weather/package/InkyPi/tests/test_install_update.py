@@ -1,3 +1,4 @@
+import base64
 import hashlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
@@ -5,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -66,6 +68,14 @@ class FakeLinks:
 
     def remove(self, link):
         self.targets.pop(Path(link).name, None)
+
+
+def _is_isolated_pip_check(command):
+    return (
+        len(command) >= 5
+        and command[1:4] == ["-I", "-S", "-c"]
+        and "dependency_errors" in str(command[-1])
+    )
 
 
 class FakeService:
@@ -707,7 +717,7 @@ def test_pre_switch_failure_cleans_candidate_without_touching_current(tmp_path, 
         joined = " ".join(str(item) for item in command)
         if failure == "pip" and " pip install " in f" {joined} ":
             raise subprocess.CalledProcessError(1, command)
-        if failure == "pip_check" and " pip check" in f" {joined}":
+        if failure == "pip_check" and _is_isolated_pip_check(command):
             raise subprocess.CalledProcessError(1, command)
         if failure == "migration" and "preflight.py" in joined:
             raise subprocess.CalledProcessError(1, command)
@@ -786,15 +796,33 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
         archive.writestr("install/inkypi", "candidate-launcher")
         archive.writestr("install/inkypi-update", "# candidate-updater")
         archive.writestr("install/cli/inkypi-plugin", "# candidate-cli")
+        archive.writestr("install/requirements.txt", "example==1.0\n")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     inspection = inspect_artifact(artifact, digest)
     journal = UpdateJournal.create(layout.journal_path, release_id="candidate")
     journal.transition(UpdatePhase.DOWNLOADED)
     calls = []
+
+    def run_command(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[1:3] != ["-m", "venv"]:
+            return
+        staging_venv = Path(command[-1])
+        (staging_venv / "bin").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(sys.executable, staging_venv / "bin" / "python")
+        (staging_venv / "bin" / "example-tool").write_text(
+            f"#!{staging_venv / 'bin' / 'python'}\n",
+            encoding="utf-8",
+        )
+        (staging_venv / "pyvenv.cfg").write_text(
+            f"command = python -m venv {staging_venv}\n",
+            encoding="utf-8",
+        )
+
     preparer = ArtifactPreparer(
         layout,
         config_path=tmp_path / "device.json",
-        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
+        run_command=run_command,
         disk_checker=lambda _directory, _required: None,
     )
 
@@ -805,7 +833,7 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert (release / "cli" / "inkypi-plugin").is_file()
     assert not layout.staging_path("candidate").exists()
     commands = [command for command, _kwargs in calls]
-    assert len(commands) == 5
+    assert len(commands) == 7
     pip_command = next(
         command for command in commands if command[1:4] == ["-m", "pip", "install"]
     )
@@ -818,11 +846,20 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert pip_tmpdir.parent == layout.staging_path("candidate")
     assert pip_tmpdir.name.startswith("pip-")
     assert not pip_tmpdir.exists()
+    published_venv = release / "venv_inkypi"
+    published_tool = (published_venv / "bin" / "example-tool").read_text(
+        encoding="utf-8"
+    )
+    published_config = (published_venv / "pyvenv.cfg").read_text(encoding="utf-8")
+    assert str(published_venv) in published_tool
+    assert str(published_venv) in published_config
+    assert str(layout.staging_path("candidate")) not in published_tool
+    assert str(layout.staging_path("candidate")) not in published_config
     install_index = commands.index(pip_command)
     check_index = next(
         index
         for index, command in enumerate(commands)
-        if command[1:4] == ["-m", "pip", "check"]
+        if _is_isolated_pip_check(command)
     )
     preflight_index = next(
         index
@@ -830,6 +867,574 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
         if any("preflight.py" in str(item) for item in command)
     )
     assert install_index < check_index < preflight_index
+
+
+def _compatible_venv_fixture(layout, tmp_path):
+    current = layout.release_path("current-release")
+    requirements = current / "install" / "requirements.txt"
+    requirements.parent.mkdir(parents=True, exist_ok=True)
+    requirements.write_bytes(b"example==1.0\n")
+
+    venv = current / "venv_inkypi"
+    python = venv / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sys.executable, python)
+    tool = venv / "bin" / "example-tool"
+    tool.write_text(f"#!{python}\nprint('ok')\n", encoding="utf-8")
+    package = (
+        venv
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "example.py"
+    )
+    package.parent.mkdir(parents=True, exist_ok=True)
+    package.write_text("VALUE = 'source'\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text(
+        f"home = {sys.base_prefix}\ncommand = python -m venv {venv}\n",
+        encoding="utf-8",
+    )
+
+    candidate_requirements = tmp_path / "candidate" / "install" / "requirements.txt"
+    candidate_requirements.parent.mkdir(parents=True, exist_ok=True)
+    candidate_requirements.write_bytes(requirements.read_bytes())
+    destination = tmp_path / "candidate" / "venv_inkypi"
+    return current, venv, candidate_requirements, destination, package
+
+
+def _write_example_distribution_record(site_packages, tool):
+    metadata_dir = site_packages / "example-1.0.dist-info"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata = metadata_dir / "METADATA"
+    metadata.write_text(
+        "Metadata-Version: 2.1\nName: example\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+
+    def record_value(path):
+        payload = path.read_bytes()
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+        return f"sha256={digest.decode('ascii')},{len(payload)}"
+
+    (metadata_dir / "RECORD").write_text(
+        "\n".join(
+            (
+                f"../../../bin/{tool.name},{record_value(tool)}",
+                f"example-1.0.dist-info/METADATA,{record_value(metadata)}",
+                "example-1.0.dist-info/RECORD,,",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_preparer_clones_compatible_current_venv_as_independent_tree(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    calls = []
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is True
+
+    destination_package = destination / source_package.relative_to(source_venv)
+    destination_package.write_text("VALUE = 'candidate'\n", encoding="utf-8")
+    assert source_package.read_text(encoding="utf-8") == "VALUE = 'source'\n"
+    cloned_tool = (destination / "bin" / "example-tool").read_text(encoding="utf-8")
+    assert str(destination / "bin" / "python") in cloned_tool
+    assert str(source_venv / "bin" / "python") not in cloned_tool
+    assert any(_is_isolated_pip_check(command) for command, _ in calls)
+
+
+def test_preparer_relocates_stale_console_script_and_preserves_record_integrity(
+    tmp_path,
+):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    source_python = source_venv / "bin" / "python"
+    shutil.copy2(sys.executable, source_python)
+    stale_venv = layout.staging_path("old-release") / "release" / "venv_inkypi"
+    source_tool = source_venv / "bin" / "example-tool"
+    source_tool.write_text(
+        f"#!{stale_venv / 'bin' / 'python'}\nprint('ok')\n",
+        encoding="utf-8",
+    )
+    source_site_packages = (
+        source_venv
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    _write_example_distribution_record(source_site_packages, source_tool)
+    source_record = source_site_packages / "example-1.0.dist-info" / "RECORD"
+    source_tool_before = source_tool.read_bytes()
+    source_record_before = source_record.read_bytes()
+    published_venv = layout.release_path("candidate") / "venv_inkypi"
+
+    def run_command(command, **kwargs):
+        if _is_isolated_pip_check(command):
+            return
+        if command[1:4] != ["-I", "-S", "-c"]:
+            return
+        subprocess.run(
+            command,
+            cwd=kwargs.get("cwd"),
+            timeout=kwargs.get("timeout"),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=run_command,
+        links=FakeLinks(current),
+    )
+
+    assert (
+        preparer._try_clone_current_venv(
+            requirements,
+            destination,
+            published_destination=published_venv,
+        )
+        is True
+    )
+
+    relocated_tool = (destination / "bin" / "example-tool").read_text(
+        encoding="utf-8"
+    )
+    assert str(published_venv / "bin" / "python") in relocated_tool
+    assert str(stale_venv) not in relocated_tool
+    assert source_tool.read_bytes() == source_tool_before
+    assert source_record.read_bytes() == source_record_before
+
+
+def test_preparer_rejects_clone_when_copied_environment_probe_fails(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, _source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    probe_calls = 0
+
+    def run_command(command, **_kwargs):
+        nonlocal probe_calls
+        if _is_isolated_pip_check(command):
+            return
+        if command[1:4] != ["-I", "-S", "-c"]:
+            return
+        probe_calls += 1
+        if probe_calls == 2:
+            raise subprocess.CalledProcessError(1, command)
+
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=run_command,
+        links=FakeLinks(current),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        preparer._try_clone_current_venv(requirements, destination)
+
+    assert probe_calls == 2
+
+
+def test_preparer_does_not_clone_current_venv_when_dependency_lock_differs(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, _source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    requirements.write_bytes(b"example==2.0\n")
+    calls = []
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is False
+
+    assert not destination.exists()
+    assert calls == []
+
+
+def test_preparer_rejects_unsupported_dependency_lock_syntax(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, _source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    marker_lock = b'example==1.0 ; python_version >= "3.11"\n'
+    (current / "install" / "requirements.txt").write_bytes(marker_lock)
+    requirements.write_bytes(marker_lock)
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    with pytest.raises(ArtifactError, match="unsupported syntax"):
+        preparer._try_clone_current_venv(requirements, destination)
+
+    assert not destination.exists()
+
+
+def test_preparer_rejects_current_venv_missing_locked_top_level_distribution_even_when_pip_check_passes(
+    tmp_path,
+):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = layout.release_path("current-release")
+    source_requirements = current / "install" / "requirements.txt"
+    source_requirements.parent.mkdir(parents=True, exist_ok=True)
+    source_requirements.write_bytes(b"definitely-missing-package==1.0\n")
+
+    source_venv = current / "venv_inkypi"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(source_venv)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source_python = source_venv / "bin" / "python"
+    source_site_packages = (
+        source_venv
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    if os.name == "nt":
+        source_python.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_venv / "Scripts" / "python.exe", source_python)
+        shutil.copytree(source_venv / "Lib" / "site-packages", source_site_packages)
+
+    pip_check = subprocess.run(
+        [str(source_python), "-m", "pip", "check"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert pip_check.returncode == 0
+    assert "No broken requirements found" in pip_check.stdout
+
+    candidate_requirements = tmp_path / "candidate" / "install" / "requirements.txt"
+    candidate_requirements.parent.mkdir(parents=True, exist_ok=True)
+    candidate_requirements.write_bytes(source_requirements.read_bytes())
+    destination = tmp_path / "candidate" / "venv_inkypi"
+    preparer = ArtifactPreparer(layout, links=FakeLinks(current))
+
+    assert (
+        preparer._try_clone_current_venv(candidate_requirements, destination) is False
+    )
+    assert not destination.exists()
+
+
+def test_preparer_rejects_current_venv_with_tampered_record_file_even_when_pip_check_passes(
+    tmp_path,
+):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = layout.release_path("current-release")
+    source_venv = current / "venv_inkypi"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(source_venv)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source_python = source_venv / "bin" / "python"
+    source_site_packages = (
+        source_venv
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    if os.name == "nt":
+        source_python.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_venv / "Scripts" / "python.exe", source_python)
+        shutil.copytree(source_venv / "Lib" / "site-packages", source_site_packages)
+
+    distributions = subprocess.run(
+        [
+            str(source_python),
+            "-I",
+            "-S",
+            "-c",
+            "import json,re;from importlib import metadata;"
+            "normalize=lambda value:re.sub(r'[-_.]+','-',value).lower();"
+            "print(json.dumps(sorted((normalize(item.metadata['Name']),item.version)"
+            f" for item in metadata.distributions(path=[{str(source_site_packages)!r}]))))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    locked_versions = json.loads(distributions.stdout)
+    assert any(name == "pip" for name, _version in locked_versions)
+    requirements_text = "".join(
+        f"{name}=={version}\n" for name, version in locked_versions
+    )
+    source_requirements = current / "install" / "requirements.txt"
+    source_requirements.parent.mkdir(parents=True, exist_ok=True)
+    source_requirements.write_text(requirements_text, encoding="utf-8")
+
+    record_entry = subprocess.run(
+        [
+            str(source_python),
+            "-I",
+            "-S",
+            "-c",
+            "import json,re;from importlib import metadata;"
+            "normalize=lambda value:re.sub(r'[-_.]+','-',value).lower();"
+            "distribution=next(item for item in metadata.distributions("
+            f"path=[{str(source_site_packages)!r}])"
+            " if normalize(item.metadata['Name'])=='pip');"
+            "item=next(item for item in distribution.files or ()"
+            " if item.hash is not None and item.hash.mode=='sha256'"
+            " and str(item).endswith('.py'));"
+            "print(json.dumps({'relative':str(item),"
+            "'hash':item.hash.value}))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    recorded = json.loads(record_entry.stdout)
+    tampered_file = source_site_packages / recorded["relative"]
+    with tampered_file.open("ab") as stream:
+        stream.write(b"\n# tampered RECORD payload\n")
+    if os.name == "nt":
+        with (source_venv / "Lib" / "site-packages" / recorded["relative"]).open(
+            "ab"
+        ) as stream:
+            stream.write(b"\n# tampered RECORD payload\n")
+    actual_hash = base64.urlsafe_b64encode(
+        hashlib.sha256(tampered_file.read_bytes()).digest()
+    ).rstrip(b"=")
+    assert actual_hash.decode("ascii") != recorded["hash"]
+
+    pip_check = subprocess.run(
+        [str(source_python), "-m", "pip", "check"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert pip_check.returncode == 0
+    assert "No broken requirements found" in pip_check.stdout
+
+    candidate_requirements = tmp_path / "candidate" / "install" / "requirements.txt"
+    candidate_requirements.parent.mkdir(parents=True, exist_ok=True)
+    candidate_requirements.write_bytes(source_requirements.read_bytes())
+    destination = tmp_path / "candidate" / "venv_inkypi"
+    preparer = ArtifactPreparer(layout, links=FakeLinks(current))
+
+    assert (
+        preparer._try_clone_current_venv(candidate_requirements, destination) is False
+    )
+    assert not destination.exists()
+
+
+def test_preparer_accepts_normal_system_python_symlink_in_current_venv(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    source_python = source_venv / "bin" / "python"
+    source_python.unlink()
+    try:
+        source_python.symlink_to(Path(sys.executable).resolve())
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is True
+
+    assert (destination / "bin" / "python").is_symlink()
+    assert (destination / "bin" / "python").resolve() == Path(sys.executable).resolve()
+
+
+def test_preparer_accepts_normal_chained_system_python_symlinks(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    source_python = source_venv / "bin" / "python"
+    source_python.unlink()
+    python3 = source_venv / "bin" / "python3"
+    try:
+        python3.symlink_to(Path(sys.executable).resolve())
+        source_python.symlink_to("python3")
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is True
+
+    assert (destination / "bin" / "python").resolve() == Path(sys.executable).resolve()
+
+
+def test_preparer_rejects_python_symlink_to_untrusted_external_executable(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    source_python = source_venv / "bin" / "python"
+    source_python.unlink()
+    untrusted_python = tmp_path / "untrusted" / "python"
+    untrusted_python.parent.mkdir()
+    shutil.copy2(sys.executable, untrusted_python)
+    try:
+        source_python.symlink_to(untrusted_python)
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is False
+
+    assert not destination.exists()
+
+
+def test_preparer_rejects_external_path_in_current_venv_pth_file(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    external = tmp_path / "external-packages"
+    external.mkdir()
+    (source_package.parent / "external.pth").write_text(
+        f"{external}\n",
+        encoding="utf-8",
+    )
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is False
+
+    assert not destination.exists()
+
+
+def test_preparer_rejects_unrecorded_import_pth_without_executing_it(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    sentinel = tmp_path / "pth-executed"
+    (source_package.parent / "unrecorded.pth").write_text(
+        f"import pathlib; pathlib.Path({str(sentinel)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    calls = []
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is False
+
+    assert calls == []
+    assert not sentinel.exists()
+    assert not destination.exists()
+
+
+def test_preparer_rejects_external_directory_symlink_in_current_venv(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    external = tmp_path / "external-packages"
+    external.mkdir()
+    link = source_venv / "lib" / "external-packages"
+    try:
+        link.symlink_to(external, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+
+    assert preparer._try_clone_current_venv(requirements, destination) is False
+
+    assert not destination.exists()
+
+
+def test_prepare_uses_compatible_venv_without_reinstalling_locked_dependencies(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, _requirements, _destination, source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    artifact = tmp_path / "release.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("src/inkypi.py", "# candidate")
+        archive.writestr("install/inkypi.service", "candidate-unit")
+        archive.writestr("install/inkypi", "candidate-launcher")
+        archive.writestr("install/inkypi-update", "# candidate-updater")
+        archive.writestr("install/cli/inkypi-plugin", "# candidate-cli")
+        archive.writestr("install/requirements.txt", "example==1.0\n")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    inspection = inspect_artifact(artifact, digest)
+    journal = UpdateJournal.create(layout.journal_path, release_id="candidate")
+    journal.transition(UpdatePhase.DOWNLOADED)
+    calls = []
+    preparer = ArtifactPreparer(
+        layout,
+        config_path=tmp_path / "device.json",
+        run_command=lambda command, **kwargs: calls.append((command, kwargs)),
+        disk_checker=lambda _directory, _required: None,
+        links=FakeLinks(current),
+    )
+    release = preparer.prepare(inspection, "candidate", journal)
+
+    commands = [command for command, _kwargs in calls]
+    assert not any(command[1:3] == ["-m", "venv"] for command in commands)
+    assert not any(command[1:4] == ["-m", "pip", "install"] for command in commands)
+    assert sum(_is_isolated_pip_check(command) for command in commands) == 2
+    assert any("preflight.py" in " ".join(map(str, command)) for command in commands)
+    cloned_package = (
+        release / "venv_inkypi" / source_package.relative_to(source_venv)
+    )
+    assert cloned_package.read_text(encoding="utf-8") == "VALUE = 'source'\n"
+    published_tool = (release / "venv_inkypi" / "bin" / "example-tool").read_text(
+        encoding="utf-8"
+    )
+    assert str(release / "venv_inkypi" / "bin" / "python") in published_tool
+    assert str(layout.staging_path("candidate")) not in published_tool
+    assert str(source_venv) not in published_tool
 
 
 def test_operations_scripts_are_strict_and_forbid_mutable_deployment_paths():

@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import csv
+import base64
 from dataclasses import dataclass
 import hashlib
 import hmac
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
+import platform
+import re
 import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
@@ -362,12 +368,224 @@ class ArtifactPreparer:
         python_executable=sys.executable,
         run_command=None,
         disk_checker=None,
+        links=None,
     ):
         self.layout = layout
         self.config_path = Path(config_path)
         self.python_executable = str(python_executable)
         self.run_command = run_command or _run_checked
         self.disk_checker = disk_checker
+        self.links = links or FilesystemLinks()
+
+    def _try_clone_current_venv(
+        self,
+        requirements,
+        destination,
+        *,
+        published_destination=None,
+    ) -> bool:
+        """Clone a compatible current venv without sharing mutable files."""
+
+        source = self.links.read(self.layout.current_link)
+        if source is None:
+            return False
+        candidate_requirements = Path(requirements)
+        destination_venv = Path(destination)
+        try:
+            releases_root = self.layout.releases_dir.resolve(strict=True)
+            current_release = Path(source).resolve(strict=True)
+        except OSError:
+            return False
+        if current_release.parent != releases_root:
+            return False
+
+        source_requirements = current_release / "install" / "requirements.txt"
+        source_venv = current_release / "venv_inkypi"
+        source_python = source_venv / "bin" / "python"
+        source_site_packages = (
+            source_venv
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+        regular_inputs = (source_requirements, candidate_requirements)
+        if any(path.is_symlink() or not path.is_file() for path in regular_inputs):
+            return False
+        if not source_python.is_file():
+            return False
+        if source_venv.is_symlink() or not source_venv.is_dir():
+            return False
+        if not source_site_packages.is_dir() or source_site_packages.is_symlink():
+            return False
+        if destination_venv.exists() or destination_venv.is_symlink():
+            raise ArtifactError("candidate release already contains a virtual environment")
+        try:
+            source_stat = source_requirements.stat()
+            candidate_stat = candidate_requirements.stat()
+            locks_match = source_stat.st_size == candidate_stat.st_size and hmac.compare_digest(
+                _sha256_file(source_requirements),
+                _sha256_file(candidate_requirements),
+            )
+        except OSError:
+            return False
+        if (
+            not locks_match
+            or not _venv_uses_trusted_python(source_venv, self.python_executable)
+            or _venv_has_unsafe_symlink(
+                source_venv,
+                self.layout.install_root,
+                self.python_executable,
+            )
+            or _venv_has_unsafe_path_file(source_venv)
+        ):
+            return False
+
+        locked_versions = _locked_distribution_versions(candidate_requirements)
+        try:
+            self._probe_venv_environment(
+                source_venv,
+                locked_versions,
+                cwd=current_release,
+            )
+            self._run_isolated_pip_check(
+                source_venv,
+                cwd=current_release,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return False
+
+        source_snapshot = _venv_metadata_digest(source_venv)
+        shutil.copytree(
+            source_venv,
+            destination_venv,
+            symlinks=True,
+            copy_function=shutil.copy2,
+        )
+        if _venv_metadata_digest(source_venv) != source_snapshot:
+            raise ArtifactError("current virtual environment changed while it was copied")
+        if _venv_metadata_digest(destination_venv) != source_snapshot:
+            raise ArtifactError("candidate virtual environment copy is incomplete")
+        self._finalize_candidate_venv(
+            destination_venv,
+            candidate_requirements,
+            published_destination=published_destination,
+            cwd=destination_venv,
+        )
+        return True
+
+    def _probe_venv_environment(self, venv, locked_versions, *, cwd) -> None:
+        candidate_venv = Path(venv)
+        python = candidate_venv / "bin" / "python"
+        site_packages = (
+            candidate_venv
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+        expected_abi = (
+            sys.implementation.name,
+            sys.implementation.cache_tag,
+            sys.version_info[:2],
+            platform.machine(),
+            sysconfig.get_config_var("SOABI"),
+        )
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        self.run_command(
+            [
+                str(python),
+                "-I",
+                "-S",
+                "-c",
+                _venv_environment_probe(
+                    candidate_venv,
+                    site_packages,
+                    expected_abi,
+                    locked_versions,
+                ),
+            ],
+            cwd=cwd,
+            timeout=300,
+            env=environment,
+        )
+
+    def _run_isolated_pip_check(self, venv, *, cwd) -> None:
+        candidate_venv = Path(venv)
+        python = candidate_venv / "bin" / "python"
+        site_packages = (
+            candidate_venv
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        self.run_command(
+            [
+                str(python),
+                "-I",
+                "-S",
+                "-c",
+                _isolated_pip_check_probe(site_packages),
+            ],
+            cwd=cwd,
+            timeout=120,
+            env=environment,
+        )
+
+    def _finalize_candidate_venv(
+        self,
+        venv,
+        requirements,
+        *,
+        published_destination=None,
+        cwd,
+    ) -> None:
+        candidate_venv = Path(venv)
+        published_venv = (
+            candidate_venv
+            if published_destination is None
+            else Path(published_destination)
+        )
+        if (
+            not _venv_uses_trusted_python(candidate_venv, self.python_executable)
+            or _venv_has_unsafe_symlink(
+                candidate_venv,
+                self.layout.install_root,
+                self.python_executable,
+            )
+            or _venv_has_unsafe_path_file(candidate_venv)
+        ):
+            raise ArtifactError("candidate virtual environment is not self-contained")
+
+        locked_versions = _locked_distribution_versions(requirements)
+        self._probe_venv_environment(
+            candidate_venv,
+            locked_versions,
+            cwd=cwd,
+        )
+        _normalize_venv_python_links(candidate_venv, self.python_executable)
+        _relocate_venv_paths(
+            candidate_venv,
+            published_venv,
+            install_root=self.layout.install_root,
+        )
+        if (
+            not _venv_uses_trusted_python(candidate_venv, self.python_executable)
+            or _venv_has_unsafe_symlink(
+                candidate_venv,
+                self.layout.install_root,
+                self.python_executable,
+            )
+            or _venv_has_unsafe_path_file(candidate_venv)
+        ):
+            raise ArtifactError("candidate virtual environment relocation is unsafe")
+        self._probe_venv_environment(
+            candidate_venv,
+            locked_versions,
+            cwd=cwd,
+        )
+        self._run_isolated_pip_check(candidate_venv, cwd=cwd)
 
     def prepare(self, inspection, release_id, journal):
         # Resolve the default lazily because ensure_disk_reserve is defined below.
@@ -415,38 +633,46 @@ class ArtifactPreparer:
             timeout=180,
         )
         venv = candidate / "venv_inkypi"
-        self.run_command(
-            [self.python_executable, "-m", "venv", str(venv)],
-            cwd=candidate,
-            timeout=180,
-        )
-        venv_python = venv / "bin" / "python"
         requirements = candidate / "install" / "requirements.txt"
-        with tempfile.TemporaryDirectory(prefix="pip-", dir=staging) as pip_tmpdir:
-            pip_environment = os.environ.copy()
-            pip_environment["TMPDIR"] = pip_tmpdir
-            self.run_command(
-                [
-                    str(venv_python),
-                    "-m",
-                    "pip",
-                    "install",
-                    "--require-hashes",
-                    "--no-deps",
-                    "--no-compile",
-                    "--disable-pip-version-check",
-                    "-r",
-                    str(requirements),
-                ],
-                cwd=candidate,
-                timeout=1200,
-                env=pip_environment,
-            )
-        self.run_command(
-            [str(venv_python), "-m", "pip", "check"],
-            cwd=candidate,
-            timeout=120,
+        reused_venv = self._try_clone_current_venv(
+            requirements,
+            venv,
+            published_destination=target / "venv_inkypi",
         )
+        if not reused_venv:
+            self.run_command(
+                [self.python_executable, "-m", "venv", str(venv)],
+                cwd=candidate,
+                timeout=180,
+            )
+            venv_python = venv / "bin" / "python"
+            with tempfile.TemporaryDirectory(prefix="pip-", dir=staging) as pip_tmpdir:
+                pip_environment = os.environ.copy()
+                pip_environment["TMPDIR"] = pip_tmpdir
+                self.run_command(
+                    [
+                        str(venv_python),
+                        "-m",
+                        "pip",
+                        "install",
+                        "--require-hashes",
+                        "--no-deps",
+                        "--no-compile",
+                        "--disable-pip-version-check",
+                        "-r",
+                        str(requirements),
+                    ],
+                    cwd=candidate,
+                    timeout=1200,
+                    env=pip_environment,
+                )
+            self._finalize_candidate_venv(
+                venv,
+                requirements,
+                published_destination=target / "venv_inkypi",
+                cwd=candidate,
+            )
+        venv_python = venv / "bin" / "python"
         config_source = self.config_path
         if not config_source.is_file():
             config_source = candidate / "install" / "config_base" / "device.json"
@@ -990,6 +1216,416 @@ def _safe_remove_tree(path, allowed_root) -> None:
         )
     shutil.rmtree(candidate)
     fsync_directory(candidate.parent)
+
+
+def _locked_distribution_versions(requirements) -> dict[str, str]:
+    pins = {}
+    try:
+        lines = Path(requirements).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ArtifactError("dependency lock cannot be read") from error
+    current_pin = None
+    pin_pattern = re.compile(
+        r"^([A-Za-z0-9_.-]+)==([^ \\;]+)(?:\s*\\)?\s*$"
+    )
+    hash_pattern = re.compile(r"^--hash=sha256:[0-9a-f]{64}(?:\s*\\)?$")
+    for line in lines:
+        value = line.strip()
+        if not value or value.startswith("#"):
+            continue
+        match = pin_pattern.fullmatch(value)
+        if match is None:
+            if current_pin is not None and hash_pattern.fullmatch(value):
+                continue
+            raise ArtifactError("dependency lock uses unsupported syntax")
+        name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+        version = match.group(2)
+        if name in pins:
+            raise ArtifactError(f"dependency lock contains a duplicate pin: {name}")
+        pins[name] = version
+        current_pin = name
+    if not pins:
+        raise ArtifactError("dependency lock contains no pinned distributions")
+    return pins
+
+
+def _venv_environment_probe(venv, site_packages, expected_abi, locked_versions) -> str:
+    return f"""
+from importlib import metadata
+from pathlib import Path
+import base64
+import hashlib
+import platform
+import re
+import sys
+import sysconfig
+
+expected_abi = {expected_abi!r}
+actual_abi = (
+    sys.implementation.name,
+    sys.implementation.cache_tag,
+    sys.version_info[:2],
+    platform.machine(),
+    sysconfig.get_config_var("SOABI"),
+)
+assert actual_abi == expected_abi, (actual_abi, expected_abi)
+
+venv = Path({str(venv)!r}).resolve(strict=True)
+site_packages = Path({str(site_packages)!r}).resolve(strict=True)
+assert site_packages == venv or venv in site_packages.parents
+normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+distributions = tuple(metadata.distributions(path=[str(site_packages)]))
+pairs = tuple(
+    (normalize(item.metadata.get("Name") or ""), item.version)
+    for item in distributions
+)
+assert all(name for name, _version in pairs)
+installed = dict(pairs)
+assert len(installed) == len(pairs)
+locked = {locked_versions!r}
+assert all(installed.get(name) == version for name, version in locked.items())
+assert set(installed) - set(locked) <= {{"pip"}}
+
+documentation_names = {{"copying", "license", "notice"}}
+for distribution in distributions:
+    files = distribution.files
+    assert files is not None
+    for item in files:
+        if item.hash is None:
+            continue
+        assert item.hash.mode == "sha256"
+        installed_file = Path(distribution.locate_file(item)).resolve(strict=True)
+        assert installed_file == venv or venv in installed_file.parents
+        if installed_file.parent == site_packages and (
+            installed_file.suffix.lower() in {{".md", ".rst"}}
+            or installed_file.name.lower() in documentation_names
+        ):
+            continue
+        with installed_file.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").digest()
+        actual_hash = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        assert actual_hash == item.hash.value
+"""
+
+
+def _isolated_pip_check_probe(site_packages) -> str:
+    return f"""
+from importlib import metadata
+import re
+import sys
+
+sys.path.insert(0, {str(site_packages)!r})
+from pip._vendor.packaging.markers import default_environment
+from pip._vendor.packaging.requirements import Requirement
+
+normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+distributions = tuple(metadata.distributions(path=[{str(site_packages)!r}]))
+installed = {{
+    normalize(item.metadata["Name"]): item.version
+    for item in distributions
+}}
+environment = default_environment()
+environment["extra"] = ""
+dependency_errors = []
+for distribution in distributions:
+    for raw_requirement in distribution.requires or ():
+        requirement = Requirement(raw_requirement)
+        if requirement.marker is not None and not requirement.marker.evaluate(environment):
+            continue
+        installed_version = installed.get(normalize(requirement.name))
+        if installed_version is None:
+            dependency_errors.append(f"{{requirement.name}} is missing")
+        elif requirement.specifier and installed_version not in requirement.specifier:
+            dependency_errors.append(
+                f"{{requirement.name}} {{installed_version}} does not satisfy "
+                f"{{requirement.specifier}}"
+            )
+
+if dependency_errors:
+    print("\n".join(dependency_errors), file=sys.stderr)
+    raise SystemExit(1)
+"""
+
+
+def _venv_metadata_digest(root) -> str:
+    """Fingerprint a venv tree without reading package payloads into memory."""
+
+    venv = Path(root)
+    digest = hashlib.sha256()
+    for path in sorted(venv.rglob("*"), key=lambda item: item.relative_to(venv).as_posix()):
+        relative = path.relative_to(venv).as_posix()
+        path_stat = os.lstat(path)
+        mode = path_stat.st_mode
+        if stat.S_ISDIR(mode):
+            record = ("d", relative, stat.S_IMODE(mode))
+        elif stat.S_ISREG(mode):
+            record = (
+                "f",
+                relative,
+                stat.S_IMODE(mode),
+                path_stat.st_size,
+                path_stat.st_mtime_ns,
+            )
+        elif stat.S_ISLNK(mode):
+            record = ("l", relative, os.readlink(path))
+        else:
+            raise ArtifactError(
+                f"virtual environment contains an unsupported file: {relative}"
+            )
+        digest.update(json.dumps(record, separators=(",", ":")).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _canonical_python_names() -> set[str]:
+    major, minor = sys.version_info[:2]
+    return {"python", f"python{major}", f"python{major}.{minor}"}
+
+
+def _venv_uses_trusted_python(root, trusted_python) -> bool:
+    try:
+        venv = Path(root).resolve(strict=True)
+        trusted = Path(trusted_python).resolve(strict=True)
+    except OSError:
+        return False
+    python = venv / "bin" / "python"
+    if not python.exists() and not python.is_symlink():
+        return False
+    for name in _canonical_python_names():
+        candidate = venv / "bin" / name
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        try:
+            if candidate.is_symlink():
+                if not os.path.samefile(candidate.resolve(strict=True), trusted):
+                    return False
+            elif not candidate.is_file():
+                return False
+            elif candidate.stat().st_size != trusted.stat().st_size or not hmac.compare_digest(
+                _sha256_file(candidate),
+                _sha256_file(trusted),
+            ):
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _venv_has_unsafe_symlink(root, install_root, trusted_python) -> bool:
+    try:
+        venv = Path(root).resolve(strict=True)
+        managed_root = Path(install_root).resolve(strict=True)
+        trusted = Path(trusted_python).resolve(strict=True)
+    except OSError:
+        return True
+    if trusted == managed_root or managed_root in trusted.parents:
+        return True
+    for path in venv.rglob("*"):
+        if not path.is_symlink():
+            continue
+        raw_target = os.readlink(path)
+        try:
+            resolved_target = path.resolve(strict=True)
+        except OSError:
+            return True
+        relative = path.relative_to(venv)
+        is_system_python = (
+            len(relative.parts) == 2
+            and relative.parts[0] == "bin"
+            and relative.name in _canonical_python_names()
+            and resolved_target.is_file()
+            and os.path.samefile(resolved_target, trusted)
+        )
+        if is_system_python:
+            continue
+        if not os.path.isabs(raw_target):
+            if resolved_target == venv or venv in resolved_target.parents:
+                continue
+            return True
+        return True
+    return False
+
+
+def _record_target(record, raw_path, venv) -> Path:
+    value = str(raw_path)
+    pure_path = PurePosixPath(value)
+    if not value or "\\" in value or pure_path.is_absolute():
+        raise ArtifactError("virtual environment RECORD contains an unsafe path")
+    target = record.parent.parent.joinpath(*pure_path.parts).resolve(strict=False)
+    if target != venv and venv not in target.parents:
+        raise ArtifactError("virtual environment RECORD escapes the environment")
+    return target
+
+
+def _read_record_rows(record, venv) -> list[list[str]]:
+    if record.is_symlink() or not record.is_file() or record.stat().st_size > 16 * 1024 * 1024:
+        raise ArtifactError("virtual environment RECORD is unsafe")
+    try:
+        payload = record.read_text(encoding="utf-8")
+        rows = list(csv.reader(io.StringIO(payload, newline="")))
+    except (OSError, UnicodeError, csv.Error) as error:
+        raise ArtifactError("virtual environment RECORD cannot be parsed") from error
+    if not rows or any(len(row) != 3 for row in rows):
+        raise ArtifactError("virtual environment RECORD is malformed")
+    for row in rows:
+        _record_target(record, row[0], venv)
+    return rows
+
+
+def _hashed_record_paths(venv) -> set[Path]:
+    hashed_paths = set()
+    for record in venv.rglob("*.dist-info/RECORD"):
+        for row in _read_record_rows(record, venv):
+            if not row[1]:
+                continue
+            if not re.fullmatch(r"sha256=[A-Za-z0-9_-]{43}", row[1]):
+                raise ArtifactError("virtual environment RECORD uses an unsafe hash")
+            hashed_paths.add(_record_target(record, row[0], venv))
+    return hashed_paths
+
+
+def _venv_has_unsafe_path_file(root) -> bool:
+    try:
+        venv = Path(root).resolve(strict=True)
+        hashed_paths = _hashed_record_paths(venv)
+    except (OSError, ArtifactError):
+        return True
+    candidates = tuple(venv.rglob("*.pth")) + tuple(venv.rglob("*.egg-link"))
+    for path in candidates:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+            return True
+        if path.resolve() not in hashed_paths:
+            return True
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            return True
+        for line in lines:
+            value = line.strip()
+            if (
+                not value
+                or value.startswith("#")
+                or value == "import"
+                or value.startswith("import ")
+                or value.startswith("import\t")
+            ):
+                continue
+            referenced = Path(value)
+            if not referenced.is_absolute():
+                referenced = path.parent / referenced
+            resolved_reference = referenced.resolve(strict=False)
+            if resolved_reference != venv and venv not in resolved_reference.parents:
+                return True
+    return False
+
+
+def _normalize_venv_python_links(root, trusted_python) -> None:
+    venv = Path(root)
+    trusted = Path(trusted_python).resolve(strict=True)
+    for name in _canonical_python_names():
+        candidate = venv / "bin" / name
+        if not candidate.is_symlink():
+            continue
+        candidate.unlink()
+        candidate.symlink_to(trusted)
+
+
+def _record_digest(payload) -> str:
+    digest = hashlib.sha256(payload).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _render_record_rows(rows) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerows(rows)
+    return output.getvalue()
+
+
+def _relocate_venv_paths(root, published_destination, *, install_root) -> None:
+    venv = Path(root).resolve(strict=True)
+    final_venv = Path(published_destination).resolve(strict=False)
+    managed_root = Path(install_root).resolve(strict=True)
+    final_bytes = os.fsencode(str(final_venv))
+    source_bytes = os.fsencode(str(venv))
+    separator = rb"[\\/]"
+    segment = rb"[^\\/\s'\"\x00]+"
+    managed_pattern = re.compile(
+        re.escape(os.fsencode(str(managed_root)))
+        + rb"(?:"
+        + separator
+        + segment
+        + rb")*?"
+        + separator
+        + rb"venv_inkypi"
+    )
+    source_pattern = re.compile(re.escape(source_bytes))
+    target_files = [venv / "pyvenv.cfg"]
+    bin_dir = venv / "bin"
+    if bin_dir.is_dir():
+        target_files.extend(path for path in bin_dir.rglob("*") if path.is_file())
+
+    planned = {}
+    for path in target_files:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+            continue
+        payload = path.read_bytes()
+        if b"\0" in payload:
+            continue
+        relocated = managed_pattern.sub(lambda _match: final_bytes, payload)
+        relocated = source_pattern.sub(lambda _match: final_bytes, relocated)
+        if relocated != payload:
+            planned[path.resolve()] = relocated
+
+    record_documents = {}
+    owners = {}
+    for record in venv.rglob("*.dist-info/RECORD"):
+        rows = _read_record_rows(record, venv)
+        record_documents[record] = rows
+        for index, row in enumerate(rows):
+            target = _record_target(record, row[0], venv)
+            if target in planned:
+                owners.setdefault(target, []).append((record, index))
+
+    record_updates = {}
+    for path, relocated in planned.items():
+        entries = owners.get(path, [])
+        if len(entries) > 1:
+            raise ArtifactError("multiple distributions own a relocated environment file")
+        if not entries:
+            continue
+        record, index = entries[0]
+        row = record_documents[record][index]
+        if not re.fullmatch(r"sha256=[A-Za-z0-9_-]{43}", row[1]):
+            raise ArtifactError("relocated environment file lacks a trusted RECORD hash")
+        payload = path.read_bytes()
+        if not hmac.compare_digest(row[1], f"sha256={_record_digest(payload)}"):
+            raise ArtifactError("relocated environment file fails its RECORD hash")
+        row[1] = f"sha256={_record_digest(relocated)}"
+        row[2] = str(len(relocated))
+        record_updates[record] = _render_record_rows(record_documents[record])
+
+    for path, relocated in planned.items():
+        path_mode = stat.S_IMODE(path.stat().st_mode)
+        path.write_bytes(relocated)
+        os.chmod(path, path_mode)
+    for record, payload in record_updates.items():
+        _atomic_write_text(record, payload, stat.S_IMODE(record.stat().st_mode))
+
+    for path in target_files:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+            continue
+        payload = path.read_bytes()
+        if b"\0" in payload:
+            continue
+        stale_matches = (
+            match.group(0)
+            for match in managed_pattern.finditer(payload)
+            if match.group(0) != final_bytes
+        )
+        has_staging_source = source_bytes != final_bytes and source_pattern.search(payload)
+        if next(stale_matches, None) is not None or has_staging_source:
+            raise ArtifactError("virtual environment still references a staging release")
 
 
 def _sha256_file(path) -> str:
