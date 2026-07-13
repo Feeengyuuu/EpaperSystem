@@ -6,16 +6,35 @@ import logging
 import os
 import random
 import re
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
+from plugins.daily_art.presentation_bank import (
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    DailyArtPresentationBank,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+    validate_provider_media_target,
+)
+from security.ssrf import get_ssrf_policy
+from utils.atomic_file import atomic_write_bytes
 from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_client
@@ -66,6 +85,7 @@ IMAGE_HEADERS = {
     "User-Agent": "InkyPi DailyArt/1.0",
     "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.5",
 }
+MAX_MEDIA_REDIRECTS = 4
 ARTIC_HEADERS = {
     **REQUEST_HEADERS,
     "AIC-User-Agent": "InkyPi DailyArt",
@@ -131,6 +151,14 @@ class DailyArt(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        cadence = self._rotation_cadence(settings)
+        if get_presentation_instance_uuid(settings) is None:
+            return self._generate_stateless_preview(settings, device_config)
+        if cadence == "every_refresh":
+            return self._generate_banked_image(settings, device_config)
+        return self._generate_bucketed_image(settings, device_config)
+
+    def _generate_bucketed_image(self, settings, device_config):
         dimensions = self._display_dimensions(device_config)
         now = self._now_for_device(device_config)
         rotation_key = self._rotation_key(now, settings)
@@ -162,7 +190,11 @@ class DailyArt(BasePlugin):
 
         for candidate in ordered[:attempt_limit]:
             try:
-                source_image = self._download_image_preview(candidate.image_url, dimensions, settings)
+                source_image = self._download_image_preview(
+                    candidate.image_url,
+                    dimensions,
+                    self._media_download_settings(settings, candidate.source),
+                )
                 if not source_image:
                     raise RuntimeError("image could not be downloaded")
 
@@ -231,6 +263,335 @@ class DailyArt(BasePlugin):
 
         logger.warning("DailyArt failed without usable stale cache: %s", "; ".join(errors[-4:]))
         return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
+
+    def _generate_stateless_preview(self, settings, device_config):
+        dimensions = self._display_dimensions(device_config)
+        now = self._now_for_device(device_config)
+        candidates = self._candidate_pool(settings, device_config, now)
+        ordered = self._candidate_order(
+            candidates,
+            {"schema": STATE_SCHEMA_VERSION, "buckets": {}},
+            self._rotation_key(now, settings),
+        )
+        selected, layout, errors = self._select_downloaded_artworks(
+            ordered,
+            dimensions,
+            settings,
+        )
+        if selected:
+            return self._render_selected_artworks(selected, layout, dimensions, settings)
+        logger.warning("DailyArt stateless preview failed: %s", "; ".join(errors[-4:]))
+        return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
+
+    def _generate_banked_image(self, settings, device_config):
+        dimensions = self._display_dimensions(device_config)
+        now = self._now_for_device(device_config)
+        date_key = now.strftime("%Y-%m-%d")
+        self._prune_cache_files()
+        bank = self._presentation_bank(settings, dimensions, date_key, device_config)
+        document, profile = bank.load_for_data()
+
+        protected_changed = False
+        for protected in bank.protected_records(profile):
+            try:
+                bank.load_media(protected)
+            except RuntimeError as media_error:
+                try:
+                    recovered = self._download_image_preview(
+                        protected["image_url"],
+                        dimensions,
+                        self._media_download_settings(settings, protected.get("source")),
+                    )
+                    if recovered is None:
+                        raise RuntimeError("DailyArt exact media recovery returned no image")
+                    bank.recover_media(profile, protected, recovered)
+                    protected_changed = True
+                except Exception as recovery_error:
+                    raise RuntimeError("DailyArt protected media recovery failed") from recovery_error
+                logger.info(
+                    "Recovered exact protected DailyArt media for %s after: %s",
+                    protected.get("artwork_id"),
+                    media_error,
+                )
+        if protected_changed:
+            bank.save(document)
+
+        ready = bank.ready_records(profile, prune=True)
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
+            candidates = self._candidate_pool(settings, device_config, now)
+            ordered = self._candidate_order(
+                candidates,
+                {"schema": STATE_SCHEMA_VERSION, "buckets": {}},
+                date_key,
+            )
+            existing_ids = {record["artwork_id"] for record in profile["records"]}
+            existing_urls = {record["image_url"] for record in profile["records"]}
+            attempt_limit = _bounded_int(settings.get("maxAttempts"), 10, 1, 40)
+            attempts = 0
+            for candidate in ordered:
+                if len(ready) >= READY_TARGET or attempts >= attempt_limit:
+                    break
+                if candidate.artwork_id in existing_ids or candidate.image_url in existing_urls:
+                    continue
+                attempts += 1
+                try:
+                    source_image = self._download_image_preview(
+                        candidate.image_url,
+                        dimensions,
+                        self._media_download_settings(settings, candidate.source),
+                    )
+                    if source_image is None:
+                        continue
+                    record = bank.ingest(profile, asdict(candidate), source_image)
+                except Exception as exc:
+                    logger.warning("DailyArt bank candidate failed for %s: %s", candidate.artwork_id, exc)
+                    continue
+                existing_ids.add(record["artwork_id"])
+                existing_urls.add(record["image_url"])
+                ready.append(record)
+        if profile.get("refill_in_progress") is True:
+            profile["refill_in_progress"] = len(ready) < READY_TARGET
+
+        bank.save(document)
+        ready = bank.ready_records(profile, prune=True)
+        if not ready:
+            cache = self._read_daily_cache()
+            stale_path = cache.get("image_path")
+            if stale_path and Path(stale_path).is_file():
+                return safe_open_image(stale_path).convert("RGB")
+            return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
+
+        current = bank.ensure_current(
+            document,
+            profile,
+            ready,
+            self._layout_mode(settings),
+            self._gallery_count(settings),
+        )
+        image = self._render_bank_selection(bank, profile, current, dimensions, settings)
+        self._write_banked_output_cache(image, bank, profile, current, settings, now)
+        return image
+
+    def presentation_mode(self, settings):
+        if self._rotation_cadence(settings or {}) == "every_refresh":
+            return PresentationMode.PREPARED_BANK
+        return PresentationMode.NO_CHANGE
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        if self.presentation_mode(settings) is PresentationMode.NO_CHANGE:
+            return PresentationPreparation(
+                request_id=request.request_id,
+                image=None,
+                changed=False,
+            )
+        dimensions = self._display_dimensions(device_config)
+        now = self._now_for_device(device_config)
+        bank = self._presentation_bank(
+            settings,
+            dimensions,
+            now.strftime("%Y-%m-%d"),
+            device_config,
+        )
+        document, profile = bank.load_warm()
+        committed_origin = bank.apply_trusted_origin(document, profile, request)
+        if committed_origin:
+            self._write_art_context(
+                committed_origin,
+                _datetime_or_utc(request.requested_at),
+                settings,
+            )
+        ready = bank.ready_records(profile, prune=False)
+        pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None:
+            selection = bank.choose_selection(
+                document,
+                profile,
+                ready,
+                self._layout_mode(settings),
+                self._gallery_count(settings),
+            )
+        else:
+            selection = pending
+        image = self._render_bank_selection(bank, profile, selection, dimensions, settings)
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("DailyArt receipt reconciliation requires trusted instance identity")
+        bank = self._presentation_bank_for_receipt(instance_uuid, receipt.request_id)
+        if bank is None:
+            return None
+        document, profile = bank.load_receipt_profile(receipt.request_id)
+        committed = bank.reconcile_receipt(document, profile, receipt)
+        if committed:
+            self._write_art_context(
+                committed,
+                _datetime_or_utc(receipt.committed_at),
+                settings,
+            )
+        return None
+
+    def _presentation_bank(self, settings, dimensions, date_key, device_config):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("DailyArt presentation bank requires trusted instance identity")
+        enabled_sources = self._enabled_sources(settings, device_config)
+        base_fingerprint = settings_fingerprint(
+            settings,
+            dimensions,
+            date_key,
+            enabled_sources,
+        )
+        fingerprint = instance_profile_fingerprint(base_fingerprint, instance_uuid)
+        return DailyArtPresentationBank(
+            self._presentation_state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base_fingerprint,
+            profile_settings_key=settings_key(settings, enabled_sources),
+            instance_uuid=instance_uuid,
+            date_key=date_key,
+        )
+
+    def _presentation_bank_for_receipt(self, instance_uuid, request_id):
+        state_path = self._presentation_state_path()
+        if not state_path.exists():
+            return None
+        document = read_bounded_json_object(state_path)
+        profiles = document.get("profiles")
+        if not isinstance(profiles, dict):
+            return None
+        for fingerprint, profile in profiles.items():
+            if not isinstance(profile, dict) or profile.get("instance_uuid") != instance_uuid:
+                continue
+            pending = profile.get("pending_selection")
+            if not isinstance(pending, dict) or pending.get("request_id") != request_id:
+                continue
+            return DailyArtPresentationBank(
+                state_path,
+                self._presentation_media_dir(),
+                fingerprint=fingerprint,
+                base_fingerprint=profile.get("settings_fingerprint"),
+                profile_settings_key=profile.get("settings_key"),
+                instance_uuid=instance_uuid,
+                date_key=profile.get("date_key") or pending.get("date_key"),
+            )
+        return None
+
+    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
+        selected = bank.selection_records(profile, selection, load_media=True)
+        pairs = [
+            (ArtworkCandidate(**{key: record.get(key, "") for key in ArtworkCandidate.__dataclass_fields__}), image)
+            for record, image in selected
+        ]
+        return self._render_selected_artworks(pairs, selection["layout"], dimensions, settings)
+
+    def _render_selected_artworks(self, selected, layout, dimensions, settings):
+        candidates = [candidate for candidate, _image in selected]
+        images = [ImageOps.exif_transpose(image).convert("RGB") for _candidate, image in selected]
+        if layout == "gallery":
+            return self._render_artwork_gallery(images, candidates, dimensions, settings)
+        return self._render_artwork(images[0], candidates[0], dimensions, settings)
+
+    def _select_downloaded_artworks(self, ordered, dimensions, settings):
+        attempt_limit = _bounded_int(settings.get("maxAttempts"), 10, 1, 40)
+        layout_mode = self._layout_mode(settings)
+        gallery_count = self._gallery_count(settings)
+        gallery = []
+        landscape = None
+        errors = []
+        with tempfile.TemporaryDirectory(prefix="inkypi-daily-art-preview-") as temporary:
+            self._stateless_download_dir = Path(temporary)
+            try:
+                for candidate in ordered[:attempt_limit]:
+                    try:
+                        image = self._download_image_preview(
+                            candidate.image_url,
+                            dimensions,
+                            self._media_download_settings(settings, candidate.source),
+                        )
+                        if image is None:
+                            raise RuntimeError("image could not be downloaded")
+                        if layout_mode == "single":
+                            return [(candidate, image)], "single", errors
+                        if layout_mode == "gallery" or self._is_portrait_art(image):
+                            gallery.append((candidate, image))
+                            if len(gallery) >= gallery_count:
+                                return gallery, "gallery", errors
+                        elif landscape is None:
+                            landscape = (candidate, image)
+                    except Exception as exc:
+                        errors.append(f"{candidate.artwork_id}: {exc}")
+            finally:
+                self._stateless_download_dir = None
+        if gallery:
+            return gallery, "gallery", errors
+        if landscape:
+            return [landscape], "single", errors
+        return [], "single", errors
+
+    def _write_banked_output_cache(self, image, bank, profile, selection, settings, now):
+        rotation_key = self._rotation_key(now, settings)
+        image_path = self._cache_image_path(rotation_key)
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(image_path)
+        selected = bank.selection_records(profile, selection, load_media=False)
+        artworks = [
+            {key: record.get(key, "") for key in ArtworkCandidate.__dataclass_fields__}
+            for record, _image in selected
+        ]
+        self._write_daily_cache(
+            {
+                "schema": CACHE_SCHEMA_VERSION,
+                "cache_key": self._cache_key(settings, image.size, rotation_key),
+                "rotation_key": rotation_key,
+                "generated_at": now.isoformat(),
+                "layout": selection["layout"],
+                "artwork": artworks[0],
+                "artworks": artworks,
+                "image_path": str(image_path),
+            }
+        )
+
+    def _presentation_state_path(self):
+        return self._cache_dir() / "presentation-state.json"
+
+    def _presentation_media_dir(self):
+        return self._cache_dir() / "presentation-media"
+
+    def _rotation_cadence(self, settings):
+        cadence = str((settings or {}).get("rotationCadence") or "daily").strip().lower()
+        return cadence if cadence in {"daily", "hourly", "every_refresh"} else "daily"
 
     def _display_dimensions(self, device_config):
         dimensions = self.get_dimensions(device_config)
@@ -552,21 +913,16 @@ class DailyArt(BasePlugin):
             return None
         max_bytes = _bounded_int(settings.get("maxImageBytes"), 12_000_000, 1_000_000, 25_000_000)
         timeout = _bounded_int(settings.get("imageTimeoutSeconds"), 14, 4, 40)
-        cache_dir = self._cache_dir()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()[:16]
-        tmp_path = cache_dir / f"download-{digest}.img"
-
-        try:
-            get_http_client().stream_to_file(
-                "GET",
-                image_url,
-                tmp_path,
-                headers=IMAGE_HEADERS,
-                timeout=(5, timeout),
-                max_bytes=max_bytes,
-            )
-
+        source = str(settings.get("_inkypiDailyArtSource") or "").strip().lower()
+        payload = self._download_media_bytes(
+            image_url,
+            source=source,
+            max_bytes=max_bytes,
+            timeout=timeout,
+        )
+        with tempfile.TemporaryDirectory(prefix="inkypi-daily-art-media-") as temporary:
+            tmp_path = Path(temporary) / "download.img"
+            atomic_write_bytes(tmp_path, payload, mode=0o600)
             image = safe_open_image(
                 tmp_path,
                 limits=ImageLimits(max_bytes=max_bytes),
@@ -574,12 +930,65 @@ class DailyArt(BasePlugin):
             ).convert("RGB")
             image.thumbnail((dimensions[0] * 3, dimensions[1] * 3), RESAMPLE)
             return image
-        finally:
+
+    def _download_media_bytes(self, image_url, *, source, max_bytes, timeout):
+        policy = get_ssrf_policy()
+        client = get_http_client()
+        current_url = str(image_url or "").strip()
+
+        for redirect_count in range(MAX_MEDIA_REDIRECTS + 1):
+            approved = policy.resolve_and_validate(current_url)
+            request_url = validate_provider_media_target(approved, source)
+            response = client.session.request(
+                "GET",
+                request_url,
+                headers=IMAGE_HEADERS,
+                timeout=(5, timeout),
+                stream=True,
+                allow_redirects=False,
+            )
             try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except Exception:
-                pass
+                response_url = str(getattr(response, "url", request_url) or request_url)
+                final_hop = policy.resolve_and_validate(response_url)
+                validate_provider_media_target(final_hop, source)
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_MEDIA_REDIRECTS:
+                        raise RuntimeError("DailyArt media redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("DailyArt media redirect has no Location")
+                    next_url = urljoin(final_hop.normalized_url, location)
+                    next_hop = policy.resolve_and_validate(next_url)
+                    current_url = validate_provider_media_target(next_hop, source)
+                    continue
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"DailyArt media request failed with status {status}")
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > max_bytes:
+                            raise RuntimeError("DailyArt media response exceeds its object budget")
+                    except ValueError:
+                        pass
+                payload = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("DailyArt media response exceeds its object budget")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("DailyArt media response is empty")
+                return bytes(payload)
+            finally:
+                response.close()
+        raise RuntimeError("DailyArt media redirect limit was exceeded")
+
+    def _media_download_settings(self, settings, source):
+        download_settings = dict(settings or {})
+        download_settings["_inkypiDailyArtSource"] = str(source or "").strip().lower()
+        return download_settings
 
     def _save_artwork_render(self, selected, layout, dimensions, settings, state, rotation_key, cache_key, now):
         selected = [
@@ -1092,3 +1501,13 @@ def _source_tokens(value):
 
 def _text_width(draw, text, font):
     return text_width(draw, str(text), font)
+
+
+def _datetime_or_utc(value):
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
