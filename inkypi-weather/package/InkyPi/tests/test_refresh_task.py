@@ -40,12 +40,13 @@ from runtime.refresh_contracts import (
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.cache_catalog import authoritative_cache_path
+from runtime.cache_lifecycle import DiskPressureTier
 from runtime.presentation_cache import (
     PreparedPresentationCandidate,
     PresentationCache,
     prepared_presentation_path,
 )
-from runtime.refresh_policy import ResourceSample
+from runtime.refresh_policy import AdmissionState, ResourceSample
 from runtime.render_arbiter import RenderArbiter
 from runtime.runtime_state import (
     LastGoodCacheState,
@@ -2818,7 +2819,14 @@ def _runtime_plugin_data(
     return data
 
 
-def _make_runtime_task(tmp_path, *, playlists=(), clock=None, cycle_seconds=300):
+def _make_runtime_task(
+    tmp_path,
+    *,
+    playlists=(),
+    clock=None,
+    cycle_seconds=300,
+    **task_kwargs,
+):
     clock = clock or RuntimeClock()
     device_config = RuntimeDeviceConfig(tmp_path, playlists)
     device_config.config["plugin_cycle_interval_seconds"] = cycle_seconds
@@ -2827,8 +2835,608 @@ def _make_runtime_task(tmp_path, *, playlists=(), clock=None, cycle_seconds=300)
         RecordingDisplayManager(),
         clock=clock.monotonic,
         wall_clock=clock.wall_time,
+        **task_kwargs,
     )
     return task, device_config, clock
+
+
+class RecordingCacheLifecycle:
+    def __init__(self, events, *, due=True):
+        self.events = events
+        self.is_due = due
+        self.snapshot_value = SimpleNamespace(
+            enabled=True,
+            disk_tier=SimpleNamespace(value="healthy"),
+            ran_at=None,
+            dry_run=False,
+            scanned_entries=0,
+            candidate_entries=0,
+            deleted_entries=0,
+            deleted_bytes=0,
+            retained_current=0,
+            retained_last_good=0,
+            retained_recent=0,
+            skipped_unsafe=0,
+            error_count=0,
+            backlog_entries=0,
+        )
+
+    def due(self, now_monotonic, tier):
+        self.events.append(("due", now_monotonic, getattr(tier, "value", tier)))
+        return self.is_due
+
+    def maintain(self, _retention, **kwargs):
+        self.events.append(("maintain", kwargs))
+        return self.snapshot_value
+
+    def snapshot(self):
+        return self.snapshot_value
+
+
+class RecordingLifecycleComponent:
+    def __init__(self, events, name, temp_root=None):
+        self.events = events
+        self.name = name
+        self.temp_root = temp_root
+
+    def cleanup_abandoned_jobs(self, **kwargs):
+        self.events.append((self.name, kwargs))
+        return kwargs["allowance"].aggregate
+
+    def maintenance(self, **kwargs):
+        self.events.append((self.name, kwargs))
+        return kwargs["allowance"].aggregate
+
+
+def _disk_usage(total, used):
+    return SimpleNamespace(total=total, used=used, free=total - used)
+
+
+def _isolate_scheduler_for_lifecycle_test(monkeypatch, task):
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_independent_refresh_command", lambda _dt: None)
+
+
+def test_lifecycle_maintenance_runs_on_idle_refresh_worker(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-idle-worker")
+    clock = RuntimeClock()
+    events = []
+    lifecycle = RecordingCacheLifecycle(events)
+    browser = RecordingLifecycleComponent(events, "browser", tmp_path / "browser")
+    display = RecordingLifecycleComponent(events, "display")
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        clock=clock,
+        cache_lifecycle_manager=lifecycle,
+        browser_renderer=browser,
+        display_transaction=display,
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    _isolate_scheduler_for_lifecycle_test(monkeypatch, task)
+
+    task._run_one_iteration_for_test()
+
+    assert [event[0] for event in events] == ["due", "browser", "maintain", "display"]
+    allowances = [event[1]["allowance"] for event in events[1:]]
+    assert allowances[0] is allowances[1] is allowances[2]
+
+
+def test_health_reads_only_old_or_new_frozen_lifecycle_snapshot_during_cleanup():
+    tmp_path = make_test_dir("runtime-lifecycle-atomic-health-snapshot")
+    events = []
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingBrowser:
+        def cleanup_abandoned_jobs(self, **kwargs):
+            for _index in range(17):
+                assert kwargs["allowance"].consume_scan() is True
+            started.set()
+            assert release.wait(1.0)
+            return kwargs["allowance"].aggregate
+
+    lifecycle = RecordingCacheLifecycle(events)
+    lifecycle.snapshot_value.ran_at = "2026-07-11T12:00:00+00:00"
+    lifecycle.snapshot_value.scanned_entries = 5
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=lifecycle,
+        browser_renderer=BlockingBrowser(),
+        display_transaction=None,
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    before = task.cache_lifecycle_snapshot()
+    failures = []
+
+    def maintain():
+        try:
+            task._run_cache_lifecycle_maintenance(DiskPressureTier.HEALTHY)
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=maintain)
+    worker.start()
+    try:
+        assert started.wait(1.0)
+        during = task.cache_lifecycle_snapshot()
+        assert during is before
+        assert during.ran_at == "2026-07-11T12:00:00+00:00"
+        assert during.scanned_entries == 5
+    finally:
+        release.set()
+        worker.join(1.0)
+
+    assert worker.is_alive() is False
+    assert failures == []
+    after = task.cache_lifecycle_snapshot()
+    assert after is not before
+    assert after.ran_at != before.ran_at
+    assert after.scanned_entries == 17
+
+
+def test_pending_manual_job_preempts_healthy_lifecycle_cleanup(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-manual-preempts")
+    events = []
+    lifecycle = RecordingCacheLifecycle(events)
+    task, _device_config, clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=lifecycle,
+        browser_renderer=RecordingLifecycleComponent(events, "browser", tmp_path / "browser"),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="manual",
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    task.refresh_queue.submit(command)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+
+    task._run_one_iteration_for_test()
+
+    assert events == []
+
+
+def test_selected_display_preempts_cleanup_and_renderer_admission(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-display-preempts-probe")
+    events = []
+    task, _device_config, clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=RecordingLifecycleComponent(events, "browser"),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    display_command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        plugin_id="cached",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_select_prepared_display_retry_command",
+        lambda _dt: display_command,
+    )
+    monkeypatch.setattr(
+        task,
+        "_select_cached_display_command",
+        lambda _dt: pytest.fail("prepared display selection fell through"),
+    )
+    monkeypatch.setattr(
+        task,
+        "_select_independent_refresh_command",
+        lambda _dt: pytest.fail("display probe also admitted a renderer"),
+    )
+
+    selected = task._schedule_if_due()
+
+    assert selected is display_command
+    assert task.refresh_queue.snapshot().depth == 1
+    assert task.refresh_queue.take(timeout=0).command == display_command
+    assert events == []
+
+
+@pytest.mark.parametrize("initial_used", [9_000_000_000, 9_500_000_000])
+def test_soft_or_hard_disk_maintains_then_resamples_before_renderer_admission(
+    monkeypatch,
+    initial_used,
+):
+    tmp_path = make_test_dir(f"runtime-lifecycle-pressure-{initial_used}")
+    events = []
+    samples = iter(
+        [
+            _disk_usage(10_000_000_000, initial_used),
+            _disk_usage(10_000_000_000, 1_000_000_000),
+        ]
+    )
+    sample_calls = []
+
+    def sample(root):
+        sample_calls.append(Path(root))
+        events.append(("sample",))
+        return next(samples)
+
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=RecordingLifecycleComponent(events, "browser", tmp_path / "browser"),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=sample,
+    )
+    _isolate_scheduler_for_lifecycle_test(monkeypatch, task)
+
+    task._run_one_iteration_for_test()
+
+    assert len(sample_calls) == 2
+    assert [event[0] for event in events] == [
+        "sample",
+        "due",
+        "browser",
+        "maintain",
+        "display",
+        "sample",
+    ]
+
+
+@pytest.mark.parametrize(
+    "intent",
+    [
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.PRESENTATION_REFRESH,
+        RefreshIntent.LIVE_REFRESH,
+        RefreshIntent.THEME_REDRAW,
+        RefreshIntent.THEME_CATCHUP,
+        RefreshIntent.MANUAL_RENDER,
+    ],
+)
+def test_persistent_hard_disk_blocks_renderer_before_any_state_mutation(
+    monkeypatch,
+    intent,
+):
+    tmp_path = make_test_dir(f"runtime-lifecycle-hard-gate-{intent.value}")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    playlist.current_plugin_index = 1
+    playlist.plugin_rotation_queue = [playlist.plugins[0].instance_uuid]
+    playlist.plugin_rotation_pool = [
+        instance.instance_uuid for instance in playlist.plugins
+    ]
+    playlist.plugin_rotation_recent_history = [playlist.plugins[1].instance_uuid]
+    events = []
+    task, device_config, clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=RecordingLifecycleComponent(
+            events,
+            "browser",
+            tmp_path / "browser-jobs",
+        ),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 9_500_000_000),
+    )
+    instance = playlist.plugins[0].snapshot()
+    task._admission_state = AdmissionState(2, 17.0, 19.0)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        "2026-07-12T12:00:00+00:00",
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="night",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at="2026-07-12T12:00:00+00:00",
+        ),
+    )
+    task.runtime_state.request_presentation(
+        instance.instance_uuid,
+        PresentationRequestState(
+            request_id=uuid.uuid4().hex,
+            requested_at="2026-07-12T12:01:00+00:00",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            origin_theme_mode="night",
+            origin_display_commit_id="display-sentinel",
+        ),
+    )
+    task.retry_registry.mark_failure("sentinel", clock.monotonic())
+    device_config.config.update(
+        {
+            "active_theme": "night",
+            "active_theme_info": {"mode": "night", "sentinel": True},
+        }
+    )
+
+    before_runtime = task.runtime_state.snapshot()
+    before_admission = task._admission_state
+    before_playlist = copy.deepcopy(playlist.to_dict())
+    before_anchor = copy.deepcopy(device_config.refresh_info.to_dict())
+    before_theme = copy.deepcopy(device_config.config)
+    before_retry = task.retry_registry.snapshot()
+    before_scheduler = task.scheduler_state.snapshot()
+
+    source = (
+        CommandSource.MANUAL
+        if intent is RefreshIntent.MANUAL_RENDER
+        else CommandSource.SCHEDULER
+    )
+    kind = (
+        CommandKind.DISPLAY
+        if intent is RefreshIntent.MANUAL_RENDER
+        else CommandKind.CACHE_REFRESH
+    )
+    command = RefreshCommand.create(
+        kind=kind,
+        source=source,
+        plugin_id=instance.plugin_id,
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={"settings": {"sentinel": True}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=intent,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(
+        task,
+        "_record_runtime_attempt",
+        lambda _command: pytest.fail("hard-gated renderer recorded a lane attempt"),
+    )
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: pytest.fail("hard-gated renderer reached plugin/provider work"),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda _reason: None)
+
+    task._process_queue_entry(entry)
+
+    finished = task.refresh_queue.get_job(submitted.id)
+    assert finished.status is JobStatus.CANCELED
+    assert finished.error_code == "disk_pressure_hard"
+    assert [event[0] for event in events] == [
+        "due",
+        "browser",
+        "maintain",
+        "display",
+    ]
+    assert task.runtime_state.snapshot() == before_runtime
+    assert task._admission_state == before_admission
+    assert playlist.to_dict() == before_playlist
+    assert device_config.refresh_info.to_dict() == before_anchor
+    assert device_config.config == before_theme
+    assert task.retry_registry.snapshot() == before_retry
+    assert task.scheduler_state.snapshot() == before_scheduler
+
+
+def test_display_cache_is_allowed_while_disk_remains_hard(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-hard-allows-display-cache")
+    events = []
+    task, _device_config, clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=RecordingLifecycleComponent(events, "browser"),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 9_500_000_000),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="cached",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    executed = []
+    monkeypatch.setattr(task, "_execute_command", executed.append)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda _reason: None)
+
+    task._process_queue_entry(entry)
+
+    assert executed == [command]
+    assert task.refresh_queue.get_job(submitted.id).status is JobStatus.SUCCEEDED
+    assert events == []
+
+
+def test_hard_disk_gate_prevents_admission_state_selection(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-hard-before-admission")
+    events = []
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=RecordingLifecycleComponent(events, "browser"),
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 9_500_000_000),
+    )
+    task._admission_state = AdmissionState(3, 27.0, 29.0)
+    before = task._admission_state
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(
+        task,
+        "_select_independent_refresh_command",
+        lambda _dt: pytest.fail("hard disk reached admission chooser"),
+    )
+
+    task._schedule_if_due()
+
+    assert task._admission_state == before
+    assert [event[0] for event in events] == [
+        "due",
+        "browser",
+        "maintain",
+        "display",
+    ]
+
+
+def test_cache_lifecycle_yields_to_stop_or_new_queue_work():
+    tmp_path = make_test_dir("runtime-lifecycle-yield-signals")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[])
+
+    assert task._cache_lifecycle_should_yield() is False
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="queued",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    task.refresh_queue.submit(command)
+    assert task._cache_lifecycle_should_yield() is True
+
+    task.refresh_queue.take(timeout=0)
+    task.stop_event.set()
+    assert task._cache_lifecycle_should_yield() is True
+
+
+@pytest.mark.parametrize("preemption", ["queue", "stop"])
+def test_cleanup_preemption_aborts_remaining_components_and_renderer_admission(
+    monkeypatch,
+    preemption,
+):
+    tmp_path = make_test_dir(f"runtime-lifecycle-preemption-{preemption}")
+    events = []
+
+    class PreemptingBrowser:
+        action = None
+
+        def cleanup_abandoned_jobs(self, **kwargs):
+            events.append(("browser", kwargs))
+            self.action()
+            assert kwargs["allowance"].consume_scan() is False
+            return kwargs["allowance"].aggregate
+
+    browser = PreemptingBrowser()
+    task, _device_config, clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=RecordingCacheLifecycle(events),
+        browser_renderer=browser,
+        display_transaction=RecordingLifecycleComponent(events, "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    queued_command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="preempting-display",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    browser.action = (
+        (lambda: task.refresh_queue.submit(queued_command))
+        if preemption == "queue"
+        else task.stop_event.set
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(
+        task,
+        "_select_independent_refresh_command",
+        lambda _dt: pytest.fail("cleanup preemption still admitted a renderer"),
+    )
+
+    task._schedule_if_due()
+
+    assert [event[0] for event in events] == ["due", "browser"]
+    assert task.refresh_queue.snapshot().depth == (1 if preemption == "queue" else 0)
+
+
+def test_cleanup_exception_is_redacted_and_does_not_create_scheduler_backoff(
+    monkeypatch,
+    caplog,
+):
+    tmp_path = make_test_dir("runtime-lifecycle-cleanup-exception")
+    lifecycle = RecordingCacheLifecycle([])
+
+    class ExplodingBrowser:
+        def cleanup_abandoned_jobs(self, **_kwargs):
+            raise RuntimeError("secret C:/private/uuid-cache-path")
+
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        cache_lifecycle_manager=lifecycle,
+        browser_renderer=ExplodingBrowser(),
+        display_transaction=RecordingLifecycleComponent([], "display"),
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    _isolate_scheduler_for_lifecycle_test(monkeypatch, task)
+    before_retry = task.retry_registry.snapshot()
+    before_failure = task.scheduler_state.snapshot().last_failure_wall
+
+    with caplog.at_level("WARNING"):
+        task._schedule_if_due()
+
+    snapshot = task.cache_lifecycle_snapshot()
+    assert snapshot.error_count == lifecycle.snapshot().error_count + 1
+    assert task.retry_registry.snapshot() == before_retry
+    assert task.scheduler_state.snapshot().last_failure_wall == before_failure
+    assert "secret C:/private" not in caplog.text
+    assert "uuid-cache-path" not in caplog.text
+
+
+def test_default_lifecycle_uses_runtime_cache_browser_and_display_roots(monkeypatch):
+    tmp_path = make_test_dir("runtime-lifecycle-actual-roots")
+    events = []
+    browser = RecordingLifecycleComponent(
+        events,
+        "browser",
+        tmp_path / "actual-browser-root",
+    )
+    display = RecordingLifecycleComponent(events, "display")
+    display_manager = RecordingDisplayManager()
+    display_manager.transaction = display
+    device_config = RuntimeDeviceConfig(tmp_path, [])
+    clock = RuntimeClock()
+    monkeypatch.setattr(refresh_task_module, "get_browser_renderer", lambda: browser)
+    task = RefreshTask(
+        device_config,
+        display_manager,
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+        disk_usage=lambda _root: _disk_usage(10_000_000_000, 1_000_000_000),
+    )
+    _isolate_scheduler_for_lifecycle_test(monkeypatch, task)
+
+    task._schedule_if_due()
+
+    assert task.cache_lifecycle.plugin_image_dir == Path(tmp_path).resolve()
+    assert task._browser_renderer is browser
+    assert task._browser_renderer.temp_root == tmp_path / "actual-browser-root"
+    assert task._display_transaction is display
+    assert [event[0] for event in events] == ["browser", "display"]
 
 
 @pytest.mark.parametrize(
@@ -6831,7 +7439,7 @@ def test_scheduler_enqueues_at_most_one_refresh_candidate_per_probe(monkeypatch)
     assert entries[0].command.intent is RefreshIntent.DATA_REFRESH
 
 
-def test_display_and_due_refresh_for_same_instance_are_distinct_serial_commands(
+def test_display_and_due_refresh_for_same_instance_are_serial_across_probes(
     monkeypatch,
 ):
     tmp_path = make_test_dir("independent-display-and-refresh")
@@ -6844,7 +7452,7 @@ def test_display_and_due_refresh_for_same_instance_are_distinct_serial_commands(
             interval=60,
         )
     )
-    task, device_config, _clock = _make_runtime_task(
+    task, device_config, clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         cycle_seconds=60,
@@ -6869,17 +7477,22 @@ def test_display_and_due_refresh_for_same_instance_are_distinct_serial_commands(
     )
 
     task._schedule_if_due()
-    commands = []
-    while (entry := task.refresh_queue.take(timeout=0)) is not None:
-        commands.append(entry.command)
+    display_entry = task.refresh_queue.take(timeout=0)
+    assert display_entry is not None
+    assert task.refresh_queue.take(timeout=0) is None
+    task._process_queue_entry(display_entry)
 
-    assert [command.intent for command in commands] == [
+    clock.advance(30)
+    task._schedule_if_due()
+    refresh_entry = task.refresh_queue.take(timeout=0)
+    assert refresh_entry is not None
+    assert task.refresh_queue.take(timeout=0) is None
+
+    assert [display_entry.command.intent, refresh_entry.command.intent] == [
         RefreshIntent.DISPLAY_CACHE,
         RefreshIntent.DATA_REFRESH,
     ]
-    assert {command.instance_uuid for command in commands} == {
-        playlist.plugins[0].instance_uuid
-    }
+    assert display_entry.command.instance_uuid == refresh_entry.command.instance_uuid
 
 
 def test_soft_pressure_makes_spaced_fair_progress_across_ordinary_instances(

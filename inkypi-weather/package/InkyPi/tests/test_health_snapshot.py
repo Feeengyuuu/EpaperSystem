@@ -3,6 +3,7 @@ import time
 from types import MappingProxyType, SimpleNamespace
 
 from src.health import HealthCollector, HealthPublisher, ReadinessEvaluator
+import src.health as health_module
 
 
 class FakeClock:
@@ -263,7 +264,10 @@ def test_health_collector_start_never_waits_for_core_component_lock(tmp_path):
     collector.stop(join_timeout=1.0)
 
 
-def test_health_collection_triggers_only_lightweight_due_cache_maintenance(tmp_path):
+def test_health_collection_does_not_run_cache_maintenance_or_disk_io(
+    tmp_path,
+    monkeypatch,
+):
     calls = []
     cache_manager = SimpleNamespace(
         maintenance_if_due=lambda: calls.append("maintenance") or False,
@@ -271,6 +275,24 @@ def test_health_collection_triggers_only_lightweight_due_cache_maintenance(tmp_p
     refresh_task = SimpleNamespace(
         lifecycle=SimpleNamespace(
             snapshot=lambda: (_ for _ in ()).throw(RuntimeError("unavailable"))
+        ),
+        cache_lifecycle=SimpleNamespace(
+            snapshot=lambda: SimpleNamespace(
+                enabled=True,
+                disk_tier=SimpleNamespace(value="healthy"),
+                ran_at=None,
+                dry_run=False,
+                scanned_entries=0,
+                candidate_entries=0,
+                deleted_entries=0,
+                deleted_bytes=0,
+                retained_current=0,
+                retained_last_good=0,
+                retained_recent=0,
+                skipped_unsafe=0,
+                error_count=0,
+                backlog_entries=0,
+            )
         ),
     )
     collector = HealthCollector(
@@ -287,10 +309,134 @@ def test_health_collection_triggers_only_lightweight_due_cache_maintenance(tmp_p
         startup_state=lambda: {"degraded": False, "reasons": {}},
         cache_manager=cache_manager,
     )
+    monkeypatch.setattr(
+        health_module,
+        "shutil",
+        SimpleNamespace(
+            disk_usage=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("health collector performed filesystem I/O")
+            )
+        ),
+        raising=False,
+    )
 
     collector.collect_once()
 
-    assert calls == ["maintenance"]
+    assert calls == []
+
+
+def test_health_exposes_cache_lifecycle_aggregate_scalars_only(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(tmp_path)
+    collector.refresh_task.cache_lifecycle = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            enabled=True,
+            disk_tier=SimpleNamespace(value="soft"),
+            ran_at="2026-07-12T12:00:00+00:00",
+            dry_run=False,
+            scanned_entries=11,
+            candidate_entries=7,
+            deleted_entries=3,
+            deleted_bytes=4096,
+            retained_current=4,
+            retained_last_good=2,
+            retained_recent=1,
+            skipped_unsafe=5,
+            error_count=1,
+            backlog_entries=6,
+            candidate_paths=("C:/secret/cache/uuid.png",),
+            exception="provider exploded with secret text",
+        )
+    )
+
+    collector.collect_once()
+    component = publisher.snapshot().components["cache_lifecycle"]
+
+    assert set(component) == {
+        "enabled",
+        "tier",
+        "ran_at",
+        "dry_run",
+        "scanned_entries",
+        "candidate_entries",
+        "deleted_entries",
+        "deleted_bytes",
+        "retained_current",
+        "retained_last_good",
+        "retained_recent",
+        "skipped_unsafe",
+        "error_count",
+        "backlog_entries",
+    }
+    assert component["tier"] == "soft"
+    assert component["deleted_bytes"] == 4096
+    rendered = repr(component)
+    assert "C:/secret" not in rendered
+    assert "uuid.png" not in rendered
+    assert "provider exploded" not in rendered
+
+
+def test_health_uses_refresh_worker_cache_lifecycle_snapshot_overlay(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(tmp_path)
+    worker_snapshot = SimpleNamespace(
+        enabled=True,
+        disk_tier=SimpleNamespace(value="hard"),
+        ran_at="2026-07-12T12:00:00+00:00",
+        dry_run=False,
+        scanned_entries=11,
+        candidate_entries=7,
+        deleted_entries=3,
+        deleted_bytes=4096,
+        retained_current=4,
+        retained_last_good=2,
+        retained_recent=1,
+        skipped_unsafe=5,
+        error_count=2,
+        backlog_entries=6,
+    )
+    collector.refresh_task.cache_lifecycle = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            **{
+                **worker_snapshot.__dict__,
+                "disk_tier": SimpleNamespace(value="healthy"),
+                "error_count": 0,
+            }
+        )
+    )
+    collector.refresh_task.cache_lifecycle_snapshot = lambda: worker_snapshot
+
+    collector.collect_once()
+    component = publisher.snapshot().components["cache_lifecycle"]
+
+    assert component["tier"] == "hard"
+    assert component["error_count"] == 2
+
+
+def test_cache_lifecycle_disk_hard_is_degraded_with_stable_error_code():
+    clock = FakeClock(160)
+    snapshot = _snapshot(
+        clock,
+        cache_lifecycle={
+            "enabled": True,
+            "tier": "hard",
+            "ran_at": "2026-07-12T12:00:00+00:00",
+            "dry_run": False,
+            "scanned_entries": 10,
+            "candidate_entries": 4,
+            "deleted_entries": 1,
+            "deleted_bytes": 1024,
+            "retained_current": 3,
+            "retained_last_good": 1,
+            "retained_recent": 0,
+            "skipped_unsafe": 0,
+            "error_count": 0,
+            "backlog_entries": 3,
+        },
+    )
+
+    result = ReadinessEvaluator().evaluate(snapshot, now_monotonic=160)
+
+    assert result.status == "degraded"
+    assert "cache_lifecycle_disk_hard" in result.error_codes
 
 
 def _independent_refresh_health_collector(tmp_path):

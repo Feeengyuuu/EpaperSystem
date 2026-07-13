@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import logging
 import math
-import shutil
 import threading
 import time
 from types import MappingProxyType
@@ -186,6 +185,7 @@ class ReadinessEvaluator:
         scheduler = components.get("scheduler", {})
         startup = components.get("startup", {})
         disk = components.get("disk", {})
+        cache_lifecycle = components.get("cache_lifecycle", {})
         fatal = []
         degraded = []
         uptime = snapshot.uptime_seconds(now)
@@ -258,15 +258,24 @@ class ReadinessEvaluator:
         if startup.get("degraded", False):
             degraded.append("startup_degraded")
 
-        free_bytes = self._optional_float(disk.get("free_bytes"))
-        hard_min = self._optional_float(disk.get("hard_min_bytes"))
-        soft_min = self._optional_float(disk.get("soft_min_bytes"))
-        if free_bytes is None:
-            degraded.append("disk_status_unavailable")
-        elif hard_min is not None and free_bytes < hard_min:
-            fatal.append("disk_hard_limit")
-        elif soft_min is not None and free_bytes < soft_min:
-            degraded.append("disk_low")
+        if cache_lifecycle:
+            disk_tier = str(cache_lifecycle.get("tier", "unknown"))
+            if disk_tier == "hard":
+                degraded.append("cache_lifecycle_disk_hard")
+            elif disk_tier == "soft":
+                degraded.append("cache_lifecycle_disk_soft")
+            elif disk_tier != "healthy":
+                degraded.append("disk_status_unavailable")
+        else:
+            free_bytes = self._optional_float(disk.get("free_bytes"))
+            hard_min = self._optional_float(disk.get("hard_min_bytes"))
+            soft_min = self._optional_float(disk.get("soft_min_bytes"))
+            if free_bytes is None:
+                degraded.append("disk_status_unavailable")
+            elif hard_min is not None and free_bytes < hard_min:
+                fatal.append("disk_hard_limit")
+            elif soft_min is not None and free_bytes < soft_min:
+                degraded.append("disk_low")
 
         error_codes = tuple(dict.fromkeys((*fatal, *degraded)))
         if fatal:
@@ -328,11 +337,7 @@ class HealthCollector:
 
     def collect_once(self):
         now = float(self._clock())
-        if self.cache_manager is not None:
-            try:
-                self.cache_manager.maintenance_if_due()
-            except Exception:
-                logger.exception("Managed cache maintenance failed")
+        cache_lifecycle = self._cache_lifecycle_component()
         components = {
             "runtime": {"dev_mode": self.dev_mode},
             "lifecycle": self._lifecycle_component(),
@@ -341,7 +346,8 @@ class HealthCollector:
             "queue": self._queue_component(now),
             "scheduler": self._scheduler_component(),
             "startup": self._startup_component(),
-            "disk": self._disk_component(),
+            "cache_lifecycle": cache_lifecycle,
+            "disk": self._disk_component(cache_lifecycle),
         }
         return self.publisher.publish_components(components)
 
@@ -493,24 +499,57 @@ class HealthCollector:
                 "error_code": type(error).__name__,
             }
 
-    def _disk_component(self):
-        hard_mb = self._config_number("health_disk_hard_free_mb", 64.0)
-        soft_mb = max(
-            hard_mb,
-            self._config_number("health_disk_soft_free_mb", 256.0),
-        )
+    def _cache_lifecycle_component(self):
         try:
-            usage = shutil.disk_usage(self.runtime_paths.data_dir)
-            free_bytes = usage.free
-            error_code = None
-        except OSError as error:
-            free_bytes = None
-            error_code = type(error).__name__
+            snapshot_reader = getattr(
+                self.refresh_task,
+                "cache_lifecycle_snapshot",
+                None,
+            )
+            snapshot = (
+                snapshot_reader()
+                if callable(snapshot_reader)
+                else self.refresh_task.cache_lifecycle.snapshot()
+            )
+            tier = getattr(snapshot.disk_tier, "value", snapshot.disk_tier)
+            return {
+                "enabled": bool(snapshot.enabled),
+                "tier": str(tier),
+                "ran_at": snapshot.ran_at,
+                "dry_run": bool(snapshot.dry_run),
+                "scanned_entries": max(0, int(snapshot.scanned_entries)),
+                "candidate_entries": max(0, int(snapshot.candidate_entries)),
+                "deleted_entries": max(0, int(snapshot.deleted_entries)),
+                "deleted_bytes": max(0, int(snapshot.deleted_bytes)),
+                "retained_current": max(0, int(snapshot.retained_current)),
+                "retained_last_good": max(0, int(snapshot.retained_last_good)),
+                "retained_recent": max(0, int(snapshot.retained_recent)),
+                "skipped_unsafe": max(0, int(snapshot.skipped_unsafe)),
+                "error_count": max(0, int(snapshot.error_count)),
+                "backlog_entries": max(0, int(snapshot.backlog_entries)),
+            }
+        except Exception:
+            return {
+                "enabled": False,
+                "tier": "unknown",
+                "ran_at": None,
+                "dry_run": False,
+                "scanned_entries": 0,
+                "candidate_entries": 0,
+                "deleted_entries": 0,
+                "deleted_bytes": 0,
+                "retained_current": 0,
+                "retained_last_good": 0,
+                "retained_recent": 0,
+                "skipped_unsafe": 0,
+                "error_count": 1,
+                "backlog_entries": 0,
+            }
+
+    @staticmethod
+    def _disk_component(cache_lifecycle):
         return {
-            "free_bytes": free_bytes,
-            "soft_min_bytes": int(soft_mb * 1024 * 1024),
-            "hard_min_bytes": int(hard_mb * 1024 * 1024),
-            "error_code": error_code,
+            "tier": str(cache_lifecycle.get("tier", "unknown")),
         }
 
     def _config_number(self, key, default):

@@ -5,6 +5,9 @@ import logging
 import ctypes
 import gc
 import hashlib
+from contextlib import nullcontext
+from pathlib import Path
+import shutil
 import psutil
 import pytz
 from collections.abc import Mapping
@@ -58,6 +61,20 @@ from runtime.cache_catalog import (
     DisplayCacheCandidate,
     authoritative_cache_path,
 )
+from runtime.cache_lifecycle import (
+    HARD_BUDGET,
+    HEALTHY_BUDGET,
+    SOFT_BUDGET,
+    CacheLifecycleSnapshot,
+    CacheLifecycleManager,
+    DiskPressureTier,
+    DiskThresholds,
+    LifecycleAggregate,
+    LifecycleAllowance,
+    STALE_TEMP_SECONDS,
+    build_cache_retention,
+    classify_disk_pressure,
+)
 from runtime.presentation_cache import (
     PreparedPresentationCandidate,
     PresentationCache,
@@ -87,9 +104,21 @@ from runtime.runtime_state import (
     RuntimeStateStore,
 )
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
+from utils.browser_renderer import get_browser_renderer
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
+
+_RENDERER_INTENTS = frozenset(
+    {
+        RefreshIntent.DATA_REFRESH,
+        RefreshIntent.PRESENTATION_REFRESH,
+        RefreshIntent.LIVE_REFRESH,
+        RefreshIntent.THEME_REDRAW,
+        RefreshIntent.THEME_CATCHUP,
+        RefreshIntent.MANUAL_RENDER,
+    }
+)
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
@@ -348,6 +377,10 @@ class RefreshTask:
         retry_registry=None,
         scheduler_state=None,
         runtime_state_store=None,
+        cache_lifecycle_manager=None,
+        browser_renderer=None,
+        display_transaction=None,
+        disk_usage=None,
     ):
         self.device_config = device_config
         self.display_manager = display_manager
@@ -416,6 +449,41 @@ class RefreshTask:
             bind_runtime_state(self.runtime_state)
             self._display_transactions_enabled = True
 
+        self._disk_usage = shutil.disk_usage if disk_usage is None else disk_usage
+        self._browser_renderer = browser_renderer
+        self._display_transaction = (
+            display_transaction
+            if display_transaction is not None
+            else getattr(display_manager, "transaction", None)
+        )
+        self._disk_pressure_tier = DiskPressureTier.HEALTHY
+        self._cache_lifecycle_error_count = 0
+        self.cache_lifecycle = (
+            cache_lifecycle_manager
+            if cache_lifecycle_manager is not None
+            else CacheLifecycleManager(
+                Path(self.device_config.plugin_image_dir),
+                enabled=_setting_enabled(
+                    self.device_config.get_config(
+                        "cache_lifecycle_enabled",
+                        default=True,
+                    )
+                ),
+                clock=clock,
+                presentation_marker_reader=self._read_presentation_marker,
+            )
+        )
+        initial_lifecycle = self.cache_lifecycle.snapshot()
+        self._cache_lifecycle_published_snapshot = (
+            self._freeze_cache_lifecycle_snapshot(
+                initial_lifecycle,
+                aggregate=None,
+                disk_tier=self._disk_pressure_tier,
+                ran_at=getattr(initial_lifecycle, "ran_at", None),
+                dry_run=bool(getattr(initial_lifecycle, "dry_run", False)),
+            )
+        )
+
         self.thread = None
         self._start_lock = threading.Lock()
         self._stop_lock = threading.Lock()
@@ -447,6 +515,303 @@ class RefreshTask:
         except (TypeError, ValueError, OverflowError):
             value = default
         return max(minimum, min(maximum, value))
+
+    def _cache_lifecycle_thresholds(self):
+        defaults = DiskThresholds()
+        return DiskThresholds(
+            soft_min_free_bytes=self._config_int(
+                "cache_lifecycle_soft_min_free_bytes",
+                defaults.soft_min_free_bytes,
+                0,
+                1 << 63,
+            ),
+            hard_min_free_bytes=self._config_int(
+                "cache_lifecycle_hard_min_free_bytes",
+                defaults.hard_min_free_bytes,
+                0,
+                1 << 63,
+            ),
+            soft_max_used_percent=self._config_float(
+                "cache_lifecycle_soft_max_used_percent",
+                defaults.soft_max_used_percent,
+            ),
+            hard_max_used_percent=self._config_float(
+                "cache_lifecycle_hard_max_used_percent",
+                defaults.hard_max_used_percent,
+            ),
+        )
+
+    def _sample_disk_pressure(self):
+        sample_failed = False
+        try:
+            usage = self._disk_usage(self.device_config.plugin_image_dir)
+            tier = classify_disk_pressure(
+                usage.total,
+                usage.used,
+                usage.free,
+                self._cache_lifecycle_thresholds(),
+            )
+        except Exception:
+            self._cache_lifecycle_error_count += 1
+            sample_failed = True
+            tier = DiskPressureTier.HARD
+        self._disk_pressure_tier = tier
+        published = self._cache_lifecycle_published_snapshot
+        self._cache_lifecycle_published_snapshot = replace(
+            published,
+            disk_tier=tier,
+            error_count=(
+                published.error_count + 1
+                if sample_failed
+                else published.error_count
+            ),
+        )
+        return tier
+
+    def cache_lifecycle_snapshot(self):
+        """Return one immutable, redacted worker-owned lifecycle snapshot."""
+        return self._cache_lifecycle_published_snapshot
+
+    @staticmethod
+    def _cache_lifecycle_count(source, name):
+        try:
+            return max(0, int(getattr(source, name)))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return 0
+
+    def _freeze_cache_lifecycle_snapshot(
+        self,
+        metadata,
+        *,
+        aggregate,
+        disk_tier,
+        ran_at,
+        dry_run,
+    ):
+        counters = metadata if aggregate is None else aggregate
+        return CacheLifecycleSnapshot(
+            enabled=bool(getattr(metadata, "enabled", False)),
+            disk_tier=DiskPressureTier(disk_tier),
+            ran_at=ran_at,
+            dry_run=bool(dry_run),
+            scanned_entries=self._cache_lifecycle_count(
+                counters,
+                "scanned_entries",
+            ),
+            candidate_entries=self._cache_lifecycle_count(
+                counters,
+                "candidate_entries",
+            ),
+            deleted_entries=self._cache_lifecycle_count(
+                counters,
+                "deleted_entries",
+            ),
+            deleted_bytes=self._cache_lifecycle_count(counters, "deleted_bytes"),
+            retained_current=self._cache_lifecycle_count(
+                counters,
+                "retained_current",
+            ),
+            retained_last_good=self._cache_lifecycle_count(
+                counters,
+                "retained_last_good",
+            ),
+            retained_recent=self._cache_lifecycle_count(
+                counters,
+                "retained_recent",
+            ),
+            skipped_unsafe=self._cache_lifecycle_count(
+                counters,
+                "skipped_unsafe",
+            ),
+            error_count=(
+                self._cache_lifecycle_count(counters, "error_count")
+                + self._cache_lifecycle_error_count
+            ),
+            backlog_entries=self._cache_lifecycle_count(
+                counters,
+                "backlog_entries",
+            ),
+        )
+
+    def _publish_cache_lifecycle_run(
+        self,
+        aggregate,
+        *,
+        disk_tier,
+        now_epoch,
+        dry_run,
+        metadata=None,
+    ):
+        metadata = (
+            self._cache_lifecycle_published_snapshot
+            if metadata is None
+            else metadata
+        )
+        snapshot = self._freeze_cache_lifecycle_snapshot(
+            metadata,
+            aggregate=aggregate,
+            disk_tier=disk_tier,
+            ran_at=datetime.fromtimestamp(
+                float(now_epoch),
+                tz=timezone.utc,
+            ).isoformat(),
+            dry_run=dry_run,
+        )
+        self._cache_lifecycle_published_snapshot = snapshot
+        return snapshot
+
+    def _cache_lifecycle_should_yield(self):
+        if self.stop_event.is_set():
+            return True
+        try:
+            return self.refresh_queue.snapshot().depth > 0
+        except Exception:
+            return True
+
+    def _cache_lifecycle_budget(self, tier):
+        return {
+            DiskPressureTier.HEALTHY: HEALTHY_BUDGET,
+            DiskPressureTier.SOFT: SOFT_BUDGET,
+            DiskPressureTier.HARD: HARD_BUDGET,
+        }[DiskPressureTier(tier)]
+
+    def _snapshot_cache_retention(self, *, include_display=True):
+        manager = self.device_config.get_playlist_manager()
+        lifecycle_guard = getattr(manager, "instance_lifecycle_guard", None)
+        guard = lifecycle_guard() if callable(lifecycle_guard) else nullcontext()
+        with guard:
+            instances = manager.snapshot_all_instances()
+            runtime_instances = dict(self.runtime_state.snapshot().instances)
+
+        current_display_path = None
+        transaction = self._display_transaction
+        if include_display and transaction is not None:
+            current_reader = getattr(transaction, "current", None)
+            if callable(current_reader):
+                current = current_reader()
+                current_display_path = (
+                    None if current is None else getattr(current, "image_path", None)
+                )
+        return build_cache_retention(
+            Path(self.device_config.plugin_image_dir),
+            instances,
+            runtime_instances,
+            current_display_path,
+        )
+
+    def _read_presentation_marker(self):
+        return self._snapshot_cache_retention(
+            include_display=False,
+        ).presentation_marker
+
+    def _run_cache_lifecycle_maintenance(self, tier):
+        now_monotonic = self._clock()
+        aggregate = None
+        metadata = None
+        now_epoch = None
+        dry_run = False
+        try:
+            if not self.cache_lifecycle.due(now_monotonic, tier):
+                return False
+            aggregate = LifecycleAggregate()
+            allowance = LifecycleAllowance(
+                self._cache_lifecycle_budget(tier).start(now_monotonic),
+                aggregate,
+                clock=self._clock,
+                should_yield=self._cache_lifecycle_should_yield,
+            )
+            now_epoch = self._wall_clock()
+            dry_run = _setting_enabled(
+                self.device_config.get_config(
+                    "cache_lifecycle_dry_run",
+                    default=False,
+                )
+            )
+            browser = self._browser_renderer
+            if browser is None:
+                browser = get_browser_renderer()
+                self._browser_renderer = browser
+            browser.cleanup_abandoned_jobs(
+                now_epoch=now_epoch,
+                stale_seconds=STALE_TEMP_SECONDS,
+                dry_run=dry_run,
+                allowance=allowance,
+            )
+            if self._cache_lifecycle_should_yield():
+                allowance.mark_backlog()
+                self._publish_cache_lifecycle_run(
+                    aggregate,
+                    disk_tier=tier,
+                    now_epoch=now_epoch,
+                    dry_run=dry_run,
+                )
+                return False
+            retention = self._snapshot_cache_retention()
+            metadata = self.cache_lifecycle.maintain(
+                retention,
+                now_epoch=now_epoch,
+                now_monotonic=now_monotonic,
+                tier=tier,
+                dry_run=dry_run,
+                should_yield=self._cache_lifecycle_should_yield,
+                allowance=allowance,
+            )
+            if self._cache_lifecycle_should_yield():
+                allowance.mark_backlog()
+                self._publish_cache_lifecycle_run(
+                    aggregate,
+                    disk_tier=tier,
+                    now_epoch=now_epoch,
+                    dry_run=dry_run,
+                    metadata=metadata,
+                )
+                return True
+            if self._display_transaction is not None:
+                self._display_transaction.maintenance(
+                    now_epoch=now_epoch,
+                    stale_seconds=STALE_TEMP_SECONDS,
+                    dry_run=dry_run,
+                    allowance=allowance,
+                )
+            self._publish_cache_lifecycle_run(
+                aggregate,
+                disk_tier=tier,
+                now_epoch=now_epoch,
+                dry_run=dry_run,
+                metadata=metadata,
+            )
+            return True
+        except Exception:
+            self._cache_lifecycle_error_count += 1
+            if aggregate is not None and now_epoch is not None:
+                self._publish_cache_lifecycle_run(
+                    aggregate,
+                    disk_tier=tier,
+                    now_epoch=now_epoch,
+                    dry_run=dry_run,
+                    metadata=metadata,
+                )
+            else:
+                published = self._cache_lifecycle_published_snapshot
+                self._cache_lifecycle_published_snapshot = replace(
+                    published,
+                    disk_tier=DiskPressureTier(tier),
+                    error_count=published.error_count + 1,
+                )
+            logger.warning(
+                "Cache lifecycle maintenance degraded. | error_count: %d",
+                self._cache_lifecycle_error_count,
+            )
+            return False
+
+    def _renderer_blocked_by_disk_pressure(self, command):
+        if command.intent not in _RENDERER_INTENTS:
+            return False
+        tier = self._sample_disk_pressure()
+        if tier is DiskPressureTier.HEALTHY:
+            return False
+        self._run_cache_lifecycle_maintenance(tier)
+        return self._sample_disk_pressure() is DiskPressureTier.HARD
 
     @staticmethod
     def _runtime_state_path(device_config):
@@ -633,8 +998,10 @@ class RefreshTask:
 
     def _run_one_iteration_for_test(self):
         """Run one non-blocking scheduler/worker turn for deterministic tests."""
-        self._schedule_if_due()
         entry = self.refresh_queue.take(timeout=0)
+        if entry is None:
+            self._schedule_if_due()
+            entry = self.refresh_queue.take(timeout=0)
         if entry is not None:
             self._process_queue_entry(entry)
         return entry
@@ -652,15 +1019,24 @@ class RefreshTask:
             self.scheduler_state.record_attempt()
             self._attempt_count += 1
             restart_requested = self._memory_watchdog_should_restart()
+            disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
             command = self._select_prepared_display_retry_command(current_dt)
             if command is None:
                 command = self._select_cached_display_command(current_dt)
             if command is not None:
                 self.refresh_queue.submit(command)
+            else:
+                self._run_cache_lifecycle_maintenance(disk_tier)
+                if disk_tier is not DiskPressureTier.HEALTHY:
+                    disk_tier = self._sample_disk_pressure()
             if restart_requested:
                 self._resource_tier = ResourceTier.HARD
-            else:
+            elif (
+                command is None
+                and disk_tier is not DiskPressureTier.HARD
+                and not self._cache_lifecycle_should_yield()
+            ):
                 refresh_command = self._select_independent_refresh_command(current_dt)
                 if refresh_command is not None:
                     self.refresh_queue.submit(refresh_command)
@@ -1669,6 +2045,15 @@ class RefreshTask:
         if busy_lock is not None:
             busy_lock.acquire()
         try:
+            if self._renderer_blocked_by_disk_pressure(command):
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="disk_pressure_hard",
+                    error="renderer blocked while disk pressure remains hard",
+                )
+                self._signal_completion(finished.id)
+                return
             self._record_runtime_attempt(command)
             try:
                 identity = InstanceIdentity(
