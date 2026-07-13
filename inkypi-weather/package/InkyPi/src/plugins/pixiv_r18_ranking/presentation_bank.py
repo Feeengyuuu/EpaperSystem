@@ -34,6 +34,7 @@ from plugins.daily_art.presentation_bank import (
     read_bounded_json_object as _secure_read_json,
 )
 from utils.atomic_file import atomic_write_bytes, fsync_directory
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
@@ -50,6 +51,13 @@ MEDIA_MAX_BYTES = 128 * 1024 * 1024
 MEDIA_MAX_OBJECT_BYTES = 12 * 1024 * 1024
 MEDIA_MAX_DIMENSION = 8192
 MEDIA_MAX_PIXELS = 32_000_000
+MEDIA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MEDIA_MAX_OBJECT_BYTES,
+    max_width=MEDIA_MAX_DIMENSION,
+    max_height=MEDIA_MAX_DIMENSION,
+    max_pixels=MEDIA_MAX_PIXELS,
+    allowed_formats=frozenset({"PNG"}),
+)
 _HEX = frozenset("0123456789abcdef")
 _PROFILE_KEYS = {
     "profile_fingerprint",
@@ -623,10 +631,13 @@ class PixivPresentationBank:
         target = self.media.path(media_key, suffix=".png")
         payload = self._read_media_payload(target)
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._validate_media_dimensions(source.size)
-                source.load()
-                image = self._normalize_media_image(source)
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            self._validate_media_dimensions(source.size)
+            image = self._normalize_media_image(source)
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                "Pixiv media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

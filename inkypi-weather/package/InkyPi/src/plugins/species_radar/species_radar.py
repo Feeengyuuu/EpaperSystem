@@ -108,6 +108,14 @@ PHOTO_IMAGE_LIMITS = ImageLimits(
     max_width=8192,
     max_height=8192,
     max_pixels=32 * 1024 * 1024,
+    allowed_formats=frozenset({"JPEG", "PNG", "WEBP", "GIF"}),
+)
+MAP_DATA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=12 * 1024 * 1024,
+    max_width=8192,
+    max_height=8192,
+    max_pixels=32_000_000,
+    allowed_formats=frozenset({"JPEG", "PNG", "WEBP", "GIF"}),
 )
 _MEDIA_RENDER_CONTEXT = ContextVar(
     "species_radar_media_render_context",
@@ -2187,19 +2195,11 @@ LIMIT 8
         )
         self._check_data_deadline(deadline)
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._check_data_deadline(deadline)
-                if (
-                    source.width > PHOTO_IMAGE_LIMITS.max_width
-                    or source.height > PHOTO_IMAGE_LIMITS.max_height
-                    or source.width * source.height > PHOTO_IMAGE_LIMITS.max_pixels
-                ):
-                    raise RuntimeError("Species photo dimensions exceed the safety limit")
-                source.load()
-                self._check_data_deadline(deadline)
-                result = source.convert("RGB")
-                self._check_data_deadline(deadline)
-                return result
+            decoded = safe_open_image(payload, limits=PHOTO_IMAGE_LIMITS)
+            self._check_data_deadline(deadline)
+            result = decoded.convert("RGB")
+            self._check_data_deadline(deadline)
+            return result
         except RuntimeError:
             raise
         except Exception as exc:
@@ -2230,15 +2230,11 @@ LIMIT 8
         )
         self._check_data_deadline(deadline)
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._check_data_deadline(deadline)
-                if source.width > 8192 or source.height > 8192 or source.width * source.height > 32_000_000:
-                    raise RuntimeError("Species map dimensions exceed the safety limit")
-                source.load()
-                self._check_data_deadline(deadline)
-                result = source.convert("RGB")
-                self._check_data_deadline(deadline)
-                return result
+            decoded = safe_open_image(payload, limits=MAP_DATA_IMAGE_LIMITS)
+            self._check_data_deadline(deadline)
+            result = decoded.convert("RGB")
+            self._check_data_deadline(deadline)
+            return result
         except RuntimeError:
             raise
         except Exception as exc:

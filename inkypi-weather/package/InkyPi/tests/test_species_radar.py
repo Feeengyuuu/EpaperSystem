@@ -2488,6 +2488,114 @@ def test_species_photo_decode_cannot_cross_data_deadline(monkeypatch):
         )
 
 
+def test_species_photo_safe_decode_deadline_crossing_skips_rgb_convert(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    clock = {"value": 0.0}
+    convert_calls = []
+
+    class DecodedImage:
+        def convert(self, mode):
+            convert_calls.append(mode)
+            return Image.new("RGB", (2, 2), "green")
+
+    def delayed_safe_open(*_args, **_kwargs):
+        clock["value"] = 76.0
+        return DecodedImage()
+
+    monkeypatch.setattr(plugin, "_monotonic", lambda: clock["value"])
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: b"image")
+    monkeypatch.setattr(species_mod, "safe_open_image", delayed_safe_open)
+
+    with pytest.raises(RuntimeError, match="deadline"):
+        plugin._download_image_for_data(
+            "https://inaturalist-open-data.s3.amazonaws.com/photos/1/medium.jpg",
+            (800, 480),
+            deadline=75.0,
+        )
+
+    assert convert_calls == []
+
+
+def test_species_data_photo_rejects_disallowed_bmp(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "green").save(buffer, "BMP")
+    monkeypatch.setattr(
+        plugin,
+        "_download_provider_bytes",
+        lambda *_args, **_kwargs: buffer.getvalue(),
+    )
+
+    with pytest.raises(RuntimeError, match="decode|format|safety"):
+        plugin._download_image_for_data(
+            "https://inaturalist-open-data.s3.amazonaws.com/photos/1/medium.jpg",
+            (800, 480),
+            deadline=time.monotonic() + 20,
+        )
+
+
+def test_species_data_map_rejects_disallowed_bmp(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(buffer, "BMP")
+    monkeypatch.setattr(plugin, "_google_maps_api_key", lambda *_args: "test-key")
+    monkeypatch.setattr(
+        plugin,
+        "_google_observation_map_url",
+        lambda *_args: "https://maps.googleapis.com/maps/api/staticmap",
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_provider_bytes",
+        lambda *_args, **_kwargs: buffer.getvalue(),
+    )
+
+    with pytest.raises(RuntimeError, match="decode|format|safety"):
+        plugin._load_map_for_data(
+            {},
+            DummyDeviceConfig(),
+            bank_observation(1),
+            (800, 480),
+            deadline=time.monotonic() + 20,
+        )
+
+
+def test_species_map_safe_decode_deadline_crossing_skips_rgb_convert(monkeypatch):
+    plugin = SpeciesRadar({"id": "species_radar"})
+    clock = {"value": 0.0}
+    convert_calls = []
+
+    class DecodedImage:
+        def convert(self, mode):
+            convert_calls.append(mode)
+            return Image.new("RGB", (2, 2), "blue")
+
+    def delayed_safe_open(*_args, **_kwargs):
+        clock["value"] = 76.0
+        return DecodedImage()
+
+    monkeypatch.setattr(plugin, "_monotonic", lambda: clock["value"])
+    monkeypatch.setattr(plugin, "_google_maps_api_key", lambda *_args: "test-key")
+    monkeypatch.setattr(
+        plugin,
+        "_google_observation_map_url",
+        lambda *_args: "https://maps.googleapis.com/maps/api/staticmap",
+    )
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: b"image")
+    monkeypatch.setattr(species_mod, "safe_open_image", delayed_safe_open)
+
+    with pytest.raises(RuntimeError, match="deadline"):
+        plugin._load_map_for_data(
+            {},
+            DummyDeviceConfig(),
+            bank_observation(1),
+            (800, 480),
+            deadline=75.0,
+        )
+
+    assert convert_calls == []
+
+
 def test_species_photo_success_map_failure_is_fully_atomic(tmp_path, monkeypatch):
     bank = _make_species_bank(tmp_path)
     _document, profile = bank.load_for_data()

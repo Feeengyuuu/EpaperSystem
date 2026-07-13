@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 
 from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, cache_namespace_for_directory
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
@@ -29,6 +30,13 @@ MEDIA_MAX_BYTES = 96 * 1024 * 1024
 MEDIA_MAX_OBJECT_BYTES = 12 * 1024 * 1024
 MEDIA_MAX_DIMENSION = 8192
 MEDIA_MAX_PIXELS = 32_000_000
+MEDIA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MEDIA_MAX_OBJECT_BYTES,
+    max_width=MEDIA_MAX_DIMENSION,
+    max_height=MEDIA_MAX_DIMENSION,
+    max_pixels=MEDIA_MAX_PIXELS,
+    allowed_formats=frozenset({"PNG"}),
+)
 MEDIA_BUDGET = CacheBudget(
     max_age_seconds=MEDIA_MAX_AGE_SECONDS,
     max_files=MEDIA_MAX_FILES,
@@ -422,10 +430,13 @@ class PosterPresentationBank:
         if not payload or len(payload) > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("BacktotheDate poster media exceeds its object budget")
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._validate_media_dimensions(source.size)
-                source.load()
-                image = self._normalize_media_image(source)
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            self._validate_media_dimensions(source.size)
+            image = self._normalize_media_image(source)
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                "BacktotheDate poster media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

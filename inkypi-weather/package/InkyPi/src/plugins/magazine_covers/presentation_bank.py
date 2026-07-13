@@ -28,6 +28,7 @@ from plugins.daily_art.presentation_bank import (
     read_bounded_json_object,
 )
 from utils.atomic_file import atomic_write_bytes, fsync_directory
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
@@ -45,6 +46,13 @@ GLOBAL_MEDIA_ROOT_MAX_BYTES = 512 * 1024 * 1024
 MEDIA_MAX_OBJECT_BYTES = 16 * 1024 * 1024
 MEDIA_MAX_DIMENSION = 8192
 MEDIA_MAX_PIXELS = 32_000_000
+MEDIA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MEDIA_MAX_OBJECT_BYTES,
+    max_width=MEDIA_MAX_DIMENSION,
+    max_height=MEDIA_MAX_DIMENSION,
+    max_pixels=MEDIA_MAX_PIXELS,
+    allowed_formats=frozenset({"PNG"}),
+)
 COVER_FRESH_SECONDS = 20 * 60 * 60
 _HEX = frozenset("0123456789abcdef")
 _PROFILE_KEYS = {
@@ -757,10 +765,13 @@ class MagazinePresentationBank:
         if payload is None or not payload or len(payload) > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("Magazine cover media is unavailable")
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._validate_media_dimensions(source.size)
-                source.load()
-                return self._normalize_media_image(source)
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            self._validate_media_dimensions(source.size)
+            return self._normalize_media_image(source)
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                "Magazine cover media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

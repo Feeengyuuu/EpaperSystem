@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from io import BytesIO
 import json
 import stat
 from datetime import datetime, timezone
@@ -17,11 +16,13 @@ from plugins.daily_art.presentation_bank import (
     MEDIA_MAX_AGE_SECONDS,
     MEDIA_MAX_BYTES,
     MEDIA_MAX_FILES,
+    MEDIA_IMAGE_LIMITS,
     MEDIA_MAX_OBJECT_BYTES,
     READY_TARGET,
     REFILL_THRESHOLD,
     read_bounded_json_object,
 )
+from utils.safe_image import ImageLimitError, safe_open_image
 
 
 STEAM_MEDIA_HOST_SUFFIXES = (
@@ -251,10 +252,13 @@ class SteamDailyArtPresentationBank(DailyArtPresentationBank):
             raise RuntimeError("Steam theme-only media exceeds its object budget")
         try:
             payload = target.read_bytes()
-            with Image.open(BytesIO(payload)) as source:
-                self._validate_media_dimensions(source.size)
-                source.load()
-                return self._normalize_media_image(source)
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            self._validate_media_dimensions(source.size)
+            return self._normalize_media_image(source)
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                "Steam theme-only media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

@@ -3,6 +3,7 @@ import uuid
 import os
 import json
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -835,6 +836,15 @@ def test_newspaper_pdf_html_png_and_pixel_limits(monkeypatch):
     monkeypatch.setattr(plugin, "_import_pymupdf", lambda: fake_fitz)
     with pytest.raises(RuntimeError, match="page"):
         plugin._render_pdf_first_page(b"%PDF fake")
+
+
+def test_newspaper_remote_image_rejects_disallowed_bmp():
+    plugin = make_plugin("remote-image-format")
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "red").save(buffer, "BMP")
+
+    with pytest.raises(RuntimeError, match="decode|format|safety"):
+        plugin._decode_remote_image(buffer.getvalue())
 
 
 def test_newspaper_media_root_symlink_never_touches_external_file(tmp_path):

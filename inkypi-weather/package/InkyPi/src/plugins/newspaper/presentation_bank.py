@@ -24,6 +24,7 @@ from plugins.daily_art.presentation_bank import (
     read_bounded_json_object as _secure_read_json,
 )
 from utils.atomic_file import atomic_write_bytes
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
@@ -41,6 +42,13 @@ MEDIA_MAX_BYTES = 192 * 1024 * 1024
 MEDIA_MAX_OBJECT_BYTES = 16 * 1024 * 1024
 MEDIA_MAX_DIMENSION = 8192
 MEDIA_MAX_PIXELS = 32_000_000
+MEDIA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MEDIA_MAX_OBJECT_BYTES,
+    max_width=MEDIA_MAX_DIMENSION,
+    max_height=MEDIA_MAX_DIMENSION,
+    max_pixels=MEDIA_MAX_PIXELS,
+    allowed_formats=frozenset({"PNG"}),
+)
 _HEX = frozenset("0123456789abcdef")
 
 
@@ -539,10 +547,13 @@ class NewspaperPresentationBank:
         path = self.media_dir / f"{media_key}.png"
         payload = self._read_media(path)
         try:
-            with Image.open(BytesIO(payload)) as source:
-                _validate_dimensions(source.size)
-                source.load()
-                return ImageOps.exif_transpose(source).convert("RGB")
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            _validate_dimensions(source.size)
+            return source.convert("RGB")
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                "Newspaper media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

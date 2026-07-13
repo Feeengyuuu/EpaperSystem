@@ -27,6 +27,7 @@ from plugins.daily_art.presentation_bank import (
     read_bounded_json_object as _secure_read_json,
 )
 from utils.atomic_file import atomic_write_bytes
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
@@ -46,6 +47,13 @@ MAP_MAX_BYTES = 64 * 1024 * 1024
 MEDIA_MAX_OBJECT_BYTES = 12 * 1024 * 1024
 MEDIA_MAX_DIMENSION = 8192
 MEDIA_MAX_PIXELS = 32_000_000
+MEDIA_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MEDIA_MAX_OBJECT_BYTES,
+    max_width=MEDIA_MAX_DIMENSION,
+    max_height=MEDIA_MAX_DIMENSION,
+    max_pixels=MEDIA_MAX_PIXELS,
+    allowed_formats=frozenset({"PNG"}),
+)
 _HEX = frozenset("0123456789abcdef")
 _ALLOWED_PHOTO_SUFFIXES = (
     "inaturalist.org",
@@ -770,15 +778,17 @@ class SpeciesPresentationBank:
         check()
         try:
             check()
-            with Image.open(BytesIO(payload)) as source:
-                check()
-                _validate_dimensions(source.size)
-                check()
-                source.load()
-                check()
-                image = source.convert("RGB")
-                check()
-                return image
+            source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+            check()
+            _validate_dimensions(source.size)
+            check()
+            image = source.convert("RGB")
+            check()
+            return image
+        except ImageLimitError as exc:
+            raise RuntimeError(
+                f"Species {kind} media dimensions or safety limits were exceeded"
+            ) from exc
         except RuntimeError:
             raise
         except Exception as exc:

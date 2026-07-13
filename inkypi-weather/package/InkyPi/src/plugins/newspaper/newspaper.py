@@ -11,7 +11,6 @@ import html
 from html.parser import HTMLParser
 import http.client
 import ipaddress
-from io import BytesIO
 from pathlib import Path
 import socket
 import ssl
@@ -42,6 +41,7 @@ from plugins.newspaper.presentation_bank import (
     write_state,
 )
 from utils.http_client import HttpStatusError
+from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,13 @@ MAX_PDF_PAGES = 200
 MAX_PNG_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 8192
 MAX_IMAGE_PIXELS = 32_000_000
+REMOTE_IMAGE_LIMITS = ImageLimits(
+    max_bytes=MAX_PNG_BYTES,
+    max_width=MAX_IMAGE_DIMENSION,
+    max_height=MAX_IMAGE_DIMENSION,
+    max_pixels=MAX_IMAGE_PIXELS,
+    allowed_formats=frozenset({"JPEG", "PNG", "WEBP", "GIF"}),
+)
 REQUEST_HEADERS = {"User-Agent": "InkyPi News Front Pages/2.0"}
 DEFAULT_MEDIA_SOURCES = """BBC News|url|https://www.bbc.com/news
 CNN|url|https://www.cnn.com
@@ -1515,12 +1522,8 @@ class Newspaper(BasePlugin):
             raise RuntimeError("Newspaper image exceeds the size limit")
         _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
         try:
-            with Image.open(BytesIO(payload)) as source:
-                self._validate_image_dimensions(source.size)
-                _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
-                source.load()
-                _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
-                image = source.convert("RGB")
+            image = safe_open_image(payload, limits=REMOTE_IMAGE_LIMITS).convert("RGB")
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
         except RuntimeError:
             raise
         except Exception as exc:
