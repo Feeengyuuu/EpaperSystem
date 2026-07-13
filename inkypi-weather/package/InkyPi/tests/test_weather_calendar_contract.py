@@ -5,10 +5,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+import pytz
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.simple_calendar.simple_calendar import SimpleCalendar
+from plugins.base_plugin.presentation import PresentationRequestContext
 from plugins.weather import weather as weather_module
 from plugins.weather.weather import Weather
 
@@ -105,6 +107,19 @@ def _write_weather_context(cache_dir, monkeypatch, *, icon_code, generated_at):
     return json.loads((cache_dir / "weather.json").read_text(encoding="utf-8"))
 
 
+def _snapshot_tree(root):
+    if not root.exists():
+        return {}
+    snapshot = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_dir():
+            snapshot[f"directory:{relative}"] = None
+        elif path.is_file():
+            snapshot[f"file:{relative}"] = path.read_bytes()
+    return snapshot
+
+
 def test_weather_context_payload_is_consumed_by_calendar_without_absolute_paths(
     tmp_path, monkeypatch
 ):
@@ -187,6 +202,209 @@ def test_calendar_theme_only_uses_compatible_stale_weather_context_without_http(
 
     assert session.calls == []
     assert Path(path).name == "snow.png"
+
+
+def test_calendar_presentation_uses_stale_weather_context_and_only_changes_theme_pixels(
+    tmp_path, monkeypatch
+):
+    data_root = tmp_path / "data"
+    context_root = tmp_path / "context"
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(data_root))
+    _write_weather_context(
+        context_root,
+        monkeypatch,
+        icon_code="13d",
+        generated_at=datetime.now(timezone.utc) - timedelta(hours=2, minutes=30),
+    )
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = {
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
+        "holidayCalendarLabels[]": ["HOL"],
+        "weatherPanelBackgroundStyle": "classic",
+        "dateHeroOverlays": "false",
+    }
+    sources = plugin._configured_calendar_sources(settings)
+    for selected_date in (date(2026, 7, 11), date(2026, 8, 1)):
+        plugin._write_event_snapshot(
+            sources,
+            selected_date,
+            tz,
+            [{
+                "date": date(selected_date.year, selected_date.month, 4),
+                "title": "Cached holiday",
+                "label": "HOL",
+                "color": (52, 89, 149),
+                "kind": "holiday",
+                "time": "",
+            }],
+            data_month=date(2026, 7, 1),
+        )
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    session = RecordingSession(weather_code=63)
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: session,
+    )
+
+    def request(request_id):
+        return PresentationRequestContext(
+            request_id=request_id,
+            requested_at="2026-07-11T12:00:00-07:00",
+            origin_display_commit_id="calendar-origin",
+            last_receipt=None,
+        )
+
+    day = plugin.prepare_presentation(
+        settings,
+        FakeDeviceConfig(),
+        request=request("b" * 32),
+        resolved_theme_context=_calendar_theme("day"),
+    ).image
+    night = plugin.prepare_presentation(
+        settings,
+        FakeDeviceConfig(),
+        request=request("c" * 32),
+        resolved_theme_context=_calendar_theme("night"),
+    ).image
+
+    assert session.calls == []
+    assert day.tobytes() != night.tobytes()
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_calendar_presentation_does_not_create_missing_weather_context_storage(
+    tmp_path, monkeypatch
+):
+    data_root = tmp_path / "data"
+    context_root = tmp_path / "missing-context"
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(data_root))
+    monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", str(context_root))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = {
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
+        "holidayCalendarLabels[]": ["HOL"],
+        "weatherPanelBackgroundStyle": "classic",
+        "dateHeroOverlays": "false",
+    }
+    sources = plugin._configured_calendar_sources(settings)
+    for selected_date in (date(2026, 7, 11), date(2026, 8, 1)):
+        plugin._write_event_snapshot(
+            sources,
+            selected_date,
+            tz,
+            [],
+            data_month=date(2026, 7, 1),
+        )
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: (_ for _ in ()).throw(AssertionError("weather provider called")),
+    )
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        FakeDeviceConfig(),
+        request=PresentationRequestContext(
+            request_id="d" * 32,
+            requested_at="2026-07-11T12:00:00-07:00",
+            origin_display_commit_id="calendar-origin",
+            last_receipt=None,
+        ),
+        resolved_theme_context=_calendar_theme("day"),
+    )
+
+    assert preparation.changed is True
+    assert not context_root.exists()
+
+
+@pytest.mark.parametrize("weather_context", ["missing", "expired"])
+def test_calendar_display_render_is_provider_free_and_preserves_entire_cache_tree(
+    tmp_path, monkeypatch, weather_context
+):
+    data_root = tmp_path / "data"
+    context_root = tmp_path / "context"
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(data_root))
+    monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", str(context_root))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    selected_date = date(2026, 7, 11)
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = {
+        "customDate": selected_date.isoformat(),
+        "_inkypiDisplayRender": True,
+        "showHolidays": "true",
+        "holidayPreset": "custom",
+        "holidayCalendarURLs[]": ["https://example.com/holidays.ics"],
+        "holidayCalendarLabels[]": ["HOL"],
+        "weatherLatitude": "37.5",
+        "weatherLongitude": "-122.0",
+        "weatherPanelBackgroundStyle": "classic",
+        "dateHeroOverlays": "false",
+    }
+    sources = plugin._configured_calendar_sources(settings)
+    plugin._write_event_snapshot(
+        sources,
+        selected_date,
+        tz,
+        [{
+            "date": date(2026, 7, 4),
+            "title": "Cached holiday",
+            "label": "HOL",
+            "color": (52, 89, 149),
+            "kind": "holiday",
+            "time": "",
+        }],
+        data_month=date(2026, 7, 1),
+    )
+    if weather_context == "expired":
+        _write_weather_context(
+            context_root,
+            monkeypatch,
+            icon_code="13d",
+            generated_at=datetime.now(timezone.utc) - timedelta(hours=2, minutes=30),
+        )
+
+    before = _snapshot_tree(tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_holiday_events",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("calendar provider called during display render")
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_current_weather_background_slug",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("weather provider called during display render")
+        ),
+    )
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("HTTP session opened during display render")
+        ),
+    )
+
+    image = plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert image.size == (800, 480)
+    assert _snapshot_tree(tmp_path) == before
+    if weather_context == "missing":
+        assert not context_root.exists()
 
 
 def test_calendar_theme_only_refuses_remote_redraw_without_event_snapshot(

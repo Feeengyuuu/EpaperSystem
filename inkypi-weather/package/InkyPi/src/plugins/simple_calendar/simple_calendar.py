@@ -1,5 +1,6 @@
 import calendar
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -7,15 +8,23 @@ import re
 import stat
 import time
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import icalendar
 import pytz
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+)
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import read_contexts
 from utils.app_utils import get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
@@ -36,6 +45,8 @@ EVENT_SNAPSHOT_TITLE_MAX_CHARS = 256
 EVENT_SNAPSHOT_LABEL_MAX_CHARS = 16
 EVENT_SNAPSHOT_TIME_MAX_CHARS = 16
 EVENT_SNAPSHOT_FILENAME_RE = re.compile(r"[0-9a-f]{64}\.json\Z")
+CALENDAR_SOURCE_MAX_BYTES = 8 * 1024 * 1024
+CALENDAR_SOURCE_MAX_REDIRECTS = 4
 
 DEFAULT_HOLIDAY_CALENDARS = [
     {
@@ -564,10 +575,59 @@ def _draw_dotmatrix_text(draw, text, center_x, center_y, dot_radius, dot_spacing
 
 class SimpleCalendar(BasePlugin):
 
+    _CACHED_EVENTS_SETTING = "_inkypi_simple_calendar_cached_events"
+    _SOURCE_PROVENANCE_SETTING = "_inkypi_simple_calendar_source_provenance"
+    _DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params['style_settings'] = False
         return template_params
+
+    def presentation_mode(self, settings):
+        del settings
+        return PresentationMode.PREPARED_BANK
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        timezone_name = device_config.get_config(
+            "timezone", default="America/New_York"
+        )
+        tz = pytz.timezone(timezone_name)
+        requested_at = datetime.fromisoformat(request.requested_at)
+        if requested_at.tzinfo is None:
+            requested_at = requested_at.replace(tzinfo=timezone.utc)
+        selected_date = (
+            self._get_selected_date(settings, tz)
+            if (settings or {}).get("customDate")
+            else requested_at.astimezone(tz).date()
+        )
+        events, provenance = self._load_calendar_event_snapshots(
+            settings,
+            selected_date,
+            tz,
+            require_current=True,
+        )
+        render_settings = dict(settings or {})
+        render_settings["customDate"] = selected_date.isoformat()
+        render_settings["_theme_render_only"] = True
+        render_settings["_inkypi_theme"] = resolved_theme_context
+        render_settings[self._CACHED_EVENTS_SETTING] = events
+        render_settings[self._SOURCE_PROVENANCE_SETTING] = provenance.value
+        image = self.generate_image(render_settings, device_config)
+        preparation = PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+        attach_source_provenance(preparation.image, provenance)
+        return preparation
 
     def generate_image(self, settings, device_config):
         dimensions = self.get_dimensions(device_config)
@@ -587,16 +647,30 @@ class SimpleCalendar(BasePlugin):
             highlight_color = theme_palette["accent"]
         layout_position = settings.get("layoutPosition", "left").lower()
         theme_render_only = self._setting_enabled(settings.get("_theme_render_only"))
-        holiday_events = self._get_calendar_events(
-            settings,
-            selected_date,
-            tz,
-            allow_remote=not theme_render_only,
+        display_render = self._setting_enabled(
+            settings.get(self._DISPLAY_RENDER_SETTING)
         )
+        cached_events = settings.get(self._CACHED_EVENTS_SETTING)
+        provenance = settings.get(self._SOURCE_PROVENANCE_SETTING)
+        if cached_events is not None:
+            holiday_events = list(cached_events)
+        elif theme_render_only or display_render:
+            holiday_events, provenance = self._load_calendar_event_snapshots(
+                settings,
+                selected_date,
+                tz,
+                require_current=True,
+            )
+        else:
+            holiday_events, provenance = self._refresh_calendar_event_snapshots(
+                settings,
+                selected_date,
+                tz,
+            )
         weather_panel_background_path = self._get_weather_panel_background_path(settings, device_config, selected_date)
         date_hero_overlay_enabled = self._date_hero_overlay_enabled(settings)
 
-        return self._render_calendar(
+        image = self._render_calendar(
             dimensions,
             selected_date,
             primary_color,
@@ -610,6 +684,9 @@ class SimpleCalendar(BasePlugin):
             reference_dt,
             theme_palette,
         )
+        if provenance is not None:
+            image = attach_source_provenance(image, provenance)
+        return image
 
     # ------------------------------------------------------------------
     # Core rendering
@@ -982,11 +1059,15 @@ class SimpleCalendar(BasePlugin):
             return None
 
         theme_render_only = self._setting_enabled(settings.get("_theme_render_only"))
+        display_render = self._setting_enabled(
+            settings.get(self._DISPLAY_RENDER_SETTING)
+        )
+        provider_free_render = theme_render_only or display_render
         source = "context"
         slug = self._read_weather_context_background_slug(
-            include_stale=theme_render_only
+            include_stale=provider_free_render
         )
-        if not slug and not theme_render_only:
+        if not slug and not provider_free_render:
             source = "open-meteo"
             weather_settings = self._find_weather_source_settings(settings, device_config)
             slug = self._fetch_current_weather_background_slug(weather_settings) if weather_settings else None
@@ -1006,6 +1087,8 @@ class SimpleCalendar(BasePlugin):
         return self._setting_enabled(settings.get("weatherPanelBackground"))
 
     def _read_weather_context_background_slug(self, *, include_stale=False):
+        if include_stale and not self._weather_context_storage_is_readable():
+            return None
         try:
             entries = read_contexts(
                 ["weather"],
@@ -1036,6 +1119,38 @@ class SimpleCalendar(BasePlugin):
             if slug:
                 return slug
         return None
+
+    @staticmethod
+    def _weather_context_storage_is_readable():
+        raw = os.getenv("INKYPI_CONTEXT_CACHE_DIR", "").strip()
+        runtime_raw = os.getenv("INKYPI_CACHE_DIR", "").strip()
+        runtime_root = Path(runtime_raw).expanduser() if runtime_raw else None
+        if raw:
+            directory = Path(raw).expanduser()
+            if not directory.is_absolute():
+                directory = (
+                    runtime_root / "context" / directory
+                    if runtime_root is not None
+                    else Path(__file__).resolve().parents[1] / directory
+                )
+        elif runtime_root is not None:
+            directory = runtime_root / "context"
+        else:
+            directory = Path(__file__).resolve().parents[1] / ".context_cache"
+
+        try:
+            info = os.lstat(directory)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                return False
+            for candidate in directory.glob("*.json"):
+                candidate_info = os.lstat(candidate)
+                if stat.S_ISLNK(candidate_info.st_mode) or not stat.S_ISREG(
+                    candidate_info.st_mode
+                ):
+                    return False
+        except OSError:
+            return False
+        return True
 
     def _find_weather_source_settings(self, settings, device_config):
         latitude = settings.get("weatherLatitude") or settings.get("latitude")
@@ -1212,6 +1327,140 @@ class SimpleCalendar(BasePlugin):
         except (TypeError, ValueError):
             return None
 
+    def _configured_calendar_sources(self, settings):
+        sources = []
+        if self._holidays_enabled(settings):
+            sources.extend(self._get_holiday_sources(settings))
+        if self._personal_calendars_enabled(settings):
+            sources.extend(self._get_personal_calendar_sources(settings))
+        return sources
+
+    @staticmethod
+    def _current_and_next_month(selected_date):
+        current = date(selected_date.year, selected_date.month, 1)
+        if current.month == 12:
+            following = date(current.year + 1, 1, 1)
+        else:
+            following = date(current.year, current.month + 1, 1)
+        return current, following
+
+    @staticmethod
+    def _worst_source_provenance(values):
+        ranking = {
+            SourceProvenance.LIVE: 0,
+            SourceProvenance.FRESH_CACHE: 1,
+            SourceProvenance.LOCAL_FALLBACK: 2,
+            SourceProvenance.STALE_CACHE: 3,
+        }
+        return max(values, key=lambda value: ranking[SourceProvenance(value)])
+
+    def _refresh_calendar_event_snapshots(self, settings, selected_date, tz):
+        """DATA-only provider refresh for the visible and following month."""
+
+        sources = self._configured_calendar_sources(settings)
+        if not sources:
+            return [], SourceProvenance.LIVE
+
+        current_month, next_month = self._current_and_next_month(selected_date)
+        month_results = []
+        for month_date in (selected_date, next_month):
+            events, failures = self._fetch_calendar_sources(
+                sources,
+                month_date,
+                tz,
+            )
+            if failures:
+                cached, _cached_provenance = self._read_event_snapshot_with_provenance(
+                    sources,
+                    month_date,
+                    tz,
+                )
+                month_results.append(
+                    (month_date, cached, SourceProvenance.STALE_CACHE, False)
+                )
+            else:
+                month_results.append(
+                    (
+                        month_date,
+                        self._normalize_snapshot_events(events),
+                        SourceProvenance.LIVE,
+                        True,
+                    )
+                )
+
+        protected_paths = {
+            self._event_snapshot_path(
+                self._event_snapshot_fingerprint(sources, month_date, tz),
+                create=False,
+            )
+            for month_date in (selected_date, next_month)
+        }
+        for month_date, events, _provenance, should_write in month_results:
+            if should_write:
+                self._write_event_snapshot(
+                    sources,
+                    month_date,
+                    tz,
+                    events,
+                    data_month=current_month,
+                    protected_paths=protected_paths,
+                )
+
+        current_events = month_results[0][1]
+        provenance = self._worst_source_provenance(
+            [result[2] for result in month_results]
+        )
+        return current_events, provenance
+
+    def _load_calendar_event_snapshots(
+        self,
+        settings,
+        selected_date,
+        tz,
+        *,
+        require_current,
+    ):
+        """Provider-free presentation/theme load of validated snapshot data."""
+
+        sources = self._configured_calendar_sources(settings)
+        if not sources:
+            return [], SourceProvenance.FRESH_CACHE
+
+        _current_month, next_month = self._current_and_next_month(selected_date)
+        try:
+            current_events, current_provenance = (
+                self._read_event_snapshot_with_provenance(
+                    sources,
+                    selected_date,
+                    tz,
+                )
+            )
+        except RuntimeError as exc:
+            if require_current:
+                raise RuntimeError(
+                    "Simple Calendar current-month snapshot is unavailable; "
+                    "event snapshot required for provider-free redraw; "
+                    "refusing provider-free redraw"
+                ) from exc
+            current_events = []
+            current_provenance = SourceProvenance.LOCAL_FALLBACK
+
+        provenances = [current_provenance]
+        next_fingerprint = self._event_snapshot_fingerprint(
+            sources,
+            next_month,
+            tz,
+        )
+        next_path = self._event_snapshot_path(next_fingerprint, create=False)
+        if os.path.lexists(next_path):
+            _next_events, next_provenance = self._read_event_snapshot_with_provenance(
+                sources,
+                next_month,
+                tz,
+            )
+            provenances.append(next_provenance)
+        return current_events, self._worst_source_provenance(provenances)
+
     def _get_calendar_events(
         self,
         settings,
@@ -1300,7 +1549,16 @@ class SimpleCalendar(BasePlugin):
             type(exc).__name__,
         )
 
-    def _write_event_snapshot(self, sources, selected_date, tz, events):
+    def _write_event_snapshot(
+        self,
+        sources,
+        selected_date,
+        tz,
+        events,
+        *,
+        data_month=None,
+        protected_paths=(),
+    ):
         fingerprint = self._event_snapshot_fingerprint(sources, selected_date, tz)
         snapshot_path = self._event_snapshot_path(fingerprint, create=True)
         normalized = self._normalize_snapshot_events(events)
@@ -1310,6 +1568,7 @@ class SimpleCalendar(BasePlugin):
             selected_date,
             tz,
             serialized,
+            data_month=data_month,
         )
         while serialized and self._event_snapshot_size(payload) > EVENT_SNAPSHOT_MAX_BYTES:
             serialized.pop()
@@ -1318,11 +1577,17 @@ class SimpleCalendar(BasePlugin):
                 selected_date,
                 tz,
                 serialized,
+                data_month=data_month,
             )
         if self._event_snapshot_size(payload) > EVENT_SNAPSHOT_MAX_BYTES:
             raise RuntimeError("Remote calendar event snapshot exceeds its size limit")
 
-        self._prune_event_snapshots(snapshot_path.parent)
+        protected_paths = {Path(path).absolute() for path in protected_paths}
+        protected_paths.add(snapshot_path.absolute())
+        self._prune_event_snapshots(
+            snapshot_path.parent,
+            protected_paths=protected_paths,
+        )
         stored_bytes = self._event_snapshot_storage_bytes(
             snapshot_path.parent,
             exclude=snapshot_path,
@@ -1336,10 +1601,21 @@ class SimpleCalendar(BasePlugin):
                 "Remote calendar event snapshot could not be written"
             ) from exc
         self._assert_snapshot_regular_file(snapshot_path)
-        self._prune_event_snapshots(snapshot_path.parent)
+        self._prune_event_snapshots(
+            snapshot_path.parent,
+            protected_paths=protected_paths,
+        )
         return normalized[: len(serialized)]
 
     def _read_event_snapshot(self, sources, selected_date, tz):
+        events, _provenance = self._read_event_snapshot_with_provenance(
+            sources,
+            selected_date,
+            tz,
+        )
+        return events
+
+    def _read_event_snapshot_with_provenance(self, sources, selected_date, tz):
         fingerprint = self._event_snapshot_fingerprint(sources, selected_date, tz)
         snapshot_path = self._event_snapshot_path(fingerprint, create=False)
         raw = self._read_event_snapshot_bytes(snapshot_path)
@@ -1376,14 +1652,34 @@ class SimpleCalendar(BasePlugin):
                 "Remote calendar event snapshot has invalid events; "
                 "refusing theme-only redraw"
             ) from exc
-        return self._dedupe_holiday_events(events)
+        data_month = str(payload.get("data_month") or expected_month)
+        provenance = (
+            SourceProvenance.STALE_CACHE
+            if data_month != expected_month
+            else SourceProvenance.FRESH_CACHE
+        )
+        return self._dedupe_holiday_events(events), provenance
 
     @staticmethod
-    def _event_snapshot_payload(fingerprint, selected_date, tz, serialized):
+    def _event_snapshot_payload(
+        fingerprint,
+        selected_date,
+        tz,
+        serialized,
+        *,
+        data_month=None,
+    ):
+        source_month = data_month or selected_date
+        if isinstance(source_month, str):
+            data_month_text = source_month
+        else:
+            data_month_text = source_month.strftime("%Y-%m")
         return {
             "version": EVENT_SNAPSHOT_VERSION,
             "source_fingerprint": fingerprint,
             "month": selected_date.strftime("%Y-%m"),
+            "data_month": data_month_text,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "timezone": getattr(tz, "zone", None) or str(tz),
             "events": serialized,
         }
@@ -1544,7 +1840,8 @@ class SimpleCalendar(BasePlugin):
         return raw
 
     @staticmethod
-    def _prune_event_snapshots(directory):
+    def _prune_event_snapshots(directory, *, protected_paths=()):
+        protected = {Path(path).absolute() for path in protected_paths}
         try:
             directory_info = os.lstat(directory)
             if stat.S_ISLNK(directory_info.st_mode) or not stat.S_ISDIR(
@@ -1557,6 +1854,8 @@ class SimpleCalendar(BasePlugin):
 
         now = time.time()
         for candidate in candidates:
+            if candidate.absolute() in protected:
+                continue
             if not EVENT_SNAPSHOT_FILENAME_RE.fullmatch(candidate.name):
                 continue
             try:
@@ -1856,13 +2155,73 @@ class SimpleCalendar(BasePlugin):
             return self._read_local_calendar_path(Path(path_text))
         if url.startswith("\\\\") or (not parsed.scheme and Path(url).is_absolute()):
             return self._read_local_calendar_path(Path(url))
-        response = get_http_session().get(
-            url,
-            timeout=20,
-            headers={"User-Agent": "InkyPi SimpleCalendar/1.0"},
-        )
-        response.raise_for_status()
-        return response.content
+        session = get_http_session()
+        current_url = self._validated_remote_calendar_url(url, redirect=False)
+        for redirect_count in range(CALENDAR_SOURCE_MAX_REDIRECTS + 1):
+            response = session.get(
+                current_url,
+                timeout=20,
+                headers={"User-Agent": "InkyPi SimpleCalendar/1.0"},
+                allow_redirects=False,
+            )
+            try:
+                status_code = int(getattr(response, "status_code", 200))
+                if status_code in {301, 302, 303, 307, 308}:
+                    location = str(
+                        (getattr(response, "headers", {}) or {}).get("Location")
+                        or ""
+                    ).strip()
+                    if not location or redirect_count >= CALENDAR_SOURCE_MAX_REDIRECTS:
+                        raise RuntimeError(
+                            "Calendar source redirect chain is invalid or too long"
+                        )
+                    current_url = self._validated_remote_calendar_url(
+                        urljoin(current_url, location),
+                        redirect=True,
+                    )
+                    continue
+                response.raise_for_status()
+                content = bytes(response.content)
+                if len(content) > CALENDAR_SOURCE_MAX_BYTES:
+                    raise RuntimeError("Calendar source response exceeds its size limit")
+                return content
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+        raise RuntimeError("Calendar source redirect chain is too long")
+
+    @staticmethod
+    def _validated_remote_calendar_url(url, *, redirect):
+        parsed = urlparse(str(url or "").strip())
+        label = "redirect target" if redirect else "URL"
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError(f"Calendar source {label} has an invalid port") from exc
+        if (
+            parsed.scheme.lower() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or port not in {None, 443}
+        ):
+            raise RuntimeError(
+                f"Calendar source {label} must use public HTTPS without credentials"
+            )
+
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+            (".local", ".localhost", ".internal")
+        ):
+            raise RuntimeError(f"Calendar source {label} cannot target a private host")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise RuntimeError(f"Calendar source {label} cannot target a private host")
+        return parsed.geturl()
 
     def _read_local_calendar_path(self, path):
         try:

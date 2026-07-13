@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -15,6 +15,59 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.simple_calendar import simple_calendar as calendar_module
 from plugins.simple_calendar.simple_calendar import LOCALE_DATA, SimpleCalendar
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationRequestContext,
+)
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    read_source_provenance,
+)
+
+
+class PresentationDeviceConfig:
+    def get_config(self, key=None, default=None):
+        values = {
+            "orientation": "horizontal",
+            "timezone": "America/Los_Angeles",
+        }
+        if key is None:
+            return values
+        return values.get(key, default)
+
+    def get_resolution(self):
+        return (800, 480)
+
+
+def _presentation_request(requested_at):
+    return PresentationRequestContext(
+        request_id="a" * 32,
+        requested_at=requested_at.isoformat(),
+        origin_display_commit_id="display-before-calendar-redraw",
+        last_receipt=None,
+    )
+
+
+def _calendar_theme(mode):
+    palettes = {
+        "day": {
+            "background": (245, 240, 229),
+            "panel": (236, 230, 215),
+            "ink": (20, 27, 31),
+            "muted": (75, 82, 84),
+            "rule": (160, 154, 137),
+            "accent": (46, 106, 118),
+        },
+        "night": {
+            "background": (11, 21, 24),
+            "panel": (18, 32, 36),
+            "ink": (236, 243, 239),
+            "muted": (172, 187, 181),
+            "rule": (72, 91, 87),
+            "accent": (105, 185, 197),
+        },
+    }
+    return {"mode": mode, "palette": palettes[mode]}
 
 
 def test_default_us_cn_holiday_sources_when_enabled():
@@ -422,8 +475,10 @@ def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
             calls.append(("raise_for_status",))
 
     class FakeSession:
-        def get(self, url, timeout, headers):
-            calls.append((url, timeout, headers.get("User-Agent")))
+        def get(self, url, timeout, headers, allow_redirects):
+            calls.append(
+                (url, timeout, headers.get("User-Agent"), allow_redirects)
+            )
             return FakeResponse()
 
     monkeypatch.setattr(
@@ -441,8 +496,39 @@ def test_remote_calendar_source_uses_shared_http_session(monkeypatch):
             "https://calendar.google.com/calendar/ical/private/basic.ics",
             20,
             "InkyPi SimpleCalendar/1.0",
+            False,
         ),
         ("raise_for_status",),
+    ]
+
+
+def test_remote_calendar_source_rejects_redirect_to_private_network(monkeypatch):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    calls = []
+
+    class RedirectResponse:
+        status_code = 302
+        headers = {"Location": "http://127.0.0.1/private.ics"}
+        content = b""
+
+        def raise_for_status(self):
+            raise AssertionError("redirect response was treated as final content")
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return RedirectResponse()
+
+    monkeypatch.setattr(
+        "plugins.simple_calendar.simple_calendar.get_http_session",
+        lambda: FakeSession(),
+    )
+
+    with pytest.raises(RuntimeError, match="redirect"):
+        plugin._read_calendar_source("https://calendar.example/private.ics?token=secret")
+
+    assert [call[0] for call in calls] == [
+        "https://calendar.example/private.ics?token=secret"
     ]
 
 
@@ -458,6 +544,219 @@ def _remote_calendar_settings():
         "personalCalendarLabels[]": ["ME"],
         "personalCalendarColors[]": ["#2e7d32"],
     }
+
+
+def _month_event(source, selected_date, tz):
+    del tz
+    return {
+        "date": date(selected_date.year, selected_date.month, 4),
+        "title": f"{source['label']} {selected_date:%Y-%m}",
+        "label": source["label"],
+        "color": source["color"],
+        "kind": source["kind"],
+        "time": "",
+    }
+
+
+def test_simple_calendar_declares_receipt_free_prepared_bank():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    assert plugin.presentation_mode({}) is PresentationMode.PREPARED_BANK
+    assert plugin.reconcile_presentation_receipt({}, None) is None
+
+
+def test_data_refresh_writes_current_and_next_month_snapshots(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    calls = []
+
+    def fetch(sources, selected_date, selected_tz):
+        calls.append(selected_date)
+        return (
+            [_month_event(source, selected_date, selected_tz) for source in sources],
+            [],
+        )
+
+    monkeypatch.setattr(plugin, "_fetch_calendar_sources", fetch)
+
+    events, provenance = plugin._refresh_calendar_event_snapshots(
+        _remote_calendar_settings(), date(2026, 7, 31), tz
+    )
+
+    assert calls == [date(2026, 7, 31), date(2026, 8, 1)]
+    assert [event["date"] for event in events] == [
+        date(2026, 7, 4),
+        date(2026, 7, 4),
+    ]
+    assert provenance is SourceProvenance.LIVE
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "data" / "plugins" / "simple_calendar" / "event_snapshots").glob("*.json")
+    ]
+    assert {payload["month"] for payload in payloads} == {"2026-07", "2026-08"}
+    assert {payload["data_month"] for payload in payloads} == {"2026-07"}
+
+
+def test_presentation_reads_current_and_next_snapshots_without_provider_or_state_writes(
+    tmp_path, monkeypatch
+):
+    data_root = tmp_path / "data"
+    context_root = tmp_path / "context"
+    context_root.mkdir()
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_root))
+    monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", os.fspath(context_root))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = {
+        **_remote_calendar_settings(),
+        "weatherPanelBackground": "false",
+        "dateHeroOverlays": "false",
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_calendar_sources",
+        lambda sources, selected_date, selected_tz: (
+            [_month_event(source, selected_date, selected_tz) for source in sources],
+            [],
+        ),
+    )
+    plugin._refresh_calendar_event_snapshots(settings, date(2026, 7, 11), tz)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    reads = []
+    original_read = plugin._read_event_snapshot_with_provenance
+
+    def track_read(sources, selected_date, selected_tz):
+        reads.append(selected_date)
+        return original_read(sources, selected_date, selected_tz)
+
+    monkeypatch.setattr(plugin, "_read_event_snapshot_with_provenance", track_read)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_calendar_sources",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("presentation called a calendar provider")
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_current_weather_background_slug",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("presentation called a weather provider")
+        ),
+    )
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        PresentationDeviceConfig(),
+        request=_presentation_request(
+            datetime(2026, 7, 12, 0, 5, tzinfo=timezone(timedelta(hours=-7)))
+        ),
+        resolved_theme_context=_calendar_theme("night"),
+    )
+
+    assert preparation.changed is True
+    assert preparation.request_id == "a" * 32
+    assert preparation.image.size == (800, 480)
+    assert reads == [date(2026, 7, 12), date(2026, 8, 1)]
+    assert not hasattr(preparation, "receipt") or preparation.receipt is None
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_presentation_missing_current_month_snapshot_fails_closed_without_creating_state(
+    tmp_path, monkeypatch
+):
+    data_root = tmp_path / "data"
+    context_root = tmp_path / "context"
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(data_root))
+    monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", os.fspath(context_root))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_calendar_sources",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cold presentation called a calendar provider")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="current-month snapshot"):
+        plugin.prepare_presentation(
+            {**_remote_calendar_settings(), "weatherPanelBackground": "false"},
+            PresentationDeviceConfig(),
+            request=_presentation_request(
+                datetime(2026, 8, 1, 0, 5, tzinfo=timezone(timedelta(hours=-7)))
+            ),
+            resolved_theme_context=_calendar_theme("night"),
+        )
+
+    assert not data_root.exists()
+    assert not context_root.exists()
+
+
+def test_cross_month_prefetch_is_rendered_with_stale_cache_provenance(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
+    monkeypatch.setenv("INKYPI_CONTEXT_CACHE_DIR", os.fspath(tmp_path / "context"))
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    settings = {
+        **_remote_calendar_settings(),
+        "weatherPanelBackground": "false",
+        "dateHeroOverlays": "false",
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_calendar_sources",
+        lambda sources, selected_date, selected_tz: (
+            [_month_event(source, selected_date, selected_tz) for source in sources],
+            [],
+        ),
+    )
+    plugin._refresh_calendar_event_snapshots(settings, date(2026, 7, 31), tz)
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        PresentationDeviceConfig(),
+        request=_presentation_request(
+            datetime(2026, 8, 1, 0, 5, tzinfo=timezone(timedelta(hours=-7)))
+        ),
+        resolved_theme_context=_calendar_theme("night"),
+    )
+
+    assert read_source_provenance(preparation.image) is SourceProvenance.STALE_CACHE
+
+
+def test_snapshot_cleanup_protects_current_and_next_month(tmp_path):
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    directory = tmp_path / "snapshots"
+    directory.mkdir()
+    current = directory / ("a" * 64 + ".json")
+    next_month = directory / ("b" * 64 + ".json")
+    expired = directory / ("c" * 64 + ".json")
+    for path in (current, next_month, expired):
+        path.write_text("{}", encoding="utf-8")
+        old = time.time() - 63 * 24 * 60 * 60
+        os.utime(path, (old, old))
+
+    plugin._prune_event_snapshots(
+        directory,
+        protected_paths={current, next_month},
+    )
+
+    assert current.exists()
+    assert next_month.exists()
+    assert not expired.exists()
 
 
 def test_remote_event_snapshot_replays_holiday_and_personal_events_without_network(

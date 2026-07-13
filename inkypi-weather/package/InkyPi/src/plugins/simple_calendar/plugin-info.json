@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
     "theme": {"presentation": "ui", "day": {"background": "#f5f0e5", "accent": "#2e6a76"}, "night": {"background": "#0b1518", "accent": "#69b9c5"}},
     "display_name": "Simple Calendar",
     "id": "simple_calendar",
