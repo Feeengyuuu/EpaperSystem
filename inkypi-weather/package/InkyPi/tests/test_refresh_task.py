@@ -59,6 +59,7 @@ from runtime.long_task_executor import (
 )
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 from utils.image_utils import compute_image_hash
+from utils.theme_utils import EFFECTIVE_THEME_CONTEXT_INFO_KEY
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
@@ -2921,6 +2922,606 @@ class RecordingThemeWrapperPlugin:
         return Image.new("RGB", (2, 1), "white")
 
 
+def _canonical_runtime_theme(
+    mode,
+    *,
+    date="2026-07-12",
+    sunrise="2026-07-12T05:56:00-07:00",
+    sunset="2026-07-12T20:31:00-07:00",
+):
+    palette = {
+        "background": [0, 0, 0] if mode == "night" else [255, 255, 255],
+        "panel": [0, 0, 0] if mode == "night" else [255, 255, 255],
+        "ink": [255, 255, 255] if mode == "night" else [0, 0, 0],
+        "muted": [194, 196, 202] if mode == "night" else [74, 78, 84],
+        "rule": [46, 48, 56] if mode == "night" else [185, 188, 194],
+        "accent": [107, 204, 255] if mode == "night" else [24, 92, 150],
+    }
+    return {
+        "requested_mode": "auto",
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": date,
+        "timezone": "America/Los_Angeles",
+        "sunrise": sunrise,
+        "sunset": sunset,
+        "palette": palette,
+        "css": {
+            key: "#%02x%02x%02x" % tuple(value)
+            for key, value in palette.items()
+        },
+    }
+
+
+class EffectiveWeatherWrapperPlugin:
+    def __init__(self, config, effective_context, *, fail=False):
+        self.config = config
+        self.effective_context = effective_context
+        self.fail = fail
+        self.calls = []
+
+    def wants_refresh_on_display(self, _settings):
+        return False
+
+    def render_themed_image(
+        self,
+        settings,
+        device_config,
+        *,
+        theme_render_only=False,
+        resolved_theme_context=None,
+    ):
+        self.calls.append(
+            {
+                "theme_render_only": theme_render_only,
+                "resolved": {
+                    "mode": (resolved_theme_context or {}).get("mode"),
+                    "source": (resolved_theme_context or {}).get("source"),
+                },
+            }
+        )
+        if self.fail:
+            raise RuntimeError("weather theme render failed")
+        image = Image.new("RGB", device_config.get_resolution(), "black")
+        image.info["inkypi_theme_mode"] = self.effective_context.get("mode")
+        image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY] = copy.deepcopy(
+            self.effective_context
+        )
+        return image
+
+
+def _weather_effective_runtime(
+    name,
+    monkeypatch,
+    effective_context,
+    *,
+    plugin_theme_mode="auto",
+    device_theme_mode="day",
+):
+    tmp_path = make_test_dir(name)
+    plugin_data = _runtime_plugin_data(
+        "weather",
+        "Weather",
+        latest_refresh_time="2999-01-01T00:00:00+00:00",
+        interval=300,
+    )
+    plugin_data["plugin_settings"]["themeMode"] = plugin_theme_mode
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    device_config.config.update(
+        {
+            "theme_mode": device_theme_mode,
+            "active_theme": "day",
+            "timezone": "America/Los_Angeles",
+        }
+    )
+    plugin_config = {
+        "id": "weather",
+        "_manifest": _theme_manifest("weather"),
+    }
+    device_config.get_plugin = lambda _plugin_id: plugin_config
+    plugin = EffectiveWeatherWrapperPlugin(plugin_config, effective_context)
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: plugin,
+    )
+    current_dt = datetime(
+        2026,
+        7,
+        12,
+        12,
+        0,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    instance = playlist.plugins[0].snapshot()
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=instance.instance_uuid,
+        changed_at=current_dt.isoformat(),
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=10,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+    expected_queued_mode = (
+        plugin_theme_mode
+        if plugin_theme_mode in {"day", "night"}
+        else "day"
+    )
+    assert command.payload["resolved_theme_context"]["mode"] == expected_queued_mode
+    return task, device_config, playlist, instance, plugin, command, current_dt
+
+
+def test_weather_data_refresh_promotes_under_effective_not_initial_mode(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    (
+        task,
+        device_config,
+        _playlist,
+        instance,
+        _plugin,
+        command,
+        current_dt,
+    ) = _weather_effective_runtime(
+        "weather-effective-cache-identity",
+        monkeypatch,
+        effective,
+    )
+
+    result = task._execute_command(command)
+
+    night_path = Path(task._snapshot_cache_path(instance, "night"))
+    assert night_path.exists()
+    assert not Path(task._snapshot_cache_path(instance, "day")).exists()
+    assert not Path(task._staging_cache_path(instance, "night")).exists()
+    assert result.getpixel((0, 0)) == (0, 0, 0)
+    assert result.info["inkypi_theme_mode"] == "night"
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.data.last_success_at == current_dt.isoformat()
+    assert state.last_good_cache.theme_mode == "night"
+    assert device_config.config["active_theme"] == "day"
+
+
+def test_weather_effective_context_controls_stage_and_last_good_record(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    (
+        task,
+        _device_config,
+        _playlist,
+        instance,
+        _plugin,
+        command,
+        _current_dt,
+    ) = _weather_effective_runtime(
+        "weather-effective-stage-and-last-good",
+        monkeypatch,
+        effective,
+    )
+    original_stage_path = task._staging_cache_path
+    staged_modes = []
+
+    def observe_stage_path(observed_instance, mode):
+        staged_modes.append(mode)
+        return original_stage_path(observed_instance, mode)
+
+    monkeypatch.setattr(task, "_staging_cache_path", observe_stage_path)
+
+    task._execute_command(command)
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    catalog_entry = task.cache_catalog.resolve(instance, "night", state)
+    assert staged_modes == ["night"]
+    assert catalog_entry is not None
+    assert catalog_entry.theme_mode == "night"
+    assert state.last_good_cache.theme_mode == "night"
+
+
+def test_active_theme_info_contains_timezone_and_exact_weather_projection(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    (
+        task,
+        device_config,
+        _playlist,
+        _instance,
+        _plugin,
+        command,
+        _current_dt,
+    ) = _weather_effective_runtime(
+        "weather-effective-active-info",
+        monkeypatch,
+        effective,
+    )
+
+    task._execute_command(command)
+
+    info = device_config.config["active_theme_info"]
+    shared = ("source", "date", "timezone", "sunrise", "sunset")
+    assert {key: info[key] for key in shared} == {
+        key: effective[key]
+        for key in shared
+    }
+    assert info["mode"] == "night"
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.write_count == 1
+
+
+def test_forced_weather_effective_mode_does_not_replace_global_theme_info(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    effective["requested_mode"] = "night"
+    (
+        task,
+        device_config,
+        _playlist,
+        instance,
+        _plugin,
+        command,
+        current_dt,
+    ) = _weather_effective_runtime(
+        "weather-forced-effective-stays-local",
+        monkeypatch,
+        effective,
+        plugin_theme_mode="night",
+        device_theme_mode="auto",
+    )
+    shared_global = _canonical_runtime_theme("day")
+    device_config.config["active_theme_info"] = task._theme_status_info(
+        shared_global,
+        current_dt,
+    )
+    before = copy.deepcopy(device_config.config["active_theme_info"])
+
+    task._execute_command(command)
+
+    assert Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert not Path(task._snapshot_cache_path(instance, "day")).exists()
+    assert device_config.config["active_theme_info"] == before
+    assert device_config.config["active_theme"] == "day"
+
+
+def _weather_status_probe_runtime(name, monkeypatch, theme_context):
+    tmp_path = make_test_dir(name)
+    plugin_data = _runtime_plugin_data(
+        "weather",
+        "Weather",
+        latest_refresh_time="2999-01-01T00:00:00+00:00",
+    )
+    plugin_data["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    device_config.config.update(
+        {
+            "theme_mode": theme_context["mode"],
+            "active_theme": "day",
+            "timezone": theme_context["timezone"],
+        }
+    )
+    plugin_config = {
+        "id": "weather",
+        "_manifest": _theme_manifest("weather"),
+    }
+    device_config.get_plugin = lambda _plugin_id: plugin_config
+    monkeypatch.setattr(
+        "src.refresh_task.get_theme_context",
+        lambda *_args, **_kwargs: copy.deepcopy(theme_context),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: pytest.fail("metadata-only probe instantiated a plugin"),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    instance = playlist.plugins[0].snapshot()
+    for mode in ("day", "night"):
+        _write_runtime_theme_cache(
+            task,
+            instance,
+            mode,
+            Image.new("RGB", (32, 16), "white" if mode == "day" else "black"),
+        )
+    current_dt = datetime(
+        2026,
+        7,
+        12,
+        12 if theme_context["mode"] == "day" else 22,
+        0,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=instance.instance_uuid,
+        changed_at=current_dt.isoformat(),
+    )
+    for lane in RefreshLane:
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (current_dt - timedelta(minutes=5)).isoformat(),
+            lane=lane,
+        )
+    playlist.current_plugin_index = 0
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = [instance.instance_uuid]
+    return task, device_config, playlist, instance, current_dt
+
+
+def test_same_mode_new_astronomy_updates_info_without_render_or_provider(
+    monkeypatch,
+):
+    context = _canonical_runtime_theme(
+        "day",
+        sunrise="2026-07-12T05:57:00-07:00",
+        sunset="2026-07-12T20:30:00-07:00",
+    )
+    task, device_config, playlist, instance, current_dt = (
+        _weather_status_probe_runtime(
+            "weather-status-same-mode",
+            monkeypatch,
+            context,
+        )
+    )
+    before_rotation = (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+    before_anchor = device_config.refresh_info.to_dict()
+    before_lanes = dict(task.runtime_state.snapshot().instances)
+    before_cache = {
+        mode: Path(task._snapshot_cache_path(instance, mode)).read_bytes()
+        for mode in ("day", "night")
+    }
+    monkeypatch.setattr(
+        task,
+        "_staging_cache_path",
+        lambda *_args, **_kwargs: pytest.fail(
+            "metadata-only sync attempted cache promotion"
+        ),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+
+    info = device_config.config["active_theme_info"]
+    assert info == {
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": "2026-07-12",
+        "timezone": "America/Los_Angeles",
+        "sunrise": "2026-07-12T05:57:00-07:00",
+        "sunset": "2026-07-12T20:30:00-07:00",
+        "updated_at": current_dt.isoformat(),
+    }
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.write_count == 1
+    assert task._select_independent_refresh_command(
+        current_dt + timedelta(minutes=1)
+    ) is None
+    assert device_config.write_count == 1
+    assert device_config.config["active_theme_info"] == info
+    assert before_rotation == (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+    assert device_config.refresh_info.to_dict() == before_anchor
+    assert dict(task.runtime_state.snapshot().instances) == before_lanes
+    assert {
+        mode: Path(task._snapshot_cache_path(instance, mode)).read_bytes()
+        for mode in ("day", "night")
+    } == before_cache
+    assert task.display_manager.calls == []
+
+
+def test_info_only_sync_preserves_rotation_anchor_random_bag_and_all_lanes(
+    monkeypatch,
+):
+    context = _canonical_runtime_theme(
+        "day",
+        sunrise="2026-07-12T05:58:00-07:00",
+        sunset="2026-07-12T20:29:00-07:00",
+    )
+    task, device_config, playlist, instance, current_dt = (
+        _weather_status_probe_runtime(
+            "weather-status-preserves-scheduler-state",
+            monkeypatch,
+            context,
+        )
+    )
+    before_anchor = device_config.refresh_info.to_dict()
+    before_rotation = (
+        playlist.current_plugin_index,
+        tuple(playlist.plugin_rotation_queue),
+        tuple(playlist.plugin_rotation_pool),
+        tuple(playlist.plugin_rotation_recent_history),
+    )
+    before_runtime = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert task._select_independent_refresh_command(current_dt) is None
+
+    assert device_config.refresh_info.to_dict() == before_anchor
+    assert before_rotation == (
+        playlist.current_plugin_index,
+        tuple(playlist.plugin_rotation_queue),
+        tuple(playlist.plugin_rotation_pool),
+        tuple(playlist.plugin_rotation_recent_history),
+    )
+    assert (
+        task.runtime_state.snapshot().instances[instance.instance_uuid]
+        == before_runtime
+    )
+    assert device_config.write_count == 1
+
+
+def test_same_projection_does_not_rewrite_config_each_poll(monkeypatch):
+    context = _canonical_runtime_theme("day")
+    task, device_config, _playlist, _instance, current_dt = (
+        _weather_status_probe_runtime(
+            "weather-status-same-projection",
+            monkeypatch,
+            context,
+        )
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    first_info = copy.deepcopy(device_config.config["active_theme_info"])
+    assert device_config.write_count == 1
+
+    assert task._select_independent_refresh_command(
+        current_dt + timedelta(minutes=1)
+    ) is None
+    assert device_config.write_count == 1
+    assert device_config.config["active_theme_info"] == first_info
+
+
+def test_mode_change_updates_info_but_not_active_theme_before_redraw_commit(
+    monkeypatch,
+):
+    context = _canonical_runtime_theme("night")
+    task, device_config, _playlist, instance, current_dt = (
+        _weather_status_probe_runtime(
+            "weather-status-mode-change",
+            monkeypatch,
+            context,
+        )
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.THEME_REDRAW
+    assert command.instance_uuid == instance.instance_uuid
+    assert command.payload["theme_context"]["mode"] == "night"
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.config["active_theme_info"]["mode"] == "night"
+    assert device_config.config["active_theme_info"]["timezone"] == (
+        "America/Los_Angeles"
+    )
+    assert device_config.write_count == 1
+    assert task.display_manager.calls == []
+
+
+def test_malformed_effective_context_cannot_change_cache_identity(monkeypatch):
+    malformed = {**_canonical_runtime_theme("night"), "mode": "sepia"}
+    (
+        task,
+        _device_config,
+        _playlist,
+        instance,
+        _plugin,
+        command,
+        _current_dt,
+    ) = _weather_effective_runtime(
+        "weather-malformed-effective-context",
+        monkeypatch,
+        malformed,
+    )
+
+    result = task._execute_command(command)
+
+    assert Path(task._snapshot_cache_path(instance, "day")).exists()
+    assert not Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert EFFECTIVE_THEME_CONTEXT_INFO_KEY not in result.info
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.last_good_cache.theme_mode == "day"
+
+
+def test_theme_redraw_rejects_effective_context_override_and_stays_pinned(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    (
+        task,
+        _device_config,
+        playlist,
+        instance,
+        plugin,
+        _data_command,
+        current_dt,
+    ) = _weather_effective_runtime(
+        "weather-theme-redraw-rejects-effective",
+        monkeypatch,
+        effective,
+    )
+    queued = _canonical_runtime_theme("day")
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.THEME_REDRAW,
+        force=False,
+        display_cached_only=False,
+        priority=80,
+        kind=CommandKind.CACHE_REFRESH,
+        theme_context=queued,
+        theme_render_only=True,
+        current_dt=current_dt,
+        resolved_theme_context=queued,
+    )
+
+    result = task._execute_command(command)
+
+    assert plugin.calls[-1]["theme_render_only"] is True
+    assert Path(task._snapshot_cache_path(instance, "day")).exists()
+    assert not Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert EFFECTIVE_THEME_CONTEXT_INFO_KEY not in result.info
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.theme.last_success_at == current_dt.isoformat()
+    assert state.last_good_cache.theme_mode == "day"
+
+
+def test_internal_effective_context_is_not_persisted_as_png_metadata(
+    monkeypatch,
+):
+    effective = _canonical_runtime_theme("night")
+    (
+        task,
+        _device_config,
+        _playlist,
+        instance,
+        _plugin,
+        command,
+        _current_dt,
+    ) = _weather_effective_runtime(
+        "weather-internal-metadata-stripped",
+        monkeypatch,
+        effective,
+    )
+
+    result = task._execute_command(command)
+
+    assert EFFECTIVE_THEME_CONTEXT_INFO_KEY not in result.info
+    with Image.open(task._snapshot_cache_path(instance, "night")) as saved:
+        assert EFFECTIVE_THEME_CONTEXT_INFO_KEY not in saved.info
+
+
 def test_pinned_mode_survives_environment_flip_through_render_stage_and_commit(
     monkeypatch,
 ):
@@ -3068,6 +3669,99 @@ def _theme_transition_runtime(
     }
     device_config.get_plugin = lambda plugin_id: configs[plugin_id]
     return task, device_config, playlist, configs
+
+
+def test_successful_redraw_aligns_active_theme_and_existing_info(monkeypatch):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "weather-status-redraw-success"
+    )
+    current_dt = datetime(
+        2026,
+        7,
+        12,
+        22,
+        0,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+    context = _canonical_runtime_theme("night")
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(
+        task,
+        instance,
+        "day",
+        Image.new("RGB", (32, 16), "white"),
+    )
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        "src.refresh_task.get_theme_context",
+        lambda *_args, **_kwargs: copy.deepcopy(context),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    command = task._select_scheduled_command(current_dt)
+    info_before_commit = copy.deepcopy(device_config.config["active_theme_info"])
+    result = task._execute_command(command)
+
+    assert result is not None
+    assert device_config.config["active_theme"] == "night"
+    assert device_config.config["active_theme_info"] == info_before_commit
+    assert {
+        key: info_before_commit[key]
+        for key in ("source", "date", "timezone", "sunrise", "sunset")
+    } == {
+        key: context[key]
+        for key in ("source", "date", "timezone", "sunrise", "sunset")
+    }
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.last_good_cache.theme_mode == "night"
+    assert device_config.write_count == 2
+
+
+def test_failed_redraw_keeps_active_theme_last_good_and_info_current(monkeypatch):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "weather-status-redraw-failure"
+    )
+    current_dt = datetime(
+        2026,
+        7,
+        12,
+        22,
+        0,
+        tzinfo=timezone(timedelta(hours=-7)),
+    )
+    context = _canonical_runtime_theme("night")
+    instance = playlist.plugins[0].snapshot()
+    day_path = _write_runtime_theme_cache(
+        task,
+        instance,
+        "day",
+        Image.new("RGB", (32, 16), "white"),
+    )
+    day_bytes = day_path.read_bytes()
+    plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr(
+        "src.refresh_task.get_theme_context",
+        lambda *_args, **_kwargs: copy.deepcopy(context),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_scheduled_command(current_dt)
+    expected_info = copy.deepcopy(device_config.config["active_theme_info"])
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    job = task.refresh_queue.get_entry(submitted.id).job
+
+    assert job.status is JobStatus.FAILED
+    assert device_config.config["active_theme"] == "day"
+    assert device_config.config["active_theme_info"] == expected_info
+    assert device_config.config["active_theme_info"]["mode"] == "night"
+    assert device_config.config["active_theme_refresh_failure"]["mode"] == "night"
+    assert day_path.read_bytes() == day_bytes
+    assert not Path(task._snapshot_cache_path(instance, "night")).exists()
+    assert task.display_manager.calls == []
+    assert device_config.write_count == 2
 
 
 def test_theme_transition_selects_exact_displayed_auto_instance_without_fallback():
@@ -3248,9 +3942,9 @@ def test_queued_theme_transition_is_stale_if_display_changes_before_render(
     assert task.display_manager.calls == []
     assert not Path(task._snapshot_cache_path(target, "night")).exists()
     assert device_config.config["active_theme"] == "day"
-    assert "active_theme_info" not in device_config.config
+    assert device_config.config["active_theme_info"]["mode"] == "night"
     assert "active_theme_refresh_failure" not in device_config.config
-    assert device_config.write_count == 0
+    assert device_config.write_count == 1
 
 
 def test_theme_transition_is_stale_if_display_changes_during_render(
@@ -3299,9 +3993,9 @@ def test_theme_transition_is_stale_if_display_changes_during_render(
     state = task.runtime_state.snapshot().instances[target.instance_uuid]
     assert state.last_success_at is None
     assert device_config.config["active_theme"] == "day"
-    assert "active_theme_info" not in device_config.config
+    assert device_config.config["active_theme_info"]["mode"] == "night"
     assert "active_theme_refresh_failure" not in device_config.config
-    assert device_config.write_count == 0
+    assert device_config.write_count == 1
 
 
 def test_theme_transition_without_runtime_uuid_does_not_use_refresh_info_fallback(
@@ -3390,9 +4084,9 @@ def test_missing_theme_cache_under_pressure_keeps_last_good_without_render(
     state = task.runtime_state.snapshot().instances.get(target.instance_uuid)
     assert state is None or state.last_success_at is None
     assert device_config.config["active_theme"] == "day"
-    assert "active_theme_info" not in device_config.config
+    assert device_config.config["active_theme_info"]["mode"] == "night"
     assert "active_theme_refresh_failure" not in device_config.config
-    assert device_config.write_count == 0
+    assert device_config.write_count == 1
 
 
 def test_existing_target_theme_cache_is_safe_to_promote_under_pressure(monkeypatch):
@@ -4634,6 +5328,9 @@ def _make_blocked_playlist_task(monkeypatch, name):
     monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
     task.start()
     assert task.wait_until_waiting(timeout=1.0)
+    # The initial scheduler probe legitimately synchronizes canonical theme
+    # status. These tests isolate side effects from the subsequent stale job.
+    device_config.write_count = 0
     return task, device_config.playlist_manager, render_started, allow_render, plugin, tmp_path
 
 
@@ -4935,6 +5632,7 @@ def test_cache_only_display_validates_each_visible_side_effect(monkeypatch):
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
+        events.clear()
         job = task.submit_playlist_display(manager.first_instance_uuid())
         result = task.wait_for_job(job["id"], timeout=1.0)
 
@@ -4982,6 +5680,9 @@ def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeyp
     )
     task.start()
     try:
+        assert task.wait_until_waiting(timeout=1.0)
+        before_config = copy.deepcopy(device_config.config)
+        device_config.write_count = 0
         submitted = task.refresh_queue.submit(command)
         result = task.wait_for_job(submitted.id, timeout=1.0)
 
@@ -4990,7 +5691,7 @@ def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeyp
         assert device_config.refresh_info.to_dict() == before_refresh
         assert "displayed_instance_uuid" not in device_config.config
         assert device_config.config["active_theme"] == "day"
-        assert "active_theme_info" not in device_config.config
+        assert device_config.config == before_config
         assert device_config.write_count == 0
     finally:
         task.stop(join_timeout=1.0)

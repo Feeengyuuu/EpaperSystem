@@ -34,7 +34,12 @@ from plugins.base_plugin.render_provenance import (
 )
 from utils.image_utils import compute_image_hash
 from utils.app_utils import get_base_ui_font, resolve_dimensions
-from utils.theme_utils import get_theme_context, resolve_plugin_theme
+from utils.theme_utils import (
+    EFFECTIVE_THEME_CONTEXT_INFO_KEY,
+    get_theme_context,
+    is_valid_effective_theme_context,
+    resolve_plugin_theme,
+)
 from model import RefreshInfo, PlaylistManager
 from runtime.refresh_contracts import (
     CommandKind,
@@ -682,6 +687,10 @@ class RefreshTask:
         manager = self.device_config.get_playlist_manager()
         latest_refresh = self.device_config.get_refresh_info()
         theme_context = get_theme_context(self.device_config, now=current_dt)
+        theme_info_changed = self._update_active_theme_info(
+            theme_context,
+            current_dt,
+        )
         if self._has_theme_changed(theme_context, current_dt):
             active = manager.snapshot_active_playlist(current_dt)
             eligible_instance_uuids = set()
@@ -714,6 +723,8 @@ class RefreshTask:
                 allow_fallback=False,
             )
             if selection is not None:
+                if theme_info_changed:
+                    self._write_device_config()
                 return self._playlist_command(
                     selection.playlist_name,
                     selection.instance,
@@ -727,6 +738,8 @@ class RefreshTask:
                     current_dt=current_dt,
                 )
             self._persist_active_theme(theme_context, current_dt)
+            self._write_device_config()
+        elif theme_info_changed:
             self._write_device_config()
 
         # Playlist rotation owns the display cadence. A currently displayed
@@ -1285,7 +1298,13 @@ class RefreshTask:
         current_dt,
     ):
         """Resolve one exact displayed auto-theme transition without fallback."""
+        theme_info_changed = self._update_active_theme_info(
+            theme_context,
+            current_dt,
+        )
         if not self._has_theme_changed(theme_context, current_dt):
+            if theme_info_changed:
+                self._write_device_config()
             return None
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
         eligible_instance_uuids = set()
@@ -1329,10 +1348,14 @@ class RefreshTask:
         if next_retry is not None:
             next_retry = self._align_datetime_tz(next_retry, current_dt)
             if current_dt < next_retry:
+                if theme_info_changed:
+                    self._write_device_config()
                 return None
         last_attempt = self._parse_iso_datetime(state.last_attempt_at)
         if last_attempt is not None:
             last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+        if theme_info_changed:
+            self._write_device_config()
         return DueCandidate(
             instance=selection.instance,
             lane=RefreshLane.THEME,
@@ -1640,6 +1663,7 @@ class RefreshTask:
                 busy_lock.release()
             self._execution_local.context = None
             self._execution_local.degraded_data_result = False
+            self._execution_local.effective_theme_context = None
             self._active_operation = None
             try:
                 self._run_memory_maintenance("refresh-command-finally")
@@ -1820,6 +1844,7 @@ class RefreshTask:
         return TaskContext(self.stop_event, self._clock() + timeout, self._clock)
 
     def _execute_command(self, command: RefreshCommand):
+        self._execution_local.effective_theme_context = None
         context = self._current_task_context(command)
         context.raise_if_cancelled()
         if command.instance_uuid is not None:
@@ -1892,6 +1917,7 @@ class RefreshTask:
                 ),
             )
             context.raise_if_cancelled()
+        self._capture_effective_theme_context(command, image)
         self._set_render_metadata(True, False, getattr(plugin, "config", plugin_config))
         return self._commit_command_result(command, None, image, self._get_current_datetime())
 
@@ -2408,6 +2434,7 @@ class RefreshTask:
             getattr(plugin, "config", plugin_config),
             theme_only=theme_render_only,
         )
+        self._capture_effective_theme_context(command, image)
         return image
 
     def _render_theme_only_image(
@@ -2472,6 +2499,42 @@ class RefreshTask:
         self._execution_local.render_theme_only = bool(theme_only)
         self._execution_local.degraded_data_result = False
         self._execution_local.image_settings = list((plugin_config or {}).get("image_settings", []))
+
+    def _capture_effective_theme_context(self, command, image):
+        """Consume Weather's render-local context without leaking PNG metadata."""
+        info = getattr(image, "info", None)
+        if not isinstance(info, dict):
+            return None
+        effective = info.pop(EFFECTIVE_THEME_CONTEXT_INFO_KEY, None)
+        if effective is None:
+            return getattr(self._execution_local, "effective_theme_context", None)
+
+        queued = command.payload.get("resolved_theme_context")
+        queued_mode = _resolved_theme_mode(command.payload)
+        queued_requested_mode = (
+            queued.get("requested_mode") if isinstance(queued, Mapping) else None
+        )
+        allowed = (
+            command.plugin_id == "weather"
+            and command.intent
+            in {RefreshIntent.DATA_REFRESH, RefreshIntent.MANUAL_RENDER}
+            and command.payload.get("theme_render_only") is not True
+            and is_valid_effective_theme_context(effective)
+            and effective.get("requested_mode") == queued_requested_mode
+            and info.get("inkypi_theme_mode") == effective.get("mode")
+        )
+        if not allowed:
+            if queued_mode in {"day", "night"}:
+                info["inkypi_theme_mode"] = queued_mode
+            return None
+
+        context = thaw_payload(effective)
+        self._execution_local.effective_theme_context = context
+        return context
+
+    def _effective_theme_context(self):
+        context = getattr(self._execution_local, "effective_theme_context", None)
+        return context if isinstance(context, Mapping) else None
 
     def _snapshot_live_state_due(self, instance, state, current_dt):
         if not state:
@@ -2597,6 +2660,7 @@ class RefreshTask:
     ):
         context = self._current_task_context(command)
         context.raise_if_cancelled()
+        self._capture_effective_theme_context(command, image)
         if prepared_selection is not None:
             return self._commit_prepared_display_result(
                 command,
@@ -2624,7 +2688,12 @@ class RefreshTask:
             theme_only = bool(
                 getattr(self._execution_local, "render_theme_only", False)
             )
-            theme_mode = _resolved_theme_mode(command.payload)
+            effective_theme_context = self._effective_theme_context()
+            theme_mode = (
+                effective_theme_context.get("mode")
+                if effective_theme_context is not None
+                else _resolved_theme_mode(command.payload)
+            )
             stage_path = None
             promoted_for_intent = False
             if generated and cacheable:
@@ -2664,6 +2733,18 @@ class RefreshTask:
                     current_dt,
                     theme_mode,
                 )
+                if (
+                    command.plugin_id == "weather"
+                    and command.intent is RefreshIntent.DATA_REFRESH
+                    and effective_theme_context is not None
+                    and effective_theme_context.get("requested_mode") == "auto"
+                    and self._update_active_theme_info(
+                        effective_theme_context,
+                        current_dt,
+                    )
+                    and command.kind is not CommandKind.DISPLAY
+                ):
+                    self._write_device_config()
                 if command.intent is RefreshIntent.LIVE_REFRESH:
                     self._enqueue_live_display_followup(
                         command,
@@ -3814,21 +3895,60 @@ class RefreshTask:
             return False
         return bool(current_mode and previous_mode != current_mode)
 
-    def _persist_active_theme(self, theme_context, current_dt):
-        mode = theme_context.get("mode")
-        if not mode:
-            return
-        info = {
-            "mode": mode,
+    @staticmethod
+    def _theme_status_info(theme_context, current_dt):
+        return {
+            "mode": theme_context.get("mode"),
             "source": theme_context.get("source"),
             "reason": theme_context.get("reason"),
             "date": theme_context.get("date"),
+            "timezone": theme_context.get("timezone"),
             "sunrise": theme_context.get("sunrise"),
             "sunset": theme_context.get("sunset"),
             "updated_at": current_dt.isoformat(),
         }
-        self._set_config_value("active_theme", mode)
+
+    @staticmethod
+    def _theme_status_projection(info):
+        if not isinstance(info, Mapping):
+            return None
+        return tuple(
+            info.get(key)
+            for key in (
+                "mode",
+                "source",
+                "reason",
+                "date",
+                "timezone",
+                "sunrise",
+                "sunset",
+            )
+        )
+
+    def _update_active_theme_info(self, theme_context, current_dt):
+        if not isinstance(theme_context, Mapping) or theme_context.get("mode") not in {
+            "day",
+            "night",
+        }:
+            return False
+        info = self._theme_status_info(theme_context, current_dt)
+        previous = self._get_config_value("active_theme_info", None)
+        if (
+            self._theme_status_projection(previous)
+            == self._theme_status_projection(info)
+            and isinstance(previous, Mapping)
+            and set(previous) == set(info)
+        ):
+            return False
         self._set_config_value("active_theme_info", info)
+        return True
+
+    def _persist_active_theme(self, theme_context, current_dt):
+        mode = theme_context.get("mode")
+        if not mode:
+            return
+        self._update_active_theme_info(theme_context, current_dt)
+        self._set_config_value("active_theme", mode)
         self._set_config_value("active_theme_refresh_failure", None)
 
     def _mark_theme_refresh_failed(self, theme_context, current_dt, error):

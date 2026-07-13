@@ -1,5 +1,6 @@
 import logging
 import os
+from copy import deepcopy
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_registry import plugin_supports_day_night_theme
@@ -13,7 +14,12 @@ from utils.cache_manager import (
     cache_namespace_for_directory,
 )
 from utils.image_loader import AdaptiveImageLoader
-from utils.theme_utils import resolve_plugin_theme
+from utils.theme_utils import (
+    EFFECTIVE_THEME_CONTEXT_INFO_KEY,
+    is_valid_effective_theme_context,
+    pinned_theme_context,
+    resolve_plugin_theme,
+)
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import asyncio
@@ -94,7 +100,7 @@ class BasePlugin:
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
 
-    def resolve_theme(self, settings, device_config, now=None):
+    def resolve_theme(self, settings, device_config, now=None, astronomy=None):
         """Resolve this plugin's theme using any manifest palette seeds."""
         manifest = self.config.get("_manifest")
         manifest_theme = getattr(manifest, "theme", None)
@@ -109,6 +115,7 @@ class BasePlugin:
             device_config,
             now=now,
             palette=palette,
+            astronomy=astronomy,
         )
 
     def render_themed_image(
@@ -132,7 +139,23 @@ class BasePlugin:
             render_settings.pop("forceRefresh", None)
             render_settings.pop("force_refresh", None)
 
-        image = self.generate_image(render_settings, device_config)
+        with pinned_theme_context(theme):
+            image = self.generate_image(render_settings, device_config)
+
+        effective = getattr(image, "info", {}).get(
+            EFFECTIVE_THEME_CONTEXT_INFO_KEY
+        )
+        accepts_effective = (
+            self.get_plugin_id() == "weather"
+            and not theme_render_only
+            and is_valid_effective_theme_context(effective)
+            and effective.get("requested_mode") == theme.get("requested_mode")
+        )
+        if accepts_effective:
+            theme = deepcopy(dict(effective))
+            image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY] = deepcopy(theme)
+        else:
+            image.info.pop(EFFECTIVE_THEME_CONTEXT_INFO_KEY, None)
         manifest = self.config.get("_manifest")
         manifest_theme = getattr(manifest, "theme", None)
         if getattr(manifest_theme, "presentation", None) == "media":

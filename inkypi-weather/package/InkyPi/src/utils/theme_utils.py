@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, time, timezone
 from typing import Any
 
@@ -13,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAY_START = time(7, 0)
 DEFAULT_NIGHT_START = time(19, 0)
-WEATHER_CONTEXT_MAX_AGE_SECONDS = 72 * 60 * 60
+EFFECTIVE_THEME_CONTEXT_INFO_KEY = "inkypi_effective_theme_context"
+
+_PINNED_THEME_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "inkypi_pinned_theme_context",
+    default=None,
+)
 
 THEME_MODE_KEYS = ("theme_mode", "display_theme_mode", "themeMode")
 PLUGIN_THEME_MODE_KEYS = ("themeMode", "theme_mode", "theme", "sportsDashboardTheme")
@@ -74,9 +81,18 @@ def normalize_theme_mode(value: Any, default: str | None = None) -> str | None:
     return MODE_ALIASES.get(str(value).strip().lower(), default)
 
 
-def get_theme_context(device_config: Any = None, now: datetime | None = None) -> dict[str, Any]:
+def get_theme_context(
+    device_config: Any = None,
+    now: datetime | None = None,
+    astronomy: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     tz = _device_timezone(device_config)
     current = _coerce_datetime(now, tz)
+
+    if astronomy is None:
+        pinned = _PINNED_THEME_CONTEXT.get()
+        if pinned is not None:
+            return _defensive_copy(pinned)
 
     requested = _requested_theme_mode(device_config)
     if requested in {"day", "night"}:
@@ -87,18 +103,28 @@ def get_theme_context(device_config: Any = None, now: datetime | None = None) ->
             reason=f"forced {requested}",
         )
 
-    astronomy = _latest_weather_astronomy(current)
-    if astronomy:
-        mode = "day" if astronomy["sunrise"] <= astronomy["now"] < astronomy["sunset"] else "night"
+    astronomy_state = (
+        _validated_astronomy_state(astronomy, current)
+        if astronomy is not None
+        else _latest_weather_astronomy(current)
+    )
+    if astronomy_state:
+        mode = (
+            "day"
+            if astronomy_state["sunrise_dt"]
+            <= astronomy_state["now_dt"]
+            < astronomy_state["sunset_dt"]
+            else "night"
+        )
         return _theme_result(
             mode,
             current,
             source="weather",
             reason="sunrise/sunset",
-            sunrise=astronomy["sunrise"],
-            sunset=astronomy["sunset"],
-            date=astronomy["now"].date().isoformat(),
-            timezone_name=astronomy["timezone_name"],
+            sunrise=astronomy_state["sunrise"],
+            sunset=astronomy_state["sunset"],
+            date=astronomy_state["date"],
+            timezone_name=astronomy_state["timezone"],
         )
 
     local_time = current.timetz().replace(tzinfo=None)
@@ -116,6 +142,7 @@ def resolve_plugin_theme(
     device_config: Any = None,
     now: datetime | None = None,
     palette: Mapping[str, Any] | None = None,
+    astronomy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     plugin_settings = settings if isinstance(settings, Mapping) else {}
     raw_mode = next(
@@ -127,7 +154,11 @@ def resolve_plugin_theme(
         "auto",
     )
     requested_mode = normalize_theme_mode(raw_mode, "auto") or "auto"
-    context = get_theme_context(device_config, now=now)
+    context = get_theme_context(
+        device_config,
+        now=now,
+        astronomy=astronomy,
+    )
     mode = context["mode"] if requested_mode == "auto" else requested_mode
 
     result = dict(context)
@@ -188,8 +219,8 @@ def _theme_result(
     *,
     source: str,
     reason: str,
-    sunrise: datetime | None = None,
-    sunset: datetime | None = None,
+    sunrise: datetime | str | None = None,
+    sunset: datetime | str | None = None,
     date: str | None = None,
     timezone_name: str | None = None,
 ) -> dict[str, Any]:
@@ -200,8 +231,8 @@ def _theme_result(
         "reason": reason,
         "date": date or current.date().isoformat(),
         "timezone": timezone_name or _tz_name(current.tzinfo),
-        "sunrise": sunrise.isoformat() if sunrise else None,
-        "sunset": sunset.isoformat() if sunset else None,
+        "sunrise": _iso_value(sunrise),
+        "sunset": _iso_value(sunset),
         "palette": palette,
         "css": _css_palette(palette),
     }
@@ -299,48 +330,142 @@ def _coerce_datetime(value: datetime | None, tz) -> datetime:
     return value.astimezone(tz)
 
 
+@contextmanager
+def pinned_theme_context(context: Mapping[str, Any]):
+    """Pin one defensive theme projection for nested renderer reads."""
+    if not isinstance(context, Mapping):
+        raise TypeError("pinned theme context must be a mapping")
+    pinned = _defensive_copy(context)
+    if pinned.get("mode") not in {"day", "night"}:
+        raise ValueError("pinned theme context must have day or night mode")
+    token = _PINNED_THEME_CONTEXT.set(pinned)
+    try:
+        yield _defensive_copy(pinned)
+    finally:
+        _PINNED_THEME_CONTEXT.reset(token)
+
+
+def canonical_weather_astronomy(
+    astronomy: Mapping[str, Any] | None,
+    *,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Return the exact validated five-field Weather projection."""
+    state = _validated_astronomy_state(astronomy, now)
+    if state is None:
+        return None
+    return {
+        key: state[key]
+        for key in ("source", "date", "timezone", "sunrise", "sunset")
+    }
+
+
+def is_valid_effective_theme_context(context: Any) -> bool:
+    """Validate the narrow renderer-to-runtime theme handoff shape."""
+    if not isinstance(context, Mapping):
+        return False
+    if context.get("mode") not in {"day", "night"}:
+        return False
+    if context.get("requested_mode") not in {"auto", "day", "night"}:
+        return False
+    if context.get("source") not in {"weather", "fallback", "config"}:
+        return False
+    timezone_name = context.get("timezone")
+    tz = _timezone_from_name(timezone_name)
+    if tz is None:
+        return False
+    try:
+        context_date = datetime.fromisoformat(str(context.get("date"))).date()
+    except (TypeError, ValueError):
+        return False
+    if context.get("source") == "weather":
+        sunrise = _parse_aware_sun_datetime(context.get("sunrise"), tz)
+        sunset = _parse_aware_sun_datetime(context.get("sunset"), tz)
+        if sunrise is None or sunset is None or sunrise >= sunset:
+            return False
+        if sunrise.date() != context_date or sunset.date() != context_date:
+            return False
+    elif context.get("sunrise") is not None or context.get("sunset") is not None:
+        return False
+    return isinstance(context.get("palette"), Mapping) and isinstance(
+        context.get("css"),
+        Mapping,
+    )
+
+
 def _latest_weather_astronomy(current: datetime) -> dict[str, Any] | None:
     try:
         contexts = read_contexts(
             ["weather"],
             now=current.astimezone(timezone.utc),
-            max_age_seconds=WEATHER_CONTEXT_MAX_AGE_SECONDS,
-            include_stale=True,
+            include_stale=False,
         )
     except Exception as exc:
         logger.warning("Could not read weather context for theme mode: %s", exc)
         return None
 
     for entry in contexts:
+        if entry.get("stale") is True:
+            continue
         payload = entry.get("payload") or {}
         astronomy = payload.get("astronomy") if isinstance(payload, dict) else None
-        if not isinstance(astronomy, dict):
-            continue
-
-        tz = _timezone_from_name(astronomy.get("timezone")) or current.tzinfo
-        now_for_sun = current.astimezone(tz)
-        sunrise = _parse_sun_datetime(astronomy.get("sunrise"), tz, now_for_sun.date())
-        sunset = _parse_sun_datetime(astronomy.get("sunset"), tz, now_for_sun.date())
-        if sunrise and sunset and sunrise < sunset:
-            return {
-                "now": now_for_sun,
-                "sunrise": sunrise,
-                "sunset": sunset,
-                "timezone_name": _tz_name(tz),
-            }
+        validated = _validated_astronomy_state(astronomy, current)
+        if validated is not None:
+            return validated
     return None
+
+
+def _validated_astronomy_state(
+    astronomy: Mapping[str, Any] | None,
+    current: datetime,
+) -> dict[str, Any] | None:
+    if not isinstance(astronomy, Mapping):
+        return None
+    if astronomy.get("source") != "weather":
+        return None
+    timezone_name = astronomy.get("timezone")
+    tz = _timezone_from_name(timezone_name)
+    if tz is None:
+        return None
+    now_for_sun = _coerce_datetime(current, tz)
+    expected_date = now_for_sun.date().isoformat()
+    if astronomy.get("date") != expected_date:
+        return None
+    sunrise = _parse_aware_sun_datetime(astronomy.get("sunrise"), tz)
+    sunset = _parse_aware_sun_datetime(astronomy.get("sunset"), tz)
+    if sunrise is None or sunset is None:
+        return None
+    if sunrise.date().isoformat() != expected_date:
+        return None
+    if sunset.date().isoformat() != expected_date:
+        return None
+    if sunrise >= sunset:
+        return None
+    return {
+        "source": "weather",
+        "date": expected_date,
+        "timezone": str(timezone_name),
+        "sunrise": str(astronomy.get("sunrise")),
+        "sunset": str(astronomy.get("sunset")),
+        "now_dt": now_for_sun,
+        "sunrise_dt": sunrise,
+        "sunset_dt": sunset,
+    }
 
 
 def _timezone_from_name(value: Any):
     if not value:
         return None
+    name = str(value).strip()
+    if name != "UTC" and "/" not in name:
+        return None
     try:
-        return pytz.timezone(str(value))
+        return pytz.timezone(name)
     except Exception:
         return None
 
 
-def _parse_sun_datetime(value: Any, tz, target_date) -> datetime | None:
+def _parse_aware_sun_datetime(value: Any, tz) -> datetime | None:
     if not value:
         return None
     if isinstance(value, datetime):
@@ -351,15 +476,26 @@ def _parse_sun_datetime(value: Any, tz, target_date) -> datetime | None:
         except Exception:
             return None
 
-    if parsed.tzinfo is None:
-        parsed = _coerce_datetime(parsed, tz)
-    else:
-        parsed = parsed.astimezone(tz)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    localized = parsed.astimezone(tz)
+    if parsed.utcoffset() != localized.utcoffset():
+        return None
+    return localized
 
-    if parsed.date() != target_date:
-        local_naive = datetime.combine(target_date, parsed.timetz().replace(tzinfo=None))
-        parsed = _coerce_datetime(local_naive, tz)
-    return parsed
+
+def _iso_value(value: datetime | str | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def _defensive_copy(value: Any):
+    if isinstance(value, Mapping):
+        return {key: _defensive_copy(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_defensive_copy(item) for item in value]
+    return value
 
 
 def _tz_name(tzinfo: Any) -> str:

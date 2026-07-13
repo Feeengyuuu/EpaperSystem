@@ -7,6 +7,7 @@ from PIL import Image
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.plugin_manifest import PluginTheme
+from utils import theme_utils
 
 
 class FakeDeviceConfig:
@@ -53,11 +54,67 @@ class RecordingPlugin(BasePlugin):
         return self.image
 
 
+class NestedThemePlugin(RecordingPlugin):
+    def generate_image(self, settings, device_config):
+        self.nested_theme = theme_utils.get_theme_context(device_config)
+        return super().generate_image(settings, device_config)
+
+
+class EffectiveContextPlugin(RecordingPlugin):
+    def __init__(self, config, image, effective_context):
+        super().__init__(config, image)
+        self.effective_context = effective_context
+
+    def generate_image(self, settings, device_config):
+        image = super().generate_image(settings, device_config)
+        image.info[theme_utils.EFFECTIVE_THEME_CONTEXT_INFO_KEY] = (
+            self.effective_context
+        )
+        return image
+
+
 def _recording_plugin(*, presentation="ui", image=None):
     return RecordingPlugin(
         _plugin_config(presentation),
         image or Image.new("RGB", (32, 24), (93, 111, 129)),
     )
+
+
+def _full_theme_context(mode, *, requested_mode="auto"):
+    palette = (
+        {
+            "background": (16, 24, 32),
+            "panel": (16, 24, 32),
+            "ink": (255, 255, 255),
+            "muted": (194, 196, 202),
+            "rule": (46, 48, 56),
+            "accent": (242, 170, 76),
+        }
+        if mode == "night"
+        else {
+            "background": (247, 241, 227),
+            "panel": (247, 241, 227),
+            "ink": (10, 12, 15),
+            "muted": (74, 78, 84),
+            "rule": (185, 188, 194),
+            "accent": (155, 52, 36),
+        }
+    )
+    return {
+        "requested_mode": requested_mode,
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": "2026-07-12",
+        "timezone": "America/Los_Angeles",
+        "sunrise": "2026-07-12T05:56:00-07:00",
+        "sunset": "2026-07-12T20:31:00-07:00",
+        "palette": palette,
+        "css": {
+            key: "#%02x%02x%02x" % value
+            for key, value in palette.items()
+        },
+    }
 
 
 def _pattern_image(size=(800, 480)):
@@ -156,6 +213,150 @@ def test_render_themed_image_uses_detached_supplied_context_without_resolving(
     assert injected["palette"] is not supplied["palette"]
     injected["palette"]["background"] = (1, 2, 3)
     assert supplied["palette"]["background"] == (16, 24, 32)
+
+
+def test_nested_auto_renderer_uses_command_pinned_shared_context(monkeypatch):
+    plugin = NestedThemePlugin(
+        _plugin_config(),
+        Image.new("RGB", (32, 24), "white"),
+    )
+    supplied = _full_theme_context("night")
+    monkeypatch.setattr(
+        theme_utils,
+        "read_contexts",
+        lambda *_args, **_kwargs: pytest.fail("nested render escaped command pin"),
+    )
+
+    plugin.render_themed_image(
+        {"themeMode": "auto"},
+        FakeDeviceConfig({"theme_mode": "auto"}),
+        resolved_theme_context=supplied,
+    )
+
+    assert plugin.nested_theme["mode"] == "night"
+    assert plugin.nested_theme["timezone"] == "America/Los_Angeles"
+    assert plugin.nested_theme["sunrise"] == supplied["sunrise"]
+
+
+def test_two_auto_plugins_share_identical_weather_projection(monkeypatch):
+    supplied = _full_theme_context("day")
+    monkeypatch.setattr(
+        theme_utils,
+        "read_contexts",
+        lambda *_args, **_kwargs: pytest.fail("auto render escaped command pin"),
+    )
+    plugins = [
+        NestedThemePlugin(
+            _plugin_config(),
+            Image.new("RGB", (32, 24), "white"),
+        )
+        for _ in range(2)
+    ]
+
+    for plugin in plugins:
+        plugin.render_themed_image(
+            {"themeMode": "auto"},
+            FakeDeviceConfig({"theme_mode": "auto"}),
+            resolved_theme_context=supplied,
+        )
+
+    shared = ("source", "date", "timezone", "sunrise", "sunset")
+    assert {
+        key: plugins[0].nested_theme[key]
+        for key in shared
+    } == {
+        key: plugins[1].nested_theme[key]
+        for key in shared
+    }
+
+
+def test_forced_plugin_mode_does_not_replace_global_auto_projection(
+    monkeypatch,
+):
+    plugin = NestedThemePlugin(
+        _plugin_config(),
+        Image.new("RGB", (32, 24), "white"),
+    )
+    supplied = _full_theme_context("day", requested_mode="night")
+    supplied["mode"] = "night"
+    monkeypatch.setattr(
+        theme_utils,
+        "read_contexts",
+        lambda *_args, **_kwargs: pytest.fail("forced render escaped command pin"),
+    )
+
+    result = plugin.render_themed_image(
+        {"themeMode": "night"},
+        FakeDeviceConfig({"theme_mode": "auto"}),
+        resolved_theme_context=supplied,
+    )
+
+    assert result.info["inkypi_theme_mode"] == "night"
+    assert plugin.nested_theme["source"] == "weather"
+    assert plugin.nested_theme["date"] == "2026-07-12"
+    assert plugin.nested_theme["sunrise"] == supplied["sunrise"]
+
+
+def test_weather_effective_context_replaces_initial_wrapper_context():
+    initial = _full_theme_context("day")
+    effective = _full_theme_context("night")
+    config = _plugin_config()
+    config["id"] = "weather"
+    plugin = EffectiveContextPlugin(
+        config,
+        Image.new("RGB", (32, 24), "black"),
+        effective,
+    )
+
+    result = plugin.render_themed_image(
+        {"themeMode": "auto"},
+        FakeDeviceConfig({"theme_mode": "auto"}),
+        resolved_theme_context=initial,
+    )
+
+    assert result.info["inkypi_theme_mode"] == "night"
+    assert result.info[theme_utils.EFFECTIVE_THEME_CONTEXT_INFO_KEY] == effective
+
+
+def test_malformed_weather_effective_context_is_removed_and_cannot_change_mode():
+    initial = _full_theme_context("day")
+    config = _plugin_config()
+    config["id"] = "weather"
+    plugin = EffectiveContextPlugin(
+        config,
+        Image.new("RGB", (32, 24), "black"),
+        {**_full_theme_context("night"), "mode": "sepia"},
+    )
+
+    result = plugin.render_themed_image(
+        {"themeMode": "auto"},
+        FakeDeviceConfig({"theme_mode": "auto"}),
+        resolved_theme_context=initial,
+    )
+
+    assert result.info["inkypi_theme_mode"] == "day"
+    assert theme_utils.EFFECTIVE_THEME_CONTEXT_INFO_KEY not in result.info
+
+
+def test_theme_redraw_rejects_weather_effective_context_override():
+    initial = _full_theme_context("day")
+    config = _plugin_config()
+    config["id"] = "weather"
+    plugin = EffectiveContextPlugin(
+        config,
+        Image.new("RGB", (32, 24), "black"),
+        _full_theme_context("night"),
+    )
+
+    result = plugin.render_themed_image(
+        {"themeMode": "auto"},
+        FakeDeviceConfig({"theme_mode": "auto"}),
+        theme_render_only=True,
+        resolved_theme_context=initial,
+    )
+
+    assert result.info["inkypi_theme_mode"] == "day"
+    assert theme_utils.EFFECTIVE_THEME_CONTEXT_INFO_KEY not in result.info
 
 
 def test_theme_only_render_removes_both_force_keys_from_copy():
