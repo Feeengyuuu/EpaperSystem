@@ -951,6 +951,13 @@ def test_preparer_clones_compatible_current_venv_as_independent_tree(tmp_path):
     assert str(destination / "bin" / "python") in cloned_tool
     assert str(source_venv / "bin" / "python") not in cloned_tool
     assert any(_is_isolated_pip_check(command) for command, _ in calls)
+    environment_probes = [
+        command
+        for command, _kwargs in calls
+        if command[1:4] == ["-I", "-S", "-c"]
+        and not _is_isolated_pip_check(command)
+    ]
+    assert len(environment_probes) == 2
 
 
 def test_preparer_relocates_stale_console_script_and_preserves_record_integrity(

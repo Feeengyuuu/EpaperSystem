@@ -470,6 +470,7 @@ class ArtifactPreparer:
             candidate_requirements,
             published_destination=published_destination,
             cwd=destination_venv,
+            environment_prevalidated=True,
         )
         return True
 
@@ -540,6 +541,7 @@ class ArtifactPreparer:
         *,
         published_destination=None,
         cwd,
+        environment_prevalidated=False,
     ) -> None:
         candidate_venv = Path(venv)
         published_venv = (
@@ -559,11 +561,12 @@ class ArtifactPreparer:
             raise ArtifactError("candidate virtual environment is not self-contained")
 
         locked_versions = _locked_distribution_versions(requirements)
-        self._probe_venv_environment(
-            candidate_venv,
-            locked_versions,
-            cwd=cwd,
-        )
+        if not environment_prevalidated:
+            self._probe_venv_environment(
+                candidate_venv,
+                locked_versions,
+                cwd=cwd,
+            )
         _normalize_venv_python_links(candidate_venv, self.python_executable)
         _relocate_venv_paths(
             candidate_venv,
