@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import html
+import ipaddress
 import json
 import logging
 import os
 import random
 import re
 import tempfile
+import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -16,9 +19,26 @@ from urllib.parse import urljoin, urlparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
+from plugins.magazine_covers.presentation_bank import (
+    COVER_FRESH_SECONDS,
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    MagazinePresentationBank,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+)
+from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
-from utils.http_client import get_http_session
+from utils.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +165,26 @@ DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
 DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_COVER_COUNT = 3
+DATA_PROVIDER_ATTEMPT_LIMIT = 6
+DATA_HYDRATION_TIME_LIMIT_SECONDS = 75
+MAX_PROVIDER_REDIRECTS = 4
+MAX_HTML_BYTES = 2 * 1024 * 1024
+MAX_IMAGE_BYTES = 16 * 1024 * 1024
+
+_PERSISTENT_WRITES_ENABLED = ContextVar(
+    "magazine_covers_persistent_writes_enabled",
+    default=True,
+)
+
+_SOURCE_HOST_ALLOWLISTS = {
+    "magazineshop.us": ("magazineshop.us", "cdn.shopify.com", "shopifycdn.net"),
+    "vanityfair.com": ("vanityfair.com", "condenast.com", "condenastdigital.com"),
+    "theatlantic.com": ("theatlantic.com",),
+    "playboy.com": ("playboy.com", "plbygroup.com"),
+    "penthousemagazine.com": ("penthousemagazine.com",),
+    "hustlermagazine.com": ("hustlermagazine.com",),
+    "maxim.com": ("maxim.com",),
+}
 
 
 class _ImageCandidateParser(HTMLParser):
@@ -243,24 +283,32 @@ class MagazineCovers(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            return self._generate_stateless_preview(settings, device_config)
+        if settings.get("_theme_render_only") is True:
+            return self._generate_banked_theme_only(settings, device_config)
+        return self._generate_banked_image(settings, device_config)
+
+    def _generate_stateless_preview(self, settings, device_config):
+        token = _PERSISTENT_WRITES_ENABLED.set(False)
+        try:
+            return self._render_stateless_preview(settings, device_config)
+        finally:
+            _PERSISTENT_WRITES_ENABLED.reset(token)
+
+    def _render_stateless_preview(self, settings, device_config):
         dimensions = self._display_dimensions(device_config)
         sources = self._sources_from_settings(settings)
         if not sources:
             raise RuntimeError("No magazine cover sources configured.")
-
         rotation_mode = (settings.get("rotationMode") or "random").lower()
-        if self._daily_library_enabled(settings):
-            image = self._generate_from_daily_library(sources, dimensions, settings, device_config, rotation_mode)
-            if image:
-                return image
-            logger.warning("Daily magazine cover library unavailable; falling back to direct source fetch.")
-
         if rotation_mode == "single":
             ordered_sources = sources[:1]
-        elif rotation_mode in {"rotate", "sequential"}:
-            ordered_sources = self._rotation_order(sources)
         else:
-            ordered_sources = self._random_order(sources)
+            ordered_sources = list(sources)
+            if rotation_mode not in {"rotate", "sequential"}:
+                random.shuffle(ordered_sources)
 
         errors = []
         if self._fit_mode(settings) in {"triptych", "three_covers", "gallery"}:
@@ -279,30 +327,19 @@ class MagazineCovers(BasePlugin):
 
             if len(source_covers) >= TRIPTYCH_COVER_COUNT:
                 image = self._fit_cover_triptych(source_covers, dimensions, settings)
-                self._remember_successes(source_covers)
-                self._write_cover_context(source_covers[0][0], source_covers[0][1])
-                logger.info(
-                    "Selected magazine cover triptych: %s",
-                    " | ".join(source["name"] for source, _cover in source_covers),
-                )
-                return image
+                return self._mark_provenance(image, "live")
 
             if source_covers:
                 logger.warning("Only %s covers loaded for triptych; falling back to first cover.", len(source_covers))
                 source, cover = source_covers[0]
                 image = self._fit_cover(cover["image"], dimensions, settings, source)
-                self._remember_success(source, cover)
-                self._write_cover_context(source, cover)
-                return image
+                return self._mark_provenance(image, "live")
 
         for source in ordered_sources:
             try:
                 cover = self._load_cover(source, dimensions)
                 image = self._fit_cover(cover["image"], dimensions, settings, source)
-                self._remember_success(source, cover)
-                self._write_cover_context(source, cover)
-                logger.info("Selected magazine cover: %s | %s", source["name"], cover["image_url"])
-                return image
+                return self._mark_provenance(image, "live")
             except Exception as exc:
                 logger.warning("Magazine cover failed for %s: %s", source["name"], exc)
                 errors.append(f"{source['name']}: {exc}")
@@ -311,7 +348,400 @@ class MagazineCovers(BasePlugin):
 
         detail = "; ".join(errors[-4:])
         logger.warning("No Pi-safe magazine cover could be fetched. %s", detail)
-        return self._fallback_image(dimensions, "Magazine Covers", "No Pi-safe cover image")
+        return self._mark_provenance(
+            self._fallback_image(dimensions, "Magazine Covers", "No Pi-safe cover image"),
+            "local_fallback",
+        )
+
+    def _generate_banked_image(self, settings, device_config):
+        data_deadline = self._monotonic() + DATA_HYDRATION_TIME_LIMIT_SECONDS
+        dimensions = self._display_dimensions(device_config)
+        sources = self._sources_from_settings(settings)
+        if not sources:
+            raise RuntimeError("No magazine cover sources configured.")
+        now = self._now_utc()
+        bank = self._presentation_bank(
+            settings,
+            dimensions,
+            self._presentation_date_key(device_config),
+            sources,
+        )
+        document, profile = bank.load_for_data()
+
+        protected_changed = False
+        for protected in bank.protected_records(profile):
+            try:
+                bank.load_media(protected, now=now)
+            except RuntimeError as media_error:
+                try:
+                    if self._remaining_data_time(data_deadline) <= 0:
+                        raise RuntimeError(
+                            "Magazine DATA deadline expired before protected recovery"
+                        )
+                    recovered = self._download_candidate_image(
+                        {
+                            "url": protected["image_url"],
+                            "score": 100,
+                            "_source": {
+                                "name": protected["source_name"],
+                                "url": protected["source_url"],
+                            },
+                        },
+                        dimensions,
+                        deadline=data_deadline,
+                    )
+                    if self._remaining_data_time(data_deadline) <= 0:
+                        raise RuntimeError(
+                            "Magazine DATA deadline expired during protected recovery"
+                        )
+                    bank.recover_media(profile, protected, recovered, recovered_at=now)
+                    protected_changed = True
+                except Exception as recovery_error:
+                    raise RuntimeError("Magazine protected cover exact recovery failed") from recovery_error
+                logger.info(
+                    "Recovered exact protected magazine cover %s after: %s",
+                    protected.get("source_id"),
+                    media_error,
+                )
+        if protected_changed:
+            bank.save(document)
+
+        ready = bank.ready_records(profile, prune=True, now=now)
+        pool_key = self._pool_key(sources)
+        if profile.get("library_pool_key") != pool_key:
+            profile["library_pool_key"] = pool_key
+            profile["hydration_cursor"] = 0
+            profile["refill_in_progress"] = True
+            profile["library_scan_source_ids"] = []
+            profile["library_scan_started_at"] = None
+        library_due = self._bank_library_due(profile, pool_key, settings, now)
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+
+        live_record_keys = set()
+        source_by_id = {self._source_id(source): source for source in sources}
+        scan_queue = [
+            source_id
+            for source_id in profile.get("library_scan_source_ids") or []
+            if source_id in source_by_id
+        ]
+        if library_due and not scan_queue:
+            record_source_ids = {
+                record.get("source_id")
+                for record in profile.get("records") or []
+                if isinstance(record, dict)
+            }
+            cursor = int(profile.get("hydration_cursor") or 0) % len(sources)
+            ordered_sources = sources[cursor:] + sources[:cursor]
+            scan_queue = [
+                self._source_id(source)
+                for source in ordered_sources
+                if self._source_id(source) not in record_source_ids
+            ]
+            profile["library_scan_source_ids"] = list(scan_queue)
+            profile["library_scan_started_at"] = now.isoformat()
+            if not scan_queue:
+                profile["library_refreshed_at"] = now.isoformat()
+                profile["library_last_attempt_at"] = now.isoformat()
+                profile["library_scan_started_at"] = None
+                library_due = False
+
+        existing_fresh_sources = {record["source_id"] for record in ready}
+        work_source_ids = list(scan_queue)
+        if not work_source_ids and profile.get("refill_in_progress") is True:
+            cursor = int(profile.get("hydration_cursor") or 0) % len(sources)
+            ordered_sources = sources[cursor:] + sources[:cursor]
+            work_source_ids = [
+                self._source_id(source)
+                for source in ordered_sources
+                if self._source_id(source) not in existing_fresh_sources
+            ]
+
+        attempts = 0
+        if work_source_ids:
+            if self._remaining_data_time(data_deadline) <= 0:
+                bank.save(document)
+                raise RuntimeError("Magazine library scan could not start before the DATA deadline")
+            profile["refill_in_progress"] = True
+            for source_id in list(work_source_ids):
+                if attempts >= DATA_PROVIDER_ATTEMPT_LIMIT:
+                    break
+                if self._remaining_data_time(data_deadline) <= 0:
+                    break
+                source = source_by_id[source_id]
+                attempts += 1
+                try:
+                    cover = self._load_cover(
+                        source,
+                        dimensions,
+                        force_refresh=True,
+                        deadline=data_deadline,
+                    )
+                    record = bank.ingest(
+                        profile,
+                        source,
+                        cover,
+                        cover["image"],
+                        fetched_at=now,
+                    )
+                except Exception as exc:
+                    cached = self._read_cached_cover(source, dimensions)
+                    if cached is None:
+                        logger.warning("Magazine bank source failed for %s: %s", source["name"], exc)
+                        record = None
+                    else:
+                        try:
+                            record = bank.ingest(
+                                profile,
+                                source,
+                                cached,
+                                cached["image"],
+                                fetched_at=cached.get("fetched_at") or now,
+                            )
+                        except Exception as cache_exc:
+                            logger.warning(
+                                "Magazine validated legacy cache import failed for %s: %s",
+                                source["name"],
+                                cache_exc,
+                            )
+                            record = None
+                if source_id in scan_queue:
+                    scan_queue.remove(source_id)
+                profile["hydration_cursor"] = (
+                    sources.index(source) + 1
+                ) % len(sources)
+                if record is not None:
+                    existing_fresh_sources.add(record["source_id"])
+                    live_record_keys.add(record["record_key"])
+                    ready = bank.ready_records(profile, prune=True, now=now)
+            profile["library_last_attempt_at"] = now.isoformat()
+            profile["library_scan_source_ids"] = list(scan_queue)
+            if library_due and not scan_queue:
+                profile["library_refreshed_at"] = now.isoformat()
+                profile["library_scan_started_at"] = None
+            profile["refill_in_progress"] = len(ready) < READY_TARGET
+
+        bank.save(document)
+        ready = bank.ready_records(profile, prune=True, now=now)
+        current = profile.get("current_selection")
+        if current is None:
+            if not ready:
+                raise RuntimeError("Magazine cover bank has no fresh prepared cover")
+            current = bank.ensure_current(
+                document,
+                profile,
+                ready,
+                self._fit_mode(settings),
+                settings.get("rotationMode") or "random",
+            )
+        try:
+            selected = bank.selection_records(profile, current, load_media=True, now=now)
+        except RuntimeError:
+            if not ready:
+                raise
+            current = bank.ensure_current(
+                document,
+                profile,
+                ready,
+                self._fit_mode(settings),
+                settings.get("rotationMode") or "random",
+            )
+            selected = bank.selection_records(profile, current, load_media=True, now=now)
+        if any(
+            bank.record_provenance(record, now=now) == "stale_cache"
+            for record, _image in selected
+        ):
+            raise RuntimeError("Magazine current selection has no fresh prepared cover")
+        image = self._render_bank_records(selected, current, dimensions, settings)
+        provenance = "live" if any(record["record_key"] in live_record_keys for record, _image in selected) else "fresh_cache"
+        return self._mark_provenance(image, provenance)
+
+    def _generate_banked_theme_only(self, settings, device_config):
+        dimensions = self._display_dimensions(device_config)
+        sources = self._sources_from_settings(settings)
+        bank = self._presentation_bank(
+            settings,
+            dimensions,
+            self._presentation_date_key(device_config),
+            sources,
+        )
+        _document, profile = bank.load_warm()
+        current = profile.get("current_selection")
+        if not isinstance(current, dict):
+            raise RuntimeError("Magazine theme redraw has no prepared current cover")
+        now = self._now_utc()
+        selected = bank.selection_records(profile, current, load_media=True, now=now)
+        image = self._render_bank_records(selected, current, dimensions, settings)
+        provenance = "stale_cache" if any(
+            bank.record_provenance(record, now=now) == "stale_cache"
+            for record, _image in selected
+        ) else "fresh_cache"
+        return self._mark_provenance(image, provenance)
+
+    def presentation_mode(self, settings):
+        return PresentationMode.PREPARED_BANK
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        dimensions = self._display_dimensions(device_config)
+        sources = self._sources_from_settings(settings)
+        bank = self._presentation_bank(
+            settings,
+            dimensions,
+            self._presentation_date_key(device_config),
+            sources,
+        )
+        document, profile = bank.load_warm()
+        committed_origin = bank.apply_trusted_origin(document, profile, request)
+        if committed_origin:
+            self._write_records_context(committed_origin)
+        ready = bank.ready_records(profile, prune=False, now=self._now_utc())
+        pending = bank.pending_for_request(profile, request.request_id)
+        selection = pending or bank.choose_selection(
+            profile,
+            ready,
+            self._fit_mode(settings),
+            settings.get("rotationMode") or "random",
+        )
+        selected = bank.selection_records(profile, selection, load_media=True, now=self._now_utc())
+        image = self._render_bank_records(selected, selection, dimensions, settings)
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Magazine receipt reconciliation requires trusted instance identity")
+        bank = self._presentation_bank_for_receipt(instance_uuid, receipt.request_id)
+        if bank is None:
+            return None
+        document, profile = bank.load_receipt_profile(receipt.request_id)
+        committed = bank.reconcile_receipt(document, profile, receipt)
+        if committed:
+            self._write_records_context(committed)
+        return None
+
+    def _presentation_bank(self, settings, dimensions, date_key, sources=None):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Magazine presentation bank requires trusted instance identity")
+        sources = list(sources or self._sources_from_settings(settings))
+        base_fingerprint = settings_fingerprint(settings, sources, dimensions, date_key)
+        fingerprint = instance_profile_fingerprint(base_fingerprint, instance_uuid)
+        return MagazinePresentationBank(
+            self._presentation_state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base_fingerprint,
+            profile_settings_key=settings_key(settings, sources),
+            instance_uuid=instance_uuid,
+            date_key=date_key,
+        )
+
+    def _presentation_bank_for_receipt(self, instance_uuid, request_id):
+        state_path = self._presentation_state_path()
+        if not state_path.exists():
+            return None
+        document = read_bounded_json_object(state_path)
+        profiles = document.get("profiles")
+        if not isinstance(profiles, dict):
+            return None
+        for fingerprint, profile in profiles.items():
+            if not isinstance(profile, dict) or profile.get("instance_uuid") != instance_uuid:
+                continue
+            pending = profile.get("pending_selection")
+            if not isinstance(pending, dict) or pending.get("request_id") != request_id:
+                continue
+            return MagazinePresentationBank.from_profile(
+                state_path,
+                self._presentation_media_dir(),
+                fingerprint,
+                profile,
+            )
+        return None
+
+    def _render_bank_records(self, selected, selection, dimensions, settings):
+        source_covers = []
+        for record, image in selected:
+            source = {"name": record["source_name"], "url": record["source_url"]}
+            cover = {
+                "image": image,
+                "image_url": record["image_url"],
+                "page_url": record["page_url"],
+                "title": record["title"],
+            }
+            source_covers.append((source, cover))
+        if selection.get("layout") == "triptych" and len(source_covers) >= 2:
+            return self._fit_cover_triptych(source_covers, dimensions, settings)
+        source, cover = source_covers[0]
+        return self._fit_cover(cover["image"], dimensions, settings, source)
+
+    def _write_records_context(self, records):
+        records = list(records or [])
+        if not records:
+            return
+        first = records[0]
+        self._write_cover_context(
+            {"name": first["source_name"], "url": first["source_url"]},
+            {
+                "title": first["title"],
+                "page_url": first["page_url"],
+                "image_url": first["image_url"],
+            },
+        )
+
+    def _bank_library_due(self, profile, pool_key, settings, now):
+        if profile.get("library_pool_key") != pool_key:
+            return True
+        refreshed_at = self._parse_datetime(profile.get("library_refreshed_at"))
+        if refreshed_at is None:
+            return True
+        return now - refreshed_at >= self._daily_library_refresh_interval(settings)
+
+    def _presentation_state_path(self):
+        return self._cache_dir() / "presentation-state.json"
+
+    def _presentation_media_dir(self):
+        return self._cache_dir() / "presentation-media"
+
+    def _presentation_date_key(self, _device_config):
+        return self._now_utc().astimezone().date().isoformat()
+
+    def _monotonic(self):
+        return time.monotonic()
+
+    def _remaining_data_time(self, deadline):
+        if deadline is None:
+            return None
+        return float(deadline) - self._monotonic()
+
+    def _mark_provenance(self, image, provenance):
+        image.info["inkypi_source_provenance"] = provenance
+        return image
 
     def _daily_library_enabled(self, settings):
         return _setting_enabled(settings.get("dailyLibraryMode", "true"))
@@ -504,6 +934,8 @@ class MagazineCovers(BasePlugin):
         return queue
 
     def _write_cover_context(self, source, cover):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         publication = str(source.get("name") or "Magazine").strip()
         title = str(cover.get("title") or publication).strip()
         write_context(
@@ -643,22 +1075,28 @@ class MagazineCovers(BasePlugin):
 
         return [source_by_id[source_id] for source_id in ordered_ids]
 
-    def _load_cover(self, source, dimensions, force_refresh=False):
+    def _load_cover(self, source, dimensions, force_refresh=False, deadline=None):
         if not force_refresh:
             cached = self._read_cached_cover(source, dimensions)
             if cached:
                 return cached
 
-        html_text = self._fetch_text(source["url"])
+        if deadline is not None and self._remaining_data_time(deadline) <= 0:
+            raise RuntimeError("Magazine DATA deadline expired before source fetch")
+        html_text = self._fetch_text(source["url"], source, deadline=deadline)
         parser = _ImageCandidateParser(source["url"])
         parser.feed(html_text or "")
 
         candidates = self._rank_candidates(source, parser)
         errors = []
         for candidate in candidates[:12]:
+            if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                raise RuntimeError("Magazine DATA deadline expired during candidate scan")
             try:
-                image = self._download_candidate_image(candidate, dimensions)
+                image = self._download_candidate_image(candidate, dimensions, deadline=deadline)
                 if image and self._looks_like_cover(image, candidate):
+                    if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                        raise RuntimeError("Magazine DATA deadline expired after candidate decode")
                     cover = {
                         "image": image,
                         "image_url": candidate["url"],
@@ -673,12 +1111,153 @@ class MagazineCovers(BasePlugin):
         detail = "; ".join(errors[-3:])
         raise RuntimeError(f"no usable cover image found. {detail}")
 
-    def _fetch_text(self, url):
-        response = get_http_session().get(url, timeout=25, headers=REQUEST_HEADERS)
-        response.raise_for_status()
-        if not response.encoding:
-            response.encoding = "utf-8"
-        return response.text
+    def _fetch_text(self, url, source=None, deadline=None):
+        source = source or {"name": urlparse(url).hostname or "source", "url": url}
+        payload = self._download_provider_bytes(
+            url,
+            source=source,
+            kind="html",
+            max_bytes=MAX_HTML_BYTES,
+            timeout=25,
+            deadline=deadline,
+        )
+        return payload.decode("utf-8", errors="replace")
+
+    def _download_provider_bytes(self, url, *, source, kind, max_bytes, timeout, deadline=None):
+        policy = get_ssrf_policy()
+        client = get_http_client()
+        current_url = str(url or "").strip()
+        for redirect_count in range(MAX_PROVIDER_REDIRECTS + 1):
+            remaining = self._remaining_data_time(deadline)
+            if remaining is not None and remaining <= 0:
+                raise RuntimeError("Magazine DATA deadline expired before provider request")
+            approved = policy.resolve_and_validate(current_url)
+            request_url = self._validate_provider_target(approved, source, kind)
+            remaining = self._remaining_data_time(deadline)
+            if remaining is not None and remaining <= 0:
+                raise RuntimeError("Magazine DATA deadline expired before provider request")
+            if remaining is None:
+                connect_timeout = 5
+                read_timeout = timeout
+            else:
+                connect_timeout = min(5, remaining / 2)
+                read_timeout = min(timeout, remaining - connect_timeout)
+            response = client.session.request(
+                "GET",
+                request_url,
+                headers=REQUEST_HEADERS,
+                timeout=(connect_timeout, read_timeout),
+                stream=True,
+                allow_redirects=False,
+            )
+            try:
+                remaining = self._remaining_data_time(deadline)
+                if remaining is not None and remaining <= 0:
+                    raise RuntimeError("Magazine DATA deadline expired after provider response")
+                response_url = str(getattr(response, "url", request_url) or request_url)
+                final_hop = policy.resolve_and_validate(response_url)
+                self._validate_provider_target(final_hop, source, kind)
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_PROVIDER_REDIRECTS:
+                        raise RuntimeError("Magazine provider redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("Magazine provider redirect has no Location")
+                    next_url = urljoin(final_hop.normalized_url, location)
+                    next_hop = policy.resolve_and_validate(next_url)
+                    current_url = self._validate_provider_target(next_hop, source, kind)
+                    continue
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"Magazine provider request failed with status {status}")
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > max_bytes:
+                            raise RuntimeError("Magazine provider response exceeds its object budget")
+                    except ValueError:
+                        pass
+                payload = bytearray()
+                chunks = iter(response.iter_content(chunk_size=64 * 1024))
+                while True:
+                    remaining = self._remaining_data_time(deadline)
+                    if remaining is not None and remaining <= 0:
+                        raise RuntimeError("Magazine DATA deadline expired during provider stream")
+                    if remaining is not None:
+                        self._set_response_stream_timeout(
+                            response,
+                            min(read_timeout, remaining),
+                        )
+                    try:
+                        chunk = next(chunks)
+                    except StopIteration:
+                        break
+                    remaining = self._remaining_data_time(deadline)
+                    if remaining is not None and remaining <= 0:
+                        raise RuntimeError("Magazine DATA deadline expired during provider stream")
+                    if not chunk:
+                        continue
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("Magazine provider response exceeds its object budget")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("Magazine provider response is empty")
+                remaining = self._remaining_data_time(deadline)
+                if remaining is not None and remaining <= 0:
+                    raise RuntimeError("Magazine DATA deadline expired after provider stream")
+                return bytes(payload)
+            finally:
+                response.close()
+        raise RuntimeError("Magazine provider redirect limit was exceeded")
+
+    @staticmethod
+    def _set_response_stream_timeout(response, timeout):
+        setter = getattr(response, "set_stream_timeout", None)
+        if callable(setter):
+            setter(timeout)
+            return
+        raw = getattr(response, "raw", None)
+        connection = getattr(raw, "_connection", None)
+        socket_candidate = getattr(connection, "sock", None)
+        if socket_candidate is None:
+            try:
+                socket_candidate = raw._fp.fp.raw._sock
+            except AttributeError:
+                socket_candidate = None
+        settimeout = getattr(socket_candidate, "settimeout", None)
+        if callable(settimeout):
+            settimeout(timeout)
+
+    def _validate_provider_target(self, approved, source, kind):
+        if getattr(approved, "scheme", None) != "https" or getattr(approved, "port", None) != 443:
+            raise RuntimeError("Magazine provider target must use HTTPS on the default port")
+        hostname = str(getattr(approved, "hostname", "") or "").strip().rstrip(".").lower()
+        source_host = (urlparse(str((source or {}).get("url") or "")).hostname or "").lower().rstrip(".")
+        if not source_host or not hostname:
+            raise RuntimeError("Magazine provider target authority is missing")
+        allowed_suffixes = (source_host,)
+        for configured_host, suffixes in _SOURCE_HOST_ALLOWLISTS.items():
+            if source_host == configured_host or source_host.endswith(f".{configured_host}"):
+                allowed_suffixes = suffixes
+                break
+        if kind == "html":
+            allowed_suffixes = (source_host,)
+        if not any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in allowed_suffixes):
+            raise RuntimeError("Magazine provider target authority is not allowed for its source")
+        addresses = tuple(getattr(approved, "addresses", ()) or ())
+        if not addresses:
+            raise RuntimeError("Magazine provider target has no approved public address")
+        for value in addresses:
+            try:
+                address = ipaddress.ip_address(value)
+            except ValueError as exc:
+                raise RuntimeError("Magazine provider target resolved to an invalid address") from exc
+            if (
+                not address.is_global
+                or (isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped)
+            ):
+                raise RuntimeError("Magazine provider target resolved to a non-public address")
+        return approved.normalized_url
 
     def _rank_candidates(self, source, parser):
         candidates = []
@@ -687,6 +1266,7 @@ class MagazineCovers(BasePlugin):
             if not self._usable_image_url(url):
                 continue
             candidate = dict(candidate)
+            candidate["_source"] = dict(source)
             candidate["score"] = self._candidate_score(source, candidate)
             candidates.append(candidate)
 
@@ -805,21 +1385,43 @@ class MagazineCovers(BasePlugin):
             score += 14
         return score
 
-    def _download_candidate_image(self, candidate, dimensions):
-        tmp_path = self._download_candidate_to_temp(candidate["url"])
+    def _download_candidate_image(self, candidate, dimensions, deadline=None):
+        if deadline is None:
+            tmp_path = self._download_candidate_to_temp(
+                candidate["url"],
+                candidate.get("_source"),
+            )
+        else:
+            tmp_path = self._download_candidate_to_temp(
+                candidate["url"],
+                candidate.get("_source"),
+                deadline=deadline,
+            )
         decode_path = tmp_path
         resized_path = None
         try:
+            if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                raise RuntimeError("Magazine DATA deadline expired before candidate decode")
             image_info = self._source_image_info(tmp_path)
+            if image_info and (
+                image_info["width"] > 8192
+                or image_info["height"] > 8192
+                or image_info["pixels"] > 32_000_000
+            ):
+                raise RuntimeError("magazine cover dimensions exceed the safety limit")
             if image_info and image_info["pixels"] > MAX_PI_SAFE_SOURCE_PIXELS:
                 if image_info["format"] == "WEBP":
                     raise RuntimeError("oversized WebP source cannot be safely downsampled on Pi")
                 resized_path = self._downsample_to_pi_safe_image(tmp_path)
                 decode_path = resized_path
 
+            if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                raise RuntimeError("Magazine DATA deadline expired before image loading")
             image = self.image_loader.from_file(str(decode_path), dimensions, resize=False)
             if not image:
                 raise RuntimeError("image load returned empty")
+            if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                raise RuntimeError("Magazine DATA deadline expired during image loading")
             return image.convert("RGB")
         finally:
             for path in [tmp_path, resized_path]:
@@ -830,23 +1432,24 @@ class MagazineCovers(BasePlugin):
                 except Exception:
                     pass
 
-    def _download_candidate_to_temp(self, url):
-        response = get_http_session().get(
+    def _download_candidate_to_temp(self, url, source=None, deadline=None):
+        source = source or {"name": urlparse(url).hostname or "image", "url": url}
+        payload = self._download_provider_bytes(
             url,
+            source=source,
+            kind="image",
+            max_bytes=MAX_IMAGE_BYTES,
             timeout=35,
-            stream=True,
-            headers=REQUEST_HEADERS,
+            deadline=deadline,
         )
-        response.raise_for_status()
-
         suffix = Path(urlparse(url).path).suffix or ".img"
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path = Path(temp_file.name)
         try:
             with temp_file:
-                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    if chunk:
-                        temp_file.write(chunk)
+                temp_file.write(payload)
+                temp_file.flush()
+            os.chmod(tmp_path, 0o600)
             return tmp_path
         except Exception:
             tmp_path.unlink(missing_ok=True)
@@ -1213,12 +1816,15 @@ class MagazineCovers(BasePlugin):
                 "image_url": meta.get("image_url"),
                 "page_url": meta.get("page_url"),
                 "title": meta.get("title"),
+                "fetched_at": fetched_at.isoformat(),
             }
         except Exception as exc:
             logger.warning("Could not read cached magazine cover for %s: %s", source["name"], exc)
             return None
 
     def _write_cached_cover(self, source, dimensions, cover):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         meta_path = self._cache_meta_path(source, dimensions)
         image_path = meta_path.with_suffix(".jpg")
         meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1292,6 +1898,8 @@ class MagazineCovers(BasePlugin):
         return self.cache_dir(env_var="INKYPI_MAGAZINE_COVERS_CACHE", leaf=".magazine_covers_cache", create=False)
 
     def _prune_stale_cover_cache_files(self):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return 0
         covers_dir = self._cache_dir() / "covers"
         if not covers_dir.is_dir():
             return 0
@@ -1341,6 +1949,8 @@ class MagazineCovers(BasePlugin):
         return {}
 
     def _write_state(self, state):
+        if not _PERSISTENT_WRITES_ENABLED.get():
+            return
         state = self._prune_stale_cover_pool_state(state)
         path = self._state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
