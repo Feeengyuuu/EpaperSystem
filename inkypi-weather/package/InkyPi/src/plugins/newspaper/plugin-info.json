@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true, "supports_presentation_refresh": true},
     "theme": {"presentation": "media", "day": {"background": "#f2efe7", "accent": "#343434"}, "night": {"background": "#111111", "accent": "#d7d7d7"}},
     "display_name": "Today's Newspaper",
     "id": "newspaper",

@@ -1,14 +1,28 @@
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_settings import resolve_refresh_on_display
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import html
+from html.parser import HTMLParser
+import http.client
+import ipaddress
 from io import BytesIO
 from pathlib import Path
+import socket
+import ssl
 import sys
-from urllib.parse import urlparse
-from security.ssrf import validate_browser_target
+import time
+from urllib.parse import urljoin, urlparse, urlsplit
+from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_font
-from utils.image_utils import get_image, take_screenshot, text_width
+from utils.browser_renderer import get_browser_renderer
+from utils.image_utils import text_width
+from runtime.refresh_contracts import TaskContext
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json
@@ -16,7 +30,18 @@ import logging
 import os
 import re
 from plugins.newspaper.constants import NEWSPAPERS
-from utils.http_client import HttpStatusError, get_http_client
+from plugins.newspaper.presentation_bank import (
+    FRESH_SECONDS,
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    NewspaperPresentationBank,
+    instance_profile_fingerprint,
+    read_state,
+    settings_fingerprint,
+    settings_key,
+    write_state,
+)
+from utils.http_client import HttpStatusError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +49,20 @@ FREEDOM_FORUM_URL = "https://cdn.freedomforum.org/dfp/jpg{}/lg/{}.jpg"
 LYWB_A01_PDF_URL = "https://lywb.lyd.com.cn/images2/2/{year_month}/{day}/A01/{stamp}A01_pdf.pdf"
 LYWB_LOOKBACK_DAYS = 10
 NEWS_FRONTPAGE_ROTATION_VERSION = "news-frontpage-rotation-v1"
+MAX_DATA_SECONDS = 90.0
+MAX_BROWSER_SECONDS = 40.0
+MAX_HTTP_SECONDS = 20.0
+MAX_DATA_SOURCES = 4
+MAX_BROWSER_SOURCES = 1
+MAX_HTTP_SOURCES = 3
+MAX_REDIRECTS = 4
+MAX_HTML_BYTES = 2 * 1024 * 1024
+MAX_PDF_BYTES = 25 * 1024 * 1024
+MAX_PDF_PAGES = 200
+MAX_PNG_BYTES = 16 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 8192
+MAX_IMAGE_PIXELS = 32_000_000
+REQUEST_HEADERS = {"User-Agent": "InkyPi News Front Pages/2.0"}
 DEFAULT_MEDIA_SOURCES = """BBC News|url|https://www.bbc.com/news
 CNN|url|https://www.cnn.com
 CCTV News|url|https://news.cctv.com/index.shtml
@@ -35,93 +74,95 @@ The New York Times|newspaper|ny_nyt
 The Washington Post|newspaper|dc_wp
 USA Today|newspaper|usat"""
 
-TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
-    "\u4e26": "\u5e76",
-    "\u4e9e": "\u4e9a",
-    "\u4f48": "\u5e03",
-    "\u50f9": "\u4ef7",
-    "\u5104": "\u4ebf",
-    "\u5167": "\u5185",
-    "\u5169": "\u4e24",
-    "\u52d5": "\u52a8",
-    "\u52d9": "\u52a1",
-    "\u570b": "\u56fd",
-    "\u5831": "\u62a5",
-    "\u5834": "\u573a",
-    "\u5c0e": "\u5bfc",
-    "\u5c08": "\u4e13",
-    "\u5c0d": "\u5bf9",
-    "\u5c64": "\u5c42",
-    "\u5ee3": "\u5e7f",
-    "\u5f8c": "\u540e",
-    "\u6771": "\u4e1c",
-    "\u689d": "\u6761",
-    "\u696d": "\u4e1a",
-    "\u6a19": "\u6807",
-    "\u6a5f": "\u673a",
-    "\u6aa2": "\u68c0",
-    "\u6b50": "\u6b27",
-    "\u6b0a": "\u6743",
-    "\u6c23": "\u6c14",
-    "\u6fdf": "\u6d4e",
-    "\u70ba": "\u4e3a",
-    "\u7522": "\u4ea7",
-    "\u756b": "\u753b",
-    "\u767c": "\u53d1",
-    "\u7bc0": "\u8282",
-    "\u7d00": "\u7eaa",
-    "\u7d1a": "\u7ea7",
-    "\u7d50": "\u7ed3",
-    "\u7d71": "\u7edf",
-    "\u7d93": "\u7ecf",
-    "\u7dda": "\u7ebf",
-    "\u7e3d": "\u603b",
-    "\u7db2": "\u7f51",
-    "\u8077": "\u804c",
-    "\u805e": "\u95fb",
-    "\u8207": "\u4e0e",
-    "\u842c": "\u4e07",
-    "\u83ef": "\u534e",
-    "\u862d": "\u5170",
-    "\u969b": "\u9645",
-    "\u8655": "\u5904",
-    "\u89c0": "\u89c2",
-    "\u8a08": "\u8ba1",
-    "\u8a0a": "\u8baf",
-    "\u8a2d": "\u8bbe",
-    "\u8a55": "\u8bc4",
-    "\u8a71": "\u8bdd",
-    "\u8a9e": "\u8bed",
-    "\u8abf": "\u8c03",
-    "\u8ad6": "\u8bba",
-    "\u8b70": "\u8bae",
-    "\u8b8a": "\u53d8",
-    "\u8ca1": "\u8d22",
-    "\u8cbf": "\u8d38",
-    "\u8cc7": "\u8d44",
-    "\u8cfd": "\u8d5b",
-    "\u8eca": "\u8f66",
-    "\u8f49": "\u8f6c",
-    "\u8f09": "\u8f7d",
-    "\u9078": "\u9009",
-    "\u91ab": "\u533b",
-    "\u91cb": "\u91ca",
-    "\u91dd": "\u9488",
-    "\u9577": "\u957f",
-    "\u9580": "\u95e8",
-    "\u958b": "\u5f00",
-    "\u9593": "\u95f4",
-    "\u95dc": "\u5173",
-    "\u96fb": "\u7535",
-    "\u9801": "\u9875",
-    "\u9818": "\u9886",
-    "\u982d": "\u5934",
-    "\u983b": "\u9891",
-    "\u984c": "\u9898",
-    "\u98a8": "\u98ce",
-    "\u9ad4": "\u4f53",
-    "\u9ede": "\u70b9",
-})
+TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
+    {
+        "\u4e26": "\u5e76",
+        "\u4e9e": "\u4e9a",
+        "\u4f48": "\u5e03",
+        "\u50f9": "\u4ef7",
+        "\u5104": "\u4ebf",
+        "\u5167": "\u5185",
+        "\u5169": "\u4e24",
+        "\u52d5": "\u52a8",
+        "\u52d9": "\u52a1",
+        "\u570b": "\u56fd",
+        "\u5831": "\u62a5",
+        "\u5834": "\u573a",
+        "\u5c0e": "\u5bfc",
+        "\u5c08": "\u4e13",
+        "\u5c0d": "\u5bf9",
+        "\u5c64": "\u5c42",
+        "\u5ee3": "\u5e7f",
+        "\u5f8c": "\u540e",
+        "\u6771": "\u4e1c",
+        "\u689d": "\u6761",
+        "\u696d": "\u4e1a",
+        "\u6a19": "\u6807",
+        "\u6a5f": "\u673a",
+        "\u6aa2": "\u68c0",
+        "\u6b50": "\u6b27",
+        "\u6b0a": "\u6743",
+        "\u6c23": "\u6c14",
+        "\u6fdf": "\u6d4e",
+        "\u70ba": "\u4e3a",
+        "\u7522": "\u4ea7",
+        "\u756b": "\u753b",
+        "\u767c": "\u53d1",
+        "\u7bc0": "\u8282",
+        "\u7d00": "\u7eaa",
+        "\u7d1a": "\u7ea7",
+        "\u7d50": "\u7ed3",
+        "\u7d71": "\u7edf",
+        "\u7d93": "\u7ecf",
+        "\u7dda": "\u7ebf",
+        "\u7e3d": "\u603b",
+        "\u7db2": "\u7f51",
+        "\u8077": "\u804c",
+        "\u805e": "\u95fb",
+        "\u8207": "\u4e0e",
+        "\u842c": "\u4e07",
+        "\u83ef": "\u534e",
+        "\u862d": "\u5170",
+        "\u969b": "\u9645",
+        "\u8655": "\u5904",
+        "\u89c0": "\u89c2",
+        "\u8a08": "\u8ba1",
+        "\u8a0a": "\u8baf",
+        "\u8a2d": "\u8bbe",
+        "\u8a55": "\u8bc4",
+        "\u8a71": "\u8bdd",
+        "\u8a9e": "\u8bed",
+        "\u8abf": "\u8c03",
+        "\u8ad6": "\u8bba",
+        "\u8b70": "\u8bae",
+        "\u8b8a": "\u53d8",
+        "\u8ca1": "\u8d22",
+        "\u8cbf": "\u8d38",
+        "\u8cc7": "\u8d44",
+        "\u8cfd": "\u8d5b",
+        "\u8eca": "\u8f66",
+        "\u8f49": "\u8f6c",
+        "\u8f09": "\u8f7d",
+        "\u9078": "\u9009",
+        "\u91ab": "\u533b",
+        "\u91cb": "\u91ca",
+        "\u91dd": "\u9488",
+        "\u9577": "\u957f",
+        "\u9580": "\u95e8",
+        "\u958b": "\u5f00",
+        "\u9593": "\u95f4",
+        "\u95dc": "\u5173",
+        "\u96fb": "\u7535",
+        "\u9801": "\u9875",
+        "\u9818": "\u9886",
+        "\u982d": "\u5934",
+        "\u983b": "\u9891",
+        "\u984c": "\u9898",
+        "\u98a8": "\u98ce",
+        "\u9ad4": "\u4f53",
+        "\u9ede": "\u70b9",
+    }
+)
 
 MOJIBAKE_MARKERS = (
     "\ufffd",
@@ -140,6 +181,133 @@ MOJIBAKE_MARKERS = (
     "\u93c2",
 )
 
+_BLOCKED_BROWSER_TAGS = frozenset({"base", "embed", "iframe", "math", "object", "script", "style", "svg", "template"})
+_VOID_BROWSER_TAGS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+)
+_NETWORK_BROWSER_ATTRIBUTES = frozenset(
+    {
+        "action",
+        "background",
+        "cite",
+        "data",
+        "download",
+        "formaction",
+        "href",
+        "longdesc",
+        "manifest",
+        "ping",
+        "poster",
+        "profile",
+        "src",
+        "srcdoc",
+        "srcset",
+        "usemap",
+    }
+)
+
+
+class _NetworkClosedHTMLSanitizer(HTMLParser):
+    """Rebuild provider HTML without executable or navigation-capable tokens."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.blocked_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = str(tag or "").lower()
+        if self.blocked_depth:
+            if tag not in _VOID_BROWSER_TAGS:
+                self.blocked_depth += 1
+            return
+        if tag in _BLOCKED_BROWSER_TAGS or ":" in tag:
+            if tag not in _VOID_BROWSER_TAGS:
+                self.blocked_depth = 1
+            return
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", tag):
+            return
+        normalized = [(str(name or "").lower(), value) for name, value in attrs]
+        if tag == "meta" and any(
+            name == "http-equiv" and str(value or "").strip().lower() == "refresh" for name, value in normalized
+        ):
+            return
+        safe_attrs = []
+        for name, value in normalized:
+            if (
+                not name
+                or name in _NETWORK_BROWSER_ATTRIBUTES
+                or name == "style"
+                or name.startswith("on")
+                or name.startswith("xmlns")
+                or ":" in name
+            ):
+                continue
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", name):
+                continue
+            escaped = html.escape(str(value or ""), quote=True)
+            safe_attrs.append(f' {name}="{escaped}"')
+        self.parts.append(f"<{tag}{''.join(safe_attrs)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        normalized_tag = str(tag or "").lower()
+        if self.blocked_depth or normalized_tag in _BLOCKED_BROWSER_TAGS or ":" in normalized_tag:
+            return
+        before = len(self.parts)
+        self.handle_starttag(tag, attrs)
+        if len(self.parts) > before and self.parts[-1].endswith(">"):
+            self.parts[-1] = f"{self.parts[-1][:-1]}/>"
+
+    def handle_endtag(self, tag):
+        tag = str(tag or "").lower()
+        if self.blocked_depth:
+            if tag not in _VOID_BROWSER_TAGS:
+                self.blocked_depth -= 1
+            return
+        if (
+            tag not in _BLOCKED_BROWSER_TAGS
+            and ":" not in tag
+            and re.fullmatch(r"[a-z][a-z0-9-]*", tag)
+            and tag not in _VOID_BROWSER_TAGS
+        ):
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.blocked_depth:
+            self.parts.append(html.escape(str(data or ""), quote=False))
+
+    def result(self):
+        return "".join(self.parts)
+
+
+class _NetworkClosedHTMLAudit(HTMLParser):
+    """Fail closed if a future sanitizer regression leaves an active token."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.unsafe = False
+
+    def handle_starttag(self, tag, attrs):
+        tag = str(tag or "").lower()
+        normalized = [(str(name or "").lower(), value) for name, value in attrs]
+        if tag in _BLOCKED_BROWSER_TAGS or ":" in tag:
+            self.unsafe = True
+        if tag == "meta" and any(
+            name == "http-equiv" and str(value or "").strip().lower() == "refresh" for name, value in normalized
+        ):
+            self.unsafe = True
+        for name, _value in normalized:
+            if (
+                name in _NETWORK_BROWSER_ATTRIBUTES
+                or name == "style"
+                or name.startswith("on")
+                or name.startswith("xmlns")
+                or ":" in name
+            ):
+                self.unsafe = True
+
+    handle_startendtag = handle_starttag
+
 
 def _enabled(value, default=False):
     if value is None:
@@ -147,13 +315,142 @@ def _enabled(value, default=False):
     return value is True or str(value).lower() in {"1", "true", "on", "yes", "rotate"}
 
 
+def _remaining_timeout(deadline, clock, configured):
+    configured = max(0.001, float(configured))
+    if deadline is None:
+        return configured
+    remaining = float(deadline) - float(clock())
+    if remaining <= 0:
+        raise RuntimeError("Newspaper DATA deadline is exhausted")
+    return max(0.001, min(configured, remaining))
+
+
+class _PinnedResponse:
+    """HTTP(S) response pinned to one SSRF-approved numeric address."""
+
+    def __init__(self, response, connection, url, *, deadline, clock, timeout):
+        self._response = response
+        self._connection = connection
+        self.url = url
+        self.status_code = int(response.status)
+        self.headers = response.headers
+        self._deadline = deadline
+        self._clock = clock
+        self._timeout = timeout
+
+    @classmethod
+    def open(cls, approved, *, headers, deadline, clock, timeout):
+        last_error = None
+        for address in approved.addresses:
+            raw_socket = None
+            connection = None
+            try:
+                raw_socket = socket.create_connection(
+                    (address, approved.port),
+                    timeout=_remaining_timeout(deadline, clock, timeout),
+                )
+                _remaining_timeout(deadline, clock, timeout)
+                raw_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                if approved.scheme == "https":
+                    connection = ssl.create_default_context().wrap_socket(
+                        raw_socket,
+                        server_hostname=approved.hostname,
+                    )
+                    raw_socket = None
+                    _remaining_timeout(deadline, clock, timeout)
+                else:
+                    connection = raw_socket
+                    raw_socket = None
+                connection.settimeout(_remaining_timeout(deadline, clock, timeout))
+                parsed = urlsplit(approved.normalized_url)
+                target = parsed.path or "/"
+                if parsed.query:
+                    target = f"{target}?{parsed.query}"
+                lines = [f"GET {target} HTTP/1.1", f"Host: {approved.authority}"]
+                for name, value in headers.items():
+                    name = str(name)
+                    value = str(value)
+                    if name.lower() in {"host", "connection"}:
+                        continue
+                    if not name or any(marker in name + value for marker in ("\r", "\n")):
+                        raise RuntimeError("Newspaper request headers are invalid")
+                    lines.append(f"{name}: {value}")
+                lines.append("Connection: close")
+                connection.settimeout(_remaining_timeout(deadline, clock, timeout))
+                connection.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+                _remaining_timeout(deadline, clock, timeout)
+                connection.settimeout(_remaining_timeout(deadline, clock, timeout))
+                response = http.client.HTTPResponse(connection)
+                response.begin()
+                _remaining_timeout(deadline, clock, timeout)
+                return cls(
+                    response,
+                    connection,
+                    approved.normalized_url,
+                    deadline=deadline,
+                    clock=clock,
+                    timeout=timeout,
+                )
+            except RuntimeError:
+                if connection is not None:
+                    connection.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                raise
+            except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+                if connection is not None:
+                    connection.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                last_error = exc
+        raise RuntimeError("Newspaper approved target could not be reached") from last_error
+
+    def iter_content(self, chunk_size):
+        while True:
+            self._connection.settimeout(_remaining_timeout(self._deadline, self._clock, self._timeout))
+            chunk = self._response.read(chunk_size)
+            _remaining_timeout(self._deadline, self._clock, self._timeout)
+            if not chunk:
+                return
+            yield chunk
+
+    def close(self):
+        try:
+            self._response.close()
+        finally:
+            self._connection.close()
+
+
+class _DataAttemptBudget:
+    """One shared DATA quota for protected recovery and ordinary refill."""
+
+    def __init__(self):
+        self.total = 0
+        self.browser = 0
+        self.http = 0
+
+    def can_claim(self, source):
+        if self.total >= MAX_DATA_SOURCES:
+            return False
+        if source.get("type") == "url":
+            return self.browser < MAX_BROWSER_SOURCES
+        return self.http < MAX_HTTP_SOURCES
+
+    def claim(self, source):
+        if not self.can_claim(source):
+            return False
+        self.total += 1
+        if source.get("type") == "url":
+            self.browser += 1
+        else:
+            self.http += 1
+        return True
+
+
 class Newspaper(BasePlugin):
     def wants_refresh_on_display(self, settings):
         settings = settings or {}
-        rotation_default = (
-            str(settings.get("mediaRotationMode") or "rotate").lower()
-            != "single"
-        )
+        rotation_default = str(settings.get("mediaRotationMode") or "rotate").lower() != "single"
         return resolve_refresh_on_display(
             settings,
             self.config,
@@ -161,20 +458,401 @@ class Newspaper(BasePlugin):
         )
 
     def generate_image(self, settings, device_config):
-        if self._rotation_enabled(settings):
-            sources = self._parse_media_sources(settings.get("mediaSources") or DEFAULT_MEDIA_SOURCES)
-            if sources:
-                return self._generate_rotating_image(sources, device_config)
-
-        newspaper_slug = settings.get("newspaperSlug")
-        if not newspaper_slug:
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            return self._generate_stateless_preview(settings, device_config)
+        if settings.get("_theme_render_only") is True:
+            return self._generate_theme_only(settings, device_config)
+        deadline = self._monotonic() + MAX_DATA_SECONDS
+        sources = self._sources_for_settings(settings)
+        if not sources:
             raise RuntimeError("Newspaper input not provided.")
+        dimensions = self.get_dimensions(device_config)
+        bank = self._presentation_bank(settings, sources, dimensions)
 
-        image = self._fetch_newspaper_cover(newspaper_slug, device_config)
-        if not image:
-            raise RuntimeError("Newspaper front cover not found.")
+        def check_deadline():
+            _remaining_timeout(deadline, self._monotonic, MAX_DATA_SECONDS)
 
+        document, profile = bank.load_for_data()
+        profile_before = json.loads(json.dumps(profile))
+        transaction = bank.transaction()
+        captured_keys = set()
+        attempt_budget = _DataAttemptBudget()
+        try:
+            protected_complete = self._recover_protected_selections(
+                bank,
+                profile,
+                device_config,
+                transaction=transaction,
+                deadline=deadline,
+                deadline_check=check_deadline,
+                captured_keys=captured_keys,
+                attempt_budget=attempt_budget,
+            )
+            if not protected_complete:
+                transaction.commit(deadline_check=check_deadline)
+                raise RuntimeError("Newspaper protected recovery exceeded the shared DATA quota")
+            ready = bank.ready_records(profile, prune=True)
+            fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
+            if len(fresh_ready) < REFILL_THRESHOLD:
+                profile["refill_in_progress"] = True
+            if profile.get("refill_in_progress") is True:
+                cursor = int(profile.get("refill_cursor") or 0) % len(sources)
+                scan_cursor = cursor
+                first_unattempted = None
+                scanned = 0
+                while (
+                    scanned < len(sources)
+                    and attempt_budget.total < MAX_DATA_SOURCES
+                    and len(fresh_ready) < READY_TARGET
+                ):
+                    check_deadline()
+                    source_index = scan_cursor
+                    source = sources[source_index]
+                    scan_cursor = (scan_cursor + 1) % len(sources)
+                    scanned += 1
+                    is_browser = source["type"] == "url"
+                    if not attempt_budget.claim(source):
+                        if first_unattempted is None:
+                            first_unattempted = source_index
+                        continue
+                    if is_browser:
+                        source_budget = MAX_BROWSER_SECONDS
+                    else:
+                        source_budget = MAX_HTTP_SECONDS
+                    source_deadline = min(
+                        deadline,
+                        self._monotonic() + source_budget,
+                    )
+                    try:
+                        image = self._fetch_source_image(
+                            source,
+                            device_config,
+                            deadline=source_deadline,
+                        )
+                        check_deadline()
+                        if image is None:
+                            continue
+                        record = bank.ingest(
+                            profile,
+                            source,
+                            image,
+                            transaction=transaction,
+                            deadline_check=check_deadline,
+                        )
+                        ready = [item for item in ready if item["source"]["id"] != source["id"]]
+                        fresh_record = {**record, "provenance": "fresh_cache"}
+                        ready.append(fresh_record)
+                        fresh_ready = [item for item in fresh_ready if item["source"]["id"] != source["id"]]
+                        fresh_ready.append(fresh_record)
+                        captured_keys.add(record["record_key"])
+                    except Exception as exc:
+                        if self._monotonic() >= deadline:
+                            raise RuntimeError("Newspaper DATA deadline is exhausted") from exc
+                        logger.warning(
+                            "Newspaper source failed for %s: %s",
+                            source["name"],
+                            exc,
+                        )
+                profile["refill_cursor"] = first_unattempted if first_unattempted is not None else scan_cursor
+            bank.cleanup(
+                document,
+                profile,
+                transaction=transaction,
+                deadline_check=check_deadline,
+            )
+            ready = bank.ready_records(profile, prune=True)
+            fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
+            profile["refill_in_progress"] = len(fresh_ready) < READY_TARGET
+            if not ready:
+                placeholder = self._render_metadata_placeholder(
+                    sources[int(profile.get("refill_cursor") or 0) % len(sources)],
+                    device_config,
+                )
+                bank.save(
+                    document,
+                    deadline_check=check_deadline,
+                    transaction=transaction,
+                )
+                placeholder.info["inkypi_source_provenance"] = "local_fallback"
+                return placeholder
+            current = bank.ensure_current(profile, ready)
+            record, image = bank.selection_media(profile, current)
+            check_deadline()
+            bank.save(
+                document,
+                deadline_check=check_deadline,
+                transaction=transaction,
+            )
+        except Exception:
+            profile.clear()
+            profile.update(profile_before)
+            transaction.rollback()
+            raise
+
+        provenance = self._record_provenance(record)
+        image.info["inkypi_source_provenance"] = "live" if record["record_key"] in captured_keys else provenance
         return image
+
+    def presentation_mode(self, settings):
+        del settings
+        return PresentationMode.PREPARED_BANK
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        sources = self._sources_for_settings(settings)
+        dimensions = self.get_dimensions(device_config)
+        bank = self._presentation_bank(settings, sources, dimensions)
+        document, profile = bank.load_warm()
+        ready = bank.ready_records(profile, prune=False)
+        fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
+        pending = bank.pending_for_request(profile, request.request_id)
+        fresh_keys = {item["record_key"] for item in fresh_ready}
+        if pending is not None and pending.get("record_key") not in fresh_keys:
+            raise RuntimeError("Newspaper pending presentation is not fresh")
+        if pending is None and not fresh_ready:
+            raise RuntimeError("Newspaper presentation bank has no fresh media")
+        selection = pending or bank.choose_selection(profile, fresh_ready)
+        image = self._render_bank_selection(bank, profile, selection)
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+        record, _media = bank.selection_media(profile, selection)
+        image.info["inkypi_source_provenance"] = self._record_provenance(record)
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Newspaper receipt reconciliation requires trusted instance identity")
+        path = self._presentation_state_path()
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        document = read_state(path)
+        if NewspaperPresentationBank.reconcile_document(
+            document,
+            receipt,
+            instance_uuid,
+        ):
+            write_state(path, document)
+        return None
+
+    def _sources_for_settings(self, settings):
+        if self._rotation_enabled(settings):
+            return self._parse_media_sources(settings.get("mediaSources") or DEFAULT_MEDIA_SOURCES)
+        slug = str(settings.get("newspaperSlug") or "").strip().upper()
+        if not slug:
+            return []
+        return [
+            {
+                "id": f"newspaper:{slug}",
+                "name": slug,
+                "type": "newspaper",
+                "value": slug,
+            }
+        ]
+
+    def _presentation_bank(self, settings, sources, dimensions):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Newspaper bank requires trusted instance identity")
+        key = settings_key(settings, sources)
+        base = settings_fingerprint(settings, sources, dimensions)
+        fingerprint = instance_profile_fingerprint(base, instance_uuid)
+        return NewspaperPresentationBank(
+            self._presentation_state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base,
+            profile_settings_key=key,
+            instance_uuid=instance_uuid,
+            now=self._now_utc,
+        )
+
+    def _presentation_state_path(self):
+        return self.data_dir(create=False) / ".newspaper_presentation_state.json"
+
+    def _presentation_media_dir(self):
+        return self.data_dir(leaf="presentation-media", create=False)
+
+    def _render_bank_selection(self, bank, profile, selection):
+        _record, image = bank.selection_media(profile, selection)
+        return image
+
+    def _recover_protected_selections(
+        self,
+        bank,
+        profile,
+        device_config,
+        *,
+        transaction,
+        deadline,
+        deadline_check,
+        captured_keys,
+        attempt_budget,
+    ):
+        recovered = {}
+        for selection_name in ("current_selection", "pending_selection"):
+            selection = profile.get(selection_name)
+            if not isinstance(selection, dict):
+                continue
+            old_key = selection.get("record_key")
+            if old_key in recovered:
+                selection["record_key"] = recovered[old_key]
+                continue
+            record = next(
+                (item for item in profile.get("records") or [] if item.get("record_key") == old_key),
+                None,
+            )
+            if record is None:
+                raise RuntimeError(f"Newspaper protected {selection_name} metadata is missing")
+            try:
+                bank.load_media(record)
+                continue
+            except RuntimeError:
+                pass
+            source = bank.normalize_source(record.get("source"))
+            if not attempt_budget.claim(source):
+                return False
+            source_budget = MAX_BROWSER_SECONDS if source["type"] == "url" else MAX_HTTP_SECONDS
+            source_deadline = min(deadline, self._monotonic() + source_budget)
+            try:
+                image = self._fetch_source_image(
+                    source,
+                    device_config,
+                    deadline=source_deadline,
+                )
+                deadline_check()
+                if image is None:
+                    raise RuntimeError("provider returned no image")
+                if not bank.media_exists(record):
+                    bank.rehydrate_missing_media(
+                        record,
+                        image,
+                        transaction=transaction,
+                        deadline_check=deadline_check,
+                    )
+                    replacement_key = old_key
+                else:
+                    replacement = bank.ingest(
+                        profile,
+                        source,
+                        image,
+                        transaction=transaction,
+                        deadline_check=deadline_check,
+                    )
+                    replacement_key = replacement["record_key"]
+            except Exception as exc:
+                raise RuntimeError(f"Newspaper protected {selection_name} recovery failed") from exc
+            selection["record_key"] = replacement_key
+            recovered[old_key] = replacement_key
+            captured_keys.add(replacement_key)
+        return True
+
+    def _generate_theme_only(self, settings, device_config):
+        sources = self._sources_for_settings(settings)
+        dimensions = self.get_dimensions(device_config)
+        bank = self._presentation_bank(settings, sources, dimensions)
+        _document, profile = bank.load_warm()
+        current = profile.get("current_selection")
+        if current is None:
+            raise RuntimeError("Newspaper theme redraw has no current selection")
+        record, image = bank.selection_media(profile, current)
+        theme = settings.get("_inkypi_theme") or self.resolve_theme(
+            settings,
+            device_config,
+            now=self._now_utc(),
+        )
+        image = apply_media_theme_chrome(
+            image,
+            self.get_plugin_id(),
+            theme,
+            dimensions,
+        )
+        mode = theme.get("mode")
+        if mode in {"day", "night"}:
+            image.info["inkypi_theme_mode"] = mode
+        image.info["inkypi_source_provenance"] = self._record_provenance(record)
+        return image
+
+    def _generate_stateless_preview(self, settings, device_config):
+        dimensions = self.get_dimensions(device_config)
+        image = Image.new("RGB", dimensions, "white")
+        draw = ImageDraw.Draw(image)
+        title = str(settings.get("newspaperSlug") or "Today's Newspaper")[:80]
+        draw.rectangle((0, 0, dimensions[0], 72), fill="black")
+        draw.text((20, 20), title, fill="white", font=self._font(28, bold=True))
+        draw.text(
+            (20, 100),
+            "Preview uses no browser or provider.",
+            fill="black",
+            font=self._font(18),
+        )
+        image.info["inkypi_source_provenance"] = "local_fallback"
+        return image
+
+    def _render_metadata_placeholder(self, source, device_config):
+        dimensions = self.get_dimensions(device_config)
+        image = Image.new("RGB", dimensions, "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, dimensions[0], 72), fill="black")
+        draw.text(
+            (20, 18),
+            str(source.get("name") or "Today's Newspaper")[:80],
+            fill="white",
+            font=self._font(28, bold=True),
+        )
+        draw.text(
+            (20, 102),
+            "Source metadata available; capture unavailable.",
+            fill="black",
+            font=self._font(18),
+        )
+        draw.text(
+            (20, 138),
+            str(source.get("value") or "")[:100],
+            fill="black",
+            font=self._font(14),
+        )
+        return image
+
+    def _record_provenance(self, record):
+        downloaded = datetime.fromisoformat(record["downloaded_at"])
+        if downloaded.tzinfo is None:
+            downloaded = downloaded.replace(tzinfo=timezone.utc)
+        age = (self._now_utc() - downloaded.astimezone(timezone.utc)).total_seconds()
+        return "fresh_cache" if 0 <= age <= FRESH_SECONDS else "stale_cache"
+
+    def _now_utc(self):
+        return datetime.now(timezone.utc)
+
+    def _monotonic(self):
+        return time.monotonic()
 
     def _rotation_enabled(self, settings):
         mode = settings.get("mediaRotationMode")
@@ -235,12 +913,14 @@ class Newspaper(BasePlugin):
             if source_id in seen:
                 continue
             seen.add(source_id)
-            sources.append({
-                "id": source_id,
-                "name": name or default_name,
-                "type": source_type,
-                "value": value,
-            })
+            sources.append(
+                {
+                    "id": source_id,
+                    "name": name or default_name,
+                    "type": source_type,
+                    "value": value,
+                }
+            )
 
         return sources
 
@@ -264,51 +944,107 @@ class Newspaper(BasePlugin):
         detail = "; ".join(errors[-4:])
         raise RuntimeError(f"No news front page could be fetched. {detail}")
 
-    def _fetch_source_image(self, source, device_config):
+    def _fetch_source_image(self, source, device_config, *, deadline=None):
         if source["type"] == "headlines":
-            headlines = self._fetch_web_headlines(source["value"])
+            headlines = self._fetch_web_headlines(source["value"], deadline=deadline)
             if headlines:
                 return self._render_headlines_page(source, headlines, device_config)
             return None
 
         if source["type"] == "url":
-            image = self._fetch_url_screenshot(source["value"], device_config)
+            image = self._fetch_url_screenshot(
+                source["value"],
+                device_config,
+                deadline=deadline,
+            )
             if image:
                 return image
             return None
 
         if source["type"] == "lywb":
-            return self._fetch_luoyang_evening_news_cover(device_config)
+            return self._fetch_luoyang_evening_news_cover(
+                device_config,
+                deadline=deadline,
+            )
 
-        return self._fetch_newspaper_cover(source["value"], device_config)
-
-    def _fetch_url_screenshot(self, url, device_config):
-        dimensions = self.get_dimensions(device_config)
-
-        logger.info("Taking news front page screenshot: %s", url)
-        return take_screenshot(
-            url,
-            dimensions,
-            timeout_ms=40000,
-            validator=validate_browser_target,
+        return self._fetch_newspaper_cover(
+            source["value"],
+            device_config,
+            deadline=deadline,
         )
 
-    def _fetch_web_headlines(self, url):
+    def _fetch_url_screenshot(self, url, device_config, *, deadline=None):
+        dimensions = self.get_dimensions(device_config)
+        deadline = deadline or self._monotonic() + MAX_BROWSER_SECONDS
+        allowed_hosts = self._allowed_hosts_for_url(url)
+        payload, final_url, headers = self._download_provider_bytes(
+            url,
+            allowed_hosts=allowed_hosts,
+            max_bytes=MAX_HTML_BYTES,
+            timeout=MAX_BROWSER_SECONDS,
+            deadline=deadline,
+        )
+        _remaining_timeout(deadline, self._monotonic, MAX_BROWSER_SECONDS)
+        html_text = self._decode_response_text(payload, headers)
+        html_text = self._sanitize_browser_html(html_text, final_url)
+        self._assert_browser_html_network_closed(html_text)
+        context = TaskContext.never_cancelled(
+            deadline_monotonic=deadline,
+            clock=self._monotonic,
+        )
+        logger.info("Rendering bounded news front page snapshot: %s", final_url)
+        image = get_browser_renderer().render_html(
+            html_text,
+            viewport=dimensions,
+            context=context,
+            timeout_seconds=_remaining_timeout(
+                deadline,
+                self._monotonic,
+                MAX_BROWSER_SECONDS,
+            ),
+        )
+        _remaining_timeout(deadline, self._monotonic, MAX_BROWSER_SECONDS)
+        if image is not None:
+            self._validate_image_dimensions(image.size)
+        return image
+
+    def _fetch_web_headlines(self, url, *, deadline=None):
         try:
-            response = get_http_client().request_bytes(
-                "GET",
+            payload, _final_url, headers = self._download_provider_bytes(
                 url,
-                timeout=15,
-                headers={"User-Agent": "InkyPi News Front Pages/1.0"},
-                max_bytes=4 * 1024 * 1024,
+                allowed_hosts=self._allowed_hosts_for_url(url),
+                timeout=MAX_HTTP_SECONDS,
+                deadline=deadline,
+                max_bytes=MAX_HTML_BYTES,
             )
         except Exception as exc:
             logger.warning("Could not fetch news front page HTML %s: %s", url, exc)
             return []
 
-        return self._extract_headlines(
-            self._decode_response_text(response.data, response.headers)
+        return self._extract_headlines(self._decode_response_text(payload, headers))
+
+    def _sanitize_browser_html(self, html_text, final_url):
+        del final_url
+        sanitizer = _NetworkClosedHTMLSanitizer()
+        sanitizer.feed(html_text or "")
+        sanitizer.close()
+        safe = sanitizer.result()
+        policy = (
+            '<meta http-equiv="Content-Security-Policy" '
+            "content=\"default-src 'none'; navigate-to 'none'; form-action 'none'; "
+            "base-uri 'none'; object-src 'none'\">"
         )
+        return f"{policy}{safe}"
+
+    def _assert_browser_html_network_closed(self, html_text):
+        audit = _NetworkClosedHTMLAudit()
+        try:
+            audit.feed(html_text or "")
+            audit.close()
+        except Exception as exc:
+            raise RuntimeError("Newspaper unsafe browser HTML was rejected") from exc
+        if audit.unsafe:
+            raise RuntimeError("Newspaper unsafe browser HTML was rejected")
 
     def _decode_response_text(self, content, headers=None):
         encodings = []
@@ -321,12 +1057,14 @@ class Newspaper(BasePlugin):
         for match in re.finditer(r"charset\s*=\s*['\"]?([A-Za-z0-9._-]+)", head, re.I):
             encodings.append(match.group(1))
 
-        encodings.extend([
-            "utf-8",
-            "gb18030",
-            "gbk",
-            "big5",
-        ])
+        encodings.extend(
+            [
+                "utf-8",
+                "gb18030",
+                "gbk",
+                "big5",
+            ]
+        )
 
         best_text = None
         best_score = None
@@ -590,8 +1328,9 @@ class Newspaper(BasePlugin):
         box = draw.textbbox((0, 0), text or "A", font=font)
         return box[3] - box[1]
 
-    def _fetch_newspaper_cover(self, newspaper_slug, device_config):
+    def _fetch_newspaper_cover(self, newspaper_slug, device_config, *, deadline=None):
         newspaper_slug = newspaper_slug.upper()
+        deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
 
         # Get today's date
         today = datetime.today()
@@ -601,8 +1340,20 @@ class Newspaper(BasePlugin):
 
         image = None
         for date in days:
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             image_url = FREEDOM_FORUM_URL.format(date.day, newspaper_slug)
-            image = get_image(image_url)
+            try:
+                payload, _final_url, _headers = self._download_provider_bytes(
+                    image_url,
+                    allowed_hosts=("cdn.freedomforum.org",),
+                    max_bytes=MAX_PNG_BYTES,
+                    timeout=MAX_HTTP_SECONDS,
+                    deadline=deadline,
+                )
+                image = self._decode_remote_image(payload, deadline=deadline)
+            except Exception as exc:
+                logger.warning("Could not fetch newspaper cover %s: %s", image_url, exc)
+                image = None
             if image:
                 logger.info(f"Found {newspaper_slug} front cover for {date.strftime('%Y-%m-%d')}")
                 break
@@ -630,14 +1381,16 @@ class Newspaper(BasePlugin):
 
         return image
 
-    def _fetch_luoyang_evening_news_cover(self, device_config):
+    def _fetch_luoyang_evening_news_cover(self, device_config, *, deadline=None):
+        deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
         for date in self._lywb_candidate_dates():
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             url = self._build_lywb_pdf_url(date)
-            pdf_bytes = self._download_pdf(url)
+            pdf_bytes = self._download_pdf(url, deadline=deadline)
             if not pdf_bytes:
                 continue
 
-            image = self._render_pdf_first_page(pdf_bytes)
+            image = self._render_pdf_first_page(pdf_bytes, deadline=deadline)
             if not image:
                 continue
 
@@ -658,17 +1411,18 @@ class Newspaper(BasePlugin):
             stamp=date.strftime("%Y%m%d"),
         )
 
-    def _download_pdf(self, url):
+    def _download_pdf(self, url, *, deadline=None):
         try:
-            response = get_http_client().request_bytes(
-                "GET",
+            payload, _final_url, _headers = self._download_provider_bytes(
                 url,
-                timeout=20,
+                allowed_hosts=("lywb.lyd.com.cn",),
+                timeout=MAX_HTTP_SECONDS,
+                deadline=deadline,
+                max_bytes=MAX_PDF_BYTES,
                 headers={
                     "User-Agent": "Mozilla/5.0 InkyPi News Front Pages/1.0",
                     "Referer": "https://lywb.lyd.com.cn/",
                 },
-                max_bytes=25 * 1024 * 1024,
             )
         except HttpStatusError as exc:
             if exc.status == 404:
@@ -679,32 +1433,45 @@ class Newspaper(BasePlugin):
             logger.warning("Could not fetch PDF front page %s: %s", url, exc)
             return None
 
-        if not response.data.startswith(b"%PDF"):
+        if not payload.startswith(b"%PDF"):
             logger.warning("PDF front page response was not a PDF: %s", url)
             return None
 
-        return response.data
+        return payload
 
-    def _render_pdf_first_page(self, pdf_bytes):
+    def _render_pdf_first_page(self, pdf_bytes, *, deadline=None):
+        if not isinstance(pdf_bytes, bytes) or len(pdf_bytes) > MAX_PDF_BYTES:
+            raise RuntimeError("Newspaper PDF exceeds the size limit")
+        _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
         try:
             fitz = self._import_pymupdf()
         except Exception as exc:
-            try:
-                image = Image.open(BytesIO(pdf_bytes))
-                image.load()
-                return image.convert("RGB")
-            except Exception:
-                raise RuntimeError("PyMuPDF is required to render PDF front pages") from exc
+            raise RuntimeError("PyMuPDF is required to render PDF front pages") from exc
 
         document = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             if len(document) < 1:
                 return None
+            if len(document) > MAX_PDF_PAGES:
+                raise RuntimeError("Newspaper PDF exceeds the page limit")
 
             page = document.load_page(0)
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             matrix = fitz.Matrix(2, 2)
+            expected_width = int(page.rect.width * 2)
+            expected_height = int(page.rect.height * 2)
+            self._validate_image_dimensions((expected_width, expected_height))
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-            return Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            self._validate_image_dimensions((pixmap.width, pixmap.height))
+            image = Image.frombytes(
+                "RGB",
+                (pixmap.width, pixmap.height),
+                pixmap.samples,
+            )
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
+            return image
         finally:
             document.close()
 
@@ -723,6 +1490,7 @@ class Newspaper(BasePlugin):
             return fitz
 
     def _prepare_frontpage_image(self, image, device_config):
+        self._validate_image_dimensions(image.size)
         img_width, img_height = image.size
 
         dimensions = device_config.get_resolution()
@@ -742,6 +1510,141 @@ class Newspaper(BasePlugin):
 
         return image
 
+    def _decode_remote_image(self, payload, *, deadline=None):
+        if not isinstance(payload, bytes) or not payload or len(payload) > MAX_PNG_BYTES:
+            raise RuntimeError("Newspaper image exceeds the size limit")
+        _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
+        try:
+            with Image.open(BytesIO(payload)) as source:
+                self._validate_image_dimensions(source.size)
+                _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
+                source.load()
+                _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
+                image = source.convert("RGB")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("Newspaper image could not be decoded") from exc
+        self._validate_image_dimensions(image.size)
+        return image
+
+    def _validate_image_dimensions(self, size):
+        width, height = int(size[0]), int(size[1])
+        if (
+            width <= 0
+            or height <= 0
+            or width > MAX_IMAGE_DIMENSION
+            or height > MAX_IMAGE_DIMENSION
+            or width * height > MAX_IMAGE_PIXELS
+        ):
+            raise RuntimeError("Newspaper image dimensions exceed the safety limit")
+
+    def _allowed_hosts_for_url(self, url):
+        try:
+            parsed = urlsplit(str(url or ""))
+            host = (parsed.hostname or "").rstrip(".").lower()
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("Newspaper source URL is invalid") from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or port is not None
+        ):
+            raise RuntimeError("Newspaper source URL is outside its allowlist")
+        return (host,)
+
+    def _validate_approved_target(self, approved, allowed_hosts):
+        host = str(approved.hostname or "").rstrip(".").lower()
+        normalized = tuple(str(value).rstrip(".").lower() for value in allowed_hosts)
+        if host not in normalized:
+            raise RuntimeError("Newspaper provider authority is outside its allowlist")
+        if approved.scheme not in {"http", "https"}:
+            raise RuntimeError("Newspaper provider scheme is not allowed")
+        expected_port = 443 if approved.scheme == "https" else 80
+        if int(approved.port) != expected_port:
+            raise RuntimeError("Newspaper provider port is outside its allowlist")
+        if not approved.addresses:
+            raise RuntimeError("Newspaper provider has no approved address")
+        for value in approved.addresses:
+            try:
+                address = ipaddress.ip_address(value)
+            except ValueError as exc:
+                raise RuntimeError("Newspaper provider address is invalid") from exc
+            if (
+                isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None
+            ) or not address.is_global:
+                raise RuntimeError("Newspaper provider address is not public")
+        return approved
+
+    def _download_provider_bytes(
+        self,
+        url,
+        *,
+        allowed_hosts,
+        max_bytes,
+        timeout,
+        deadline=None,
+        headers=None,
+    ):
+        deadline = deadline or self._monotonic() + timeout
+        current_url = str(url or "").strip()
+        policy = get_ssrf_policy()
+        headers = dict(headers or REQUEST_HEADERS)
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            _remaining_timeout(deadline, self._monotonic, timeout)
+            approved = self._validate_approved_target(
+                policy.resolve_and_validate(current_url),
+                allowed_hosts,
+            )
+            _remaining_timeout(deadline, self._monotonic, timeout)
+            response = _PinnedResponse.open(
+                approved,
+                headers=headers,
+                deadline=deadline,
+                clock=self._monotonic,
+                timeout=_remaining_timeout(deadline, self._monotonic, timeout),
+            )
+            try:
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_REDIRECTS:
+                        raise RuntimeError("Newspaper redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("Newspaper redirect has no Location")
+                    next_url = urljoin(approved.normalized_url, location)
+                    next_target = self._validate_approved_target(
+                        policy.resolve_and_validate(next_url),
+                        allowed_hosts,
+                    )
+                    current_url = next_target.normalized_url
+                    continue
+                if not 200 <= status < 300:
+                    raise HttpStatusError("GET", approved.normalized_url, status)
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > max_bytes:
+                            raise RuntimeError("Newspaper response exceeds its size limit")
+                    except ValueError:
+                        pass
+                payload = bytearray()
+                for chunk in response.iter_content(64 * 1024):
+                    _remaining_timeout(deadline, self._monotonic, timeout)
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("Newspaper response exceeds its size limit")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("Newspaper provider response is empty")
+                _remaining_timeout(deadline, self._monotonic, timeout)
+                return bytes(payload), approved.normalized_url, dict(response.headers)
+            finally:
+                response.close()
+        raise RuntimeError("Newspaper redirect limit was exceeded")
+
     def _select_next_source(self, sources):
         pool_key = self._source_pool_key(sources)
         state = self._read_rotation_state()
@@ -759,10 +1662,7 @@ class Newspaper(BasePlugin):
         return selected
 
     def _source_pool_key(self, sources):
-        raw = "|".join(
-            [NEWS_FRONTPAGE_ROTATION_VERSION]
-            + [source["id"] for source in sources]
-        )
+        raw = "|".join([NEWS_FRONTPAGE_ROTATION_VERSION] + [source["id"] for source in sources])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _rotation_state_path(self):
@@ -794,6 +1694,6 @@ class Newspaper(BasePlugin):
 
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
-        template_params['newspapers'] = sorted(NEWSPAPERS, key=lambda n: n['name'])
+        template_params["newspapers"] = sorted(NEWSPAPERS, key=lambda n: n["name"])
         template_params["default_media_sources"] = DEFAULT_MEDIA_SOURCES
         return template_params
