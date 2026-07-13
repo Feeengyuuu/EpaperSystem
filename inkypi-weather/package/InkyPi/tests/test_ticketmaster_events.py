@@ -15,6 +15,7 @@ from plugins.ticketmaster_events.ticketmaster_events import (  # noqa: E402
     TicketmasterEvent,
     TicketmasterEvents,
 )
+from utils import cache_manager  # noqa: E402
 
 
 class DummyDeviceConfig:
@@ -468,6 +469,46 @@ def test_ticketmaster_state_json_uses_single_file_managed_namespace(
     assert namespace.budget.max_bytes <= 512 * 1024
     assert namespace.status().files == 1
     assert namespace.status().bytes <= namespace.budget.max_bytes
+
+
+def test_runtime_cache_manager_accepts_ticketmaster_state_and_image_namespaces(
+    monkeypatch,
+    tmp_path,
+):
+    runtime_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(runtime_root))
+    monkeypatch.delenv("INKYPI_TICKETMASTER_EVENTS_CACHE", raising=False)
+    monkeypatch.setattr(
+        cache_manager,
+        "_GLOBAL_MANAGER",
+        cache_manager.CacheManager(SimpleNamespace(cache_dir=runtime_root)),
+    )
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    rendered = {}
+
+    monkeypatch.setattr(
+        plugin,
+        "_load_events",
+        lambda *_args: [TicketmasterEvent(rank=1, title="Runtime event")],
+    )
+    monkeypatch.setattr(plugin, "_write_ticketmaster_context", lambda *_args: None)
+
+    def fake_render(_dimensions, events, *_args, **_kwargs):
+        rendered["titles"] = [event.title for event in events]
+        return Image.new("RGB", (800, 480), "white")
+
+    monkeypatch.setattr(plugin, "_render_events", fake_render)
+
+    image = plugin.generate_image(
+        {"apiKey": "test-key", "forceRefresh": True},
+        DummyDeviceConfig(),
+    )
+
+    assert image.size == (800, 480)
+    assert rendered == {"titles": ["Runtime event"]}
+    assert len(plugin._read_cache()["events"]) == 1
+    assert plugin._state_cache_namespace().status().files == 1
+    assert plugin._poster_cache_namespace().root.is_dir()
 
 
 def test_ticketmaster_poster_namespace_evicts_by_count_and_bytes(

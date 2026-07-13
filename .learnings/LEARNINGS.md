@@ -396,3 +396,49 @@ Keep a focused contract test for theme-only LoL account/skin selection, avoid re
 - Tags: lol, theme, account-rotation, skin, regression
 
 ---
+
+## [LRN-20260713-001] best_practice
+
+**Logged**: 2026-07-13T06:36:07-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+Runtime cache namespaces must use path components accepted by the shared CacheManager.
+
+### Details
+Ticketmaster could reach its provider and receive events, but its production cache leaf began with a dot. The shared CacheManager correctly rejected that unsafe namespace before poster downloads started, so the plugin caught the resulting error and rendered an empty-events fallback instead of the available event data.
+
+### Suggested Action
+Keep legacy hidden cache directories only in local development mode. Under `INKYPI_CACHE_DIR`, use safe namespace components and test the plugin with an initialized global CacheManager so state and image namespaces are exercised exactly as they are on the device.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/ticketmaster_events/ticketmaster_events.py, inkypi-weather/package/InkyPi/tests/test_ticketmaster_events.py
+- Tags: ticketmaster, cache-manager, runtime-path, poster-cache, live-acceptance
+
+---
+
+## [LRN-20260713-002] best_practice
+
+**Logged**: 2026-07-13T06:45:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: operations
+
+### Summary
+Do not transport exact credentials through a Windows PowerShell string pipeline to SSH.
+
+### Details
+The pipeline prepended a UTF-8 BOM to the first line. A recovery helper and its subsequent HTTP acceptance test both consumed the same altered value, so they agreed with each other while the intended password still failed an independent byte-clean verification.
+
+### Suggested Action
+Send secret stdin through a byte-oriented subprocess with explicit UTF-8 encoding and no BOM. Verify the resulting credential through a second process, and keep all proof output limited to booleans, modes, ownership checks, and token absence.
+
+### Metadata
+- Source: error
+- Related Files: .tmp/ssh_secret_pipe.py, .tmp/live_credential_audit.py
+- Tags: powershell, ssh, utf-8-bom, credentials, independent-verification
+
+---

@@ -968,7 +968,16 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         )
 
     def _cache_dir(self):
-        return self.cache_dir(env_var="INKYPI_TICKETMASTER_EVENTS_CACHE", leaf=".ticketmaster_events_cache", create=True)
+        leaf = (
+            "ticketmaster_events_cache"
+            if os.getenv("INKYPI_CACHE_DIR", "").strip()
+            else ".ticketmaster_events_cache"
+        )
+        return self.cache_dir(
+            env_var="INKYPI_TICKETMASTER_EVENTS_CACHE",
+            leaf=leaf,
+            create=True,
+        )
 
     def _state_cache_namespace(self):
         return self.managed_cache_namespace(
