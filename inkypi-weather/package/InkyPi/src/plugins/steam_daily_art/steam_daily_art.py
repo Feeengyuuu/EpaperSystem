@@ -1,13 +1,35 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from utils.http_client import get_http_session
-from utils.safe_image import safe_open_image, safe_open_image_response
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.steam_daily_art.presentation_bank import (
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    SteamDailyArtPresentationBank,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_key,
+    settings_fingerprint,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from utils.safe_image import ImageLimits, safe_open_image
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 from datetime import datetime
 import hashlib
+import ipaddress
 import json
 import logging
 import os
 import random
+import time
+from pathlib import Path
+from io import BytesIO
+from urllib.parse import urlencode, urljoin
+
+from plugins.pixiv_r18_ranking.pixiv_r18_ranking import _PinnedHTTPSResponse
+from security.ssrf import get_ssrf_policy
 
 from plugins.context_cache import write_context
 
@@ -17,6 +39,18 @@ STEAM_FEATURED_CATEGORIES_URL = "https://store.steampowered.com/api/featuredcate
 STEAM_CDN_APP_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{image_name}.jpg"
 STEAM_CDN_ASSET_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{filename}"
 STEAM_DAILY_ART_VERSION = "fresh-frontpage-ranked-live-list-v1"
+MAX_DATA_NEW_MEDIA = 8
+MAX_DATA_ATTEMPTS = 16
+MAX_DATA_SECONDS = 45
+MAX_JSON_BYTES = 4 * 1024 * 1024
+MAX_MEDIA_BYTES = 12 * 1024 * 1024
+MAX_MEDIA_REDIRECTS = 4
+STEAM_MEDIA_HOST_SUFFIXES = (
+    "steamstatic.com",
+    "steamcontent.com",
+    "steamusercontent.com",
+    "akamaihd.net",
+)
 
 
 class SteamDailyArt(BasePlugin):
@@ -25,7 +59,85 @@ class SteamDailyArt(BasePlugin):
         template_params['style_settings'] = False
         return template_params
 
+    def presentation_mode(self, settings):
+        mode = str((settings or {}).get("selectionMode") or "current").strip().lower()
+        cadence = str((settings or {}).get("rotationCadence") or "hourly").strip().lower()
+        if mode == "every_refresh" or cadence == "every_refresh":
+            return PresentationMode.PREPARED_BANK
+        return PresentationMode.NO_CHANGE
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        if self.presentation_mode(settings) is PresentationMode.NO_CHANGE:
+            return PresentationPreparation(
+                request_id=request.request_id,
+                image=None,
+                changed=False,
+            )
+        dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
+        rotation_key = self._bank_rotation_key(device_config, settings)
+        bank = self._presentation_bank(settings, dimensions, rotation_key)
+        document, profile = bank.load_warm()
+        bank.apply_trusted_origin(document, profile, request)
+        ready = bank.ready_records(profile, prune=False)
+        pending = bank.pending_for_request(profile, request.request_id)
+        selection = pending or bank.choose_selection(document, profile, ready)
+        image = self._render_bank_selection(bank, profile, selection)
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Steam receipt reconciliation requires trusted instance identity")
+        bank = self._presentation_bank_for_receipt(instance_uuid, receipt.request_id)
+        if bank is None:
+            return None
+        document, profile = bank.load_receipt_profile(receipt.request_id)
+        committed = bank.reconcile_receipt(document, profile, receipt)
+        if committed:
+            self._write_daily_art_context(
+                self._context_entry_for_bank_record(committed[-1]),
+                settings,
+                receipt.committed_at,
+            )
+        return None
+
+    def _presentation_profile_fingerprint(self, settings, dimensions, rotation_key):
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        base = settings_fingerprint(settings, dimensions, rotation_key)
+        return instance_profile_fingerprint(base, instance_uuid or "unbound-preview")
+
     def generate_image(self, settings, device_config):
+        settings = settings or {}
+        if self.presentation_mode(settings) is PresentationMode.PREPARED_BANK:
+            if get_presentation_instance_uuid(settings) is None:
+                if settings.get("_theme_render_only") is True:
+                    raise RuntimeError("Steam theme-only presentation requires trusted instance identity")
+                return self._generate_stateless_preview(settings, device_config)
+            if settings.get("_theme_render_only") is True:
+                return self._generate_theme_only_banked_image(settings, device_config)
+            return self._generate_banked_image(settings, device_config)
         dimensions = self.get_dimensions(device_config)
 
         rotation_key = self._rotation_key(device_config, settings)
@@ -38,8 +150,11 @@ class SteamDailyArt(BasePlugin):
             if cached_image and os.path.exists(cached_image):
                 logger.info(f"Using cached Steam daily art for {rotation_key}: {cached_image}")
                 self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
-                return safe_open_image(cached_image).convert("RGB")
+                image = safe_open_image(cached_image).convert("RGB")
+                image.info["inkypi_source_provenance"] = "fresh_cache"
+                return image
 
+        item = None
         try:
             item = self._select_item(settings, rotation_key)
             image_url, image = self._download_first_available_image(item, settings)
@@ -70,6 +185,7 @@ class SteamDailyArt(BasePlugin):
             self._write_cache(cache_payload)
             self._write_daily_art_context(cache_payload, settings, self._now_for_device(device_config))
 
+            image.info["inkypi_source_provenance"] = "live"
             return image
         except Exception as e:
             logger.error(f"Steam Daily Art failed: {e}")
@@ -77,8 +193,222 @@ class SteamDailyArt(BasePlugin):
             if stale_image and os.path.exists(stale_image):
                 logger.warning("Using stale Steam daily art cache.")
                 self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
-                return safe_open_image(stale_image).convert("RGB")
+                image = safe_open_image(stale_image).convert("RGB")
+                image.info["inkypi_source_provenance"] = "stale_cache"
+                return image
+            if isinstance(item, dict):
+                return self._metadata_fallback(dimensions, item)
             raise RuntimeError(f"Steam Daily Art failed: {str(e)}")
+
+    @staticmethod
+    def _metadata_fallback(dimensions, item):
+        image = Image.new("RGB", tuple(dimensions), (24, 32, 43))
+        draw = ImageDraw.Draw(image)
+        title = str(item.get("name") or "Steam promotion")[:80]
+        draw.rectangle((0, 0, image.width, 72), fill=(35, 76, 112))
+        draw.text((24, 24), "STEAM DAILY ART", fill=(255, 255, 255))
+        draw.text((24, 132), title, fill=(240, 244, 248))
+        draw.text((24, 174), "Artwork unavailable - metadata preserved", fill=(166, 185, 204))
+        image.info["inkypi_source_provenance"] = "local_fallback"
+        return image
+
+    def _generate_stateless_preview(self, settings, device_config):
+        dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
+        item = self._select_item_without_state(settings)
+        _url, image = self._download_first_available_image(item, settings)
+        return self._render_downloaded_item(item, image, settings, dimensions)
+
+    def _generate_banked_image(self, settings, device_config):
+        deadline = time.monotonic() + MAX_DATA_SECONDS
+        previous_deadline = getattr(self, "_active_data_deadline", None)
+        self._active_data_deadline = deadline
+        try:
+            return self._generate_banked_image_with_deadline(
+                settings,
+                device_config,
+                deadline,
+            )
+        finally:
+            self._active_data_deadline = previous_deadline
+
+    def _generate_theme_only_banked_image(self, settings, device_config):
+        state_path = self._presentation_state_path(create=False)
+        if not state_path.exists():
+            raise RuntimeError("Steam theme-only presentation bank is cold")
+        dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
+        rotation_key = self._bank_rotation_key(device_config, settings)
+        bank = self._presentation_bank(
+            settings,
+            dimensions,
+            rotation_key,
+            read_only=True,
+        )
+        _document, profile = bank.load_warm()
+        selected = bank.selection_records_read_only(
+            profile,
+            profile.get("current_selection"),
+        )
+        image = selected[0][1].convert("RGB")
+        image.info["inkypi_source_provenance"] = "fresh_cache"
+        return image
+
+    def _generate_banked_image_with_deadline(self, settings, device_config, deadline):
+        dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
+        rotation_key = self._bank_rotation_key(device_config, settings)
+        bank = self._presentation_bank(settings, dimensions, rotation_key)
+        document, profile = bank.load_for_data()
+
+        for protected in bank.protected_records(profile):
+            try:
+                bank.load_media(protected)
+            except RuntimeError as media_error:
+                try:
+                    self._check_data_deadline(deadline)
+                    recovered = self._download_image(protected["image_url"])
+                    self._check_data_deadline(deadline)
+                    bank.recover_media(profile, protected, recovered)
+                except Exception as recovery_error:
+                    raise RuntimeError("Steam protected media recovery failed") from recovery_error
+                logger.info("Recovered protected Steam media after: %s", media_error)
+
+        ready = bank.ready_records(profile, prune=True)
+        force_refresh = self._settings_enabled(settings.get("forceRefresh")) or self._settings_enabled(
+            settings.get("force_refresh")
+        )
+        downloaded = 0
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+        if force_refresh or (profile.get("refill_in_progress") is True and len(ready) < READY_TARGET):
+            self._check_data_deadline(deadline)
+            data = self._fetch_featured_categories(settings)
+            self._check_data_deadline(deadline)
+            items = self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage"))
+            if not items:
+                raise RuntimeError("No Steam promotional items found.")
+            existing = {record["artwork_id"] for record in profile["records"]}
+            attempts = 0
+            for item in items:
+                if attempts >= MAX_DATA_ATTEMPTS or downloaded >= MAX_DATA_NEW_MEDIA:
+                    break
+                identity = self._item_identity(item)
+                if identity in existing:
+                    continue
+                attempts += 1
+                try:
+                    self._check_data_deadline(deadline)
+                    image_url, source = self._download_first_available_image(item, settings)
+                    self._check_data_deadline(deadline)
+                    rendered = self._render_downloaded_item(item, source, settings, dimensions)
+                    self._check_data_deadline(deadline)
+                    record = bank.ingest(profile, {**item, "image_url": image_url}, rendered)
+                except Exception as exc:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Steam DATA deadline is exhausted") from exc
+                    logger.warning("Steam bank candidate failed for %s: %s", identity, exc)
+                    continue
+                existing.add(record["artwork_id"])
+                ready.append(record)
+                downloaded += 1
+        profile["refill_in_progress"] = len(ready) < READY_TARGET
+        bank.cleanup(document, profile)
+        ready = bank.ready_records(profile, prune=True)
+        if not ready:
+            raise RuntimeError("Steam presentation bank is unavailable")
+        preview = {
+            "record_keys": [ready[0]["record_key"]],
+            "request_id": None,
+            "date_key": rotation_key,
+            "layout": "single",
+            "reset_seen": False,
+        }
+        image = self._render_bank_selection(bank, profile, preview)
+        image.info["inkypi_source_provenance"] = "live" if downloaded else "fresh_cache"
+        return image
+
+    def _render_downloaded_item(self, item, image, settings, dimensions):
+        rendered = self._smart_cover(image, dimensions)
+        if settings.get("logoOverlay", "show") != "hide":
+            _logo_url, logo = self._download_first_available_logo(item)
+            if logo:
+                rendered = self._overlay_logo(rendered, logo, settings)
+        if settings.get("showCaption") == "true":
+            rendered = self._add_caption(rendered, item.get("name", "Steam"))
+        return rendered
+
+    def _select_item_without_state(self, settings):
+        data = self._fetch_featured_categories(settings)
+        items = self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage"))
+        if not items:
+            raise RuntimeError("No Steam promotional items found.")
+        return items[0]
+
+    def _check_data_deadline(self, deadline):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Steam DATA deadline is exhausted")
+
+    def _bank_rotation_key(self, device_config, settings):
+        now = self._now_for_device(device_config)
+        cadence = str((settings or {}).get("rotationCadence") or "hourly").strip().lower()
+        if cadence in {"six_hour", "six_hours"}:
+            return f"{now.strftime('%Y-%m-%d')}-slot-{now.hour // 6}"
+        if cadence == "daily":
+            return now.strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d-%H")
+
+    def _presentation_state_path(self, *, create=True):
+        return Path(self._cache_dir(create=create)) / "presentation-state.json"
+
+    def _presentation_media_dir(self, *, create=True):
+        return Path(self._cache_dir(create=create)) / "presentation-media"
+
+    def _presentation_bank(self, settings, dimensions, rotation_key, *, read_only=False):
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Steam presentation bank requires trusted instance identity")
+        base_fingerprint = settings_fingerprint(settings, dimensions, rotation_key)
+        fingerprint = instance_profile_fingerprint(base_fingerprint, instance_uuid)
+        return SteamDailyArtPresentationBank(
+            self._presentation_state_path(create=not read_only),
+            self._presentation_media_dir(create=not read_only),
+            fingerprint=fingerprint,
+            base_fingerprint=base_fingerprint,
+            profile_settings_key=settings_key(settings),
+            instance_uuid=instance_uuid,
+            date_key=self._presentation_bucket_key(settings, rotation_key),
+            selection_mode=self._effective_selection_mode(settings),
+            source_rotation_key=rotation_key,
+            read_only=read_only,
+        )
+
+    def _presentation_bank_for_receipt(self, instance_uuid, request_id):
+        state_path = self._presentation_state_path()
+        if not os.path.exists(state_path):
+            return None
+        document = read_bounded_json_object(state_path)
+        for fingerprint, profile in (document.get("profiles") or {}).items():
+            if not isinstance(profile, dict) or profile.get("instance_uuid") != instance_uuid:
+                continue
+            pending = profile.get("pending_selection")
+            if not isinstance(pending, dict) or pending.get("request_id") != request_id:
+                continue
+            return SteamDailyArtPresentationBank(
+                state_path,
+                self._presentation_media_dir(),
+                fingerprint=fingerprint,
+                base_fingerprint=profile.get("settings_fingerprint"),
+                profile_settings_key=profile.get("settings_key"),
+                instance_uuid=instance_uuid,
+                date_key=profile.get("date_key") or pending.get("date_key"),
+                source_rotation_key=profile.get("date_key") or pending.get("date_key"),
+            )
+        return None
+
+    @staticmethod
+    def _render_bank_selection(bank, profile, selection):
+        selected = bank.selection_records(profile, selection, load_media=True)
+        image = selected[0][1].convert("RGB")
+        image.info["inkypi_source_provenance"] = "fresh_cache"
+        return image
 
     def _write_daily_art_context(self, entry, settings, generated_at):
         if not isinstance(entry, dict):
@@ -103,6 +433,38 @@ class SteamDailyArt(BasePlugin):
             generated_at=generated_at,
             ttl_seconds=self._context_ttl_seconds(settings),
         )
+
+    @staticmethod
+    def _context_entry_for_bank_record(record):
+        artwork_id = str(record.get("artwork_id") or "")
+        appid = artwork_id.removeprefix("app:") if artwork_id.startswith("app:") else None
+        if appid is not None and appid.isdigit():
+            appid = int(appid)
+        return {
+            "name": record.get("title") or "Steam promotion",
+            "appid": appid,
+            "rotation_key": str(
+                record.get("source_rotation_key") or record.get("date_key") or ""
+            )[:80],
+            "image_url": record.get("image_url"),
+        }
+
+    @staticmethod
+    def _effective_selection_mode(settings):
+        mode = str((settings or {}).get("selectionMode") or "daily_rotation").strip().lower()
+        if mode in {"", "current", "daily_rotation", "every_refresh"}:
+            return "daily_rotation"
+        if mode in {"first", "random"}:
+            return mode
+        return "daily_rotation"
+
+    @staticmethod
+    def _presentation_bucket_key(settings, rotation_key):
+        cadence = str((settings or {}).get("rotationCadence") or "hourly").strip().lower()
+        selection_mode = str((settings or {}).get("selectionMode") or "current").strip().lower()
+        if cadence == "every_refresh" or selection_mode == "every_refresh":
+            return "every-refresh-pool"
+        return str(rotation_key)
 
     @staticmethod
     def _settings_enabled(value):
@@ -141,8 +503,8 @@ class SteamDailyArt(BasePlugin):
             return f"{now.strftime('%Y-%m-%d')}-slot-{now.hour // 6}"
         return now.strftime("%Y-%m-%d")
 
-    def _cache_dir(self):
-        return self.cache_dir(leaf=".steam_daily_art_cache", create=True)
+    def _cache_dir(self, *, create=True):
+        return self.cache_dir(leaf=".steam_daily_art_cache", create=create)
 
     def _cache_path(self):
         return os.path.join(self._cache_dir(), "cache.json")
@@ -177,12 +539,15 @@ class SteamDailyArt(BasePlugin):
             json.dump(state, f, indent=2)
 
     def _cache_key(self, settings, dimensions, rotation_key):
+        selection_mode = str(settings.get("selectionMode") or "current").strip().lower()
+        if selection_mode == "daily_rotation":
+            selection_mode = "current"
         parts = [
             STEAM_DAILY_ART_VERSION,
             rotation_key,
             str(dimensions),
             settings.get("sourceCategory", "fresh_frontpage"),
-            settings.get("selectionMode", "daily_rotation"),
+            selection_mode,
             settings.get("rotationCadence", "hourly"),
             settings.get("imageMode", "library_hero"),
             settings.get("logoOverlay", "show"),
@@ -198,11 +563,39 @@ class SteamDailyArt(BasePlugin):
         country_code = (settings.get("countryCode") or "US").strip().upper()[:2]
         language = (settings.get("language") or "english").strip() or "english"
         params = {"cc": country_code, "l": language}
-
-        session = get_http_session()
-        response = session.get(STEAM_FEATURED_CATEGORIES_URL, params=params)
-        response.raise_for_status()
-        return response.json()
+        url = f"{STEAM_FEATURED_CATEGORIES_URL}?{urlencode(params)}"
+        deadline = getattr(self, "_active_data_deadline", None)
+        approved = get_ssrf_policy().resolve_and_validate(url)
+        self._validate_steam_target(approved, kind="json")
+        response = self._request_approved_target(
+            approved,
+            headers={"Accept": "application/json", "User-Agent": "InkyPi SteamDailyArt/1.0"},
+            timeout=20,
+            deadline=deadline,
+        )
+        try:
+            response.raise_for_status()
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None and int(content_length) > MAX_JSON_BYTES:
+                raise RuntimeError("Steam featured response exceeds its object budget")
+            payload = bytearray()
+            for chunk in response.iter_content(chunk_size=8192):
+                if deadline is not None:
+                    self._check_data_deadline(deadline)
+                if not chunk:
+                    continue
+                if len(payload) + len(chunk) > MAX_JSON_BYTES:
+                    raise RuntimeError("Steam featured response exceeds its object budget")
+                payload.extend(chunk)
+        finally:
+            response.close()
+        try:
+            value = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Steam featured response is not JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("Steam featured response has an invalid shape")
+        return value
 
     def _collect_items(self, data, source_category):
         matched = []
@@ -357,6 +750,9 @@ class SteamDailyArt(BasePlugin):
         return item_by_id[selected_id]
 
     def _selection_pool_key(self, settings, source_category, selection_mode, pool_ids):
+        del pool_ids
+        if selection_mode in {None, "", "daily_rotation"}:
+            selection_mode = "current"
         parts = [
             STEAM_DAILY_ART_VERSION,
             source_category,
@@ -455,14 +851,111 @@ class SteamDailyArt(BasePlugin):
         return None, None
 
     def _download_image(self, url):
-        session = get_http_session()
-        response = session.get(url, timeout=40, stream=True)
-        return safe_open_image_response(response).convert("RGB")
+        payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=40)
+        return safe_open_image(
+            BytesIO(payload),
+            limits=ImageLimits(
+                max_bytes=MAX_MEDIA_BYTES,
+                max_width=8192,
+                max_height=8192,
+                max_pixels=32_000_000,
+            ),
+        ).convert("RGB")
 
     def _download_logo(self, url):
-        session = get_http_session()
-        response = session.get(url, stream=True)
-        return safe_open_image_response(response).convert("RGBA")
+        payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=30)
+        return safe_open_image(
+            BytesIO(payload),
+            limits=ImageLimits(
+                max_bytes=MAX_MEDIA_BYTES,
+                max_width=8192,
+                max_height=8192,
+                max_pixels=32_000_000,
+            ),
+        ).convert("RGBA")
+
+    def _download_media_bytes(self, url, *, max_bytes, timeout):
+        policy = get_ssrf_policy()
+        current_url = str(url or "").strip()
+        deadline = getattr(self, "_active_data_deadline", None)
+        for redirect_count in range(MAX_MEDIA_REDIRECTS + 1):
+            approved = policy.resolve_and_validate(current_url)
+            self._validate_steam_target(approved, kind="media")
+            response = self._request_approved_target(
+                approved,
+                headers={"Referer": "https://store.steampowered.com/", "User-Agent": "InkyPi SteamDailyArt/1.0"},
+                timeout=timeout,
+                deadline=deadline,
+            )
+            try:
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_MEDIA_REDIRECTS:
+                        raise RuntimeError("Steam media redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("Steam media redirect has no Location")
+                    next_url = urljoin(approved.normalized_url, location)
+                    next_target = policy.resolve_and_validate(next_url)
+                    current_url = self._validate_steam_target(next_target, kind="media")
+                    continue
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"Steam media request failed with status {status}")
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None and int(content_length) > max_bytes:
+                    raise RuntimeError("Steam media response exceeds its object budget")
+                payload = bytearray()
+                for chunk in response.iter_content(chunk_size=8192):
+                    if deadline is not None:
+                        self._check_data_deadline(deadline)
+                    if not chunk:
+                        continue
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("Steam media response exceeds its object budget")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("Steam media response is empty")
+                return bytes(payload)
+            finally:
+                response.close()
+        raise RuntimeError("Steam media redirect limit was exceeded")
+
+    def _request_approved_target(self, approved, *, headers, timeout, deadline):
+        hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
+        kind = "json" if hostname == "store.steampowered.com" else "media"
+        self._validate_steam_target(approved, kind=kind)
+        return _PinnedHTTPSResponse.open(
+            approved,
+            headers=headers,
+            deadline=deadline,
+            clock=time.monotonic,
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def _validate_steam_target(approved, *, kind):
+        if getattr(approved, "scheme", None) != "https" or getattr(approved, "port", None) != 443:
+            raise RuntimeError("Steam target must use HTTPS on port 443")
+        hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
+        if kind == "json":
+            allowed = hostname == "store.steampowered.com"
+        else:
+            allowed = any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in STEAM_MEDIA_HOST_SUFFIXES)
+        if not allowed:
+            raise RuntimeError("Steam target authority is not allowed")
+        addresses = getattr(approved, "addresses", None)
+        if not isinstance(addresses, (tuple, list)) or not addresses:
+            raise RuntimeError("Steam target has no approved public addresses")
+        for raw_address in addresses:
+            try:
+                address = ipaddress.ip_address(str(raw_address))
+            except ValueError as exc:
+                raise RuntimeError("Steam target contains an invalid approved address") from exc
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+                raise RuntimeError("Steam target IPv4-mapped addresses are not allowed")
+            if not address.is_global:
+                raise RuntimeError("Steam target address must be public")
+        return approved.normalized_url
 
     def _smart_cover(self, image, dimensions):
         target_width, target_height = dimensions
