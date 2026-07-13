@@ -2,6 +2,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.stocktracker.stocktracker as stocktracker_module  # noqa: E402
@@ -20,6 +22,54 @@ from plugins.stocktracker.stocktracker import (  # noqa: E402
     StockTracker,
 )
 from utils.massive_market_data import MassiveBar  # noqa: E402
+
+
+class FakeDeviceConfig:
+    def __init__(self, resolution=(800, 480), timezone="America/Los_Angeles"):
+        self.resolution = resolution
+        self.timezone = timezone
+
+    def get_resolution(self):
+        return self.resolution
+
+    def get_config(self, key=None, default=None):
+        values = {"orientation": "horizontal", "timezone": self.timezone}
+        if key is None:
+            return values
+        return values.get(key, default)
+
+    def load_env_key(self, _key):
+        return None
+
+
+def _canonical_theme(mode):
+    if mode == "night":
+        palette = {
+            "background": (11, 21, 12),
+            "panel": (19, 35, 21),
+            "ink": (244, 252, 245),
+            "muted": (174, 194, 177),
+            "rule": (65, 100, 70),
+            "accent": (127, 213, 138),
+        }
+    else:
+        palette = {
+            "background": (241, 244, 236),
+            "panel": (252, 253, 248),
+            "ink": (18, 31, 20),
+            "muted": (75, 94, 78),
+            "rule": (165, 181, 168),
+            "accent": (61, 122, 69),
+        }
+    return {
+        "requested_mode": "auto",
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": "2026-07-12",
+        "palette": palette,
+        "css": {},
+    }
 
 
 class FakeLoc:
@@ -264,8 +314,8 @@ def _hidden_ticker_stock_data():
 def test_stock_tracker_selects_day_and_night_ticker_palettes():
     assert StockTracker._ticker_theme_key("day") == "day"
     assert StockTracker._ticker_theme_key("night") == "night"
-    assert StockTracker._ticker_theme_key("auto", datetime(2026, 6, 22, 12)) == "day"
-    assert StockTracker._ticker_theme_key("auto", datetime(2026, 6, 22, 23)) == "night"
+    assert StockTracker._ticker_theme_key("auto", _canonical_theme("day")) == "day"
+    assert StockTracker._ticker_theme_key("auto", _canonical_theme("night")) == "night"
 
 
 def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
@@ -524,3 +574,247 @@ def test_stocktracker_preserves_shared_fallback_weight_rasters(monkeypatch):
 
         assert font is shared
         assert bytes(font.getmask(sample)) == expected
+
+
+def test_stock_auto_ticker_and_main_pixels_use_pinned_weather_theme(monkeypatch, tmp_path):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    stock_data = _hidden_ticker_stock_data()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        plugin,
+        "resolve_theme",
+        lambda *_args, **_kwargs: pytest.fail("pinned theme was re-resolved"),
+    )
+
+    class NoonDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 12, 12, 0)
+            return value.replace(tzinfo=tz) if tz is not None else value
+
+    monkeypatch.setattr(stocktracker_module, "datetime", NoonDateTime)
+
+    day_theme = _canonical_theme("day")
+    night_theme = _canonical_theme("night")
+    day = plugin._create_dashboard(
+        stock_data,
+        device.get_resolution(),
+        ticker_theme="auto",
+        theme_context=day_theme,
+    )
+    night = plugin._create_dashboard(
+        stock_data,
+        device.get_resolution(),
+        ticker_theme="auto",
+        theme_context=night_theme,
+    )
+
+    assert plugin._ticker_theme_key("auto", day_theme) == "day"
+    assert plugin._ticker_theme_key("auto", night_theme) == "night"
+    assert day.getpixel((0, 100)) == day_theme["palette"]["background"]
+    assert night.getpixel((0, 100)) == night_theme["palette"]["background"]
+    assert day.getpixel((40, 250)) == day_theme["palette"]["panel"]
+    assert night.getpixel((40, 250)) == night_theme["palette"]["panel"]
+    ticker_region = (36, 420, 764, 449)
+    assert _region_near_color_count(
+        night,
+        night_theme["palette"]["background"],
+        ticker_region,
+        tolerance=0,
+    ) > 8_000
+    assert day.tobytes() != night.tobytes()
+
+
+def test_stock_theme_only_uses_matching_source_cache_without_provider_or_state_writes(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    settings = {
+        "tickers": "AAPL,NVDA",
+        "shares": "2,3",
+        "period": "1mo",
+        "data_provider": "yfinance",
+        "ticker_theme": "auto",
+        "_inkypi_theme": _canonical_theme("day"),
+    }
+    provider_calls = []
+
+    def fetch_stock(ticker, shares, period, **_kwargs):
+        provider_calls.append(ticker)
+        return _stock(ticker, [100.0, 110.0], shares)
+
+    monkeypatch.setattr(plugin, "_fetch_stock_data", fetch_stock)
+    monkeypatch.setattr(plugin, "_massive_client", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+
+    plugin.generate_image(settings, device)
+    assert provider_calls == ["AAPL", "NVDA"]
+    source_files = list((tmp_path / "cache" / "plugins" / "stocktracker").rglob("*.json"))
+    assert len(source_files) == 1
+    source_bytes = source_files[0].read_bytes()
+
+    provider_calls.clear()
+    monkeypatch.setattr(
+        plugin,
+        "_record_portfolio_snapshot",
+        lambda *_args, **_kwargs: pytest.fail("theme-only advanced portfolio history"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_source_cache",
+        lambda *_args, **_kwargs: pytest.fail("theme-only rewrote source cache"),
+        raising=False,
+    )
+    image = plugin.generate_image(
+        {
+            **settings,
+            "_theme_render_only": True,
+            "_inkypi_theme": _canonical_theme("night"),
+        },
+        device,
+    )
+
+    assert image.size == (800, 480)
+    assert image.getpixel((0, 100)) == _canonical_theme("night")["palette"]["background"]
+    assert provider_calls == []
+    assert source_files[0].read_bytes() == source_bytes
+
+
+def test_stock_theme_only_cold_or_incompatible_cache_fails_closed_without_provider(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    provider_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_stock_data",
+        lambda *_args, **_kwargs: provider_calls.append("provider") or _stock("AAPL", [1, 2], 1),
+    )
+
+    with pytest.raises(RuntimeError, match="matching StockTracker source cache"):
+        plugin.generate_image(
+            {
+                "tickers": "AAPL",
+                "shares": "1",
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme("night"),
+            },
+            device,
+        )
+
+    assert provider_calls == []
+    assert not (Path(stocktracker_module.__file__).resolve().parent / ".stocktracker_history").exists()
+
+
+def test_stock_theme_only_rejects_cache_warmed_for_different_currency_without_io(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    settings = {
+        "tickers": "AAPL",
+        "shares": "1",
+        "period": "1mo",
+        "data_provider": "yfinance",
+        "cash_balance": "25",
+        "currency": "USD",
+        "_inkypi_theme": _canonical_theme("day"),
+    }
+    provider_calls = []
+
+    def fetch_stock(ticker, shares, period, **_kwargs):
+        provider_calls.append(ticker)
+        return _stock(ticker, [100.0, 110.0], shares)
+
+    monkeypatch.setattr(plugin, "_fetch_stock_data", fetch_stock)
+    monkeypatch.setattr(plugin, "_massive_client", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(plugin, "_create_dashboard", lambda stock_data, *_args, **_kwargs: stock_data)
+
+    plugin.generate_image(settings, device)
+    assert provider_calls == ["AAPL"]
+
+    provider_calls.clear()
+    source_write_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_write_source_cache",
+        lambda *_args, **_kwargs: source_write_calls.append("write"),
+    )
+
+    with pytest.raises(RuntimeError, match="matching StockTracker source cache"):
+        plugin.generate_image(
+            {
+                **settings,
+                "currency": "EUR",
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme("night"),
+            },
+            device,
+        )
+
+    assert provider_calls == []
+    assert source_write_calls == []
+
+
+def test_stock_theme_only_reuses_matching_currency_snapshot(monkeypatch, tmp_path):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    settings = {
+        "tickers": "AAPL",
+        "shares": "1",
+        "period": "1mo",
+        "data_provider": "yfinance",
+        "cash_balance": "25",
+        "currency": "EUR",
+        "_inkypi_theme": _canonical_theme("day"),
+    }
+    provider_calls = []
+
+    def fetch_stock(ticker, shares, period, **_kwargs):
+        provider_calls.append(ticker)
+        return _stock(ticker, [100.0, 110.0], shares)
+
+    monkeypatch.setattr(plugin, "_fetch_stock_data", fetch_stock)
+    monkeypatch.setattr(plugin, "_massive_client", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(plugin, "_create_dashboard", lambda stock_data, *_args, **_kwargs: stock_data)
+
+    plugin.generate_image(settings, device)
+    period, holdings = plugin._portfolio_holdings_from_settings(settings)
+    portfolio_meta = plugin._portfolio_meta_from_settings(settings)
+    source_key = plugin._source_cache_key(
+        period,
+        holdings,
+        portfolio_meta,
+        plugin._data_provider(settings),
+    )
+    cached = plugin._read_source_cache(source_key)
+
+    provider_calls.clear()
+    rendered_rows = plugin.generate_image(
+        {
+            **settings,
+            "_theme_render_only": True,
+            "_inkypi_theme": _canonical_theme("night"),
+        },
+        device,
+    )
+
+    assert next(row for row in cached["stock_data"] if row["symbol"] == "CASH")["price_text"] == "EUR"
+    assert next(row for row in rendered_rows if row["symbol"] == "CASH")["price_text"] == "EUR"
+    assert provider_calls == []

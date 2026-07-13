@@ -1,6 +1,9 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -33,6 +36,63 @@ def _plugin():
     plugin = FlightRadar({"id": "flight_radar"})
     plugin._write_radar_context = lambda *args, **kwargs: None
     return plugin
+
+
+def _canonical_theme(mode):
+    if mode == "night":
+        palette = {
+            "background": (7, 20, 24),
+            "panel": (13, 38, 44),
+            "ink": (239, 250, 252),
+            "muted": (166, 198, 205),
+            "rule": (45, 84, 94),
+            "accent": (99, 200, 227),
+        }
+    else:
+        palette = {
+            "background": (237, 245, 247),
+            "panel": (250, 253, 253),
+            "ink": (18, 42, 48),
+            "muted": (73, 103, 111),
+            "rule": (158, 188, 195),
+            "accent": (20, 121, 149),
+        }
+    return {
+        "requested_mode": "auto",
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "date": "2026-07-12",
+        "palette": palette,
+        "css": {},
+    }
+
+
+def _sample_snapshot():
+    return {
+        "schema": flight_radar_module.CACHE_SCHEMA_VERSION,
+        "center": {"lat": 37.6213, "lon": -122.3790, "label": "SFO"},
+        "radius_nm": 160,
+        "source": "adsb_lol",
+        "source_label": "ADSB.lol",
+        "warning": "",
+        "from_cache": False,
+        "statuses": [SourceStatus("adsb_lol", "ADSB.lol", "ok", 1, 10).to_dict()],
+        "generated_at": "2026-07-12T12:00:00-07:00",
+        "aircraft": [
+            {
+                "callsign": "UAL123",
+                "hex": "A12345",
+                "lat": 37.7,
+                "lon": -122.3,
+                "altitude_ft": 32000,
+                "speed_kt": 442,
+                "track": 178,
+                "distance_nm": 7.2,
+                "source": "adsb_lol",
+            }
+        ],
+    }
 
 
 def test_readsb_aircraft_normalization_keeps_position_and_distance():
@@ -237,7 +297,7 @@ def test_plane_marker_renders_colored_aircraft_icon():
     plugin._draw_plane_marker(draw, 24, 24, {"track": 45, "altitude_ft": 6000}, theme)
     plugin._draw_plane_marker(draw, 72, 24, {"track": 225, "altitude_ft": 35000}, theme)
 
-    pixels = list(image.getdata())
+    pixels = list(image.get_flattened_data())
     assert pixels.count(theme["plane_low"]) > 10
     assert pixels.count(theme["plane_high"]) > 10
     assert pixels.count(theme["plane_halo"]) > 10
@@ -367,3 +427,107 @@ def test_flight_radar_base_font_uses_shared_resolver(monkeypatch):
     assert FlightRadar._font(16, "bold") is sentinel
     assert FlightRadar._city_font(14, "bold") is sentinel
     assert calls == [(16, True), (14, True)]
+
+
+def test_flight_auto_main_and_google_map_use_pinned_weather_theme_without_clock(monkeypatch):
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    now = datetime.fromisoformat(snapshot["generated_at"])
+    monkeypatch.setattr(
+        plugin,
+        "_now",
+        lambda *_args, **_kwargs: pytest.fail("map theme re-read the wall clock"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "resolve_theme",
+        lambda *_args, **_kwargs: pytest.fail("pinned theme was re-resolved"),
+    )
+
+    day_settings = {"googleMapTheme": "auto", "_inkypi_theme": _canonical_theme("day")}
+    night_settings = {"googleMapTheme": "auto", "_inkypi_theme": _canonical_theme("night")}
+    day = plugin._render(snapshot, (800, 480), day_settings, now, FakeDeviceConfig())
+    night = plugin._render(snapshot, (800, 480), night_settings, now, FakeDeviceConfig())
+
+    assert plugin._google_map_theme(day_settings, FakeDeviceConfig()) == "day"
+    assert plugin._google_map_theme(night_settings, FakeDeviceConfig()) == "night"
+    assert day.getpixel((0, 100)) == day_settings["_inkypi_theme"]["palette"]["background"]
+    assert night.getpixel((0, 100)) == night_settings["_inkypi_theme"]["palette"]["background"]
+    assert FlightRadar._theme(day_settings["_inkypi_theme"])["panel"] == day_settings["_inkypi_theme"]["palette"]["panel"]
+    assert FlightRadar._theme(night_settings["_inkypi_theme"])["panel"] == night_settings["_inkypi_theme"]["palette"]["panel"]
+    assert list(day.get_flattened_data()).count(day_settings["_inkypi_theme"]["palette"]["panel"]) > 1_000
+    assert list(night.get_flattened_data()).count(night_settings["_inkypi_theme"]["palette"]["panel"]) > 1_000
+    assert day.tobytes() != night.tobytes()
+
+
+def test_flight_theme_only_uses_matching_snapshot_and_never_writes_or_calls_provider(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    settings = {
+        "mapMode": "google",
+        "googleMapsApiKey": "TEST_KEY",
+        "googleMapTheme": "auto",
+        "_theme_render_only": True,
+        "_inkypi_theme": _canonical_theme("night"),
+    }
+    source_order = plugin._source_order(settings)
+    cache_key = plugin._cache_key(
+        flight_radar_module.DEFAULT_LATITUDE,
+        flight_radar_module.DEFAULT_LONGITUDE,
+        flight_radar_module.DEFAULT_RADIUS_NM,
+        flight_radar_module.DEFAULT_MAX_AIRCRAFT,
+        source_order,
+    )
+    cache_file = plugin._cache_file(cache_key)
+    plugin._write_json(
+        cache_file,
+        {
+            "schema": flight_radar_module.CACHE_SCHEMA_VERSION,
+            "fetched_at": 1.0,
+            "snapshot": _sample_snapshot(),
+        },
+    )
+    source_bytes = cache_file.read_bytes()
+
+    monkeypatch.setattr(plugin, "_now", lambda *_args: pytest.fail("theme-only read wall clock"))
+    monkeypatch.setattr(plugin, "_fetch_sources", lambda *_args: pytest.fail("theme-only called aircraft provider"))
+    monkeypatch.setattr(plugin, "_attach_track_history", lambda *_args: pytest.fail("theme-only advanced track history"))
+    monkeypatch.setattr(plugin, "_write_radar_context", lambda *_args: pytest.fail("theme-only advanced context"))
+    monkeypatch.setattr(plugin, "_write_json", lambda *_args: pytest.fail("theme-only rewrote state"))
+    monkeypatch.setattr(plugin, "_client", lambda: pytest.fail("theme-only fetched a map"))
+
+    image = plugin.generate_image(settings, device)
+
+    assert image.size == (800, 480)
+    assert image.getpixel((0, 100)) == _canonical_theme("night")["palette"]["background"]
+    assert cache_file.read_bytes() == source_bytes
+
+
+def test_flight_theme_only_cold_or_incompatible_snapshot_fails_closed_without_provider(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    provider_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_sources",
+        lambda *_args: provider_calls.append("provider") or ([], "none", []),
+    )
+
+    with pytest.raises(RuntimeError, match="matching FlightRadar source cache"):
+        plugin.generate_image(
+            {
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme("day"),
+            },
+            device,
+        )
+
+    assert provider_calls == []

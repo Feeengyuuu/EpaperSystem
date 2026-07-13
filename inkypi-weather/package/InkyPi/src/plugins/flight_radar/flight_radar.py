@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import get_theme_palette
 
 logger = logging.getLogger(__name__)
 
@@ -318,10 +320,67 @@ class FlightRadar(BasePlugin):
         settings = settings or {}
         dimensions = self.get_dimensions(device_config)
 
+        if self._bool_setting(settings.get("_theme_render_only"), False):
+            snapshot = self._get_cached_snapshot_for_theme(settings)
+            snapshot_time = self._snapshot_time(snapshot, device_config)
+            return self._render(snapshot, dimensions, settings, snapshot_time, device_config)
+
         now = self._now(device_config)
         snapshot = self._get_snapshot(settings, device_config, now)
         self._write_radar_context(snapshot, now)
         return self._render(snapshot, dimensions, settings, now, device_config)
+
+    def _get_cached_snapshot_for_theme(self, settings):
+        lat = self._float_setting(settings, "latitude", DEFAULT_LATITUDE, -90.0, 90.0)
+        lon = self._float_setting(settings, "longitude", DEFAULT_LONGITUDE, -180.0, 180.0)
+        radius_nm = self._int_setting(settings, "radiusNm", DEFAULT_RADIUS_NM, 25, 250)
+        max_aircraft = self._int_setting(settings, "maxAircraft", DEFAULT_MAX_AIRCRAFT, 10, 180)
+        source_order = self._source_order(settings)
+        cache_key = self._cache_key(lat, lon, radius_nm, max_aircraft, source_order)
+        cached = self._read_json(self._cache_file(cache_key))
+        if (
+            cached.get("schema") != CACHE_SCHEMA_VERSION
+            or not isinstance(cached.get("snapshot"), dict)
+        ):
+            raise RuntimeError(
+                "Theme-only redraw requires a matching FlightRadar source cache."
+            )
+        snapshot = dict(cached["snapshot"])
+        if snapshot.get("schema") != CACHE_SCHEMA_VERSION:
+            raise RuntimeError(
+                "Theme-only redraw requires a matching FlightRadar source cache."
+            )
+        snapshot["from_cache"] = True
+        snapshot["warning"] = "THEME CACHE"
+        snapshot["statuses"] = [
+            SourceStatus(
+                "cache",
+                "Cache",
+                "cache",
+                len(snapshot.get("aircraft") or []),
+            ).to_dict()
+        ]
+        return snapshot
+
+    @staticmethod
+    def _snapshot_time(snapshot, device_config):
+        try:
+            parsed = datetime.fromisoformat(
+                str(snapshot.get("generated_at") or "").replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise RuntimeError("FlightRadar source cache has no valid generated_at.") from exc
+        if parsed.tzinfo is not None:
+            return parsed
+        tz_name = "America/Los_Angeles"
+        try:
+            tz_name = device_config.get_config("timezone") or tz_name
+        except Exception:
+            pass
+        try:
+            return parsed.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            return parsed
 
     def _get_snapshot(self, settings, device_config, now):
         lat = self._float_setting(settings, "latitude", DEFAULT_LATITUDE, -90.0, 90.0)
@@ -922,7 +981,7 @@ class FlightRadar(BasePlugin):
 
     def _render(self, snapshot, dimensions, settings, now, device_config=None):
         width, height = dimensions
-        theme = self._theme()
+        theme = self._theme((settings or {}).get("_inkypi_theme"))
         image = Image.new("RGB", dimensions, theme["bg"])
         draw = ImageDraw.Draw(image)
         horizontal = width >= height
@@ -1244,6 +1303,14 @@ class FlightRadar(BasePlugin):
 
         cache_hours = self._int_setting(settings, "mapCacheHours", 24, 1, 168)
         cache_file = self._map_cache_file(url)
+        theme_render_only = self._bool_setting(settings.get("_theme_render_only"), False)
+        if theme_render_only:
+            try:
+                if cache_file.is_file():
+                    return safe_open_image(cache_file, limits=MAP_IMAGE_LIMITS).convert("RGB")
+            except Exception as exc:
+                logger.debug("Could not use cached FlightRadar map image: %s", exc)
+            return None
         try:
             if cache_file.is_file() and time.time() - cache_file.stat().st_mtime < cache_hours * 3600:
                 return safe_open_image(cache_file, limits=MAP_IMAGE_LIMITS).convert("RGB")
@@ -1294,11 +1361,14 @@ class FlightRadar(BasePlugin):
         if value in {"night", "dark"}:
             return "night"
         if value in {"auto", "automatic"}:
-            try:
-                now = FlightRadar._now(device_config)
-                return "night" if now.hour >= 18 or now.hour < 6 else "day"
-            except Exception:
-                return "day"
+            context = (settings or {}).get("_inkypi_theme")
+            if isinstance(context, Mapping):
+                return (
+                    "night"
+                    if str(context.get("mode") or "").strip().lower() == "night"
+                    else "day"
+                )
+            return "day"
         return "day"
 
     @staticmethod
@@ -1826,10 +1896,10 @@ class FlightRadar(BasePlugin):
             logger.debug("FlightRadar context write skipped: %s", exc)
 
     @staticmethod
-    def _theme():
+    def _theme(theme_context=None):
         # Comic color e-paper tokens: cold paper blues, process black linework,
         # and a limited set of flat cyan/violet accents.
-        return {
+        legacy = {
             "bg": (55, 91, 119),
             "panel": (163, 213, 222),
             "panel2": (117, 180, 203),
@@ -1868,6 +1938,78 @@ class FlightRadar(BasePlugin):
             "plane_ground": (176, 97, 39),
             "trail_arrival": (255, 166, 43),
             "trail_departure": (224, 54, 67),
+        }
+        if not isinstance(theme_context, Mapping):
+            return legacy
+
+        mode = (
+            "night"
+            if str(theme_context.get("mode") or "").strip().lower() == "night"
+            else "day"
+        )
+        canonical = get_theme_palette(mode)
+        supplied = theme_context.get("palette")
+        if isinstance(supplied, Mapping):
+            for role in ("background", "panel", "ink", "muted", "rule", "accent"):
+                value = supplied.get(role)
+                if isinstance(value, (list, tuple)) and len(value) == 3:
+                    try:
+                        channels = tuple(int(channel) for channel in value)
+                    except (TypeError, ValueError):
+                        continue
+                    if all(0 <= channel <= 255 for channel in channels):
+                        canonical[role] = channels
+
+        background = canonical["background"]
+        panel = canonical["panel"]
+        ink = canonical["ink"]
+        muted = canonical["muted"]
+        rule = canonical["rule"]
+        accent = canonical["accent"]
+        red = canonical["red"]
+        green = canonical["green"]
+        gold = canonical["gold"]
+        cyan = canonical["cyan"]
+        blend = FlightRadar._blend_color
+        return {
+            "bg": background,
+            "panel": panel,
+            "panel2": blend(accent, panel, 0.13 if mode == "day" else 0.20),
+            "chip_bg": blend(accent, panel, 0.09 if mode == "day" else 0.16),
+            "header_bg": ink,
+            "header_ink": background,
+            "header_muted": accent,
+            "header_rule": accent,
+            "ink": ink,
+            "muted": muted,
+            "line": rule,
+            "ring": rule,
+            "grid_faint": blend(rule, background, 0.56),
+            "card_line": rule,
+            "map_border": ink,
+            "map_shade": background,
+            "map_water": blend(cyan, panel, 0.44 if mode == "day" else 0.31),
+            "map_water_line": cyan,
+            "map_land_line": ink,
+            "map_road": blend(gold, panel, 0.54),
+            "map_city": ink,
+            "map_city_dot": ink,
+            "map_label_dim": muted,
+            "cyan": cyan,
+            "amber": gold,
+            "green": green,
+            "red": red,
+            "magenta": blend(red, accent, 0.48),
+            "blue": accent,
+            "plane_halo": blend(gold, panel, 0.35),
+            "plane_outline": ink,
+            "plane_low": gold,
+            "plane_cruise": blend(red, gold, 0.42),
+            "plane_high": red,
+            "plane_unknown": muted,
+            "plane_ground": blend(ink, muted, 0.45),
+            "trail_arrival": gold,
+            "trail_departure": red,
         }
 
     @staticmethod

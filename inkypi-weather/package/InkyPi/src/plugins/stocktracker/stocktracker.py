@@ -39,6 +39,8 @@ from plugins.base_plugin.base_plugin import BasePlugin
 
 import os
 import sys
+from collections.abc import Mapping
+from contextvars import ContextVar
 
 VENDOR_DIR = os.path.join(os.path.dirname(__file__), "_vendor")
 if os.path.isdir(VENDOR_DIR) and VENDOR_DIR not in sys.path:
@@ -79,6 +81,7 @@ from utils.massive_market_data import (
 	load_massive_api_key,
 	massive_ticker_candidates,
 )
+from utils.theme_utils import get_theme_palette
 import csv
 import hashlib
 import io
@@ -161,6 +164,91 @@ EXTENDED_HISTORY_INTERVAL = "1m"
 PORTFOLIO_HISTORY_DIR_ENV = "INKYPI_STOCKTRACKER_HISTORY_DIR"
 PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
+SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v1"
+SOURCE_CACHE_LEAF = "source"
+
+_LEGACY_STOCK_COLORS = {
+	"mode": "day",
+	"white": WHITE,
+	"paper": PAPER,
+	"panel": PANEL,
+	"panel_blue": PANEL_BLUE,
+	"panel_gold": PANEL_GOLD,
+	"ink": INK,
+	"muted": MUTED,
+	"grid": GRID,
+	"border": BORDER,
+	"accent_blue": ACCENT_BLUE,
+	"accent_gold": ACCENT_GOLD,
+	"accent_orange": ACCENT_ORANGE,
+	"cinnabar": CINNABAR,
+	"malachite": MALACHITE,
+	"chart_marker_green": CHART_MARKER_GREEN,
+	"row_colors": ROW_COLORS,
+}
+_ACTIVE_STOCK_COLORS = ContextVar("stocktracker_render_colors", default=None)
+
+
+def _rgb(value, fallback):
+	if isinstance(value, (list, tuple)) and len(value) == 3:
+		try:
+			channels = tuple(int(channel) for channel in value)
+		except (TypeError, ValueError):
+			return fallback
+		if all(0 <= channel <= 255 for channel in channels):
+			return channels
+	return fallback
+
+
+def _blend_rgb(foreground, background, amount):
+	amount = min(max(float(amount), 0.0), 1.0)
+	return tuple(
+		int(round(foreground[index] * amount + background[index] * (1.0 - amount)))
+		for index in range(3)
+	)
+
+
+def _stock_render_colors(theme_context):
+	if not isinstance(theme_context, Mapping):
+		return _LEGACY_STOCK_COLORS
+	mode = "night" if str(theme_context.get("mode") or "").strip().lower() == "night" else "day"
+	canonical = get_theme_palette(mode)
+	supplied = theme_context.get("palette")
+	if isinstance(supplied, Mapping):
+		for role in ("background", "panel", "ink", "muted", "rule", "accent"):
+			canonical[role] = _rgb(supplied.get(role), canonical[role])
+	background = canonical["background"]
+	panel = canonical["panel"]
+	ink = canonical["ink"]
+	muted = canonical["muted"]
+	rule = canonical["rule"]
+	accent = canonical["accent"]
+	gold = canonical["gold"]
+	green = canonical["green"]
+	red = canonical["red"]
+	return {
+		"mode": mode,
+		"white": panel,
+		"paper": background,
+		"panel": panel,
+		"panel_blue": _blend_rgb(accent, panel, 0.11 if mode == "day" else 0.18),
+		"panel_gold": _blend_rgb(gold, panel, 0.16 if mode == "day" else 0.20),
+		"ink": ink,
+		"muted": muted,
+		"grid": rule,
+		"border": ink,
+		"accent_blue": accent,
+		"accent_gold": gold,
+		"accent_orange": gold,
+		"cinnabar": red,
+		"malachite": green,
+		"chart_marker_green": green,
+		"row_colors": [panel, _blend_rgb(accent, panel, 0.055 if mode == "day" else 0.10)],
+	}
+
+
+def _active_stock_colors():
+	return _ACTIVE_STOCK_COLORS.get() or _LEGACY_STOCK_COLORS
 
 _yf = None
 _plt = None
@@ -257,37 +345,61 @@ class StockTracker(BasePlugin):
 	def generate_image(self, settings, device_config):
 
 		"""Generate stock portfolio dashboard"""
+		settings = settings or {}
 		dimensions = self.get_dimensions(device_config)
+		theme_context = settings.get("_inkypi_theme")
+		if not isinstance(theme_context, Mapping):
+			theme_context = self.resolve_theme(settings, device_config)
 
 		period, holdings = self._portfolio_holdings_from_settings(settings)
 		portfolio_meta = self._portfolio_meta_from_settings(settings)
 		data_provider = self._data_provider(settings)
-		massive_client = self._massive_client(device_config, data_provider)
+		source_key = self._source_cache_key(period, holdings, portfolio_meta, data_provider)
+		theme_render_only = self._enabled(settings.get("_theme_render_only"))
 
-		# Fetch stock data
-		stock_data = []
-
-		for ticker, share_count in holdings:
-			try:
-				data = self._fetch_stock_data(
-					ticker,
-					share_count,
-					period,
-					data_provider=data_provider,
-					massive_client=massive_client,
+		if theme_render_only:
+			cached = self._read_source_cache(source_key)
+			if cached is None:
+				raise RuntimeError(
+					"Theme-only redraw requires a matching StockTracker source cache."
 				)
-				if data:
-					stock_data.append(data)
-			except Exception as e:
-				raise RuntimeError(f"Error fetching {ticker}: {str(e)}")
+			stock_data = cached["stock_data"]
+			history_points = cached["history_points"]
+			updated_at = cached["generated_at"]
+		else:
+			massive_client = self._massive_client(device_config, data_provider)
+			stock_data = []
+			for ticker, share_count in holdings:
+				try:
+					data = self._fetch_stock_data(
+						ticker,
+						share_count,
+						period,
+						data_provider=data_provider,
+						massive_client=massive_client,
+					)
+					if data:
+						stock_data.append(data)
+				except Exception as e:
+					raise RuntimeError(f"Error fetching {ticker}: {str(e)}")
 
-		stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
-		if not stock_data:
-			raise RuntimeError("No valid stock data retrieved")
+			stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
+			if not stock_data:
+				raise RuntimeError("No valid stock data retrieved")
+			updated_at = datetime.now()
+			history_points = self._record_portfolio_snapshot(
+				stock_data,
+				now=updated_at,
+				account_value_override=portfolio_meta.get("account_value"),
+			)
+			self._write_source_cache(
+				source_key,
+				stock_data,
+				history_points,
+				updated_at,
+			)
 
-		# Create dashboard
 		account_value_override = portfolio_meta.get("account_value")
-		history_points = self._record_portfolio_snapshot(stock_data, account_value_override=account_value_override)
 		return self._create_dashboard(
 			stock_data,
 			dimensions,
@@ -298,7 +410,164 @@ class StockTracker(BasePlugin):
 			account_value_override=account_value_override,
 			header_brand=self._header_brand_from_settings(settings, portfolio_meta),
 			ticker_theme=settings.get("ticker_theme", "auto"),
+			theme_context=theme_context,
+			updated_at=updated_at,
 		)
+
+	@staticmethod
+	def _enabled(value):
+		if isinstance(value, bool):
+			return value
+		return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+	@staticmethod
+	def _source_cache_key(period, holdings, portfolio_meta, data_provider):
+		payload = {
+			"schema": SOURCE_CACHE_SCHEMA_VERSION,
+			"period": str(period or ""),
+			"holdings": [
+				[str(symbol or "").upper(), round(float(shares), 8)]
+				for symbol, shares in holdings
+			],
+			"portfolio_meta": {
+				**{
+					key: portfolio_meta.get(key)
+					for key in ("account_value", "cash_balance", "buying_power")
+					if portfolio_meta.get(key) is not None
+				},
+				"currency": str(portfolio_meta.get("currency") or "USD").strip().upper() or "USD",
+			},
+			"data_provider": str(data_provider or "auto"),
+		}
+		encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+		return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+	def _source_cache_file(self, source_key, *, create):
+		return self.cache_dir(leaf=SOURCE_CACHE_LEAF, create=create) / f"{source_key}.json"
+
+	@staticmethod
+	def _serialized_history(history):
+		if history is None or getattr(history, "empty", True):
+			return []
+		points = []
+		for date_key in list(getattr(history, "index", [])):
+			try:
+				close = float(history.loc[date_key, "Close"])
+			except (KeyError, TypeError, ValueError, IndexError):
+				continue
+			if math.isfinite(close):
+				points.append([str(date_key), close])
+		return points
+
+	@classmethod
+	def _serialized_stock_data(cls, stock_data):
+		serialized = []
+		for item in stock_data:
+			record = {}
+			for key, value in item.items():
+				if key == "history":
+					record[key] = cls._serialized_history(value)
+				elif value is None or isinstance(value, (str, int, float, bool)):
+					record[key] = value
+				elif isinstance(value, (list, tuple)) and len(value) == 3:
+					record[key] = list(value)
+				else:
+					record[key] = str(value)
+			serialized.append(record)
+		return serialized
+
+	@staticmethod
+	def _rehydrated_stock_data(raw_stock_data):
+		if not isinstance(raw_stock_data, list) or not raw_stock_data:
+			return None
+		stock_data = []
+		for raw in raw_stock_data:
+			if not isinstance(raw, dict) or not str(raw.get("symbol") or "").strip():
+				return None
+			record = dict(raw)
+			points = record.get("history")
+			if not isinstance(points, list):
+				return None
+			clean_points = []
+			for point in points:
+				if not isinstance(point, (list, tuple)) or len(point) != 2:
+					continue
+				try:
+					close = float(point[1])
+				except (TypeError, ValueError):
+					continue
+				if math.isfinite(close):
+					clean_points.append((str(point[0]), close))
+			if not clean_points:
+				return None
+			record["history"] = _SimpleHistory(clean_points)
+			for color_key in ("change_text_color", "indicator_color"):
+				if isinstance(record.get(color_key), list):
+					record[color_key] = _rgb(record[color_key], MUTED)
+			stock_data.append(record)
+		return stock_data
+
+	def _write_source_cache(self, source_key, stock_data, history_points, generated_at):
+		path = self._source_cache_file(source_key, create=True)
+		payload = {
+			"schema": SOURCE_CACHE_SCHEMA_VERSION,
+			"cache_key": source_key,
+			"generated_at": generated_at.isoformat(),
+			"stock_data": self._serialized_stock_data(stock_data),
+			"history_points": [
+				point
+				for point in (
+					self._normalize_portfolio_history_entry(item)
+					for item in (history_points or [])
+				)
+				if point
+			],
+		}
+		temp = path.with_suffix(path.suffix + ".tmp")
+		try:
+			temp.write_text(
+				json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")),
+				encoding="utf-8",
+			)
+			os.replace(temp, path)
+		except Exception as e:
+			logging.warning(f"Could not write StockTracker source cache: {type(e).__name__}: {e}")
+			try:
+				temp.unlink(missing_ok=True)
+			except Exception:
+				pass
+
+	def _read_source_cache(self, source_key):
+		path = self._source_cache_file(source_key, create=False)
+		try:
+			payload = json.loads(path.read_text(encoding="utf-8"))
+		except Exception:
+			return None
+		if (
+			payload.get("schema") != SOURCE_CACHE_SCHEMA_VERSION
+			or payload.get("cache_key") != source_key
+		):
+			return None
+		stock_data = self._rehydrated_stock_data(payload.get("stock_data"))
+		if not stock_data:
+			return None
+		history_points = [
+			point
+			for point in (
+				self._normalize_portfolio_history_entry(item)
+				for item in (payload.get("history_points") or [])
+			)
+			if point
+		]
+		try:
+			generated_at = datetime.fromisoformat(str(payload.get("generated_at") or ""))
+		except ValueError:
+			return None
+		return {
+			"stock_data": stock_data,
+			"history_points": history_points,
+			"generated_at": generated_at,
+		}
 
 	def _portfolio_holdings_from_settings(self, settings):
 		period = settings.get('period', '1mo')
@@ -884,26 +1153,38 @@ class StockTracker(BasePlugin):
 
 	@staticmethod
 	def _change_color(percent):
+		colors = _active_stock_colors()
 		if percent > 0.005:
-			return MALACHITE
+			return colors["malachite"]
 		if percent < -0.005:
-			return CINNABAR
-		return MUTED
+			return colors["cinnabar"]
+		return colors["muted"]
 
-	def _draw_box(self, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL, canvas=None):
+	def _draw_box(self, draw, box, title=None, accent=None, fill=None, canvas=None):
+		colors = _active_stock_colors()
+		accent = colors["accent_blue"] if accent is None else accent
+		fill = colors["panel"] if fill is None else fill
 		left, top, right, bottom = [int(v) for v in box]
-		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=ACCENT_ORANGE)
+		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=colors["accent_orange"])
 		draw.rectangle((left, top, right, bottom), fill=fill)
-		draw.rectangle((left, top, right, bottom), outline=BORDER, width=2)
+		draw.rectangle((left, top, right, bottom), outline=colors["border"], width=2)
 		draw.rectangle((left, top, right, top + 6), fill=accent)
 		if title:
 			if canvas is not None and self._draw_section_wordmark(canvas, title, left + 10, top + 8):
 				return
-			draw.text((left + 12, top + 12), title, fill=INK, font=self._font(16, True))
+			draw.text((left + 12, top + 12), title, fill=colors["ink"], font=self._font(16, True))
 
-	def _draw_summary(self, img, draw, box, stock_data, account_value_override=None):
+	def _draw_summary(self, img, draw, box, stock_data, account_value_override=None, updated_at=None):
+		colors = _active_stock_colors()
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO", accent=ACCENT_GOLD, fill=PANEL_GOLD, canvas=img)
+		self._draw_box(
+			draw,
+			box,
+			"PORTFOLIO",
+			accent=colors["accent_gold"],
+			fill=colors["panel_gold"],
+			canvas=img,
+		)
 		total_value, total_change, total_change_percent = self._portfolio_totals(
 			stock_data,
 			account_value_override=account_value_override,
@@ -912,7 +1193,7 @@ class StockTracker(BasePlugin):
 
 		value_text = self._money(total_value)
 		value_font = self._fit_font(draw, value_text, right - left - 28, 36, True, 20)
-		draw.text((left + 14, top + 44), value_text, fill=INK, font=value_font)
+		draw.text((left + 14, top + 44), value_text, fill=colors["ink"], font=value_font)
 
 		change_text = self._change_text(total_change, total_change_percent)
 		change_font = self._fit_font(draw, change_text, right - left - 32, 18, True, 12)
@@ -920,25 +1201,53 @@ class StockTracker(BasePlugin):
 		draw.rounded_rectangle(
 			pill,
 			radius=8,
-			fill=self._blend(change_color, PANEL_GOLD, 0.12),
+			fill=self._blend(change_color, colors["panel_gold"], 0.12),
 			outline=change_color,
 			width=2,
 		)
 		draw.text((left + 24, top + 100), change_text, fill=change_color, font=change_font)
-		draw.text((left + 14, bottom - 18), datetime.now().strftime("Updated %H:%M"), fill=MUTED, font=self._font(10))
+		updated_at = updated_at or datetime.now()
+		draw.text(
+			(left + 14, bottom - 18),
+			updated_at.strftime("Updated %H:%M"),
+			fill=colors["muted"],
+			font=self._font(10),
+		)
 
 	def _draw_sparkline(self, img, draw, box, values, history_points=None):
+		colors = _active_stock_colors()
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "PORTFOLIO TREND", accent=ACCENT_BLUE, fill=PANEL_BLUE, canvas=img)
+		self._draw_box(
+			draw,
+			box,
+			"PORTFOLIO TREND",
+			accent=colors["accent_blue"],
+			fill=colors["panel_blue"],
+			canvas=img,
+		)
 		plot = (left + 14, top + 42, right - 14, bottom - 16)
-		chart_bg = (247, 251, 252)
-		draw.rounded_rectangle(plot, radius=4, fill=chart_bg, outline=self._blend(GRID, PANEL_BLUE, 0.65), width=1)
+		chart_bg = self._blend(colors["panel"], colors["paper"], 0.78)
+		draw.rounded_rectangle(
+			plot,
+			radius=4,
+			fill=chart_bg,
+			outline=self._blend(colors["grid"], colors["panel_blue"], 0.65),
+			width=1,
+		)
 		for i in range(1, 5):
 			y = plot[1] + (plot[3] - plot[1]) * i / 5
-			draw.line((plot[0] + 8, y, plot[2] - 8, y), fill=self._blend(GRID, chart_bg, 0.38), width=1)
+			draw.line(
+				(plot[0] + 8, y, plot[2] - 8, y),
+				fill=self._blend(colors["grid"], chart_bg, 0.38),
+				width=1,
+			)
 		for i in range(1, 5):
 			x = plot[0] + (plot[2] - plot[0]) * i / 5
-			draw.line((x, plot[1] + 4, x, plot[3] - 4), fill=self._blend(GRID, chart_bg, 0.18), width=1)
+			draw.line(
+				(x, plot[1] + 4, x, plot[3] - 4),
+				fill=self._blend(colors["grid"], chart_bg, 0.18),
+				width=1,
+			)
 		history_points = [
 			point
 			for point in (self._normalize_portfolio_history_entry(item) for item in (history_points or []))
@@ -952,8 +1261,8 @@ class StockTracker(BasePlugin):
 		raw_vmax = max(values)
 		vmin, vmax = self._chart_value_bounds(values)
 		line_color = self._change_color(values[-1] - values[0])
-		if line_color == MUTED:
-			line_color = ACCENT_BLUE
+		if line_color == colors["muted"]:
+			line_color = colors["accent_blue"]
 
 		points = self._plot_series_points(plot, values, vmin, vmax)
 		curve_points = self._smooth_curve_points(points)
@@ -968,8 +1277,20 @@ class StockTracker(BasePlugin):
 			self._draw_latest_value_marker(draw, points[-1], line_color)
 		self._draw_history_markers(draw, history_points, points)
 
-		self._draw_chart_label(draw, (plot[0] + 6, plot[1] + 6), self._money(raw_vmax, 0), INK, chart_bg)
-		self._draw_chart_label(draw, (plot[0] + 6, plot[3] - 20), self._money(raw_vmin, 0), MUTED, chart_bg)
+		self._draw_chart_label(
+			draw,
+			(plot[0] + 6, plot[1] + 6),
+			self._money(raw_vmax, 0),
+			colors["ink"],
+			chart_bg,
+		)
+		self._draw_chart_label(
+			draw,
+			(plot[0] + 6, plot[3] - 20),
+			self._money(raw_vmin, 0),
+			colors["muted"],
+			chart_bg,
+		)
 
 	@staticmethod
 	def _chart_value_bounds(values):
@@ -1013,20 +1334,28 @@ class StockTracker(BasePlugin):
 		return curve
 
 	def _draw_chart_label(self, draw, position, text, fill, chart_bg):
+		colors = _active_stock_colors()
 		x, y = [int(v) for v in position]
 		font = self._font(11, True)
 		width = self._text_width(draw, text, font)
 		draw.rounded_rectangle(
 			(x - 2, y - 1, x + width + 6, y + 14),
 			radius=3,
-			fill=self._blend(chart_bg, WHITE, 0.72),
-			outline=self._blend(GRID, chart_bg, 0.45),
+			fill=self._blend(chart_bg, colors["white"], 0.72),
+			outline=self._blend(colors["grid"], chart_bg, 0.45),
 			width=1,
 		)
 		draw.text((x + 2, y), text, fill=fill, font=font)
 
-	def _draw_latest_value_marker(self, draw, point, color=ACCENT_BLUE):
-		draw.ellipse((point[0] - 5, point[1] - 5, point[0] + 5, point[1] + 5), fill=WHITE, outline=INK, width=1)
+	def _draw_latest_value_marker(self, draw, point, color=None):
+		colors = _active_stock_colors()
+		color = colors["accent_blue"] if color is None else color
+		draw.ellipse(
+			(point[0] - 5, point[1] - 5, point[0] + 5, point[1] + 5),
+			fill=colors["white"],
+			outline=colors["ink"],
+			width=1,
+		)
 		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
 
 	@staticmethod
@@ -1059,6 +1388,7 @@ class StockTracker(BasePlugin):
 		return sampled_points
 
 	def _history_marker_points(self, curve_points, history_points):
+		colors = _active_stock_colors()
 		if not history_points:
 			return []
 		ordered_points = sorted(history_points, key=lambda point: str(point.get("timestamp") or point["date"]))
@@ -1068,14 +1398,15 @@ class StockTracker(BasePlugin):
 		for idx, point in enumerate(ordered_points):
 			value = float(point["value"])
 			if previous_value is None:
-				fill = ACCENT_ORANGE
+				fill = colors["accent_orange"]
 			else:
-				fill = MALACHITE if value >= previous_value else CINNABAR
+				fill = colors["malachite"] if value >= previous_value else colors["cinnabar"]
 			previous_value = value
 			marker_points.append({"point": coords[idx], "fill": fill, "history": point})
 		return marker_points
 
 	def _draw_history_markers(self, draw, history_points, curve_points):
+		colors = _active_stock_colors()
 		marker_points = self._history_marker_points(curve_points, history_points)
 		if not marker_points:
 			return
@@ -1083,7 +1414,10 @@ class StockTracker(BasePlugin):
 		for marker in marker_points:
 			x, y = marker["point"]
 			fill = marker["fill"]
-			draw.ellipse((x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1), fill=INK)
+			draw.ellipse(
+				(x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1),
+				fill=colors["ink"],
+			)
 			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 	def _ordered_holdings(self, stock_data, pin_symbols=None, sink_symbols=None):
@@ -1124,6 +1458,8 @@ class StockTracker(BasePlugin):
 		return image.crop(threshold_bbox or alpha.getbbox()) if alpha.getbbox() else image
 
 	def _draw_section_wordmark(self, canvas, title, x, y):
+		if _active_stock_colors()["mode"] == "night":
+			return False
 		config = SECTION_WORDMARK_IMAGES.get(title)
 		if not config:
 			return False
@@ -1219,37 +1555,67 @@ class StockTracker(BasePlugin):
 		return logo
 
 	def _draw_header(self, img, draw, width, stock_data, header_brand=None):
-		draw.rectangle((0, 0, width, 54), fill=PAPER)
+		colors = _active_stock_colors()
+		draw.rectangle((0, 0, width, 54), fill=colors["paper"])
 		header_logo = self._header_logo_image(header_brand, 214, 34)
 		if header_logo:
 			img.paste(header_logo, (24, 9), header_logo)
 		else:
-			draw.text((24, 12), "STOCK TRACKER", fill=INK, font=self._font(24, True))
+			draw.text((24, 12), "STOCK TRACKER", fill=colors["ink"], font=self._font(24, True))
 
 		source_label = self._source_label(stock_data)
-		draw.text((width - 24, 18), f"{source_label}  |  COLOR E-PAPER MODE", fill=MUTED, font=self._font(13, True), anchor="ra")
-		draw.line((24, 46, width - 24, 46), fill=ACCENT_GOLD, width=3)
+		draw.text(
+			(width - 24, 18),
+			f"{source_label}  |  COLOR E-PAPER MODE",
+			fill=colors["muted"],
+			font=self._font(13, True),
+			anchor="ra",
+		)
+		draw.line((24, 46, width - 24, 46), fill=colors["accent_gold"], width=3)
 
 	@staticmethod
-	def _ticker_theme_key(theme=None, now=None):
+	def _ticker_theme_key(theme=None, theme_context=None):
 		requested = str(theme or "auto").strip().lower()
 		if requested in ("day", "light"):
 			return "day"
 		if requested in ("night", "dark"):
 			return "night"
-		now = now or datetime.now()
-		hour = getattr(now, "hour", 12)
-		return "night" if hour >= 18 or hour < 6 else "day"
+		if isinstance(theme_context, Mapping):
+			return "night" if str(theme_context.get("mode") or "").strip().lower() == "night" else "day"
+		return _active_stock_colors()["mode"]
 
-	def _ticker_palette(self, theme=None, now=None):
-		return TICKER_PALETTES[self._ticker_theme_key(theme, now)]
+	def _ticker_palette(self, theme=None, theme_context=None):
+		mode = self._ticker_theme_key(theme, theme_context)
+		if (
+			not isinstance(theme_context, Mapping)
+			and _ACTIVE_STOCK_COLORS.get() is _LEGACY_STOCK_COLORS
+		):
+			return TICKER_PALETTES[mode]
+		colors = _active_stock_colors()
+		return {
+			"fill": colors["paper"] if mode == colors["mode"] else TICKER_PALETTES[mode]["fill"],
+			"border": colors["accent_gold"],
+			"top_line": colors["accent_orange"],
+			"separator": colors["grid"],
+			"symbol": colors["ink"],
+			"price": colors["accent_blue"],
+			"value": colors["muted"],
+		}
 
-	def _draw_hidden_holdings_ticker(self, img, draw, box, hidden_rows, ticker_theme=None):
+	def _draw_hidden_holdings_ticker(
+		self,
+		img,
+		draw,
+		box,
+		hidden_rows,
+		ticker_theme=None,
+		theme_context=None,
+	):
 		if not hidden_rows:
 			return
 
 		left, top, right, bottom = box
-		palette = self._ticker_palette(ticker_theme)
+		palette = self._ticker_palette(ticker_theme, theme_context)
 		ticker_top = max(top, bottom - 36)
 		ticker_bottom = bottom - 7
 		if ticker_bottom - ticker_top < 24:
@@ -1313,11 +1679,26 @@ class StockTracker(BasePlugin):
 		holdings_pin_symbols=None,
 		holdings_sink_symbols=None,
 		ticker_theme=None,
+		theme_context=None,
 	):
+		colors = _active_stock_colors()
 		left, top, right, bottom = box
-		self._draw_box(draw, box, "HOLDINGS", accent=MALACHITE, fill=PANEL, canvas=img)
+		self._draw_box(
+			draw,
+			box,
+			"HOLDINGS",
+			accent=colors["malachite"],
+			fill=colors["panel"],
+			canvas=img,
+		)
 		if tracking_window_label:
-			draw.text((right - 14, top + 14), tracking_window_label, fill=MUTED, font=self._font(12, True), anchor="ra")
+			draw.text(
+				(right - 14, top + 14),
+				tracking_window_label,
+				fill=colors["muted"],
+				font=self._font(12, True),
+				anchor="ra",
+			)
 		header_font = self._font(12, True)
 		row_font = self._font(13)
 		symbol_font = self._font(15, True)
@@ -1333,9 +1714,9 @@ class StockTracker(BasePlugin):
 			"change": left + 604,
 		}
 		for label, x in [("SYMBOL", cols["symbol"]), ("PRICE", cols["price"]), ("SHARES", cols["shares"]), ("VALUE", cols["value"]), ("CHANGE", cols["change"])]:
-			draw.text((x, y), label, fill=MUTED, font=header_font)
+			draw.text((x, y), label, fill=colors["muted"], font=header_font)
 		y += 22
-		draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
+		draw.line((left + 12, y, right - 12, y), fill=colors["grid"], width=1)
 		y += 6
 
 		max_rows = min(len(stock_data), 6)
@@ -1344,7 +1725,7 @@ class StockTracker(BasePlugin):
 		for idx, data in enumerate(display_rows[:max_rows]):
 			if y + row_slot_height > bottom - 38:
 				break
-			row_bg = ROW_COLORS[idx % len(ROW_COLORS)]
+			row_bg = colors["row_colors"][idx % len(colors["row_colors"])]
 			row_top = y - 2
 			row_bottom = row_top + row_slot_height
 			row_center_y = row_top + row_slot_height / 2
@@ -1357,22 +1738,29 @@ class StockTracker(BasePlugin):
 				logo_y = int(round(row_center_y - logo.height / 2))
 				img.paste(logo, (logo_x, logo_y), logo)
 			row_items = [
-				(cols["symbol"], data["symbol"], symbol_font, INK),
-				(cols["price"], data.get("price_text", self._money(data["price"])), row_font, INK),
-				(cols["shares"], data.get("shares_text", self._shares(data["shares"])), row_font, INK),
-				(cols["value"], data.get("value_text", self._money(data["total_value"])), row_font, INK),
+				(cols["symbol"], data["symbol"], symbol_font, colors["ink"]),
+				(cols["price"], data.get("price_text", self._money(data["price"])), row_font, colors["ink"]),
+				(cols["shares"], data.get("shares_text", self._shares(data["shares"])), row_font, colors["ink"]),
+				(cols["value"], data.get("value_text", self._money(data["total_value"])), row_font, colors["ink"]),
 				(cols["change"], data.get("change_text", f"{data['change_percent']:+.2f}%"), row_font, change_color),
 			]
 			for x, text, font, fill in row_items:
 				text_y = self._centered_text_y(draw, text, font, row_center_y)
 				draw.text((x, text_y), text, fill=fill, font=font)
 			y += row_slot_height
-			draw.line((left + 12, y, right - 12, y), fill=GRID, width=1)
+			draw.line((left + 12, y, right - 12, y), fill=colors["grid"], width=1)
 			displayed_rows += 1
 
 		hidden_rows = display_rows[displayed_rows:]
 		if hidden_rows:
-			self._draw_hidden_holdings_ticker(img, draw, box, hidden_rows, ticker_theme=ticker_theme)
+			self._draw_hidden_holdings_ticker(
+				img,
+				draw,
+				box,
+				hidden_rows,
+				ticker_theme=ticker_theme,
+				theme_context=theme_context,
+			)
 
 	def _create_dashboard(
 		self,
@@ -1385,34 +1773,49 @@ class StockTracker(BasePlugin):
 		account_value_override=None,
 		header_brand=None,
 		ticker_theme=None,
+		theme_context=None,
+		updated_at=None,
 	):
 		"""Create a color dashboard that preserves the original stock layout."""
-		width, height = dimensions
-		img = Image.new("RGB", (width, height), PAPER)
-		draw = ImageDraw.Draw(img)
+		colors = _stock_render_colors(theme_context)
+		token = _ACTIVE_STOCK_COLORS.set(colors)
+		try:
+			width, height = dimensions
+			img = Image.new("RGB", (width, height), colors["paper"])
+			draw = ImageDraw.Draw(img)
 
-		self._draw_header(img, draw, width, stock_data, header_brand=header_brand)
+			self._draw_header(img, draw, width, stock_data, header_brand=header_brand)
 
-		self._draw_summary(img, draw, (24, 60, 284, 204), stock_data, account_value_override=account_value_override)
-		self._draw_sparkline(
-			img,
-			draw,
-			(304, 60, width - 24, 204),
-			self._portfolio_values(stock_data, account_value_override=account_value_override),
-			history_points,
-		)
-		self._draw_holdings(
-			img,
-			draw,
-			(24, 224, width - 24, height - 24),
-			stock_data,
-			tracking_window_label,
-			holdings_pin_symbols,
-			holdings_sink_symbols,
-			ticker_theme,
-		)
+			self._draw_summary(
+				img,
+				draw,
+				(24, 60, 284, 204),
+				stock_data,
+				account_value_override=account_value_override,
+				updated_at=updated_at,
+			)
+			self._draw_sparkline(
+				img,
+				draw,
+				(304, 60, width - 24, 204),
+				self._portfolio_values(stock_data, account_value_override=account_value_override),
+				history_points,
+			)
+			self._draw_holdings(
+				img,
+				draw,
+				(24, 224, width - 24, height - 24),
+				stock_data,
+				tracking_window_label,
+				holdings_pin_symbols,
+				holdings_sink_symbols,
+				ticker_theme,
+				theme_context,
+			)
 
-		return img
+			return img
+		finally:
+			_ACTIVE_STOCK_COLORS.reset(token)
 
 	@staticmethod
 	def _source_label(stock_data):
