@@ -1090,6 +1090,12 @@ def test_preparer_rejects_unsupported_dependency_lock_syntax(tmp_path):
     assert not destination.exists()
 
 
+def test_isolated_dependency_check_probe_is_valid_python(tmp_path):
+    probe = update_engine_module._isolated_pip_check_probe(tmp_path / "site-packages")
+
+    compile(probe, "<isolated-dependency-check>", "exec")
+
+
 def test_preparer_rejects_current_venv_missing_locked_top_level_distribution_even_when_pip_check_passes(
     tmp_path,
 ):

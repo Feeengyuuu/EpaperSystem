@@ -1342,7 +1342,7 @@ for distribution in distributions:
             )
 
 if dependency_errors:
-    print("\n".join(dependency_errors), file=sys.stderr)
+    print("\\n".join(dependency_errors), file=sys.stderr)
     raise SystemExit(1)
 """
 
