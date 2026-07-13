@@ -442,3 +442,26 @@ Send secret stdin through a byte-oriented subprocess with explicit UTF-8 encodin
 - Tags: powershell, ssh, utf-8-bom, credentials, independent-verification
 
 ---
+
+## [LRN-20260713-003] best_practice
+
+**Logged**: 2026-07-13T07:15:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: release
+
+### Summary
+Windows subtree release archives must disable automatic line-ending conversion.
+
+### Details
+The committed Unix scripts and checked-out files used LF, but `git archive HEAD:<subtree>` inherited Windows `core.autocrlf` after leaving the repository-level attributes outside the archived tree. The resulting ZIP converted every Unix entrypoint to CRLF, so the device rejected `set -o pipefail` before the candidate release could switch.
+
+### Suggested Action
+Build subtree artifacts with `git -c core.autocrlf=false archive`, then scan every shell script and extensionless Unix launcher in the final ZIP for carriage returns before upload. Keep the transactional updater rollback check in the deployment gate.
+
+### Metadata
+- Source: error
+- Related Files: .gitattributes, tools/epaperpod-deploy-zip.ps1, inkypi-weather/package/InkyPi/install/update_vendors.sh
+- Tags: git-archive, windows, autocrlf, release-artifact, rollback
+
+---
