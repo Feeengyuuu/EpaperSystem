@@ -13448,6 +13448,33 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
         assert logo.getchannel("A").getextrema()[0] == 0
 
 
+def test_local_brand_logo_retries_after_transient_decode_failure(monkeypatch):
+    cache_key = (LOCAL_LCK_LOGO_PATH, (74, 38), 8)
+    original_open = sports_dashboard_module.Image.open
+    attempts = []
+
+    def fail_first_open(path, *args, **kwargs):
+        if path == LOCAL_LCK_LOGO_PATH:
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise MemoryError("transient image decode pressure")
+        return original_open(path, *args, **kwargs)
+
+    TEAM_LOGO_CACHE.pop(cache_key, None)
+    monkeypatch.setattr(sports_dashboard_module.Image, "open", fail_first_open)
+    try:
+        assert SportsDashboard._load_local_logo(LOCAL_LCK_LOGO_PATH, (74, 38), alpha_threshold=8) is None
+
+        recovered = SportsDashboard._load_local_logo(LOCAL_LCK_LOGO_PATH, (74, 38), alpha_threshold=8)
+
+        assert recovered is not None
+        assert recovered.size[0] <= 74
+        assert recovered.size[1] <= 38
+        assert attempts == [LOCAL_LCK_LOGO_PATH, LOCAL_LCK_LOGO_PATH]
+    finally:
+        TEAM_LOGO_CACHE.pop(cache_key, None)
+
+
 def test_worldcup_title_wordmark_asset_is_transparent_and_wide():
     wordmark = Image.open(LOCAL_WORLDCUP_TITLE_WORDMARK_PATH).convert("RGBA")
 

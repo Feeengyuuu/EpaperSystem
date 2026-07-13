@@ -2807,7 +2807,6 @@ class SportsDashboardCommonMixin:
             return logo
         except Exception as exc:
             logger.warning("Failed to load local logo %s: %s", path, exc)
-            TEAM_LOGO_CACHE[cache_key] = None
             return None
 
     @staticmethod

@@ -152,11 +152,10 @@ def test_renderer_close_stops_egress_proxy(tmp_path):
     assert proxy.closed
 
 
-def test_all_remote_screenshot_callers_supply_ssrf_validator():
+def test_all_take_screenshot_callers_supply_ssrf_validator():
     source_root = Path(__file__).resolve().parents[1] / "src" / "plugins"
     callers = (
         source_root / "screenshot" / "screenshot.py",
-        source_root / "newspaper" / "newspaper.py",
         source_root / "sports_dashboard" / "worldcup.py",
         source_root / "tech_pulse" / "tech_pulse.py",
     )
@@ -175,3 +174,142 @@ def test_all_remote_screenshot_callers_supply_ssrf_validator():
             any(keyword.arg == "validator" for keyword in call.keywords)
             for call in calls
         ), path
+
+
+def test_newspaper_browser_capture_keeps_network_closed_security_chain():
+    source_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "newspaper"
+        / "newspaper.py"
+    )
+    tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    newspaper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Newspaper"
+    )
+
+    def method(name):
+        return next(
+            node
+            for node in newspaper.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        )
+
+    def names(node):
+        return {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+
+    def attributes(node):
+        return {
+            child.attr for child in ast.walk(node) if isinstance(child, ast.Attribute)
+        }
+
+    html_limit = next(
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "MAX_HTML_BYTES"
+            for target in node.targets
+        )
+    )
+    assert ast.unparse(html_limit).replace(" ", "") == "2*1024*1024"
+
+    capture = method("_fetch_url_screenshot")
+    capture_names = names(capture)
+    capture_attributes = attributes(capture)
+    assert {
+        "MAX_BROWSER_SECONDS",
+        "MAX_HTML_BYTES",
+        "TaskContext",
+        "_remaining_timeout",
+        "get_browser_renderer",
+    } <= capture_names
+    assert {
+        "_allowed_hosts_for_url",
+        "_assert_browser_html_network_closed",
+        "_download_provider_bytes",
+        "_sanitize_browser_html",
+        "never_cancelled",
+        "render_html",
+    } <= capture_attributes
+    assert any(
+        keyword.arg == "max_bytes"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "MAX_HTML_BYTES"
+        for call in ast.walk(capture)
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
+    )
+    assert any(
+        keyword.arg == "deadline_monotonic"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "deadline"
+        for call in ast.walk(capture)
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
+    )
+
+    download = method("_download_provider_bytes")
+    assert {"MAX_REDIRECTS", "_PinnedResponse", "get_ssrf_policy"} <= names(
+        download
+    )
+    assert {
+        "_validate_approved_target",
+        "iter_content",
+        "open",
+        "resolve_and_validate",
+    } <= attributes(download)
+    target_checks = [
+        call
+        for call in ast.walk(download)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_validate_approved_target"
+    ]
+    assert len(target_checks) >= 2
+    assert all(
+        len(call.args) >= 2
+        and isinstance(call.args[1], ast.Name)
+        and call.args[1].id == "allowed_hosts"
+        for call in target_checks
+    )
+
+    target_validation = method("_validate_approved_target")
+    assert "ipaddress" in names(target_validation)
+    assert {"is_global", "ipv4_mapped"} <= attributes(target_validation)
+
+    pinned_response = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "_PinnedResponse"
+    )
+    pinned_open = next(
+        node
+        for node in pinned_response.body
+        if isinstance(node, ast.FunctionDef) and node.name == "open"
+    )
+    assert {"create_connection", "wrap_socket"} <= attributes(pinned_open)
+    assert {"addresses", "authority", "hostname"} <= attributes(pinned_open)
+
+    sanitizer = method("_sanitize_browser_html")
+    audit = method("_assert_browser_html_network_closed")
+    assert "_NetworkClosedHTMLSanitizer" in names(sanitizer)
+    assert "_NetworkClosedHTMLAudit" in names(audit)
+    sanitizer_text = "".join(
+        child.value
+        for child in ast.walk(sanitizer)
+        if isinstance(child, ast.Constant) and isinstance(child.value, str)
+    )
+    for directive in (
+        "Content-Security-Policy",
+        "default-src 'none'",
+        "navigate-to 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        "object-src 'none'",
+    ):
+        assert directive in sanitizer_text
