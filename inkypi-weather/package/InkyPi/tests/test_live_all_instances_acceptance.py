@@ -1282,6 +1282,7 @@ def test_run_instance_rejects_missing_expected_presentation_request(
         json.dumps(_manifest(instance, "a" * 64, timestamp)),
         encoding="utf-8",
     )
+    ticks = iter((0.0, 31.0))
     runner = acceptance.AcceptanceRunner(
         session=None,
         base_url="http://127.0.0.1",
@@ -1289,6 +1290,8 @@ def test_run_instance_rejects_missing_expected_presentation_request(
         runtime_state_path=runtime_path,
         display_manifest_path=manifest_path,
         output_dir=tmp_path / "evidence",
+        monotonic=lambda: next(ticks),
+        sleep=lambda _seconds: None,
     )
     monkeypatch.setattr(
         acceptance,
@@ -1309,7 +1312,13 @@ def test_run_instance_rejects_missing_expected_presentation_request(
         runner,
         "_capture_display",
         lambda *_args, **_kwargs: (
-            _runtime(instance, timestamp, request=None, receipt=None),
+            _runtime(
+                instance,
+                timestamp,
+                request=None,
+                receipt=None,
+                commit_id="b" * 32,
+            ),
             _manifest(instance, "b" * 64, timestamp, commit_id="b" * 32),
             {"hardware_written": True},
             {"image": "display.png", "headers": "display.headers.json"},
@@ -1320,6 +1329,78 @@ def test_run_instance_rejects_missing_expected_presentation_request(
         runner._run_instance(instance)
 
     assert captured.value.code == "presentation_request_missing"
+
+
+def test_wait_for_display_presentation_start_accepts_late_exact_request(
+    acceptance,
+    tmp_path,
+):
+    base = _instance(acceptance)
+    instance = acceptance.InstancePlan(
+        index=base.index,
+        playlist_name=base.playlist_name,
+        plugin_id=base.plugin_id,
+        instance_name=base.instance_name,
+        instance_uuid=base.instance_uuid,
+        structural_generation=base.structural_generation,
+        settings_revision=base.settings_revision,
+        expects_presentation_refresh=True,
+    )
+    committed_at = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    commit_id = "b" * 32
+    initial_runtime = _runtime(
+        instance,
+        committed_at,
+        request=None,
+        receipt=None,
+        commit_id=commit_id,
+    )
+    manifest = _manifest(
+        instance,
+        "b" * 64,
+        committed_at,
+        commit_id=commit_id,
+    )
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(json.dumps(initial_runtime), encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    request = _presentation_request(instance, committed_at)
+    request["origin_display_commit_id"] = commit_id
+
+    def publish_request(_seconds):
+        updated = _runtime(
+            instance,
+            committed_at,
+            request=request,
+            receipt=None,
+            commit_id=commit_id,
+        )
+        runtime_path.write_text(json.dumps(updated), encoding="utf-8")
+
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=tmp_path / "unused-config.json",
+        runtime_state_path=runtime_path,
+        display_manifest_path=manifest_path,
+        output_dir=tmp_path / "evidence",
+        monotonic=lambda: 0.0,
+        sleep=publish_request,
+    )
+
+    _runtime_state, _manifest_state, observed, evidence = (
+        runner._wait_for_display_presentation_start(
+            instance,
+            initial_runtime,
+            initial_runtime,
+            manifest,
+            display_started_at=datetime(2026, 7, 13, 19, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    assert observed["request_id"] == request["request_id"]
+    assert evidence is None
 
 
 def test_safe_instance_result_never_serializes_name_uuid_settings_or_raw_error(acceptance):

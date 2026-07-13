@@ -36,6 +36,7 @@ HEAVY_TIMEOUT_SECONDS = 600
 PRESENTATION_TIMEOUT_FLOOR_SECONDS = 420
 HTTP_TIMEOUT_SECONDS = 30
 STATE_SETTLE_SECONDS = 12
+PRESENTATION_START_SETTLE_SECONDS = 30
 POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_CACHE_ROOT = "/var/cache/inkypi"
 DEFAULT_DATA_ROOT = "/var/lib/inkypi/data"
@@ -1533,6 +1534,69 @@ class AcceptanceRunner:
                     raise EvidenceFailure("presentation_receipt_timeout")
                 self.sleep(POLL_INTERVAL_SECONDS)
 
+    def _wait_for_display_presentation_start(
+        self,
+        instance,
+        baseline_runtime,
+        initial_runtime,
+        initial_manifest,
+        *,
+        display_started_at,
+    ):
+        expected_commit_id = initial_manifest.get("commit_id")
+        if not isinstance(expected_commit_id, str) or not expected_commit_id:
+            raise EvidenceFailure("presentation_display_commit_invalid")
+        deadline = self.monotonic() + PRESENTATION_START_SETTLE_SECONDS
+        runtime = initial_runtime
+        manifest = initial_manifest
+        while True:
+            display = runtime.get("display")
+            target = manifest.get("logical_target")
+            if (
+                not isinstance(display, dict)
+                or display.get("commit_id") != expected_commit_id
+                or manifest.get("commit_id") != expected_commit_id
+                or not isinstance(target, dict)
+                or target.get("instance_uuid") != instance.instance_uuid
+                or manifest.get("instance_revision")
+                != [instance.structural_generation, instance.settings_revision]
+            ):
+                raise EvidenceFailure("presentation_start_display_drift")
+
+            request = self._presentation_request(runtime, instance)
+            if request is not None:
+                validate_display_created_presentation_request(
+                    request,
+                    instance,
+                    manifest,
+                    display_started_at=display_started_at,
+                )
+                return runtime, manifest, request, None
+            try:
+                evidence = validate_atomic_presentation_no_change(
+                    runtime,
+                    baseline_runtime,
+                    manifest,
+                    instance,
+                )
+                return runtime, manifest, None, evidence
+            except EvidenceFailure:
+                pass
+
+            if self.monotonic() >= deadline:
+                raise EvidenceFailure("presentation_request_missing")
+            self.sleep(POLL_INTERVAL_SECONDS)
+            runtime = _read_json(
+                self.runtime_state_path,
+                code="runtime_state_read_failed",
+                abort=False,
+            )
+            manifest = _read_json(
+                self.display_manifest_path,
+                code="display_manifest_read_failed",
+                abort=False,
+            )
+
     @staticmethod
     def _artifact_prefix(instance):
         plugin = _SAFE_FILE_TOKEN.sub("_", instance.plugin_id).strip("._") or "plugin"
@@ -1643,16 +1707,23 @@ class AcceptanceRunner:
                 presentation_request = current_request
                 presentation_origin = "display_created"
             elif instance.expects_presentation_refresh:
-                try:
-                    presentation_evidence = validate_atomic_presentation_no_change(
-                        runtime,
-                        baseline_runtime,
-                        manifest,
-                        instance,
-                    )
-                except EvidenceFailure as error:
-                    raise EvidenceFailure("presentation_request_missing") from error
-                presentation_origin = "display_created_atomic"
+                (
+                    runtime,
+                    manifest,
+                    current_request,
+                    presentation_evidence,
+                ) = self._wait_for_display_presentation_start(
+                    instance,
+                    baseline_runtime,
+                    runtime,
+                    manifest,
+                    display_started_at=display_started_at,
+                )
+                if current_request is not None:
+                    presentation_request = current_request
+                    presentation_origin = "display_created"
+                else:
+                    presentation_origin = "display_created_atomic"
             else:
                 presentation_evidence = {"completion": "not_applicable"}
                 presentation_origin = "disabled"
