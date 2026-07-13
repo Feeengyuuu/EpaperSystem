@@ -640,32 +640,69 @@ def archive_journal(layout, journal, *, keep=20) -> Path:
 
 
 def prune_releases(layout, links=None, *, keep=2) -> tuple[Path, ...]:
+    _ensure_no_active_journal(layout)
+    install_root, _install_identity = _validated_directory_chain(
+        layout.install_root,
+        label="install root",
+    )
+    releases_root, _releases_identity = _validated_descendant_directory(
+        layout.releases_dir,
+        install_root,
+        label="releases root",
+    )
     link_manager = links or FilesystemLinks()
     preserved = set()
-    for link in (layout.current_link, layout.previous_link):
+    for index, link in enumerate((layout.current_link, layout.previous_link)):
         target = link_manager.read(link)
-        if target is not None:
-            preserved.add(Path(target).resolve())
-    releases = sorted(
-        (
-            path
-            for path in layout.releases_dir.iterdir()
-            if path.is_dir() and not path.is_symlink()
-        ),
-        key=lambda path: path.stat().st_mtime_ns,
-        reverse=True,
+        if target is None:
+            if index == 0:
+                raise ReleaseStateError("current release link target is missing")
+            continue
+        validated_target, _target_identity = _validated_descendant_directory(
+            target,
+            releases_root,
+            label="release link target",
+        )
+        if validated_target.parent != releases_root:
+            raise ReleaseStateError(
+                f"release link target must be a direct child: {validated_target}"
+            )
+        preserved.add(validated_target)
+
+    releases_with_mtime = []
+    try:
+        entries = tuple(releases_root.iterdir())
+    except OSError as error:
+        raise ReleaseStateError("releases root cannot be enumerated safely") from error
+    for path in entries:
+        try:
+            path_stat = os.lstat(path)
+        except OSError as error:
+            raise ReleaseStateError(f"release child cannot be inspected: {path}") from error
+        if stat.S_ISLNK(path_stat.st_mode):
+            raise ReleaseStateError(f"release child cannot be a symlink: {path}")
+        if stat.S_ISDIR(path_stat.st_mode):
+            releases_with_mtime.append((path, path_stat.st_mtime_ns))
+    releases = tuple(
+        path
+        for path, _mtime in sorted(
+            releases_with_mtime,
+            key=lambda item: item[1],
+            reverse=True,
+        )
     )
     retained = set(preserved)
     retain_count = max(2, int(keep))
     for release in releases:
         if len(retained) >= retain_count:
             break
-        retained.add(release.resolve())
+        retained.add(release)
     removed = []
     for release in releases:
-        if release.resolve() in retained:
+        if release in retained:
             continue
-        _safe_remove_tree(release, layout.releases_dir)
+        _ensure_no_active_journal(layout)
+        _safe_remove_tree(release, releases_root)
         removed.append(release)
     return tuple(removed)
 
@@ -857,11 +894,100 @@ def _is_release_root(path) -> bool:
     )
 
 
+def _ensure_no_active_journal(layout) -> None:
+    if os.path.lexists(layout.journal_path):
+        raise ReleaseStateError(
+            f"refusing to prune releases while update journal is active: "
+            f"{layout.journal_path}"
+        )
+
+
+def _absolute_without_resolving(path) -> Path:
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _directory_identity(path_stat) -> tuple[int, int, int]:
+    return (
+        int(path_stat.st_dev),
+        int(path_stat.st_ino),
+        stat.S_IFMT(path_stat.st_mode),
+    )
+
+
+def _validated_directory_chain(path, *, label) -> tuple[Path, tuple]:
+    candidate = _absolute_without_resolving(path)
+    chain = [candidate]
+    while chain[-1].parent != chain[-1]:
+        chain.append(chain[-1].parent)
+    identities = []
+    for member in reversed(chain):
+        try:
+            member_stat = os.lstat(member)
+        except OSError as error:
+            raise ReleaseStateError(f"{label} cannot be inspected: {member}") from error
+        if stat.S_ISLNK(member_stat.st_mode):
+            raise ReleaseStateError(f"{label} cannot contain a symlink: {member}")
+        if not stat.S_ISDIR(member_stat.st_mode):
+            raise ReleaseStateError(f"{label} must be a directory: {member}")
+        identities.append((member, _directory_identity(member_stat)))
+    return candidate, tuple(identities)
+
+
+def _validated_descendant_directory(path, root, *, label) -> tuple[Path, tuple]:
+    candidate = _absolute_without_resolving(path)
+    managed_root = _absolute_without_resolving(root)
+    try:
+        relative = candidate.relative_to(managed_root)
+    except ValueError as error:
+        raise ReleaseStateError(
+            f"{label} is outside managed root: {candidate}"
+        ) from error
+    if not relative.parts:
+        raise ReleaseStateError(f"{label} cannot be the managed root: {candidate}")
+
+    _root, root_identities = _validated_directory_chain(
+        managed_root,
+        label="managed root",
+    )
+    identities = list(root_identities)
+    member = managed_root
+    for part in relative.parts:
+        member /= part
+        try:
+            member_stat = os.lstat(member)
+        except OSError as error:
+            raise ReleaseStateError(f"{label} cannot be inspected: {member}") from error
+        if stat.S_ISLNK(member_stat.st_mode):
+            raise ReleaseStateError(f"{label} cannot contain a symlink: {member}")
+        if not stat.S_ISDIR(member_stat.st_mode):
+            raise ReleaseStateError(f"{label} must be a directory: {member}")
+        identities.append((member, _directory_identity(member_stat)))
+
+    try:
+        resolved_root = managed_root.resolve(strict=True)
+        resolved_candidate = candidate.resolve(strict=True)
+    except OSError as error:
+        raise ReleaseStateError(f"{label} cannot be resolved safely: {candidate}") from error
+    if resolved_candidate == resolved_root or resolved_root not in resolved_candidate.parents:
+        raise ReleaseStateError(f"{label} is outside managed root: {candidate}")
+    return candidate, tuple(identities)
+
+
 def _safe_remove_tree(path, allowed_root) -> None:
-    candidate = Path(path).resolve()
-    root = Path(allowed_root).resolve()
-    if candidate == root or root not in candidate.parents:
-        raise ReleaseStateError(f"refusing to remove path outside managed root: {candidate}")
+    candidate, identities = _validated_descendant_directory(
+        path,
+        allowed_root,
+        label="removal candidate",
+    )
+    rechecked_candidate, rechecked_identities = _validated_descendant_directory(
+        candidate,
+        allowed_root,
+        label="removal candidate",
+    )
+    if rechecked_candidate != candidate or rechecked_identities != identities:
+        raise ReleaseStateError(
+            f"refusing to remove path changed during validation: {candidate}"
+        )
     shutil.rmtree(candidate)
     fsync_directory(candidate.parent)
 

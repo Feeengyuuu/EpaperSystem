@@ -152,6 +152,15 @@ def run_update(args) -> int:
             return 1
 
         try:
+            archive_journal(layout, journal)
+        except Exception as error:
+            print(
+                f"InkyPi release committed; post-commit cleanup pending: {error}",
+                file=sys.stderr,
+            )
+            return 2
+
+        try:
             prune_releases(layout, coordinator.links)
         except Exception as error:
             print(f"Release pruning warning: {error}", file=sys.stderr)

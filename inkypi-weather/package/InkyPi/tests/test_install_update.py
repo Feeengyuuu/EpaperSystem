@@ -1,9 +1,13 @@
 import hashlib
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -16,15 +20,23 @@ INSTALL_LIB = INSTALL_ROOT / "lib"
 sys.path.insert(0, str(INSTALL_LIB))
 sys.path.insert(0, str(INSTALL_ROOT))
 
-from release_state import ReleaseLayout, UpdateJournal, UpdatePhase  # noqa: E402
+from release_state import (  # noqa: E402
+    ReleaseLayout,
+    ReleaseStateError,
+    UpdateJournal,
+    UpdatePhase,
+)
 from update_engine import (  # noqa: E402
     ArtifactError,
     ArtifactPreparer,
     ManagedFile,
     UpdateCoordinator,
     UpdateFailed,
+    _safe_remove_tree,
     inspect_artifact,
+    prune_releases,
 )
+import update_engine as update_engine_module  # noqa: E402
 from preflight import (  # noqa: E402
     PreflightError,
     REQUIRED_RELEASE_PATHS,
@@ -116,6 +128,443 @@ def _prepared_journal(layout, release_id):
     journal.transition(UpdatePhase.DOWNLOADED)
     journal.transition(UpdatePhase.PREFLIGHTED)
     return journal
+
+
+def _set_directory_mtime(path, value):
+    timestamp_ns = int(value) * 1_000_000_000
+    os.utime(path, ns=(timestamp_ns, timestamp_ns))
+
+
+def _journal_at_phase(layout, release_id, target, phase):
+    journal = UpdateJournal.create(
+        layout.journal_path,
+        release_id=release_id,
+        metadata={"target_path": str(target)},
+    )
+    paths = {
+        UpdatePhase.CREATED: (),
+        UpdatePhase.DOWNLOADED: (UpdatePhase.DOWNLOADED,),
+        UpdatePhase.PREFLIGHTED: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+        ),
+        UpdatePhase.SWITCHED: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+        ),
+        UpdatePhase.STARTING: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.STARTING,
+        ),
+        UpdatePhase.HEALTHY: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.STARTING,
+            UpdatePhase.HEALTHY,
+        ),
+        UpdatePhase.COMMITTED: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.STARTING,
+            UpdatePhase.HEALTHY,
+            UpdatePhase.COMMITTED,
+        ),
+        UpdatePhase.ROLLING_BACK: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.ROLLING_BACK,
+        ),
+        UpdatePhase.ROLLED_BACK: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.ROLLING_BACK,
+            UpdatePhase.ROLLED_BACK,
+        ),
+        UpdatePhase.ROLLBACK_FAILED: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.ROLLING_BACK,
+            UpdatePhase.ROLLBACK_FAILED,
+        ),
+    }
+    for destination in paths[phase]:
+        journal.transition(destination)
+    return journal
+
+
+def _directory_symlink(target, link):
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlinks are unavailable: {error}")
+
+
+def _load_updater_module():
+    loader = SourceFileLoader("inkypi_update_test_module", str(INSTALL_ROOT / "inkypi-update"))
+    spec = spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def _updater_args(tmp_path):
+    return SimpleNamespace(
+        artifact=tmp_path / "release.zip",
+        sha256="0" * 64,
+        release_id="candidate",
+        install_root=tmp_path / "opt",
+        state_root=tmp_path / "state",
+        config=tmp_path / "device.json",
+        service_name="inkypi.service",
+        systemctl="systemctl",
+        health_url="http://127.0.0.1/readyz",
+        health_timeout=1.0,
+        python=sys.executable,
+        unit_target=tmp_path / "etc" / "inkypi.service",
+        launcher_target=tmp_path / "bin" / "inkypi",
+        updater_target=tmp_path / "sbin" / "inkypi-update",
+        legacy_root=tmp_path / "legacy",
+    )
+
+
+def _configure_successful_updater(monkeypatch, module, events, holders):
+    class FakeLock:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return False
+
+    class Service:
+        def __init__(self, **_kwargs):
+            self.active = True
+
+    class Coordinator:
+        def __init__(self, _layout, service, **_kwargs):
+            self.service = service
+            self.links = {"current": "candidate", "previous": "old"}
+            self.recover_calls = 0
+            holders["coordinator"] = self
+
+        def activate(self, journal, _release):
+            events.append("activate")
+            journal.transition(UpdatePhase.SWITCHED)
+            journal.transition(UpdatePhase.STARTING)
+            journal.transition(UpdatePhase.HEALTHY)
+            journal.transition(UpdatePhase.COMMITTED)
+
+        def recover(self, _journal):
+            self.recover_calls += 1
+
+    class Preparer:
+        def __init__(self, layout, **_kwargs):
+            self.layout = layout
+
+        def prepare(self, _inspection, release_id, _journal):
+            release = self.layout.release_path(release_id)
+            release.mkdir(parents=True)
+            return release
+
+        def ensure_bootstrap_token(self, _release):
+            return None
+
+    monkeypatch.setattr(module, "UpdateLock", FakeLock)
+    monkeypatch.setattr(module, "SystemdService", Service)
+    monkeypatch.setattr(module, "UpdateCoordinator", Coordinator)
+    monkeypatch.setattr(module, "ArtifactPreparer", Preparer)
+    monkeypatch.setattr(
+        module,
+        "inspect_artifact",
+        lambda _artifact, _sha256: SimpleNamespace(sha256="verified"),
+    )
+    monkeypatch.setattr(module, "_recover_existing", lambda _layout, _coordinator: None)
+
+
+def test_prune_releases_keeps_current_and_previous_and_converges_to_two(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = _release(layout, "current-release", "current")
+    previous = _release(layout, "previous-release", "previous")
+    stale = [
+        _release(layout, f"stale-{index}", f"stale-{index}")
+        for index in range(3)
+    ]
+    for index, release in enumerate((*stale, previous, current), start=1):
+        _set_directory_mtime(release, index)
+
+    removed = prune_releases(layout, FakeLinks(current, previous), keep=2)
+
+    assert set(removed) == set(stale)
+    assert {path.name for path in layout.releases_dir.iterdir()} == {
+        current.name,
+        previous.name,
+    }
+
+
+def test_prune_releases_same_current_and_previous_keeps_newest_fallback(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = _release(layout, "current-release", "current")
+    newest = _release(layout, "newest-fallback", "newest")
+    stale = _release(layout, "stale", "stale")
+    _set_directory_mtime(stale, 1)
+    _set_directory_mtime(current, 2)
+    _set_directory_mtime(newest, 3)
+
+    removed = prune_releases(layout, FakeLinks(current, current), keep=1)
+
+    assert removed == (stale,)
+    assert {path.name for path in layout.releases_dir.iterdir()} == {
+        current.name,
+        newest.name,
+    }
+
+
+@pytest.mark.parametrize("phase", tuple(UpdatePhase))
+def test_prune_releases_refuses_every_unarchived_journal_phase(tmp_path, phase):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = _release(layout, "current-release", "current")
+    target = _release(layout, "target-release", "target")
+    stale = _release(layout, "stale", "stale")
+    _journal_at_phase(layout, "target-release", target, phase)
+    original = {path.name for path in layout.releases_dir.iterdir()}
+
+    with pytest.raises(ReleaseStateError, match="journal"):
+        prune_releases(layout, FakeLinks(current, current), keep=2)
+
+    assert {path.name for path in layout.releases_dir.iterdir()} == original
+    assert target.is_dir()
+    assert stale.is_dir()
+
+
+@pytest.mark.parametrize("unsafe_target", ["outside", "broken"])
+def test_prune_releases_fails_closed_for_outside_or_broken_link_target(
+    tmp_path, unsafe_target
+):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    releases = [
+        _release(layout, f"release-{index}", f"release-{index}")
+        for index in range(3)
+    ]
+    if unsafe_target == "outside":
+        target = tmp_path / "outside-release"
+        target.mkdir()
+        sentinel = target / "sentinel.txt"
+        sentinel.write_text("do not delete", encoding="utf-8")
+    else:
+        target = layout.releases_dir / "missing-release"
+        sentinel = None
+    original = {path.name for path in layout.releases_dir.iterdir()}
+
+    with pytest.raises(ReleaseStateError, match="release link target"):
+        prune_releases(layout, FakeLinks(target, releases[0]), keep=2)
+
+    assert {path.name for path in layout.releases_dir.iterdir()} == original
+    if sentinel is not None:
+        assert sentinel.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_prune_releases_fails_closed_when_install_root_is_symlink(tmp_path):
+    external_install = tmp_path / "external-install"
+    external_releases = external_install / "releases"
+    external_releases.mkdir(parents=True)
+    protected = external_releases / "protected"
+    protected.mkdir()
+    install_link = tmp_path / "install-link"
+    _directory_symlink(external_install, install_link)
+    layout = ReleaseLayout(install_link, tmp_path / "state")
+    layout.state_root.mkdir()
+
+    with pytest.raises(ReleaseStateError, match="install root"):
+        prune_releases(layout, FakeLinks(protected, protected), keep=2)
+
+    assert protected.is_dir()
+
+
+def test_prune_releases_fails_closed_when_releases_root_is_symlink(tmp_path):
+    install_root = tmp_path / "opt"
+    install_root.mkdir()
+    external_releases = tmp_path / "external-releases"
+    external_releases.mkdir()
+    protected = external_releases / "protected"
+    protected.mkdir()
+    _directory_symlink(external_releases, install_root / "releases")
+    layout = ReleaseLayout(install_root, tmp_path / "state")
+    layout.state_root.mkdir()
+
+    with pytest.raises(ReleaseStateError, match="releases root"):
+        prune_releases(layout, FakeLinks(protected, protected), keep=2)
+
+    assert protected.is_dir()
+
+
+def test_prune_releases_fails_closed_when_release_child_is_symlink(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current = _release(layout, "current-release", "current")
+    previous = _release(layout, "previous-release", "previous")
+    stale = _release(layout, "stale", "stale")
+    external = tmp_path / "external-release"
+    external.mkdir()
+    sentinel = external / "sentinel.txt"
+    sentinel.write_text("do not delete", encoding="utf-8")
+    _directory_symlink(external, layout.releases_dir / "linked-release")
+    original = {path.name for path in layout.releases_dir.iterdir()}
+
+    with pytest.raises(ReleaseStateError, match="symlink"):
+        prune_releases(layout, FakeLinks(current, previous), keep=2)
+
+    assert {path.name for path in layout.releases_dir.iterdir()} == original
+    assert stale.is_dir()
+    assert sentinel.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_safe_remove_tree_refuses_symlinked_managed_root(tmp_path):
+    external_root = tmp_path / "external-root"
+    candidate = external_root / "candidate"
+    candidate.mkdir(parents=True)
+    sentinel = candidate / "sentinel.txt"
+    sentinel.write_text("do not delete", encoding="utf-8")
+    managed_root = tmp_path / "managed-root"
+    _directory_symlink(external_root, managed_root)
+
+    with pytest.raises(ReleaseStateError, match="managed root"):
+        _safe_remove_tree(managed_root / "candidate", managed_root)
+
+    assert sentinel.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_safe_remove_tree_rechecks_directory_identity_before_delete(
+    tmp_path, monkeypatch
+):
+    managed_root = tmp_path / "managed-root"
+    candidate = managed_root / "candidate"
+    candidate.mkdir(parents=True)
+    sentinel = candidate / "sentinel.txt"
+    sentinel.write_text("do not delete", encoding="utf-8")
+    validate = update_engine_module._validated_descendant_directory
+    calls = 0
+
+    def changed_identity(path, root, *, label):
+        nonlocal calls
+        calls += 1
+        validated, identities = validate(path, root, label=label)
+        if calls == 2:
+            member, identity = identities[-1]
+            changed = (identity[0], identity[1] + 1, identity[2])
+            identities = (*identities[:-1], (member, changed))
+        return validated, identities
+
+    monkeypatch.setattr(
+        update_engine_module,
+        "_validated_descendant_directory",
+        changed_identity,
+    )
+
+    with pytest.raises(ReleaseStateError, match="changed during validation"):
+        _safe_remove_tree(candidate, managed_root)
+
+    assert sentinel.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_updater_archives_committed_journal_before_pruning(
+    tmp_path, monkeypatch
+):
+    module = _load_updater_module()
+    events = []
+    holders = {}
+    _configure_successful_updater(monkeypatch, module, events, holders)
+
+    def archive(_layout, journal):
+        assert journal.phase is UpdatePhase.COMMITTED
+        events.append("archive")
+        journal.path.unlink()
+
+    def prune(layout, _links):
+        assert not layout.journal_path.exists()
+        events.append("prune")
+
+    monkeypatch.setattr(module, "archive_journal", archive)
+    monkeypatch.setattr(module, "prune_releases", prune)
+
+    result = module.run_update(_updater_args(tmp_path))
+
+    assert result == 0
+    assert events == ["activate", "archive", "prune"]
+
+
+def test_updater_archive_failure_skips_prune_and_leaves_healthy_release_active(
+    tmp_path, monkeypatch, capsys
+):
+    module = _load_updater_module()
+    events = []
+    holders = {}
+    _configure_successful_updater(monkeypatch, module, events, holders)
+
+    def archive(_layout, _journal):
+        events.append("archive")
+        raise OSError("archive unavailable")
+
+    monkeypatch.setattr(module, "archive_journal", archive)
+    monkeypatch.setattr(
+        module,
+        "prune_releases",
+        lambda _layout, _links: events.append("prune"),
+    )
+
+    result = module.run_update(_updater_args(tmp_path))
+
+    assert result != 0
+    assert events == ["activate", "archive"]
+    assert holders["coordinator"].service.active
+    assert holders["coordinator"].recover_calls == 0
+    assert "post-commit cleanup pending" in capsys.readouterr().err.lower()
+
+
+def test_updater_prune_failure_preserves_archived_commit_and_active_links(
+    tmp_path, monkeypatch, capsys
+):
+    module = _load_updater_module()
+    events = []
+    holders = {}
+    _configure_successful_updater(monkeypatch, module, events, holders)
+
+    def archive(_layout, journal):
+        events.append("archive")
+        journal.path.unlink()
+
+    def prune(_layout, _links):
+        events.append("prune")
+        raise OSError("prune unavailable")
+
+    monkeypatch.setattr(module, "archive_journal", archive)
+    monkeypatch.setattr(module, "prune_releases", prune)
+
+    result = module.run_update(_updater_args(tmp_path))
+
+    assert result == 0
+    assert events == ["activate", "archive", "prune"]
+    assert holders["coordinator"].links == {
+        "current": "candidate",
+        "previous": "old",
+    }
+    assert holders["coordinator"].recover_calls == 0
+    assert not (tmp_path / "state" / "update-state.json").exists()
+    assert "release pruning warning" in capsys.readouterr().err.lower()
 
 
 def test_successful_activation_commits_target_release_and_managed_files(tmp_path):
