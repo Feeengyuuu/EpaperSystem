@@ -1,4 +1,6 @@
 import ast
+import copy
+import hashlib
 import json
 import inspect
 from contextlib import contextmanager
@@ -61,6 +63,32 @@ from utils.image_utils import compute_image_hash
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "refresh_task_tests"
 PLUGIN_SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "plugins"
+
+LIVE_PRESENTATION_REFERENCE_ROWS = (
+    ("backtothedate", "BacktotheDate", {"scheduled": "00:00"}, {}),
+    ("bambu_monitor", "Bambu", {"interval": 300}, {}),
+    ("box_office_top_movies", "BoxOfficeTopMovies", {"interval": 21600}, {}),
+    ("china_box_office_top_movies", "China Movie Hot", {"interval": 21600}, {}),
+    ("daily_ai_news", "Daily AI News", {"scheduled": "07:30"}, {"refreshOnDisplay": True}),
+    ("daily_art", "DailyArt", {"interval": 300}, {}),
+    ("daily_wiki_page", "DailyWiki", {"scheduled": "00:15"}, {}),
+    ("daily_word_poem", "DailyWord", {"interval": 300}, {}),
+    ("gcd_comic_covers", "ComicCovers", {"interval": 300}, {}),
+    ("live_radar", "LiveRadar", {"interval": 120}, {}),
+    ("magazine_covers", "MagazineCovers", {"interval": 300}, {}),
+    ("newspaper", "ChinaDaily", {"scheduled": "15:00"}, {"mediaRotationMode": "rotate"}),
+    ("pixiv_r18_ranking", "DailyPorn", {"interval": 21600}, {}),
+    ("simple_calendar", "Date", {"interval": 21600}, {}),
+    ("species_radar", "SpeciesRadar", {"interval": 21600}, {}),
+    ("sports_dashboard", "SportsDashboard", {"interval": 900}, {}),
+    ("steam_charts", "Steam Charts", {"interval": 3600}, {}),
+    ("steam_daily_art", "SteamDailyArt", {"interval": 3600}, {}),
+    ("stocktracker", "Money", {"scheduled": "13:10"}, {}),
+    ("tech_pulse", "TechPulse", {"interval": 1800}, {}),
+    ("weather", "AwesomeWeather", {"interval": 300}, {}),
+)
+
+LIVE_CADENCE_DIGEST = "c930d1d19ed71d9579aaa4a7fee086d5d8d5446fd14d7156cd8bc11f72bccbd8"
 
 
 def _settings_default_refresh_on_display_plugin_ids():
@@ -156,7 +184,106 @@ def test_refresh_on_display_for_config_rejects_invalid_saved_value():
         )
 
 
-def test_refresh_on_display_for_config_restores_dynamic_thirteenth_newspaper():
+def _reference_plugin_config(plugin_id):
+    manifest_path = PLUGIN_SOURCE_ROOT / plugin_id / "plugin-info.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    config = {"id": plugin_id}
+    if "refresh_on_display" in manifest:
+        config["refresh_on_display"] = manifest["refresh_on_display"]
+    return config
+
+
+def _canonical_reference_json(value):
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _resolve_live_reference_reasons(resolver):
+    manifest_snapshots = {}
+    for plugin_id, _instance_name, _refresh, _settings in LIVE_PRESENTATION_REFERENCE_ROWS:
+        manifest_path = PLUGIN_SOURCE_ROOT / plugin_id / "plugin-info.json"
+        manifest_bytes = manifest_path.read_bytes()
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+        manifest_snapshots[manifest_path] = (
+            manifest_bytes,
+            hashlib.sha256(manifest_text.encode("utf-8")).hexdigest(),
+        )
+
+    resolved_reasons = {}
+
+    for plugin_id, _instance_name, _refresh, settings in LIVE_PRESENTATION_REFERENCE_ROWS:
+        assert set(settings) <= {"refreshOnDisplay", "mediaRotationMode"}
+        plugin_config = _reference_plugin_config(plugin_id)
+        plugin_config_copy = copy.deepcopy(plugin_config)
+        plugin_config_json = _canonical_reference_json(plugin_config_copy)
+        resolved = resolver(settings, plugin_config)
+        assert plugin_config == plugin_config_copy, (
+            f"resolver mutated plugin config for {plugin_id}"
+        )
+        assert _canonical_reference_json(plugin_config) == plugin_config_json, (
+            f"resolver changed canonical plugin config for {plugin_id}"
+        )
+        if not resolved:
+            continue
+        if settings.get("refreshOnDisplay") is True:
+            reason = "saved_explicit"
+        elif plugin_config.get("refresh_on_display") is True:
+            reason = "manifest_default"
+        else:
+            assert plugin_id == "newspaper"
+            assert settings.get("mediaRotationMode") == "rotate"
+            reason = "newspaper_media_rotation"
+        resolved_reasons[plugin_id] = reason
+
+    for manifest_path, (manifest_bytes, manifest_text_hash) in manifest_snapshots.items():
+        assert manifest_path.read_bytes() == manifest_bytes, (
+            f"resolver mutated manifest bytes for {manifest_path.parent.name}"
+        )
+        current_text = manifest_path.read_text(encoding="utf-8")
+        assert hashlib.sha256(current_text.encode("utf-8")).hexdigest() == (
+            manifest_text_hash
+        ), f"resolver mutated manifest text for {manifest_path.parent.name}"
+
+    return resolved_reasons
+
+
+def test_live_reference_slice_preserves_saved_cadence_digest():
+    identities = {
+        (plugin_id, instance_name)
+        for plugin_id, instance_name, _refresh, _settings in LIVE_PRESENTATION_REFERENCE_ROWS
+    }
+    assert len(LIVE_PRESENTATION_REFERENCE_ROWS) == len(identities) == 21
+    assert sum("scheduled" in row[2] for row in LIVE_PRESENTATION_REFERENCE_ROWS) == 5
+    assert sum("interval" in row[2] for row in LIVE_PRESENTATION_REFERENCE_ROWS) == 16
+    assert all(
+        len(refresh) == 1 and set(refresh) <= {"interval", "scheduled"}
+        for _plugin_id, _instance_name, refresh, _settings in LIVE_PRESENTATION_REFERENCE_ROWS
+    )
+    canonical = json.dumps(
+        [
+            {
+                "plugin": plugin_id,
+                "instance": instance_name,
+                "interval": refresh.get("interval"),
+                "scheduled": refresh.get("scheduled"),
+            }
+            for plugin_id, instance_name, refresh, _settings in sorted(
+                LIVE_PRESENTATION_REFERENCE_ROWS,
+                key=lambda row: (row[0], row[1]),
+            )
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == LIVE_CADENCE_DIGEST
+
+
+def test_live_reference_slice_resolves_exact_effective_triggers_and_reasons():
     manifest_default_ids = {
         "backtothedate",
         "daily_art",
@@ -170,58 +297,33 @@ def test_refresh_on_display_for_config_restores_dynamic_thirteenth_newspaper():
         "steam_daily_art",
         "tech_pulse",
     }
-    no_display_trigger_ids = {
-        "bambu_monitor",
-        "box_office_top_movies",
-        "china_box_office_top_movies",
-        "daily_word_poem",
-        "sports_dashboard",
-        "steam_charts",
-        "stocktracker",
-        "weather",
+    expected_reasons = {
+        **{plugin_id: "manifest_default" for plugin_id in manifest_default_ids},
+        "daily_ai_news": "saved_explicit",
+        "newspaper": "newspaper_media_rotation",
     }
-    rows = []
-    for plugin_id in sorted(manifest_default_ids | no_display_trigger_ids):
-        rows.append(
-            (
-                plugin_id,
-                {},
-                {
-                    "id": plugin_id,
-                    "refresh_on_display": plugin_id in manifest_default_ids,
-                },
-            )
-        )
-    rows.extend(
-        [
-            (
-                "daily_ai_news",
-                {"refreshOnDisplay": True},
-                {"id": "daily_ai_news", "refresh_on_display": False},
-            ),
-            (
-                "newspaper",
-                {"mediaRotationMode": "rotate"},
-                {"id": "newspaper"},
-            ),
-        ]
+    before = json.dumps(LIVE_PRESENTATION_REFERENCE_ROWS, sort_keys=True)
+    resolved_reasons = _resolve_live_reference_reasons(
+        plugin_settings.resolve_refresh_on_display_for_config
     )
 
-    effective_ids = {
-        plugin_id
-        for plugin_id, settings, plugin_config in rows
-        if plugin_settings.resolve_refresh_on_display_for_config(
-            settings,
-            plugin_config,
-        )
-    }
+    assert resolved_reasons == expected_reasons
+    assert set(resolved_reasons) == manifest_default_ids | {"daily_ai_news", "newspaper"}
+    assert len(set(resolved_reasons) - {"newspaper"}) == 12
+    assert len(resolved_reasons) == 13
+    assert json.dumps(LIVE_PRESENTATION_REFERENCE_ROWS, sort_keys=True) == before
 
-    assert effective_ids == manifest_default_ids | {
-        "daily_ai_news",
-        "newspaper",
-    }
-    assert len(effective_ids - {"newspaper"}) == 12
-    assert len(effective_ids) == 13
+
+def test_live_reference_mutation_probe_rejects_resolver_config_mutation():
+    real_resolver = plugin_settings.resolve_refresh_on_display_for_config
+
+    def mutating_resolver(settings, plugin_config):
+        result = real_resolver(settings, plugin_config)
+        plugin_config["mutation_probe"] = True
+        return result
+
+    with pytest.raises(AssertionError, match="mutated plugin config"):
+        _resolve_live_reference_reasons(mutating_resolver)
 
 
 def test_presentation_capability_lookup_is_metadata_only(monkeypatch):
