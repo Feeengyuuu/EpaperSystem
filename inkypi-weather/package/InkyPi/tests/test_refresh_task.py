@@ -4192,6 +4192,42 @@ def _write_runtime_theme_cache(task, instance, mode, image=None):
     return cache_path
 
 
+def test_public_cache_path_prefers_current_theme_then_last_good_fallback():
+    tmp_path = make_test_dir("public-themed-cache-path")
+    plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
+    plugin_data["plugin_settings"]["themeMode"] = "night"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    device_config.get_plugin = lambda _plugin_id: {
+        "id": "themed_plugin",
+        "_manifest": _theme_manifest("themed_plugin"),
+    }
+    instance = playlist.plugins[0].snapshot()
+    current_theme = _write_runtime_theme_cache(task, instance, "night")
+    last_good = _write_runtime_theme_cache(task, instance, "day")
+    succeeded_at = "2026-07-12T12:00:00+00:00"
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        succeeded_at,
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="day",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=succeeded_at,
+        ),
+    )
+
+    assert Path(task.cache_path_for_snapshot(instance)) == current_theme
+
+    current_theme.unlink()
+
+    assert Path(task.cache_path_for_snapshot(instance)) == last_good
+
+
 class ThemeOnlyRecordingPlugin:
     def __init__(self, config, *, fail=False, color="white"):
         self.config = config

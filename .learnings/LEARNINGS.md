@@ -1,0 +1,398 @@
+# Learnings
+
+Corrections, insights, and knowledge gaps captured during development.
+
+**Categories**: correction | insight | knowledge_gap | best_practice
+
+---
+
+## [LRN-20260710-009] best_practice
+
+**Logged**: 2026-07-10T23:20:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Chromium headless cannot combine an enabled Linux sandbox with `--no-zygote`.
+
+### Details
+Chromium 150 exited before rendering with `Zygote cannot be disabled if sandbox is enabled`. The renderer suppressed stderr, so both Weather and Steam initially appeared to have unrelated screenshot failures. Adding `--no-sandbox` made a diagnostic succeed but would have weakened isolation; removing `--no-zygote` preserved the sandbox and restored real HTML rendering on the 416 MB device.
+
+### Suggested Action
+Keep regression assertions that reject both `--no-sandbox` and `--no-zygote`, and require a live HTML render plus kernel OOM check after Chromium package updates.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/utils/browser_renderer.py, inkypi-weather/package/InkyPi/tests/test_browser_renderer.py
+- Tags: chromium, sandbox, zygote, raspberry-pi, html-rendering
+
+---
+
+## [LRN-20260710-010] best_practice
+
+**Logged**: 2026-07-10T23:20:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: operations
+
+### Summary
+A ready service can still rotate stale, sample, or impossible plugin instances.
+
+### Details
+The control plane remained healthy while a removed Ticketmaster plugin, missing Riot/NASA/Steam keys, and Telegram sample fallback repeatedly consumed playlist work. A brief `readyz` 503 also occurred during legitimate long renders and returned to 200 when the task finished.
+
+### Suggested Action
+For live acceptance, inspect instance-level logs and committed display manifests across multiple refresh cycles. Reversibly remove only proven-unrunnable instances with ConfigStore versioning and root-only backups; treat bounded render-time 503 as transient only when health stays alive and readiness returns to 200.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/health.py, inkypi-weather/package/InkyPi/src/config_store.py
+- Tags: playlist, readiness, api-keys, sample-data, config-migration, live-acceptance
+
+---
+
+## [LRN-20260710-011] best_practice
+
+**Logged**: 2026-07-10T23:20:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: release
+
+### Summary
+Release preflight requires the resolved release directory, not the `/opt/inkypi/current` symlink.
+
+### Details
+A transactional config migration committed successfully but preflight rejected the symlink path as not being a regular release directory. The rollback restored all config files and restarted the service; retrying with `readlink -f /opt/inkypi/current` passed.
+
+### Suggested Action
+Resolve and verify the current release once at the start of every maintenance wrapper, then pass that immutable path to preflight and all release-local tools.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/install/preflight.py
+- Tags: preflight, symlink, release, rollback, maintenance
+
+---
+
+## [LRN-20260710-001] best_practice
+
+**Logged**: 2026-07-10T16:53:14-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Treat a low-memory Raspberry Pi release update as a resource-bounded transaction.
+
+### Details
+On a 512 MB Pi, a reliable update required an offline wheelhouse, `TMPDIR` on the root filesystem instead of `/tmp` tmpfs, quieting desktop/background services, preserving the previous release, and temporarily widening the hardware watchdog only during the update. Check disk headroom after cache growth and never race zram's systemd unit with a manual immediate `swapoff`/`swapon` cycle.
+
+### Suggested Action
+Keep the updater's disk/memory preflight and rollback boundary; clean only reproducible caches when necessary and restore the watchdog/services after live verification.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/install/install.sh, inkypi-weather/package/InkyPi/install/lib/update_engine.py
+- Tags: raspberry-pi, low-memory, watchdog, tmpfs, zram, rollback
+
+---
+
+## [LRN-20260710-002] best_practice
+
+**Logged**: 2026-07-10T16:53:14-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Relocated virtual environments must be launched through their final absolute interpreter path.
+
+### Details
+`activate` embeds the staging venv path, so sourcing it after moving a release can silently fall back to the system interpreter. Pi GPIO packages also belong in the Pi runtime lock, and `lgpio` needs a writable runtime working directory for its FIFO.
+
+### Suggested Action
+Launch `/opt/inkypi/current/venv_inkypi/bin/python` directly, keep GPIO dependencies hash-locked, and set both `WorkingDirectory` and `LG_WD` to `/run/inkypi`.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/install/inkypi, inkypi-weather/package/InkyPi/install/inkypi.service, inkypi-weather/package/InkyPi/install/requirements-pi.in
+- Tags: venv, relocation, systemd, gpio, lgpio
+
+---
+
+## [LRN-20260710-003] best_practice
+
+**Logged**: 2026-07-10T16:53:14-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Build deploy archives from the repository root so nested line-ending attributes survive.
+
+### Details
+A subtree-only archive omitted parent `.gitattributes`, converting Linux service/socket and APT list files to CRLF. Bash optional probes under `set -e` must also return success on their expected no-op path.
+
+### Suggested Action
+Verify Linux control files are LF in the final tracked archive and keep expected optional branches explicitly successful.
+
+### Metadata
+- Source: error
+- Related Files: .gitattributes, inkypi-weather/package/InkyPi/install/install.sh
+- Tags: git-archive, crlf, bash, systemd, apt
+
+---
+
+## [LRN-20260710-004] best_practice
+
+**Logged**: 2026-07-10T16:53:14-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Keep legacy cache migration as a controlled operational step until it is transaction-safe.
+
+### Details
+An automatic installer migration introduced service ABA, private-home access, marker/LKG, and power-loss boundaries. The live data could be copied safely while the service was explicitly stopped, but the generic automation could not prove those invariants.
+
+### Suggested Action
+Do not ship automatic migration until config identity, both LKG snapshots, service ownership, and crash recovery are verified before publishing a one-time marker.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/install/install.sh
+- Tags: migration, config, lkg, crash-safety, aba
+
+---
+
+## [LRN-20260710-005] best_practice
+
+**Logged**: 2026-07-10T17:01:30-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Persist user-referenced plugin files outside legacy home-backed source trees.
+
+### Details
+The hardened service correctly uses `ProtectHome=true`, so a legacy URI under `/usr/local/inkypi/src` became unreadable when that symlink traversed a mode-0700 user home. The file itself was world-readable, but every parent directory must also be traversable.
+
+### Suggested Action
+Store plugin-owned files under `INKYPI_DATA_DIR`, migrate saved URIs through ConfigStore, and keep any compatibility resolver restricted to a known legacy directory plus one filename. Never weaken `ProtectHome` or home permissions to preserve a stale path.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/simple_calendar/simple_calendar.py
+- Tags: protecthome, persistent-data, file-uri, config-migration, path-traversal
+
+---
+
+## [LRN-20260710-006] insight
+
+**Logged**: 2026-07-10T21:32:21-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Fresh provider data and valid provenance do not prove that a rendered live-state label is truthful.
+
+### Details
+SportsDashboard fetched current ESPN, EWC, PGA, and MLB payloads, yet broad date windows, empty competition results, provider post states, and MLB warmup codes were still rendered as LIVE. Data freshness is a transport property; acceptance must separately validate the provider's semantic state and the final human-facing label.
+
+### Suggested Action
+Keep provider-specific semantic tests for scheduled, warmup, active, post, completed, and empty-result states, then inspect a freshly generated production image rather than accepting cache timestamps or source badges alone.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard
+- Tags: sports, provenance, freshness, semantics, live-state, acceptance
+
+---
+
+## [LRN-20260710-007] best_practice
+
+**Logged**: 2026-07-10T21:32:21-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Stopping a systemd service removes its RuntimeDirectory, and a hardened service user cannot use a private user home as runtime storage.
+
+### Details
+One-off maintenance that stops `inkypi.service` also removes `/run/inkypi`. Subsequent commands run as `inkypi` fail unless the root wrapper recreates the directory with the service's expected ownership and mode. `ProtectHome=true` and mode-0700 home parents also make otherwise readable files unreachable.
+
+### Suggested Action
+Have privileged maintenance wrappers recreate `/run/inkypi` before invoking the service interpreter, keep durable assets under `/var/lib/inkypi`, and never weaken home or service sandbox permissions as a shortcut.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/install/inkypi.service
+- Tags: systemd, runtimedirectory, protecthome, service-user, maintenance
+
+---
+
+## [LRN-20260710-008] best_practice
+
+**Logged**: 2026-07-10T21:32:21-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: release
+
+### Summary
+Git ignore rules do not protect proprietary runtime assets from a release builder that walks the filesystem directly.
+
+### Details
+The installer builds archives with recursive filesystem traversal rather than `git archive`, so an ignored `msyh.ttf` or `msyhbd.ttf` placed anywhere under the source tree could still enter a release. Repository cleanliness alone is therefore insufficient evidence for font licensing and artifact hygiene.
+
+### Suggested Action
+Keep Microsoft YaHei files only in the device-owned data directory, explicitly exclude case-insensitive `msyh*.ttf` and `msyh*.ttc` basenames in the archive builder, and test the real archive contents with nested and uppercase fixtures.
+
+### Metadata
+- Source: code_review
+- Related Files: inkypi-weather/package/InkyPi/install/install.sh, inkypi-weather/package/InkyPi/tests/test_systemd_units.py
+- Tags: release, archive, gitignore, proprietary-font, licensing, artifact
+
+---
+
+## [LRN-20260710-009] best_practice
+
+**Logged**: 2026-07-10T23:45:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Global base-font migrations must preserve intentional display typography through selector-level exceptions.
+
+### Details
+Weather's primary temperature and unit intentionally used Jost as large numeric display type. Replacing every font declaration with the shared Microsoft YaHei stack erased that visual role even though the rest of the interface correctly adopted the new base font.
+
+### Suggested Action
+Before a global font migration, inventory explicit data-display and decorative selectors. Encode approved exceptions at selector scope, assert the surrounding component still uses the shared base stack, and verify the rendered production image rather than relying only on stylesheet scans.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/weather/render/weather.css, inkypi-weather/package/InkyPi/tests/test_base_ui_font_policy.py
+- Tags: typography, font-migration, weather, selector-exception, visual-regression
+
+---
+
+## [LRN-20260711-001] user_feedback
+
+**Logged**: 2026-07-11T14:30:00-07:00
+**Priority**: critical
+**Status**: unresolved
+**Area**: architecture
+
+### Summary
+Cache-only playlist display must not erase instance-owned refresh-on-display and plugin-internal rotation contracts.
+
+### Details
+The independent-refresh integration correctly separated random cache display from provider work, but the production scheduler stopped consuming effective `refreshOnDisplay`. Twelve live instances explicitly saved the rule, and Newspaper dynamically enabled it through `mediaRotationMode=rotate`. Several affected plugins use the render call to advance a warm local rotation queue, so preserving interval/scheduled DATA cadence alone does not preserve their visible behavior.
+
+### Suggested Action
+Keep `DISPLAY_CACHE` strictly provider-free, then enqueue a separate single-worker `PRESENTATION_REFRESH` lane after successful display. Resolve instance override before manifest/default, apply resource gates and lane-local cooldown, preserve DATA/LIVE/THEME clocks and the playlist anchor, and prove real rotation plugins with warm-cache HTTP sentinels before deployment.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/plugins/plugin_settings.py, .superpowers/sdd/plugin-refresh-interaction-matrix.md
+- Tags: refresh-on-display, cache-only, rotation, scheduler, presentation-lane, single-worker
+
+---
+
+## [LRN-20260712-001] best_practice
+
+**Logged**: 2026-07-12T22:00:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Theme-aware render caches must be resolved through the shared cache catalog everywhere they are exposed.
+
+### Details
+The display worker correctly wrote day/night-suffixed cache files, while the plugin-instance preview route still derived the old unsuffixed path. A render job could therefore complete successfully and update the panel while the settings preview returned 404.
+
+### Suggested Action
+Route preview, display, and fallback lookup through the same resolved theme context and CacheCatalog candidate selection. Keep a regression test for current-theme and last-known-good candidates instead of reconstructing cache filenames in HTTP routes.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/blueprints/plugin.py
+- Tags: theme, cache-catalog, preview, last-known-good, dual-theme
+
+---
+
+## [LRN-20260712-002] best_practice
+
+**Logged**: 2026-07-12T22:00:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: release
+
+### Summary
+Low-memory device updates need a tiny trusted bootstrap and must reuse the already verified environment.
+
+### Details
+Building or compiling a second full environment while the display service is live can exhaust a small device. Reliable updates used the pinned SSH identity and host alias, verified the artifact hash, stopped the service with a recovery trap, reused the exact validated virtual environment, forced binary-only offline wheels, and checked the activated release rather than relying on command exit alone.
+
+### Suggested Action
+Keep deployment transport pinned, compile-test generated probe code, preserve rollback on every signal or timeout, and require release ID, ready endpoint, config ownership, image integrity, and residue checks before declaring an update healthy.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/install/inkypi-update, inkypi-weather/package/InkyPi/install/lib/update_engine.py
+- Tags: low-memory, updater, rollback, offline-wheelhouse, host-key, verification
+
+---
+
+## [LRN-20260712-003] best_practice
+
+**Logged**: 2026-07-12T22:00:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: operations
+
+### Summary
+Live acceptance helpers must use public API contracts and preserve service-owned security/config files.
+
+### Details
+Internal render states are exposed publicly as compatibility values such as completed and timed_out, and the public ready response intentionally omits internal diagnostic fields. Root-run maintenance can also silently change configuration ownership, while direct service-user reads of the one-time admin bootstrap token are correctly denied.
+
+### Suggested Action
+Test helpers against the public status vocabulary, authenticate through the HTTP flow with CSRF, perform bootstrap setup through the running service, preserve service ownership on every atomic config replacement and backup, and emit only redacted gate results.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/blueprints/plugin.py, inkypi-weather/package/InkyPi/src/security
+- Tags: acceptance, public-api, csrf, credentials, ownership, redaction
+
+---
+
+## [LRN-20260712-004] user_feedback
+
+**Logged**: 2026-07-12T22:00:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+The LoL plugin's theme-triggered account and skin rotation is intentional product behavior.
+
+### Details
+Day/night switching is allowed to select the paired LoL account and visual skin. This is not an accidental credential mutation and must survive scheduler, cache, and theme refactors; unrelated Telegram behavior may be repaired independently.
+
+### Suggested Action
+Keep a focused contract test for theme-only LoL account/skin selection, avoid rewriting its provider/cache contract during global theme work, and verify both modes without logging account identifiers.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/lol_info
+- Tags: lol, theme, account-rotation, skin, regression
+
+---

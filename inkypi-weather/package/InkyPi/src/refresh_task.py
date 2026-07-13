@@ -2009,7 +2009,30 @@ class RefreshTask:
 
     def cache_path_for_snapshot(self, instance):
         """Public read-only cache location for an immutable instance snapshot."""
-        return self._snapshot_cache_path(instance)
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        resolved_theme = _resolved_theme_context_for_instance(
+            instance,
+            plugin_config,
+            self.device_config,
+            current_dt=self._get_current_datetime(),
+        )
+        theme_mode = (
+            resolved_theme.get("mode")
+            if isinstance(resolved_theme, Mapping)
+            else None
+        )
+        runtime_instance = self.runtime_state.snapshot().instances.get(
+            instance.instance_uuid,
+            InstanceRuntimeState(),
+        )
+        candidate = self.cache_catalog.resolve(
+            instance,
+            theme_mode,
+            runtime_instance,
+        )
+        if candidate is not None:
+            return candidate.cache_path
+        return self._snapshot_cache_path(instance, theme_mode)
 
     def compatibility_cache_path_for_snapshot(self, instance):
         """Return the old name-based preview path; never use it for scheduling."""
