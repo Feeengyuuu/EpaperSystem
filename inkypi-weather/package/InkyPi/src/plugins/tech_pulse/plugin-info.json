@@ -1,3 +1,3 @@
-{"schema_version":2,"capabilities":{"supports_live_refresh":false,"supports_day_night_theme":true},"theme":{"presentation":"ui","day":{"background":"#eef1f5","accent":"#455f95"},"night":{"background":"#0c111c","accent":"#879fe0"}},"display_name":"Tech Pulse / 技术圈脉搏","id":"tech_pulse","class":"TechPulse",
+{"schema_version":2,"capabilities":{"supports_live_refresh":false,"supports_presentation_refresh":true,"supports_day_night_theme":true},"theme":{"presentation":"ui","day":{"background":"#eef1f5","accent":"#455f95"},"night":{"background":"#0c111c","accent":"#879fe0"}},"display_name":"Tech Pulse / 技术圈脉搏","id":"tech_pulse","class":"TechPulse",
     "refresh_on_display": true
 }

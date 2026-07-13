@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.daily_wiki_page import daily_wiki_page as wiki_module  # noqa: E402
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DAILY_IMAGE_TITLE_PATH, DAILY_HEADER_FILLER_PATH, HISTORY_TITLE_WORDMARK_PATH, DAILY_CAPTION_GAP, DAILY_CAPTION_LINE_SPACING, EPAPER_RULE_WIDTH, HISTORY_BODY_Y_OFFSET, HISTORY_FLOAT_MIN_TEXT_WIDTH, HISTORY_IMAGE_GAP, HISTORY_IMAGE_HEIGHT, HISTORY_IMAGE_WIDTH, HISTORY_LINE_SPACING, HISTORY_MIN_EVENT_FONT_SIZE, HISTORY_TEXT_INDENT, HISTORY_TITLE_RULE_GAP, HISTORY_TITLE_Y_OFFSET, HISTORY_TOPIC_PLACEHOLDER_TOP_OFFSET, YEAR_LABEL_Y_OFFSET, TOPIC_PLACEHOLDER_PATH, DEFAULT_FONT  # noqa: E402
+from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
+from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
 from utils import cache_manager  # noqa: E402
 from utils.cache_manager import CacheBudget, CachePathError  # noqa: E402
 
@@ -35,7 +37,7 @@ class FakeDeviceConfig:
 
 def make_plugin(tmp_path):
     plugin = DailyWikiPage({"id": "daily_wiki_page"})
-    plugin._cache_dir = lambda: tmp_path
+    plugin._cache_dir = lambda create=True: tmp_path
     return plugin
 
 
@@ -1807,3 +1809,137 @@ def test_title_wordmark_is_darkened_for_epaper(tmp_path):
     boosted_pixel = boosted.getpixel((1, 1))
     assert luma(boosted_pixel) <= luma(original_pixel) - 35
     assert boosted_pixel[3] > original_pixel[3]
+
+
+def test_daily_wiki_presentation_is_explicit_no_change(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("NO_CHANGE presentation must not render, fetch, or write")
+
+    monkeypatch.setattr(plugin, "generate_image", forbidden)
+    monkeypatch.setattr(plugin, "_daily_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_cache", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+
+    assert "presentation_mode" in DailyWikiPage.__dict__
+    assert plugin.presentation_mode({}) is PresentationMode.NO_CHANGE
+
+
+def test_daily_wiki_provenance_covers_live_fresh_stale_and_local(monkeypatch, tmp_path):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 7, 12, 10, 0)
+    settings = {"language": "en"}
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda current, language, _fallback, local_settings: media_payload(
+            plugin,
+            current,
+            language,
+            local_settings,
+        ),
+    )
+    live = plugin._daily_payload(settings, now)
+    fresh = plugin._daily_payload(settings, now)
+
+    cache = plugin._read_cache()
+    cache["cache_key"] = "wrong-key"
+    plugin._write_cache(cache)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    stale = plugin._daily_payload({**settings, "forceRefresh": True}, now)
+
+    plugin._cache_path().unlink()
+    local = plugin._daily_payload({**settings, "forceRefresh": True}, now)
+
+    assert live["_source_provenance"] == "live"
+    assert fresh["_source_provenance"] == "fresh_cache"
+    assert stale["_source_provenance"] == "stale_cache"
+    assert local["_source_provenance"] == "local_fallback"
+
+
+def test_daily_wiki_theme_provenance_is_read_only_and_context_has_health_label(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 7, 12, 10, 0)
+    settings = {
+        "language": "en",
+        "_theme_render_only": True,
+        "_inkypi_theme": canonical_theme("day"),
+    }
+    payload = plugin._local_fallback_payload("en", "2026-07-12")
+    key = plugin._cache_key("2026-07-12", settings, "en", "")
+    plugin._write_cache(
+        {
+            "schema": wiki_module.CACHE_SCHEMA_VERSION,
+            "cache_key": key,
+            "payload": payload,
+        }
+    )
+    before = plugin._cache_path().read_bytes()
+    captured = []
+    monkeypatch.setattr(
+        wiki_module,
+        "write_context",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
+    plugin._write_context({**payload, "_source_provenance": "fresh_cache"}, now)
+    assert captured[0][0][1]["source_provenance"] == "fresh_cache"
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("theme-only work must not fetch or write")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+    monkeypatch.setattr(plugin, "_write_cache", forbidden)
+    monkeypatch.setattr(
+        plugin,
+        "_render_page",
+        lambda *_args: Image.new("RGB", (2, 1), "white"),
+    )
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert read_source_provenance(image).value == "fresh_cache"
+    assert plugin._cache_path().read_bytes() == before
+
+
+def test_daily_wiki_cold_theme_render_does_not_create_cache_tree(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("cold theme-only render must not fetch or write")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_cache", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+
+    with pytest.raises(RuntimeError, match="matching cached source data"):
+        plugin.generate_image(
+            {
+                "language": "en",
+                "_theme_render_only": True,
+                "_inkypi_theme": canonical_theme("day"),
+            },
+            FakeDeviceConfig(),
+        )
+
+    assert not cache_root.exists()
+
+    writer = DailyWikiPage({"id": "daily_wiki_page"})
+    writer._write_cache({"schema": wiki_module.CACHE_SCHEMA_VERSION})
+    assert (
+        cache_root / "plugins" / "daily_wiki_page" / "cache" / "daily.json"
+    ).is_file()

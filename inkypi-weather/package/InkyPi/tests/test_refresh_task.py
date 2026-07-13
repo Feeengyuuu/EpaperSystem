@@ -8525,6 +8525,16 @@ def test_presentation_no_change_succeeds_at_committed_origin_without_display(
     )
     before_lanes = _non_presentation_lane_bytes(task.runtime_state.snapshot().instances[instance.instance_uuid])
     plugin = NoChangePresentationPlugin()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("NO_CHANGE must not reconcile or prepare")
+
+    plugin.reconcile_presentation_receipt = forbidden
+    plugin.prepare_presentation = forbidden
+    plugin.generate_image = forbidden
+    monkeypatch.setattr(task.presentation_cache, "save", forbidden)
+    monkeypatch.setattr(refresh_task_module, "PresentationCommitReceipt", forbidden)
+    monkeypatch.setattr(refresh_task_module, "PresentationRequestContext", forbidden)
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
@@ -8544,28 +8554,16 @@ def test_presentation_no_change_succeeds_at_committed_origin_without_display(
     assert entry is not None
     task._process_queue_entry(entry)
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
-    origin_receipt = PresentationCommitReceipt(
-        request_id=request.request_id,
-        committed_at=request.requested_at,
-        display_commit_id=request.origin_display_commit_id,
-        structural_generation=instance.structural_generation,
-        settings_revision=instance.settings_revision,
-        theme_mode=request.origin_theme_mode,
-    )
 
     assert state.presentation_request is None
     assert state.presentation.last_success_at == request.requested_at
     assert state.presentation_receipt == prior_receipt
     assert _non_presentation_lane_bytes(state) == before_lanes
-    assert [event[0] for event in plugin.events] == [
-        "mode",
-        "reconcile",
-        "reconcile",
-    ]
-    assert plugin.events[1:] == [
-        ("reconcile", origin_receipt),
-        ("reconcile", prior_receipt),
-    ]
+    assert [event[0] for event in plugin.events] == ["mode"]
+    assert (
+        presentation_contract.get_presentation_instance_uuid(plugin.events[0][1])
+        == instance.instance_uuid
+    )
     assert display.calls == []
 
 
@@ -8828,3 +8826,221 @@ def test_exact_presentation_followup_with_revoked_capability_never_falls_back(
     assert state.presentation_receipt is None
     assert Path(candidate.cache_path).exists()
     assert canonical.read_bytes() == authoritative_bytes
+
+
+def _task6_provenance_api():
+    try:
+        from plugins.base_plugin.render_provenance import (
+            SourceProvenance,
+            attach_source_provenance,
+            read_source_provenance,
+        )
+    except ModuleNotFoundError:
+        pytest.fail("Task 6 render provenance contract is missing")
+    return SourceProvenance, attach_source_provenance, read_source_provenance
+
+
+def test_source_provenance_attestation_cannot_be_forged_or_persisted(tmp_path):
+    SourceProvenance, attach, read = _task6_provenance_api()
+    forged = Image.new("RGB", (2, 1), "white")
+    forged.info["inkypi_source_provenance"] = "live"
+    forged.info["inkypi_source_detail"] = "task6_test"
+    assert read(forged) is None
+
+    forged.info["inkypi_source_provenance"] = {"value": "live"}
+    assert read(forged) is None
+
+    image = Image.new("RGB", (2, 1), "white")
+    unsafe = "sk-secret https://provider.example/user-feed?token=abc {payload}" * 20
+
+    result = attach(image, SourceProvenance.LIVE, detail=unsafe)
+
+    assert result is image
+    assert read(image) is SourceProvenance.LIVE
+    assert "inkypi_source_provenance" not in image.info
+    assert "inkypi_source_detail" not in image.info
+
+    saved = tmp_path / "provenance.png"
+    image.save(saved)
+    with Image.open(saved) as persisted:
+        persisted.load()
+        assert read(persisted) is None
+
+
+@pytest.mark.parametrize(
+    ("provenance_name", "degraded"),
+    [
+        ("LIVE", False),
+        ("FRESH_CACHE", False),
+        ("STALE_CACHE", True),
+        ("LOCAL_FALLBACK", True),
+        ("RAW_VALID", False),
+        ("RAW_MALFORMED", False),
+        (None, False),
+    ],
+)
+def test_data_source_provenance_controls_success_without_blocking_image_promotion(
+    provenance_name,
+    degraded,
+):
+    SourceProvenance, attach, _read = _task6_provenance_api()
+    tmp_path = make_test_dir(f"task6-provenance-{provenance_name or 'legacy'}")
+    legacy_success = "2026-07-12T07:30:00+00:00"
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time=legacy_success)
+    )
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = playlist.plugins[0].snapshot()
+    for lane in RefreshLane:
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            legacy_success,
+            lane=lane,
+        )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current,
+    )
+    resolved = task._resolve_playlist_command(command)
+    image = Image.new("RGB", (32, 16), "white")
+    if provenance_name == "RAW_VALID":
+        image.info["inkypi_source_provenance"] = "stale_cache"
+    elif provenance_name == "RAW_MALFORMED":
+        image.info["inkypi_source_provenance"] = {"value": "stale_cache"}
+    elif provenance_name is not None:
+        attach(image, SourceProvenance[provenance_name], detail="task6_test")
+    task._set_render_metadata(True, True, {})
+
+    task._commit_command_result(command, resolved, image, current)
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert Path(task._snapshot_cache_path(instance)).is_file()
+    if degraded:
+        assert state.data.last_success_at == legacy_success
+        assert state.data.last_failure_at == current.isoformat()
+        assert state.data.next_retry_at is not None
+        retry_entries = task.retry_registry.snapshot()
+        assert [(entry.key, entry.failure_count) for entry in retry_entries] == [
+            (task._lane_retry_key(instance.instance_uuid, RefreshLane.DATA), 1)
+        ]
+    else:
+        assert state.data.last_success_at == current.isoformat()
+        assert state.data.last_failure_at is None
+        assert state.data.next_retry_at is None
+    assert state.live.last_success_at == legacy_success
+    assert state.theme.last_success_at == legacy_success
+    assert state.presentation.last_success_at == legacy_success
+
+
+@pytest.mark.parametrize(
+    ("intent", "lane"),
+    [
+        (RefreshIntent.LIVE_REFRESH, RefreshLane.LIVE),
+        (RefreshIntent.THEME_REDRAW, RefreshLane.THEME),
+        (RefreshIntent.PRESENTATION_REFRESH, RefreshLane.PRESENTATION),
+    ],
+)
+def test_non_data_lanes_ignore_degraded_source_provenance(intent, lane):
+    SourceProvenance, attach, _read = _task6_provenance_api()
+    tmp_path = make_test_dir(f"task6-provenance-lane-{lane.value}")
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(_runtime_plugin_data())
+    task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=intent,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current,
+        cache_theme_mode="night" if lane is RefreshLane.THEME else None,
+    )
+    resolved = task._resolve_playlist_command(command)
+    image = attach(
+        Image.new("RGB", (32, 16), "white"),
+        SourceProvenance.STALE_CACHE,
+        detail="task6_test",
+    )
+    task._set_render_metadata(True, True, {})
+
+    task._commit_command_result(command, resolved, image, current)
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert getattr(state, lane.value).last_success_at == current.isoformat()
+    assert getattr(state, lane.value).last_failure_at is None
+
+
+def test_degraded_data_worker_keeps_failure_backoff_after_promoting_safe_image(
+    monkeypatch,
+):
+    SourceProvenance, attach, _read = _task6_provenance_api()
+
+    class DegradedPlugin(DelegatingThemeWrapper):
+        config = {}
+
+        def generate_image(self, settings, device_config):
+            return attach(
+                Image.new("RGB", (32, 16), "white"),
+                SourceProvenance.STALE_CACHE,
+                detail="task6_test",
+            )
+
+    tmp_path = make_test_dir("task6-degraded-worker-backoff")
+    legacy_success = "2026-07-12T07:30:00+00:00"
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(latest_refresh_time=legacy_success)
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0].snapshot()
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        legacy_success,
+        lane=RefreshLane.DATA,
+    )
+    _write_runtime_cache(task, instance)
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: DegradedPlugin(),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current)
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        command = task._playlist_command(
+            playlist.name,
+            device_config.playlist_manager.snapshot_instance(
+                instance.instance_uuid
+            ),
+            source=CommandSource.BACKGROUND,
+            intent=RefreshIntent.DATA_REFRESH,
+            force=False,
+            display_cached_only=False,
+            kind=CommandKind.CACHE_REFRESH,
+        )
+        submitted = task.refresh_queue.submit(command)
+        result = task.wait_for_job(submitted.id, timeout=1.0)
+
+        state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+        retry_entries = task.retry_registry.snapshot()
+        assert result["status"] == "completed"
+        assert Path(task._snapshot_cache_path(instance)).is_file()
+        assert state.data.last_success_at == legacy_success
+        assert state.data.last_failure_at == current.isoformat()
+        assert state.data.next_retry_at is not None
+        assert [(entry.key, entry.failure_count) for entry in retry_entries] == [
+            (task._lane_retry_key(instance.instance_uuid, RefreshLane.DATA), 1)
+        ]
+        assert task.scheduler_state.snapshot().last_error.endswith("stale_cache")
+    finally:
+        task.stop(join_timeout=1.0)

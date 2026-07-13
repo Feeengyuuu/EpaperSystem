@@ -18,6 +18,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import pytz
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import (
     bounded_int,
@@ -813,6 +818,9 @@ def _safe_json_write(path: Path, payload: Any) -> None:
 
 
 class DailyAINews(BasePlugin):
+    def presentation_mode(self, settings):
+        return PresentationMode.NO_CHANGE
+
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = True
@@ -838,11 +846,21 @@ class DailyAINews(BasePlugin):
                 raise
             logger.exception("Daily AI news failed")
             brief = self._fallback_brief(settings, now, str(exc))
+            brief = self._mark_source_provenance(
+                brief,
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
         brief = self._simplify_chinese_payload(brief)
-        self._write_news_context(brief, now)
+        if not _enabled(settings.get("_theme_render_only")):
+            self._write_news_context(brief, now)
         theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
-        return self._render(dimensions, settings, brief, now, theme_context)
+        image = self._render(dimensions, settings, brief, now, theme_context)
+        return attach_source_provenance(
+            image,
+            brief.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
+            detail="daily_ai_news",
+        )
 
     def _write_news_context(self, brief: dict[str, Any], now: datetime) -> None:
         payload = brief.get("brief") if isinstance(brief, dict) else {}
@@ -873,6 +891,7 @@ class DailyAINews(BasePlugin):
                 "items": items,
                 "sources": payload.get("sources") or [],
                 "from_cache": bool(brief.get("from_cache")),
+                "source_provenance": brief.get("_source_provenance"),
             },
             generated_at=brief.get("generated_at") or now,
             ttl_seconds=24 * 60 * 60,
@@ -883,12 +902,53 @@ class DailyAINews(BasePlugin):
         feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = _parse_int(settings.get("max_items"), 22, 6, 40)
         theme_render_only = _enabled(settings.get("_theme_render_only"))
+        cache_only_render = theme_render_only or _enabled(
+            settings.get("_cached_render_only") or settings.get("cached_render_only")
+        )
+        force_refresh = _enabled(settings.get("force_refresh")) and not cache_only_render
+        date_key = now.strftime("%Y-%m-%d")
+        cache_key = self._cache_key(
+            date_key,
+            model,
+            feeds_text,
+            max_items,
+            settings.get("region_focus"),
+        )
+        cache_dir = self._cache_dir(create=False) if theme_render_only else self._cache_dir()
+        cached = _safe_json_load(cache_dir / "brief.json", {})
+        cache_matches = cached.get("cache_key") == cache_key
+        if theme_render_only and cached.get("brief") and not cache_matches:
+            raise RuntimeError(
+                "Theme-only redraw requires a matching Daily AI News cache."
+            )
+        payload = self._get_brief_unclassified(settings, device_config, now)
+        if payload.get("from_cache"):
+            provenance = (
+                SourceProvenance.FRESH_CACHE
+                if cache_matches and not force_refresh
+                else SourceProvenance.STALE_CACHE
+            )
+        else:
+            provenance = SourceProvenance.LIVE
+        return self._mark_source_provenance(payload, provenance)
+
+    def _get_brief_unclassified(
+        self,
+        settings,
+        device_config,
+        now: datetime,
+    ) -> dict[str, Any]:
+        model = (settings.get("model") or DEFAULT_MODEL).strip()
+        feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
+        max_items = _parse_int(settings.get("max_items"), 22, 6, 40)
+        theme_render_only = _enabled(settings.get("_theme_render_only"))
         cache_only_render = theme_render_only or _enabled(settings.get("_cached_render_only") or settings.get("cached_render_only"))
         force_refresh = _enabled(settings.get("force_refresh")) and not cache_only_render
         date_key = now.strftime("%Y-%m-%d")
         cache_key = self._cache_key(date_key, model, feeds_text, max_items, settings.get("region_focus"))
 
-        cache_file = self._cache_dir() / "brief.json"
+        cache_dir = self._cache_dir(create=False) if theme_render_only else self._cache_dir()
+        cache_file = cache_dir / "brief.json"
         cached = _safe_json_load(cache_file, {})
         cache_matches_current_settings = cached.get("cache_key") == cache_key
         if cached.get("brief") and (cache_only_render or (cache_matches_current_settings and not force_refresh)):
@@ -966,8 +1026,14 @@ class DailyAINews(BasePlugin):
             self._record_api_call(date_key)
         return payload
 
-    def _cache_dir(self) -> Path:
-        return self.cache_dir(leaf="cache", create=True)
+    @staticmethod
+    def _mark_source_provenance(payload, provenance):
+        result = dict(payload)
+        result["_source_provenance"] = SourceProvenance(provenance).value
+        return result
+
+    def _cache_dir(self, create=True) -> Path:
+        return self.cache_dir(leaf="cache", create=create)
 
     def _cache_key(self, date_key: str, model: str, feeds_text: str, max_items: int, region_focus: Any) -> str:
         raw = "\n".join([SUMMARY_SCHEMA_VERSION, date_key, model, feeds_text, str(max_items), str(region_focus or "")])

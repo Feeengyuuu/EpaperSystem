@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
 from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE, SECTION_WORDMARK_IMAGES, SECTION_WORDMARK_SIZES
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import read_source_provenance
 
 
 def _plugin():
@@ -497,7 +499,7 @@ def test_base_background_uses_plain_theme_color_in_night_mode():
 def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monkeypatch, tmp_path):
     plugin = _plugin()
     device = _ThemeDeviceConfig()
-    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     items = [
         {
             "source": "中国新闻网要闻" if index < 4 else "BBC世界",
@@ -551,7 +553,7 @@ def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monk
 
 def test_theme_only_brief_cache_miss_fails_without_provider_calls(monkeypatch, tmp_path):
     plugin = _plugin()
-    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     calls = {"items": 0}
 
     def fake_items(*_args):
@@ -572,7 +574,7 @@ def test_theme_only_brief_cache_miss_fails_without_provider_calls(monkeypatch, t
 
 def test_theme_only_generate_propagates_cold_cache_failure(monkeypatch, tmp_path):
     plugin = _plugin()
-    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
 
     def fail_provider(*_args, **_kwargs):
         raise AssertionError("theme-only redraw must not call a provider")
@@ -1681,3 +1683,203 @@ def test_render_positions_title_background_between_title_and_meta(monkeypatch):
     assert top == 8
     assert right == expected_meta_left - 12
     assert bottom == 73
+
+
+def test_daily_ai_presentation_is_explicit_no_change(monkeypatch):
+    plugin = _plugin()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("NO_CHANGE presentation must not render, fetch, or write")
+
+    monkeypatch.setattr(plugin, "generate_image", forbidden)
+    monkeypatch.setattr(plugin, "_get_brief", forbidden)
+    monkeypatch.setattr(plugin, "_write_news_context", forbidden)
+
+    assert "presentation_mode" in DailyAINews.__dict__
+    assert plugin.presentation_mode({}) is PresentationMode.NO_CHANGE
+
+
+def test_daily_ai_provenance_covers_fresh_stale_live_and_local(monkeypatch, tmp_path):
+    plugin = _plugin()
+    now = datetime(2026, 7, 12, 8, 0)
+    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"}
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+
+    class Device:
+        def load_env_key(self, _key):
+            return ""
+
+    key = plugin._cache_key(
+        "2026-07-12",
+        daily_ai_news_module.DEFAULT_MODEL,
+        plugin._effective_feeds_text(settings["feed_urls"]),
+        6,
+        None,
+    )
+    cache_file = tmp_path / "brief.json"
+    cached = {
+        "cache_key": key,
+        "brief": {"top": [{"title": "cached", "why": "cached"}]},
+        "items": [{"source": "cached", "title": "cached"}],
+    }
+    cache_file.write_text(daily_ai_news_module.json.dumps(cached), encoding="utf-8")
+    fresh = plugin._get_brief(settings, Device(), now)
+
+    cached["cache_key"] = "wrong-key"
+    cache_file.write_text(daily_ai_news_module.json.dumps(cached), encoding="utf-8")
+    monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: [])
+    stale = plugin._get_brief(settings, Device(), now)
+
+    cache_file.unlink()
+    items = [
+        {"source": "RSS", "title": f"fresh-{index}", "summary": "summary", "published": "", "link": ""}
+        for index in range(8)
+    ]
+    monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: items)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda *_args: {})
+    live = plugin._get_brief(settings, Device(), now)
+
+    secret = "sk-task6-super-secret"
+    monkeypatch.setattr(
+        plugin,
+        "_get_brief",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
+    monkeypatch.setattr(plugin, "_write_news_context", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (2, 1), "white"),
+    )
+    fallback = plugin.generate_image({}, _ThemeDeviceConfig())
+
+    assert fresh["_source_provenance"] == "fresh_cache"
+    assert stale["_source_provenance"] == "stale_cache"
+    assert live["_source_provenance"] == "live"
+    assert read_source_provenance(fallback).value == "local_fallback"
+    metadata = repr(fallback.info)
+    assert secret not in metadata
+    assert "http://" not in metadata and "https://" not in metadata
+    assert len(metadata) <= 256
+
+
+def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    now = datetime(2026, 7, 12, 8, 0)
+    settings = {
+        "feed_urls": daily_ai_news_module.DEFAULT_FEEDS,
+        "max_items": "6",
+        "_theme_render_only": True,
+        "_inkypi_theme": _canonical_theme(
+            "day",
+            background=(255, 255, 255),
+            panel=(255, 255, 255),
+            ink=(0, 0, 0),
+            muted=(80, 80, 80),
+            rule=(120, 120, 120),
+            accent=(20, 90, 140),
+        ),
+    }
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    key = plugin._cache_key(
+        "2026-07-12",
+        daily_ai_news_module.DEFAULT_MODEL,
+        plugin._effective_feeds_text(settings["feed_urls"]),
+        6,
+        None,
+    )
+    cache_file = tmp_path / "brief.json"
+    cache_file.write_text(
+        daily_ai_news_module.json.dumps(
+            {
+                "cache_key": key,
+                "brief": {"top": [{"title": "cached", "why": "cached"}]},
+                "items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = cache_file.read_bytes()
+    captured = []
+    monkeypatch.setattr(
+        daily_ai_news_module,
+        "write_context",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
+    plugin._write_news_context(
+        {
+            "brief": {"top": []},
+            "_source_provenance": "stale_cache",
+        },
+        now,
+    )
+    assert captured[0][0][1]["source_provenance"] == "stale_cache"
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("theme-only work must not fetch or write")
+
+    monkeypatch.setattr(plugin, "_fetch_items", forbidden)
+    monkeypatch.setattr(plugin, "_write_news_context", forbidden)
+    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (2, 1), "white"),
+    )
+
+    image = plugin.generate_image(settings, _ThemeDeviceConfig())
+
+    assert read_source_provenance(image).value == "fresh_cache"
+    assert cache_file.read_bytes() == before
+
+
+def test_daily_ai_news_cold_theme_render_does_not_create_cache_tree(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("cold theme-only render must not fetch or write")
+
+    data_writer = daily_ai_news_module._safe_json_write
+    monkeypatch.setattr(plugin, "_fetch_items", forbidden)
+    monkeypatch.setattr(plugin, "_write_news_context", forbidden)
+    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+
+    with pytest.raises(RuntimeError, match="warm Daily AI News cache"):
+        plugin.generate_image(
+            {
+                "_theme_render_only": True,
+                "_inkypi_theme": _canonical_theme(
+                    "day",
+                    background=(255, 255, 255),
+                    panel=(255, 255, 255),
+                    ink=(0, 0, 0),
+                    muted=(80, 80, 80),
+                    rule=(120, 120, 120),
+                    accent=(20, 90, 140),
+                ),
+            },
+            _ThemeDeviceConfig(),
+        )
+
+    assert not cache_root.exists()
+
+    writer = _plugin()
+    data_writer(
+        writer._cache_dir() / "data-writer.json",
+        {"ok": True},
+    )
+    assert (
+        cache_root
+        / "plugins"
+        / "daily_ai_news"
+        / "cache"
+        / "data-writer.json"
+    ).is_file()

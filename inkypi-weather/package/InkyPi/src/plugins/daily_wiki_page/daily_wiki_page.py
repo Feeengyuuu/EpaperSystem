@@ -16,6 +16,11 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.cache_manager import CacheBudget
@@ -128,6 +133,9 @@ LOCAL_FALLBACK_PAGES = (
 )
 
 class DailyWikiPage(BasePlugin):
+    def presentation_mode(self, settings):
+        return PresentationMode.NO_CHANGE
+
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -141,8 +149,19 @@ class DailyWikiPage(BasePlugin):
         ) or self.resolve_theme(settings, device_config)
         now = self._now_for_device(device_config)
         payload = self._daily_payload(settings, now)
-        self._write_context(payload, now)
-        return self._render_page(self.get_dimensions(device_config), payload, settings, now)
+        if not settings.get("_theme_render_only"):
+            self._write_context(payload, now)
+        image = self._render_page(
+            self.get_dimensions(device_config),
+            payload,
+            settings,
+            now,
+        )
+        return attach_source_provenance(
+            image,
+            payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
+            detail="daily_wiki_page",
+        )
 
     def _now_for_device(self, device_config):
         timezone_name = DEFAULT_TIMEZONE
@@ -158,7 +177,40 @@ class DailyWikiPage(BasePlugin):
         fallback_language = self._fallback_language(settings, language)
         date_key = now.strftime("%Y-%m-%d")
         cache_key = self._cache_key(date_key, settings, language, fallback_language)
-        cache = self._read_cache()
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        cache = self._read_cache(create=not theme_render_only)
+        source_cache_ready = (
+            cache.get("schema") == CACHE_SCHEMA_VERSION
+            and cache.get("cache_key") == cache_key
+            and isinstance(cache.get("payload"), dict)
+        )
+        force_refresh = self._enabled(
+            settings.get("forceRefresh") or settings.get("force_refresh"),
+            default=False,
+        )
+        payload = self._daily_payload_unclassified(settings, now)
+        source_state = payload.get("source_state")
+        if source_state == "live":
+            provenance = SourceProvenance.LIVE
+        elif source_state == "cache":
+            provenance = (
+                SourceProvenance.FRESH_CACHE
+                if source_cache_ready and not force_refresh
+                else SourceProvenance.STALE_CACHE
+            )
+        else:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        result = dict(payload)
+        result["_source_provenance"] = provenance.value
+        return result
+
+    def _daily_payload_unclassified(self, settings, now):
+        language = self._language(settings)
+        fallback_language = self._fallback_language(settings, language)
+        date_key = now.strftime("%Y-%m-%d")
+        cache_key = self._cache_key(date_key, settings, language, fallback_language)
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        cache = self._read_cache(create=not theme_render_only)
         force_refresh = self._enabled(settings.get("forceRefresh") or settings.get("force_refresh"), default=False)
         cached = cache.get("payload")
         source_cache_ready = (
@@ -1339,6 +1391,7 @@ class DailyWikiPage(BasePlugin):
                     "language": payload.get("language"),
                     "page_url": payload.get("page_url"),
                     "source_state": payload.get("source_state"),
+                    "source_provenance": payload.get("_source_provenance"),
                     "on_this_day": payload.get("on_this_day") or [],
                 },
                 generated_at=now,
@@ -1429,15 +1482,20 @@ class DailyWikiPage(BasePlugin):
         parts = [CACHE_SCHEMA_VERSION, date_key, language, fallback_language or "", str(self._enabled(settings.get("showImage"), True)), str(self._enabled(settings.get("showOnThisDay"), True))]
         return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
-    def _cache_dir(self):
-        return self.cache_dir(env_var="INKYPI_DAILY_WIKI_PAGE_CACHE", leaf="cache", create=True, strip=True)
+    def _cache_dir(self, create=True):
+        return self.cache_dir(
+            env_var="INKYPI_DAILY_WIKI_PAGE_CACHE",
+            leaf="cache",
+            create=create,
+            strip=True,
+        )
 
-    def _cache_path(self):
-        return self._cache_dir() / "daily.json"
+    def _cache_path(self, create=True):
+        return self._cache_dir(create=create) / "daily.json"
 
-    def _read_cache(self):
+    def _read_cache(self, create=True):
         try:
-            path = self._cache_path()
+            path = self._cache_path(create=create)
             if not path.is_file():
                 return {}
             payload = json.loads(path.read_text(encoding="utf-8"))

@@ -17,6 +17,11 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import PresentationMode
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from security.ssrf import validate_browser_target
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
@@ -110,6 +115,9 @@ LOCAL_SAMPLE_STORIES = (
 
 
 class TechPulse(BasePlugin):
+    def presentation_mode(self, settings):
+        return PresentationMode.NO_CHANGE
+
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = True
@@ -124,8 +132,14 @@ class TechPulse(BasePlugin):
         dimensions = self.get_dimensions(device_config)
         now = self._now_for_device(device_config)
         payload = self._payload(settings, now)
-        self._write_context(payload, now)
-        return self._render_page(dimensions, payload, settings, now)
+        if not settings.get("_theme_render_only"):
+            self._write_context(payload, now)
+        image = self._render_page(dimensions, payload, settings, now)
+        return attach_source_provenance(
+            image,
+            payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
+            detail="tech_pulse",
+        )
 
     def _payload(self, settings, now):
         feed = self._feed(settings)
@@ -133,7 +147,40 @@ class TechPulse(BasePlugin):
         min_score = self._optional_int(settings.get("minScore"))
         refresh_minutes = bounded_int(settings.get("refreshMinutes"), 30, 5, 720)
         cache_key = self._cache_key(feed, max_stories, min_score)
-        cache_file = self._cache_dir() / "state.json"
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        cache_dir = self._cache_dir(create=False) if theme_render_only else self._cache_dir()
+        cache = self._read_json(cache_dir / "state.json", {})
+        cache_is_fresh = self._is_fresh_cache(
+            cache,
+            cache_key,
+            now,
+            refresh_minutes,
+        )
+        payload = self._payload_unclassified(settings, now)
+        source_state = (payload.get("status") or {}).get("source_state")
+        if source_state == "live":
+            provenance = SourceProvenance.LIVE
+        elif source_state == "cache":
+            provenance = (
+                SourceProvenance.FRESH_CACHE
+                if cache_is_fresh
+                else SourceProvenance.STALE_CACHE
+            )
+        else:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        result = dict(payload)
+        result["_source_provenance"] = provenance.value
+        return result
+
+    def _payload_unclassified(self, settings, now):
+        feed = self._feed(settings)
+        max_stories = bounded_int(settings.get("maxStories"), 5, 1, 8)
+        min_score = self._optional_int(settings.get("minScore"))
+        refresh_minutes = bounded_int(settings.get("refreshMinutes"), 30, 5, 720)
+        cache_key = self._cache_key(feed, max_stories, min_score)
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        cache_dir = self._cache_dir(create=False) if theme_render_only else self._cache_dir()
+        cache_file = cache_dir / "state.json"
         cache = self._read_json(cache_file, {})
         force_refresh = self._enabled(settings.get("forceRefresh"), default=False)
 
@@ -163,7 +210,7 @@ class TechPulse(BasePlugin):
             live_error = str(exc)
             logger.warning("Tech Pulse live fetch failed: %s", exc)
 
-        if self._valid_cache(cache, cache_key):
+        if self._valid_stale_cache(cache):
             cached = dict(cache)
             cached["status"] = dict(cached.get("status") or {})
             cached["status"]["source_state"] = "cache"
@@ -692,6 +739,7 @@ class TechPulse(BasePlugin):
                     "stories": payload.get("stories") or [],
                     "stats": payload.get("stats") or {},
                     "status": payload.get("status") or {},
+                    "source_provenance": payload.get("_source_provenance"),
                 },
                 generated_at=now,
                 ttl_seconds=2 * 60 * 60,
@@ -699,8 +747,13 @@ class TechPulse(BasePlugin):
         except Exception as exc:
             logger.debug("Could not write Tech Pulse context: %s", exc)
 
-    def _cache_dir(self):
-        return self.cache_dir(env_var="TECH_PULSE_CACHE_DIR", leaf="cache", strip=True)
+    def _cache_dir(self, create=True):
+        return self.cache_dir(
+            env_var="TECH_PULSE_CACHE_DIR",
+            leaf="cache",
+            create=create,
+            strip=True,
+        )
 
 
     def _trim_flat_background(self, image):
@@ -744,6 +797,15 @@ class TechPulse(BasePlugin):
             isinstance(cache, dict)
             and cache.get("schema") == CACHE_SCHEMA_VERSION
             and cache.get("cache_key") == cache_key
+            and isinstance(cache.get("stories"), list)
+            and bool(cache.get("stories"))
+        )
+
+    @staticmethod
+    def _valid_stale_cache(cache):
+        return (
+            isinstance(cache, dict)
+            and cache.get("schema") == CACHE_SCHEMA_VERSION
             and isinstance(cache.get("stories"), list)
             and bool(cache.get("stories"))
         )

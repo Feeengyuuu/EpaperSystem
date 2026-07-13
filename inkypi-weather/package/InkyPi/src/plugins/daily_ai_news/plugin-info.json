@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
     "theme": {"presentation": "ui", "day": {"background": "#edf5f2", "accent": "#166b5c"}, "night": {"background": "#071513", "accent": "#5dc6b2"}},
     "display_name": "AI每日新闻",
     "id": "daily_ai_news",

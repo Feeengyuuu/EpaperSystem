@@ -28,6 +28,10 @@ from plugins.base_plugin.presentation import (
     bind_presentation_instance_identity,
 )
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    read_source_provenance,
+)
 from utils.image_utils import compute_image_hash
 from utils.app_utils import get_base_ui_font, resolve_dimensions
 from utils.theme_utils import get_theme_context, resolve_plugin_theme
@@ -1612,14 +1616,21 @@ class RefreshTask:
                 else:
                     finished = self.refresh_queue.finish(entry.job.id, JobStatus.SUCCEEDED)
                     try:
-                        lane = self._lane_for_intent(command.intent)
-                        retry_key = (
-                            self._lane_retry_key(command.instance_uuid, lane)
-                            if command.instance_uuid is not None and lane is not None
-                            else command.instance_uuid or RetryRegistry.GLOBAL_KEY
-                        )
-                        self.retry_registry.mark_success(retry_key)
-                        self.scheduler_state.record_success()
+                        if not bool(
+                            getattr(
+                                self._execution_local,
+                                "degraded_data_result",
+                                False,
+                            )
+                        ):
+                            lane = self._lane_for_intent(command.intent)
+                            retry_key = (
+                                self._lane_retry_key(command.instance_uuid, lane)
+                                if command.instance_uuid is not None and lane is not None
+                                else command.instance_uuid or RetryRegistry.GLOBAL_KEY
+                            )
+                            self.retry_registry.mark_success(retry_key)
+                            self.scheduler_state.record_success()
                     except Exception:
                         logger.exception("Refresh success bookkeeping failed")
             self._signal_completion(finished.id)
@@ -1628,6 +1639,7 @@ class RefreshTask:
             if busy_lock is not None:
                 busy_lock.release()
             self._execution_local.context = None
+            self._execution_local.degraded_data_result = False
             self._active_operation = None
             try:
                 self._run_memory_maintenance("refresh-command-finally")
@@ -1719,6 +1731,16 @@ class RefreshTask:
             lane=lane,
         )
         return delay
+
+    def _record_degraded_data_result(self, command, provenance, current_dt):
+        error = RuntimeError(
+            f"DATA source is display-safe but unhealthy: {provenance.value}"
+        )
+        self.scheduler_state.record_failure(error)
+        self._record_intent_failure(command, error, current_dt)
+        self.scheduler_state.set_next_attempt(
+            self._clock() + self._scheduler_poll_seconds()
+        )
 
     def _record_runtime_success(self, instance_uuid, succeeded_at):
         try:
@@ -2024,6 +2046,20 @@ class RefreshTask:
             mode = PresentationMode(plugin.presentation_mode(settings))
             if mode is PresentationMode.LEGACY_ASYNC:
                 raise RuntimeError("legacy async presentation refresh is disabled")
+            if mode is PresentationMode.NO_CHANGE:
+                if not self.runtime_state.satisfy_presentation_no_change(
+                    instance.instance_uuid,
+                    request.request_id,
+                    request.requested_at,
+                ):
+                    raise _StaleSelection("presentation request changed before no-change commit")
+                self.retry_registry.mark_success(
+                    self._lane_retry_key(
+                        instance.instance_uuid,
+                        RefreshLane.PRESENTATION,
+                    )
+                )
+                return None
             origin_receipt = PresentationCommitReceipt(
                 request_id=request.request_id,
                 committed_at=request.requested_at,
@@ -2042,21 +2078,6 @@ class RefreshTask:
                     settings,
                     prior_receipt,
                 )
-            if mode is PresentationMode.NO_CHANGE:
-                if not self.runtime_state.satisfy_presentation_no_change(
-                    instance.instance_uuid,
-                    request.request_id,
-                    request.requested_at,
-                ):
-                    raise _StaleSelection("presentation request changed before no-change commit")
-                self.retry_registry.mark_success(
-                    self._lane_retry_key(
-                        instance.instance_uuid,
-                        RefreshLane.PRESENTATION,
-                    )
-                )
-                return None
-
             request_context = PresentationRequestContext(
                 request_id=request.request_id,
                 requested_at=request.requested_at,
@@ -2449,6 +2470,7 @@ class RefreshTask:
         self._execution_local.render_generated = bool(generated)
         self._execution_local.render_cacheable = bool(cacheable)
         self._execution_local.render_theme_only = bool(theme_only)
+        self._execution_local.degraded_data_result = False
         self._execution_local.image_settings = list((plugin_config or {}).get("image_settings", []))
 
     def _snapshot_live_state_due(self, instance, state, current_dt):
@@ -2589,6 +2611,16 @@ class RefreshTask:
             instance = resolved_snapshot.instance
             generated = bool(getattr(self._execution_local, "render_generated", False))
             cacheable = bool(getattr(self._execution_local, "render_cacheable", False))
+            source_provenance = read_source_provenance(image)
+            degraded_data_result = (
+                command.intent is RefreshIntent.DATA_REFRESH
+                and generated
+                and source_provenance
+                in {
+                    SourceProvenance.STALE_CACHE,
+                    SourceProvenance.LOCAL_FALLBACK,
+                }
+            )
             theme_only = bool(
                 getattr(self._execution_local, "render_theme_only", False)
             )
@@ -2618,7 +2650,14 @@ class RefreshTask:
             ):
                 promoted_for_intent = True
 
-            if promoted_for_intent:
+            if degraded_data_result:
+                self._execution_local.degraded_data_result = True
+                self._record_degraded_data_result(
+                    command,
+                    source_provenance,
+                    current_dt,
+                )
+            elif promoted_for_intent:
                 self._record_intent_success(
                     command,
                     instance,

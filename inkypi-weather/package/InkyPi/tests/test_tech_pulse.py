@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
+import pytest
 
 sys.modules.setdefault(
     "psutil",
@@ -23,6 +24,8 @@ from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     TITLE_WORDMARK_IMAGE,
     TechPulse,
 )
+from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
+from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
 from security.ssrf import validate_browser_target  # noqa: E402
 
 
@@ -74,7 +77,7 @@ class FakeSession:
 
 def _plugin(tmp_path):
     plugin = TechPulse({"id": "tech_pulse"})
-    plugin._cache_dir = lambda: tmp_path
+    plugin._cache_dir = lambda create=True: tmp_path
     return plugin
 
 
@@ -412,6 +415,140 @@ def test_render_page_returns_nonblank_800x480_and_draws_labels(tmp_path, monkeyp
     assert "HN TOP 5" in drawn
     assert story_list_ranks == [2, 3]
     assert preview_urls == ["https://example.com/sqlite"]
+
+
+def test_tech_pulse_presentation_is_explicit_no_change(monkeypatch, tmp_path):
+    plugin = _plugin(tmp_path)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("NO_CHANGE presentation must not render, fetch, or write")
+
+    monkeypatch.setattr(plugin, "generate_image", forbidden)
+    monkeypatch.setattr(plugin, "_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_json", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+
+    assert "presentation_mode" in TechPulse.__dict__
+    assert plugin.presentation_mode({}) is PresentationMode.NO_CHANGE
+
+
+def test_tech_pulse_provenance_covers_live_fresh_stale_wrong_key_and_local(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    story = plugin._parse_story_item(_story(88, "Task 6 story"), now=now)
+    story["rank"] = 1
+    live_payload = plugin._build_payload("topstories", [story], "live", now, [HN_DOCS_URL])
+    monkeypatch.setattr(plugin, "_fetch_live_payload", lambda *_args: dict(live_payload))
+    live = plugin._payload({"feed": "topstories", "maxStories": "5"}, now)
+    fresh = plugin._payload({"feed": "topstories", "maxStories": "5"}, now)
+
+    cached = plugin._read_json(tmp_path / "state.json", {})
+    cached["cache_key"] = "wrong-key"
+    cached["status"]["generated_at"] = (now - timedelta(hours=2)).isoformat()
+    plugin._write_json(tmp_path / "state.json", cached)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    stale = plugin._payload({"feed": "topstories", "maxStories": "5"}, now)
+
+    (tmp_path / "state.json").unlink()
+    local = plugin._payload({"feed": "topstories", "maxStories": "5"}, now)
+
+    assert live["_source_provenance"] == "live"
+    assert fresh["_source_provenance"] == "fresh_cache"
+    assert stale["_source_provenance"] == "stale_cache"
+    assert local["_source_provenance"] == "local_fallback"
+
+
+def test_tech_pulse_theme_provenance_is_read_only_and_context_has_health_label(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    story = plugin._parse_story_item(_story(89, "Cached theme story"), now=now)
+    story["rank"] = 1
+    cache = plugin._build_payload(
+        "topstories",
+        [story],
+        "live",
+        now - timedelta(hours=2),
+        [HN_DOCS_URL],
+    )
+    cache["cache_key"] = plugin._cache_key("topstories", 5, None)
+    plugin._write_json(tmp_path / "state.json", cache)
+    before = (tmp_path / "state.json").read_bytes()
+    captured = []
+    monkeypatch.setattr(
+        tech_pulse_module,
+        "write_context",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
+    )
+    plugin._write_context({**cache, "_source_provenance": "stale_cache"}, now)
+    assert captured[0][0][1]["source_provenance"] == "stale_cache"
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("theme-only work must not fetch or write")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+    monkeypatch.setattr(plugin, "_write_json", forbidden)
+    monkeypatch.setattr(
+        plugin,
+        "_render_page",
+        lambda *_args: Image.new("RGB", (2, 1), "white"),
+    )
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.generate_image(
+        {
+            "feed": "topstories",
+            "maxStories": "5",
+            "_theme_render_only": True,
+            "_inkypi_theme": canonical_theme("day"),
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert read_source_provenance(image).value == "stale_cache"
+    assert (tmp_path / "state.json").read_bytes() == before
+
+
+def test_tech_pulse_cold_theme_render_does_not_create_cache_tree(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = TechPulse({"id": "tech_pulse"})
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("cold theme-only render must not fetch or write")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden)
+    monkeypatch.setattr(plugin, "_write_json", forbidden)
+    monkeypatch.setattr(plugin, "_write_context", forbidden)
+
+    with pytest.raises(RuntimeError, match="matching cached source data"):
+        plugin.generate_image(
+            {
+                "_theme_render_only": True,
+                "_inkypi_theme": canonical_theme("day"),
+            },
+            FakeDeviceConfig(),
+        )
+
+    assert not cache_root.exists()
+
+    writer = TechPulse({"id": "tech_pulse"})
+    state_path = writer._cache_dir() / "state.json"
+    writer._write_json(state_path, {"ok": True})
+    assert state_path.is_file()
 
 
 def test_title_wordmark_asset_exists_and_draws(tmp_path):
