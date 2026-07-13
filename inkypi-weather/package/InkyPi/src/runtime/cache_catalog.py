@@ -70,6 +70,33 @@ def _theme_mode(value) -> str | None:
     return value
 
 
+def cache_identity_prefix(instance_uuid) -> str:
+    """Return the shared authoritative cache prefix for one instance UUID."""
+
+    instance_uuid = _instance_uuid(instance_uuid)
+    return hashlib.sha256(instance_uuid.encode("utf-8")).hexdigest()[:32]
+
+
+def parse_authoritative_cache_filename(filename):
+    """Parse one direct-child authoritative filename without touching disk."""
+
+    try:
+        filename = os.fspath(filename)
+    except TypeError:
+        return None
+    if not isinstance(filename, str) or os.path.basename(filename) != filename:
+        return None
+    match = _CACHE_NAME_RE.fullmatch(filename)
+    if match is None:
+        return None
+    return CachePathIdentity(
+        uuid_hash_prefix=match.group("prefix"),
+        structural_generation=int(match.group("generation")),
+        settings_revision=int(match.group("revision")),
+        theme_mode=match.group("theme"),
+    )
+
+
 def authoritative_cache_path(
     cache_root,
     instance_uuid,
@@ -86,7 +113,7 @@ def authoritative_cache_path(
     )
     settings_revision = _positive_int(settings_revision, "settings_revision")
     theme_mode = _theme_mode(theme_mode)
-    prefix = hashlib.sha256(instance_uuid.encode("utf-8")).hexdigest()[:32]
+    prefix = cache_identity_prefix(instance_uuid)
     suffix = "" if theme_mode is None else f"-{theme_mode}"
     filename = (
         f"{prefix}-{structural_generation}-{settings_revision}{suffix}.png"
@@ -101,15 +128,7 @@ def parse_authoritative_cache_path(cache_root, cache_path):
     path = Path(os.path.abspath(os.fspath(cache_path)))
     if path.parent != root or path.is_symlink():
         return None
-    match = _CACHE_NAME_RE.fullmatch(path.name)
-    if match is None:
-        return None
-    return CachePathIdentity(
-        uuid_hash_prefix=match.group("prefix"),
-        structural_generation=int(match.group("generation")),
-        settings_revision=int(match.group("revision")),
-        theme_mode=match.group("theme"),
-    )
+    return parse_authoritative_cache_filename(path.name)
 
 
 class CacheCatalog:
@@ -312,9 +331,7 @@ class CacheCatalog:
         identity = parse_authoritative_cache_path(self.cache_root, path)
         if identity is None:
             return None
-        expected_prefix = hashlib.sha256(
-            candidate.instance_uuid.encode("utf-8")
-        ).hexdigest()[:32]
+        expected_prefix = cache_identity_prefix(candidate.instance_uuid)
         if identity != CachePathIdentity(
             uuid_hash_prefix=expected_prefix,
             structural_generation=candidate.structural_generation,

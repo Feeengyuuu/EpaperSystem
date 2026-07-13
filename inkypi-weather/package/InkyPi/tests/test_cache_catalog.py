@@ -7,9 +7,12 @@ import pytest
 
 from src.runtime import cache_catalog as cache_catalog_module
 from src.runtime.cache_catalog import (
+    CachePathIdentity,
     CacheCatalog,
     DisplayCacheCandidate,
     authoritative_cache_path,
+    cache_identity_prefix,
+    parse_authoritative_cache_filename,
 )
 from src.runtime.runtime_state import InstanceRuntimeState, LastGoodCacheState
 
@@ -35,6 +38,60 @@ def _last_good(*, mode, generation=2, revision=5):
         settings_revision=revision,
         promoted_at="2026-07-09T10:00:00+00:00",
     )
+
+
+@pytest.mark.parametrize("theme_mode", [None, "day", "night"])
+def test_parse_authoritative_filename_roundtrips_none_day_night(
+    tmp_path,
+    theme_mode,
+):
+    path = Path(
+        authoritative_cache_path(
+            tmp_path,
+            "instance-one",
+            2,
+            5,
+            theme_mode,
+        )
+    )
+
+    assert parse_authoritative_cache_filename(path.name) == CachePathIdentity(
+        uuid_hash_prefix=cache_identity_prefix("instance-one"),
+        structural_generation=2,
+        settings_revision=5,
+        theme_mode=theme_mode,
+    )
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "weather_Home.png",
+        "instance-one-2-5.png",
+        "0" * 31 + "-2-5.png",
+        "A" * 32 + "-2-5.png",
+        "0" * 32 + "-0-5.png",
+        "0" * 32 + "-2-0.png",
+        "0" * 32 + "-2-5-dusk.png",
+        "0" * 32 + "-2-5-night.png.tmp",
+        "." + "0" * 32 + "-2-5.png.token.tmp",
+        "../" + "0" * 32 + "-2-5.png",
+        "nested/" + "0" * 32 + "-2-5.png",
+    ],
+)
+def test_parse_authoritative_filename_rejects_alias_temp_and_malformed_shape(
+    filename,
+):
+    assert parse_authoritative_cache_filename(filename) is None
+
+
+def test_public_identity_prefix_matches_authoritative_path(tmp_path):
+    prefix = cache_identity_prefix("instance-one")
+    path = Path(authoritative_cache_path(tmp_path, "instance-one", 7, 9, "day"))
+
+    assert len(prefix) == 32
+    assert path.name == f"{prefix}-7-9-day.png"
+    assert parse_authoritative_cache_filename(path.name).uuid_hash_prefix == prefix
 
 
 def test_current_theme_exact_revision_wins_over_last_good(tmp_path):

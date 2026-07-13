@@ -887,6 +887,71 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert not thread.is_alive()
         assert acquired == [True]
 
+    def test_snapshot_all_instances_is_deeply_immutable_and_covers_inactive_playlists(
+        self,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Day",
+                "08:00",
+                "18:00",
+                [
+                    self._plugin(
+                        "First",
+                        instance_uuid="first-uuid",
+                        settings={"nested": {"values": ["original"]}},
+                    ),
+                    self._plugin("Second", instance_uuid="second-uuid"),
+                ],
+            ),
+            self._playlist(
+                "Night",
+                "18:00",
+                "08:00",
+                [self._plugin("Third", instance_uuid="third-uuid")],
+            ),
+            active_playlist="Day",
+        )
+        before_rotation = self._rotation_state(manager)
+
+        snapshots = manager.snapshot_all_instances()
+
+        assert isinstance(snapshots, tuple)
+        assert [item.instance_uuid for item in snapshots] == [
+            "first-uuid",
+            "second-uuid",
+            "third-uuid",
+        ]
+        with pytest.raises(FrozenInstanceError):
+            snapshots[0].name = "Changed"
+        with pytest.raises(TypeError):
+            snapshots[0].settings["nested"]["values"][0] = "changed"
+        manager.update_plugin_instance(
+            "first-uuid",
+            settings={"nested": {"values": ["updated"]}},
+        )
+        assert snapshots[0].settings["nested"]["values"] == ("original",)
+        assert self._rotation_state(manager) == before_rotation
+        assert manager.active_playlist == "Day"
+
+    def test_snapshot_all_instances_releases_model_lock_before_filesystem_work(
+        self,
+        tmp_path,
+    ):
+        manager = self._manager(
+            self._playlist(
+                "Default",
+                plugins=[self._plugin("Clock", instance_uuid="clock-uuid")],
+            )
+        )
+
+        snapshots = manager.snapshot_all_instances()
+        self._assert_manager_lock_released(manager)
+        probe = tmp_path / "lock-free-probe"
+        probe.write_text(snapshots[0].instance_uuid, encoding="utf-8")
+
+        assert probe.read_text(encoding="utf-8") == "clock-uuid"
+
     def test_select_next_active_uses_only_eligible_uuid_bag(self, monkeypatch):
         manager = self._manager(
             self._playlist(

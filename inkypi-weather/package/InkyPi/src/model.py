@@ -176,6 +176,16 @@ class PlaylistManager:
             match = self._find_instance_by_uuid(instance_uuid)
             return match[2].snapshot() if match else None
 
+    def snapshot_all_instances(self) -> tuple[PluginInstanceSnapshot, ...]:
+        """Return every configured instance in stable playlist order."""
+
+        with self._lock:
+            return tuple(
+                instance.snapshot()
+                for playlist in self.playlists
+                for instance in playlist.plugins
+            )
+
     def resolve_plugin_instance_snapshot(
         self,
         playlist_name,

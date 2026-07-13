@@ -12,6 +12,8 @@ from src.runtime import presentation_cache as presentation_cache_module
 from src.runtime.presentation_cache import (
     PreparedPresentationCandidate,
     PresentationCache,
+    PresentationPathIdentity,
+    parse_prepared_presentation_filename,
     prepared_presentation_path,
 )
 
@@ -89,6 +91,53 @@ def test_prepared_path_is_a_deterministic_direct_child(tmp_path):
     digest = hashlib.sha256(INSTANCE_UUID.encode("utf-8")).hexdigest()
     assert path.parent == root
     assert path.name == f"{digest}-2-5-night-{REQUEST_ID}.png"
+
+
+@pytest.mark.parametrize("theme_mode", [None, "day", "night"])
+def test_prepared_filename_parser_roundtrips_shared_identity(
+    tmp_path,
+    theme_mode,
+):
+    path = Path(
+        prepared_presentation_path(
+            tmp_path,
+            INSTANCE_UUID,
+            2,
+            5,
+            theme_mode,
+            REQUEST_ID,
+        )
+    )
+
+    assert parse_prepared_presentation_filename(path.name) == (
+        PresentationPathIdentity(
+            uuid_hash=hashlib.sha256(INSTANCE_UUID.encode("utf-8")).hexdigest(),
+            structural_generation=2,
+            settings_revision=5,
+            theme_mode=theme_mode,
+            request_id=REQUEST_ID,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "alias.png",
+        "0" * 63 + "-2-5-" + REQUEST_ID + ".png",
+        "A" * 64 + "-2-5-" + REQUEST_ID + ".png",
+        "0" * 64 + "-0-5-" + REQUEST_ID + ".png",
+        "0" * 64 + "-2-0-" + REQUEST_ID + ".png",
+        "0" * 64 + "-2-5-dusk-" + REQUEST_ID + ".png",
+        "0" * 64 + "-2-5-" + "A" * 32 + ".png",
+        "../" + "0" * 64 + "-2-5-" + REQUEST_ID + ".png",
+        "." + "0" * 64 + "-2-5-" + REQUEST_ID + ".png.token.tmp",
+    ],
+)
+def test_prepared_filename_parser_rejects_alias_temp_and_malformed_shape(
+    filename,
+):
+    assert parse_prepared_presentation_filename(filename) is None
 
 
 @pytest.mark.parametrize(

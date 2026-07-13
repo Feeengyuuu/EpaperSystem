@@ -52,6 +52,17 @@ class PreparedPresentationCandidate:
 
 
 @dataclass(frozen=True)
+class PresentationPathIdentity:
+    """Identity encoded by an authoritative prepared-presentation filename."""
+
+    uuid_hash: str
+    structural_generation: int
+    settings_revision: int
+    theme_mode: str | None
+    request_id: str
+
+
+@dataclass(frozen=True)
 class _BoundCacheFile:
     fd: int
     file_stat: os.stat_result
@@ -127,6 +138,27 @@ def prepared_presentation_path(
     filename = f"{uuid_hash}-{structural_generation}-{settings_revision}{theme_suffix}-{request_id}.png"
     root = Path(os.path.abspath(os.fspath(cache_root)))
     return str(root / filename)
+
+
+def parse_prepared_presentation_filename(filename) -> PresentationPathIdentity | None:
+    """Parse one direct-child prepared filename without performing filesystem I/O."""
+
+    try:
+        filename = os.fspath(filename)
+    except TypeError:
+        return None
+    if not isinstance(filename, str) or os.path.basename(filename) != filename:
+        return None
+    match = _CACHE_NAME_RE.fullmatch(filename)
+    if match is None:
+        return None
+    return PresentationPathIdentity(
+        uuid_hash=match.group("uuid_hash"),
+        structural_generation=int(match.group("generation")),
+        settings_revision=int(match.group("revision")),
+        theme_mode=match.group("theme"),
+        request_id=match.group("request_id"),
+    )
 
 
 class PresentationCache:
@@ -266,16 +298,16 @@ class PresentationCache:
         if path.parent != self.cache_root:
             return None
 
-        match = _CACHE_NAME_RE.fullmatch(path.name)
-        if match is None:
+        identity = parse_prepared_presentation_filename(path.name)
+        if identity is None:
             return None
         expected_hash = hashlib.sha256(candidate.instance_uuid.encode("utf-8")).hexdigest()
         if (
-            match.group("uuid_hash") != expected_hash
-            or int(match.group("generation")) != candidate.structural_generation
-            or int(match.group("revision")) != candidate.settings_revision
-            or match.group("theme") != candidate.theme_mode
-            or match.group("request_id") != candidate.request_id
+            identity.uuid_hash != expected_hash
+            or identity.structural_generation != candidate.structural_generation
+            or identity.settings_revision != candidate.settings_revision
+            or identity.theme_mode != candidate.theme_mode
+            or identity.request_id != candidate.request_id
         ):
             return None
         return path
@@ -383,8 +415,8 @@ class PresentationCache:
                 raise OSError(errno.ELOOP, "presentation cache contains an unsafe child", name)
             total_files += 1
             total_bytes += item_stat.st_size
-            match = _CACHE_NAME_RE.fullmatch(name)
-            if match is not None and match.group("uuid_hash") == expected_hash:
+            identity = parse_prepared_presentation_filename(name)
+            if identity is not None and identity.uuid_hash == expected_hash:
                 instance_files += 1
             if name == path.name:
                 target_exists = True
