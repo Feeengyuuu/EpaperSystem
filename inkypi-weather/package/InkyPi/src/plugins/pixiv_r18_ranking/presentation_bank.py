@@ -71,6 +71,8 @@ _PROFILE_KEYS = {
     "pending_selection",
     "last_applied_origin_commit_id",
     "last_applied_request_id",
+    "last_provider_attempt_at",
+    "last_provider_status",
     "refill_in_progress",
     "source_provenance",
     "last_used_at",
@@ -1019,6 +1021,8 @@ class PixivPresentationBank:
             "pending_selection": None,
             "last_applied_origin_commit_id": None,
             "last_applied_request_id": None,
+            "last_provider_attempt_at": None,
+            "last_provider_status": None,
             "refill_in_progress": False,
             "source_provenance": {},
             "last_used_at": _utc_now(),
@@ -1033,6 +1037,12 @@ class PixivPresentationBank:
         profile["settings_fingerprint"] = self.base_fingerprint
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
+        attempted_at = _parse_datetime(profile.get("last_provider_attempt_at"))
+        profile["last_provider_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         profile["date_buckets"] = _bounded_date_buckets(profile.get("date_buckets"))
         normalized = []
         for record in profile.get("records") or []:

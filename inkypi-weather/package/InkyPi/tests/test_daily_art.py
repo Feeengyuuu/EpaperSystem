@@ -18,6 +18,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 
 
@@ -1192,6 +1196,68 @@ def test_force_refresh_does_not_change_bank_identity(tmp_path, monkeypatch):
 
     assert after["instance_profiles"]["daily-art-test-instance"] == fingerprint
     assert set(after["profiles"]) == set(state["profiles"])
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_daily_art_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    tmp_path,
+    monkeypatch,
+    force_key,
+):
+    plugin = make_plugin(tmp_path)
+    settings = bound_settings()
+    hydrate_bank(plugin, monkeypatch, settings)
+    before = presentation_state(plugin)
+    current = dict(profile_for(before)["current_selection"])
+    candidate = art_candidate(99)
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda *_args: calls.append("provider") or [candidate],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_image_preview",
+        lambda *_args: Image.new("RGB", (240, 420), "purple"),
+    )
+
+    image = plugin.generate_image({**settings, force_key: "true"}, FakeDeviceConfig())
+
+    profile = profile_for(presentation_state(plugin))
+    assert calls == ["provider"]
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert any(record["artwork_id"] == candidate.artwork_id for record in profile["records"])
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_daily_art_force_refresh_provider_error_marks_warm_bank_stale_and_skips_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = bound_settings()
+    hydrate_bank(plugin, monkeypatch, settings)
+    candidate = art_candidate(99)
+    monkeypatch.setattr(plugin, "_candidate_pool", lambda *_args: [candidate])
+    monkeypatch.setattr(
+        plugin,
+        "_download_image_preview",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("media provider offline")),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        FakeDeviceConfig(),
+    )
+
+    profile = profile_for(presentation_state(plugin))
+    assert profile["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_presentation_bank_budget_and_state_limits_are_declared():

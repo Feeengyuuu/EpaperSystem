@@ -65,6 +65,16 @@ class PlaylistDeletionResult:
     removed_instances: tuple[PluginInstanceSnapshot, ...]
 
 
+@dataclass(frozen=True)
+class PlaylistRotationAcknowledgement:
+    """Rollback token for one persisted automatic display acknowledgement."""
+
+    playlist_name: str
+    instance_uuid: str
+    before_state: tuple
+    after_state: tuple
+
+
 class RefreshInfo:
     """Keeps track of refresh metadata.
 
@@ -266,6 +276,101 @@ class PlaylistManager:
             if instance is None:
                 return None
             return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    def reserve_next_active_instance(
+        self,
+        current_datetime,
+        *,
+        latest_refresh,
+        interval_seconds,
+        eligible_instance_uuids=None,
+    ) -> PlaylistSelectionSnapshot | None:
+        """Reserve, but do not consume, one due automatic display candidate."""
+        eligible_instance_uuids = self._normalize_eligible_instance_uuids(
+            eligible_instance_uuids
+        )
+        if latest_refresh is not None and not isinstance(latest_refresh, datetime):
+            raise ValueError("latest_refresh must be a datetime or None")
+        try:
+            normalized_interval = float(interval_seconds)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("interval_seconds must be finite") from exc
+        if not math.isfinite(normalized_interval):
+            raise ValueError("interval_seconds must be finite")
+
+        with self._lock:
+            playlist = self._determine_active_playlist_locked(current_datetime)
+            if playlist is None:
+                self.active_playlist = None
+                return None
+
+            self.active_playlist = playlist.name
+            if not playlist.plugins:
+                return None
+            if not self.should_refresh(
+                latest_refresh,
+                normalized_interval,
+                current_datetime,
+            ):
+                return None
+
+            instance = playlist.reserve_next_plugin(eligible_instance_uuids)
+            if instance is None:
+                return None
+            return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    def validate_rotation_reservation(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+    ) -> bool:
+        """Return whether an automatic display still owns this exact reservation."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return False
+            playlist = match[0]
+            return (
+                playlist.name == expected_playlist_name
+                and playlist.is_rotation_reservation_current(instance_uuid)
+            )
+
+    def acknowledge_rotation_display(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+    ) -> PlaylistRotationAcknowledgement | None:
+        """Consume one reserved member only after its playlist display commits."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+            playlist = match[0]
+            if playlist.name != expected_playlist_name:
+                return None
+            return playlist.acknowledge_rotation_display(instance_uuid)
+
+    def rollback_rotation_acknowledgement(
+        self,
+        acknowledgement: PlaylistRotationAcknowledgement,
+    ) -> bool:
+        """Restore an acknowledgement only if no later rotation mutation won."""
+        if not isinstance(acknowledgement, PlaylistRotationAcknowledgement):
+            return False
+        with self._lock:
+            playlist = next(
+                (
+                    item
+                    for item in self.playlists
+                    if item.name == acknowledgement.playlist_name
+                ),
+                None,
+            )
+            if playlist is None:
+                return False
+            return playlist.rollback_rotation_acknowledgement(acknowledgement)
 
     @staticmethod
     def _normalize_eligible_instance_uuids(values):
@@ -882,6 +987,9 @@ class Playlist:
         self.plugin_rotation_queue = list(plugin_rotation_queue or [])
         self.plugin_rotation_pool = list(plugin_rotation_pool or [])
         self.plugin_rotation_recent_history = list(plugin_rotation_recent_history or [])
+        # Reservations are process-local. The persisted queue remains unchanged
+        # until a successful playlist DISPLAY commit acknowledges the member.
+        self._plugin_rotation_reserved_key = None
 
     def is_active(self, current_time):
         """Check if the playlist is active at the given time."""
@@ -925,6 +1033,9 @@ class Playlist:
 
     def get_next_plugin(self, eligible_instance_uuids=None):
         """Return the next plugin from a shuffled no-repeat rotation bag."""
+        # This legacy API consumes immediately. Any outstanding automatic
+        # reservation must become stale before that separate mutation proceeds.
+        self._plugin_rotation_reserved_key = None
         if eligible_instance_uuids is not None:
             eligible_instance_uuids = frozenset(eligible_instance_uuids)
             if not eligible_instance_uuids:
@@ -1021,6 +1132,204 @@ class Playlist:
         self.plugin_rotation_recent_history = self._updated_recent_history(next_key, recent_history, len(plugin_keys))
 
         return self.plugins[self.current_plugin_index]
+
+    def reserve_next_plugin(self, eligible_instance_uuids=None):
+        """Reserve an eligible member from the full persisted shuffle bag.
+
+        Eligibility is only an admission filter: ineligible configured members
+        remain in the current round. Selection does not remove the reservation
+        from ``plugin_rotation_queue``; acknowledgement after display commit does.
+        """
+        if eligible_instance_uuids is not None:
+            eligible_instance_uuids = frozenset(eligible_instance_uuids)
+            if not eligible_instance_uuids:
+                return None
+        if not self.plugins:
+            self.current_plugin_index = None
+            self.plugin_rotation_queue = []
+            self.plugin_rotation_pool = []
+            self.plugin_rotation_recent_history = []
+            self._plugin_rotation_reserved_key = None
+            return None
+
+        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        if eligible_instance_uuids is not None and not any(
+            key in eligible_instance_uuids for key in plugin_keys
+        ):
+            return None
+
+        self._reconcile_automatic_rotation_bag(plugin_keys)
+        if not self.plugin_rotation_queue:
+            self.plugin_rotation_queue = list(plugin_keys)
+            random.shuffle(self.plugin_rotation_queue)
+            self._avoid_automatic_round_boundary_repeat()
+
+        reserved_key = self._plugin_rotation_reserved_key
+        if (
+            reserved_key not in self.plugin_rotation_queue
+            or (
+                eligible_instance_uuids is not None
+                and reserved_key not in eligible_instance_uuids
+            )
+        ):
+            reserved_key = None
+            self._plugin_rotation_reserved_key = None
+
+        if reserved_key is None:
+            reserved_key = next(
+                (
+                    key
+                    for key in self.plugin_rotation_queue
+                    if eligible_instance_uuids is None
+                    or key in eligible_instance_uuids
+                ),
+                None,
+            )
+            if reserved_key is None:
+                # The round still contains configured members, but none currently
+                # has a valid cache. Do not refill and do not discard them.
+                return None
+            self._plugin_rotation_reserved_key = reserved_key
+
+        return next(
+            plugin
+            for plugin in self.plugins
+            if self._plugin_rotation_key(plugin) == reserved_key
+        )
+
+    def is_rotation_reservation_current(self, instance_uuid):
+        return (
+            self._plugin_rotation_reserved_key == instance_uuid
+            and instance_uuid in self.plugin_rotation_queue
+            and any(
+                self._plugin_rotation_key(plugin) == instance_uuid
+                for plugin in self.plugins
+            )
+        )
+
+    def acknowledge_rotation_display(self, instance_uuid):
+        """Remove exactly one current reservation and return a rollback token."""
+        before_state = self._automatic_rotation_state()
+        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        self._reconcile_automatic_rotation_bag(plugin_keys)
+        if not self.is_rotation_reservation_current(instance_uuid):
+            self._restore_automatic_rotation_state(before_state)
+            return None
+
+        self.plugin_rotation_queue.remove(instance_uuid)
+        self.current_plugin_index = next(
+            index
+            for index, plugin in enumerate(self.plugins)
+            if self._plugin_rotation_key(plugin) == instance_uuid
+        )
+        recent_history = self._dedupe_rotation_keys(
+            key
+            for key in self.plugin_rotation_recent_history
+            if key in plugin_keys
+        )
+        self.plugin_rotation_recent_history = self._updated_recent_history(
+            instance_uuid,
+            recent_history,
+            len(plugin_keys),
+        )
+        self._plugin_rotation_reserved_key = None
+        after_state = self._automatic_rotation_state()
+        return PlaylistRotationAcknowledgement(
+            playlist_name=self.name,
+            instance_uuid=instance_uuid,
+            before_state=before_state,
+            after_state=after_state,
+        )
+
+    def rollback_rotation_acknowledgement(self, acknowledgement):
+        if (
+            acknowledgement.playlist_name != self.name
+            or self._automatic_rotation_state() != acknowledgement.after_state
+        ):
+            return False
+        self._restore_automatic_rotation_state(acknowledgement.before_state)
+        return True
+
+    def _reconcile_automatic_rotation_bag(self, plugin_keys):
+        configured = set(plugin_keys)
+        previous_pool = self._dedupe_rotation_keys(
+            key for key in self.plugin_rotation_pool if key in configured
+        )
+        initialized_new_round = not previous_pool
+        remaining = self._dedupe_rotation_keys(
+            key for key in self.plugin_rotation_queue if key in configured
+        )
+        newly_configured = [
+            key for key in plugin_keys if key not in set(previous_pool)
+        ]
+        if not previous_pool:
+            remaining = list(plugin_keys)
+            random.shuffle(remaining)
+        elif newly_configured:
+            random.shuffle(newly_configured)
+            remaining.extend(
+                key for key in newly_configured if key not in remaining
+            )
+
+        self.plugin_rotation_pool = list(plugin_keys)
+        self.plugin_rotation_queue = remaining
+        self.plugin_rotation_recent_history = self._dedupe_rotation_keys(
+            key for key in self.plugin_rotation_recent_history if key in configured
+        )[: self._recent_history_max_size(len(plugin_keys))]
+        if initialized_new_round:
+            self._avoid_automatic_round_boundary_repeat()
+        if self._plugin_rotation_reserved_key not in remaining:
+            self._plugin_rotation_reserved_key = None
+
+    def _avoid_automatic_round_boundary_repeat(self):
+        if len(self.plugin_rotation_queue) < 2:
+            return
+        current_key = None
+        if (
+            isinstance(self.current_plugin_index, int)
+            and 0 <= self.current_plugin_index < len(self.plugins)
+        ):
+            current_key = self._plugin_rotation_key(
+                self.plugins[self.current_plugin_index]
+            )
+        if current_key is None and self.plugin_rotation_recent_history:
+            current_key = self.plugin_rotation_recent_history[0]
+        if current_key is None or self.plugin_rotation_queue[0] != current_key:
+            return
+        replacement_index = next(
+            (
+                index
+                for index, key in enumerate(self.plugin_rotation_queue[1:], start=1)
+                if key != current_key
+            ),
+            None,
+        )
+        if replacement_index is not None:
+            self.plugin_rotation_queue[0], self.plugin_rotation_queue[replacement_index] = (
+                self.plugin_rotation_queue[replacement_index],
+                self.plugin_rotation_queue[0],
+            )
+
+    def _automatic_rotation_state(self):
+        return (
+            self.current_plugin_index,
+            tuple(self.plugin_rotation_queue),
+            tuple(self.plugin_rotation_pool),
+            tuple(self.plugin_rotation_recent_history),
+            self._plugin_rotation_reserved_key,
+        )
+
+    def _restore_automatic_rotation_state(self, state):
+        (
+            self.current_plugin_index,
+            queue,
+            pool,
+            recent_history,
+            self._plugin_rotation_reserved_key,
+        ) = state
+        self.plugin_rotation_queue = list(queue)
+        self.plugin_rotation_pool = list(pool)
+        self.plugin_rotation_recent_history = list(recent_history)
 
     def _plugin_rotation_key(self, plugin):
         return plugin.instance_uuid

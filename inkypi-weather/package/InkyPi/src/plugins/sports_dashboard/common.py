@@ -15,6 +15,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+    read_source_provenance,
+)
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
@@ -2215,6 +2220,9 @@ class SportsDashboardCommonMixin:
                 visible_worldcup_matches,
                 self._worldcup_configured_season(settings),
             )
+        left_provenance = read_source_provenance(left)
+        if left_provenance is None:
+            left_provenance = self._sports_source_state_provenance(left_source)
         left, worldcup_content_box = self._prepare_worldcup_panel(
             left.convert("RGB"),
             (left_width, worldcup_height),
@@ -2244,6 +2252,7 @@ class SportsDashboardCommonMixin:
         if self._should_show_offseason_hub_panel(settings, nba_selected):
             try:
                 hub_selected, hub_source_state = self._load_offseason_hub(settings, timezone_info, now)
+                lower_source_state = hub_source_state
                 self._write_offseason_hub_state(hub_selected, now, hub_source_state)
                 self._draw_offseason_hub_compact_panel(
                     image,
@@ -2255,6 +2264,7 @@ class SportsDashboardCommonMixin:
                 )
             except Exception as exc:
                 logger.warning("Offseason hub panel failed, falling back to NBA panel: %s", exc)
+                lower_source_state = nba_source_state
                 self._draw_nba_compact_panel(
                     image,
                     draw,
@@ -2264,6 +2274,7 @@ class SportsDashboardCommonMixin:
                     now,
                 )
         else:
+            lower_source_state = nba_source_state
             self._draw_nba_compact_panel(
                 image,
                 draw,
@@ -2306,14 +2317,26 @@ class SportsDashboardCommonMixin:
             ewc_selected = esports_choice["selected"]
             ewc_source_state = esports_choice["source_state"]
             self._draw_ewc_sidebar(image, left_width, ewc_selected, ewc_source_state, now)
-            return image
+            return self._attest_sports_dashboard_image(
+                image,
+                left_provenance,
+                self._sports_source_state_provenance(lower_source_state),
+                self._sports_source_state_provenance(ewc_source_state),
+                force_refresh=self._force_refresh_requested(settings),
+            )
 
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
             valve_source_state = esports_choice["source_state"]
             self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
             self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
-            return image
+            return self._attest_sports_dashboard_image(
+                image,
+                left_provenance,
+                self._sports_source_state_provenance(lower_source_state),
+                self._sports_source_state_provenance(valve_source_state),
+                force_refresh=self._force_refresh_requested(settings),
+            )
 
         lol_choice = esports_choice["choice"]
         lol_selected = lol_choice["selected"]
@@ -2322,7 +2345,64 @@ class SportsDashboardCommonMixin:
         self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
         self._write_lol_live_state(lol_selected, now, lol_source_state, league_key=lol_league_key)
         self._draw_lpl_sidebar(image, left_width, lol_selected, lol_source_state, now, league_key=lol_league_key)
-        return image
+        return self._attest_sports_dashboard_image(
+            image,
+            left_provenance,
+            self._sports_source_state_provenance(lower_source_state),
+            self._sports_source_state_provenance(lol_source_state),
+            force_refresh=self._force_refresh_requested(settings),
+        )
+
+    @staticmethod
+    def _sports_source_state_provenance(source_state):
+        if isinstance(source_state, SourceProvenance):
+            return source_state
+        state = str(source_state or "").strip().upper()
+        if any(
+            marker in state
+            for marker in ("FALLBACK", "NO DATA", "LIMIT", "BLOCKED", "PREVIEW", "WATCH")
+        ):
+            return SourceProvenance.LOCAL_FALLBACK
+        if "STALE" in state:
+            return SourceProvenance.STALE_CACHE
+        if "CACHE" in state:
+            return SourceProvenance.FRESH_CACHE
+        if "LIVE" in state or state in {"API", "SCREENSHOT"}:
+            return SourceProvenance.LIVE
+        return SourceProvenance.LOCAL_FALLBACK
+
+    @staticmethod
+    def _attest_sports_dashboard_image(
+        image,
+        *panel_provenances,
+        force_refresh=False,
+    ):
+        provenances = [
+            provenance
+            for provenance in panel_provenances
+            if isinstance(provenance, SourceProvenance)
+        ]
+        if SourceProvenance.LOCAL_FALLBACK in provenances:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        elif SourceProvenance.STALE_CACHE in provenances:
+            provenance = SourceProvenance.STALE_CACHE
+        elif force_refresh and any(
+            panel_provenance is not SourceProvenance.LIVE
+            for panel_provenance in provenances
+        ):
+            provenance = SourceProvenance.STALE_CACHE
+        elif SourceProvenance.LIVE in provenances:
+            provenance = SourceProvenance.LIVE
+        elif SourceProvenance.FRESH_CACHE in provenances:
+            provenance = SourceProvenance.FRESH_CACHE
+        else:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        if provenance in {
+            SourceProvenance.STALE_CACHE,
+            SourceProvenance.LOCAL_FALLBACK,
+        }:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def _sports_dashboard_theme_context(self, settings, device_config, now):
         settings = settings or {}

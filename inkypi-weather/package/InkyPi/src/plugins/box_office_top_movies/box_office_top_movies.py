@@ -16,6 +16,10 @@ from urllib.parse import urljoin
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import bounded_int, get_base_ui_font
 from utils.http_client import get_http_session
@@ -181,45 +185,84 @@ class BoxOfficeTopMovies(BasePlugin):
         generated_at = self._now_for_device(device_config)
         stale = False
         theme_render_only = bool(settings.get("_theme_render_only"))
+        force_refresh = self._force_refresh_requested(settings)
         source_cache_ready = (
             cache.get("cache_key") == cache_key and bool(cache.get("movies"))
         )
+        cache_is_fresh = self._cache_is_fresh(cache, cache_key, cache_hours)
+        provenance = SourceProvenance.LOCAL_FALLBACK
 
         if theme_render_only and not source_cache_ready:
             raise RuntimeError(
                 "Box office theme-only render requires matching cached source data."
             )
 
-        if theme_render_only or self._cache_is_fresh(cache, cache_key, cache_hours):
+        if theme_render_only or (cache_is_fresh and not force_refresh):
             movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
             source_label = cache.get("source_label") or source_label
             generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
+            if source_label == "Demo Fallback":
+                provenance = SourceProvenance.LOCAL_FALLBACK
+            elif cache_is_fresh:
+                provenance = SourceProvenance.FRESH_CACHE
+            else:
+                provenance = SourceProvenance.STALE_CACHE
         else:
             try:
                 movies, source_label = self._load_movies(settings, items_count)
                 self._enrich_with_tmdb(movies, settings, device_config)
                 self._download_posters(movies)
                 generated_at = self._now_for_device(device_config)
-                self._write_cache({
-                    "version": STATE_VERSION,
-                    "cache_key": cache_key,
-                    "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
-                    "source_label": source_label,
-                    "movies": [movie.to_dict() for movie in movies],
-                })
+                provenance = (
+                    SourceProvenance.LOCAL_FALLBACK
+                    if source_label == "Demo Fallback"
+                    else SourceProvenance.LIVE
+                )
+                if provenance is SourceProvenance.LIVE:
+                    self._write_cache({
+                        "version": STATE_VERSION,
+                        "cache_key": cache_key,
+                        "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
+                        "source_label": source_label,
+                        "movies": [movie.to_dict() for movie in movies],
+                    })
             except Exception as exc:
                 logger.warning("Box office refresh failed: %s", exc)
                 movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
                 source_label = cache.get("source_label") or source_label
                 generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
                 stale = True
+                provenance = (
+                    SourceProvenance.LOCAL_FALLBACK
+                    if source_label == "Demo Fallback"
+                    else SourceProvenance.STALE_CACHE
+                )
 
         if not movies:
-            return self._fallback_image(dimensions, "Box Office", "No chart data")
+            image = self._fallback_image(dimensions, "Box Office", "No chart data")
+            image.info["inkypi_skip_cache"] = True
+            return attach_source_provenance(
+                image,
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
         movies = movies[:items_count]
-        self._write_box_office_context(movies, source_label, generated_at, stale)
-        return self._render_chart(dimensions, movies, settings, source_label, generated_at, stale)
+        if provenance is not SourceProvenance.LOCAL_FALLBACK:
+            self._write_box_office_context(movies, source_label, generated_at, stale)
+        image = self._render_chart(
+            dimensions,
+            movies,
+            settings,
+            source_label,
+            generated_at,
+            stale,
+        )
+        if provenance in {
+            SourceProvenance.STALE_CACHE,
+            SourceProvenance.LOCAL_FALLBACK,
+        }:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def _load_movies(self, settings, items_count):
         source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
@@ -647,6 +690,17 @@ class BoxOfficeTopMovies(BasePlugin):
         if value is None:
             return bool(default)
         return str(value).strip().lower() not in {"0", "false", "off", "no", "none"}
+
+    def _force_refresh_requested(self, settings):
+        truthy = {"1", "true", "yes", "on"}
+        for key in ("forceRefresh", "force_refresh"):
+            value = (settings or {}).get(key)
+            if isinstance(value, bool):
+                if value:
+                    return True
+            elif str(value or "").strip().lower() in truthy:
+                return True
+        return False
 
     def _setting_secret(self, settings, key):
         value = str(settings.get(key) or "").strip()

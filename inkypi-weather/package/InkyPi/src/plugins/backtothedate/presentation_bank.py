@@ -53,6 +53,8 @@ _BANK_KEYS = {
     "pending_selection",
     "last_applied_origin_commit_id",
     "last_applied_request_id",
+    "last_provider_attempt_at",
+    "last_provider_status",
     "last_used_at",
 }
 
@@ -245,7 +247,21 @@ class PosterPresentationBank:
                 break
         else:
             records.append(record)
-        profile["records"] = records[-READY_TARGET:]
+        protected = self._protected_media_keys(profile)
+        while len(records) > READY_TARGET:
+            victim = next(
+                (
+                    index
+                    for index, item in enumerate(records)
+                    if item.get("media_key") not in protected
+                    and item.get("media_key") != media_key
+                ),
+                None,
+            )
+            if victim is None:
+                raise RuntimeError("BacktotheDate protected media fills the record budget")
+            records.pop(victim)
+        profile["records"] = records
         return record
 
     def normalize_poster(self, poster):
@@ -512,6 +528,8 @@ class PosterPresentationBank:
             "pending_selection": None,
             "last_applied_origin_commit_id": None,
             "last_applied_request_id": None,
+            "last_provider_attempt_at": None,
+            "last_provider_status": None,
             "last_used_at": _utc_now(),
         }
 
@@ -524,6 +542,12 @@ class PosterPresentationBank:
         profile["settings_fingerprint"] = self.base_fingerprint
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
+        attempted_at = _parse_datetime(profile.get("last_provider_attempt_at"))
+        profile["last_provider_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         profile["records"] = [
             record
             for record in (profile.get("records") or [])

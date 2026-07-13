@@ -25,6 +25,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.pixiv_r18_ranking.presentation_bank import (
     READY_TARGET,
@@ -324,11 +325,21 @@ class PixivR18Ranking(BasePlugin):
         date_key = self._day_key()
         ranking_mode = self._ranking_mode(settings)
         cookie = self._load_session_cookie(device_config)
+        force_refresh = _setting_enabled(settings.get("forceRefresh")) or _setting_enabled(
+            settings.get("force_refresh")
+        )
+        requested_r18 = self._mode_pair(ranking_mode)[0] is not None
         resolution = None
         provider_error = None
+        provider_attempted = False
+        provider_attempted_at = None
+        provider_status = None
+        live_record_keys = set()
         instance_uuid = get_presentation_instance_uuid(settings)
         provenance = self._saved_provenance_for_instance(instance_uuid)
         if provenance is None:
+            provider_attempted = True
+            provider_attempted_at = self._now_utc().isoformat()
             try:
                 resolution = self._resolve_ranking_with_provenance(
                     ranking_mode,
@@ -338,9 +349,20 @@ class PixivR18Ranking(BasePlugin):
             except Exception as exc:
                 raise RuntimeError("Pixiv ranking source is unavailable") from exc
             provenance = _resolution_provenance(resolution)
+            provider_status = (
+                "error"
+                if requested_r18 and resolution.get("healthy_r18") is not True
+                else ("success" if resolution.get("items") else "empty")
+            )
         bank = self._presentation_bank(settings, dimensions, date_key, provenance)
         document, profile = bank.load_for_data()
         profile["source_provenance"] = dict(provenance)
+        if provider_attempted:
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = provider_status
+        if force_refresh and provider_status == "error":
+            bank.save(document)
+            raise RuntimeError("Pixiv forced R-18 refresh resolved only an SFW fallback")
 
         self._recover_protected_media(
             bank,
@@ -352,8 +374,12 @@ class PixivR18Ranking(BasePlugin):
         ready = bank.ready_records(profile, prune=True)
         if len(ready) < REFILL_THRESHOLD:
             profile["refill_in_progress"] = True
-        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
+        if force_refresh or (
+            profile.get("refill_in_progress") is True and len(ready) < READY_TARGET
+        ):
             if resolution is None:
+                provider_attempted = True
+                provider_attempted_at = self._now_utc().isoformat()
                 try:
                     resolution = self._resolve_ranking_with_provenance(
                         ranking_mode,
@@ -362,7 +388,18 @@ class PixivR18Ranking(BasePlugin):
                     )
                 except Exception as exc:
                     provider_error = exc
+                    provider_status = "error"
             if resolution is not None:
+                provider_status = (
+                    "error"
+                    if requested_r18 and resolution.get("healthy_r18") is not True
+                    else ("success" if resolution.get("items") else "empty")
+                )
+                if force_refresh and provider_status == "error":
+                    profile["last_provider_attempt_at"] = provider_attempted_at
+                    profile["last_provider_status"] = "error"
+                    bank.save(document)
+                    raise RuntimeError("Pixiv forced R-18 refresh resolved only an SFW fallback")
                 live_provenance = _resolution_provenance(resolution)
                 if _provenance_identity(live_provenance) != _provenance_identity(provenance):
                     provenance = live_provenance
@@ -381,18 +418,25 @@ class PixivR18Ranking(BasePlugin):
                         profile["refill_in_progress"] = True
                 else:
                     profile["source_provenance"] = dict(live_provenance)
-                self._refill_presentation_bank(
+                live_record_keys.update(self._refill_presentation_bank(
                     bank,
                     profile,
                     resolution,
                     dimensions,
                     deadline=deadline,
-                )
+                    force_refresh=force_refresh,
+                ))
                 ready = bank.ready_records(profile, prune=True)
             elif not ready:
+                profile["last_provider_attempt_at"] = provider_attempted_at
+                profile["last_provider_status"] = "error"
+                bank.save(document)
                 raise RuntimeError("Pixiv ranking source is unavailable") from provider_error
             else:
                 profile["source_provenance"]["source_status"] = "stale"
+        if provider_attempted:
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = provider_status or "empty"
         if profile.get("refill_in_progress") is True:
             profile["refill_in_progress"] = len(ready) < READY_TARGET
 
@@ -413,7 +457,17 @@ class PixivR18Ranking(BasePlugin):
             current = bank.ensure_current(document, profile, ready, self._fit_mode(settings))
         else:
             bank.selection_records(profile, current, load_media=True)
-        return self._render_bank_selection(bank, profile, current, dimensions, settings)
+        image = self._render_bank_selection(bank, profile, current, dimensions, settings)
+        if requested_r18 and str(provenance.get("content_rating") or "").lower() != "r18":
+            source_provenance = SourceProvenance.LOCAL_FALLBACK
+        elif set(current.get("record_keys") or []).intersection(live_record_keys):
+            source_provenance = SourceProvenance.LIVE
+        else:
+            source_provenance = SourceProvenance.FRESH_CACHE
+        if force_refresh and provider_status == "error":
+            source_provenance = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, source_provenance)
 
     def _recover_protected_media(
         self,
@@ -475,24 +529,29 @@ class PixivR18Ranking(BasePlugin):
         dimensions,
         *,
         deadline=None,
+        force_refresh=False,
     ):
         existing_ids = {record["illust_id"] for record in profile["records"]}
         existing_urls = {record["image_url"] for record in profile["records"]}
         ready_count = len(bank.ready_records(profile, prune=False))
         attempts = 0
         downloaded = 0
+        ingested_keys = set()
+        full_force_refresh = force_refresh and ready_count >= READY_TARGET
         page = 1
         items = list(resolution.get("items") or [])
         provenance = _resolution_provenance(resolution)
         while page <= MAX_RANKING_PAGES and items:
             for raw in items:
                 if (
-                    ready_count >= READY_TARGET
+                    (ready_count >= READY_TARGET and not full_force_refresh)
                     or attempts >= MAX_DATA_ATTEMPTS
                     or downloaded >= MAX_DATA_NEW_MEDIA
                     or (deadline is not None and self._monotonic() >= deadline)
                 ):
-                    return
+                    return ingested_keys
+                if full_force_refresh and downloaded >= 1:
+                    return ingested_keys
                 if not self._is_safe_ranking_item(raw):
                     continue
                 item = self._ranking_item_metadata(raw, _get_value(raw, "rank", ready_count + 1))
@@ -526,6 +585,7 @@ class PixivR18Ranking(BasePlugin):
                 existing_urls.add(record["image_url"])
                 ready_count += 1
                 downloaded += 1
+                ingested_keys.add(record["record_key"])
             page += 1
             if page > MAX_RANKING_PAGES:
                 break
@@ -539,6 +599,7 @@ class PixivR18Ranking(BasePlugin):
             except Exception as exc:
                 logger.warning("Pixiv ranking refill page %s failed: %s", page, exc)
                 break
+        return ingested_keys
 
     def prepare_presentation(
         self,

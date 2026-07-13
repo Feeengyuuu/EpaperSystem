@@ -1,4 +1,8 @@
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from utils.app_utils import get_base_ui_font
@@ -390,7 +394,10 @@ class BambuMonitor(BasePlugin):
         if self._bool_setting(settings, "demoMode", False):
             status = self._demo_status()
             self._apply_machine_identity(status, settings)
-            return self._render_status(status, dimensions)
+            return attach_source_provenance(
+                self._non_cacheable_image(self._render_status(status, dimensions)),
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
         host = str(settings.get("host") or "").strip()
         serial = str(settings.get("serialNumber") or "").strip()
@@ -406,25 +413,35 @@ class BambuMonitor(BasePlugin):
             access_code = str(device_config.load_env_key(env_key) or "").strip()
 
         if not host or not serial or not access_code:
-            return self._render_setup_required(
-                dimensions,
-                host,
-                serial,
-                bool(access_code),
-                settings,
+            return attach_source_provenance(
+                self._render_setup_required(
+                    dimensions,
+                    host,
+                    serial,
+                    bool(access_code),
+                    settings,
+                ),
+                SourceProvenance.LOCAL_FALLBACK,
             )
 
         cache_file = self._cache_file(host, serial)
         cached = self._read_cache(cache_file)
         now = time.time()
-        if self._cache_entry_is_fresh(cached, cache_seconds, now):
+        force_refresh = any(
+            self._bool_setting(settings, key, False)
+            for key in ("forceRefresh", "force_refresh")
+        )
+        if not force_refresh and self._cache_entry_is_fresh(cached, cache_seconds, now):
             status = dict(cached.get("status") or {})
             self._apply_machine_identity(status, settings, host=host, serial=serial)
             status["source"] = "cache"
             if camera_enabled:
                 self._attach_camera_frame(status, host, camera_port, access_code, camera_timeout)
                 self._write_cache(cache_file, {"fetched_at": cached.get("fetched_at", now), "status": status})
-            return self._render_status(status, dimensions)
+            return attach_source_provenance(
+                self._render_status(status, dimensions),
+                SourceProvenance.FRESH_CACHE,
+            )
 
         try:
             report = self._fetch_report(host, port, serial, access_code, timeout, settings)
@@ -432,7 +449,10 @@ class BambuMonitor(BasePlugin):
             if camera_enabled:
                 self._attach_camera_frame(status, host, camera_port, access_code, camera_timeout)
             self._write_cache(cache_file, {"fetched_at": now, "status": status})
-            return self._render_status(status, dimensions)
+            return attach_source_provenance(
+                self._render_status(status, dimensions),
+                SourceProvenance.LIVE,
+            )
         except Exception as exc:
             if self._is_expected_connection_failure(exc):
                 logger.warning(f"Bambu printer unavailable; preserving previous cache: {exc}")
@@ -443,20 +463,29 @@ class BambuMonitor(BasePlugin):
                 self._apply_machine_identity(status, settings, host=host, serial=serial)
                 status["source"] = "stale"
                 status["warning"] = str(exc)
-                return self._non_cacheable_image(self._render_status(status, dimensions))
-            return self._render_error(
-                dimensions,
-                str(exc),
-                host=host,
-                serial=serial,
-                settings=settings,
+                return attach_source_provenance(
+                    self._non_cacheable_image(self._render_status(status, dimensions)),
+                    SourceProvenance.STALE_CACHE,
+                )
+            return attach_source_provenance(
+                self._render_error(
+                    dimensions,
+                    str(exc),
+                    host=host,
+                    serial=serial,
+                    settings=settings,
+                ),
+                SourceProvenance.LOCAL_FALLBACK,
             )
 
     def _render_theme_only(self, settings, dimensions):
         if self._bool_setting(settings, "demoMode", False):
             status = self._demo_status()
             self._apply_machine_identity(status, settings)
-            return self._render_status(status, dimensions)
+            return attach_source_provenance(
+                self._non_cacheable_image(self._render_status(status, dimensions)),
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
         host = str(settings.get("host") or "").strip()
         serial = str(settings.get("serialNumber") or "").strip()
@@ -474,31 +503,43 @@ class BambuMonitor(BasePlugin):
                 )
                 if self._cache_entry_is_fresh(cached, cache_seconds, now):
                     status["source"] = "cache"
-                    return self._render_status(status, dimensions)
+                    return attach_source_provenance(
+                        self._render_status(status, dimensions),
+                        SourceProvenance.FRESH_CACHE,
+                    )
                 status["source"] = "stale"
                 status["warning"] = (
                     "Cached printer status is older than cacheSeconds; "
                     "theme-only redraw kept it stale"
                 )
-                return self._non_cacheable_image(
-                    self._render_status(status, dimensions)
+                return attach_source_provenance(
+                    self._non_cacheable_image(
+                        self._render_status(status, dimensions)
+                    ),
+                    SourceProvenance.STALE_CACHE,
                 )
 
         if not host or not serial:
-            return self._render_setup_required(
-                dimensions,
-                host,
-                serial,
-                bool(settings.get("accessCode") or settings.get("accessCodeEnv")),
-                settings,
+            return attach_source_provenance(
+                self._render_setup_required(
+                    dimensions,
+                    host,
+                    serial,
+                    bool(settings.get("accessCode") or settings.get("accessCodeEnv")),
+                    settings,
+                ),
+                SourceProvenance.LOCAL_FALLBACK,
             )
 
-        return self._render_error(
-            dimensions,
-            "No cached printer status is available for theme redraw",
-            host=host,
-            serial=serial,
-            settings=settings,
+        return attach_source_provenance(
+            self._render_error(
+                dimensions,
+                "No cached printer status is available for theme redraw",
+                host=host,
+                serial=serial,
+                settings=settings,
+            ),
+            SourceProvenance.LOCAL_FALLBACK,
         )
 
     def _fetch_report(self, host, port, serial, access_code, timeout, settings):

@@ -215,6 +215,7 @@ class DisplayManager:
         task_context=None,
         logical_target=None,
         instance_revision=None,
+        force_hardware_write=False,
     ):
         
         """
@@ -248,6 +249,7 @@ class DisplayManager:
             image_settings=image_settings,
             logical_target=logical_target,
             instance_revision=instance_revision,
+            force_hardware_write=force_hardware_write,
         )
         return transaction.commit(prepared, task_context=task_context)
 

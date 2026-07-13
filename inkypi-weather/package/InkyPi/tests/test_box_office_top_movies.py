@@ -11,6 +11,10 @@ from plugins.box_office_top_movies.box_office_top_movies import (  # noqa: E402
     BoxOfficeMovie,
     BoxOfficeTopMovies,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 
 
 class DummyDeviceConfig:
@@ -73,6 +77,59 @@ def test_parse_the_numbers_weekend_table():
     assert movies[0].weekend_gross == "$55,100,000"
     assert movies[0].total_gross == "$55,100,000"
     assert movies[0].theaters == "4200"
+
+
+def test_force_refresh_aliases_bypass_fresh_box_office_cache(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_BOX_OFFICE_CACHE", str(tmp_path))
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    load_calls = []
+    context_writes = []
+
+    def load_movies(_settings, _items_count):
+        load_calls.append(True)
+        return [BoxOfficeMovie(rank=1, title="Live Movie")], "The Numbers"
+
+    monkeypatch.setattr(plugin, "_load_movies", load_movies)
+    monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        plugin,
+        "_write_box_office_context",
+        lambda *args, **kwargs: context_writes.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_chart",
+        lambda *_a, **_k: Image.new("RGB", (800, 480), "white"),
+    )
+
+    plugin.generate_image({}, DummyDeviceConfig())
+    for force_key in ("forceRefresh", "force_refresh"):
+        image = plugin.generate_image(
+            {force_key: "true"},
+            DummyDeviceConfig(),
+        )
+        assert read_source_provenance(image) is SourceProvenance.LIVE
+
+    assert len(load_calls) == 3
+    cached_generated_at = plugin._parse_datetime(plugin._read_cache()["generated_at"])
+
+    monkeypatch.setattr(
+        plugin,
+        "_load_movies",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    stale = plugin.generate_image(
+        {"forceRefresh": True},
+        DummyDeviceConfig(),
+    )
+    assert read_source_provenance(stale) is SourceProvenance.STALE_CACHE
+    assert stale.info["inkypi_skip_cache"] is True
+    assert context_writes[-1][0][2] == cached_generated_at
+    assert context_writes[-1][0][3] is True
 
 
 def maoyan_sample_payload():

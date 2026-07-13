@@ -15,6 +15,10 @@ from plugins.ticketmaster_events.ticketmaster_events import (  # noqa: E402
     TicketmasterEvent,
     TicketmasterEvents,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from utils import cache_manager  # noqa: E402
 
 
@@ -558,12 +562,14 @@ def test_refresh_failure_uses_matching_stale_cache(monkeypatch, tmp_path):
 
     monkeypatch.setattr(plugin, "_render_events", fake_render)
 
-    plugin.generate_image(
+    image = plugin.generate_image(
         {**settings, "forceRefresh": True},
         DummyDeviceConfig(),
     )
 
     assert rendered == {"titles": ["Last good event"], "stale": True}
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_refresh_failure_never_logs_api_key(monkeypatch, tmp_path, caplog):

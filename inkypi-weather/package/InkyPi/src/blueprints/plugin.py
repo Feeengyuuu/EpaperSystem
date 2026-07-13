@@ -490,6 +490,7 @@ def display_plugin_instance():
             snapshot.instance_uuid,
             force=False,
             display_cached_only=True,
+            force_hardware_write=True,
             expected_playlist_name=selection.playlist_name,
             expected_generation=snapshot.structural_generation,
             expected_settings_revision=snapshot.settings_revision,
@@ -503,6 +504,47 @@ def display_plugin_instance():
     except Exception as error:
         logger.exception("Display instance submission failed: %s", error)
         return _server_error(error)
+
+
+@plugin_bp.route('/refresh_plugin_instance', methods=['POST'])
+def refresh_plugin_instance():
+    device_config = current_app.config['DEVICE_CONFIG']
+    refresh_task = current_app.config['REFRESH_TASK']
+    playlist_manager = device_config.get_playlist_manager()
+
+    data = request.get_json(silent=True) or {}
+    playlist_name = data.get("playlist_name")
+    plugin_id = data.get("plugin_id")
+    plugin_instance_name = data.get("plugin_instance")
+
+    try:
+        selection = playlist_manager.resolve_plugin_instance_snapshot(
+            playlist_name,
+            plugin_id,
+            plugin_instance_name,
+        )
+        if selection is None:
+            return _legacy_lookup_error(
+                f"Plugin instance '{plugin_instance_name}' not found"
+            )
+        snapshot = selection.instance
+
+        job = refresh_task.submit_playlist_data_refresh(
+            snapshot.instance_uuid,
+            expected_playlist_name=selection.playlist_name,
+            expected_generation=snapshot.structural_generation,
+            expected_settings_revision=snapshot.settings_revision,
+            require_active=False,
+        )
+        return _queued_refresh_response(job)
+    except (QueueFullError, QueueStoppingError) as error:
+        return _queue_error_response(error)
+    except (RuntimeError, ValueError) as error:
+        return _error_response(str(error), "refresh_rejected", 400)
+    except Exception as error:
+        logger.exception("Data refresh instance submission failed: %s", error)
+        return _server_error(error)
+
 
 @plugin_bp.route('/update_now', methods=['POST'])
 def update_now():

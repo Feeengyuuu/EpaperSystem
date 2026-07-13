@@ -24,6 +24,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
 from plugins.magazine_covers.presentation_bank import (
@@ -360,6 +361,9 @@ class MagazineCovers(BasePlugin):
         if not sources:
             raise RuntimeError("No magazine cover sources configured.")
         now = self._now_utc()
+        force_refresh = _setting_enabled(settings.get("forceRefresh")) or _setting_enabled(
+            settings.get("force_refresh")
+        )
         bank = self._presentation_bank(
             settings,
             dimensions,
@@ -414,7 +418,7 @@ class MagazineCovers(BasePlugin):
             profile["refill_in_progress"] = True
             profile["library_scan_source_ids"] = []
             profile["library_scan_started_at"] = None
-        library_due = self._bank_library_due(profile, pool_key, settings, now)
+        library_due = force_refresh or self._bank_library_due(profile, pool_key, settings, now)
         if len(ready) < REFILL_THRESHOLD:
             profile["refill_in_progress"] = True
 
@@ -433,16 +437,20 @@ class MagazineCovers(BasePlugin):
             }
             cursor = int(profile.get("hydration_cursor") or 0) % len(sources)
             ordered_sources = sources[cursor:] + sources[:cursor]
-            scan_queue = [
-                self._source_id(source)
-                for source in ordered_sources
-                if self._source_id(source) not in record_source_ids
-            ]
+            if force_refresh:
+                scan_queue = [self._source_id(source) for source in ordered_sources]
+            else:
+                scan_queue = [
+                    self._source_id(source)
+                    for source in ordered_sources
+                    if self._source_id(source) not in record_source_ids
+                ]
             profile["library_scan_source_ids"] = list(scan_queue)
             profile["library_scan_started_at"] = now.isoformat()
             if not scan_queue:
                 profile["library_refreshed_at"] = now.isoformat()
                 profile["library_last_attempt_at"] = now.isoformat()
+                profile["last_provider_status"] = "empty"
                 profile["library_scan_started_at"] = None
                 library_due = False
 
@@ -458,6 +466,8 @@ class MagazineCovers(BasePlugin):
             ]
 
         attempts = 0
+        provider_successes = 0
+        provider_errors = 0
         if work_source_ids:
             if self._remaining_data_time(data_deadline) <= 0:
                 bank.save(document)
@@ -470,6 +480,7 @@ class MagazineCovers(BasePlugin):
                     break
                 source = source_by_id[source_id]
                 attempts += 1
+                provider_record = None
                 try:
                     cover = self._load_cover(
                         source,
@@ -484,7 +495,10 @@ class MagazineCovers(BasePlugin):
                         cover["image"],
                         fetched_at=now,
                     )
+                    provider_record = record
+                    provider_successes += 1
                 except Exception as exc:
+                    provider_errors += 1
                     cached = self._read_cached_cover(source, dimensions)
                     if cached is None:
                         logger.warning("Magazine bank source failed for %s: %s", source["name"], exc)
@@ -512,9 +526,15 @@ class MagazineCovers(BasePlugin):
                 ) % len(sources)
                 if record is not None:
                     existing_fresh_sources.add(record["source_id"])
-                    live_record_keys.add(record["record_key"])
+                    if provider_record is record:
+                        live_record_keys.add(record["record_key"])
                     ready = bank.ready_records(profile, prune=True, now=now)
             profile["library_last_attempt_at"] = now.isoformat()
+            profile["last_provider_status"] = (
+                "success"
+                if provider_successes
+                else ("error" if provider_errors else "empty")
+            )
             profile["library_scan_source_ids"] = list(scan_queue)
             if library_due and not scan_queue:
                 profile["library_refreshed_at"] = now.isoformat()
@@ -554,6 +574,9 @@ class MagazineCovers(BasePlugin):
             raise RuntimeError("Magazine current selection has no fresh prepared cover")
         image = self._render_bank_records(selected, current, dimensions, settings)
         provenance = "live" if any(record["record_key"] in live_record_keys for record, _image in selected) else "fresh_cache"
+        if force_refresh and profile.get("last_provider_status") == "error":
+            provenance = "stale_cache"
+            image.info["inkypi_skip_cache"] = True
         return self._mark_provenance(image, provenance)
 
     def _generate_banked_theme_only(self, settings, device_config):
@@ -741,7 +764,13 @@ class MagazineCovers(BasePlugin):
 
     def _mark_provenance(self, image, provenance):
         image.info["inkypi_source_provenance"] = provenance
-        return image
+        trusted = {
+            "live": SourceProvenance.LIVE,
+            "fresh_cache": SourceProvenance.FRESH_CACHE,
+            "stale_cache": SourceProvenance.STALE_CACHE,
+            "local_fallback": SourceProvenance.LOCAL_FALLBACK,
+        }.get(str(provenance).strip().lower(), SourceProvenance.LOCAL_FALLBACK)
+        return attach_source_provenance(image, trusted)
 
     def _daily_library_enabled(self, settings):
         return _setting_enabled(settings.get("dailyLibraryMode", "true"))

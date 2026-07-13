@@ -15,6 +15,10 @@ import pytz
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
 from utils.image_utils import text_width
@@ -476,9 +480,17 @@ class DailyWordPoem(BasePlugin):
         dimensions = self._display_dimensions(device_config)
         now = self._localized_now(device_config)
         payload = self._daily_payload(settings, now)
-        self._write_daily_word_context(payload, now)
+        provenance = self._payload_provenance(payload)
+        if provenance is not SourceProvenance.LOCAL_FALLBACK:
+            self._write_daily_word_context(payload, now)
         theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
-        return self._render(dimensions, settings, payload, now, theme_context)
+        image = self._render(dimensions, settings, payload, now, theme_context)
+        if provenance in {
+            SourceProvenance.STALE_CACHE,
+            SourceProvenance.LOCAL_FALLBACK,
+        }:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def _display_dimensions(self, device_config):
         return self.get_dimensions(device_config)
@@ -500,9 +512,17 @@ class DailyWordPoem(BasePlugin):
         cached = _safe_json_load(cache_file, {})
 
         theme_render_only = _enabled(settings.get("_theme_render_only"))
-        force_refresh = _enabled(settings.get("force_refresh")) and not theme_render_only
+        force_refresh = (
+            _enabled(settings.get("force_refresh"))
+            or _enabled(settings.get("forceRefresh"))
+        ) and not theme_render_only
         if cached.get("cache_key") == cache_key and not force_refresh:
             cached["from_cache"] = True
+            cached["_source_provenance"] = (
+                SourceProvenance.FRESH_CACHE.value
+                if self._payload_has_remote_source(cached)
+                else SourceProvenance.LOCAL_FALLBACK.value
+            )
             return cached
         if theme_render_only:
             raise RuntimeError("Theme-only redraw requires a warm Daily Word cache.")
@@ -517,13 +537,17 @@ class DailyWordPoem(BasePlugin):
             "from_cache": False,
             "generated_at": now.isoformat(),
         }
+        providers_attempted = 0
+        providers_succeeded = 0
 
         if _enabled(settings.get("fetch_dictionary"), default=True):
+            providers_attempted += 1
             try:
                 enriched = self._fetch_dictionary_entry(word_entry["word"])
                 if enriched:
                     payload["word"] = {**word_entry, **enriched}
                     payload["sources"][0] = "Free Dictionary API"
+                    providers_succeeded += 1
             except Exception as exc:
                 logger.warning("Daily word definition fetch failed: %s", exc)
                 payload["warnings"].append("definition offline")
@@ -532,17 +556,57 @@ class DailyWordPoem(BasePlugin):
             _enabled(settings.get("fetch_wikiquote"), default=True)
             and quote_entry.get("source") != "custom golden sentences"
         ):
+            providers_attempted += 1
             try:
                 wikiquote = self._fetch_wikiquote_quote(date_key)
                 if wikiquote:
                     payload["quote"] = wikiquote
                     payload["sources"][1] = wikiquote.get("source") or "Wikiquote QOTD"
+                    providers_succeeded += 1
             except Exception as exc:
                 logger.warning("Wikiquote quote of the day fetch failed: %s", exc)
                 payload["warnings"].append("quote offline")
 
-        _safe_json_write(cache_file, payload)
+        if providers_attempted and providers_succeeded == providers_attempted:
+            _safe_json_write(cache_file, payload)
+            payload["_source_provenance"] = SourceProvenance.LIVE.value
+            return payload
+
+        if (
+            force_refresh
+            and cached.get("cache_key") == cache_key
+            and self._payload_has_remote_source(cached)
+        ):
+            cached["from_cache"] = True
+            cached.setdefault("warnings", []).extend(payload["warnings"])
+            cached["_source_provenance"] = SourceProvenance.STALE_CACHE.value
+            return cached
+
+        if not providers_attempted:
+            _safe_json_write(cache_file, payload)
+        payload["_source_provenance"] = SourceProvenance.LOCAL_FALLBACK.value
         return payload
+
+    @staticmethod
+    def _payload_has_remote_source(payload: dict[str, Any]) -> bool:
+        sources = payload.get("sources") if isinstance(payload, dict) else None
+        if not isinstance(sources, list):
+            return False
+        return any(
+            isinstance(source, str)
+            and (
+                "free dictionary api" in source.lower()
+                or "wikiquote" in source.lower()
+            )
+            for source in sources
+        )
+
+    @staticmethod
+    def _payload_provenance(payload: dict[str, Any]) -> SourceProvenance:
+        try:
+            return SourceProvenance(payload.get("_source_provenance"))
+        except (TypeError, ValueError):
+            return SourceProvenance.LOCAL_FALLBACK
 
     def _write_daily_word_context(self, payload: dict[str, Any], now: datetime) -> None:
         word = payload.get("word") if isinstance(payload, dict) else {}

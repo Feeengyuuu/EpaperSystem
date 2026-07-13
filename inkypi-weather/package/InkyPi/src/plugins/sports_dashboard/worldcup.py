@@ -179,7 +179,18 @@ class WorldCupMixin:
                 return None
             self._attach_worldcup_lineup_summary_from_api(selected, settings, device_config, timezone_info, now)
             self._write_worldcup_live_state(selected, now, source_state)
-            return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
+            image = self._render_worldcup_api_panel(
+                dimensions,
+                selected,
+                source_state,
+                fetched_at,
+                visible_matches,
+                now,
+            )
+            return attach_source_provenance(
+                image,
+                self._sports_source_state_provenance(source_state),
+            )
         except Exception as exc:
             logger.warning("football-data.org World Cup panel failed: %s", exc)
             return None
@@ -387,7 +398,18 @@ class WorldCupMixin:
                 return None
             self._attach_worldcup_lineup_summary_from_api(selected, settings, device_config, timezone_info, now)
             self._write_worldcup_live_state(selected, now, source_state)
-            return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
+            image = self._render_worldcup_api_panel(
+                dimensions,
+                selected,
+                source_state,
+                fetched_at,
+                visible_matches,
+                now,
+            )
+            return attach_source_provenance(
+                image,
+                self._sports_source_state_provenance(source_state),
+            )
         except Exception as exc:
             logger.warning("ESPN World Cup scoreboard panel failed: %s", exc)
             return None
@@ -629,7 +651,18 @@ class WorldCupMixin:
                 api_events=events,
             )
             self._write_worldcup_live_state(selected, now, source_state)
-            return self._render_worldcup_api_panel(dimensions, selected, source_state, fetched_at, visible_matches, now)
+            image = self._render_worldcup_api_panel(
+                dimensions,
+                selected,
+                source_state,
+                fetched_at,
+                visible_matches,
+                now,
+            )
+            return attach_source_provenance(
+                image,
+                self._sports_source_state_provenance(source_state),
+            )
         except Exception as exc:
             logger.warning("World Cup API panel failed: %s", exc)
             return None
@@ -2286,7 +2319,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
 
 
 

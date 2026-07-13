@@ -147,6 +147,7 @@ class PreparedDisplay:
     logical_target: Mapping[str, object]
     instance_revision: tuple[int, int] | None
     image_settings: tuple[object, ...]
+    force_hardware_write: bool = False
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,10 @@ class DisplayTransaction:
         image_settings=(),
         logical_target=None,
         instance_revision=None,
+        force_hardware_write=False,
     ) -> PreparedDisplay:
+        if type(force_hardware_write) is not bool:
+            raise TypeError("force_hardware_write must be a boolean")
         settings = _freeze(_json_detach(list(image_settings or ())))
         final = self.manager.prepare_image(image, image_settings=settings)
         commit_id = uuid4().hex
@@ -224,6 +228,7 @@ class DisplayTransaction:
             logical_target=_frozen_mapping(logical_target),
             instance_revision=_revision(instance_revision),
             image_settings=settings,
+            force_hardware_write=force_hardware_write,
         )
 
     def commit(self, prepared: PreparedDisplay, *, task_context) -> DisplayCommit:
@@ -233,7 +238,7 @@ class DisplayTransaction:
         with self._lock:
             self._validate_prepared(prepared)
             previous = self.current()
-            hardware_needed = previous is None or (
+            hardware_needed = prepared.force_hardware_write or previous is None or (
                 previous.pixel_hash != prepared.pixel_hash
                 or previous.hardware_fingerprint != prepared.hardware_fingerprint
             )

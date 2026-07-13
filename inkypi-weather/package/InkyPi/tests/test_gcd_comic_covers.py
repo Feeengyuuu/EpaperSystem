@@ -14,6 +14,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from plugins.gcd_comic_covers.gcd_comic_covers import (  # noqa: E402
     GcdComicCovers,
     GcdCoverImageUnavailable,
@@ -213,6 +217,162 @@ def test_gcd_data_hydration_does_not_consume_seen_issue_ids(tmp_path, monkeypatc
     assert _profile_for(state)["pending_selection"] is None
     assert image.size == DeviceConfig().get_resolution()
     assert plugin.presentation_mode(settings) is PresentationMode.PREPARED_BANK
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_gcd_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    tmp_path,
+    monkeypatch,
+    force_key,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    _fill_presentation_bank(plugin, monkeypatch, settings)
+    before = _state_json(plugin)
+    current = dict(_profile_for(before)["current_selection"])
+    candidate = _bank_candidate(99)
+    calls = []
+
+    def forced_candidates(*_args, force_refresh=False):
+        assert force_refresh is True
+        calls.append("provider")
+        return [candidate]
+
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        forced_candidates,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda item, *_args: {**item, "image": Image.new("RGB", (220, 360), "purple")},
+    )
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DeviceConfig())
+
+    profile = _profile_for(_state_json(plugin))
+    assert calls == ["provider"]
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert any(record["issue_id"] == candidate["issue_id"] for record in profile["records"])
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_gcd_force_refresh_all_duplicate_candidates_is_provider_success(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    _fill_presentation_bank(plugin, monkeypatch, settings)
+    duplicate = _bank_candidate(0)
+    monkeypatch.setattr(plugin, "_candidate_pool", lambda *_args, **_kwargs: [duplicate])
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda *_args, **_kwargs: pytest.fail("duplicate candidate must not reload media"),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DeviceConfig(),
+    )
+
+    profile = _profile_for(_state_json(plugin))
+    assert profile["last_provider_status"] == "success"
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+    assert image.info.get("inkypi_skip_cache") is not True
+
+
+def test_gcd_force_refresh_candidate_error_marks_warm_bank_stale_and_skips_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    _fill_presentation_bank(plugin, monkeypatch, settings)
+    candidate = _bank_candidate(99)
+    monkeypatch.setattr(plugin, "_candidate_pool", lambda *_args, **_kwargs: [candidate])
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("cover provider offline")),
+    )
+    monkeypatch.setattr(plugin, "_has_candidate_metadata", lambda _candidate: False)
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DeviceConfig(),
+    )
+
+    profile = _profile_for(_state_json(plugin))
+    assert profile["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+
+
+def test_gcd_force_refresh_bypasses_month_and_comic_vine_candidate_caches(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 7, 12)
+    cached = _bank_candidate(1)
+    refreshed = _bank_candidate(99)
+    month_calls = []
+    comic_vine_calls = []
+    monkeypatch.setattr(plugin, "_target_years", lambda *_args: [today.year])
+    monkeypatch.setattr(plugin, "_read_month_cache", lambda *_args: [cached])
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_month_candidates",
+        lambda *_args: month_calls.append("fetch") or [refreshed],
+    )
+    monkeypatch.setattr(plugin, "_write_month_cache", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_comic_vine_api_key", lambda _settings: "api-key")
+    monkeypatch.setattr(plugin, "_read_comic_vine_cache", lambda *_args: [cached])
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_comic_vine_recent_candidates",
+        lambda *_args: comic_vine_calls.append("fetch") or [refreshed],
+    )
+    monkeypatch.setattr(plugin, "_write_comic_vine_cache", lambda *_args: None)
+
+    assert plugin._gcd_candidate_pool({}, today)[0]["issue_id"] == cached["issue_id"]
+    assert plugin._comic_vine_candidate_pool({}, today)[0]["issue_id"] == cached["issue_id"]
+    assert month_calls == []
+    assert comic_vine_calls == []
+
+    gcd_result = plugin._gcd_candidate_pool({}, today, force_refresh=True)
+    comic_vine_result = plugin._comic_vine_candidate_pool(
+        {},
+        today,
+        force_refresh=True,
+    )
+
+    assert month_calls == ["fetch"]
+    assert comic_vine_calls == ["fetch"]
+    assert gcd_result[0]["issue_id"] == refreshed["issue_id"]
+    assert comic_vine_result[0]["issue_id"] == refreshed["issue_id"]
+
+
+def test_gcd_forced_empty_provider_is_attested_local_fallback(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: [],
+    )
+
+    image = plugin.generate_image({**settings, "forceRefresh": "true"}, DeviceConfig())
+
+    profile = _profile_for(_state_json(plugin))
+    assert profile["last_provider_status"] == "empty"
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
 
 
 def test_gcd_warm_presentation_never_calls_gcd_comicvine_or_cover_http(tmp_path, monkeypatch):

@@ -15,6 +15,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 
 
@@ -354,6 +358,12 @@ def test_bucketed_live_fresh_and_cross_key_stale_provenance(tmp_path, monkeypatc
     plugin = make_plugin(tmp_path, monkeypatch)
     settings = {**base_settings(), "selectionMode": "current"}
     item = {"id": 7, "name": "Live Game"}
+    context_times = []
+    monkeypatch.setattr(
+        plugin,
+        "_write_daily_art_context",
+        lambda _entry, _settings, generated_at: context_times.append(generated_at),
+    )
     monkeypatch.setattr(plugin, "_select_item", lambda *_args: item)
     monkeypatch.setattr(
         plugin,
@@ -368,9 +378,39 @@ def test_bucketed_live_fresh_and_cross_key_stale_provenance(tmp_path, monkeypatc
     monkeypatch.setattr(plugin, "_select_item", lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")))
     stale = plugin.generate_image(settings, FakeDeviceConfig())
 
-    assert live.info["inkypi_source_provenance"] == "live"
-    assert fresh.info["inkypi_source_provenance"] == "fresh_cache"
-    assert stale.info["inkypi_source_provenance"] == "stale_cache"
+    assert read_source_provenance(live) is SourceProvenance.LIVE
+    assert read_source_provenance(fresh) is SourceProvenance.FRESH_CACHE
+    assert read_source_provenance(stale) is SourceProvenance.STALE_CACHE
+    assert stale.info["inkypi_skip_cache"] is True
+    assert context_times[-1] == datetime(2026, 6, 29, 15, 5, 0)
+
+
+def test_stale_legacy_cache_without_generation_time_does_not_publish_context(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = {**base_settings(), "selectionMode": "current"}
+    write_matching_cache(plugin, settings, tmp_path)
+    context_times = []
+    monkeypatch.setattr(
+        plugin,
+        "_write_daily_art_context",
+        lambda _entry, _settings, generated_at: context_times.append(generated_at),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_select_item",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": True},
+        FakeDeviceConfig(),
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert context_times == []
 
 
 def test_metadata_only_failure_card_is_explicit_local_fallback(tmp_path, monkeypatch):
@@ -386,7 +426,8 @@ def test_metadata_only_failure_card_is_explicit_local_fallback(tmp_path, monkeyp
     image = plugin.generate_image(settings, FakeDeviceConfig())
 
     assert image.size == (800, 480)
-    assert image.info["inkypi_source_provenance"] == "local_fallback"
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_steam_target_validation_rejects_wrong_authority_and_non_https(tmp_path, monkeypatch):
@@ -1063,4 +1104,4 @@ def test_every_refresh_full_warm_bank_renders_without_provider_or_unbound_state(
     image = plugin.generate_image(settings, FakeDeviceConfig())
 
     assert image.size == (800, 480)
-    assert image.info["inkypi_source_provenance"] == "fresh_cache"
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE

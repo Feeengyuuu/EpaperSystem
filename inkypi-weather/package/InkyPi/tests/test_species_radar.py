@@ -19,6 +19,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 from plugins.species_radar.species_radar import (  # noqa: E402
     CATEGORY_STYLES,
@@ -943,6 +947,38 @@ def test_daily_payload_uses_stale_cache_when_refresh_fails(tmp_path, monkeypatch
     assert first["source_state"] == "live"
     assert second["source_state"] == "cache"
     assert second["observations"][0]["display_name"] == first["observations"][0]["display_name"]
+
+
+def test_daily_payload_snake_force_alias_overrides_inactive_camel_alias(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 27, tzinfo=timezone.utc)
+    location = {"latitude": 37.5485, "longitude": -121.9886, "name": "Fremont, CA"}
+    live_payload = {
+        "schema": "species-radar-v1",
+        "observations": [plugin._observation_from_occurrence(occurrence(), location)],
+        "category_counts": {"species": 1},
+        "location": location,
+    }
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda *_args: calls.append("provider") or dict(live_payload),
+    )
+
+    plugin._daily_payload({}, now, location)
+    refreshed = plugin._daily_payload(
+        {"forceRefresh": "false", "force_refresh": "true"},
+        now,
+        location,
+    )
+
+    assert calls == ["provider", "provider"]
+    assert refreshed["source_state"] == "live"
+
 
 def test_cache_key_uses_configurable_refresh_hour_buckets(tmp_path):
     plugin = make_plugin(tmp_path)
@@ -2173,6 +2209,114 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     assert len(photos) == 12
     assert len(maps) == 8
     assert second_profile["refill_in_progress"] is False
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_species_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    tmp_path,
+    monkeypatch,
+    force_key,
+):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    bank, _document, _profile, current = _warm_species_bank(tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_page",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_daily_payload",
+        lambda *_args: pytest.fail("ordinary full-bank rotation fetched provider"),
+    )
+    ordinary = plugin.generate_image(settings, DummyDeviceConfig())
+    assert read_source_provenance(ordinary) is SourceProvenance.FRESH_CACHE
+    calls = []
+    payload = {
+        "source": "GBIF",
+        "source_state": "live",
+        "cache_key": plugin._cache_key(settings, plugin._now_utc(), plugin._resolve_location(settings, DummyDeviceConfig())),
+        "location": {"name": "Fremont, CA"},
+        "observations": [bank_observation(99)],
+        "category_counts": {},
+        "location_counts": {},
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_daily_payload",
+        lambda *_args: calls.append("provider") or payload,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_image_for_data",
+        lambda *_args, **_kwargs: Image.new("RGB", (80, 60), "green"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_map_for_data",
+        lambda *_args, **_kwargs: Image.new("RGB", (80, 40), "blue"),
+    )
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DummyDeviceConfig())
+
+    state = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    profile = _species_profile(state)
+    assert calls == ["provider"]
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert any(record["observation"]["gbif_key"] == "99" for record in profile["records"])
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_species_force_refresh_provider_fallback_marks_warm_bank_stale_and_skips_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    bank, _document, _profile, _current = _warm_species_bank(tmp_path)
+    now = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    monkeypatch.setattr(
+        plugin,
+        "_render_page",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_daily_payload",
+        lambda *_args: {
+            "source": "GBIF",
+            "source_state": "cache",
+            "cache_key": plugin._cache_key(
+                settings,
+                now,
+                plugin._resolve_location(settings, DummyDeviceConfig()),
+            ),
+            "location": {"name": "Fremont, CA"},
+            "observations": [],
+            "category_counts": {},
+            "location_counts": {},
+        },
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DummyDeviceConfig(),
+    )
+
+    state = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    assert _species_profile(state)["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_path, monkeypatch):

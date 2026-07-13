@@ -22,6 +22,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 
 
@@ -1247,6 +1251,118 @@ def test_full_same_day_bank_keeps_daily_source_pool_without_provider_or_selectio
     assert profile["current_selection"] == current
     assert profile["pending_selection"] is None
     assert profile.get("date_buckets", {}).get("2026-07-12", {}).get("seen_illust_ids", []) == []
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_pixiv_force_refresh_attempts_r18_provider_for_full_bank_without_consuming_selection(
+    tmp_path,
+    monkeypatch,
+    force_key,
+):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc))
+    bank, _document, _profile, current = warm_bank(tmp_path)
+    calls = []
+    item = make_ranking_item(99)
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [item],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: calls.append("provider") or dict(resolution),
+    )
+    monkeypatch.setattr(plugin, "_fetch_ranking_page", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (240, 420), "purple"),
+    )
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DummyDeviceConfig())
+
+    state = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    profile = profile_for_instance(state)
+    assert calls == ["provider"]
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert any(record["illust_id"] == "99" for record in profile["records"])
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_pixiv_force_refresh_provider_exception_marks_warm_bank_stale_and_skips_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, _profile, _current = warm_bank(tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider offline")),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DummyDeviceConfig(),
+    )
+
+    state = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    profile = profile_for_instance(state)
+    assert profile["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+
+
+def test_pixiv_forced_r18_sfw_fallback_is_persisted_as_error_and_fails(tmp_path, monkeypatch):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(forceRefresh="true")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc))
+    bank, _document, _profile, current = warm_bank(tmp_path)
+    fallback = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily",
+        "content_rating": "sfw",
+        "authenticated": False,
+        "healthy_r18": False,
+        "source_status": "fresh_sfw_fallback",
+        "cookie": None,
+        "items": [make_ranking_item(100, sexual=0, tags=[])],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: dict(fallback),
+    )
+
+    with pytest.raises(RuntimeError, match="R-18|SFW|fallback"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    state = json.loads(bank.state_path.read_text(encoding="utf-8"))
+    profile = profile_for_instance(state)
+    assert profile["last_provider_status"] == "error"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert all(record["content_rating"] == "r18" for record in profile["records"])
 
 
 def test_data_recovers_exact_protected_media_or_fails_without_state_change(tmp_path, monkeypatch):

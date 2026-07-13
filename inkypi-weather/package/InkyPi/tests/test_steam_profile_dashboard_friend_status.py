@@ -12,6 +12,22 @@ from plugins.steam_profile_dashboard.steam_profile_dashboard import (
     STEAM_SECTION_WORDMARK_Y_OFFSET,
     SteamProfileDashboard,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
+
+
+class _SteamDeviceConfig:
+    def get_resolution(self):
+        return (800, 480)
+
+    def get_config(self, _key, default=None):
+        return default
+
+    def load_env_key(self, key):
+        assert key == "STEAM_API_KEY"
+        return "test-key"
 
 
 def test_friend_game_status_keeps_long_title_inside_row_bounds():
@@ -47,6 +63,67 @@ def test_friend_game_status_keeps_long_title_inside_row_bounds():
     assert next_y <= y + row_height
     assert diff.crop((x, y, x + max_width, y + row_height)).getbbox() is not None
     assert diff.crop((x + max_width, 0, image.width, image.height)).getbbox() is None
+
+
+def test_force_refresh_aliases_bypass_fresh_steam_dashboard_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    now = steam_profile_module.time.time()
+    cached_image = tmp_path / "cached.png"
+    Image.new("RGB", (800, 480), "black").save(cached_image)
+    cache_entry = {
+        "status_updated_at": now,
+        "full_updated_at": now,
+        "image_path": str(cached_image),
+        "data": {"profile": {"personaname": "Cached"}},
+    }
+    fetch_calls = []
+
+    def fetch_dashboard(*_args, **_kwargs):
+        fetch_calls.append(True)
+        return {"profile": {"personaname": "Live"}, "api_calls": 1}
+
+    monkeypatch.setattr(steam_profile_module, "get_theme_context", lambda _config: {"mode": "day"})
+    monkeypatch.setattr(plugin, "_read_cache", lambda _key: cache_entry)
+    monkeypatch.setattr(plugin, "_fetch_dashboard_data", fetch_dashboard)
+    monkeypatch.setattr(
+        plugin,
+        "_render_dashboard",
+        lambda _data, dimensions, _theme: Image.new("RGB", dimensions, "white"),
+    )
+    monkeypatch.setattr(plugin, "_cache_image_path", lambda _key: str(tmp_path / "live.png"))
+    monkeypatch.setattr(plugin, "_write_cache", lambda *_a, **_k: None)
+    context_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_write_steam_profile_context",
+        lambda *_a, **_k: context_calls.append(True),
+    )
+
+    for force_key in ("forceRefresh", "force_refresh"):
+        image = plugin.generate_image(
+            {force_key: "true"},
+            _SteamDeviceConfig(),
+        )
+        assert read_source_provenance(image) is SourceProvenance.LIVE
+
+    assert len(fetch_calls) == 2
+    assert len(context_calls) == 2
+
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_dashboard_data",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    stale = plugin.generate_image(
+        {"forceRefresh": True},
+        _SteamDeviceConfig(),
+    )
+    assert read_source_provenance(stale) is SourceProvenance.STALE_CACHE
+    assert stale.info["inkypi_skip_cache"] is True
+    assert len(context_calls) == 2
 
 
 def test_online_friend_activity_preserves_friend_name_above_game_title():

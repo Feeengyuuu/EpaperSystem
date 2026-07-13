@@ -2790,6 +2790,7 @@ class TransactionRecordingDisplayManager:
         task_context=None,
         logical_target=None,
         instance_revision=None,
+        force_hardware_write=False,
     ):
         self.calls.append(
             {
@@ -2798,6 +2799,7 @@ class TransactionRecordingDisplayManager:
                 "task_context": task_context,
                 "logical_target": dict(logical_target or {}),
                 "instance_revision": instance_revision,
+                "force_hardware_write": force_hardware_write,
             }
         )
 
@@ -3136,6 +3138,7 @@ def test_soft_or_hard_disk_maintains_then_resamples_before_renderer_admission(
 def test_persistent_hard_disk_blocks_renderer_before_any_state_mutation(
     monkeypatch,
     intent,
+    caplog,
 ):
     tmp_path = make_test_dir(f"runtime-lifecycle-hard-gate-{intent.value}")
     playlist = _runtime_playlist(
@@ -3237,11 +3240,13 @@ def test_persistent_hard_disk_blocks_renderer_before_any_state_mutation(
     )
     monkeypatch.setattr(task, "_run_memory_maintenance", lambda _reason: None)
 
-    task._process_queue_entry(entry)
+    with caplog.at_level("INFO", logger=refresh_task_module.__name__):
+        task._process_queue_entry(entry)
 
     finished = task.refresh_queue.get_job(submitted.id)
     assert finished.status is JobStatus.CANCELED
     assert finished.error_code == "disk_pressure_hard"
+    assert "Refresh command started." not in caplog.text
     assert [event[0] for event in events] == [
         "due",
         "browser",
@@ -5223,6 +5228,139 @@ def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(
         task.stop(join_timeout=1.0)
 
 
+def test_manual_playlist_data_refresh_queues_forced_exact_inactive_cache_command():
+    tmp_path = make_test_dir("manual-inactive-playlist-data-refresh")
+    active = _runtime_playlist(
+        _runtime_plugin_data("active", "Active"),
+        name="Active",
+    )
+    inactive = _runtime_playlist(
+        _runtime_plugin_data("inactive", "Inactive"),
+        name="Inactive",
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[active, inactive],
+    )
+    target = device_config.playlist_manager.resolve_plugin_instance_snapshot(
+        "Inactive",
+        "inactive",
+        "Inactive",
+    ).instance
+    task.running = True
+
+    job = task.submit_playlist_data_refresh(
+        target.instance_uuid,
+        expected_playlist_name="Inactive",
+        expected_generation=target.structural_generation,
+        expected_settings_revision=target.settings_revision,
+        require_active=False,
+    )
+
+    entry = task.refresh_queue.get_entry(job["id"])
+    command = entry.command
+    assert command.source is CommandSource.MANUAL
+    assert command.intent is RefreshIntent.DATA_REFRESH
+    assert command.kind is CommandKind.CACHE_REFRESH
+    assert command.force is True
+    assert command.priority == 100
+    assert command.instance_uuid == target.instance_uuid
+    assert command.structural_generation == target.structural_generation
+    assert command.settings_revision == target.settings_revision
+    assert command.payload["playlist_name"] == "Inactive"
+    assert command.payload["display_cached_only"] is False
+    assert command.payload["require_active"] is False
+
+
+def test_manual_inactive_data_refresh_executes_after_scheduled_job_coalesces(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("manual-inactive-data-refresh-coalesced-execution")
+    active = _runtime_playlist(
+        _runtime_plugin_data("active", "Active"),
+        name="Active",
+    )
+    inactive = _runtime_playlist(
+        _runtime_plugin_data("inactive", "Inactive"),
+        name="Inactive",
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[active, inactive],
+    )
+    current_dt = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    target = device_config.playlist_manager.resolve_plugin_instance_snapshot(
+        "Inactive",
+        "inactive",
+        "Inactive",
+    ).instance
+    scheduled = task._playlist_command(
+        "Inactive",
+        target,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=10,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+        require_active=True,
+    )
+    scheduled_job = task.refresh_queue.submit(scheduled)
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    task.running = True
+
+    manual_job = task.submit_playlist_data_refresh(
+        target.instance_uuid,
+        expected_playlist_name="Inactive",
+        expected_generation=target.structural_generation,
+        expected_settings_revision=target.settings_revision,
+        require_active=False,
+    )
+    entry = task.refresh_queue.take(timeout=0)
+
+    assert manual_job["id"] == scheduled_job.id
+    assert entry.command.source is CommandSource.MANUAL
+    assert entry.command.payload["require_active"] is False
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(scheduled_job.id).job
+    state = task.runtime_state.snapshot().instances[target.instance_uuid]
+    assert result.status is JobStatus.SUCCEEDED
+    assert calls == [{"id": "inactive", "forceRefresh": True, "force_refresh": True}]
+    assert state.data.last_success_at == current_dt.isoformat()
+    assert state.last_good_cache.structural_generation == target.structural_generation
+    assert state.last_good_cache.settings_revision == target.settings_revision
+    assert task.display_manager.calls == []
+
+
+def test_manual_playlist_data_refresh_rejects_changed_exact_cas():
+    tmp_path = make_test_dir("manual-stale-playlist-data-refresh")
+    playlist = _runtime_playlist(_runtime_plugin_data("weather", "Home"))
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+    )
+    target = playlist.plugins[0]
+    task.running = True
+
+    with pytest.raises(ValueError, match="not found or changed"):
+        task.submit_playlist_data_refresh(
+            target.instance_uuid,
+            expected_playlist_name=playlist.name,
+            expected_generation=target.structural_generation,
+            expected_settings_revision=target.settings_revision + 1,
+            require_active=False,
+        )
+
+    assert task.refresh_queue.snapshot().depth == 0
+
+
 def test_playlist_refresh_rerenders_non_sports_live_due_before_ordinary_interval():
     calls = []
     tmp_path = make_test_dir("scheduled-non-sports-live-refresh")
@@ -6561,6 +6699,111 @@ def test_active_operation_snapshot_publishes_command_deadline_then_clears(monkey
     assert task.active_operation_snapshot() is None
 
 
+def test_process_queue_entry_logs_privacy_safe_command_origin(monkeypatch, caplog):
+    tmp_path = make_test_dir("runtime-command-start-audit")
+    playlist = _runtime_playlist(_runtime_plugin_data("audit_plugin", "Audit Plugin"))
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+    )
+    task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+
+    with caplog.at_level("INFO", logger=refresh_task_module.__name__):
+        task._process_queue_entry(entry)
+
+    expected_hash = hashlib.sha256(instance.instance_uuid.encode("utf-8")).hexdigest()[:16]
+    start_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Refresh command started.")
+    ]
+    assert start_messages == [
+        "Refresh command started. | source: background | intent: data_refresh | "
+        f"plugin_id: audit_plugin | instance_uuid_hash: {expected_hash}"
+    ]
+
+
+def test_process_queue_entry_start_log_excludes_private_command_fields(monkeypatch, caplog):
+    tmp_path = make_test_dir("runtime-command-start-audit-privacy")
+    plugin_data = _runtime_plugin_data("audit_plugin", "private-instance-name")
+    plugin_data["plugin_settings"] = {
+        "id": "audit_plugin",
+        "apiKey": "super-secret-value",
+        "url": "https://private.example/secret",
+    }
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    instance = device_config.playlist_manager.snapshot_instance(
+        device_config.playlist_manager.first_instance_uuid()
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+    )
+    task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+
+    with caplog.at_level("INFO", logger=refresh_task_module.__name__):
+        task._process_queue_entry(entry)
+
+    start_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Refresh command started.")
+    ]
+    assert len(start_messages) == 1
+    start_message = start_messages[0]
+    assert instance.instance_uuid not in start_message
+    assert "private-instance-name" not in start_message
+    assert "super-secret-value" not in start_message
+    assert "https://private.example/secret" not in start_message
+
+
+def test_process_queue_entry_start_log_uses_none_without_instance_uuid(monkeypatch, caplog):
+    tmp_path = make_test_dir("runtime-command-start-audit-no-instance")
+    task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[])
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        plugin_id="audit_global",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+
+    with caplog.at_level("INFO", logger=refresh_task_module.__name__):
+        task._process_queue_entry(entry)
+
+    start_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Refresh command started.")
+    ]
+    assert start_messages == [
+        "Refresh command started. | source: scheduler | intent: display_cache | "
+        "plugin_id: audit_global | instance_uuid_hash: none"
+    ]
+
+
 def test_process_queue_entry_binds_context_and_immutable_instance_identity(monkeypatch):
     tmp_path = make_test_dir("runtime-long-task-binding")
     playlist = _runtime_playlist(_runtime_plugin_data())
@@ -7316,14 +7559,14 @@ def test_random_selection_passes_only_catalog_eligible_uuids_to_model():
     corrupt.write_bytes(b"not-a-png")
     _write_runtime_cache(task, playlist.plugins[2])
     manager = device_config.playlist_manager
-    original_select = manager.select_next_active_instance
+    original_select = manager.reserve_next_active_instance
     observed = []
 
     def select_with_observation(*args, **kwargs):
         observed.append(kwargs["eligible_instance_uuids"])
         return original_select(*args, **kwargs)
 
-    manager.select_next_active_instance = select_with_observation
+    manager.reserve_next_active_instance = select_with_observation
 
     command = task._select_cached_display_command(
         datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
@@ -7332,6 +7575,228 @@ def test_random_selection_passes_only_catalog_eligible_uuids_to_model():
     assert command is not None
     assert observed == [frozenset(expected)]
     assert command.instance_uuid in expected
+
+
+def test_random_selection_reserves_full_playlist_bag_without_consuming(monkeypatch):
+    tmp_path = make_test_dir("cache-only-full-shuffle-bag-reservation")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+        _runtime_plugin_data("three", "Three"),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    _write_runtime_cache(task, playlist.plugins[1])
+    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+    command = task._select_cached_display_command(
+        datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert command.instance_uuid == playlist.plugins[1].instance_uuid
+    assert command.payload["automatic_rotation"] is True
+    assert playlist.plugin_rotation_pool == [
+        instance.instance_uuid for instance in playlist.plugins
+    ]
+    assert playlist.plugin_rotation_queue == [
+        instance.instance_uuid for instance in playlist.plugins
+    ]
+
+
+def test_successful_automatic_display_acknowledges_exactly_one_bag_member(monkeypatch):
+    tmp_path = make_test_dir("cache-only-shuffle-bag-success-ack")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    for instance in playlist.plugins:
+        _write_runtime_cache(task, instance)
+    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_cached_display_command(current_dt)
+    selected_uuid = command.instance_uuid
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert playlist.plugin_rotation_pool == [
+        instance.instance_uuid for instance in playlist.plugins
+    ]
+    assert playlist.plugin_rotation_queue == [
+        instance.instance_uuid
+        for instance in playlist.plugins
+        if instance.instance_uuid != selected_uuid
+    ]
+    assert playlist.plugin_rotation_recent_history == [selected_uuid]
+    assert device_config.write_count == 1
+
+
+def test_automatic_rotation_forces_physical_display_before_ack_for_same_target(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("cache-only-shuffle-bag-forces-panel-write")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    image = Image.new("RGB", (1, 1), "black")
+    _write_runtime_cache(task, instance, image)
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=instance.plugin_id,
+        plugin_instance=instance.name,
+        refresh_time="2026-07-11T11:00:00+00:00",
+        image_hash=compute_image_hash(image),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_cached_display_command(current_dt)
+
+    task._execute_command(command)
+
+    assert len(task.display_manager.calls) == 1
+    assert playlist.plugin_rotation_queue == []
+
+
+def test_failed_automatic_display_keeps_reserved_bag_member(monkeypatch):
+    tmp_path = make_test_dir("cache-only-shuffle-bag-display-failure")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    _write_runtime_cache(task, playlist.plugins[0])
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_cached_display_command(current_dt)
+    before = list(playlist.plugin_rotation_queue)
+    monkeypatch.setattr(
+        task,
+        "_display_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("panel failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="panel failed"):
+        task._execute_command(command)
+
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(command.instance_uuid) is True
+    assert device_config.write_count == 0
+
+
+def test_unproven_automatic_display_does_not_acknowledge_shuffle_bag(monkeypatch):
+    tmp_path = make_test_dir("cache-only-shuffle-bag-evidence-failure")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    _write_runtime_cache(task, playlist.plugins[0])
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_cached_display_command(current_dt)
+    before = list(playlist.plugin_rotation_queue)
+    monkeypatch.setattr(
+        task,
+        "_display_commit_evidence",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("display evidence missing")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="display evidence missing"):
+        task._execute_command(command)
+
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(command.instance_uuid) is True
+    assert device_config.write_count == 0
+
+
+def test_automatic_display_config_write_failure_rolls_back_bag_ack(monkeypatch):
+    tmp_path = make_test_dir("cache-only-shuffle-bag-write-rollback")
+    playlist = _runtime_playlist(_runtime_plugin_data("only", "Only"))
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    _write_runtime_cache(task, playlist.plugins[0])
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command = task._select_cached_display_command(current_dt)
+    before = list(playlist.plugin_rotation_queue)
+    monkeypatch.setattr(
+        device_config,
+        "write_config",
+        lambda: (_ for _ in ()).throw(RuntimeError("config write failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="config write failed"):
+        task._execute_command(command)
+
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(command.instance_uuid) is True
+
+
+def test_manual_exact_display_does_not_acknowledge_automatic_shuffle_bag(monkeypatch):
+    tmp_path = make_test_dir("cache-only-manual-does-not-consume-shuffle-bag")
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One"),
+        _runtime_plugin_data("two", "Two"),
+    )
+    task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0]
+    _write_runtime_cache(task, instance)
+    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    assert playlist.reserve_next_plugin(
+        {item.instance_uuid for item in playlist.plugins}
+    ).instance_uuid == instance.instance_uuid
+    before = list(playlist.plugin_rotation_queue)
+    command = task._playlist_command(
+        playlist.name,
+        instance.snapshot(),
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=100,
+        current_dt=current_dt,
+    )
+
+    task._execute_command(command)
+
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
 
 
 @pytest.mark.parametrize("cache_state", ["missing", "corrupt"])
@@ -7446,6 +7911,8 @@ def test_cache_disappearing_after_selection_cancels_without_refresh_failure():
     assert scheduler.retry_entries == ()
     assert task.display_manager.calls == []
     assert device_config.write_count == 0
+    assert command.instance_uuid in playlist.plugin_rotation_queue
+    assert playlist.is_rotation_reservation_current(command.instance_uuid) is True
 
 
 def test_production_playlist_commands_always_have_explicit_intent():
@@ -9132,10 +9599,11 @@ def _presentation_manifest(plugin_id="presentation_plugin"):
 
 
 class PresentationTransactionDisplayManager:
-    def __init__(self, *, after_display=None):
+    def __init__(self, *, after_display=None, hardware_written=True):
         self.calls = []
         self.bound_runtime_state = None
         self.after_display = after_display
+        self.hardware_written = hardware_written
 
     def bind_runtime_state(self, runtime_state):
         self.bound_runtime_state = runtime_state
@@ -9149,6 +9617,7 @@ class PresentationTransactionDisplayManager:
         task_context=None,
         logical_target=None,
         instance_revision=None,
+        force_hardware_write=False,
     ):
         commit_id = uuid.uuid4().hex
         committed_at = PRESENTATION_NOW.isoformat()
@@ -9160,6 +9629,7 @@ class PresentationTransactionDisplayManager:
             "task_context": task_context,
             "logical_target": dict(logical_target or {}),
             "instance_revision": instance_revision,
+            "force_hardware_write": force_hardware_write,
         }
         self.calls.append(call)
         if self.bound_runtime_state is not None:
@@ -9171,7 +9641,11 @@ class PresentationTransactionDisplayManager:
             )
         if self.after_display is not None:
             self.after_display(self, call)
-        return SimpleNamespace(commit_id=commit_id, committed_at=committed_at)
+        return SimpleNamespace(
+            commit_id=commit_id,
+            committed_at=committed_at,
+            hardware_written=self.hardware_written,
+        )
 
 
 class PresentationBankPlugin(DelegatingThemeWrapper):
@@ -9488,6 +9962,94 @@ def _presentation_followup_command(task, playlist, instance, request):
     )
 
 
+def test_automatic_rotation_keeps_member_when_transaction_skips_hardware_write(
+    monkeypatch,
+):
+    display = PresentationTransactionDisplayManager(hardware_written=False)
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "automatic-shuffle-bag-requires-hardware-write",
+        display_manager=display,
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    command = task._select_cached_display_command(PRESENTATION_NOW)
+    before = list(playlist.plugin_rotation_queue)
+
+    with pytest.raises(RuntimeError, match="did not write the panel"):
+        task._execute_command(command)
+
+    assert len(display.calls) == 1
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+    assert device_config.write_count == 0
+
+
+def test_exact_manual_display_forces_hardware_without_consuming_shuffle_bag(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "exact-manual-display-forces-panel"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    before = list(playlist.plugin_rotation_queue)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=100,
+        current_dt=PRESENTATION_NOW,
+        force_hardware_write=True,
+    )
+
+    task._execute_command(command)
+
+    assert display.calls[0]["force_hardware_write"] is True
+    assert playlist.plugin_rotation_queue == before
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
+
+
+def test_exact_manual_display_rejects_unproven_hardware_write(monkeypatch):
+    display = PresentationTransactionDisplayManager(hardware_written=False)
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "exact-manual-display-requires-panel-proof",
+        display_manager=display,
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    before = list(playlist.plugin_rotation_queue)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=100,
+        current_dt=PRESENTATION_NOW,
+        force_hardware_write=True,
+    )
+
+    with pytest.raises(RuntimeError, match="did not write the panel"):
+        task._execute_command(command)
+
+    assert display.calls[0]["force_hardware_write"] is True
+    assert playlist.plugin_rotation_queue == before
+    assert device_config.write_count == 0
+
+
 def test_normal_cache_commit_records_one_coalesced_presentation_request(monkeypatch):
     task, device_config, clock, playlist, _display = _make_presentation_task("presentation-normal-display-request")
     instance = playlist.plugins[0].snapshot()
@@ -9522,6 +10084,54 @@ def test_normal_cache_commit_records_one_coalesced_presentation_request(monkeypa
     task._process_queue_entry(second)
 
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == original
+
+
+def test_prepared_refresh_on_display_followup_does_not_consume_shuffle_bag_twice(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-followup-preserves-shuffle-bag"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    automatic = task._select_cached_display_command(PRESENTATION_NOW)
+    assert automatic.payload["automatic_rotation"] is True
+    first = _queue_and_process(task, automatic)
+    assert first.job.status is JobStatus.SUCCEEDED
+    request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert request is not None
+    anchor = device_config.refresh_info.refresh_time
+    rotation_after_automatic = (
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_recent_history),
+    )
+    assert rotation_after_automatic == ([], [instance.instance_uuid])
+
+    _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+    )
+    followup = _presentation_followup_command(task, playlist, instance, request)
+    assert followup.payload.get("automatic_rotation") is None
+
+    result = _queue_and_process(task, followup)
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert (
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_recent_history),
+    ) == rotation_after_automatic
+    assert device_config.refresh_info.refresh_time == anchor
 
 
 def test_manual_cache_display_records_request_but_live_theme_followups_do_not(

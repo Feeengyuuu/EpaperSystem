@@ -31,6 +31,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
 from plugins.species_radar.presentation_bank import (
     READY_TARGET,
@@ -374,15 +375,36 @@ class SpeciesRadar(BasePlugin):
         )
         check_or_rollback()
         ready = bank.ready_records(profile, prune=True)
+        force_refresh = self._enabled(settings.get("forceRefresh"), default=False) or self._enabled(
+            settings.get("force_refresh"),
+            default=False,
+        )
+        live_record_keys = set()
         if len(ready) < REFILL_THRESHOLD:
             profile["refill_in_progress"] = True
-        if profile.get("refill_in_progress") is True or len(ready) < READY_TARGET:
+        if force_refresh or profile.get("refill_in_progress") is True or len(ready) < READY_TARGET:
+            provider_attempted_at = datetime.now(timezone.utc).isoformat()
             deadline_token = _DATA_DEADLINE.set(deadline)
             try:
-                payload = self._daily_payload(settings, now, location)
+                try:
+                    payload = self._daily_payload(settings, now, location)
+                except Exception:
+                    profile["last_provider_attempt_at"] = provider_attempted_at
+                    profile["last_provider_status"] = "error"
+                    bank.save(document, deadline_check=check_deadline)
+                    raise
             finally:
                 _DATA_DEADLINE.reset(deadline_token)
             check_or_rollback()
+            payload_source_state = str(payload.get("source_state") or "").strip().lower()
+            if not payload_source_state:
+                payload_source_state = "live" if payload.get("observations") else "local"
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = (
+                "success"
+                if payload_source_state == "live" and payload.get("observations")
+                else ("empty" if payload_source_state == "live" else "error")
+            )
             expected_cache_key = self._cache_key(settings, now, location)
             stale_fallback = (
                 str(payload.get("source_state") or "").lower() == "cache"
@@ -459,6 +481,8 @@ class SpeciesRadar(BasePlugin):
                     logger.warning("Species bank candidate failed for %s: %s", observation_id, exc)
                     continue
                 existing.add(record["observation_id"])
+                if payload_source_state == "live":
+                    live_record_keys.add(record["record_key"])
                 if len(bank.ready_records(profile, prune=False)) >= READY_TARGET:
                     break
             if source_observations:
@@ -507,7 +531,15 @@ class SpeciesRadar(BasePlugin):
                 profile.update(profile_before)
                 raise
         check_or_rollback()
-        return image
+        provenance = (
+            SourceProvenance.LIVE
+            if current.get("record_key") in live_record_keys
+            else SourceProvenance.FRESH_CACHE
+        )
+        if force_refresh and profile.get("last_provider_status") == "error":
+            provenance = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def prepare_presentation(
         self,
@@ -813,7 +845,10 @@ class SpeciesRadar(BasePlugin):
         cache_key = self._cache_key(settings, now, location)
         cache = self._read_cache()
         theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
-        force_refresh = self._enabled(settings.get("forceRefresh") or settings.get("force_refresh"), default=False) and not theme_render_only
+        force_refresh = (
+            self._enabled(settings.get("forceRefresh"), default=False)
+            or self._enabled(settings.get("force_refresh"), default=False)
+        ) and not theme_render_only
         if cache.get("schema") == CACHE_SCHEMA_VERSION and cache.get("cache_key") == cache_key and not force_refresh:
             cached = cache.get("payload")
             if isinstance(cached, dict):

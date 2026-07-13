@@ -128,6 +128,26 @@ def test_successful_hardware_write_is_the_commit_linearization_point(tmp_path):
     assert manager.transaction.current().commit_id == commit.commit_id
 
 
+def test_display_manager_can_force_same_pixels_to_hardware(tmp_path):
+    manager = _manager(tmp_path)
+    image = Image.new("RGB", (8, 6), "green")
+    manager.display_image(
+        image,
+        task_context=_context(),
+        logical_target={"id": "same"},
+    )
+
+    forced = manager.display_image(
+        image,
+        task_context=_context(),
+        logical_target={"id": "same"},
+        force_hardware_write=True,
+    )
+
+    assert len(manager.display.calls) == 2
+    assert forced.hardware_written is True
+
+
 def test_hardware_initialization_failure_creates_degraded_manager(tmp_path, monkeypatch):
     config = FakeDeviceConfig(tmp_path)
     config.values["display_type"] = "epd7in5_V2"

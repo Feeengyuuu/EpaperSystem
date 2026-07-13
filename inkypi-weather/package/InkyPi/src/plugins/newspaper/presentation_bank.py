@@ -611,6 +611,8 @@ class NewspaperPresentationBank:
             "pending_selection": None,
             "last_applied_request_id": None,
             "last_committed_at": None,
+            "last_provider_attempt_at": None,
+            "last_provider_status": None,
             "refill_cursor": 0,
             "refill_in_progress": False,
             "last_used_at": self.now().isoformat(),
@@ -625,6 +627,12 @@ class NewspaperPresentationBank:
         profile["settings_fingerprint"] = self.base_fingerprint
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
+        attempted_at = _parse_datetime(profile.get("last_provider_attempt_at"))
+        profile["last_provider_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         profile["records"] = [item for item in profile.get("records") or [] if self._valid_record(item)][
             -MAX_RECORDS_PER_PROFILE:
         ]

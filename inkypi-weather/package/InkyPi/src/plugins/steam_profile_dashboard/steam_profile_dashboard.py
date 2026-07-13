@@ -1,4 +1,8 @@
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -95,13 +99,26 @@ class SteamProfileDashboard(BasePlugin):
         cache_key = self._cache_key(cache_settings, dimensions, steam_id)
         cache_entry = self._read_cache(cache_key)
         now = time.time()
+        force_refresh = self._force_refresh_requested(settings)
 
-        if cache_entry and self._cache_is_fresh(cache_entry, now, status_cache_seconds, full_cache_minutes):
+        if (
+            not force_refresh
+            and cache_entry
+            and self._cache_is_fresh(
+                cache_entry,
+                now,
+                status_cache_seconds,
+                full_cache_minutes,
+            )
+        ):
             image_path = cache_entry.get("image_path")
             if image_path and os.path.exists(image_path):
                 logger.info("Using cached Steam profile dashboard.")
                 self._write_steam_profile_context(cache_entry.get("data") or {}, now)
-                return safe_open_image(image_path).convert("RGB")
+                return attach_source_provenance(
+                    safe_open_image(image_path).convert("RGB"),
+                    SourceProvenance.FRESH_CACHE,
+                )
 
         try:
             data = self._get_dashboard_data(
@@ -112,6 +129,7 @@ class SteamProfileDashboard(BasePlugin):
                 now,
                 status_cache_seconds,
                 full_cache_minutes,
+                force_refresh=force_refresh,
             )
             image = self._render_dashboard(data, dimensions, theme_context)
             image_path = self._cache_image_path(cache_key)
@@ -127,13 +145,22 @@ class SteamProfileDashboard(BasePlugin):
                 "data": self._json_safe(data),
             })
             self._write_steam_profile_context(data, now)
-            return image
+            provenance = (
+                SourceProvenance.FRESH_CACHE
+                if data.get("refresh_mode") == "cache"
+                else SourceProvenance.LIVE
+            )
+            return attach_source_provenance(image, provenance)
         except Exception as e:
             logger.error(f"Steam Profile Dashboard failed: {e}")
             if cache_entry and cache_entry.get("image_path") and os.path.exists(cache_entry["image_path"]):
                 logger.warning("Using stale Steam profile dashboard cache.")
-                self._write_steam_profile_context(cache_entry.get("data") or {}, now)
-                return safe_open_image(cache_entry["image_path"]).convert("RGB")
+                image = safe_open_image(cache_entry["image_path"]).convert("RGB")
+                image.info["inkypi_skip_cache"] = True
+                return attach_source_provenance(
+                    image,
+                    SourceProvenance.STALE_CACHE,
+                )
             raise RuntimeError(f"Steam 个人资料看板生成失败：{str(e)}")
 
     def _write_steam_profile_context(self, data, generated_at):
@@ -192,7 +219,18 @@ class SteamProfileDashboard(BasePlugin):
             and now - cache_entry.get("full_updated_at", 0) < full_cache_minutes * 60
         )
 
-    def _get_dashboard_data(self, api_key, steam_id, settings, cache_entry, now, status_cache_seconds, full_cache_minutes):
+    def _get_dashboard_data(
+        self,
+        api_key,
+        steam_id,
+        settings,
+        cache_entry,
+        now,
+        status_cache_seconds,
+        full_cache_minutes,
+        *,
+        force_refresh=False,
+    ):
         cached_data = cache_entry.get("data") if isinstance(cache_entry, dict) else None
         full_is_fresh = bool(
             cached_data
@@ -203,7 +241,7 @@ class SteamProfileDashboard(BasePlugin):
             and now - cache_entry.get("status_updated_at", 0) < status_cache_seconds
         )
 
-        if not full_is_fresh:
+        if force_refresh or not full_is_fresh:
             data = self._fetch_dashboard_data(api_key, steam_id, settings)
             data["_status_updated_at"] = now
             data["_full_updated_at"] = now
@@ -2310,6 +2348,12 @@ class SteamProfileDashboard(BasePlugin):
         if value is None:
             return default
         return str(value).lower() in ("true", "1", "yes", "on")
+
+    def _force_refresh_requested(self, settings):
+        return any(
+            self._bool_setting(settings or {}, key, False)
+            for key in ("forceRefresh", "force_refresh")
+        )
 
     def _cache_dir(self):
         return self.cache_dir(leaf=".steam_profile_dashboard_cache", create=True)

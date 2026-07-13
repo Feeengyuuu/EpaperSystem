@@ -1104,6 +1104,235 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert restored.get_next_plugin(eligible).instance_uuid == "three-uuid"
         assert restored.plugin_rotation_pool == ["two-uuid", "three-uuid"]
 
+    def test_automatic_rotation_reserves_from_full_playlist_without_consuming(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        reserved = playlist.reserve_next_plugin({"two-uuid"})
+
+        assert reserved.instance_uuid == "two-uuid"
+        assert playlist.plugin_rotation_pool == [
+            "one-uuid",
+            "two-uuid",
+            "three-uuid",
+        ]
+        assert playlist.plugin_rotation_queue == [
+            "one-uuid",
+            "two-uuid",
+            "three-uuid",
+        ]
+        assert playlist.is_rotation_reservation_current("two-uuid") is True
+
+        acknowledgement = playlist.acknowledge_rotation_display("two-uuid")
+
+        assert acknowledgement is not None
+        assert playlist.plugin_rotation_queue == ["one-uuid", "three-uuid"]
+        assert playlist.plugin_rotation_recent_history == ["two-uuid"]
+
+    def test_automatic_rotation_ineligible_remainder_stays_in_same_round(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+                plugin_rotation_queue=["one-uuid", "three-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid", "three-uuid"],
+                plugin_rotation_recent_history=["two-uuid"],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        before = playlist.to_dict()
+
+        assert playlist.reserve_next_plugin({"two-uuid"}) is None
+
+        assert playlist.to_dict() == before
+        assert playlist.plugin_rotation_queue == ["one-uuid", "three-uuid"]
+
+    def test_automatic_rotation_restart_does_not_consume_unacknowledged_reservation(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        assert playlist.reserve_next_plugin({"two-uuid"}).instance_uuid == "two-uuid"
+        restarted = Playlist.from_dict(playlist.to_dict())
+
+        assert "two-uuid" in restarted.plugin_rotation_queue
+        assert restarted.reserve_next_plugin({"two-uuid"}).instance_uuid == "two-uuid"
+        assert restarted.acknowledge_rotation_display("two-uuid") is not None
+
+        restarted_again = Playlist.from_dict(restarted.to_dict())
+
+        assert "two-uuid" not in restarted_again.plugin_rotation_queue
+        assert restarted_again.reserve_next_plugin({"two-uuid"}) is None
+
+    def test_automatic_rotation_refills_only_after_every_ack_and_avoids_boundary_repeat(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        first_round = []
+        for _ in range(3):
+            reserved = playlist.reserve_next_plugin(
+                {"one-uuid", "two-uuid", "three-uuid"}
+            )
+            first_round.append(reserved.instance_uuid)
+            assert playlist.acknowledge_rotation_display(reserved.instance_uuid)
+
+        assert first_round == ["one-uuid", "two-uuid", "three-uuid"]
+        assert playlist.plugin_rotation_queue == []
+
+        next_round = playlist.reserve_next_plugin(
+            {"one-uuid", "two-uuid", "three-uuid"}
+        )
+
+        assert next_round.instance_uuid != first_round[-1]
+        assert set(playlist.plugin_rotation_queue) == {
+            "one-uuid",
+            "two-uuid",
+            "three-uuid",
+        }
+
+    def test_automatic_rotation_initializes_legacy_bag_without_repeating_displayed(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+                current_plugin_index=0,
+                plugin_rotation_queue=[],
+                plugin_rotation_pool=[],
+                plugin_rotation_recent_history=["one-uuid"],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        reserved = playlist.reserve_next_plugin(
+            {"one-uuid", "two-uuid", "three-uuid"}
+        )
+
+        assert reserved.instance_uuid == "two-uuid"
+        assert playlist.plugin_rotation_queue == [
+            "two-uuid",
+            "one-uuid",
+            "three-uuid",
+        ]
+
+    def test_automatic_rotation_reconciles_added_and_removed_instances(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+                plugin_rotation_queue=["two-uuid", "three-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid", "three-uuid"],
+                plugin_rotation_recent_history=["one-uuid"],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        playlist.plugins = [
+            plugin for plugin in playlist.plugins if plugin.instance_uuid != "two-uuid"
+        ]
+        playlist.plugins.append(
+            Playlist.from_dict(
+                self._playlist(
+                    "Added",
+                    plugins=[self._plugin("Four", instance_uuid="four-uuid")],
+                )
+            ).plugins[0]
+        )
+
+        reserved = playlist.reserve_next_plugin({"three-uuid", "four-uuid"})
+
+        assert reserved.instance_uuid == "three-uuid"
+        assert playlist.plugin_rotation_pool == [
+            "one-uuid",
+            "three-uuid",
+            "four-uuid",
+        ]
+        assert playlist.plugin_rotation_queue == ["three-uuid", "four-uuid"]
+
+    def test_automatic_rotation_full_26_instance_round_has_zero_repeats(
+        self,
+        monkeypatch,
+    ):
+        instance_uuids = [f"instance-{index:02d}" for index in range(26)]
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Factory",
+                plugins=[
+                    self._plugin(f"Plugin {index:02d}", instance_uuid=instance_uuid)
+                    for index, instance_uuid in enumerate(instance_uuids)
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+        eligible = set(instance_uuids)
+
+        displayed = []
+        for _ in range(26):
+            reserved = playlist.reserve_next_plugin(eligible)
+            displayed.append(reserved.instance_uuid)
+            assert playlist.acknowledge_rotation_display(reserved.instance_uuid)
+
+        assert len(displayed) == len(set(displayed)) == 26
+        assert set(displayed) == eligible
+        assert playlist.plugin_rotation_queue == []
+
+        next_round = playlist.reserve_next_plugin(eligible)
+
+        assert next_round.instance_uuid != displayed[-1]
+
     def test_active_playlist_snapshot_is_deeply_immutable_detached_and_pure(self):
         manager = self._manager(
             self._playlist(

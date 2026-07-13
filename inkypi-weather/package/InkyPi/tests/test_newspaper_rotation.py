@@ -21,6 +21,7 @@ from plugins.base_plugin.presentation import (
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from runtime.runtime_state import PresentationCommitReceipt
 
 
@@ -585,6 +586,83 @@ def test_newspaper_refill_in_progress_reaches_six_ready_records(monkeypatch):
     profile = state["profiles"][fingerprint]
     assert len(profile["records"]) == newspaper_bank.READY_TARGET == 6
     assert profile["refill_in_progress"] is False
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_newspaper_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    monkeypatch,
+    force_key,
+):
+    plugin = make_plugin(f"force-full-{force_key}")
+    settings = bound_settings(
+        mediaSources="\n".join(
+            f"Paper {index}|newspaper|paper_{index}" for index in range(6)
+        )
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_source_image",
+        lambda source, *_args, **_kwargs: Image.new(
+            "RGB", (800, 480), (len(source["id"]) * 11 % 255, 30, 70)
+        ),
+    )
+    plugin.generate_image(settings, DeviceConfig())
+    plugin.generate_image(settings, DeviceConfig())
+    before = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = before["instance_profiles"]["newspaper-instance"]
+    current = dict(before["profiles"][fingerprint]["current_selection"])
+    calls = []
+
+    def refreshed(source, *_args, **_kwargs):
+        calls.append(source["id"])
+        return Image.new("RGB", (800, 480), (200, len(calls) * 20, 80))
+
+    monkeypatch.setattr(plugin, "_fetch_source_image", refreshed)
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DeviceConfig())
+
+    after = newspaper_bank.read_state(plugin._presentation_state_path())
+    profile = after["profiles"][fingerprint]
+    assert calls
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_newspaper_force_refresh_provider_error_marks_warm_bank_stale_and_skips_cache(
+    monkeypatch,
+):
+    plugin = make_plugin("force-provider-error")
+    settings = bound_settings(
+        mediaSources="\n".join(
+            f"Paper {index}|newspaper|paper_{index}" for index in range(6)
+        )
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+    plugin.generate_image(settings, DeviceConfig())
+    plugin.generate_image(settings, DeviceConfig())
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_source_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider offline")),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DeviceConfig(),
+    )
+
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = state["instance_profiles"]["newspaper-instance"]
+    assert state["profiles"][fingerprint]["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_newspaper_metadata_placeholder_is_local_fallback(monkeypatch):

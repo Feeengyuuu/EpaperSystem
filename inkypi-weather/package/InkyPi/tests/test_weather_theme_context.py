@@ -9,6 +9,10 @@ from PIL import Image
 
 from plugins.weather import weather as weather_module
 from plugins.weather.weather import Weather
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from utils import theme_utils
 from utils.theme_utils import EFFECTIVE_THEME_CONTEXT_INFO_KEY
 
@@ -352,11 +356,14 @@ def test_openweather_stale_cache_keeps_original_age_and_omits_astronomy(
         lambda _plugin_id, context, **_kwargs: published.update(context) or True,
     )
 
-    plugin.generate_image(_settings(), FakeDeviceConfig())
+    image = plugin.generate_image(_settings(), FakeDeviceConfig())
 
+    assert published == {}
     assert "astronomy" not in published
     assert _sun_points(rendered) == {}
     assert rendered["theme"]["source"] == "fallback"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_openmeteo_location_mode_uses_response_iana_timezone(monkeypatch):
@@ -677,3 +684,162 @@ def test_weather_success_fetches_each_endpoint_once(monkeypatch):
     )
 
     assert calls == {"weather": 1, "air": 1, "location": 1}
+
+
+def test_force_refresh_aliases_bypass_fresh_openweather_source_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    monkeypatch.setenv("OPENWEATHER_CACHE_DIR", str(tmp_path))
+    settings = _settings(titleSelection="location")
+    api_key = "test-key"
+    lat = float(settings["latitude"])
+    long = float(settings["longitude"])
+    urls = {
+        "onecall": weather_module.WEATHER_URL.format(
+            lat=lat,
+            long=long,
+            units=settings["units"],
+            api_key=api_key,
+        ),
+        "air_quality": weather_module.AIR_QUALITY_URL.format(
+            lat=lat,
+            long=long,
+            api_key=api_key,
+        ),
+        "geocoding": weather_module.GEOCODING_URL.format(
+            lat=lat,
+            long=long,
+            api_key=api_key,
+        ),
+    }
+    payloads = {
+        "onecall": _openweather_payload(),
+        "air_quality": _air_quality_openweather(),
+        "geocoding": [{"name": "Fremont", "state": "California"}],
+    }
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    for namespace, url in urls.items():
+        plugin._write_json_file(
+            plugin._cache_path_for_url(str(tmp_path), namespace, url),
+            {"fetched_at": fetched_at, "stale": False, "data": payloads[namespace]},
+        )
+
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    def get(url):
+        namespace = next(name for name, candidate in urls.items() if candidate == url)
+        calls.append(namespace)
+        return Response(payloads[namespace])
+
+    monkeypatch.setattr(
+        weather_module,
+        "get_http_session",
+        lambda: SimpleNamespace(get=get),
+    )
+    plugin.parse_forecast = lambda *_args: []
+    plugin.parse_hourly = lambda *_args: []
+    _capture_render(plugin)
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+
+    for force_key in ("forceRefresh", "force_refresh"):
+        image = plugin.generate_image(
+            {**settings, force_key: "true"},
+            FakeDeviceConfig(),
+        )
+        assert read_source_provenance(image) is SourceProvenance.LIVE
+
+    assert sorted(calls) == sorted(["onecall", "air_quality", "geocoding"] * 2)
+
+
+def test_force_refresh_bypasses_openweather_daily_safety_limit(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    monkeypatch.setenv("OPENWEATHER_CACHE_DIR", str(tmp_path))
+    payload = _openweather_payload()
+    url = "https://example.test/onecall"
+    cache_path = plugin._cache_path_for_url(str(tmp_path), "onecall", url)
+    plugin._write_json_file(
+        cache_path,
+        {
+            "fetched_at": "2026-07-10T12:00:00+00:00",
+            "stale": False,
+            "data": payload,
+        },
+    )
+    plugin._write_json_file(
+        str(tmp_path / "onecall_usage.json"),
+        {
+            "date": datetime.now(timezone.utc).date().isoformat(),
+            "onecall_requests": 1,
+        },
+    )
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(
+        weather_module,
+        "get_http_session",
+        lambda: SimpleNamespace(get=lambda *_a, **_k: calls.append(True) or Response()),
+    )
+    plugin._openweather_force_refresh = True
+
+    assert plugin._request_openweather_json(
+        url,
+        "onecall",
+        min_seconds=3600,
+        daily_limit=1,
+    ) == payload
+    assert calls == [True]
+    assert plugin._openweather_request_metadata["onecall"]["stale"] is False
+    assert plugin._read_json_file(str(tmp_path / "onecall_usage.json"), {})[
+        "onecall_requests"
+    ] == 2
+
+
+def test_openweather_stale_auxiliary_cache_marks_whole_render_stale(monkeypatch):
+    plugin = _plugin()
+    payload = _openweather_payload()
+
+    def weather(*_args):
+        plugin._openweather_request_metadata["onecall"] = {
+            "fetched_at": "2026-07-13T12:00:00+00:00",
+            "stale": False,
+        }
+        return payload
+
+    def stale_air(*_args):
+        plugin._openweather_request_metadata["air_quality"] = {
+            "fetched_at": "2026-07-10T12:00:00+00:00",
+            "stale": True,
+        }
+        return _air_quality_openweather()
+
+    plugin.get_weather_data = weather
+    plugin.get_air_quality = stale_air
+    plugin.parse_forecast = lambda *_args: []
+    plugin.parse_hourly = lambda *_args: []
+    _capture_render(plugin)
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+
+    image = plugin.generate_image(_settings(), FakeDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True

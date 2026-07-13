@@ -1130,7 +1130,7 @@ class RefreshTask:
             ))
         except (TypeError, ValueError, OverflowError):
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
-        selection = manager.select_next_active_instance(
+        selection = manager.reserve_next_active_instance(
             current_dt,
             latest_refresh=latest_refresh.get_refresh_datetime(),
             interval_seconds=interval,
@@ -1143,6 +1143,7 @@ class RefreshTask:
                 intent=RefreshIntent.DISPLAY_CACHE,
                 display_cached_only=True,
                 priority=50,
+                automatic_rotation=True,
             )
 
         active = manager.snapshot_active_playlist(current_dt)
@@ -1330,7 +1331,7 @@ class RefreshTask:
             )
         except (TypeError, ValueError, OverflowError):
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
-        selection = manager.select_next_active_instance(
+        selection = manager.reserve_next_active_instance(
             current_dt,
             latest_refresh=latest_refresh.get_refresh_datetime(),
             interval_seconds=interval,
@@ -1355,6 +1356,7 @@ class RefreshTask:
             priority=50,
             current_dt=current_dt,
             cache_theme_mode=candidate.theme_mode,
+            automatic_rotation=True,
         )
 
     def _select_prepared_display_retry_command(
@@ -2077,6 +2079,19 @@ class RefreshTask:
                 )
                 self._signal_completion(finished.id)
                 return
+            instance_uuid_hash = (
+                hashlib.sha256(command.instance_uuid.encode("utf-8")).hexdigest()[:16]
+                if command.instance_uuid
+                else "none"
+            )
+            logger.info(
+                "Refresh command started. | source: %s | intent: %s | "
+                "plugin_id: %s | instance_uuid_hash: %s",
+                command.source.value,
+                command.intent.value if command.intent is not None else "none",
+                command.plugin_id,
+                instance_uuid_hash,
+            )
             self._record_runtime_attempt(command)
             try:
                 identity = InstanceIdentity(
@@ -2352,15 +2367,18 @@ class RefreshTask:
         image_settings=(),
         logical_target=None,
         instance_revision=None,
+        force_hardware_write=False,
     ):
         if self._display_transactions_enabled:
-            return self.display_manager.display_image(
-                image,
-                image_settings=image_settings,
-                task_context=context,
-                logical_target=logical_target,
-                instance_revision=instance_revision,
-            )
+            display_kwargs = {
+                "image_settings": image_settings,
+                "task_context": context,
+                "logical_target": logical_target,
+                "instance_revision": instance_revision,
+            }
+            if force_hardware_write:
+                display_kwargs["force_hardware_write"] = True
+            return self.display_manager.display_image(image, **display_kwargs)
         return self.display_manager.display_image(
             image,
             image_settings=image_settings,
@@ -3130,6 +3148,13 @@ class RefreshTask:
         )
         if selection is None:
             raise _StaleSelection("playlist selection changed before commit")
+        if command.payload.get("automatic_rotation") is True and not (
+            self.device_config.get_playlist_manager().validate_rotation_reservation(
+                command.instance_uuid,
+                expected_playlist_name=command.payload.get("playlist_name"),
+            )
+        ):
+            raise _StaleSelection("automatic display reservation changed before commit")
         return selection
 
     def _live_display_target_is_current(self, command):
@@ -3338,7 +3363,11 @@ class RefreshTask:
             display_was_invoked = False
             if command.kind is CommandKind.DISPLAY:
                 self._require_fresh_selection(command, context)
-                if image_hash != latest_refresh.image_hash or self._display_target_changed(latest_refresh, refresh_info):
+                if (
+                    self._force_hardware_write_requested(command)
+                    or image_hash != latest_refresh.image_hash
+                    or self._display_target_changed(latest_refresh, refresh_info)
+                ):
                     display_was_invoked = True
                     display_commit = self._display_image(
                         image,
@@ -3355,6 +3384,9 @@ class RefreshTask:
                             instance.structural_generation,
                             instance.settings_revision,
                         ),
+                        force_hardware_write=self._force_hardware_write_requested(
+                            command
+                        ),
                     )
 
             if command.kind is CommandKind.DISPLAY:
@@ -3366,16 +3398,21 @@ class RefreshTask:
                 self._require_fresh_selection(command, context)
                 # The final validation is the config commit linearization point.
                 # Do not observe cancellation again after shared state is mutated.
-                self.device_config.refresh_info = refresh_record
-                if thawed_theme_context:
-                    self._persist_active_theme(thawed_theme_context, current_dt)
-                self._write_device_config()
+                self._require_automatic_hardware_write(
+                    command,
+                    display_commit,
+                    display_was_invoked=display_was_invoked,
+                )
                 commit_id, committed_at = self._display_commit_evidence(
                     display_commit,
                     instance.instance_uuid,
                     current_dt,
                     display_was_invoked=display_was_invoked,
                 )
+                self.device_config.refresh_info = refresh_record
+                if thawed_theme_context:
+                    self._persist_active_theme(thawed_theme_context, current_dt)
+                self._write_playlist_display_commit(command)
                 if command.allow_prepared_presentation:
                     self._request_presentation_after_display(
                         instance,
@@ -3450,6 +3487,12 @@ class RefreshTask:
                 instance.structural_generation,
                 instance.settings_revision,
             ),
+            force_hardware_write=self._force_hardware_write_requested(command),
+        )
+        self._require_automatic_hardware_write(
+            command,
+            display_commit,
+            display_was_invoked=True,
         )
         commit_id, committed_at = self._display_commit_evidence(
             display_commit,
@@ -3521,7 +3564,7 @@ class RefreshTask:
         ):
             refresh_info["refresh_time"] = latest_refresh.refresh_time
         self.device_config.refresh_info = RefreshInfo(**refresh_info)
-        self._write_device_config()
+        self._write_playlist_display_commit(command)
 
         receipt = PresentationCommitReceipt(
             request_id=prepared_selection.request.request_id,
@@ -3607,6 +3650,29 @@ class RefreshTask:
             changed_at=committed_at,
         )
         return commit_id, committed_at
+
+    def _require_automatic_hardware_write(
+        self,
+        command,
+        display_commit,
+        *,
+        display_was_invoked,
+    ):
+        if not self._force_hardware_write_requested(command):
+            return
+        if not display_was_invoked:
+            raise RuntimeError("forced display did not invoke the panel")
+        if self._display_transactions_enabled and (
+            getattr(display_commit, "hardware_written", None) is not True
+        ):
+            raise RuntimeError("forced display did not write the panel")
+
+    @staticmethod
+    def _force_hardware_write_requested(command):
+        return bool(
+            command.payload.get("automatic_rotation") is True
+            or command.payload.get("force_hardware_write") is True
+        )
 
     def _request_presentation_after_display(
         self,
@@ -3977,6 +4043,8 @@ class RefreshTask:
         coalescing_scope=None,
         allow_prepared_presentation=None,
         presentation_request_id=None,
+        automatic_rotation=False,
+        force_hardware_write=False,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -4024,6 +4092,10 @@ class RefreshTask:
             payload["cache_theme_mode"] = cache_theme_mode
         if presentation_request_id is not None:
             payload["presentation_request_id"] = str(presentation_request_id)
+        if automatic_rotation:
+            payload["automatic_rotation"] = True
+        if force_hardware_write:
+            payload["force_hardware_write"] = True
         if allow_prepared_presentation is None:
             allow_prepared_presentation = (
                 normalized_intent is RefreshIntent.DISPLAY_CACHE
@@ -4134,6 +4206,7 @@ class RefreshTask:
         expected_generation=None,
         expected_settings_revision=None,
         require_active=True,
+        force_hardware_write=False,
     ):
         """Queue an immutable, cache-only playlist display command by UUID."""
         if not self.running and self.refresh_queue.snapshot().accepting:
@@ -4229,6 +4302,56 @@ class RefreshTask:
                 if candidate is not None
                 else resolved_theme_mode
             ),
+            force_hardware_write=bool(force_hardware_write),
+        )
+        job = self.refresh_queue.submit(command)
+        return self._job_payload(self.refresh_queue.get_entry(job.id))
+
+    def submit_playlist_data_refresh(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+        expected_generation,
+        expected_settings_revision,
+        require_active=True,
+    ):
+        """Queue a forced data refresh for one exact immutable playlist instance."""
+        if not self.running and self.refresh_queue.snapshot().accepting:
+            raise RuntimeError("Background refresh task is not running")
+        if any(
+            value is None
+            for value in (
+                expected_playlist_name,
+                expected_generation,
+                expected_settings_revision,
+            )
+        ):
+            raise ValueError("Playlist data refresh requires exact CAS metadata")
+
+        current_dt = self._get_current_datetime()
+        selection = self.device_config.get_playlist_manager().validate_selection(
+            instance_uuid,
+            expected_playlist_name=expected_playlist_name,
+            expected_generation=expected_generation,
+            expected_settings_revision=expected_settings_revision,
+            current_datetime=current_dt,
+            require_active=bool(require_active),
+        )
+        if selection is None:
+            raise ValueError(f"Playlist instance not found or changed: {instance_uuid}")
+
+        command = self._playlist_command(
+            selection.playlist_name,
+            selection.instance,
+            source=CommandSource.MANUAL,
+            intent=RefreshIntent.DATA_REFRESH,
+            force=True,
+            display_cached_only=False,
+            priority=100,
+            kind=CommandKind.CACHE_REFRESH,
+            current_dt=current_dt,
+            require_active=bool(require_active),
         )
         job = self.refresh_queue.submit(command)
         return self._job_payload(self.refresh_queue.get_entry(job.id))
@@ -4591,6 +4714,29 @@ class RefreshTask:
         if hasattr(self.device_config, "config") and isinstance(self.device_config.config, dict):
             return self.device_config.config.get(key, default)
         return default
+
+    def _write_playlist_display_commit(self, command):
+        """Persist a display commit and its automatic bag acknowledgement together."""
+        if command.payload.get("automatic_rotation") is not True:
+            self._write_device_config()
+            return
+
+        manager = self.device_config.get_playlist_manager()
+        acknowledgement = manager.acknowledge_rotation_display(
+            command.instance_uuid,
+            expected_playlist_name=command.payload.get("playlist_name"),
+        )
+        if acknowledgement is None:
+            raise _StaleSelection("automatic display reservation changed at commit")
+        try:
+            self._write_device_config()
+        except BaseException:
+            if not manager.rollback_rotation_acknowledgement(acknowledgement):
+                logger.error(
+                    "Automatic display acknowledgement could not be rolled back. | instance_uuid: %s",
+                    command.instance_uuid,
+                )
+            raise
 
     def _write_device_config(self):
         with self.config_write_lock:

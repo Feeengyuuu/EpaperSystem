@@ -4,6 +4,10 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.steam_daily_art.presentation_bank import (
     READY_TARGET,
     REFILL_THRESHOLD,
@@ -149,10 +153,18 @@ class SteamDailyArt(BasePlugin):
             cached_image = cache_entry.get("image_path")
             if cached_image and os.path.exists(cached_image):
                 logger.info(f"Using cached Steam daily art for {rotation_key}: {cached_image}")
-                self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
+                cached_generated_at = self._cache_generated_at(cache_entry)
+                if cached_generated_at is not None:
+                    self._write_daily_art_context(
+                        cache_entry,
+                        settings,
+                        cached_generated_at,
+                    )
                 image = safe_open_image(cached_image).convert("RGB")
-                image.info["inkypi_source_provenance"] = "fresh_cache"
-                return image
+                return attach_source_provenance(
+                    image,
+                    SourceProvenance.FRESH_CACHE,
+                )
 
         item = None
         try:
@@ -173,6 +185,7 @@ class SteamDailyArt(BasePlugin):
             image_path = self._cache_image_path(rotation_key)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
             image.save(image_path)
+            generated_at = self._now_for_device(device_config)
             cache_payload = {
                 "cache_key": cache_key,
                 "rotation_key": rotation_key,
@@ -181,21 +194,30 @@ class SteamDailyArt(BasePlugin):
                 "image_url": image_url,
                 "logo_url": logo_url,
                 "image_path": image_path,
+                "generated_at": generated_at.isoformat(),
             }
             self._write_cache(cache_payload)
-            self._write_daily_art_context(cache_payload, settings, self._now_for_device(device_config))
+            self._write_daily_art_context(cache_payload, settings, generated_at)
 
-            image.info["inkypi_source_provenance"] = "live"
-            return image
+            return attach_source_provenance(image, SourceProvenance.LIVE)
         except Exception as e:
             logger.error(f"Steam Daily Art failed: {e}")
             stale_image = cache_entry.get("image_path")
             if stale_image and os.path.exists(stale_image):
                 logger.warning("Using stale Steam daily art cache.")
-                self._write_daily_art_context(cache_entry, settings, self._now_for_device(device_config))
+                cached_generated_at = self._cache_generated_at(cache_entry)
+                if cached_generated_at is not None:
+                    self._write_daily_art_context(
+                        cache_entry,
+                        settings,
+                        cached_generated_at,
+                    )
                 image = safe_open_image(stale_image).convert("RGB")
-                image.info["inkypi_source_provenance"] = "stale_cache"
-                return image
+                image.info["inkypi_skip_cache"] = True
+                return attach_source_provenance(
+                    image,
+                    SourceProvenance.STALE_CACHE,
+                )
             if isinstance(item, dict):
                 return self._metadata_fallback(dimensions, item)
             raise RuntimeError(f"Steam Daily Art failed: {str(e)}")
@@ -209,8 +231,8 @@ class SteamDailyArt(BasePlugin):
         draw.text((24, 24), "STEAM DAILY ART", fill=(255, 255, 255))
         draw.text((24, 132), title, fill=(240, 244, 248))
         draw.text((24, 174), "Artwork unavailable - metadata preserved", fill=(166, 185, 204))
-        image.info["inkypi_source_provenance"] = "local_fallback"
-        return image
+        image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
 
     def _generate_stateless_preview(self, settings, device_config):
         dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
@@ -249,8 +271,7 @@ class SteamDailyArt(BasePlugin):
             profile.get("current_selection"),
         )
         image = selected[0][1].convert("RGB")
-        image.info["inkypi_source_provenance"] = "fresh_cache"
-        return image
+        return attach_source_provenance(image, SourceProvenance.FRESH_CACHE)
 
     def _generate_banked_image_with_deadline(self, settings, device_config, deadline):
         dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
@@ -322,8 +343,10 @@ class SteamDailyArt(BasePlugin):
             "reset_seen": False,
         }
         image = self._render_bank_selection(bank, profile, preview)
-        image.info["inkypi_source_provenance"] = "live" if downloaded else "fresh_cache"
-        return image
+        return attach_source_provenance(
+            image,
+            SourceProvenance.LIVE if downloaded else SourceProvenance.FRESH_CACHE,
+        )
 
     def _render_downloaded_item(self, item, image, settings, dimensions):
         rendered = self._smart_cover(image, dimensions)
@@ -407,8 +430,19 @@ class SteamDailyArt(BasePlugin):
     def _render_bank_selection(bank, profile, selection):
         selected = bank.selection_records(profile, selection, load_media=True)
         image = selected[0][1].convert("RGB")
-        image.info["inkypi_source_provenance"] = "fresh_cache"
-        return image
+        return attach_source_provenance(image, SourceProvenance.FRESH_CACHE)
+
+    @staticmethod
+    def _cache_generated_at(entry):
+        value = entry.get("generated_at") if isinstance(entry, dict) else None
+        if isinstance(value, datetime):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     def _write_daily_art_context(self, entry, settings, generated_at):
         if not isinstance(entry, dict):

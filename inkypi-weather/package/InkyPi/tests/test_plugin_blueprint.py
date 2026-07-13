@@ -202,6 +202,12 @@ class RecordingRefreshTask:
             raise self.queue_error
         return self.job
 
+    def submit_playlist_data_refresh(self, instance_uuid, **kwargs):
+        self.events.append(("submit_data_refresh", instance_uuid, kwargs))
+        if self.queue_error is not None:
+            raise self.queue_error
+        return self.job
+
     def get_manual_update_job(self, job_id):
         return self.jobs.get(job_id)
 
@@ -850,6 +856,15 @@ def test_update_rejects_invalid_refresh_before_any_effect(
             }},
             "submit_display",
         ),
+        (
+            "/refresh_plugin_instance",
+            {"json": {
+                "playlist_name": "Default",
+                "plugin_id": "weather",
+                "plugin_instance": "Home",
+            }},
+            "submit_data_refresh",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -929,6 +944,15 @@ def test_queue_error_with_job_record_is_serialized_without_enum(plugin_env):
             }},
             "submit_display",
         ),
+        (
+            "/refresh_plugin_instance",
+            {"json": {
+                "playlist_name": "Default",
+                "plugin_id": "weather",
+                "plugin_instance": "Home",
+            }},
+            "submit_data_refresh",
+        ),
     ],
 )
 def test_queue_acceptance_preserves_existing_202_shape(
@@ -990,8 +1014,37 @@ def test_display_submits_only_the_resolved_immutable_uuid(plugin_env):
             "expected_generation": 1,
             "expected_settings_revision": 1,
             "require_active": False,
+            "force_hardware_write": True,
         },
     )
+    assert not any(event[0] == "submit_manual" for event in plugin_env.events)
+
+
+def test_data_refresh_submits_the_resolved_exact_cas_without_display(plugin_env):
+    response = plugin_env.client.post(
+        "/refresh_plugin_instance",
+        json={
+            "playlist_name": "Default",
+            "plugin_id": "weather",
+            "plugin_instance": "Home",
+        },
+    )
+
+    assert response.status_code == 202
+    submit = next(
+        event for event in plugin_env.events if event[0] == "submit_data_refresh"
+    )
+    assert submit == (
+        "submit_data_refresh",
+        "home-uuid",
+        {
+            "expected_playlist_name": "Default",
+            "expected_generation": 1,
+            "expected_settings_revision": 1,
+            "require_active": False,
+        },
+    )
+    assert not any(event[0] == "submit_display" for event in plugin_env.events)
     assert not any(event[0] == "submit_manual" for event in plugin_env.events)
 
 

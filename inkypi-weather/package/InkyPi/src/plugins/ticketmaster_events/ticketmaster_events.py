@@ -16,6 +16,10 @@ from plugins.box_office_top_movies.box_office_top_movies import (
     BoxOfficeTopMovies,
     _clean_text,
 )
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.context_cache import write_context
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
@@ -126,6 +130,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         source_label = "Ticketmaster Discovery"
         generated_at = self._now_for_device(device_config)
         stale = False
+        provenance = SourceProvenance.LOCAL_FALLBACK
 
         theme_render_only = self._truthy(
             settings.get("_theme_render_only"),
@@ -150,11 +155,18 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 cache_hours,
             )
             if not events:
-                return self._config_image(
-                    dimensions,
-                    "Events cache unavailable",
-                    self._location_label(settings),
+                return self._local_fallback_image(
+                    self._config_image(
+                        dimensions,
+                        "Events cache unavailable",
+                        self._location_label(settings),
+                    )
                 )
+            provenance = (
+                SourceProvenance.STALE_CACHE
+                if stale
+                else SourceProvenance.FRESH_CACHE
+            )
         elif not force_refresh and self._cache_is_fresh(
             cache,
             cache_key,
@@ -162,6 +174,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         ):
             events = [TicketmasterEvent.from_dict(item) for item in cache.get("events", [])]
             generated_at = self._local_cached_datetime(cache.get("generated_at"), generated_at) or generated_at
+            provenance = SourceProvenance.FRESH_CACHE
         else:
             try:
                 api_key = self._ticketmaster_api_key(settings, device_config)
@@ -176,16 +189,20 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
                     "events": [event.to_dict() for event in events],
                 })
+                provenance = SourceProvenance.LIVE
             except MissingTicketmasterCredentials as exc:
                 events = self._cached_events_for_key(cache, cache_key)
                 generated_at = self._local_cached_datetime(cache.get("generated_at"), generated_at) or generated_at
                 stale = bool(events)
                 if not events:
-                    return self._config_image(
-                        dimensions,
-                        "Ticketmaster API key required",
-                        "Configure TICKETMASTER_API_KEY",
+                    return self._local_fallback_image(
+                        self._config_image(
+                            dimensions,
+                            "Ticketmaster API key required",
+                            "Configure TICKETMASTER_API_KEY",
+                        )
                     )
+                provenance = SourceProvenance.STALE_CACHE
                 logger.warning("Ticketmaster refresh skipped: %s", exc)
             except Exception as exc:
                 logger.warning(
@@ -195,13 +212,36 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 events = self._cached_events_for_key(cache, cache_key)
                 generated_at = self._local_cached_datetime(cache.get("generated_at"), generated_at) or generated_at
                 stale = bool(events)
+                if events:
+                    provenance = SourceProvenance.STALE_CACHE
 
         if not events:
-            return self._config_image(dimensions, "No events found", self._location_label(settings))
+            return self._local_fallback_image(
+                self._config_image(
+                    dimensions,
+                    "No events found",
+                    self._location_label(settings),
+                )
+            )
 
         events = events[:items_count]
         self._write_ticketmaster_context(events, generated_at, stale, settings)
-        return self._render_events(dimensions, events, settings, source_label, generated_at, stale)
+        image = self._render_events(
+            dimensions,
+            events,
+            settings,
+            source_label,
+            generated_at,
+            stale,
+        )
+        if provenance is SourceProvenance.STALE_CACHE:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
+
+    @staticmethod
+    def _local_fallback_image(image):
+        image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
 
     def _load_events(self, settings, items_count, api_key):
         for params in self._request_param_candidates(settings, api_key, items_count):

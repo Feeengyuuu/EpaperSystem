@@ -11,6 +11,10 @@ import plugins.china_box_office_top_movies.china_box_office_top_movies as china_
 from plugins.china_box_office_top_movies.china_box_office_top_movies import (  # noqa: E402
     ChinaBoxOfficeTopMovies,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 
 
 class DummyDeviceConfig:
@@ -85,6 +89,71 @@ def test_north_america_cache_invalidates_when_tmdb_credentials_appear(
     )
 
     assert len(load_calls) == 2
+
+
+def test_force_refresh_aliases_bypass_fresh_china_box_office_cache(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_CHINA_BOX_OFFICE_CACHE", str(tmp_path))
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    load_calls = []
+
+    def load_movies(_settings, _items_count):
+        load_calls.append(True)
+        return [BoxOfficeMovie(rank=1, title="Live Movie")], "The Numbers"
+
+    monkeypatch.setattr(plugin, "_load_movies", load_movies)
+    monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        plugin,
+        "_render_chart",
+        lambda *_a, **_k: Image.new("RGB", (800, 480), "white"),
+    )
+
+    plugin.generate_image({}, DummyDeviceConfig())
+    for force_key in ("forceRefresh", "force_refresh"):
+        image = plugin.generate_image(
+            {force_key: "true"},
+            DummyDeviceConfig(),
+        )
+        assert read_source_provenance(image) is SourceProvenance.LIVE
+
+    assert len(load_calls) == 3
+
+
+def test_china_sample_fallback_is_local_and_not_persisted(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CHINA_BOX_OFFICE_CACHE", str(tmp_path))
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    context_writes = []
+    unavailable = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("offline"))
+    monkeypatch.setattr(plugin, "_load_zgdypw_weekly", unavailable)
+    monkeypatch.setattr(plugin, "_load_tmdb_now_playing", unavailable)
+    monkeypatch.setattr(plugin, "_load_tmdb_cn_popular", unavailable)
+    monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        plugin,
+        "_write_box_office_context",
+        lambda *args, **kwargs: context_writes.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_chart",
+        lambda *_a, **_k: Image.new("RGB", (800, 480), "white"),
+    )
+
+    image = plugin.generate_image(
+        {"sourceMode": "legacy_auto", "forceRefresh": True},
+        DummyDeviceConfig(),
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+    assert not plugin._cache_path().exists()
+    assert context_writes == []
 
 
 def test_china_box_office_uses_injected_canonical_palette_and_source_only_cache_key():

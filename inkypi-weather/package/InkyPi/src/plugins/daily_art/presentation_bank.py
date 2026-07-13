@@ -81,6 +81,8 @@ _PROFILE_KEYS = {
     "pending_selection",
     "last_applied_origin_commit_id",
     "last_applied_request_id",
+    "last_provider_attempt_at",
+    "last_provider_status",
     "refill_in_progress",
     "last_used_at",
 }
@@ -579,6 +581,8 @@ class DailyArtPresentationBank:
             "pending_selection": None,
             "last_applied_origin_commit_id": None,
             "last_applied_request_id": None,
+            "last_provider_attempt_at": None,
+            "last_provider_status": None,
             "refill_in_progress": False,
             "last_used_at": _utc_now(),
         }
@@ -593,6 +597,12 @@ class DailyArtPresentationBank:
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
         profile["date_key"] = str(source.get("date_key") or self.date_key)
+        attempted_at = _parse_datetime(profile.get("last_provider_attempt_at"))
+        profile["last_provider_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         source_buckets = source.get("date_buckets")
         if isinstance(source_buckets, dict):
             profile["date_buckets"] = deepcopy(_bounded_date_buckets(source_buckets))

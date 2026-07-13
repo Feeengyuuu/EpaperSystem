@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PIL import Image, ImageDraw
+import pytest
 
 try:
     import requests  # noqa: F401
@@ -38,6 +39,11 @@ except ModuleNotFoundError:
     sys.modules["jinja2"] = jinja2_stub
 
 import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+    read_source_provenance,
+)
 from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
@@ -12844,6 +12850,163 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     assert image.getpixel((10, 230)) != (1, 2, 3)
     assert image.getpixel((360, 230)) != (1, 2, 3)
     assert image.getpixel((560, 230)) != (1, 2, 3)
+
+
+def _render_dashboard_with_source_states(
+    plugin,
+    monkeypatch,
+    *,
+    left_provenance,
+    nba_source_state,
+    lol_source_state,
+    force_refresh=False,
+):
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 13, 9, 0, tzinfo=la)
+    if left_provenance is None:
+        left_panel = None
+    else:
+        left_panel = attach_source_provenance(
+            Image.new("RGB", (552, 208), (9, 9, 9)),
+            left_provenance,
+        )
+    monkeypatch.setattr(
+        plugin,
+        "_try_worldcup_scoreboard_panel",
+        lambda *args, **kwargs: left_panel,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_try_worldcup_football_data_panel",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_try_worldcup_api_panel",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(plugin, "_take_worldcup_screenshot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        plugin,
+        "_load_nba_events",
+        lambda *_args, **_kwargs: (
+            SportsDashboard._fallback_nba_events(la),
+            nba_source_state,
+        ),
+    )
+    monkeypatch.setattr(plugin, "_attach_nba_odds", lambda events, *_args: events)
+    monkeypatch.setattr(plugin, "_write_nba_live_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_nba_compact_panel", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plugin,
+        "_load_lol_esports_sidebar_cards",
+        lambda *_args, **_kwargs: [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([], now),
+                "source_state": lol_source_state,
+                "priority": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(plugin, "_attach_lpl_realtime_info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_write_lol_live_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_sidebar", lambda *_args, **_kwargs: None)
+    settings = {
+        "worldCupTopHeight": "208",
+        "overlayWorldCupLocalTimes": "false",
+        "nbaOffseasonPanelMode": "off",
+        "ewcSidebarEnabled": "false",
+        "valveEsportsEnabled": "false",
+    }
+    if force_refresh:
+        settings["force_refresh"] = True
+    return plugin._generate_image_with_active_colors(
+        settings,
+        FakeDeviceConfig(),
+        (800, 480),
+        la,
+        now,
+    )
+
+
+def test_generate_image_attests_all_remote_panel_fallback_as_local(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=None,
+        nba_source_state="NBA FALLBACK",
+        lol_source_state="LPL FALLBACK",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+
+
+def test_generate_image_attests_complete_live_remote_panels(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.LIVE,
+        nba_source_state="ESPN LIVE",
+        lol_source_state="LIVE DATA",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+
+
+def test_generate_image_attests_complete_fresh_remote_cache(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.FRESH_CACHE,
+        nba_source_state="ESPN CACHE",
+        lol_source_state="LPL CACHE",
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_generate_image_attests_stale_remote_panels_and_skips_promotion(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.STALE_CACHE,
+        nba_source_state="ESPN STALE",
+        lol_source_state="LPL STALE",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+
+
+@pytest.mark.parametrize(
+    ("mixed_source_state", "expected"),
+    [
+        ("NBA FALLBACK", SourceProvenance.LOCAL_FALLBACK),
+        ("ESPN STALE", SourceProvenance.STALE_CACHE),
+        ("ESPN CACHE", SourceProvenance.STALE_CACHE),
+    ],
+)
+def test_forced_composite_refresh_fails_closed_when_any_visible_panel_is_not_live(
+    monkeypatch,
+    mixed_source_state,
+    expected,
+):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.LIVE,
+        nba_source_state=mixed_source_state,
+        lol_source_state="LIVE DATA",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is expected
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_generate_image_prefers_espn_scoreboard_for_worldcup_panel():

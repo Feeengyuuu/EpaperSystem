@@ -385,6 +385,213 @@ def test_same_intent_same_revision_coalesces_and_new_revision_supersedes():
     assert selected.priority == 5
 
 
+@pytest.mark.parametrize("manual_first", [False, True])
+def test_manual_exact_data_refresh_owns_inactive_payload_when_coalesced(
+    manual_first,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    scheduled = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"inactive-data-{manual_first}",
+        force=False,
+        priority=10,
+        payload={
+            "playlist_name": "Inactive",
+            "require_active": True,
+            "owner": "scheduled",
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    manual = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.MANUAL,
+        instance_uuid=f"inactive-data-{manual_first}",
+        force=True,
+        priority=100,
+        payload={
+            "playlist_name": "Inactive",
+            "require_active": False,
+            "owner": "manual-exact",
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    first, second = (manual, scheduled) if manual_first else (scheduled, manual)
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+
+    assert second_job.id == first_job.id
+    assert queue.snapshot().depth == 1
+    selected = queue.take(timeout=0).command
+    assert selected.kind is CommandKind.CACHE_REFRESH
+    assert selected.intent is RefreshIntent.DATA_REFRESH
+    assert selected.source is CommandSource.MANUAL
+    assert selected.force is True
+    assert selected.priority == 100
+    assert selected.payload["require_active"] is False
+    assert selected.payload["owner"] == "manual-exact"
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+def test_manual_display_coalescing_never_inherits_automatic_rotation_ack(
+    manual_first,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    automatic = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        instance_uuid=f"manual-rotation-boundary-{manual_first}",
+        priority=50,
+        payload={
+            "playlist_name": "Default",
+            "require_active": True,
+            "automatic_rotation": True,
+            "owner": "automatic",
+        },
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=True,
+    )
+    manual = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid=f"manual-rotation-boundary-{manual_first}",
+        priority=100,
+        payload={
+            "playlist_name": "Default",
+            "require_active": True,
+            "owner": "manual",
+        },
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=True,
+    )
+    first, second = (manual, automatic) if manual_first else (automatic, manual)
+
+    queue.submit(first)
+    queue.submit(second)
+    selected = queue.take(timeout=0).command
+
+    assert selected.source is CommandSource.MANUAL
+    assert selected.payload.get("automatic_rotation") is None
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+def test_manual_display_never_inherits_newer_automatic_revision_ack(manual_first):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    automatic = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        instance_uuid=f"manual-newer-rotation-boundary-{manual_first}",
+        settings_revision=2,
+        priority=50,
+        payload={"automatic_rotation": True, "owner": "automatic"},
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=True,
+    )
+    manual = command(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        instance_uuid=f"manual-newer-rotation-boundary-{manual_first}",
+        settings_revision=1,
+        priority=100,
+        payload={"owner": "manual"},
+        intent=RefreshIntent.DISPLAY_CACHE,
+        allow_prepared_presentation=True,
+    )
+    first, second = (manual, automatic) if manual_first else (automatic, manual)
+
+    queue.submit(first)
+    queue.submit(second)
+    selected = queue.take(timeout=0).command
+
+    assert selected.source is CommandSource.MANUAL
+    assert selected.settings_revision == 2
+    assert selected.payload.get("automatic_rotation") is None
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+@pytest.mark.parametrize(
+    ("scheduled_mode", "manual_mode"),
+    [("day", "night"), ("night", "day")],
+)
+def test_manual_exact_data_refresh_owns_payload_across_theme_transition(
+    manual_first,
+    scheduled_mode,
+    manual_mode,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    scheduled = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"inactive-data-theme-{manual_first}-{scheduled_mode}",
+        settings_revision=8,
+        force=False,
+        priority=10,
+        payload={
+            "playlist_name": "Scheduled Playlist",
+            "require_active": True,
+            "owner": "scheduled",
+            "theme_context": {
+                "mode": scheduled_mode,
+                "source": "scheduler",
+            },
+            "resolved_theme_context": {
+                "mode": scheduled_mode,
+                "palette": {"owner": "scheduled"},
+            },
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    manual = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.MANUAL,
+        instance_uuid=f"inactive-data-theme-{manual_first}-{scheduled_mode}",
+        settings_revision=8,
+        force=True,
+        priority=100,
+        payload={
+            "playlist_name": "Manual Exact Playlist",
+            "instance_name": "Manual Exact Target",
+            "settings": {"owner": "manual-settings"},
+            "refresh": {"interval": 7200},
+            "require_active": False,
+            "owner": "manual-exact",
+            "admission_nonce": "manual-exact-admission",
+            "theme_context": {
+                "mode": manual_mode,
+                "source": "manual",
+            },
+            "resolved_theme_context": {
+                "mode": manual_mode,
+                "palette": {"owner": "manual"},
+            },
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    first, second = (manual, scheduled) if manual_first else (scheduled, manual)
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+
+    assert second_job.id == first_job.id
+    selected = queue.take(timeout=0).command
+    incoming_mode = second.payload["resolved_theme_context"]["mode"]
+    assert selected.kind is CommandKind.CACHE_REFRESH
+    assert selected.intent is RefreshIntent.DATA_REFRESH
+    assert selected.source is CommandSource.MANUAL
+    assert selected.force is True
+    assert selected.priority == 100
+    assert selected.payload["require_active"] is False
+    assert selected.payload["owner"] == "manual-exact"
+    assert selected.payload["playlist_name"] == "Manual Exact Playlist"
+    assert selected.payload["instance_name"] == "Manual Exact Target"
+    assert selected.payload["settings"] == {"owner": "manual-settings"}
+    assert selected.payload["refresh"] == {"interval": 7200}
+    assert selected.payload["admission_nonce"] == "manual-exact-admission"
+    assert selected.payload["resolved_theme_context"]["mode"] == incoming_mode
+    assert selected.payload["theme_context"]["mode"] == incoming_mode
+
+
 @pytest.mark.parametrize("explicit_first", [False, True])
 def test_explicit_intent_never_coalesces_with_transition_none_intent(
     explicit_first,

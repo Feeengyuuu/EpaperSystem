@@ -10,6 +10,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.backtothedate.presentation_bank import (
     MAX_HISTORY_URLS,
@@ -148,6 +149,13 @@ class BacktotheDate(BasePlugin):
         document, profile = bank.load_for_data()
         ready = bank.ready_records(document, profile, prune=True)
         errors = []
+        live_media_keys = set()
+        force_refresh = _force_refresh_requested(settings)
+        force_attempt_pending = force_refresh
+        provider_status = None
+        provider_attempted_at = (
+            datetime.now(timezone.utc).isoformat() if force_refresh else None
+        )
 
         protected_missing = bank.missing_protected_records(profile, ready)
         for record in protected_missing:
@@ -176,10 +184,16 @@ class BacktotheDate(BasePlugin):
         maximum_attempts = target + attempts
         tries = 0
         refill_bank = len(ready) < refill_threshold
-        while refill_bank and len(ready) < target and tries < maximum_attempts:
+        while (
+            (force_attempt_pending or (refill_bank and len(ready) < target))
+            and tries < maximum_attempts
+        ):
             tries += 1
             try:
                 poster = forced_poster or self._select_random_poster(settings)
+                if force_attempt_pending:
+                    force_attempt_pending = False
+                    provider_status = "success"
                 poster = bank.normalize_poster(poster)
                 if any(item["image_url"] == poster["image_url"] for item in ready):
                     if forced_poster:
@@ -188,12 +202,19 @@ class BacktotheDate(BasePlugin):
                 image = self._load_poster_image(poster["image_url"], dimensions)
                 if image is not None:
                     record = bank.ingest(profile, poster, image)
+                    live_media_keys.add(record["media_key"])
                     ready.append(record)
                     if len(ready) >= target:
                         break
                     continue
                 errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
+                if force_refresh:
+                    provider_status = "error"
             except Exception as exc:
+                if force_attempt_pending:
+                    force_attempt_pending = False
+                if force_refresh:
+                    provider_status = "error"
                 logger.warning("BacktotheDate poster attempt failed: %s", exc)
                 errors.append(str(exc))
 
@@ -201,6 +222,9 @@ class BacktotheDate(BasePlugin):
         for key in ("max_page", "max_page_checked_at"):
             if key in latest:
                 document[key] = latest[key]
+        if force_refresh:
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = provider_status or "empty"
         bank.save(document)
         ready = bank.ready_records(document, profile, prune=True)
         if not ready:
@@ -224,7 +248,16 @@ class BacktotheDate(BasePlugin):
             "BacktotheDate bank ready: %s decoded posters; DATA kept current selection",
             len(ready),
         )
-        return image
+        selected_keys = set(current.get("media_keys") or [])
+        provenance = (
+            SourceProvenance.LIVE
+            if selected_keys.intersection(live_media_keys)
+            else SourceProvenance.FRESH_CACHE
+        )
+        if force_refresh and provider_status == "error":
+            provenance = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def presentation_mode(self, settings):
         return PresentationMode.PREPARED_BANK
@@ -1010,3 +1043,11 @@ class BacktotheDate(BasePlugin):
         if maximum is not None:
             result = min(maximum, result)
         return result
+
+
+def _force_refresh_requested(settings):
+    settings = settings or {}
+    return any(
+        value is True or str(value).strip().lower() in {"1", "true", "on", "yes"}
+        for value in (settings.get("forceRefresh"), settings.get("force_refresh"))
+    )

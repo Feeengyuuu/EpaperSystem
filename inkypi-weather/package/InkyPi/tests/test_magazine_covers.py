@@ -34,6 +34,10 @@ from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 
 
@@ -207,6 +211,73 @@ def magazine_png_bytes(color="red", size=(32, 48)):
     output = BytesIO()
     Image.new("RGB", size, color).save(output, format="PNG")
     return output.getvalue()
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_magazine_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    tmp_path,
+    monkeypatch,
+    force_key,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings()
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=4)
+    before = magazine_presentation_state(plugin)
+    current = dict(magazine_profile(before)["current_selection"])
+    calls = []
+
+    def forced_cover(source, _dimensions, force_refresh=False, deadline=None):
+        assert force_refresh is True
+        assert deadline is not None
+        calls.append(source["name"])
+        return cover_for_source(source, suffix="forced")
+
+    monkeypatch.setattr(plugin, "_load_cover", forced_cover)
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DummyDeviceConfig())
+
+    profile = magazine_profile(magazine_presentation_state(plugin))
+    assert calls
+    assert len(calls) <= magazine_module.DATA_PROVIDER_ATTEMPT_LIMIT
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["library_last_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_magazine_forced_provider_failure_marks_legacy_cache_stale_and_skips_cache(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings()
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=4)
+
+    def fail_provider(_source, _dimensions, force_refresh=False, deadline=None):
+        assert force_refresh is True
+        assert deadline is not None
+        raise RuntimeError("provider failure")
+
+    monkeypatch.setattr(plugin, "_load_cover", fail_provider)
+    monkeypatch.setattr(
+        plugin,
+        "_read_cached_cover",
+        lambda source, _dimensions: {
+            **cover_for_source(source),
+            "fetched_at": datetime(2026, 7, 12, 9, 0, tzinfo=timezone.utc),
+        },
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DummyDeviceConfig(),
+    )
+
+    profile = magazine_profile(magazine_presentation_state(plugin))
+    assert profile["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 class MagazineFakeHttpResponse:

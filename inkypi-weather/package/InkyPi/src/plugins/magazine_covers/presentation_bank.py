@@ -71,6 +71,7 @@ _PROFILE_KEYS = {
     "hydration_cursor",
     "library_refreshed_at",
     "library_last_attempt_at",
+    "last_provider_status",
     "library_pool_key",
     "library_scan_source_ids",
     "library_scan_started_at",
@@ -826,6 +827,7 @@ class MagazinePresentationBank:
             "hydration_cursor": 0,
             "library_refreshed_at": None,
             "library_last_attempt_at": None,
+            "last_provider_status": None,
             "library_pool_key": None,
             "library_scan_source_ids": [],
             "library_scan_started_at": None,
@@ -843,6 +845,12 @@ class MagazinePresentationBank:
         profile["instance_uuid"] = self.instance_uuid
         profile["date_key"] = str(source.get("date_key") or self.date_key)
         profile["date_buckets"] = deepcopy(_bounded_date_buckets(source.get("date_buckets")))
+        attempted_at = _coerce_datetime(profile.get("library_last_attempt_at"))
+        profile["library_last_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         normalized_records = []
         for record in profile.get("records") or []:
             if self._valid_record(record):

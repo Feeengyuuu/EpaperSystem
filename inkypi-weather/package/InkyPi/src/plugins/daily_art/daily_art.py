@@ -21,6 +21,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
 from plugins.daily_art.presentation_bank import (
@@ -165,7 +166,10 @@ class DailyArt(BasePlugin):
         cache_key = self._cache_key(settings, dimensions, rotation_key)
         cache = self._read_daily_cache()
 
-        force_refresh = _enabled(settings.get("forceRefresh"), default=False)
+        force_refresh = _enabled(settings.get("forceRefresh"), default=False) or _enabled(
+            settings.get("force_refresh"),
+            default=False,
+        )
         if (
             cache.get("schema") == CACHE_SCHEMA_VERSION
             and cache.get("cache_key") == cache_key
@@ -317,10 +321,29 @@ class DailyArt(BasePlugin):
             bank.save(document)
 
         ready = bank.ready_records(profile, prune=True)
+        force_refresh = _enabled(settings.get("forceRefresh"), default=False) or _enabled(
+            settings.get("force_refresh"),
+            default=False,
+        )
+        live_record_keys = set()
+        provider_attempted = False
+        provider_attempted_at = None
+        provider_status = None
         if len(ready) < REFILL_THRESHOLD:
             profile["refill_in_progress"] = True
-        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
-            candidates = self._candidate_pool(settings, device_config, now)
+        if force_refresh or (
+            profile.get("refill_in_progress") is True and len(ready) < READY_TARGET
+        ):
+            provider_attempted = True
+            provider_attempted_at = datetime.now(timezone.utc).isoformat()
+            try:
+                candidates = self._candidate_pool(settings, device_config, now)
+            except Exception:
+                profile["last_provider_attempt_at"] = provider_attempted_at
+                profile["last_provider_status"] = "error"
+                bank.save(document)
+                raise
+            provider_status = "success" if candidates else "empty"
             ordered = self._candidate_order(
                 candidates,
                 {"schema": STATE_SCHEMA_VERSION, "buckets": {}},
@@ -330,8 +353,15 @@ class DailyArt(BasePlugin):
             existing_urls = {record["image_url"] for record in profile["records"]}
             attempt_limit = _bounded_int(settings.get("maxAttempts"), 10, 1, 40)
             attempts = 0
+            ingested = 0
+            provider_had_error = False
+            full_force_refresh = force_refresh and len(ready) >= READY_TARGET
             for candidate in ordered:
-                if len(ready) >= READY_TARGET or attempts >= attempt_limit:
+                if attempts >= attempt_limit:
+                    break
+                if full_force_refresh and ingested >= 1:
+                    break
+                if not full_force_refresh and len(ready) >= READY_TARGET:
                     break
                 if candidate.artwork_id in existing_ids or candidate.image_url in existing_urls:
                     continue
@@ -346,13 +376,21 @@ class DailyArt(BasePlugin):
                         continue
                     record = bank.ingest(profile, asdict(candidate), source_image)
                 except Exception as exc:
+                    provider_had_error = True
                     logger.warning("DailyArt bank candidate failed for %s: %s", candidate.artwork_id, exc)
                     continue
                 existing_ids.add(record["artwork_id"])
                 existing_urls.add(record["image_url"])
                 ready.append(record)
+                live_record_keys.add(record["record_key"])
+                ingested += 1
+            if not ingested and provider_had_error:
+                provider_status = "error"
         if profile.get("refill_in_progress") is True:
             profile["refill_in_progress"] = len(ready) < READY_TARGET
+        if provider_attempted:
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = provider_status or "empty"
 
         bank.save(document)
         ready = bank.ready_records(profile, prune=True)
@@ -360,8 +398,14 @@ class DailyArt(BasePlugin):
             cache = self._read_daily_cache()
             stale_path = cache.get("image_path")
             if stale_path and Path(stale_path).is_file():
-                return safe_open_image(stale_path).convert("RGB")
-            return self._fallback_image(dimensions, "Daily Art", "No museum scan available")
+                return attach_source_provenance(
+                    safe_open_image(stale_path).convert("RGB"),
+                    SourceProvenance.STALE_CACHE,
+                )
+            return attach_source_provenance(
+                self._fallback_image(dimensions, "Daily Art", "No museum scan available"),
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
         current = bank.ensure_current(
             document,
@@ -372,7 +416,15 @@ class DailyArt(BasePlugin):
         )
         image = self._render_bank_selection(bank, profile, current, dimensions, settings)
         self._write_banked_output_cache(image, bank, profile, current, settings, now)
-        return image
+        provenance = (
+            SourceProvenance.LIVE
+            if set(current.get("record_keys") or []).intersection(live_record_keys)
+            else SourceProvenance.FRESH_CACHE
+        )
+        if force_refresh and provider_status == "error":
+            provenance = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def presentation_mode(self, settings):
         if self._rotation_cadence(settings or {}) == "every_refresh":

@@ -4,6 +4,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_settings import resolve_refresh_on_display
 from datetime import datetime, timedelta, timezone
@@ -486,6 +487,13 @@ class Newspaper(BasePlugin):
         transaction = bank.transaction()
         captured_keys = set()
         attempt_budget = _DataAttemptBudget()
+        force_refresh = _enabled(settings.get("forceRefresh")) or _enabled(
+            settings.get("force_refresh")
+        )
+        provider_attempted = False
+        provider_attempted_at = None
+        provider_success = False
+        provider_had_error = False
         try:
             protected_complete = self._recover_protected_selections(
                 bank,
@@ -504,7 +512,9 @@ class Newspaper(BasePlugin):
             fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
             if len(fresh_ready) < REFILL_THRESHOLD:
                 profile["refill_in_progress"] = True
-            if profile.get("refill_in_progress") is True:
+            if force_refresh or profile.get("refill_in_progress") is True:
+                provider_attempted_at = self._now_utc().isoformat()
+                force_attempt_pending = force_refresh
                 cursor = int(profile.get("refill_cursor") or 0) % len(sources)
                 scan_cursor = cursor
                 first_unattempted = None
@@ -512,7 +522,7 @@ class Newspaper(BasePlugin):
                 while (
                     scanned < len(sources)
                     and attempt_budget.total < MAX_DATA_SOURCES
-                    and len(fresh_ready) < READY_TARGET
+                    and (len(fresh_ready) < READY_TARGET or force_attempt_pending)
                 ):
                     check_deadline()
                     source_index = scan_cursor
@@ -524,6 +534,8 @@ class Newspaper(BasePlugin):
                         if first_unattempted is None:
                             first_unattempted = source_index
                         continue
+                    provider_attempted = True
+                    force_attempt_pending = False
                     if is_browser:
                         source_budget = MAX_BROWSER_SECONDS
                     else:
@@ -554,7 +566,9 @@ class Newspaper(BasePlugin):
                         fresh_ready = [item for item in fresh_ready if item["source"]["id"] != source["id"]]
                         fresh_ready.append(fresh_record)
                         captured_keys.add(record["record_key"])
+                        provider_success = True
                     except Exception as exc:
+                        provider_had_error = True
                         if self._monotonic() >= deadline:
                             raise RuntimeError("Newspaper DATA deadline is exhausted") from exc
                         logger.warning(
@@ -563,6 +577,13 @@ class Newspaper(BasePlugin):
                             exc,
                         )
                 profile["refill_cursor"] = first_unattempted if first_unattempted is not None else scan_cursor
+            if provider_attempted:
+                profile["last_provider_attempt_at"] = provider_attempted_at
+                profile["last_provider_status"] = (
+                    "success"
+                    if provider_success
+                    else ("error" if provider_had_error else "empty")
+                )
             bank.cleanup(
                 document,
                 profile,
@@ -583,7 +604,10 @@ class Newspaper(BasePlugin):
                     transaction=transaction,
                 )
                 placeholder.info["inkypi_source_provenance"] = "local_fallback"
-                return placeholder
+                return attach_source_provenance(
+                    placeholder,
+                    SourceProvenance.LOCAL_FALLBACK,
+                )
             current = bank.ensure_current(profile, ready)
             record, image = bank.selection_media(profile, current)
             check_deadline()
@@ -600,7 +624,19 @@ class Newspaper(BasePlugin):
 
         provenance = self._record_provenance(record)
         image.info["inkypi_source_provenance"] = "live" if record["record_key"] in captured_keys else provenance
-        return image
+        trusted = (
+            SourceProvenance.LIVE
+            if record["record_key"] in captured_keys
+            else (
+                SourceProvenance.STALE_CACHE
+                if provenance == "stale_cache"
+                else SourceProvenance.FRESH_CACHE
+            )
+        )
+        if force_refresh and profile.get("last_provider_status") == "error":
+            trusted = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, trusted)
 
     def presentation_mode(self, settings):
         del settings

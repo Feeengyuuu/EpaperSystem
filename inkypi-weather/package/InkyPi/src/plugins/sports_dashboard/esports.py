@@ -36,7 +36,7 @@ class EsportsMixin:
                 return events, "LIVE DATA"
         except Exception as exc:
             logger.warning("LPL schedule fetch failed: %s", exc)
-        return self._fallback_lpl_events(timezone_info), "CACHE DATA"
+        return self._fallback_lpl_events(timezone_info), "LPL FALLBACK"
 
     def _load_lck_events(self, settings, timezone_info):
         try:
@@ -1372,7 +1372,12 @@ class EsportsMixin:
         for card in cards or []:
             if str((card or {}).get("league_key") or "").strip().upper() == "LPL":
                 return card
-        return {"league_key": "LPL", "selected": SportsDashboard._select_lpl_events([], now), "source_state": "CACHE DATA", "priority": 0}
+        return {
+            "league_key": "LPL",
+            "selected": SportsDashboard._select_lpl_events([], now),
+            "source_state": "LPL FALLBACK",
+            "priority": 0,
+        }
 
     @staticmethod
     def _valve_esports_active_cards(selected):
@@ -3434,7 +3439,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 

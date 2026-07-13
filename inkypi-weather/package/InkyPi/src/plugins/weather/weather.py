@@ -1,4 +1,8 @@
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from PIL import Image
 import os
 import hashlib
@@ -88,6 +92,8 @@ class Weather(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
+        self._openweather_force_refresh = self._force_refresh_requested(settings)
+        self._openweather_cache_hits = set()
         lat = float(settings.get('latitude'))
         long = float(settings.get('longitude'))
         if not lat or not long:
@@ -181,6 +187,14 @@ class Weather(BasePlugin):
             weather_provider == "OpenWeatherMap"
             and self._openweather_request_metadata.get("onecall", {}).get("stale")
         )
+        source_stale = bool(
+            weather_provider == "OpenWeatherMap"
+            and any(
+                metadata.get("stale")
+                for metadata in self._openweather_request_metadata.values()
+                if isinstance(metadata, dict)
+            )
+        )
         canonical_astronomy = (
             None
             if provider_stale
@@ -207,7 +221,7 @@ class Weather(BasePlugin):
             last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
 
-        if not self._write_weather_context(template_params, now):
+        if not source_stale and not self._write_weather_context(template_params, now):
             raise RuntimeError("Weather context publication failed.")
 
         theme_context = self.resolve_theme(
@@ -234,7 +248,17 @@ class Weather(BasePlugin):
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")
         image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY] = theme_context
-        return image
+        if weather_provider != "OpenWeatherMap":
+            provenance = SourceProvenance.LIVE
+        elif source_stale:
+            provenance = SourceProvenance.STALE_CACHE
+        elif self._openweather_cache_hits:
+            provenance = SourceProvenance.FRESH_CACHE
+        else:
+            provenance = SourceProvenance.LIVE
+        if provenance is SourceProvenance.STALE_CACHE:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     @staticmethod
     def _now(tz):
@@ -1083,17 +1107,26 @@ class Weather(BasePlugin):
         cache_path = self._cache_path_for_url(cache_dir, namespace, url)
         cache_entry = self._read_cache_entry(cache_path)
         now = datetime.now(timezone.utc)
+        force_refresh = bool(getattr(self, "_openweather_force_refresh", False))
 
-        if cache_entry:
+        if cache_entry and not force_refresh:
             age_seconds = self._cache_entry_age_seconds(cache_entry, now)
             if age_seconds is not None and age_seconds < min_seconds:
                 logger.info(f"Using cached OpenWeather {namespace} data.")
                 self._remember_openweather_request(namespace, cache_entry)
+                cache_hits = getattr(self, "_openweather_cache_hits", None)
+                if not isinstance(cache_hits, set):
+                    cache_hits = set()
+                    self._openweather_cache_hits = cache_hits
+                cache_hits.add(namespace)
                 return cache_entry["data"]
 
         if daily_limit is not None:
             state_path, state = self._onecall_usage_state(cache_dir)
-            if state["onecall_requests"] >= daily_limit:
+            # An explicit administrator force refresh is also the live-acceptance
+            # path: keep accounting the call, but do not let the local safety
+            # threshold turn that request into a stale-cache false positive.
+            if state["onecall_requests"] >= daily_limit and not force_refresh:
                 message = f"OpenWeather One Call daily safety limit reached ({daily_limit})."
                 return self._use_stale_cache_or_raise(
                     cache_path,
@@ -1210,6 +1243,18 @@ class Weather(BasePlugin):
             raise RuntimeError("Failed to retrieve Open-Meteo air quality data.")
         
         return response.json()
+
+    @staticmethod
+    def _force_refresh_requested(settings):
+        truthy = {"1", "true", "yes", "on"}
+        for key in ("forceRefresh", "force_refresh"):
+            value = (settings or {}).get(key)
+            if isinstance(value, bool):
+                if value:
+                    return True
+            elif str(value or "").strip().lower() in truthy:
+                return True
+        return False
     
     def format_time(self, dt, time_format, hour_only=False, include_am_pm=True):
         """Format datetime based on 12h or 24h preference"""

@@ -22,6 +22,10 @@ from plugins.bambu_monitor.bambu_monitor import (
     TITLE_WORDMARK_SIZE,
     BambuMonitor,
 )
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
 
 
 def _plugin(tmp_path):
@@ -793,12 +797,14 @@ def test_demo_mode_uses_current_machine_identity_settings(tmp_path, monkeypatch)
 
     monkeypatch.setattr(plugin, "_render_status", capture_status)
 
-    plugin.generate_image(settings, _BambuDeviceConfig())
+    image = plugin.generate_image(settings, _BambuDeviceConfig())
 
     assert rendered["machine_name"] == "Current Device"
     assert rendered["machine_model"] == "P1S"
     assert rendered["host"] == "demo.local"
     assert rendered["serial"] == "01P-DEMO"
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_setup_required_keeps_known_machine_identity(tmp_path, monkeypatch):
@@ -902,6 +908,39 @@ def test_bambu_connection_failure_preserves_cached_status(tmp_path, monkeypatch)
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
     assert image.info["inkypi_skip_cache"] is True
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
     cached = plugin._read_cache(cache_file)
     assert cached["status"]["source"] == "live"
     assert "warning" not in cached["status"]
+
+
+def test_force_refresh_aliases_bypass_fresh_bambu_cache(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    settings["cacheSeconds"] = 3600
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    fetch_calls = []
+
+    def fetch_report(*_args, **_kwargs):
+        fetch_calls.append(True)
+        return {"print": {"gcode_state": "IDLE"}}
+
+    monkeypatch.setattr(plugin, "_fetch_report", fetch_report)
+    monkeypatch.setattr(
+        plugin,
+        "_render_status",
+        lambda _status, dimensions: Image.new("RGB", dimensions),
+    )
+
+    for force_key in ("forceRefresh", "force_refresh"):
+        plugin._write_cache(
+            cache_file,
+            {"fetched_at": bambu_module.time.time(), "status": _cached_status()},
+        )
+        image = plugin.generate_image(
+            {**settings, force_key: "true"},
+            _BambuDeviceConfig(),
+        )
+        assert read_source_provenance(image) is SourceProvenance.LIVE
+
+    assert len(fetch_calls) == 2

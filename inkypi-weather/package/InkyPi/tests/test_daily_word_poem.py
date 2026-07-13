@@ -11,6 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.daily_word_poem import daily_word_poem as word_module
 from plugins.daily_word_poem.daily_word_poem import DailyWordPoem, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    read_source_provenance,
+)
 
 
 class FakeDeviceConfig:
@@ -237,6 +241,7 @@ def test_generate_image_renders_and_writes_daily_cache(tmp_path):
 
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
+    assert read_source_provenance(image) is SourceProvenance.LIVE
     assert (tmp_path / "daily.json").is_file()
     payload = json.loads((tmp_path / "daily.json").read_text(encoding="utf-8"))
     assert "quote" in payload
@@ -439,6 +444,176 @@ def test_cached_payload_is_reused_without_network(tmp_path):
     assert "quote" in first
     assert second["from_cache"] is True
     assert calls == {"dictionary": 1, "wikiquote": 1}
+
+
+def test_generate_image_attests_fresh_remote_cache_without_network(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 9, 0)
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (32, 16), "white"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_dictionary_entry",
+        lambda word: {"word": word, "definition": "Remote definition."},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_wikiquote_quote",
+        lambda _date_key: {
+            "text": "Remote quote.",
+            "author": "Fixture",
+            "source": "Wikiquote QOTD",
+        },
+    )
+    plugin.generate_image({}, FakeDeviceConfig())
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("fresh cache must avoid provider calls")
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fail_provider)
+    image = plugin.generate_image({}, FakeDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_forced_provider_failure_uses_local_fallback_without_promoting_cache_or_context(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 9, 0)
+    context_calls = []
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (32, 16), "white"),
+    )
+    monkeypatch.setattr(
+        word_module,
+        "write_context",
+        lambda *args, **kwargs: context_calls.append((args, kwargs)),
+    )
+
+    def fail_provider(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fail_provider)
+
+    image = plugin.generate_image({"forceRefresh": True}, FakeDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+    assert not (tmp_path / "daily.json").exists()
+    assert context_calls == []
+
+
+@pytest.mark.parametrize("failed_provider", ["dictionary", "wikiquote"])
+def test_partial_provider_success_is_local_and_never_promoted(
+    tmp_path,
+    monkeypatch,
+    failed_provider,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 9, 0)
+    context_calls = []
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: now)
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (32, 16), "white"),
+    )
+    monkeypatch.setattr(
+        word_module,
+        "write_context",
+        lambda *args, **kwargs: context_calls.append((args, kwargs)),
+    )
+
+    def dictionary(word):
+        if failed_provider == "dictionary":
+            raise RuntimeError("dictionary unavailable")
+        return {"word": word, "definition": "Remote definition."}
+
+    def wikiquote(_date_key):
+        if failed_provider == "wikiquote":
+            raise RuntimeError("wikiquote unavailable")
+        return {
+            "text": "Remote quote.",
+            "author": "Fixture",
+            "source": "Wikiquote QOTD",
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", dictionary)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", wikiquote)
+
+    image = plugin.generate_image({"force_refresh": True}, FakeDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+    assert not (tmp_path / "daily.json").exists()
+    assert context_calls == []
+
+
+def test_forced_provider_failure_uses_stale_remote_cache_without_rewriting_it(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    times = [
+        datetime(2026, 7, 13, 9, 0),
+        datetime(2026, 7, 13, 9, 5),
+    ]
+    context_calls = []
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: times[0])
+    monkeypatch.setattr(
+        plugin,
+        "_render",
+        lambda *_args, **_kwargs: Image.new("RGB", (32, 16), "white"),
+    )
+    monkeypatch.setattr(
+        word_module,
+        "write_context",
+        lambda *args, **kwargs: context_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_dictionary_entry",
+        lambda word: {"word": word, "definition": "Remote definition."},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_wikiquote_quote",
+        lambda _date_key: {
+            "text": "Remote quote.",
+            "author": "Fixture",
+            "source": "Wikiquote QOTD",
+        },
+    )
+    plugin.generate_image({}, FakeDeviceConfig())
+    cache_path = tmp_path / "daily.json"
+    original_bytes = cache_path.read_bytes()
+    original_generated_at = json.loads(original_bytes)["generated_at"]
+    context_calls.clear()
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: times[1])
+
+    def fail_provider(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(plugin, "_fetch_dictionary_entry", fail_provider)
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fail_provider)
+    image = plugin.generate_image({"force_refresh": True}, FakeDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+    assert cache_path.read_bytes() == original_bytes
+    assert len(context_calls) == 1
+    assert context_calls[0][1]["generated_at"] == original_generated_at
 
 
 def test_theme_only_warm_daily_cache_changes_only_palette_without_network(tmp_path, monkeypatch):

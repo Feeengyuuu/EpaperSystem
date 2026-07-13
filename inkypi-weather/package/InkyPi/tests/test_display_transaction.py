@@ -133,6 +133,28 @@ def test_same_pixels_new_logical_target_creates_metadata_only_commit(
     assert second.hardware_written is False
 
 
+def test_forced_commit_writes_hardware_even_when_pixels_are_unchanged(
+    display_transaction,
+):
+    transaction, manager, _runtime_state = display_transaction
+    transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "same"}),
+        task_context=_context(),
+    )
+
+    forced = transaction.commit(
+        transaction.prepare(
+            _image("red"),
+            logical_target={"id": "same"},
+            force_hardware_write=True,
+        ),
+        task_context=_context(),
+    )
+
+    assert len(manager.calls) == 2
+    assert forced.hardware_written is True
+
+
 def test_manifest_failure_after_hardware_marks_display_unknown(
     display_transaction,
     monkeypatch,

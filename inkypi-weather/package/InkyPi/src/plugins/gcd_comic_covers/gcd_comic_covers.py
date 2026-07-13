@@ -22,6 +22,7 @@ from plugins.base_plugin.presentation import (
     PresentationPreparation,
     get_presentation_instance_uuid,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.context_cache import write_context
 from plugins.gcd_comic_covers.presentation_bank import (
@@ -269,6 +270,11 @@ class GcdComicCovers(BasePlugin):
                 )
         ready = bank.ready_records(profile, prune=True)
         ready_keys = {record["record_key"] for record in ready}
+        live_record_keys = set()
+        force_refresh = _force_refresh_requested(settings)
+        provider_attempted = False
+        provider_status = None
+        provider_attempted_at = None
         attempt_limit = self._bounded_int(
             settings.get("maxCoverAttempts"),
             DEFAULT_MAX_COVER_ATTEMPTS,
@@ -278,17 +284,41 @@ class GcdComicCovers(BasePlugin):
 
         if len(ready) < REFILL_THRESHOLD:
             profile["refill_in_progress"] = True
-        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
-            candidates = self._candidate_pool(settings, today)
-            ordered = self._candidate_order(candidates, deepcopy(document), today)
+        if force_refresh or (
+            profile.get("refill_in_progress") is True and len(ready) < READY_TARGET
+        ):
+            provider_attempted = True
+            provider_attempted_at = datetime.now(timezone.utc).isoformat()
+            try:
+                candidates = (
+                    self._candidate_pool(settings, today, force_refresh=True)
+                    if force_refresh
+                    else self._candidate_pool(settings, today)
+                )
+                ordered = self._candidate_order(candidates, deepcopy(document), today)
+            except Exception:
+                profile["last_provider_attempt_at"] = provider_attempted_at
+                profile["last_provider_status"] = "error"
+                bank.save(document)
+                raise
+            provider_status = "success" if ordered else "empty"
+            provider_had_error = False
+            attempted_new_candidate = False
             existing_issue_ids = {record["issue_id"] for record in profile["records"]}
             attempts = 0
+            ingested = 0
+            full_force_refresh = force_refresh and len(ready_keys) >= READY_TARGET
             for candidate in ordered:
-                if len(ready_keys) >= READY_TARGET or attempts >= attempt_limit:
+                if attempts >= attempt_limit:
+                    break
+                if full_force_refresh and ingested >= 1:
+                    break
+                if not full_force_refresh and len(ready_keys) >= READY_TARGET:
                     break
                 issue_id = str(candidate.get("issue_id") or "").strip()
                 if not issue_id or issue_id in existing_issue_ids:
                     continue
+                attempted_new_candidate = True
                 attempts += 1
                 try:
                     cover = self._load_cover(candidate, dimensions, settings)
@@ -299,6 +329,7 @@ class GcdComicCovers(BasePlugin):
                         render_kind="media",
                     )
                 except GcdCoverImageUnavailable as exc:
+                    provider_had_error = True
                     cover = self._cover_from_unavailable_image(exc)
                     if not self._has_candidate_metadata(cover):
                         logger.warning(
@@ -317,6 +348,7 @@ class GcdComicCovers(BasePlugin):
                         )
                         continue
                 except Exception as exc:
+                    provider_had_error = True
                     if not self._has_candidate_metadata(candidate):
                         logger.warning(
                             "GCD cover candidate failed for issue %s: %s",
@@ -336,22 +368,33 @@ class GcdComicCovers(BasePlugin):
                         continue
                 existing_issue_ids.add(record["issue_id"])
                 ready_keys.add(record["record_key"])
+                live_record_keys.add(record["record_key"])
+                ingested += 1
+                provider_status = "success"
                 retained_current_day_keys = {
                     item["record_key"]
                     for item in profile["records"]
                     if item.get("display_date_key") == today.strftime("%m-%d")
                 }
                 ready_keys.intersection_update(retained_current_day_keys)
+            if attempted_new_candidate and not ingested and provider_had_error:
+                provider_status = "error"
         if profile.get("refill_in_progress") is True:
             profile["refill_in_progress"] = len(ready_keys) < READY_TARGET
+        if provider_attempted:
+            profile["last_provider_attempt_at"] = provider_attempted_at
+            profile["last_provider_status"] = provider_status or "empty"
 
         bank.save(document)
         ready = bank.ready_records(profile, prune=True)
         if not ready:
-            return self._fallback_image(
-                dimensions,
-                "GCD Comic Covers",
-                "No usable cover image",
+            return attach_source_provenance(
+                self._fallback_image(
+                    dimensions,
+                    "GCD Comic Covers",
+                    "No usable cover image",
+                ),
+                SourceProvenance.LOCAL_FALLBACK,
             )
         current = profile.get("current_selection")
         if current is None:
@@ -363,7 +406,16 @@ class GcdComicCovers(BasePlugin):
             )
         else:
             bank.selection_records(profile, current, load_media=True)
-        return self._render_bank_selection(bank, profile, current, dimensions, settings)
+        image = self._render_bank_selection(bank, profile, current, dimensions, settings)
+        provenance = (
+            SourceProvenance.LIVE
+            if set(current.get("record_keys") or []).intersection(live_record_keys)
+            else SourceProvenance.FRESH_CACHE
+        )
+        if force_refresh and provider_status == "error":
+            provenance = SourceProvenance.STALE_CACHE
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
 
     def presentation_mode(self, settings):
         return PresentationMode.PREPARED_BANK
@@ -724,23 +776,46 @@ class GcdComicCovers(BasePlugin):
                 logger.warning("Invalid timezone for GCD comic cover date: %s", timezone_name)
         return date.today()
 
-    def _candidate_pool(self, settings, today):
+    def _candidate_pool(self, settings, today, *, force_refresh=False):
         source_mode = self._source_mode(settings)
         if source_mode == "comicvine":
+            if force_refresh:
+                return self._comic_vine_candidate_pool(
+                    settings,
+                    today,
+                    force_refresh=True,
+                )
             return self._comic_vine_candidate_pool(settings, today)
 
-        gcd_candidates = self._gcd_candidate_pool(settings, today)
+        if force_refresh:
+            gcd_candidates = self._gcd_candidate_pool(
+                settings,
+                today,
+                force_refresh=True,
+            )
+        else:
+            gcd_candidates = self._gcd_candidate_pool(settings, today)
         if source_mode != "mixed":
             return gcd_candidates
 
         try:
-            comic_vine_candidates = self._comic_vine_candidate_pool(settings, today)
+            if force_refresh:
+                comic_vine_candidates = self._comic_vine_candidate_pool(
+                    settings,
+                    today,
+                    force_refresh=True,
+                )
+            else:
+                comic_vine_candidates = self._comic_vine_candidate_pool(
+                    settings,
+                    today,
+                )
         except Exception as exc:
             logger.warning("Comic Vine candidate fetch failed; using GCD candidates only: %s", exc)
             comic_vine_candidates = []
         return self._dedupe_candidates(comic_vine_candidates + gcd_candidates)
 
-    def _gcd_candidate_pool(self, settings, today):
+    def _gcd_candidate_pool(self, settings, today, *, force_refresh=False):
         years = self._target_years(settings, today)
         month = today.month
         candidates = []
@@ -748,12 +823,18 @@ class GcdComicCovers(BasePlugin):
 
         for year in years:
             target_date = self._target_date_for_year(year, today)
-            cached = self._read_month_cache(target_date.year, target_date.month, target_date.day)
+            cached = None if force_refresh else self._read_month_cache(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+            )
             if cached is None:
                 missing_years.append(target_date)
             else:
                 candidates.extend(cached)
 
+        provider_errors = []
+        successful_fetches = 0
         if missing_years:
             fetch_targets = self._prioritized_missing_dates(missing_years, today)
             fetch_limit = self._bounded_int(
@@ -767,9 +848,11 @@ class GcdComicCovers(BasePlugin):
                     break
                 try:
                     fetched = self._fetch_month_candidates(target_date.year, target_date.month, target_date.day)
+                    successful_fetches += 1
                     self._write_month_cache(target_date.year, target_date.month, fetched, target_date.day)
                     candidates.extend(fetched)
                 except Exception as exc:
+                    provider_errors.append(exc)
                     logger.warning(
                         "Could not fetch GCD on-sale candidates for %s: %s",
                         target_date.isoformat(),
@@ -778,6 +861,9 @@ class GcdComicCovers(BasePlugin):
                     status_code = getattr(getattr(exc, "response", None), "status_code", None)
                     if status_code in {403, 429}:
                         break
+
+        if force_refresh and not successful_fetches and provider_errors:
+            raise RuntimeError("GCD candidate provider refresh failed") from provider_errors[0]
 
         return self._dedupe_candidates(self._filter_candidates(candidates, settings, today))
 
@@ -1127,14 +1213,14 @@ class GcdComicCovers(BasePlugin):
             "page_url": candidate.get("page_url") or f"{GCD_BASE_URL}/issue/{issue_id}/",
         }
 
-    def _comic_vine_candidate_pool(self, settings, today):
+    def _comic_vine_candidate_pool(self, settings, today, *, force_refresh=False):
         api_key = self._comic_vine_api_key(settings)
         if not api_key:
             logger.info("Comic Vine source skipped because no API key is configured.")
             return []
 
         limit = self._bounded_int(settings.get("comicVineLimit"), DEFAULT_COMIC_VINE_LIMIT, 3, 100)
-        cached = self._read_comic_vine_cache(today, limit)
+        cached = None if force_refresh else self._read_comic_vine_cache(today, limit)
         if cached is not None:
             return cached
 
@@ -2086,6 +2172,14 @@ def _clean_text(value):
     value = re.sub(r"<[^>]+>", " ", str(value or ""))
     value = html.unescape(value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _force_refresh_requested(settings):
+    settings = settings or {}
+    return any(
+        value is True or str(value).strip().lower() in {"1", "true", "on", "yes"}
+        for value in (settings.get("forceRefresh"), settings.get("force_refresh"))
+    )
 
 
 def _canonical_provider_url(value, provider):

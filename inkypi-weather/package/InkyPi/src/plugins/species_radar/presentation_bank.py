@@ -1152,6 +1152,8 @@ class SpeciesPresentationBank:
             "last_applied_origin_commit_id": None,
             "last_applied_request_id": None,
             "last_committed_at": None,
+            "last_provider_attempt_at": None,
+            "last_provider_status": None,
             "displayed_context": None,
             "refill_cursor": 0,
             "last_used_at": _utc_now(),
@@ -1166,6 +1168,12 @@ class SpeciesPresentationBank:
         profile["settings_fingerprint"] = self.base_fingerprint
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
+        attempted_at = _parse_datetime(profile.get("last_provider_attempt_at"))
+        profile["last_provider_attempt_at"] = (
+            attempted_at.isoformat() if attempted_at is not None else None
+        )
+        status = str(profile.get("last_provider_status") or "").strip().lower()
+        profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         records = [item for item in profile.get("records") or [] if self._valid_record(item)]
         profile["records"] = records[-MAX_RECORDS_PER_PROFILE:]
         profile["seen_ids"] = [str(value) for value in profile.get("seen_ids") or [] if value][-MAX_SEEN_IDS:]

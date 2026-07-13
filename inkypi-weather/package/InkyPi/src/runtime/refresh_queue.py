@@ -14,6 +14,7 @@ from .refresh_contracts import (
     JobStatus,
     QueueSnapshot,
     RefreshCommand,
+    RefreshIntent,
     freeze_payload,
 )
 
@@ -771,22 +772,25 @@ class RefreshQueue:
                 priority = existing.priority
                 source = self._more_urgent_source(existing.source, incoming.source)
 
+        manual_display_owner = next(
+            (
+                candidate
+                for candidate in (incoming, existing)
+                if candidate.source is CommandSource.MANUAL
+                and candidate.kind is CommandKind.DISPLAY
+            ),
+            None,
+        )
         if revision_comparison == 0:
-            manual_display_owner = next(
+            manual_exact_owner = next(
                 (
                     candidate
                     for candidate in (incoming, existing)
                     if candidate.source is CommandSource.MANUAL
-                    and candidate.kind is CommandKind.DISPLAY
-                ),
-                None,
-            )
-            manual_inactive = next(
-                (
-                    candidate
-                    for candidate in (incoming, existing)
-                    if candidate.source is CommandSource.MANUAL
-                    and candidate.kind is CommandKind.DISPLAY
+                    and (
+                        candidate.kind is CommandKind.DISPLAY
+                        or candidate.intent is RefreshIntent.DATA_REFRESH
+                    )
                     and candidate.payload.get("require_active") is False
                 ),
                 None,
@@ -796,12 +800,25 @@ class RefreshQueue:
                     existing,
                     incoming,
                     manual_display_owner,
+                    manual_exact_owner,
                 )
-            elif manual_inactive is not None:
-                # Manual display of an exact inactive-playlist revision is a
-                # stronger admission requirement than an older scheduled probe.
-                # Keep its immutable payload when the jobs coalesce.
-                selected_payload = manual_inactive.payload
+            elif manual_exact_owner is not None:
+                # Manual display or DATA_REFRESH of an exact inactive-playlist
+                # revision is a stronger admission requirement than an older
+                # scheduled probe. Keep its immutable payload when jobs coalesce.
+                selected_payload = manual_exact_owner.payload
+            elif manual_display_owner is not None:
+                # A manual display never acknowledges the scheduler's persisted
+                # shuffle bag, even when it targets the same immutable revision.
+                selected_payload = manual_display_owner.payload
+
+        if (
+            manual_display_owner is not None
+            and selected_payload.get("automatic_rotation") is True
+        ):
+            without_rotation_ack = dict(selected_payload)
+            without_rotation_ack.pop("automatic_rotation", None)
+            selected_payload = freeze_payload(without_rotation_ack)
 
         deadline = existing.deadline_monotonic
         if (
@@ -829,9 +846,10 @@ class RefreshQueue:
         existing: RefreshCommand,
         incoming: RefreshCommand,
         manual_display_owner: RefreshCommand | None,
+        manual_exact_owner: RefreshCommand | None,
     ):
         """Merge theme metadata while retaining ordinary manual display intent."""
-        payload_owner = manual_display_owner or incoming
+        payload_owner = manual_exact_owner or manual_display_owner or incoming
         merged = dict(payload_owner.payload)
 
         existing_theme_context = existing.payload.get("theme_context")

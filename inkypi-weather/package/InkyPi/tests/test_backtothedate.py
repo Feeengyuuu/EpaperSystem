@@ -24,6 +24,7 @@ from plugins.base_plugin.presentation import (
     PresentationRequestContext,
     bind_presentation_instance_identity,
 )
+from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from runtime.runtime_state import PresentationCommitReceipt
 
 
@@ -194,6 +195,59 @@ def test_data_hydrates_bank_without_consuming_discard_or_last_displayed_state(mo
     assert len(loader.calls) == 24
     assert image.size == DeviceConfig().get_resolution()
     assert plugin.presentation_mode(settings) is PresentationMode.PREPARED_BANK
+
+
+@pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
+def test_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
+    monkeypatch,
+    force_key,
+):
+    plugin = make_plugin(f"forced-full-bank-{force_key}")
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    before = _state_json(plugin)
+    before_profile = _active_profile(before)
+    current = dict(before_profile["current_selection"])
+    calls = []
+    forced_poster = _poster(99)
+    monkeypatch.setattr(
+        plugin,
+        "_select_random_poster",
+        lambda _settings: calls.append("provider") or forced_poster,
+    )
+    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "purple"))
+
+    image = plugin.generate_image({**settings, force_key: "true"}, DeviceConfig())
+
+    after = _state_json(plugin)
+    profile = _active_profile(after)
+    assert calls == ["provider"]
+    assert profile["last_provider_status"] == "success"
+    assert datetime.fromisoformat(profile["last_provider_attempt_at"]).tzinfo is not None
+    assert profile["current_selection"] == current
+    assert profile["pending_selection"] is None
+    assert any(record["image_url"] == forced_poster["image_url"] for record in profile["records"])
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+
+
+def test_force_refresh_provider_error_marks_warm_bank_stale_and_skips_cache(monkeypatch):
+    plugin = make_plugin("forced-provider-error")
+    monkeypatch.setattr(presentation_bank_module.random, "shuffle", lambda _items: None)
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    monkeypatch.setattr(
+        plugin,
+        "_select_random_poster",
+        lambda _settings: (_ for _ in ()).throw(RuntimeError("provider offline")),
+    )
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DeviceConfig(),
+    )
+
+    profile = _active_profile(_state_json(plugin))
+    assert profile["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_warm_bank_presentation_has_zero_http_and_does_not_mark_seen_before_receipt(monkeypatch):
