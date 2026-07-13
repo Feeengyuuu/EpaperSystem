@@ -70,6 +70,52 @@ def test_last_good_same_revision_is_used_when_current_theme_cache_is_missing(
     assert candidate.cache_path == previous
 
 
+def test_exact_theme_resolution_rejects_opposite_last_good_rollback(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    instance = _instance()
+    previous = authoritative_cache_path(root, "instance-one", 2, 5, "day")
+    _write_png(previous)
+    state = InstanceRuntimeState(last_good_cache=_last_good(mode="day"))
+    catalog = CacheCatalog(root)
+
+    assert catalog.resolve(instance, "night", state).theme_mode == "day"
+    assert catalog.resolve_exact(instance, "night", state) is None
+
+
+def test_exact_theme_resolution_rejects_unsuffixed_migration_rollback(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    instance = _instance()
+    migration = authoritative_cache_path(root, "instance-one", 2, 5, None)
+    _write_png(migration)
+    catalog = CacheCatalog(root)
+
+    assert catalog.resolve(
+        instance,
+        "night",
+        InstanceRuntimeState(),
+    ).theme_mode is None
+    assert catalog.resolve_exact(
+        instance,
+        "night",
+        InstanceRuntimeState(),
+    ) is None
+
+
+def test_exact_theme_resolution_returns_only_current_exact_revision(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    instance = _instance()
+    current = authoritative_cache_path(root, "instance-one", 2, 5, "night")
+    _write_png(current)
+    state = InstanceRuntimeState(last_good_cache=_last_good(mode="night"))
+
+    candidate = CacheCatalog(root).resolve_exact(instance, "night", state)
+
+    assert candidate is not None
+    assert candidate.theme_mode == "night"
+    assert candidate.cache_path == current
+    assert candidate.promoted_at == "2026-07-09T10:00:00+00:00"
+
+
 def test_old_settings_revision_and_name_alias_are_never_displayable(tmp_path):
     root = tmp_path / ".refresh-cache"
     instance = _instance(revision=5)

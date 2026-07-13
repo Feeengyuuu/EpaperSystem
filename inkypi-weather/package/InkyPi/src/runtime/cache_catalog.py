@@ -120,6 +120,52 @@ class CacheCatalog:
         self._validation_cache: dict[tuple[str, int, int], bool] = {}
         self._validation_lock = threading.Lock()
 
+    def resolve_exact(
+        self,
+        instance,
+        resolved_theme_mode,
+        runtime_instance_state,
+    ) -> DisplayCacheCandidate | None:
+        """Resolve only the exact current-theme cache for one immutable revision."""
+        resolved_theme_mode = _theme_mode(resolved_theme_mode)
+        try:
+            instance_uuid = _instance_uuid(instance.instance_uuid)
+            generation = _positive_int(
+                instance.structural_generation,
+                "structural_generation",
+            )
+            revision = _positive_int(
+                instance.settings_revision,
+                "settings_revision",
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        last_good = getattr(runtime_instance_state, "last_good_cache", None)
+        promoted_at = None
+        if (
+            last_good is not None
+            and last_good.structural_generation == generation
+            and last_good.settings_revision == revision
+            and last_good.theme_mode == resolved_theme_mode
+        ):
+            promoted_at = last_good.promoted_at
+        candidate = DisplayCacheCandidate(
+            instance_uuid=instance_uuid,
+            structural_generation=generation,
+            settings_revision=revision,
+            theme_mode=resolved_theme_mode,
+            cache_path=authoritative_cache_path(
+                self.cache_root,
+                instance_uuid,
+                generation,
+                revision,
+                resolved_theme_mode,
+            ),
+            promoted_at=promoted_at,
+        )
+        return candidate if self.validate(candidate) else None
+
     def resolve(
         self,
         instance,

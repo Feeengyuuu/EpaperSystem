@@ -4314,7 +4314,7 @@ def test_theme_retry_cooldown_does_not_block_independently_due_background_data(
     assert device_config.config["active_theme_refresh_failure"] == failure
 
 
-def test_ordinary_next_display_uses_last_good_theme_cache_without_generation(
+def test_ordinary_random_display_excludes_last_good_opposite_theme_cache(
     monkeypatch,
 ):
     tmp_path = make_test_dir("theme-lazy-next-display")
@@ -4353,17 +4353,27 @@ def test_ordinary_next_display_uses_last_good_theme_cache_without_generation(
     plugin = ThemeOnlyRecordingPlugin(plugin_config, color="white")
     monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    before_rotation = (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+    before_refresh_info = device_config.refresh_info
 
     command = task._select_cached_display_command(current_dt)
-    result = task._execute_command(command)
 
-    assert result is not None
-    assert command.payload.get("theme_render_only") is None
-    assert command.payload["cache_theme_mode"] == "day"
+    assert command is None
     assert plugin.calls == []
     state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
     assert state.data.last_success_at == seeded_at.isoformat()
-    assert device_config.refresh_info.refresh_time == current_dt.isoformat()
+    assert device_config.refresh_info == before_refresh_info
+    assert before_rotation == (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
     assert not Path(task._snapshot_cache_path(instance, "night")).exists()
     assert not Path(task._staging_cache_path(instance, "night")).exists()
 
@@ -7774,10 +7784,14 @@ def test_media_theme_redraw_reuses_opposite_or_legacy_uuid_cache_with_zero_provi
     assert device_config.refresh_info.refresh_time == "2026-07-11T21:59:00+00:00"
 
 
-def test_nonvisible_opposite_cache_is_last_good_not_lazy_display_generation(
+@pytest.mark.parametrize("source_mode", ["day", None])
+def test_random_display_excludes_noncurrent_theme_rollback_without_consuming_bag(
     monkeypatch,
+    source_mode,
 ):
-    tmp_path = make_test_dir("nonvisible-opposite-last-good")
+    tmp_path = make_test_dir(
+        f"nonvisible-{source_mode or 'unsuffixed'}-last-good"
+    )
     plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
     plugin_data["plugin_settings"]["themeMode"] = "auto"
     playlist = _runtime_playlist(plugin_data)
@@ -7806,11 +7820,11 @@ def test_nonvisible_opposite_cache_is_last_good_not_lazy_display_generation(
         changed_at=current_dt.isoformat(),
     )
     instance = playlist.plugins[0].snapshot()
-    _write_runtime_theme_cache(task, instance, "day")
+    _write_runtime_theme_cache(task, instance, source_mode)
     _seed_theme_last_good(
         task,
         instance,
-        "day",
+        source_mode,
         current_dt - timedelta(minutes=10),
     )
     monkeypatch.setattr(
@@ -7819,13 +7833,434 @@ def test_nonvisible_opposite_cache_is_last_good_not_lazy_display_generation(
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
-    command = task._select_cached_display_command(current_dt)
-    result = task._execute_command(command)
+    before_rotation = (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
 
-    assert command.intent is RefreshIntent.DISPLAY_CACHE
-    assert command.payload["cache_theme_mode"] == "day"
-    assert result is not None
+    command = task._select_cached_display_command(current_dt)
+
+    assert command is None
+    assert before_rotation == (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
     assert not Path(task._snapshot_cache_path(instance, "night")).exists()
+
+
+def _prepare_theme_catchup_runtime(name, *, active_theme="night"):
+    task, device_config, playlist, configs = _theme_transition_runtime(name)
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    device_config.config["active_theme"] = active_theme
+    _prepare_independent_theme_candidate(task, playlist, current_dt)
+    return task, device_config, playlist, configs, current_dt
+
+
+def _rotation_state(playlist):
+    return (
+        playlist.current_plugin_index,
+        list(playlist.plugin_rotation_queue),
+        list(playlist.plugin_rotation_pool),
+        list(playlist.plugin_rotation_recent_history),
+    )
+
+
+def test_theme_catchup_waits_for_exact_displayed_transition_then_uses_no_rotation(
+    monkeypatch,
+):
+    task, device_config, playlist, _configs, current_dt = (
+        _prepare_theme_catchup_runtime(
+            "theme-catchup-displayed-first",
+            active_theme="day",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    before_rotation = _rotation_state(playlist)
+
+    displayed = task._select_independent_refresh_command(current_dt)
+
+    assert displayed.intent is RefreshIntent.THEME_REDRAW
+    assert displayed.instance_uuid == playlist.plugins[0].instance_uuid
+    assert task.runtime_state.snapshot().theme_catchup_admissions == ()
+    assert _rotation_state(playlist) == before_rotation
+
+    device_config.config["active_theme"] = "night"
+    displayed_instance = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(task, displayed_instance, "night")
+    before_admission = task._admission_state
+
+    catchup = task._select_independent_refresh_command(current_dt)
+
+    assert catchup.intent is RefreshIntent.THEME_CATCHUP
+    assert catchup.kind is CommandKind.CACHE_REFRESH
+    assert catchup.source is CommandSource.BACKGROUND
+    assert catchup.instance_uuid == playlist.plugins[1].instance_uuid
+    assert catchup.payload["theme_render_only"] is True
+    assert catchup.payload["resolved_theme_context"]["mode"] == "night"
+    assert "expected_displayed_instance_uuid" not in catchup.payload
+    assert task._admission_state == before_admission
+    assert _rotation_state(playlist) == before_rotation
+
+
+def test_theme_redraw_command_is_display_guarded_but_catchup_is_not():
+    task, _device_config, playlist, _configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-command-display-guard")
+    )
+    instance = playlist.plugins[0].snapshot()
+
+    redraw = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.THEME_REDRAW,
+        kind=CommandKind.CACHE_REFRESH,
+        theme_render_only=True,
+        current_dt=current_dt,
+    )
+    catchup = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.THEME_CATCHUP,
+        kind=CommandKind.CACHE_REFRESH,
+        theme_render_only=True,
+        current_dt=current_dt,
+    )
+
+    assert redraw.payload["expected_displayed_instance_uuid"] == (
+        instance.instance_uuid
+    )
+    assert "expected_displayed_instance_uuid" not in catchup.payload
+
+
+def test_theme_catchup_admits_one_per_probe_and_two_per_rolling_minute(monkeypatch):
+    task, _device_config, playlist, _configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-bounds")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    before_rotation = _rotation_state(playlist)
+    before_admission = task._admission_state
+
+    first = task._select_independent_refresh_command(current_dt)
+    second = task._select_independent_refresh_command(current_dt)
+    limited = task._select_independent_refresh_command(current_dt)
+
+    assert first.intent is RefreshIntent.THEME_CATCHUP
+    assert second.intent is RefreshIntent.THEME_CATCHUP
+    assert first.instance_uuid != second.instance_uuid
+    assert limited is None
+    assert len(task.runtime_state.snapshot().theme_catchup_admissions) == 2
+    assert task._admission_state == before_admission
+    assert _rotation_state(playlist) == before_rotation
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        ResourceSample(available_mb=100, swap_percent=0),
+        ResourceSample(available_mb=50, swap_percent=0),
+    ],
+)
+def test_theme_catchup_is_not_admitted_under_soft_or_hard_pressure(
+    monkeypatch,
+    sample,
+):
+    task, _device_config, _playlist, _configs, current_dt = (
+        _prepare_theme_catchup_runtime(
+            f"theme-catchup-pressure-{sample.available_mb}"
+        )
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task.runtime_state.snapshot().theme_catchup_admissions == ()
+
+
+def test_theme_catchup_never_displaces_an_ordinary_data_candidate(monkeypatch):
+    task, _device_config, playlist, _configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-data-first")
+    )
+    due = playlist.plugins[0].snapshot()
+    task.runtime_state.record_success(
+        due.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command.intent is RefreshIntent.DATA_REFRESH
+    assert command.instance_uuid == due.instance_uuid
+    assert task.runtime_state.snapshot().theme_catchup_admissions == ()
+
+
+@pytest.mark.parametrize(
+    "ineligible_reason",
+    ["fixed", "theme-unaware", "missing-config", "background-disabled"],
+)
+def test_theme_catchup_skips_ineligible_instances(
+    monkeypatch,
+    ineligible_reason,
+):
+    task, device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime(
+            f"theme-catchup-ineligible-{ineligible_reason}"
+        )
+    )
+    displayed = playlist.plugins[0].snapshot()
+    target = playlist.plugins[1]
+    _write_runtime_theme_cache(task, displayed, "night")
+    if ineligible_reason == "fixed":
+        target.settings["themeMode"] = "day"
+    elif ineligible_reason == "theme-unaware":
+        configs["fallback"]["_manifest"] = _theme_manifest(
+            "fallback",
+            supported=False,
+        )
+    elif ineligible_reason == "missing-config":
+        device_config.get_plugin = lambda plugin_id: configs.get(plugin_id)
+        configs.pop("fallback")
+    else:
+        monkeypatch.setattr(
+            task,
+            "_snapshot_background_cache_disabled",
+            lambda instance: instance.instance_uuid == target.instance_uuid,
+        )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    before_rotation = _rotation_state(playlist)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task.runtime_state.snapshot().theme_catchup_admissions == ()
+    assert _rotation_state(playlist) == before_rotation
+
+
+def _one_pending_theme_catchup(task, playlist, current_dt):
+    displayed = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(task, displayed, "night")
+    command = task._select_independent_refresh_command(current_dt)
+    assert command.instance_uuid == playlist.plugins[1].instance_uuid
+    return command, playlist.plugins[1].snapshot()
+
+
+def _refresh_lane_state(state):
+    return (
+        state.data,
+        state.live,
+        state.theme,
+        state.presentation,
+        state.last_good_cache,
+        state.presentation_request,
+        state.presentation_receipt,
+    )
+
+
+def test_theme_catchup_failure_uses_only_persisted_catchup_cooldown(monkeypatch):
+    task, device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-failure-cooldown")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    plugin = ThemeOnlyRecordingPlugin(configs["fallback"], fail=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    command, target = _one_pending_theme_catchup(task, playlist, current_dt)
+    before = task.runtime_state.snapshot().instances[target.instance_uuid]
+    anchor = device_config.refresh_info.refresh_time
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    after = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.FAILED
+    assert _refresh_lane_state(after) == _refresh_lane_state(before)
+    assert after.theme_catchup.target_mode == "night"
+    assert after.theme_catchup.last_failure_at == current_dt.isoformat()
+    assert after.theme_catchup.next_retry_at is not None
+    assert device_config.refresh_info.refresh_time == anchor
+    assert task.display_manager.calls == []
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+    assert task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    ) is None
+
+
+def test_theme_catchup_noncacheable_result_is_failure_not_success(monkeypatch):
+    task, _device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-noncacheable")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    class NoncacheableThemePlugin(ThemeOnlyRecordingPlugin):
+        def render_themed_image(self, *args, **kwargs):
+            image = super().render_themed_image(*args, **kwargs)
+            image.info[refresh_task_module.SKIP_CACHE_IMAGE_INFO_KEY] = True
+            return image
+
+    plugin = NoncacheableThemePlugin(configs["fallback"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    command, target = _one_pending_theme_catchup(task, playlist, current_dt)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    state = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.FAILED
+    assert state.theme_catchup.next_retry_at is not None
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+
+
+def test_theme_catchup_rechecks_pressure_without_false_success(monkeypatch):
+    task, _device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-pressure-recheck")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    plugin = ThemeOnlyRecordingPlugin(configs["fallback"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    command, target = _one_pending_theme_catchup(task, playlist, current_dt)
+    before = task.runtime_state.snapshot().instances[target.instance_uuid]
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: True)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    entry = task.refresh_queue.get_entry(submitted.id)
+    after = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    assert entry.job.status is JobStatus.CANCELED
+    assert entry.job.error_code == "cache_unavailable"
+    assert plugin.calls == []
+    assert _refresh_lane_state(after) == _refresh_lane_state(before)
+    assert after.theme_catchup.next_retry_at is None
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+
+
+def test_theme_catchup_media_success_is_provider_free_and_side_effect_free(
+    monkeypatch,
+):
+    task, device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-provider-free")
+    )
+    configs["fallback"]["_manifest"] = _theme_manifest(
+        "fallback",
+        presentation="media",
+    )
+    device_config.get_resolution = lambda: (40, 24)
+    target = playlist.plugins[1].snapshot()
+    _write_runtime_theme_cache(
+        task,
+        target,
+        "day",
+        Image.new("RGB", (40, 24), (180, 20, 30)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    plugin = ThemeOnlyRecordingPlugin(configs["fallback"], fail=True)
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    before_rotation = _rotation_state(playlist)
+    before_display = task.runtime_state.snapshot()
+    anchor = device_config.refresh_info.refresh_time
+    command, target = _one_pending_theme_catchup(task, playlist, current_dt)
+    before = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    after_snapshot = task.runtime_state.snapshot()
+    after = after_snapshot.instances[target.instance_uuid]
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert plugin.calls == []
+    assert Path(task._snapshot_cache_path(target, "night")).exists()
+    assert _refresh_lane_state(after) == _refresh_lane_state(before)
+    assert after.last_good_cache.theme_mode == "day"
+    assert after_snapshot.display_state == before_display.display_state
+    assert after_snapshot.display_commit_id == before_display.display_commit_id
+    assert after_snapshot.displayed_instance_uuid == before_display.displayed_instance_uuid
+    assert device_config.refresh_info.refresh_time == anchor
+    assert task.display_manager.calls == []
+    assert task.refresh_queue.take(timeout=0) is None
+    assert _rotation_state(playlist) == before_rotation
+
+
+def test_theme_catchup_revision_change_during_render_cancels_without_promotion(
+    monkeypatch,
+):
+    task, _device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-stale-revision")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    command, target = _one_pending_theme_catchup(task, playlist, current_dt)
+    before = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    class RevisionChangingPlugin(ThemeOnlyRecordingPlugin):
+        def render_themed_image(self, *args, **kwargs):
+            image = super().render_themed_image(*args, **kwargs)
+            task.device_config.get_playlist_manager().update_plugin_instance(
+                target.instance_uuid,
+                settings={"id": "changed", "themeMode": "auto"},
+                expected_generation=target.structural_generation,
+                expected_settings_revision=target.settings_revision,
+            )
+            return image
+
+    plugin = RevisionChangingPlugin(configs["fallback"])
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    after = task.runtime_state.snapshot().instances[target.instance_uuid]
+
+    job = task.refresh_queue.get_entry(submitted.id).job
+    assert job.status is JobStatus.CANCELED
+    assert job.error_code == "stale_selection"
+    assert _refresh_lane_state(after) == _refresh_lane_state(before)
+    assert not Path(task._snapshot_cache_path(target, "night")).exists()
+    assert not Path(task._staging_cache_path(target, "night")).exists()
 
 
 def test_theme_failure_cools_theme_lane_only_and_keeps_last_good(monkeypatch):

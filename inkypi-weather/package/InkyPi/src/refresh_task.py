@@ -101,6 +101,7 @@ DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
 DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 75
 DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS = 30 * 60
 DEFAULT_THEME_REFRESH_RETRY_COOLDOWN_SECONDS = 10 * 60
+DEFAULT_THEME_CATCHUP_RETRY_COOLDOWN_SECONDS = 10 * 60
 DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
@@ -736,6 +737,7 @@ class RefreshTask:
                     theme_context=theme_context,
                     theme_render_only=True,
                     current_dt=current_dt,
+                    expected_displayed_instance_uuid=selection.instance.instance_uuid,
                 )
             self._persist_active_theme(theme_context, current_dt)
             self._write_device_config()
@@ -886,7 +888,13 @@ class RefreshTask:
             for item in selected
         )
 
-    def _active_cache_candidates(self, active, theme_context):
+    def _active_cache_candidates(
+        self,
+        active,
+        theme_context,
+        *,
+        exact_theme_only=False,
+    ):
         """Resolve exact, decodable cache candidates outside the model lock."""
         if active is None:
             return {}
@@ -905,7 +913,12 @@ class RefreshTask:
                 if isinstance(resolved_theme, Mapping)
                 else None
             )
-            candidate = self.cache_catalog.resolve(
+            resolver = (
+                self.cache_catalog.resolve_exact
+                if exact_theme_only
+                else self.cache_catalog.resolve
+            )
+            candidate = resolver(
                 instance,
                 theme_mode,
                 runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()),
@@ -926,7 +939,11 @@ class RefreshTask:
             # queueing an opposite-theme DISPLAY_CACHE command that could
             # absorb its cache-only follow-up and lose the pinned context.
             return None
-        candidates = self._active_cache_candidates(active, theme_context)
+        candidates = self._active_cache_candidates(
+            active,
+            theme_context,
+            exact_theme_only=True,
+        )
         latest_refresh = self.device_config.get_refresh_info()
         try:
             interval = float(
@@ -1078,6 +1095,12 @@ class RefreshTask:
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         theme_context = get_theme_context(self.device_config, now=current_dt)
+        theme_transition_pending = bool(
+            isinstance(theme_context, Mapping)
+            and theme_context.get("mode") in {"day", "night"}
+            and self._get_config_value("active_theme", None)
+            != theme_context.get("mode")
+        )
         if active is None:
             self._theme_due_candidate(
                 manager,
@@ -1180,7 +1203,14 @@ class RefreshTask:
             self._oldest_data_overdue_seconds = None
         candidate = decision.candidate
         if candidate is None:
-            return None
+            return self._select_theme_catchup_command(
+                active,
+                runtime_instances,
+                theme_context,
+                current_dt,
+                tier,
+                theme_transition_pending,
+            )
         if candidate.lane is RefreshLane.THEME:
             return self._playlist_command(
                 active.name,
@@ -1236,6 +1266,100 @@ class RefreshTask:
             kind=CommandKind.CACHE_REFRESH,
             current_dt=current_dt,
         )
+
+    def _select_theme_catchup_command(
+        self,
+        active,
+        runtime_instances,
+        theme_context,
+        current_dt,
+        tier,
+        theme_transition_pending,
+    ):
+        """Admit one provider-free exact-theme catch-up without rotation."""
+        if (
+            tier is not ResourceTier.HEALTHY
+            or theme_transition_pending
+        ):
+            return None
+        target_mode = (
+            theme_context.get("mode")
+            if isinstance(theme_context, Mapping)
+            else None
+        )
+        if target_mode not in {"day", "night"}:
+            return None
+
+        candidates = []
+        for instance in active.plugins:
+            if self._snapshot_background_cache_disabled(instance):
+                continue
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            resolved_theme = _resolved_theme_context_for_instance(
+                instance,
+                plugin_config,
+                self.device_config,
+                current_dt=current_dt,
+            )
+            if (
+                not isinstance(resolved_theme, Mapping)
+                or resolved_theme.get("requested_mode") != "auto"
+                or resolved_theme.get("mode") != target_mode
+            ):
+                continue
+            runtime_instance = runtime_instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            if self.cache_catalog.resolve_exact(
+                instance,
+                target_mode,
+                runtime_instance,
+            ) is not None:
+                continue
+            catchup = runtime_instance.theme_catchup
+            next_retry = self._parse_iso_datetime(catchup.next_retry_at)
+            if next_retry is not None:
+                next_retry = self._align_datetime_tz(next_retry, current_dt)
+                if catchup.target_mode == target_mode and current_dt < next_retry:
+                    continue
+            last_attempt = self._parse_iso_datetime(catchup.last_attempt_at)
+            if last_attempt is not None:
+                last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+            candidates.append((
+                last_attempt is not None,
+                datetime.min.replace(tzinfo=current_dt.tzinfo)
+                if last_attempt is None
+                else last_attempt,
+                instance.instance_uuid,
+                instance,
+                resolved_theme,
+            ))
+
+        for _attempted, _last_attempt, _uuid, instance, resolved_theme in sorted(
+            candidates,
+            key=lambda item: item[:3],
+        ):
+            if not self.runtime_state.try_admit_theme_catchup(
+                instance.instance_uuid,
+                target_mode,
+                current_dt.isoformat(),
+            ):
+                continue
+            return self._playlist_command(
+                active.name,
+                instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.THEME_CATCHUP,
+                force=False,
+                display_cached_only=False,
+                priority=5,
+                kind=CommandKind.CACHE_REFRESH,
+                theme_render_only=True,
+                current_dt=current_dt,
+                resolved_theme_context=resolved_theme,
+            )
+        return None
 
     def _live_due_candidates(self, active, runtime_instances, current_dt, tier):
         """Return exact-display live candidates admitted only in the healthy tier."""
@@ -2295,6 +2419,10 @@ class RefreshTask:
                     and self._cache_refresh_under_resource_pressure()
                 ):
                     self._set_render_metadata(False, False, plugin_config)
+                    if command.intent is RefreshIntent.THEME_CATCHUP:
+                        raise _CacheUnavailable(
+                            "theme catch-up deferred under resource pressure"
+                        )
                     return None
 
                 if theme_render_only and not image_missing:
@@ -2714,10 +2842,22 @@ class RefreshTask:
                 self._require_fresh_selection(command, context)
                 promoted_for_intent = True
             elif (
-                command.intent is RefreshIntent.THEME_REDRAW
+                command.intent
+                in {
+                    RefreshIntent.THEME_REDRAW,
+                    RefreshIntent.THEME_CATCHUP,
+                }
                 and self._exact_cache_is_valid(instance, theme_mode)
             ):
                 promoted_for_intent = True
+
+            if (
+                command.intent is RefreshIntent.THEME_CATCHUP
+                and not promoted_for_intent
+            ):
+                raise RuntimeError(
+                    "theme catch-up did not produce an exact cacheable image"
+                )
 
             if degraded_data_result:
                 self._execution_local.degraded_data_result = True
@@ -3201,6 +3341,23 @@ class RefreshTask:
         return None
 
     def _record_command_failure(self, command, error):
+        if command.intent is RefreshIntent.THEME_CATCHUP:
+            current_dt = self._get_current_datetime()
+            target_mode = _resolved_theme_mode(command.payload)
+            if target_mode in {"day", "night"}:
+                self.runtime_state.record_theme_catchup_failure(
+                    command.instance_uuid,
+                    target_mode,
+                    current_dt.isoformat(),
+                    error,
+                    (
+                        current_dt
+                        + timedelta(
+                            seconds=DEFAULT_THEME_CATCHUP_RETRY_COOLDOWN_SECONDS
+                        )
+                    ).isoformat(),
+                )
+            return
         theme_context = command.payload.get("theme_context")
         if theme_context:
             context = self._current_task_context(command)
@@ -3416,6 +3573,13 @@ class RefreshTask:
         now = self._clock()
         if deadline_monotonic is None:
             deadline_monotonic = now + self._manual_update_timeout_seconds()
+        normalized_intent = RefreshIntent(intent)
+        if (
+            expected_displayed_instance_uuid is None
+            and normalized_intent is RefreshIntent.THEME_REDRAW
+            and theme_render_only
+        ):
+            expected_displayed_instance_uuid = instance.instance_uuid
         payload = {
             "refresh_type": "Playlist",
             "playlist_name": playlist_name,
@@ -3430,8 +3594,10 @@ class RefreshTask:
             payload["theme_context"] = theme_context
         if theme_render_only:
             payload["theme_render_only"] = True
-        if theme_render_only or expected_displayed_instance_uuid is not None:
-            payload["expected_displayed_instance_uuid"] = instance.instance_uuid
+        if expected_displayed_instance_uuid is not None:
+            payload["expected_displayed_instance_uuid"] = str(
+                expected_displayed_instance_uuid
+            )
         if preserve_rotation_anchor:
             payload["preserve_rotation_anchor"] = True
         if resolved_theme_context is None:
@@ -3446,11 +3612,10 @@ class RefreshTask:
             resolved_theme_context = thaw_payload(resolved_theme_context)
         if resolved_theme_context is not None:
             payload["resolved_theme_context"] = resolved_theme_context
-        if RefreshIntent(intent) is RefreshIntent.DISPLAY_CACHE:
+        if normalized_intent is RefreshIntent.DISPLAY_CACHE:
             payload["cache_theme_mode"] = cache_theme_mode
         if presentation_request_id is not None:
             payload["presentation_request_id"] = str(presentation_request_id)
-        normalized_intent = RefreshIntent(intent)
         if allow_prepared_presentation is None:
             allow_prepared_presentation = (
                 normalized_intent is RefreshIntent.DISPLAY_CACHE

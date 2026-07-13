@@ -99,6 +99,87 @@ def test_data_live_theme_success_clocks_are_independent(tmp_path):
     assert state.theme.last_success_at == "2026-07-09T10:02:00+00:00"
 
 
+def test_theme_catchup_rolling_limit_is_persisted_across_restart(tmp_path):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+
+    assert store.try_admit_theme_catchup(
+        "one",
+        "night",
+        "2026-07-09T10:00:00+00:00",
+    )
+    assert store.try_admit_theme_catchup(
+        "two",
+        "night",
+        "2026-07-09T10:00:10+00:00",
+    )
+    assert not store.try_admit_theme_catchup(
+        "three",
+        "night",
+        "2026-07-09T10:00:59+00:00",
+    )
+    store.flush()
+
+    restarted = RuntimeStateStore(path)
+
+    assert not restarted.try_admit_theme_catchup(
+        "three",
+        "night",
+        "2026-07-09T10:00:59+00:00",
+    )
+    assert restarted.try_admit_theme_catchup(
+        "three",
+        "night",
+        "2026-07-09T10:01:00+00:00",
+    )
+    assert restarted.snapshot().theme_catchup_admissions == (
+        "2026-07-09T10:00:10+00:00",
+        "2026-07-09T10:01:00+00:00",
+    )
+
+
+def test_theme_catchup_failure_cooldown_is_mode_scoped_and_persisted(tmp_path):
+    path = tmp_path / "runtime.json"
+    store = RuntimeStateStore(path)
+    before = store.snapshot().instances.get("one")
+    assert store.try_admit_theme_catchup(
+        "one",
+        "night",
+        "2026-07-09T10:00:00+00:00",
+    )
+    store.record_theme_catchup_failure(
+        "one",
+        "night",
+        "2026-07-09T10:00:01+00:00",
+        "local theme source is cold",
+        "2026-07-09T10:10:01+00:00",
+    )
+    store.flush()
+
+    restarted = RuntimeStateStore(path)
+    state = restarted.snapshot().instances["one"]
+
+    assert state.theme_catchup.target_mode == "night"
+    assert state.theme_catchup.last_failure_at == "2026-07-09T10:00:01+00:00"
+    assert state.theme_catchup.last_error == "local theme source is cold"
+    assert state.theme_catchup.next_retry_at == "2026-07-09T10:10:01+00:00"
+    assert not restarted.try_admit_theme_catchup(
+        "one",
+        "night",
+        "2026-07-09T10:09:59+00:00",
+    )
+    assert restarted.try_admit_theme_catchup(
+        "one",
+        "day",
+        "2026-07-09T10:09:59+00:00",
+    )
+    assert before is None
+    assert state.data.last_attempt_at is None
+    assert state.live.last_attempt_at is None
+    assert state.theme.last_attempt_at is None
+    assert state.presentation.last_attempt_at is None
+
+
 def test_failure_cools_only_requested_instance_lane(tmp_path):
     store = RuntimeStateStore(tmp_path / "runtime.json")
     for lane in RefreshLane:
@@ -186,7 +267,7 @@ def test_schema_v1_migrates_cache_success_without_claiming_theme_as_data_success
     snapshot = RuntimeStateStore(path).snapshot()
     state = snapshot.instances["one"]
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == runtime_state.SCHEMA_VERSION
     assert state.data.last_attempt_at == "2026-07-09T10:00:00+00:00"
     assert state.data.last_failure_at == "2026-07-09T10:02:00+00:00"
     assert state.data.last_success_at is None
@@ -195,7 +276,10 @@ def test_schema_v1_migrates_cache_success_without_claiming_theme_as_data_success
     assert state.last_good_cache is None
     assert state.legacy_cache_success_at == "2026-07-09T10:01:00+00:00"
     assert state.last_success_at == "2026-07-09T10:01:00+00:00"
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["schema_version"]
+        == runtime_state.SCHEMA_VERSION
+    )
 
 
 def test_schema_v2_roundtrip_preserves_lane_and_last_good_state(tmp_path):
@@ -273,12 +357,15 @@ def test_schema_v2_migrates_with_empty_presentation_state(tmp_path):
     snapshot = RuntimeStateStore(path).snapshot()
     state = snapshot.instances["one"]
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == runtime_state.SCHEMA_VERSION
     assert state.data.last_success_at == "2026-07-09T10:01:00+00:00"
     assert state.presentation == runtime_state.RefreshLaneState()
     assert state.presentation_request is None
     assert state.presentation_receipt is None
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["schema_version"]
+        == runtime_state.SCHEMA_VERSION
+    )
 
 
 def test_schema_v3_roundtrip_preserves_pending_prepared_request(tmp_path):
@@ -1028,7 +1115,10 @@ def test_store_round_trips_display_and_instance_state(tmp_path):
     assert loaded.display_state == "committed"
     assert loaded.display_commit_id == "commit-1"
     assert loaded.displayed_instance_uuid == "one"
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["schema_version"]
+        == runtime_state.SCHEMA_VERSION
+    )
 
 
 def test_prune_keeps_current_instances_and_only_64_recent_tombstones(tmp_path):

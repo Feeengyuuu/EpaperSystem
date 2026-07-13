@@ -40,6 +40,7 @@ class RefreshIntent(str, Enum):
     PRESENTATION_REFRESH = "presentation_refresh"
     LIVE_REFRESH = "live_refresh"
     THEME_REDRAW = "theme_redraw"
+    THEME_CATCHUP = "theme_catchup"
     MANUAL_RENDER = "manual_render"
 
 

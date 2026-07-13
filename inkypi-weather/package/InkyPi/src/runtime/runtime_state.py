@@ -21,9 +21,11 @@ except ImportError:  # pragma: no cover - top-level runtime import in production
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PERSISTENCE_INTERVAL_SECONDS = 5.0
 MAX_TOMBSTONES = 64
+THEME_CATCHUP_WINDOW_SECONDS = 60.0
+THEME_CATCHUP_MAX_PER_WINDOW = 2
 _UNSET = object()
 _LOWERCASE_HEX = frozenset("0123456789abcdef")
 
@@ -177,6 +179,38 @@ class LastGoodCacheState:
 
 
 @dataclass(frozen=True)
+class ThemeCatchupState:
+    """Persisted retry metadata that is independent of refresh lanes."""
+
+    target_mode: str | None = None
+    last_attempt_at: str | None = None
+    last_failure_at: str | None = None
+    last_error: str | None = None
+    next_retry_at: str | None = None
+
+    def __post_init__(self) -> None:
+        _validated_theme_mode(self.target_mode, "target_mode")
+        for field_name in (
+            "last_attempt_at",
+            "last_failure_at",
+            "next_retry_at",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _validated_iso_timestamp(value, field_name),
+                )
+        if self.last_error is not None:
+            object.__setattr__(
+                self,
+                "last_error",
+                _validated_non_empty_text(self.last_error, "last_error"),
+            )
+
+
+@dataclass(frozen=True)
 class InstanceRuntimeState:
     """Immutable refresh lanes and cache state for one stable instance UUID."""
 
@@ -186,6 +220,7 @@ class InstanceRuntimeState:
     presentation: RefreshLaneState = field(default_factory=RefreshLaneState)
     presentation_request: PresentationRequestState | None = None
     presentation_receipt: PresentationCommitReceipt | None = None
+    theme_catchup: ThemeCatchupState = field(default_factory=ThemeCatchupState)
     last_good_cache: LastGoodCacheState | None = None
     legacy_cache_success_at: str | None = None
     tombstoned_at: str | None = None
@@ -238,6 +273,8 @@ class InstanceRuntimeState:
                 self.presentation_receipt.committed_at
                 if self.presentation_receipt is not None
                 else None,
+                self.theme_catchup.last_attempt_at,
+                self.theme_catchup.last_failure_at,
             )
             if value is not None
         )
@@ -253,6 +290,7 @@ class RuntimeStateSnapshot:
     display_state: str
     display_commit_id: str | None
     displayed_instance_uuid: str | None
+    theme_catchup_admissions: tuple[str, ...]
     updated_at: str | None
 
 
@@ -269,6 +307,7 @@ def _empty_snapshot() -> RuntimeStateSnapshot:
         display_state="unknown",
         display_commit_id=None,
         displayed_instance_uuid=None,
+        theme_catchup_admissions=(),
         updated_at=None,
     )
 
@@ -382,6 +421,105 @@ class RuntimeStateStore:
                 next_retry_at=next_retry_at,
             ),
         )
+
+    def try_admit_theme_catchup(
+        self,
+        instance_uuid,
+        target_mode,
+        admitted_at,
+    ) -> bool:
+        """Atomically apply retry and rolling-rate gates for one catch-up."""
+        instance_uuid = self._instance_uuid(instance_uuid)
+        target_mode = _validated_theme_mode(target_mode, "target_mode")
+        if target_mode not in {"day", "night"}:
+            raise ValueError("target_mode must be 'day' or 'night'")
+        admitted_at = _validated_iso_timestamp(admitted_at, "admitted_at")
+        admitted_instant = self._timestamp_instant(admitted_at)
+        cutoff = admitted_instant.timestamp() - THEME_CATCHUP_WINDOW_SECONDS
+
+        with self._state_lock:
+            previous = self._snapshot.instances.get(
+                instance_uuid,
+                InstanceRuntimeState(),
+            )
+            catchup = previous.theme_catchup
+            if (
+                catchup.target_mode == target_mode
+                and catchup.next_retry_at is not None
+                and admitted_instant
+                < self._timestamp_instant(catchup.next_retry_at)
+            ):
+                return False
+
+            recent_admissions = tuple(
+                timestamp
+                for timestamp in self._snapshot.theme_catchup_admissions
+                if self._timestamp_instant(timestamp).timestamp() > cutoff
+            )
+            if len(recent_admissions) >= THEME_CATCHUP_MAX_PER_WINDOW:
+                return False
+
+            if catchup.target_mode != target_mode:
+                catchup = ThemeCatchupState(
+                    target_mode=target_mode,
+                    last_attempt_at=admitted_at,
+                )
+            else:
+                catchup = replace(catchup, last_attempt_at=admitted_at)
+            instances = dict(self._snapshot.instances)
+            instances[instance_uuid] = replace(
+                previous,
+                theme_catchup=catchup,
+            )
+            self._publish_locked(
+                replace(
+                    self._snapshot,
+                    instances=_frozen_instances(instances),
+                    theme_catchup_admissions=(
+                        *recent_admissions,
+                        admitted_at,
+                    ),
+                    updated_at=admitted_at,
+                )
+            )
+        self._persist_if_due()
+        return True
+
+    def record_theme_catchup_failure(
+        self,
+        instance_uuid,
+        target_mode,
+        failed_at,
+        error,
+        next_retry_at,
+    ) -> None:
+        """Persist catch-up failure without touching any refresh lane."""
+        instance_uuid = self._instance_uuid(instance_uuid)
+        target_mode = _validated_theme_mode(target_mode, "target_mode")
+        if target_mode not in {"day", "night"}:
+            raise ValueError("target_mode must be 'day' or 'night'")
+        failed_at = _validated_iso_timestamp(failed_at, "failed_at")
+        next_retry_at = _validated_iso_timestamp(
+            next_retry_at,
+            "next_retry_at",
+        )
+        error_text = _validated_non_empty_text(str(error), "error")
+
+        def update(previous):
+            catchup = previous.theme_catchup
+            if catchup.target_mode != target_mode:
+                catchup = ThemeCatchupState(target_mode=target_mode)
+            return replace(
+                previous,
+                theme_catchup=replace(
+                    catchup,
+                    last_failure_at=failed_at,
+                    last_error=error_text,
+                    next_retry_at=next_retry_at,
+                ),
+            )
+
+        self._update_instance(instance_uuid, failed_at, update)
 
     def request_presentation(
         self,
@@ -852,6 +990,9 @@ class RuntimeStateStore:
                 "commit_id": snapshot.display_commit_id,
                 "instance_uuid": snapshot.displayed_instance_uuid,
             },
+            "theme_catchup": {
+                "admissions": list(snapshot.theme_catchup_admissions),
+            },
             "instances": {
                 instance_uuid: {
                     "lanes": {
@@ -866,6 +1007,9 @@ class RuntimeStateStore:
                     ),
                     "presentation_receipt": cls._serialize_presentation_receipt(
                         state.presentation_receipt
+                    ),
+                    "theme_catchup": cls._serialize_theme_catchup(
+                        state.theme_catchup
                     ),
                     "legacy_cache_success_at": state.legacy_cache_success_at,
                     "tombstoned_at": state.tombstoned_at,
@@ -923,12 +1067,22 @@ class RuntimeStateStore:
             "theme_mode": state.theme_mode,
         }
 
+    @staticmethod
+    def _serialize_theme_catchup(state: ThemeCatchupState) -> dict:
+        return {
+            "target_mode": state.target_mode,
+            "last_attempt_at": state.last_attempt_at,
+            "last_failure_at": state.last_failure_at,
+            "last_error": state.last_error,
+            "next_retry_at": state.next_retry_at,
+        }
+
     @classmethod
     def _deserialize(cls, payload) -> RuntimeStateSnapshot:
         if not isinstance(payload, dict):
             raise ValueError("runtime state must be a JSON object")
         schema_version = payload.get("schema_version")
-        if schema_version not in {1, 2, SCHEMA_VERSION}:
+        if schema_version not in {1, 2, 3, SCHEMA_VERSION}:
             raise ValueError("unsupported runtime state schema")
         raw_instances = payload.get("instances", {})
         if not isinstance(raw_instances, dict):
@@ -942,9 +1096,22 @@ class RuntimeStateStore:
                 instances[instance_uuid] = cls._deserialize_v1_instance(raw_state)
             elif schema_version == 2:
                 instances[instance_uuid] = cls._deserialize_v2_instance(raw_state)
-            else:
+            elif schema_version == 3:
                 instances[instance_uuid] = cls._deserialize_v3_instance(raw_state)
+            else:
+                instances[instance_uuid] = cls._deserialize_v4_instance(raw_state)
         instances = cls._cap_loaded_tombstones(instances)
+
+        raw_theme_catchup = payload.get("theme_catchup", {})
+        if not isinstance(raw_theme_catchup, dict):
+            raise ValueError("runtime theme_catchup state must be an object")
+        raw_admissions = raw_theme_catchup.get("admissions", [])
+        if not isinstance(raw_admissions, list):
+            raise ValueError("runtime theme_catchup admissions must be a list")
+        admissions = tuple(
+            _validated_iso_timestamp(value, "theme_catchup admission")
+            for value in raw_admissions[-THEME_CATCHUP_MAX_PER_WINDOW:]
+        )
 
         raw_display = payload.get("display", {})
         if not isinstance(raw_display, dict):
@@ -963,6 +1130,7 @@ class RuntimeStateStore:
             displayed_instance_uuid=cls._optional_instance_uuid(
                 raw_display.get("instance_uuid"),
             ),
+            theme_catchup_admissions=admissions,
             updated_at=cls._optional_timestamp(
                 payload.get("updated_at"),
                 "updated_at",
@@ -1043,6 +1211,15 @@ class RuntimeStateStore:
         )
 
     @classmethod
+    def _deserialize_v4_instance(cls, raw_state) -> InstanceRuntimeState:
+        return replace(
+            cls._deserialize_v3_instance(raw_state),
+            theme_catchup=cls._deserialize_theme_catchup(
+                raw_state.get("theme_catchup", {})
+            ),
+        )
+
+    @classmethod
     def _deserialize_lane(cls, raw_state) -> RefreshLaneState:
         if not isinstance(raw_state, dict):
             raise ValueError("runtime lane state must be an object")
@@ -1118,6 +1295,18 @@ class RuntimeStateStore:
         )
 
     @staticmethod
+    def _deserialize_theme_catchup(raw_state):
+        if not isinstance(raw_state, dict):
+            raise ValueError("theme_catchup must be an object")
+        return ThemeCatchupState(
+            target_mode=raw_state.get("target_mode"),
+            last_attempt_at=raw_state.get("last_attempt_at"),
+            last_failure_at=raw_state.get("last_failure_at"),
+            last_error=raw_state.get("last_error"),
+            next_retry_at=raw_state.get("next_retry_at"),
+        )
+
+    @staticmethod
     def _cap_loaded_tombstones(instances):
         tombstones = sorted(
             (
@@ -1147,6 +1336,13 @@ class RuntimeStateStore:
             float(self._wall_clock()),
             tz=timezone.utc,
         ).isoformat()
+
+    @staticmethod
+    def _timestamp_instant(value) -> datetime:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     @staticmethod
     def _instance_uuid(value) -> str:
