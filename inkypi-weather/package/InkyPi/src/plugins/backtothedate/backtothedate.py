@@ -347,7 +347,7 @@ class BacktotheDate(BasePlugin):
         )
 
     def _presentation_media_dir(self):
-        return self.cache_dir(leaf="presentation-media")
+        return self.data_dir(leaf="presentation-media")
 
     def _generate_stateless_preview(self, settings, dimensions, attempts):
         preview_settings = dict(settings)

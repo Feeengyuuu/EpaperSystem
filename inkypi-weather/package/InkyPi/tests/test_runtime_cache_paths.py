@@ -215,13 +215,28 @@ def test_literature_clock_downloads_to_cache_and_seeds_bundled_fallback(
     assert expected.read_text(encoding="utf-8") == "bundled"
 
 
-def test_backtothedate_state_uses_global_runtime_cache_root(monkeypatch, tmp_path):
-    root = tmp_path / "runtime-cache"
-    monkeypatch.setenv("INKYPI_CACHE_DIR", str(root))
+def test_backtothedate_bank_uses_data_while_legacy_cache_stays_in_cache(
+    monkeypatch, tmp_path
+):
+    data_root = tmp_path / "runtime-data"
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(data_root))
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin(BacktotheDate, "backtothedate")
 
-    state_path = _plugin(BacktotheDate, "backtothedate")._state_path()
+    state_path = plugin._state_path()
+    media_dir = plugin._presentation_media_dir()
+    legacy_state_path = plugin._legacy_state_path()
+    legacy_output_dir = plugin.cache_dir(leaf="output")
 
-    assert state_path == root / "plugins" / "backtothedate" / ".backtothedate_state.json"
+    assert state_path == (
+        data_root / "plugins" / "backtothedate" / ".backtothedate_state.json"
+    )
+    assert media_dir == data_root / "plugins" / "backtothedate" / "presentation-media"
+    assert legacy_state_path == (
+        cache_root / "plugins" / "backtothedate" / ".backtothedate_state.json"
+    )
+    assert legacy_output_dir == cache_root / "plugins" / "backtothedate" / "output"
 
 
 def test_newspaper_rotation_state_uses_global_runtime_cache_root(monkeypatch, tmp_path):
