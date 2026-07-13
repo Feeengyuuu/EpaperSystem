@@ -50,17 +50,33 @@ class TelegramDigest(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
-        settings = settings or {}
+        settings = dict(settings or {})
+        injected_theme = settings.get("_inkypi_theme")
+        if not isinstance(injected_theme, dict):
+            settings["_inkypi_theme"] = self.resolve_theme(
+                settings,
+                device_config,
+            )
+        theme_render_only = self._enabled(
+            settings.get("_theme_render_only"),
+            default=False,
+        )
         dimensions = self.get_dimensions(device_config)
         now = self._now_utc()
         payload = self._payload(settings, device_config, now)
         image = self._render_page(dimensions, payload, settings, now)
-        self._remember_displayed_messages(payload, settings, now)
+        if not theme_render_only:
+            self._remember_displayed_messages(payload, settings, now)
         return image
 
     def _payload(self, settings, device_config, now):
         cache = self._read_state()
         max_messages = bounded_int(settings.get("maxMessages"), DEFAULT_MAX_MESSAGES, 4, MAX_MESSAGE_CACHE)
+        if self._enabled(settings.get("_theme_render_only"), default=False):
+            cached = self._stale_payload(cache, now, "")
+            if cached:
+                return cached
+            return self._sample_payload(settings, now, "sample")
         access_mode = self._access_mode(settings, device_config)
 
         if access_mode == "account":
@@ -788,7 +804,8 @@ class TelegramDigest(BasePlugin):
         sx = width / 800
         sy = height / 480
         scale = max(0.72, min(sx, sy))
-        image = Image.new("RGB", dimensions, self._palette()["background"])
+        p = self._palette((settings or {}).get("_inkypi_theme"))
+        image = Image.new("RGB", dimensions, p["background"])
         draw = ImageDraw.Draw(image)
         fonts = {
             "title": self._font(int(25 * scale), "bold"),
@@ -803,7 +820,6 @@ class TelegramDigest(BasePlugin):
             "chat_badge": self._font(int(9 * scale), "bold"),
             "footer": self._font(int(12 * scale), "bold"),
         }
-        p = self._palette()
         self._draw_header(image, draw, payload, width, sx, sy, fonts, p, now)
         messages = payload.get("messages") or []
         lead, secondary_messages = self._prioritize_featured_messages(messages)
@@ -1095,14 +1111,14 @@ class TelegramDigest(BasePlugin):
         return self._draw_chat_feed_panel(image, draw, messages, box, fonts, p, scale)
     def _draw_chat_feed_panel(self, image, draw, messages, box, fonts, p, scale):
         x0, y0, x1, y1 = box
-        chat_bg = (23, 28, 31)
-        header_bg = (33, 38, 41)
-        row_bg = (27, 32, 34)
-        row_alt = (31, 36, 38)
-        rule = (88, 83, 71)
-        ink = (234, 238, 231)
-        dim = (151, 157, 151)
-        amber = (236, 177, 82)
+        chat_bg = p["chat_background"]
+        header_bg = p["chat_header"]
+        row_bg = p["chat_row"]
+        row_alt = p["chat_row_alt"]
+        rule = p["rule"]
+        ink = p["ink"]
+        dim = p["dim"]
+        amber = p["amber"]
         draw.rounded_rectangle(box, radius=7, fill=chat_bg, outline=rule, width=1)
         header_h = int(29 * scale)
         header_box = (x0 + 1, y0 + 1, x1 - 1, y0 + header_h)
@@ -1143,7 +1159,18 @@ class TelegramDigest(BasePlugin):
             if self._chat_item_is_media(item):
                 self._draw_chat_media_item(image, draw, item, item_box, fonts, p, scale, fill, rule, ink, dim)
             else:
-                self._draw_chat_text_item(draw, item, item_box, fonts, scale, fill, rule, ink, dim)
+                self._draw_chat_text_item(
+                    draw,
+                    item,
+                    item_box,
+                    fonts,
+                    scale,
+                    fill,
+                    rule,
+                    ink,
+                    dim,
+                    palette=p,
+                )
             drawn.append(item)
             cursor_y += item_h + int(2 * scale)
             row_index += 1
@@ -1184,11 +1211,23 @@ class TelegramDigest(BasePlugin):
         max_lines = max(1, min(5, self._chat_item_row_weight(item)))
         return self._wrap_text(draw, text, fonts["chat"], max_width, max_lines)
 
-    def _draw_chat_text_item(self, draw, item, box, fonts, scale, fill, rule, ink, dim):
+    def _draw_chat_text_item(
+        self,
+        draw,
+        item,
+        box,
+        fonts,
+        scale,
+        fill,
+        rule,
+        ink,
+        dim,
+        palette=None,
+    ):
         x0, y0, x1, y1 = box
         draw.rectangle((x0, y0, x1, y1 - 1), fill=fill)
-        draw.line((x0, y1 - 1, x1, y1 - 1), fill=(51, 54, 49), width=1)
-        color = self._chat_channel_color(item)
+        draw.line((x0, y1 - 1, x1, y1 - 1), fill=rule, width=1)
+        color = self._chat_channel_color(item, palette)
         draw.rectangle((x0 + int(2 * scale), y0 + int(4 * scale), x0 + int(5 * scale), y1 - int(4 * scale)), fill=color)
         prefix_y = y0 + int(4 * scale)
         self._draw_chat_prefix(draw, item, x0, prefix_y, fonts, scale, color, dim)
@@ -1204,8 +1243,8 @@ class TelegramDigest(BasePlugin):
     def _draw_chat_media_item(self, image, draw, item, box, fonts, p, scale, fill, rule, ink, dim):
         x0, y0, x1, y1 = box
         draw.rectangle((x0, y0, x1, y1 - 1), fill=fill)
-        draw.line((x0, y1 - 1, x1, y1 - 1), fill=(51, 54, 49), width=1)
-        color = self._chat_channel_color(item)
+        draw.line((x0, y1 - 1, x1, y1 - 1), fill=rule, width=1)
+        color = self._chat_channel_color(item, p)
         draw.rectangle((x0 + int(2 * scale), y0 + int(4 * scale), x0 + int(5 * scale), y1 - int(4 * scale)), fill=color)
         cursor = self._draw_chat_prefix(draw, item, x0, y0 + int(5 * scale), fonts, scale, color, dim)
         badge = self._chat_media_label(item)
@@ -1213,7 +1252,13 @@ class TelegramDigest(BasePlugin):
             badge_width = max(0, x1 - cursor - int(8 * scale))
             badge_text = self._fit_text(draw, badge, fonts["chat_badge"], badge_width)
             if badge_text:
-                self._draw_text(draw, (cursor, y0 + int(5 * scale)), badge_text, fonts["chat_badge"], (228, 224, 202))
+                self._draw_text(
+                    draw,
+                    (cursor, y0 + int(5 * scale)),
+                    badge_text,
+                    fonts["chat_badge"],
+                    ink,
+                )
 
         media_top = y0 + int(22 * scale)
         media_box = (x0 + int(10 * scale), media_top, x1 - int(10 * scale), media_top + int(86 * scale))
@@ -1252,8 +1297,8 @@ class TelegramDigest(BasePlugin):
         label = title or username or "channel"
         return label[:28]
 
-    def _chat_channel_color(self, item):
-        colors = (
+    def _chat_channel_color(self, item, palette=None):
+        colors = (palette or {}).get("channel_colors") or (
             (132, 202, 255),
             (129, 219, 150),
             (255, 197, 103),
@@ -1600,17 +1645,112 @@ class TelegramDigest(BasePlugin):
     def _file_url(self, token, file_path):
         return TELEGRAM_FILE_BASE.format(token=token, file_path=file_path.lstrip("/"))
 
-    def _palette(self):
+    @staticmethod
+    def _theme_role(theme_context, name, fallback):
+        palette = (
+            theme_context.get("palette")
+            if isinstance(theme_context, dict)
+            else None
+        )
+        value = palette.get(name) if isinstance(palette, dict) else None
+        try:
+            result = tuple(int(channel) for channel in value)
+        except (TypeError, ValueError):
+            return fallback
+        return result if len(result) == 3 else fallback
+
+    @staticmethod
+    def _blend(foreground, background, amount):
+        amount = max(0.0, min(1.0, float(amount)))
+        return tuple(
+            int(background[index] + (foreground[index] - background[index]) * amount)
+            for index in range(3)
+        )
+
+    @staticmethod
+    def _contrast_ratio(first, second):
+        def relative_luminance(color):
+            channels = []
+            for value in color:
+                normalized = value / 255
+                channels.append(
+                    normalized / 12.92
+                    if normalized <= 0.04045
+                    else ((normalized + 0.055) / 1.055) ** 2.4
+                )
+            return (
+                0.2126 * channels[0]
+                + 0.7152 * channels[1]
+                + 0.0722 * channels[2]
+            )
+
+        lighter, darker = sorted(
+            (relative_luminance(first), relative_luminance(second)),
+            reverse=True,
+        )
+        return (lighter + 0.05) / (darker + 0.05)
+
+    def _day_dim(self, initial, ink, surfaces):
+        for step in range(21):
+            candidate = self._blend(ink, initial, step / 20)
+            if all(
+                self._contrast_ratio(candidate, surface) >= 4.5
+                for surface in surfaces
+            ):
+                return candidate
+        return ink
+
+    def _palette(self, theme_context=None):
+        mode = str((theme_context or {}).get("mode") or "day").lower()
+        night = mode == "night"
+        background = self._theme_role(
+            theme_context,
+            "background",
+            (246, 242, 232),
+        )
+        panel = self._theme_role(theme_context, "panel", (255, 252, 242))
+        ink = self._theme_role(theme_context, "ink", (29, 33, 38))
+        muted = self._theme_role(theme_context, "muted", (78, 85, 91))
+        rule = self._theme_role(theme_context, "rule", (206, 198, 181))
+        accent = self._theme_role(theme_context, "accent", (0, 135, 170))
+        dim = self._blend(muted, background, 0.72)
+        if not night:
+            dim = self._day_dim(dim, ink, (background, panel))
         return {
-            "background": (246, 242, 232),
-            "panel": (255, 252, 242),
-            "chip": (239, 235, 224),
-            "rule": (206, 198, 181),
-            "ink": (29, 33, 38),
-            "muted": (78, 85, 91),
-            "dim": (125, 128, 126),
-            "cyan": (0, 135, 170),
-            "amber": (188, 116, 32),
+            "background": background,
+            "panel": panel,
+            "chip": self._blend(accent, background, 0.08),
+            "rule": rule,
+            "ink": ink,
+            "muted": muted,
+            "dim": dim,
+            "cyan": accent,
+            "amber": (236, 177, 82) if night else (153, 93, 23),
+            "chat_background": self._blend(accent, background, 0.08),
+            "chat_header": self._blend(accent, background, 0.14),
+            "chat_row": self._blend(accent, background, 0.05),
+            "chat_row_alt": self._blend(accent, background, 0.1),
+            "channel_colors": (
+                (
+                    (132, 202, 255),
+                    (129, 219, 150),
+                    (255, 197, 103),
+                    (219, 168, 255),
+                    (255, 148, 123),
+                    (130, 224, 215),
+                    (231, 228, 126),
+                )
+                if night
+                else (
+                    (17, 82, 130),
+                    (31, 111, 70),
+                    (139, 86, 18),
+                    (100, 62, 137),
+                    (147, 55, 42),
+                    (17, 112, 107),
+                    (116, 105, 21),
+                )
+            ),
         }
 
     def _panel(self, draw, box, p):

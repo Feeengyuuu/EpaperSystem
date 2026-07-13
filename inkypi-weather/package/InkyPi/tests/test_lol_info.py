@@ -40,6 +40,7 @@ def install_import_stubs():
     sys.modules.setdefault("plugins.context_cache", context)
 
     http = types.ModuleType("utils.http_client")
+    http.get_http_client = lambda: None
     http.get_http_session = lambda: None
     sys.modules.setdefault("utils.http_client", http)
 
@@ -72,6 +73,143 @@ def make_plugin(tmp_path):
     plugin = LoLInfo({"id": "lol_info"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def _theme_context(mode, requested_mode="auto"):
+    palettes = {
+        "day": {
+            "background": (237, 243, 244),
+            "panel": (255, 255, 255),
+            "ink": (10, 12, 15),
+            "muted": (74, 78, 84),
+            "rule": (185, 188, 194),
+            "accent": (26, 112, 128),
+        },
+        "night": {
+            "background": (8, 20, 22),
+            "panel": (0, 0, 0),
+            "ink": (255, 255, 255),
+            "muted": (194, 196, 202),
+            "rule": (46, 48, 56),
+            "accent": (101, 189, 201),
+        },
+    }
+    return {
+        "requested_mode": requested_mode,
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "sunrise": "2026-07-13T05:57:00-07:00",
+        "sunset": "2026-07-13T20:30:00-07:00",
+        "palette": palettes[mode],
+    }
+
+
+def _theme_payload(plugin):
+    payload = plugin._sample_payload()
+    payload["ranked"] = {}
+    payload["matches"] = []
+    payload["mastery"] = []
+    payload["skin_art_pool"] = []
+    payload["summary"] = {}
+    return payload
+
+
+def test_lol_renderer_uses_injected_palette_for_day_night_and_weather_auto(
+    tmp_path,
+):
+    plugin = make_plugin(tmp_path)
+    payload = _theme_payload(plugin)
+    day_theme = _theme_context("day", requested_mode="day")
+    night_theme = _theme_context("night", requested_mode="night")
+    auto_theme = _theme_context("night")
+
+    day = plugin._render_dashboard(
+        payload,
+        (800, 480),
+        {"_inkypi_theme": day_theme},
+        day_theme,
+    )
+    night = plugin._render_dashboard(
+        payload,
+        (800, 480),
+        {"_inkypi_theme": night_theme},
+        night_theme,
+    )
+    auto = plugin._render_dashboard(
+        payload,
+        (800, 480),
+        {"_inkypi_theme": auto_theme},
+        auto_theme,
+    )
+
+    assert day.size == night.size == auto.size == (800, 480)
+    assert day.getpixel((420, 10)) == day_theme["palette"]["background"]
+    assert night.getpixel((420, 10)) == night_theme["palette"]["background"]
+    assert day.getpixel((22, 22)) == day_theme["palette"]["rule"]
+    assert night.getpixel((22, 22)) == night_theme["palette"]["rule"]
+    assert auto.getpixel((420, 10)) == auto_theme["palette"]["background"]
+    assert auto.getpixel((22, 22)) == auto_theme["palette"]["rule"]
+    assert day.tobytes() != night.tobytes()
+
+
+def test_lol_theme_only_render_uses_expired_cache_and_injected_context(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = {
+        "_theme_render_only": True,
+        "_inkypi_theme": _theme_context("night"),
+    }
+    dimensions = (800, 480)
+    cache_key = plugin._cache_key(settings, dimensions, plugin._identity(settings))
+    old_image = plugin._cache_image_path(cache_key)
+    Image.new("RGB", dimensions, (1, 2, 3)).save(old_image)
+    provider_cache_path = plugin._cache_path(cache_key)
+    plugin._write_json(
+        provider_cache_path,
+        {
+            "schema": STYLE_VERSION,
+            "updated_ts": 0,
+            "identity": plugin._identity(settings),
+            "image_path": str(old_image),
+            "data": _theme_payload(plugin),
+        },
+    )
+    provider_cache_bytes = provider_cache_path.read_bytes()
+    canonical_png_bytes = old_image.read_bytes()
+    calls = {"fetch": 0, "context": 0, "render": 0, "write_context": 0}
+
+    def fail_fetch(*_args, **_kwargs):
+        calls["fetch"] += 1
+        raise AssertionError("theme-only render fetched Riot provider data")
+
+    def fail_context(*_args, **_kwargs):
+        calls["context"] += 1
+        raise AssertionError("theme-only render ignored injected theme context")
+
+    def fake_render(data, dimensions, settings=None, theme_context=None):
+        calls["render"] += 1
+        assert data["source"] == "Mock Riot API"
+        assert theme_context == settings["_inkypi_theme"]
+        return Image.new("RGB", dimensions, theme_context["palette"]["background"])
+
+    def fail_write_context(*_args, **_kwargs):
+        calls["write_context"] += 1
+        raise AssertionError("theme-only render rewrote provider context")
+
+    plugin._fetch_dashboard_data = fail_fetch
+    plugin._render_dashboard = fake_render
+    plugin._write_context = fail_write_context
+    monkeypatch.setattr(lol_info_module, "get_theme_context", fail_context)
+
+    image = plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert calls == {"fetch": 0, "context": 0, "render": 1, "write_context": 0}
+    assert image.getpixel((0, 0)) == settings["_inkypi_theme"]["palette"]["background"]
+    assert provider_cache_path.read_bytes() == provider_cache_bytes
+    assert old_image.read_bytes() == canonical_png_bytes
 
 
 def test_mock_generate_image_renders_branded_dashboard(tmp_path):

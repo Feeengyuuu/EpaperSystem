@@ -553,6 +553,12 @@ BUILTIN_THEME_SETTINGS = [
         id="tech-pulse-paper",
     ),
     pytest.param(
+        "ticketmaster_events",
+        {"themeMode": "color"},
+        "auto",
+        id="ticketmaster-color-legacy-auto",
+    ),
+    pytest.param(
         "us_tv_hot_shows",
         {"themeMode": "streaming"},
         "night",

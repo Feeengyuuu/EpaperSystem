@@ -948,6 +948,11 @@ def test_pending_survives_restart_and_theme_redraw(tmp_path, monkeypatch):
     pending = profile_for(first_state)["pending_selection"]
 
     restarted = make_plugin(tmp_path)
+    monkeypatch.setattr(
+        restarted,
+        "_now_for_device",
+        lambda _device: datetime(2026, 7, 12, 9, 30),
+    )
     monkeypatch.setattr(restarted, "_candidate_pool", lambda *_args: pytest.fail("restart called provider"))
     monkeypatch.setattr(restarted, "_download_image_preview", lambda *_args: pytest.fail("restart downloaded"))
     second = restarted.prepare_presentation(

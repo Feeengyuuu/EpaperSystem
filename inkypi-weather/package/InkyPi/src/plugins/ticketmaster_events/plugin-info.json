@@ -1,0 +1,26 @@
+{
+    "schema_version": 2,
+    "capabilities": {
+        "supports_live_refresh": false,
+        "supports_day_night_theme": true
+    },
+    "theme": {
+        "presentation": "ui",
+        "day": {
+            "background": "#e5ece8",
+            "accent": "#b14435"
+        },
+        "night": {
+            "background": "#000000",
+            "accent": "#e5bc58"
+        }
+    },
+    "display_name": "Ticketmaster Events",
+    "id": "ticketmaster_events",
+    "class": "TicketmasterEvents",
+    "refresh_on_display": false,
+    "recommended_refresh": {
+        "interval": 10800
+    },
+    "repository": "local"
+}

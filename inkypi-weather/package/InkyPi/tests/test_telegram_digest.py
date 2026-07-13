@@ -138,6 +138,59 @@ def _plugin(tmp_path):
     return plugin
 
 
+def _theme_context(mode, requested_mode="auto"):
+    palettes = {
+        "day": {
+            "background": (237, 245, 248),
+            "panel": (255, 255, 255),
+            "ink": (10, 12, 15),
+            "muted": (74, 78, 84),
+            "rule": (185, 188, 194),
+            "accent": (34, 133, 170),
+        },
+        "night": {
+            "background": (7, 22, 27),
+            "panel": (0, 0, 0),
+            "ink": (255, 255, 255),
+            "muted": (194, 196, 202),
+            "rule": (46, 48, 56),
+            "accent": (104, 200, 230),
+        },
+    }
+    return {
+        "requested_mode": requested_mode,
+        "mode": mode,
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "sunrise": "2026-07-13T05:57:00-07:00",
+        "sunset": "2026-07-13T20:30:00-07:00",
+        "palette": palettes[mode],
+    }
+
+
+def _contrast_ratio(first, second):
+    def relative_luminance(color):
+        channels = []
+        for value in color:
+            normalized = value / 255
+            channels.append(
+                normalized / 12.92
+                if normalized <= 0.04045
+                else ((normalized + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * channels[0]
+            + 0.7152 * channels[1]
+            + 0.0722 * channels[2]
+        )
+
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 
 def test_plugin_info_and_settings_defaults_are_declared():
     root = Path(__file__).resolve().parents[1] / "src" / "plugins" / "telegram_digest"
@@ -159,6 +212,108 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'name="mediaDownloadLimit"' in settings
     assert 'name="botToken"' in settings
     assert 'name="chatFilter"' in settings
+
+
+def test_telegram_renderer_uses_injected_palette_for_day_night_and_weather_auto(
+    tmp_path,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
+    payload = plugin._sample_payload({}, now, "sample")
+    day_theme = _theme_context("day", requested_mode="day")
+    night_theme = _theme_context("night", requested_mode="night")
+    auto_theme = _theme_context("night")
+
+    day = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": day_theme},
+        now,
+    )
+    night = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": night_theme},
+        now,
+    )
+    auto = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": auto_theme},
+        now,
+    )
+
+    assert day.size == night.size == auto.size == (800, 480)
+    assert day.getpixel((0, 479)) == day_theme["palette"]["background"]
+    assert night.getpixel((0, 479)) == night_theme["palette"]["background"]
+    assert day.getpixel((20, 60)) == day_theme["palette"]["panel"]
+    assert night.getpixel((20, 60)) == night_theme["palette"]["panel"]
+    assert auto.getpixel((0, 479)) == auto_theme["palette"]["background"]
+    assert auto.getpixel((20, 60)) == auto_theme["palette"]["panel"]
+    assert day.tobytes() != night.tobytes()
+
+
+def test_telegram_day_dim_text_has_small_text_contrast_on_all_surfaces(tmp_path):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette(_theme_context("day", requested_mode="day"))
+
+    assert _contrast_ratio(palette["dim"], palette["background"]) >= 4.5
+    assert _contrast_ratio(palette["dim"], palette["panel"]) >= 4.5
+
+
+def test_telegram_theme_only_render_uses_cache_without_provider_or_state_writes(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
+    cache = plugin._build_payload(
+        {},
+        [
+            {
+                "key": "cached:1",
+                "date": int(now.timestamp()),
+                "chat_title": "Cached channel",
+                "title": "Cached digest",
+                "summary": "Provider-free theme redraw",
+                "raw_text": "Provider-free theme redraw",
+                "media_kind": "text",
+                "media_path": "",
+            }
+        ],
+        now,
+        "live",
+        auth_mode="account",
+        unread_total=1,
+    )
+    provider_calls = []
+    state_writes = []
+
+    def account_provider(*_args, **_kwargs):
+        provider_calls.append("account")
+        return dict(cache)
+
+    def bot_provider(*_args, **_kwargs):
+        provider_calls.append("bot")
+        return dict(cache)
+
+    monkeypatch.setattr(plugin, "_read_state", lambda: cache)
+    monkeypatch.setattr(plugin, "_write_state", lambda payload: state_writes.append(payload))
+    monkeypatch.setattr(plugin, "_fetch_account_payload", account_provider)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", bot_provider)
+
+    settings = {
+        "accessMode": "account",
+        "_theme_render_only": True,
+        "_inkypiDisplayRender": True,
+        "markDisplayedRead": True,
+        "_inkypi_theme": _theme_context("night"),
+    }
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert provider_calls == []
+    assert state_writes == []
+    assert image.getpixel((0, 479)) == settings["_inkypi_theme"]["palette"]["background"]
 
 
 

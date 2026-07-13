@@ -277,6 +277,32 @@ def test_add_plugin_uses_atomic_snapshot_then_write_and_signal(playlist_env):
     ]
 
 
+def test_ticketmaster_recommended_three_hour_form_migrates_to_10800_seconds(
+    playlist_env,
+):
+    response = playlist_env.client.post(
+        "/add_plugin",
+        data={
+            "plugin_id": "ticketmaster_events",
+            "refresh_settings": json.dumps({
+                "playlist": "Other",
+                "instance_name": "Nearby Events",
+                "refreshType": "interval",
+                "unit": "hour",
+                "interval": "3",
+            }),
+        },
+    )
+
+    assert response.status_code == 200
+    added = playlist_env.inner_manager.resolve_plugin_instance_snapshot(
+        "Other",
+        "ticketmaster_events",
+        "Nearby Events",
+    ).instance
+    assert added.refresh == {"interval": 10_800}
+
+
 def test_atomic_add_preserves_global_plugin_name_uniqueness(playlist_env):
     response = playlist_env.client.post(
         "/add_plugin",

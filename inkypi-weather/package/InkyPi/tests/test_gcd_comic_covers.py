@@ -58,6 +58,8 @@ class MissingImageLoader:
 def make_plugin(tmp_path, monkeypatch):
     plugin = GcdComicCovers({"id": "gcd_comic_covers"})
     plugin.image_loader = StaticLoader()
+    monkeypatch.setattr(plugin, "_current_date", lambda _device: date(2026, 7, 12))
+
     def download_cover_image(cover_url, candidate, detail):
         image = plugin.image_loader.from_url(cover_url, (800, 480), resize=False)
         if not image:

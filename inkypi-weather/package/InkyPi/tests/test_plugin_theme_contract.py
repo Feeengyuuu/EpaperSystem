@@ -41,7 +41,7 @@ def contrast_ratio(first, second):
 def test_every_builtin_renderer_owns_two_valid_palettes():
     manifests = load_all_builtin_manifests()
 
-    assert len(manifests) == 56
+    assert len(manifests) == 57
     for manifest in manifests:
         assert manifest.capabilities.supports_day_night_theme, manifest.id
         assert manifest.theme.presentation in {"ui", "media"}, manifest.id

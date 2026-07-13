@@ -8,6 +8,7 @@ import os
 import random
 import time
 import urllib.parse
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ CDRAGON_SHARED_IMAGES = "https://raw.communitydragon.org/latest/plugins/rcp-fe-l
 LOL_LOGO_FILE = "league-of-legends-logo.png"
 RIOT_LOGO_FILE = "riot-games-logo.png"
 RANK_EMBLEM_TIERS = {"iron", "bronze", "silver", "gold", "platinum", "emerald", "diamond", "master", "grandmaster", "challenger"}
+_ALLOW_PROVIDER_MEDIA = ContextVar("lol_info_allow_provider_media", default=True)
 
 PLATFORM_ROUTES = {"br1", "eun1", "euw1", "jp1", "kr", "la1", "la2", "na1", "oc1", "tr1"}
 REGIONAL_ROUTES = {"americas", "asia", "europe", "sea"}
@@ -91,19 +93,37 @@ class LoLInfo(BasePlugin):
         refresh_minutes = self._bounded_int(effective_settings.get("refreshMinutes"), 120, 15, 1440)
         cache_key = self._cache_key(effective_settings, dimensions, identity)
         cache = self._read_json(self._cache_path(cache_key), {})
-        force_refresh = self._enabled(effective_settings.get("forceRefresh"), default=False)
+        theme_render_only = self._enabled(
+            effective_settings.get("_theme_render_only"),
+            default=False,
+        )
+        force_refresh = (
+            self._enabled(effective_settings.get("forceRefresh"), default=False)
+            and not theme_render_only
+        )
+        source_cache_valid = (
+            cache.get("schema") == STYLE_VERSION
+            and isinstance(cache.get("data"), dict)
+            and bool(cache.get("data"))
+        )
 
         cache_valid = (
             not force_refresh
-            and cache.get("schema") == STYLE_VERSION
+            and source_cache_valid
             and now - float(cache.get("updated_ts", 0) or 0) < refresh_minutes * 60
             and cache.get("image_path")
             and Path(cache["image_path"]).exists()
-            and cache.get("data")
         )
 
         try:
-            if cache_valid:
+            if theme_render_only:
+                if not source_cache_valid:
+                    raise RuntimeError(
+                        "LoLInfo theme-only render requires matching cached source data."
+                    )
+                data = cache.get("data") or {}
+                data_updated_ts = float(cache.get("updated_ts", now) or now)
+            elif cache_valid:
                 data = cache.get("data") or {}
                 data_updated_ts = float(cache.get("updated_ts", now) or now)
             else:
@@ -111,7 +131,19 @@ class LoLInfo(BasePlugin):
                 data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 data_updated_ts = now
             data = self._with_pro_account_context(data, effective_settings)
-            image = self._render_dashboard(data, dimensions, effective_settings, get_theme_context(device_config))
+            theme_context = self._theme_context(effective_settings, device_config)
+            media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
+            try:
+                image = self._render_dashboard(
+                    data,
+                    dimensions,
+                    effective_settings,
+                    theme_context,
+                )
+            finally:
+                _ALLOW_PROVIDER_MEDIA.reset(media_token)
+            if theme_render_only:
+                return image
             image_path = self._cache_image_path(cache_key)
             image_path.parent.mkdir(parents=True, exist_ok=True)
             image.save(image_path)
@@ -123,10 +155,13 @@ class LoLInfo(BasePlugin):
                 "image_path": str(image_path),
                 "data": self._json_safe(data),
             })
-            self._write_context(data, data_updated_ts, refresh_minutes)
+            if not theme_render_only:
+                self._write_context(data, data_updated_ts, refresh_minutes)
             return image
         except Exception as exc:
             logger.error("LoLInfo generation failed: %s", exc)
+            if theme_render_only:
+                raise RuntimeError(f"LoLInfo theme-only render failed: {exc}") from exc
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 logger.warning("Using stale LoLInfo cache.")
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
@@ -1007,23 +1042,77 @@ class LoLInfo(BasePlugin):
         total = (challenge_data or {}).get("totalPoints") or {}
         return int(total.get("current") or total.get("levelPoints") or 0)
 
+    def _theme_context(self, settings, device_config):
+        injected = (settings or {}).get("_inkypi_theme")
+        if isinstance(injected, dict):
+            return injected
+        resolver = getattr(self, "resolve_theme", None)
+        if callable(resolver):
+            return resolver(settings, device_config)
+        return get_theme_context(device_config)
+
+    @staticmethod
+    def _theme_role(theme_context, name, fallback):
+        palette = (
+            theme_context.get("palette")
+            if isinstance(theme_context, dict)
+            else None
+        )
+        value = palette.get(name) if isinstance(palette, dict) else None
+        try:
+            result = tuple(int(channel) for channel in value)
+        except (TypeError, ValueError):
+            return fallback
+        return result if len(result) == 3 else fallback
+
+    @staticmethod
+    def _blend(foreground, background, amount):
+        amount = max(0.0, min(1.0, float(amount)))
+        return tuple(
+            int(background[index] + (foreground[index] - background[index]) * amount)
+            for index in range(3)
+        )
+
+    def _render_colors(self, theme_context):
+        mode = str((theme_context or {}).get("mode") or "night").lower()
+        night = mode == "night"
+        background = self._theme_role(theme_context, "background", (5, 7, 12))
+        panel = self._theme_role(theme_context, "panel", (18, 22, 35))
+        ink = self._theme_role(theme_context, "ink", (255, 250, 222))
+        muted = self._theme_role(theme_context, "muted", (202, 190, 150))
+        rule = self._theme_role(theme_context, "rule", (236, 232, 206))
+        accent = self._theme_role(theme_context, "accent", (107, 204, 255))
+        return {
+            "background": background,
+            "background_stripe": self._blend(accent, background, 0.08),
+            "panel": panel,
+            "surface": self._blend(accent, panel, 0.06),
+            "bar": self._blend(muted, panel, 0.32),
+            "rule": rule,
+            "ink": ink,
+            "muted": muted,
+            "gold": (255, 205, 54) if night else (142, 98, 18),
+            "cyan": accent,
+            "green": (82, 202, 128) if night else (31, 111, 70),
+            "red": (255, 82, 74) if night else (164, 43, 43),
+        }
+
     def _render_dashboard(self, data, dimensions, settings=None, theme_context=None):
         width, height = dimensions
-        # Tokens follow docs/color-ui-guidelines.md: process black base,
-        # warm paper linework, and limited vintage comic accent colors.
-        bg = (5, 7, 12)
-        panel = (18, 22, 35)
-        border = (236, 232, 206)
-        ink = (255, 250, 222)
-        muted = (202, 190, 150)
-        gold = (255, 205, 54)
-        cyan = (107, 204, 255)
-        green = (82, 202, 128)
-        red = (255, 82, 74)
+        colors = self._render_colors(theme_context)
+        bg = colors["background"]
+        panel = colors["panel"]
+        border = colors["rule"]
+        ink = colors["ink"]
+        muted = colors["muted"]
+        gold = colors["gold"]
+        cyan = colors["cyan"]
+        green = colors["green"]
+        red = colors["red"]
 
         image = Image.new("RGB", dimensions, bg)
         draw = ImageDraw.Draw(image)
-        self._draw_background(draw, width, height)
+        self._draw_background(draw, width, height, colors["background_stripe"])
         fonts = {
             "title": self._font(25, bold=True),
             "section": self._font(20, bold=True),
@@ -1048,14 +1137,68 @@ class LoLInfo(BasePlugin):
         for box in (left_box, center_box, right_box, bottom_box):
             self._rect(draw, box, panel, border)
 
-        self._draw_profile(image, draw, data, left_box, fonts, ink, muted, gold, cyan, green)
+        self._draw_profile(
+            image,
+            draw,
+            data,
+            left_box,
+            fonts,
+            ink,
+            muted,
+            gold,
+            cyan,
+            green,
+            surface=colors["surface"],
+            rule=border,
+        )
         self._draw_recent(image, draw, data, center_box, fonts, ink, muted, gold, green, red, cyan)
-        self._draw_rank_mastery(image, draw, data, right_box, fonts, ink, muted, gold, green, cyan)
-        self._draw_overview(image, draw, data, bottom_box, fonts, ink, muted, gold, green, cyan, red)
+        self._draw_rank_mastery(
+            image,
+            draw,
+            data,
+            right_box,
+            fonts,
+            ink,
+            muted,
+            gold,
+            green,
+            cyan,
+            bar_fill=colors["bar"],
+        )
+        self._draw_overview(
+            image,
+            draw,
+            data,
+            bottom_box,
+            fonts,
+            ink,
+            muted,
+            gold,
+            green,
+            cyan,
+            red,
+            rule=border,
+        )
         return image
 
-    def _draw_profile(self, image, draw, data, box, fonts, ink, muted, gold, cyan, green):
+    def _draw_profile(
+        self,
+        image,
+        draw,
+        data,
+        box,
+        fonts,
+        ink,
+        muted,
+        gold,
+        cyan,
+        green,
+        surface=None,
+        rule=None,
+    ):
         x0, y0, x1, y1 = box
+        surface = surface or (12, 17, 27)
+        rule = rule or (78, 68, 40)
         account = data.get("account") or {}
         summoner = data.get("summoner") or {}
         ranked = data.get("ranked") or {}
@@ -1069,7 +1212,7 @@ class LoLInfo(BasePlugin):
         logo_w = 124
         logo_left = x0 + (x1 - x0 - logo_w) // 2
         self._paste_asset_logo(image, LOL_LOGO_FILE, (logo_left, y0 + 9, logo_left + logo_w, y0 + 43))
-        draw.line((x0 + 14, y0 + 53, x1 - 14, y0 + 53), fill=(70, 66, 52), width=1)
+        draw.line((x0 + 14, y0 + 53, x1 - 14, y0 + 53), fill=rule, width=1)
 
         icon_size = 68
         icon_x = x0 + 15
@@ -1088,8 +1231,13 @@ class LoLInfo(BasePlugin):
         stat_y0 = y0 + 147
         stat_y1 = y0 + 195
         stat_mid = x0 + 104
-        draw.rectangle((x0 + 14, stat_y0, x1 - 14, stat_y1), fill=(12, 17, 27), outline=(78, 68, 40), width=1)
-        draw.line((stat_mid, stat_y0 + 5, stat_mid, stat_y1 - 5), fill=(68, 62, 48), width=1)
+        draw.rectangle(
+            (x0 + 14, stat_y0, x1 - 14, stat_y1),
+            fill=surface,
+            outline=rule,
+            width=1,
+        )
+        draw.line((stat_mid, stat_y0 + 5, stat_mid, stat_y1 - 5), fill=rule, width=1)
         self._text(draw, (x0 + 23, stat_y0 + 7), "等级", fonts["tiny"], gold)
         self._single(draw, (x0 + 23, stat_y0 + 22), self._fmt(summoner.get("summonerLevel")), fonts["section"], ink, stat_mid - x0 - 33, 10)
         self._text(draw, (stat_mid + 11, stat_y0 + 7), "排位", fonts["tiny"], cyan)
@@ -1130,8 +1278,22 @@ class LoLInfo(BasePlugin):
         if not data.get("matches"):
             self._text(draw, (x0 + 16, y0 + 70), "没有可显示的近期比赛", fonts["body"], muted)
 
-    def _draw_rank_mastery(self, image, draw, data, box, fonts, ink, muted, gold, green, cyan):
+    def _draw_rank_mastery(
+        self,
+        image,
+        draw,
+        data,
+        box,
+        fonts,
+        ink,
+        muted,
+        gold,
+        green,
+        cyan,
+        bar_fill=None,
+    ):
         x0, y0, x1, y1 = box
+        bar_fill = bar_fill or (55, 51, 42)
         self._text(draw, (x0 + 12, y0 + 12), "排位 / 熟练度", fonts["section"], ink)
         ranked = data.get("ranked") or {}
         rank_text = self._rank_text(ranked)
@@ -1166,11 +1328,25 @@ class LoLInfo(BasePlugin):
             bar_x = x0 + 112
             bar_right = x1 - 20
             bar_w = max(10, int((bar_right - bar_x) * int(item.get("points") or 0) / max_points))
-            draw.rectangle((bar_x, y + 9, bar_right, y + 15), fill=(55, 51, 42))
+            draw.rectangle((bar_x, y + 9, bar_right, y + 15), fill=bar_fill)
             draw.rectangle((bar_x, y + 9, bar_x + bar_w, y + 15), fill=gold)
             self._text(draw, (x0 + 44, y + 12), f"L{item.get('level', 0)} · {self._compact(item.get('points'))}", fonts["micro"], muted)
             y += row_step
-    def _draw_overview(self, image, draw, data, box, fonts, ink, muted, gold, green, cyan, red):
+    def _draw_overview(
+        self,
+        image,
+        draw,
+        data,
+        box,
+        fonts,
+        ink,
+        muted,
+        gold,
+        green,
+        cyan,
+        red,
+        rule=None,
+    ):
         x0, y0, x1, y1 = box
         summary = data.get("summary") or {}
         content_x1, logo_box, art_box = self._overview_layout(box)
@@ -1194,7 +1370,18 @@ class LoLInfo(BasePlugin):
             self._text(draw, (x, y), label, fonts["tiny"], muted)
             self._single(draw, (x, y + 15), value, fonts["section"], color, col_w - 12, 11)
             self._single(draw, (x, y + 39), sub, fonts["tiny"], ink, col_w - 12, 8)
-        selected_skin_art = self._draw_skin_art_feature(image, draw, data, art_box, fonts, ink, muted, gold, cyan)
+        selected_skin_art = self._draw_skin_art_feature(
+            image,
+            draw,
+            data,
+            art_box,
+            fonts,
+            ink,
+            muted,
+            gold,
+            cyan,
+            rule=rule,
+        )
         self._draw_skin_art_label(draw, selected_skin_art, logo_box, box, fonts, ink)
 
     def _overview_layout(self, box):
@@ -1207,7 +1394,19 @@ class LoLInfo(BasePlugin):
         content_x1 = max(x0 + 320, logo_box[0] - 14)
         return content_x1, logo_box, art_box
 
-    def _draw_skin_art_feature(self, image, draw, data, box, fonts, ink, muted, gold, cyan):
+    def _draw_skin_art_feature(
+        self,
+        image,
+        draw,
+        data,
+        box,
+        fonts,
+        ink,
+        muted,
+        gold,
+        cyan,
+        rule=None,
+    ):
         x0, y0, x1, y1 = box
         width = max(1, x1 - x0)
         height = max(1, y1 - y0)
@@ -1217,7 +1416,11 @@ class LoLInfo(BasePlugin):
             raw = self._placeholder_splash(width, height, (selected or {}).get("champion_name") or "LoL")
         art = ImageOps.fit(ImageOps.exif_transpose(raw).convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.42, 0.5))
         image.paste(art, (x0, y0))
-        draw.rectangle((x0, y0, x1, y1), outline=(236, 232, 206), width=2)
+        draw.rectangle(
+            (x0, y0, x1, y1),
+            outline=rule or (236, 232, 206),
+            width=2,
+        )
         return selected
 
     def _draw_skin_art_label(self, draw, selected, logo_box, overview_box, fonts, ink):
@@ -1344,8 +1547,16 @@ class LoLInfo(BasePlugin):
             return None
         cache_path = self._image_cache_path(url)
         try:
-            if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60:
+            cache_fresh = (
+                cache_path.exists()
+                and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60
+            )
+            if cache_path.exists() and (
+                cache_fresh or not _ALLOW_PROVIDER_MEDIA.get()
+            ):
                 raw = safe_open_image(cache_path)
+            elif not _ALLOW_PROVIDER_MEDIA.get():
+                return None
             else:
                 response = get_http_session().get(url, timeout=20, stream=True)
                 raw = safe_open_image_response(response)
@@ -1366,8 +1577,16 @@ class LoLInfo(BasePlugin):
         if url:
             cache_path = self._image_cache_path(url)
             try:
-                if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60:
+                cache_fresh = (
+                    cache_path.exists()
+                    and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60
+                )
+                if cache_path.exists() and (
+                    cache_fresh or not _ALLOW_PROVIDER_MEDIA.get()
+                ):
                     raw = safe_open_image(cache_path)
+                elif not _ALLOW_PROVIDER_MEDIA.get():
+                    return self._placeholder_icon(label, size)
                 else:
                     response = get_http_session().get(url, timeout=20, stream=True)
                     raw = safe_open_image_response(response)
@@ -1407,6 +1626,11 @@ class LoLInfo(BasePlugin):
         state = self._read_json(state_path, {})
         pool_ids = [str(item.get("id")) for item in pool]
         last_id = str(state.get("last") or "")
+        if not _ALLOW_PROVIDER_MEDIA.get():
+            return next(
+                (item for item in pool if str(item.get("id")) == last_id),
+                pool[0],
+            )
         previous_pool_ids = state.get("pool_ids")
         pool_changed = isinstance(previous_pool_ids, list) and previous_pool_ids != pool_ids
         try:
@@ -1441,8 +1665,16 @@ class LoLInfo(BasePlugin):
             return None
         cache_path = self._image_cache_path(url)
         try:
-            if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60:
+            cache_fresh = (
+                cache_path.exists()
+                and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60
+            )
+            if cache_path.exists() and (
+                cache_fresh or not _ALLOW_PROVIDER_MEDIA.get()
+            ):
                 raw = safe_open_image(cache_path)
+            elif not _ALLOW_PROVIDER_MEDIA.get():
+                return None
             else:
                 session = get_http_session()
                 if not session:
@@ -1546,9 +1778,9 @@ class LoLInfo(BasePlugin):
     def _rect(self, draw, box, fill, outline):
         draw.rectangle(box, fill=fill, outline=outline, width=2)
 
-    def _draw_background(self, draw, width, height):
+    def _draw_background(self, draw, width, height, stripe=(18, 16, 20)):
         for x in range(-40, width, 88):
-            draw.line((x, 0, x + 80, height), fill=(18, 16, 20), width=8)
+            draw.line((x, 0, x + 80, height), fill=stripe, width=8)
 
     def _font(self, size, bold=False, prefer_hangul=False):
         font = get_base_ui_font(int(size), bold=bool(bold))

@@ -502,7 +502,11 @@
       ],
       "required": false,
       "aliases": [
-        "TICKETMASTER_CONSUMER_KEY"
+        "TICKETMASTER_CONSUMER_KEY",
+        "TICKETMASTER_DISCOVERY_API_KEY",
+        "TICKETMASTER_KEY",
+        "TICKETMASTER_DISCOVERY_KEY",
+        "TM_API_KEY"
       ],
       "signup_url": "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/",
       "notes": "",

@@ -1768,7 +1768,15 @@ def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
     tmp_path,
 ):
     plugin = _plugin()
-    now = datetime(2026, 7, 12, 8, 0)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 7, 12, 8, 0)
+            return tz.localize(value) if tz is not None else value
+
+    monkeypatch.setattr(daily_ai_news_module, "datetime", FrozenDateTime)
+    now = FrozenDateTime.now()
     settings = {
         "feed_urls": daily_ai_news_module.DEFAULT_FEEDS,
         "max_items": "6",
@@ -1785,7 +1793,7 @@ def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
     }
     monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     key = plugin._cache_key(
-        "2026-07-12",
+        now.strftime("%Y-%m-%d"),
         daily_ai_news_module.DEFAULT_MODEL,
         plugin._effective_feeds_text(settings["feed_urls"]),
         6,
