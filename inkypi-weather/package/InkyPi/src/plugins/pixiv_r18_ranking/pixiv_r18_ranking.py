@@ -1,21 +1,45 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import ipaddress
 import json
 import logging
 import os
 import random
 import re
+import socket
+import ssl
+import stat
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urljoin, urlparse, urlsplit
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.presentation import (
+    PresentationMode,
+    PresentationPreparation,
+    get_presentation_instance_uuid,
+)
+from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.pixiv_r18_ranking.presentation_bank import (
+    READY_TARGET,
+    REFILL_THRESHOLD,
+    PixivPresentationBank,
+    atomic_write_bounded_json,
+    instance_profile_fingerprint,
+    read_bounded_json_object,
+    settings_fingerprint,
+    settings_key,
+    validate_pixiv_media_target,
+)
+from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
-from utils.http_client import get_http_session
+from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +52,14 @@ DEFAULT_FIT_MODE = "auto_layout"
 MAX_STRIP_CELLS = 3
 # Cap on ranking pages walked while filling the pool (~50 entries/page).
 MAX_RANKING_PAGES = 5
-JST = timezone(timedelta(hours=9))
+MAX_DATA_NEW_MEDIA = 12
+MAX_DATA_ATTEMPTS = 36
+MAX_DATA_SECONDS = 30
+MAX_MEDIA_REDIRECTS = 4
+MAX_RANKING_JSON_BYTES = 4 * 1024 * 1024
+# Compatibility export consumed by reddit_rule34_hot and older plugin modules.
 DOWNLOAD_CHUNK_SIZE = 8192
+JST = timezone(timedelta(hours=9))
 MAX_PI_SAFE_SOURCE_PIXELS = 900_000
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
 JAPANESE_FONT_SAMPLE = "\u65e5\u672c\u8a9e\u3042\u30a2"
@@ -96,6 +126,118 @@ RISK_TAGS = {
 }
 
 
+class _PinnedHTTPSResponse:
+    """Minimal HTTPS response bound to an SSRF-approved address set."""
+
+    def __init__(self, response, connection, url, *, deadline, clock, read_timeout):
+        self._response = response
+        self._connection = connection
+        self.url = url
+        self.status_code = int(response.status)
+        self.headers = response.headers
+        self._deadline = deadline
+        self._clock = clock
+        self._read_timeout = float(read_timeout)
+
+    @classmethod
+    def open(cls, approved, *, headers, deadline, clock, timeout):
+        last_error = None
+        for address in approved.addresses:
+            raw_socket = None
+            tls_socket = None
+            try:
+                connect_timeout = _remaining_timeout(deadline, clock, min(5.0, timeout))
+                parsed_address = ipaddress.ip_address(address)
+                family = socket.AF_INET6 if parsed_address.version == 6 else socket.AF_INET
+                raw_socket = socket.socket(family, socket.SOCK_STREAM)
+                raw_socket.settimeout(connect_timeout)
+                endpoint = (
+                    (address, approved.port, 0, 0)
+                    if parsed_address.version == 6
+                    else (address, approved.port)
+                )
+                raw_socket.connect(endpoint)
+                raw_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                tls_socket = ssl.create_default_context().wrap_socket(
+                    raw_socket,
+                    server_hostname=approved.hostname,
+                )
+                raw_socket = None
+                tls_socket.settimeout(_remaining_timeout(deadline, clock, timeout))
+                parsed = urlsplit(approved.normalized_url)
+                request_target = parsed.path or "/"
+                if parsed.query:
+                    request_target = f"{request_target}?{parsed.query}"
+                authority = getattr(approved, "authority", approved.hostname)
+                lines = [f"GET {request_target} HTTP/1.1", f"Host: {authority}"]
+                for name, value in headers.items():
+                    name = str(name)
+                    value = str(value)
+                    if name.lower() in {"host", "connection"}:
+                        continue
+                    if not name or "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+                        raise RuntimeError("Pixiv request headers are invalid")
+                    lines.append(f"{name}: {value}")
+                lines.append("Connection: close")
+                tls_socket.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+                response = http.client.HTTPResponse(tls_socket)
+                response.begin()
+                return cls(
+                    response,
+                    tls_socket,
+                    approved.normalized_url,
+                    deadline=deadline,
+                    clock=clock,
+                    read_timeout=timeout,
+                )
+            except RuntimeError:
+                if tls_socket is not None:
+                    tls_socket.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                raise
+            except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+                if tls_socket is not None:
+                    tls_socket.close()
+                elif raw_socket is not None:
+                    raw_socket.close()
+                last_error = exc
+        raise RuntimeError("Pixiv approved target could not be reached") from last_error
+
+    def iter_content(self, chunk_size):
+        while True:
+            timeout = _remaining_timeout(
+                self._deadline,
+                self._clock,
+                self._read_timeout,
+            )
+            self._connection.settimeout(timeout)
+            chunk = self._response.read(chunk_size)
+            if not chunk:
+                return
+            yield chunk
+
+    def raise_for_status(self):
+        if not 200 <= self.status_code < 300:
+            raise RuntimeError(f"Pixiv provider request failed with status {self.status_code}")
+
+    def close(self):
+        try:
+            self._response.close()
+        finally:
+            self._connection.close()
+
+
+def _remaining_timeout(deadline, clock, configured):
+    configured = max(0.001, float(configured))
+    if deadline is None:
+        return configured
+    remaining = float(deadline) - float(clock())
+    if remaining <= 0:
+        raise RuntimeError("Pixiv DATA deadline is exhausted")
+    return max(0.001, min(configured, remaining))
+
+
 class PixivR18Ranking(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
@@ -104,22 +246,49 @@ class PixivR18Ranking(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
+        if get_presentation_instance_uuid(settings) is not None:
+            if settings.get("_theme_render_only") is True:
+                return self._generate_theme_only(settings, device_config)
+            return self._generate_banked_image(settings, device_config)
+        return self._generate_stateless_preview(settings, device_config)
+
+    def _generate_stateless_preview(self, settings, device_config):
+        """Render an unsaved preview without touching provider or bank state."""
+
         dimensions = self._display_dimensions(device_config)
         try:
-            pool = self._daily_pool(settings, device_config, dimensions)
+            pool = self._read_daily_pool()
+            if not pool:
+                cookie = self._load_session_cookie(device_config)
+                resolution = self._resolve_ranking_with_provenance(
+                    self._ranking_mode(settings),
+                    cookie,
+                )
+                pool = []
+                for rank, raw in enumerate(resolution["items"], start=1):
+                    if not self._is_safe_ranking_item(raw):
+                        continue
+                    item = self._ranking_item_metadata(raw, rank)
+                    item.update(_resolution_provenance(resolution))
+                    source = self._download_ranking_item_source_image(item, dimensions)
+                    if source is not None:
+                        item["_preview_image"] = source
+                        pool.append(item)
+                    if len(pool) >= MAX_STRIP_CELLS:
+                        break
             if not pool:
                 logger.warning("Pixiv R-18 ranking daily pool is empty after filtering.")
                 return self._fallback_image(dimensions, "Pixiv R-18", "No filtered image available")
 
-            group = self._select_display_group(pool, settings)
+            group = self._preview_display_group(pool, settings)
             if not group:
                 return self._fallback_image(dimensions, "Pixiv R-18", "No cached image available")
 
             images = []
             for item in group:
-                image = self._load_cached_item_image(item, dimensions)
+                image = item.get("_preview_image") or self._load_cached_item_image(item, dimensions)
                 if image:
-                    images.append(image)
+                    images.append(image.convert("RGB"))
             if not images:
                 logger.warning("Cached Pixiv ranking image missing for %s", group[0].get("illust_id"))
                 return self._fallback_image(dimensions, "Pixiv R-18", "Cached image missing")
@@ -136,6 +305,454 @@ class PixivR18Ranking(BasePlugin):
         except Exception as exc:
             logger.exception("Pixiv R-18 ranking plugin failed: %s", exc)
             return self._fallback_image(dimensions, "Pixiv R-18", "Ranking unavailable")
+
+    def _preview_display_group(self, pool, settings):
+        candidates = list(pool)
+        if not candidates:
+            return []
+        head = candidates[0]
+        if self._fit_mode(settings) == "auto_layout" and self._is_portrait_item(head):
+            return [item for item in candidates if self._is_portrait_item(item)][:MAX_STRIP_CELLS]
+        return [head]
+
+    def presentation_mode(self, settings):
+        return PresentationMode.PREPARED_BANK
+
+    def _generate_banked_image(self, settings, device_config):
+        deadline = self._monotonic() + MAX_DATA_SECONDS
+        dimensions = self._display_dimensions(device_config)
+        date_key = self._day_key()
+        ranking_mode = self._ranking_mode(settings)
+        cookie = self._load_session_cookie(device_config)
+        resolution = None
+        provider_error = None
+        instance_uuid = get_presentation_instance_uuid(settings)
+        provenance = self._saved_provenance_for_instance(instance_uuid)
+        if provenance is None:
+            try:
+                resolution = self._resolve_ranking_with_provenance(
+                    ranking_mode,
+                    cookie,
+                    deadline=deadline,
+                )
+            except Exception as exc:
+                raise RuntimeError("Pixiv ranking source is unavailable") from exc
+            provenance = _resolution_provenance(resolution)
+        bank = self._presentation_bank(settings, dimensions, date_key, provenance)
+        document, profile = bank.load_for_data()
+        profile["source_provenance"] = dict(provenance)
+
+        self._recover_protected_media(
+            bank,
+            document,
+            profile,
+            dimensions,
+            deadline=deadline,
+        )
+        ready = bank.ready_records(profile, prune=True)
+        if len(ready) < REFILL_THRESHOLD:
+            profile["refill_in_progress"] = True
+        if profile.get("refill_in_progress") is True and len(ready) < READY_TARGET:
+            if resolution is None:
+                try:
+                    resolution = self._resolve_ranking_with_provenance(
+                        ranking_mode,
+                        cookie,
+                        deadline=deadline,
+                    )
+                except Exception as exc:
+                    provider_error = exc
+            if resolution is not None:
+                live_provenance = _resolution_provenance(resolution)
+                if _provenance_identity(live_provenance) != _provenance_identity(provenance):
+                    provenance = live_provenance
+                    bank = self._presentation_bank(settings, dimensions, date_key, provenance)
+                    document, profile = bank.load_for_data()
+                    profile["source_provenance"] = dict(provenance)
+                    self._recover_protected_media(
+                        bank,
+                        document,
+                        profile,
+                        dimensions,
+                        deadline=deadline,
+                    )
+                    ready = bank.ready_records(profile, prune=True)
+                    if len(ready) < REFILL_THRESHOLD:
+                        profile["refill_in_progress"] = True
+                else:
+                    profile["source_provenance"] = dict(live_provenance)
+                self._refill_presentation_bank(
+                    bank,
+                    profile,
+                    resolution,
+                    dimensions,
+                    deadline=deadline,
+                )
+                ready = bank.ready_records(profile, prune=True)
+            elif not ready:
+                raise RuntimeError("Pixiv ranking source is unavailable") from provider_error
+            else:
+                profile["source_provenance"]["source_status"] = "stale"
+        if profile.get("refill_in_progress") is True:
+            profile["refill_in_progress"] = len(ready) < READY_TARGET
+
+        bank.cleanup(
+            document,
+            profile,
+            before_save=lambda: self._remaining_data_timeout(
+                deadline,
+                MAX_DATA_SECONDS,
+            ),
+        )
+        self._cleanup_legacy_image_days(date_key)
+        ready = bank.ready_records(profile, prune=True)
+        if not ready:
+            raise RuntimeError("Pixiv presentation bank is unavailable") from provider_error
+        current = profile.get("current_selection")
+        if current is None:
+            current = bank.ensure_current(document, profile, ready, self._fit_mode(settings))
+        else:
+            bank.selection_records(profile, current, load_media=True)
+        return self._render_bank_selection(bank, profile, current, dimensions, settings)
+
+    def _recover_protected_media(
+        self,
+        bank,
+        document,
+        profile,
+        dimensions,
+        *,
+        deadline=None,
+    ):
+        protected_changed = False
+        for record in bank.protected_records(profile):
+            try:
+                bank.load_media(record, allow_stale=True)
+            except RuntimeError as media_error:
+                try:
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    recovered = self._download_ranking_item_source_image(
+                        record,
+                        dimensions,
+                        deadline=deadline,
+                    )
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    if recovered is None:
+                        raise RuntimeError("Pixiv exact media recovery returned no image")
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    bank.recover_media(
+                        profile,
+                        record,
+                        recovered,
+                        before_commit=lambda: self._remaining_data_timeout(
+                            deadline,
+                            MAX_DATA_SECONDS,
+                        ),
+                    )
+                    protected_changed = True
+                except Exception as recovery_error:
+                    raise RuntimeError("Pixiv protected media recovery failed") from recovery_error
+                logger.info(
+                    "Recovered exact protected Pixiv media for %s after: %s",
+                    record.get("illust_id"),
+                    media_error,
+                )
+        if protected_changed:
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            bank.save(
+                document,
+                before_commit=lambda: self._remaining_data_timeout(
+                    deadline,
+                    MAX_DATA_SECONDS,
+                ),
+            )
+
+    def _refill_presentation_bank(
+        self,
+        bank,
+        profile,
+        resolution,
+        dimensions,
+        *,
+        deadline=None,
+    ):
+        existing_ids = {record["illust_id"] for record in profile["records"]}
+        existing_urls = {record["image_url"] for record in profile["records"]}
+        ready_count = len(bank.ready_records(profile, prune=False))
+        attempts = 0
+        downloaded = 0
+        page = 1
+        items = list(resolution.get("items") or [])
+        provenance = _resolution_provenance(resolution)
+        while page <= MAX_RANKING_PAGES and items:
+            for raw in items:
+                if (
+                    ready_count >= READY_TARGET
+                    or attempts >= MAX_DATA_ATTEMPTS
+                    or downloaded >= MAX_DATA_NEW_MEDIA
+                    or (deadline is not None and self._monotonic() >= deadline)
+                ):
+                    return
+                if not self._is_safe_ranking_item(raw):
+                    continue
+                item = self._ranking_item_metadata(raw, _get_value(raw, "rank", ready_count + 1))
+                if item["illust_id"] in existing_ids or item["image_url"] in existing_urls:
+                    continue
+                attempts += 1
+                try:
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    source = self._download_ranking_item_source_image(
+                        item,
+                        dimensions,
+                        deadline=deadline,
+                    )
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    if source is None:
+                        continue
+                    self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                    record = bank.ingest(
+                        profile,
+                        {**item, **provenance},
+                        source,
+                        before_commit=lambda: self._remaining_data_timeout(
+                            deadline,
+                            MAX_DATA_SECONDS,
+                        ),
+                    )
+                except Exception as exc:
+                    logger.warning("Pixiv bank candidate failed for %s: %s", item["illust_id"], exc)
+                    continue
+                existing_ids.add(record["illust_id"])
+                existing_urls.add(record["image_url"])
+                ready_count += 1
+                downloaded += 1
+            page += 1
+            if page > MAX_RANKING_PAGES:
+                break
+            try:
+                items = self._fetch_ranking_page_with_deadline(
+                    resolution["effective_mode"],
+                    resolution.get("cookie"),
+                    page,
+                    deadline=deadline,
+                )
+            except Exception as exc:
+                logger.warning("Pixiv ranking refill page %s failed: %s", page, exc)
+                break
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Pixiv presentation requires trusted instance identity")
+        dimensions = self._display_dimensions(device_config)
+        bank = self._presentation_bank_for_request(instance_uuid, request.request_id)
+        if bank is None:
+            provenance = self._saved_provenance_for_instance(instance_uuid)
+            if provenance is None:
+                raise RuntimeError("Pixiv presentation bank is cold")
+            bank = self._presentation_bank(
+                settings,
+                dimensions,
+                self._day_key(),
+                provenance,
+            )
+        document, profile = bank.load_warm()
+        bank.apply_trusted_origin(document, profile, request)
+        pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None:
+            ready = bank.ready_records(profile, prune=False)
+            selection = bank.choose_selection(
+                document,
+                profile,
+                ready,
+                self._fit_mode(settings),
+            )
+        else:
+            selection = pending
+        image = self._render_bank_selection(bank, profile, selection, dimensions, settings)
+        if resolved_theme_context is not None:
+            image = apply_media_theme_chrome(
+                image,
+                self.get_plugin_id(),
+                resolved_theme_context,
+                dimensions,
+            )
+            mode = resolved_theme_context.get("mode")
+            if mode in {"day", "night"}:
+                image.info["inkypi_theme_mode"] = mode
+        if pending is None:
+            bank.set_pending(document, profile, request, selection)
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        if receipt is None:
+            return None
+        instance_uuid = get_presentation_instance_uuid(settings or {})
+        if instance_uuid is None:
+            raise RuntimeError("Pixiv receipt requires trusted instance identity")
+        bank = self._presentation_bank_for_request(instance_uuid, receipt.request_id)
+        if bank is None:
+            return None
+        document, profile = bank.load_receipt_profile(receipt.request_id)
+        bank.reconcile_receipt(document, profile, receipt)
+        return None
+
+    def _generate_theme_only(self, settings, device_config):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        dimensions = self._display_dimensions(device_config)
+        provenance = self._saved_provenance_for_instance(instance_uuid)
+        if provenance is None:
+            raise RuntimeError("Pixiv theme redraw requires a warm bank")
+        bank = self._presentation_bank(settings, dimensions, self._day_key(), provenance)
+        document, profile = bank.load_warm()
+        current = profile.get("current_selection")
+        if current is None:
+            raise RuntimeError("Pixiv theme redraw has no current selection")
+        return self._render_bank_selection(bank, profile, current, dimensions, settings)
+
+    def _presentation_bank(self, settings, dimensions, date_key, provenance):
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("Pixiv bank requires trusted instance identity")
+        base = settings_fingerprint(
+            settings,
+            dimensions,
+            date_key,
+            effective_mode=provenance["effective_mode"],
+            content_rating=provenance["content_rating"],
+        )
+        fingerprint = instance_profile_fingerprint(base, instance_uuid)
+        return PixivPresentationBank(
+            self._presentation_state_path(),
+            self._presentation_media_dir(),
+            fingerprint=fingerprint,
+            base_fingerprint=base,
+            profile_settings_key=settings_key(settings),
+            instance_uuid=instance_uuid,
+            date_key=date_key,
+        )
+
+    def _presentation_bank_for_request(self, instance_uuid, request_id):
+        path = self._presentation_state_path()
+        if not path.exists():
+            return None
+        document = read_bounded_json_object(path)
+        profiles = document.get("profiles")
+        if not isinstance(profiles, dict):
+            return None
+        for fingerprint, profile in profiles.items():
+            if not isinstance(profile, dict) or profile.get("instance_uuid") != instance_uuid:
+                continue
+            pending = profile.get("pending_selection")
+            if not isinstance(pending, dict) or pending.get("request_id") != request_id:
+                continue
+            return PixivPresentationBank(
+                path,
+                self._presentation_media_dir(),
+                fingerprint=fingerprint,
+                base_fingerprint=profile.get("settings_fingerprint"),
+                profile_settings_key=profile.get("settings_key"),
+                instance_uuid=instance_uuid,
+                date_key=pending.get("date_key"),
+            )
+        return None
+
+    def _saved_provenance_for_instance(self, instance_uuid):
+        path = self._presentation_state_path()
+        if not path.exists():
+            return None
+        document = read_bounded_json_object(path)
+        fingerprint = (document.get("instance_profiles") or {}).get(instance_uuid)
+        profile = (document.get("profiles") or {}).get(fingerprint)
+        if not isinstance(profile, dict):
+            return None
+        provenance = profile.get("source_provenance")
+        if isinstance(provenance, dict) and provenance.get("effective_mode"):
+            return dict(provenance)
+        records = profile.get("records")
+        if isinstance(records, list) and records and isinstance(records[0], dict):
+            recovered = _resolution_provenance(records[0])
+            if recovered.get("effective_mode"):
+                return recovered
+        return None
+
+    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
+        selected = bank.selection_records(profile, selection, load_media=True)
+        images = [image for _record, image in selected]
+        records = [record for record, _image in selected]
+        if len(images) > 1:
+            return self._compose_strip(images, dimensions, settings)
+        return self._fit_image(images[0], dimensions, settings, records[0])
+
+    def _presentation_state_path(self):
+        return self._presentation_root_dir() / "presentation-state.json"
+
+    def _presentation_media_dir(self):
+        return self._presentation_root_dir() / "presentation-media"
+
+    def _presentation_root_dir(self):
+        if os.getenv("INKYPI_PIXIV_R18_CACHE"):
+            return self._cache_dir()
+        return self.data_dir(
+            env_var="INKYPI_PIXIV_R18_DATA",
+            leaf="presentation-bank",
+            legacy_leaf=".pixiv_r18_ranking_cache",
+            create=False,
+            strip=True,
+        )
+
+    def _cleanup_legacy_image_days(self, current_day, *, max_files=64):
+        """Bound one legacy cleanup pass without following links or reparses."""
+
+        root = self._cache_dir() / "images"
+        try:
+            root_info = root.lstat()
+        except FileNotFoundError:
+            return 0
+        if root.is_symlink() or not root.is_dir() or _stat_is_reparse(root_info):
+            return 0
+        removed = 0
+        for day_dir in sorted(root.iterdir(), key=lambda item: item.name):
+            if removed >= max_files or day_dir.name == str(current_day):
+                continue
+            try:
+                day_info = day_dir.lstat()
+            except OSError:
+                continue
+            if day_dir.is_symlink() or not day_dir.is_dir() or _stat_is_reparse(day_info):
+                continue
+            for target in sorted(day_dir.iterdir(), key=lambda item: item.name):
+                if removed >= max_files:
+                    break
+                try:
+                    info = target.lstat()
+                except OSError:
+                    continue
+                if target.is_symlink() or _stat_is_reparse(info):
+                    continue
+                if target.is_file():
+                    try:
+                        target.unlink()
+                    except OSError:
+                        continue
+                    removed += 1
+            try:
+                day_dir.rmdir()
+            except OSError:
+                pass
+        return removed
 
     def _daily_pool(self, settings, device_config, dimensions):
         if self._daily_pool_needs_refresh(settings):
@@ -232,11 +849,35 @@ class PixivR18Ranking(BasePlugin):
         need a login cookie; when it is missing or rejected (the page comes back
         as the HTML landing page, not JSON), fall back to the SFW ranking.
         """
+        resolution = self._resolve_ranking_with_provenance(ranking_mode, cookie)
+        return (
+            resolution["effective_mode"],
+            resolution.get("cookie"),
+            resolution["items"],
+        )
+
+    def _resolve_ranking_with_provenance(self, ranking_mode, cookie, *, deadline=None):
+        """Resolve the effective source without ever labelling SFW as healthy R-18."""
+
         r18_mode, sfw_mode = self._mode_pair(ranking_mode)
         if r18_mode:
             if cookie:
                 try:
-                    return r18_mode, cookie, self._fetch_ranking_page(r18_mode, cookie, 1)
+                    return {
+                        "requested_mode": ranking_mode,
+                        "effective_mode": r18_mode,
+                        "content_rating": "r18",
+                        "authenticated": True,
+                        "healthy_r18": True,
+                        "source_status": "fresh",
+                        "cookie": cookie,
+                        "items": self._fetch_ranking_page_with_deadline(
+                            r18_mode,
+                            cookie,
+                            1,
+                            deadline=deadline,
+                        ),
+                    }
                 except Exception as exc:
                     logger.warning(
                         "Pixiv R-18 ranking '%s' fetch failed (cookie expired or invalid?); "
@@ -249,9 +890,37 @@ class PixivR18Ranking(BasePlugin):
                     "Falling back to SFW ranking '%s'.",
                     sfw_mode,
                 )
-            return sfw_mode, None, self._fetch_ranking_page(sfw_mode, None, 1)
+            return {
+                "requested_mode": ranking_mode,
+                "effective_mode": sfw_mode,
+                "content_rating": "sfw",
+                "authenticated": False,
+                "healthy_r18": False,
+                "source_status": "fresh_sfw_fallback",
+                "cookie": None,
+                "items": self._fetch_ranking_page_with_deadline(
+                    sfw_mode,
+                    None,
+                    1,
+                    deadline=deadline,
+                ),
+            }
         eff_cookie = cookie or None
-        return sfw_mode, eff_cookie, self._fetch_ranking_page(sfw_mode, eff_cookie, 1)
+        return {
+            "requested_mode": ranking_mode,
+            "effective_mode": sfw_mode,
+            "content_rating": "sfw",
+            "authenticated": bool(eff_cookie),
+            "healthy_r18": False,
+            "source_status": "fresh",
+            "cookie": eff_cookie,
+            "items": self._fetch_ranking_page_with_deadline(
+                sfw_mode,
+                eff_cookie,
+                1,
+                deadline=deadline,
+            ),
+        }
 
     def _fetch_ranking(self, ranking_mode, cookie):
         """First ranking page for the mode (R-18 with cookie, else SFW fallback)."""
@@ -261,22 +930,48 @@ class PixivR18Ranking(BasePlugin):
         """Returns (r18_mode, sfw_fallback_mode); r18_mode is None for plain modes."""
         return RANKING_MODE_MAP.get(ranking_mode, (None, ranking_mode))
 
-    def _fetch_ranking_page(self, mode, cookie, page=1):
+    def _fetch_ranking_page(self, mode, cookie, page=1, *, deadline=None):
         params = {"mode": mode, "content": "illust", "format": "json", "p": int(page)}
-        cookies = {"PHPSESSID": cookie} if cookie else None
-        response = get_http_session().get(
-            RANKING_URL,
-            params=params,
-            headers=PIXIV_RANKING_HEADERS,
-            cookies=cookies,
-            timeout=40,
+        timeout = self._remaining_data_timeout(deadline, 40)
+        request_url = f"{RANKING_URL}?{urlencode(params)}"
+        headers = dict(PIXIV_RANKING_HEADERS)
+        if cookie:
+            headers["Cookie"] = f"PHPSESSID={cookie}"
+        response = self._request_ranking_target(
+            request_url,
+            headers=headers,
+            timeout=timeout,
+            deadline=deadline,
         )
-        response.raise_for_status()
         try:
-            payload = response.json()
-        except ValueError as exc:
+            response.raise_for_status()
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > MAX_RANKING_JSON_BYTES:
+                        raise RuntimeError("Pixiv ranking response exceeds its object budget")
+                except ValueError:
+                    pass
+            payload_bytes = bytearray()
+            for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                self._remaining_data_timeout(deadline, 40)
+                if not chunk:
+                    continue
+                if len(payload_bytes) + len(chunk) > MAX_RANKING_JSON_BYTES:
+                    raise RuntimeError("Pixiv ranking response exceeds its object budget")
+                payload_bytes.extend(chunk)
+            if not payload_bytes:
+                raise RuntimeError("Pixiv ranking response is empty")
+        finally:
+            response.close()
+        self._remaining_data_timeout(deadline, 40)
+        try:
+            self._remaining_data_timeout(deadline, 40)
+            payload = json.loads(payload_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             # R-18 without a valid cookie returns the HTML landing page, not JSON.
             raise RuntimeError(f"pixiv ranking '{mode}' did not return JSON (auth/cookie issue)") from exc
+        self._remaining_data_timeout(deadline, 40)
         if isinstance(payload, dict):
             if payload.get("error"):
                 raise RuntimeError(f"pixiv ranking '{mode}' error: {payload.get('message') or 'unknown'}")
@@ -284,6 +979,21 @@ class PixivR18Ranking(BasePlugin):
             if isinstance(contents, list):
                 return contents
         return []
+
+    def _request_ranking_target(self, url, *, headers, timeout, deadline):
+        approved = get_ssrf_policy().resolve_and_validate(url)
+        validate_pixiv_media_target(approved)
+        return self._request_approved_target(
+            approved,
+            headers=headers,
+            timeout=timeout,
+            deadline=deadline,
+        )
+
+    def _fetch_ranking_page_with_deadline(self, mode, cookie, page, *, deadline):
+        if deadline is None:
+            return self._fetch_ranking_page(mode, cookie, page)
+        return self._fetch_ranking_page(mode, cookie, page, deadline=deadline)
 
     def _ranking_item_metadata(self, illust, rank):
         illust_id = str(self._illust_id(illust) or "")
@@ -322,20 +1032,32 @@ class PixivR18Ranking(BasePlugin):
             "cached_at": self._now_utc().isoformat(),
         }
 
-    def _download_ranking_item_image(self, item, dimensions):
+    def _download_ranking_item_image(self, item, dimensions, *, deadline=None):
         tmp_path = None
         resized_path = None
         try:
-            tmp_path = self._download_to_temp(item["image_url"])
+            tmp_path = (
+                self._download_to_temp(item["image_url"])
+                if deadline is None
+                else self._download_to_temp(item["image_url"], deadline=deadline)
+            )
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             image_info = self._source_image_info(tmp_path)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             if image_info and image_info["pixels"] > MAX_PI_SAFE_SOURCE_PIXELS:
                 if image_info["format"] == "WEBP":
                     raise RuntimeError("oversized WebP skipped for Pi-safe decode")
+                self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
                 resized_path = self._downsample_to_pi_safe_image(tmp_path)
+                self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             load_path = resized_path or tmp_path
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             image = self.image_loader.from_file(str(load_path), dimensions, resize=False)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             if not image:
                 raise RuntimeError("image load returned empty")
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             return self._write_cached_image(item, image)
         finally:
             for path in (tmp_path, resized_path):
@@ -345,27 +1067,142 @@ class PixivR18Ranking(BasePlugin):
                     except Exception:
                         pass
 
-    def _download_to_temp(self, url):
-        response = get_http_session().get(
-            url,
-            timeout=40,
-            stream=True,
-            headers=PIXIV_IMAGE_HEADERS,
-        )
-        response.raise_for_status()
+    def _download_ranking_item_source_image(self, item, dimensions, *, deadline=None):
+        tmp_path = None
+        resized_path = None
+        try:
+            tmp_path = (
+                self._download_to_temp(item["image_url"])
+                if deadline is None
+                else self._download_to_temp(item["image_url"], deadline=deadline)
+            )
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            info = self._source_image_info(tmp_path)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            if info and info["pixels"] > 32_000_000:
+                raise RuntimeError("Pixiv media dimensions exceed the safety limit")
+            if info and info["pixels"] > MAX_PI_SAFE_SOURCE_PIXELS:
+                if info["format"] == "WEBP":
+                    raise RuntimeError("oversized WebP skipped for Pi-safe decode")
+                self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+                resized_path = self._downsample_to_pi_safe_image(tmp_path)
+                self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            load_path = resized_path or tmp_path
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            image = safe_open_image(
+                load_path,
+                limits=ImageLimits(max_bytes=12 * 1024 * 1024),
+                draft_size=(dimensions[0] * 3, dimensions[1] * 3),
+            ).convert("RGB")
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            image.thumbnail((dimensions[0] * 3, dimensions[1] * 3), RESAMPLING_FILTER)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            return image
+        finally:
+            for path in (tmp_path, resized_path):
+                if path:
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
+    def _download_to_temp(self, url, *, deadline=None):
+        payload = self._download_media_bytes(
+            url,
+            max_bytes=12 * 1024 * 1024,
+            timeout=40,
+            deadline=deadline,
+        )
+        self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
         suffix = Path(urlparse(url).path).suffix or ".img"
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path = Path(temp_file.name)
         try:
             with temp_file:
-                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    if chunk:
-                        temp_file.write(chunk)
+                temp_file.write(payload)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
+            os.chmod(tmp_path, 0o600)
+            self._remaining_data_timeout(deadline, MAX_DATA_SECONDS)
             return tmp_path
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
+
+    def _download_media_bytes(self, url, *, max_bytes, timeout, deadline=None):
+        policy = get_ssrf_policy()
+        current_url = str(url or "").strip()
+        for redirect_count in range(MAX_MEDIA_REDIRECTS + 1):
+            approved = policy.resolve_and_validate(current_url)
+            validate_pixiv_media_target(approved)
+            remaining = self._remaining_data_timeout(deadline, timeout)
+            response = self._request_approved_target(
+                approved,
+                headers=PIXIV_IMAGE_HEADERS,
+                timeout=remaining,
+                deadline=deadline,
+            )
+            try:
+                response_url = str(
+                    getattr(response, "url", approved.normalized_url)
+                    or approved.normalized_url
+                )
+                final_hop = policy.resolve_and_validate(response_url)
+                validate_pixiv_media_target(final_hop)
+                status = int(response.status_code)
+                if 300 <= status < 400:
+                    if redirect_count >= MAX_MEDIA_REDIRECTS:
+                        raise RuntimeError("Pixiv media redirect limit was exceeded")
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise RuntimeError("Pixiv media redirect has no Location")
+                    next_url = urljoin(final_hop.normalized_url, location)
+                    next_hop = policy.resolve_and_validate(next_url)
+                    validate_pixiv_media_target(next_hop)
+                    current_url = next_hop.normalized_url
+                    continue
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"Pixiv media request failed with status {status}")
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > max_bytes:
+                            raise RuntimeError("Pixiv media response exceeds its object budget")
+                    except ValueError:
+                        pass
+                payload = bytearray()
+                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                    self._remaining_data_timeout(deadline, timeout)
+                    if not chunk:
+                        continue
+                    if len(payload) + len(chunk) > max_bytes:
+                        raise RuntimeError("Pixiv media response exceeds its object budget")
+                    payload.extend(chunk)
+                if not payload:
+                    raise RuntimeError("Pixiv media response is empty")
+                self._remaining_data_timeout(deadline, timeout)
+                return bytes(payload)
+            finally:
+                response.close()
+        raise RuntimeError("Pixiv media redirect limit was exceeded")
+
+    def _request_approved_target(self, approved, *, headers, timeout, deadline):
+        return _PinnedHTTPSResponse.open(
+            approved,
+            headers=headers,
+            deadline=deadline,
+            clock=self._monotonic,
+            timeout=timeout,
+        )
+
+    def _remaining_data_timeout(self, deadline, configured):
+        return _remaining_timeout(deadline, self._monotonic, configured)
+
+    def _monotonic(self):
+        return time.monotonic()
 
     def _write_cached_image(self, item, image):
         image_dir = self._cache_dir() / "images" / self._day_key()
@@ -402,12 +1239,14 @@ class PixivR18Ranking(BasePlugin):
             path = self._daily_pool_path()
             if not path.is_file():
                 return None
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = read_bounded_json_object(path)
             if payload.get("state_version") != STATE_VERSION:
                 return None
             if payload.get("day_key") != self._day_key():
                 return None
             return payload
+        except RuntimeError:
+            raise
         except Exception as exc:
             logger.warning("Could not read Pixiv R-18 daily pool: %s", exc)
             return None
@@ -699,8 +1538,10 @@ class PixivR18Ranking(BasePlugin):
         path = self._state_path()
         try:
             if path.is_file():
-                state = json.loads(path.read_text(encoding="utf-8"))
+                state = read_bounded_json_object(path)
                 return state if isinstance(state, dict) else {}
+        except RuntimeError:
+            raise
         except Exception as exc:
             logger.warning("Could not read Pixiv R-18 state %s: %s", path, exc)
         return {}
@@ -711,17 +1552,7 @@ class PixivR18Ranking(BasePlugin):
         self._atomic_write_json(path, state if isinstance(state, dict) else {})
 
     def _atomic_write_json(self, path, payload):
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        text = json.dumps(payload, ensure_ascii=True, indent=2)
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            path.write_text(text, encoding="utf-8")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+        atomic_write_bounded_json(path, payload)
 
     def _source_image_info(self, image_path):
         try:
@@ -862,3 +1693,29 @@ def _normalize_tag(value):
 
 def _setting_enabled(value):
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
+
+
+def _resolution_provenance(resolution):
+    resolution = resolution or {}
+    return {
+        "requested_mode": str(resolution.get("requested_mode") or ""),
+        "effective_mode": str(resolution.get("effective_mode") or ""),
+        "content_rating": str(resolution.get("content_rating") or "sfw"),
+        "authenticated": resolution.get("authenticated") is True,
+        "healthy_r18": resolution.get("healthy_r18") is True,
+        "source_status": str(resolution.get("source_status") or "unavailable"),
+    }
+
+
+def _provenance_identity(provenance):
+    return (
+        str((provenance or {}).get("effective_mode") or ""),
+        str((provenance or {}).get("content_rating") or ""),
+        bool((provenance or {}).get("authenticated")),
+    )
+
+
+def _stat_is_reparse(value):
+    flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    attributes = getattr(value, "st_file_attributes", 0)
+    return stat.S_ISLNK(value.st_mode) or bool(flag and attributes & flag)
