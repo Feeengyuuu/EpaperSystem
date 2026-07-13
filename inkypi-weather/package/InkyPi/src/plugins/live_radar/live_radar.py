@@ -1980,6 +1980,13 @@ class LiveRadar(BasePlugin):
         settings = settings or {}
         context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config)
         palette = context["palette"]
+        # Immutable scheduler payloads thaw tuples into mutable lists. Pillow's
+        # RGB constructors require tuples, so normalize only at this renderer
+        # boundary without changing the shared theme-context contract.
+        palette = {
+            role: tuple(color) if isinstance(color, (list, tuple)) else color
+            for role, color in palette.items()
+        }
         mode = "dark" if context.get("mode") == "night" else "light"
         panel = palette["panel"]
         accent = palette["accent"]

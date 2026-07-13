@@ -40,6 +40,31 @@ INVALID_REFRESH_SETTINGS = [
 ]
 
 
+@pytest.mark.parametrize(
+    "checkbox_values",
+    [("false", "true"), ("true", "false")],
+)
+def test_parse_form_prefers_checked_checkbox_over_hidden_false_fallback(
+    checkbox_values,
+):
+    submitted = MultiDict(
+        [
+            *(('unreadOnly', value) for value in checkbox_values),
+            ("dialogFilter", "@latest"),
+        ]
+    )
+
+    parsed = app_utils.parse_form(submitted)
+
+    assert parsed == {"unreadOnly": "true", "dialogFilter": "@latest"}
+
+
+def test_parse_form_preserves_first_value_for_non_checkbox_scalar_duplicates():
+    submitted = MultiDict([("dialogFilter", "first"), ("dialogFilter", "second")])
+
+    assert app_utils.parse_form(submitted) == {"dialogFilter": "first"}
+
+
 def _png_bytes():
     buffer = BytesIO()
     Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")

@@ -13,6 +13,8 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -58,7 +60,7 @@ REGION_CONFIG = {
 }
 
 
-class WowProfileDashboard(BasePlugin):
+class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
     def __init__(self, config, **dependencies):
         super().__init__(config, **dependencies)
         self._token_cache: dict[str, Any] = {}
@@ -91,25 +93,34 @@ class WowProfileDashboard(BasePlugin):
             and Path(cache["image_path"]).exists()
         ):
             self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-            return safe_open_image(cache["image_path"]).convert("RGB")
+            return attach_source_provenance(
+                safe_open_image(cache["image_path"]).convert("RGB"),
+                SourceProvenance.FRESH_CACHE,
+            )
 
         data: dict[str, Any]
+        provenance = SourceProvenance.LIVE
         try:
             if self._enabled(settings.get("useMockData"), default=False):
                 data = self._sample_payload()
+                provenance = SourceProvenance.LOCAL_FALLBACK
             else:
                 data = self._fetch_dashboard_data(settings, device_config)
         except Exception as exc:
             logger.warning("WoW profile dashboard fetch failed: %s", exc)
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-                return safe_open_image(cache["image_path"]).convert("RGB")
+                return attach_source_provenance(
+                    safe_open_image(cache["image_path"]).convert("RGB"),
+                    SourceProvenance.STALE_CACHE,
+                )
             data = self._status_payload(
                 "Fetch failed",
                 str(exc),
                 settings=settings,
                 source="Battle.net",
             )
+            provenance = SourceProvenance.LOCAL_FALLBACK
 
         data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         image = self._render_dashboard(data, dimensions)
@@ -123,7 +134,7 @@ class WowProfileDashboard(BasePlugin):
             "data": self._json_safe(data),
         })
         self._write_context(data, now, refresh_minutes)
-        return image
+        return attach_source_provenance(image, provenance)
 
     def _fetch_dashboard_data(self, settings, device_config):
         region = self._region(settings)

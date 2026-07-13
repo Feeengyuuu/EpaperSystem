@@ -16,6 +16,8 @@ from plugins.pixiv_r18_ranking.pixiv_r18_ranking import (
     PixivR18Ranking,
     _setting_enabled,
 )
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ RISK_TERMS = {
 }
 
 
-class RedditRule34Hot(PixivR18Ranking):
+class RedditRule34Hot(RefreshOnDisplayPresentationMixin, PixivR18Ranking):
     """Daily Reddit hot-image pool using Pixiv's proven display pipeline."""
 
     def __init__(self, config, **dependencies):
@@ -83,11 +85,17 @@ class RedditRule34Hot(PixivR18Ranking):
             pool = self._daily_pool(settings, device_config, dimensions)
             if not pool:
                 logger.warning("Reddit Rule34 hot daily pool is empty after filtering.")
-                return self._fallback_image(dimensions, "Reddit Rule34", "No filtered image available")
+                return attach_source_provenance(
+                    self._fallback_image(dimensions, "Reddit Rule34", "No filtered image available"),
+                    SourceProvenance.LOCAL_FALLBACK,
+                )
 
             group = self._select_display_group(pool, settings)
             if not group:
-                return self._fallback_image(dimensions, "Reddit Rule34", "No cached image available")
+                return attach_source_provenance(
+                    self._fallback_image(dimensions, "Reddit Rule34", "No cached image available"),
+                    SourceProvenance.LOCAL_FALLBACK,
+                )
 
             images = []
             for item in group:
@@ -96,7 +104,10 @@ class RedditRule34Hot(PixivR18Ranking):
                     images.append(image)
             if not images:
                 logger.warning("Cached Reddit Rule34 image missing for %s", group[0].get("post_id"))
-                return self._fallback_image(dimensions, "Reddit Rule34", "Cached image missing")
+                return attach_source_provenance(
+                    self._fallback_image(dimensions, "Reddit Rule34", "Cached image missing"),
+                    SourceProvenance.LOCAL_FALLBACK,
+                )
 
             logger.info(
                 "Selected Reddit Rule34 hot image. | count: %s | post_ids: %s",
@@ -104,13 +115,20 @@ class RedditRule34Hot(PixivR18Ranking):
                 [item.get("post_id") for item in group],
             )
             if len(images) >= 2:
-                return self._compose_strip(images, dimensions, settings)
-            return self._fit_image(images[0], dimensions, settings, group[0])
+                image = self._compose_strip(images, dimensions, settings)
+            else:
+                image = self._fit_image(images[0], dimensions, settings, group[0])
+            return attach_source_provenance(image, SourceProvenance.FRESH_CACHE)
         except Exception as exc:
             logger.exception("Reddit Rule34 hot plugin failed: %s", exc)
-            return self._fallback_image(dimensions, "Reddit Rule34", "Reddit unavailable")
+            return attach_source_provenance(
+                self._fallback_image(dimensions, "Reddit Rule34", "Reddit unavailable"),
+                SourceProvenance.LOCAL_FALLBACK,
+            )
 
     def _daily_pool_needs_refresh(self, settings):
+        if _setting_enabled(settings.get("_inkypiPresentationRefresh")):
+            return True
         if not _setting_enabled(settings.get("dailyPoolMode", "true")):
             return True
 

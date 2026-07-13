@@ -16,6 +16,8 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
@@ -74,7 +76,7 @@ QUEUE_LABELS = {
 }
 
 
-class LoLInfo(BasePlugin):
+class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -116,6 +118,7 @@ class LoLInfo(BasePlugin):
         )
 
         try:
+            provenance = SourceProvenance.LIVE
             if theme_render_only:
                 if not source_cache_valid:
                     raise RuntimeError(
@@ -123,13 +126,18 @@ class LoLInfo(BasePlugin):
                     )
                 data = cache.get("data") or {}
                 data_updated_ts = float(cache.get("updated_ts", now) or now)
+                provenance = SourceProvenance.FRESH_CACHE
             elif cache_valid:
                 data = cache.get("data") or {}
                 data_updated_ts = float(cache.get("updated_ts", now) or now)
+                provenance = SourceProvenance.FRESH_CACHE
             else:
-                data = self._sample_payload() if self._enabled(effective_settings.get("useMockData"), default=False) else self._fetch_dashboard_data(effective_settings, device_config)
+                use_mock_data = self._enabled(effective_settings.get("useMockData"), default=False)
+                data = self._sample_payload() if use_mock_data else self._fetch_dashboard_data(effective_settings, device_config)
                 data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 data_updated_ts = now
+                if use_mock_data:
+                    provenance = SourceProvenance.LOCAL_FALLBACK
             data = self._with_pro_account_context(data, effective_settings)
             theme_context = self._theme_context(effective_settings, device_config)
             media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
@@ -143,7 +151,7 @@ class LoLInfo(BasePlugin):
             finally:
                 _ALLOW_PROVIDER_MEDIA.reset(media_token)
             if theme_render_only:
-                return image
+                return attach_source_provenance(image, provenance)
             image_path = self._cache_image_path(cache_key)
             image_path.parent.mkdir(parents=True, exist_ok=True)
             image.save(image_path)
@@ -157,7 +165,7 @@ class LoLInfo(BasePlugin):
             })
             if not theme_render_only:
                 self._write_context(data, data_updated_ts, refresh_minutes)
-            return image
+            return attach_source_provenance(image, provenance)
         except Exception as exc:
             logger.error("LoLInfo generation failed: %s", exc)
             if theme_render_only:
@@ -165,7 +173,10 @@ class LoLInfo(BasePlugin):
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 logger.warning("Using stale LoLInfo cache.")
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-                return safe_open_image(cache["image_path"]).convert("RGB")
+                return attach_source_provenance(
+                    safe_open_image(cache["image_path"]).convert("RGB"),
+                    SourceProvenance.STALE_CACHE,
+                )
             raise RuntimeError(f"LoLInfo 生成失败：{exc}")
 
     def _fetch_dashboard_data(self, settings, device_config):

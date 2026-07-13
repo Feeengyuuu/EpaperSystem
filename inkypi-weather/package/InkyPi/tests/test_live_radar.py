@@ -35,6 +35,7 @@ from plugins.live_radar.live_radar import (
     TITLE_LOGO_SCALE,
     LiveRadar,
 )
+from runtime.refresh_contracts import freeze_payload
 
 
 class FakeDeviceConfig:
@@ -783,6 +784,34 @@ def test_theme_uses_injected_palette_over_conflicting_legacy_alias():
     assert theme["ink"] == context["palette"]["ink"]
     assert theme["muted"] == context["palette"]["muted"]
     assert theme["line"] == context["palette"]["rule"]
+
+
+def test_render_themed_image_accepts_frozen_scheduler_theme_context():
+    plugin = _plugin()
+    _memory_cache(plugin)
+    plugin._fetch_statuses = lambda *_args, **_kwargs: [_status_result()]
+    context = _canonical_theme(
+        "day",
+        background=(242, 237, 226),
+        panel=(224, 216, 198),
+        ink=(20, 22, 24),
+        muted=(72, 74, 78),
+        rule=(130, 126, 118),
+        accent=(176, 42, 54),
+    )
+
+    image = plugin.render_themed_image(
+        {
+            "roomsText": "twitch|xqc|xQc",
+            "fetchAvatars": "false",
+            "showSnapshots": "false",
+            "cacheSeconds": "20",
+        },
+        FakeDeviceConfig(mode="night"),
+        resolved_theme_context=freeze_payload(context),
+    )
+
+    assert image.getpixel((0, 0)) == context["palette"]["background"]
 
 
 def test_theme_only_stale_status_cache_rerenders_without_provider_calls():

@@ -7,10 +7,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.telegram_digest.telegram_digest as telegram_mod  # noqa: E402
+from plugins.base_plugin.presentation import (  # noqa: E402
+    PresentationMode,
+    PresentationRequestContext,
+)
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    read_source_provenance,
+)
+from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 from plugins.telegram_digest.telegram_digest import CHAT_FEED_MAX_ROWS, STATE_VERSION, TelegramDigest  # noqa: E402
 
 
@@ -50,6 +60,233 @@ class FakeResponse:
 
     def iter_content(self, chunk_size=8192):
         yield from self._chunks
+
+
+def test_missing_account_sample_is_not_cacheable_or_source_healthy(tmp_path):
+    plugin = _plugin(tmp_path)
+
+    image = plugin.generate_image(
+        {"accessMode": "account"},
+        DummyDeviceConfig(),
+    )
+
+    assert image.info.get("inkypi_skip_cache") is True
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+
+
+def test_telegram_refresh_on_display_uses_prepared_background_render(tmp_path):
+    plugin = _plugin(tmp_path)
+    plugin.config["refresh_on_display"] = True
+    payload = {
+        "schema": STATE_VERSION,
+        "messages": [
+            {
+                "key": "chat:42",
+                "message_id": 42,
+                "date": 1_782_000_000,
+                "chat_title": "Latest",
+                "title": "Newest unread",
+                "summary": "Fresh account result",
+                "media_kind": "text",
+                "unread": True,
+            }
+        ],
+        "channel_label": "Telegram",
+        "stats": {},
+        "status": {
+            "source_state": "live",
+            "account_api": True,
+            "generated_at": "2026-07-13T20:00:00+00:00",
+        },
+    }
+    def fake_payload(*_args, **_kwargs):
+        result = dict(payload)
+        plugin._write_state(result)
+        return result
+
+    plugin._payload = fake_payload
+    request = PresentationRequestContext(
+        request_id="a" * 32,
+        requested_at="2026-07-13T20:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    assert plugin.presentation_mode({}) is PresentationMode.PREPARED_BANK
+    prepared = plugin.prepare_presentation(
+        {},
+        DummyDeviceConfig(),
+        request=request,
+        resolved_theme_context=plugin.resolve_theme({}, DummyDeviceConfig()),
+    )
+
+    assert prepared.changed is True
+    assert prepared.request_id == request.request_id
+    assert prepared.image.size == (800, 480)
+    assert prepared.image.info.get("inkypi_skip_cache") is not True
+    saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert saved["pending_presentation_display"] == {
+        "request_id": request.request_id,
+        "keys": ["chat:42"],
+        "source_state": "live",
+        "account_api": True,
+    }
+
+
+def test_telegram_prepared_receipt_uses_exact_pixel_layout_keys(tmp_path):
+    plugin = _plugin(tmp_path)
+    plugin.config["refresh_on_display"] = True
+    long_caption = "long caption " * 80
+    messages = [
+        {
+            "key": "lead",
+            "title": "lead",
+            "summary": "featured text",
+            "media_kind": "text",
+            "date": 100,
+        },
+        *[
+            {
+                "key": f"media-{index}",
+                "title": f"media {index}",
+                "summary": long_caption,
+                "media_kind": "photo",
+                "media_path": "",
+                "date": 100 - index,
+            }
+            for index in range(1, 5)
+        ],
+        {
+            "key": "late-short",
+            "title": "short",
+            "summary": "fits remaining pixels",
+            "media_kind": "text",
+            "date": 1,
+        },
+    ]
+    payload = {
+        "schema": STATE_VERSION,
+        "messages": messages,
+        "channel_label": "Telegram",
+        "stats": {},
+        "status": {"source_state": "live", "account_api": True},
+    }
+
+    def fake_payload(*_args, **_kwargs):
+        result = dict(payload)
+        plugin._write_state(result)
+        return result
+
+    plugin._payload = fake_payload
+    request = PresentationRequestContext(
+        request_id="9" * 32,
+        requested_at="2026-07-13T20:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    prepared = plugin.prepare_presentation(
+        {},
+        DummyDeviceConfig(),
+        request=request,
+        resolved_theme_context=plugin.resolve_theme({}, DummyDeviceConfig()),
+    )
+
+    saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    exact_keys = saved["pending_presentation_display"]["keys"]
+    heuristic_keys = plugin._displayed_message_keys(messages)
+    assert exact_keys == list(
+        prepared.image.info["inkypi_rendered_visible_message_keys"]
+    )
+    assert "media-3" in exact_keys
+    assert "media-3" not in heuristic_keys
+
+
+def test_telegram_prepared_refresh_rejects_sample_fallback(tmp_path):
+    plugin = _plugin(tmp_path)
+    plugin.config["refresh_on_display"] = True
+    request = PresentationRequestContext(
+        request_id="b" * 32,
+        requested_at="2026-07-13T20:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    with pytest.raises(RuntimeError, match="fresh cacheable image"):
+        plugin.prepare_presentation(
+            {"accessMode": "account"},
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=plugin.resolve_theme({}, DummyDeviceConfig()),
+        )
+
+
+def test_telegram_reconciles_plugin_read_state_only_from_display_receipt(tmp_path):
+    plugin = _plugin(tmp_path)
+    state = {
+        "schema": STATE_VERSION,
+        "messages": [
+            {"key": "chat:42", "title": "shown", "media_kind": "text", "date": 42},
+            {"key": "chat:41", "title": "not shown", "media_kind": "text", "date": 41},
+        ],
+        "stats": {},
+        "status": {"source_state": "live", "account_api": True},
+        "pending_presentation_display": {
+            "request_id": "c" * 32,
+            "keys": ["chat:42"],
+            "source_state": "live",
+            "account_api": True,
+        },
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    receipt = PresentationCommitReceipt(
+        request_id="c" * 32,
+        committed_at="2026-07-13T20:01:00+00:00",
+        display_commit_id="physical-display-commit",
+        structural_generation=1,
+        settings_revision=1,
+        theme_mode="day",
+    )
+
+    plugin.reconcile_presentation_receipt({"markDisplayedRead": True}, receipt)
+    plugin.reconcile_presentation_receipt({"markDisplayedRead": True}, receipt)
+
+    saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert saved["display_read"]["keys"] == ["chat:42"]
+    assert saved["display_read"]["last_display_commit_id"] == receipt.display_commit_id
+    assert saved["display_read"]["last_receipt_request_id"] == receipt.request_id
+    assert "pending_presentation_display" not in saved
+
+
+def test_telegram_ignores_receipt_for_a_different_prepared_request(tmp_path):
+    plugin = _plugin(tmp_path)
+    state = {
+        "schema": STATE_VERSION,
+        "messages": [{"key": "chat:42", "title": "shown"}],
+        "stats": {},
+        "status": {"source_state": "live", "account_api": True},
+        "pending_presentation_display": {
+            "request_id": "e" * 32,
+            "keys": ["chat:42"],
+            "source_state": "live",
+            "account_api": True,
+        },
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    receipt = PresentationCommitReceipt(
+        request_id="f" * 32,
+        committed_at="2026-07-13T20:01:00+00:00",
+        display_commit_id="other-display-commit",
+        structural_generation=1,
+        settings_revision=1,
+        theme_mode="day",
+    )
+
+    plugin.reconcile_presentation_receipt({"markDisplayedRead": True}, receipt)
+
+    saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "display_read" not in saved
+    assert saved["pending_presentation_display"]["request_id"] == "e" * 32
 
 
 class FailingSession:
@@ -117,6 +354,13 @@ class FakeTelegramClient:
         return getattr(message, "media_bytes", b"")
 
 
+class SessionFallbackTelegramClient(FakeTelegramClient):
+    instances = []
+
+    async def is_user_authorized(self):
+        return "plugins" in str(self.session_path)
+
+
 
 def make_test_tmp_dir(name):
     path = TEST_TMP_ROOT / f"{name}-{uuid.uuid4().hex}"
@@ -136,6 +380,44 @@ def _plugin(tmp_path):
     plugin = TelegramDigest({"id": "telegram_digest"})
     plugin._cache_dir = lambda: tmp_path
     return plugin
+
+
+def test_account_refresh_falls_back_when_shared_session_is_not_authorized(
+    tmp_path,
+    monkeypatch,
+):
+    runtime_data = tmp_path / "runtime-data"
+    shared = runtime_data / "telegram_account.session"
+    plugin_session = (
+        runtime_data / "plugins" / "telegram_digest" / "telegram_account.session"
+    )
+    plugin_session.parent.mkdir(parents=True)
+    shared.write_text("not-authorized", encoding="utf-8")
+    plugin_session.write_text("authorized", encoding="utf-8")
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(runtime_data))
+    plugin = _plugin(tmp_path / "plugin-cache")
+    SessionFallbackTelegramClient.instances = []
+    monkeypatch.setattr(
+        plugin,
+        "_telethon_client_class",
+        lambda: SessionFallbackTelegramClient,
+    )
+
+    payload = plugin._fetch_account_payload(
+        {"unreadOnly": False},
+        DummyDeviceConfig(
+            env={"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "hash-value"}
+        ),
+        {},
+        datetime(2026, 7, 13, 20, 0, tzinfo=timezone.utc),
+        8,
+    )
+
+    assert payload["status"]["source_state"] == "live"
+    assert [Path(item.session_path) for item in SessionFallbackTelegramClient.instances] == [
+        runtime_data / "telegram_account",
+        runtime_data / "plugins" / "telegram_digest" / "telegram_account",
+    ]
 
 
 def _theme_context(mode, requested_mode="auto"):

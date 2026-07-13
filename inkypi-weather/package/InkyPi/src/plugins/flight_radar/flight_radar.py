@@ -18,6 +18,8 @@ import time
 from PIL import Image, ImageDraw
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client
@@ -305,7 +307,7 @@ class SourceStatus:
         }
 
 
-class FlightRadar(BasePlugin):
+class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -323,12 +325,27 @@ class FlightRadar(BasePlugin):
         if self._bool_setting(settings.get("_theme_render_only"), False):
             snapshot = self._get_cached_snapshot_for_theme(settings)
             snapshot_time = self._snapshot_time(snapshot, device_config)
-            return self._render(snapshot, dimensions, settings, snapshot_time, device_config)
+            return attach_source_provenance(
+                self._render(snapshot, dimensions, settings, snapshot_time, device_config),
+                SourceProvenance.FRESH_CACHE,
+            )
 
         now = self._now(device_config)
         snapshot = self._get_snapshot(settings, device_config, now)
         self._write_radar_context(snapshot, now)
-        return self._render(snapshot, dimensions, settings, now, device_config)
+        warning = str(snapshot.get("warning") or "").upper()
+        if warning == "STALE CACHE":
+            provenance = SourceProvenance.STALE_CACHE
+        elif warning == "NO DATA":
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        elif snapshot.get("from_cache"):
+            provenance = SourceProvenance.FRESH_CACHE
+        else:
+            provenance = SourceProvenance.LIVE
+        return attach_source_provenance(
+            self._render(snapshot, dimensions, settings, now, device_config),
+            provenance,
+        )
 
     def _get_cached_snapshot_for_theme(self, settings):
         lat = self._float_setting(settings, "latitude", DEFAULT_LATITUDE, -90.0, 90.0)

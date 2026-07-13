@@ -1,6 +1,6 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true, "supports_presentation_refresh": true},
     "theme": {"presentation": "media", "day": {"background": "#f7efe9", "accent": "#d7592a"}, "night": {"background": "#1a0e09", "accent": "#ff966d"}},
     "display_name": "Reddit Rule34 Hot",
     "id": "reddit_rule34_hot",

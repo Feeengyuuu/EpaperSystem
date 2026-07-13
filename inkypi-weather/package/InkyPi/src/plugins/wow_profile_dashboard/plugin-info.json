@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true, "supports_presentation_refresh": true},
   "theme": {"presentation": "ui", "day": {"background": "#f4ede3", "accent": "#9a5b24"}, "night": {"background": "#171008", "accent": "#e2a362"}},
   "display_name": "WoW Profile Dashboard",
   "id": "wow_profile_dashboard",

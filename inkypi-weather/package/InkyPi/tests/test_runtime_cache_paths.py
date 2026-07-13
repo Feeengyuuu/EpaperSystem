@@ -422,6 +422,26 @@ def test_telegram_session_uses_runtime_data(monkeypatch, tmp_path, configured_pa
     assert Path(config["session_file"]) == Path(str(expected) + ".session")
 
 
+def test_telegram_session_reuses_authorized_shared_runtime_session(monkeypatch, tmp_path):
+    root = tmp_path / "runtime-data"
+    root.mkdir()
+    shared_session = root / "telegram_account.session"
+    shared_session.write_text("authorized", encoding="utf-8")
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(root))
+    plugin = TelegramDigest.__new__(TelegramDigest)
+    plugin.config = {"id": "telegram_digest"}
+
+    class DeviceConfig:
+        def load_env_key(self, key):
+            return ""
+
+    config = plugin._account_config({}, DeviceConfig())
+
+    assert Path(config["session_path"]) == root / "telegram_account"
+    assert Path(config["session_file"]) == shared_session
+    assert config["session_ready"] is True
+
+
 def test_backtothedate_state_keeps_development_source_fallback(monkeypatch):
     monkeypatch.delenv("INKYPI_CACHE_DIR", raising=False)
     plugin = _plugin(BacktotheDate, "backtothedate")

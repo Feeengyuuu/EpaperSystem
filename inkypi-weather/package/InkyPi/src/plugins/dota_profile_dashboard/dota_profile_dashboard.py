@@ -13,6 +13,8 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.image_utils import text_width
@@ -57,7 +59,7 @@ RANK_NAMES = {
 RECORD_FIELDS = ("kills", "gold_per_min", "xp_per_min", "hero_damage")
 
 
-class DotaProfileDashboard(BasePlugin):
+class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -87,10 +89,14 @@ class DotaProfileDashboard(BasePlugin):
             and Path(cache["image_path"]).exists()
         ):
             self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-            return safe_open_image(cache["image_path"]).convert("RGB")
+            return attach_source_provenance(
+                safe_open_image(cache["image_path"]).convert("RGB"),
+                SourceProvenance.FRESH_CACHE,
+            )
 
         try:
-            data = self._sample_payload(account_id) if self._enabled(settings.get("useMockData"), default=False) else self._fetch_dashboard_data(account_id, settings, device_config)
+            use_mock_data = self._enabled(settings.get("useMockData"), default=False)
+            data = self._sample_payload(account_id) if use_mock_data else self._fetch_dashboard_data(account_id, settings, device_config)
             data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             image = self._render_dashboard(data, dimensions, settings, get_theme_context(device_config))
             image_path = self._cache_image_path(cache_key)
@@ -104,13 +110,19 @@ class DotaProfileDashboard(BasePlugin):
                 "data": self._json_safe(data),
             })
             self._write_context(data, now, refresh_minutes)
-            return image
+            return attach_source_provenance(
+                image,
+                SourceProvenance.LOCAL_FALLBACK if use_mock_data else SourceProvenance.LIVE,
+            )
         except Exception as exc:
             logger.error("Dota profile dashboard failed: %s", exc)
             if cache.get("image_path") and Path(cache["image_path"]).exists():
                 logger.warning("Using stale Dota profile dashboard cache.")
                 self._write_context(cache.get("data") or {}, cache.get("updated_ts", now), refresh_minutes)
-                return safe_open_image(cache["image_path"]).convert("RGB")
+                return attach_source_provenance(
+                    safe_open_image(cache["image_path"]).convert("RGB"),
+                    SourceProvenance.STALE_CACHE,
+                )
             raise RuntimeError(f"Dota 个人信息页生成失败：{exc}")
 
     def _fetch_dashboard_data(self, account_id, settings, device_config):

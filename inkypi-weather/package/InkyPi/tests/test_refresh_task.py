@@ -15,6 +15,11 @@ import pytest
 from PIL import Image, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import (
+    SourceProvenance,
+    attach_source_provenance,
+)
 from plugins.base_plugin.presentation import (
     PresentationMode,
     PresentationPreparation,
@@ -125,6 +130,28 @@ def test_refresh_on_display_settings_defaults_have_runtime_fallback():
     expected_plugin_ids = _settings_default_refresh_on_display_plugin_ids()
 
     assert expected_plugin_ids <= _refresh_on_display_plugin_info_ids()
+
+
+def test_non_live_refresh_on_display_plugins_have_background_presentation_lane():
+    expected = {
+        "dota_profile_dashboard",
+        "flight_radar",
+        "lol_info",
+        "reddit_rule34_hot",
+        "telegram_digest",
+        "wow_profile_dashboard",
+    }
+
+    for plugin_id in expected:
+        info = json.loads(
+            (PLUGIN_SOURCE_ROOT / plugin_id / "plugin-info.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        capabilities = info.get("capabilities") or {}
+        assert capabilities.get("supports_live_refresh") is False
+        assert info.get("refresh_on_display") is True
+        assert capabilities.get("supports_presentation_refresh") is True
 
 
 @pytest.mark.parametrize(
@@ -9199,6 +9226,27 @@ class PresentationBankPlugin(DelegatingThemeWrapper):
         return Image.new("RGB", (32, 16), self.data_color)
 
 
+class RefreshOnDisplayRerenderPlugin(RefreshOnDisplayPresentationMixin, BasePlugin):
+    def __init__(self, calls):
+        self.config = {"id": "presentation_plugin_0", "refresh_on_display": True}
+        self.calls = calls
+
+    def generate_image(self, settings, device_config):
+        self.calls.append(dict(settings or {}))
+        return attach_source_provenance(
+            Image.new("RGB", (32, 16), "white"),
+            SourceProvenance.LIVE,
+        )
+
+
+class UnattestedRefreshOnDisplayPlugin(RefreshOnDisplayPresentationMixin, BasePlugin):
+    def __init__(self):
+        self.config = {"id": "unattested", "refresh_on_display": True}
+
+    def generate_image(self, settings, device_config):
+        return Image.new("RGB", (32, 16), "white")
+
+
 class BaseCopyIdentityPlugin(BasePlugin):
     def __init__(self):
         self.config = {}
@@ -9523,6 +9571,68 @@ def test_manual_cache_display_records_request_but_live_theme_followups_do_not(
     assert results["manual"] is not None
     assert results["live"] is None
     assert results["theme"] is None
+
+
+def test_refresh_on_display_rerender_rejects_unattested_output():
+    plugin = UnattestedRefreshOnDisplayPlugin()
+    request = PresentationRequestContext(
+        request_id="d" * 32,
+        requested_at="2026-07-13T20:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    with pytest.raises(RuntimeError, match="fresh cacheable image"):
+        plugin.prepare_presentation(
+            {},
+            SimpleNamespace(),
+            request=request,
+            resolved_theme_context={"mode": "day"},
+        )
+
+
+def test_refresh_on_display_rerender_prepares_latest_then_commits_without_loop(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, display = _make_presentation_task(
+        "refresh-on-display-rerender-adapter"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    _seed_independent_lane_clocks(task, instance)
+    provider_calls = []
+    plugin = RefreshOnDisplayRerenderPlugin(provider_calls)
+    monkeypatch.setattr(refresh_task_module, "get_plugin_instance", lambda _config: plugin)
+
+    display_result = _queue_and_process(
+        task,
+        _normal_cache_display_command(task, playlist, instance),
+    )
+    request = task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request
+
+    assert display_result.job.status is JobStatus.SUCCEEDED
+    assert request is not None
+    assert provider_calls == []
+    refresh_command = task._select_independent_refresh_command(PRESENTATION_NOW)
+    assert refresh_command.intent is RefreshIntent.PRESENTATION_REFRESH
+
+    refresh_result = _queue_and_process(task, refresh_command)
+    followup = task.refresh_queue.take(timeout=0)
+    assert refresh_result.job.status is JobStatus.SUCCEEDED
+    assert provider_calls and len(provider_calls) == 1
+    assert provider_calls[0]["forceRefresh"] is True
+    assert provider_calls[0]["_inkypiPresentationRefresh"] is True
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    task._process_queue_entry(followup)
+
+    final_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert final_state.presentation_request is None
+    assert final_state.presentation_receipt.request_id == request.request_id
+    assert len(display.calls) == 2
+    assert display.calls[-1]["image"].getpixel((0, 0)) == (255, 255, 255)
+    assert task.refresh_queue.take(timeout=0) is None
+    assert task._select_independent_refresh_command(PRESENTATION_NOW) is None
 
 
 def test_display_cache_never_instantiates_plugin_with_pending_presentation(

@@ -15,6 +15,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
@@ -38,12 +40,14 @@ MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = MAX_MESSAGE_CACHE
 DISPLAY_READ_KEY_LIMIT = 1000
 ACCOUNT_SCAN_LIMIT_CAP = 100
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+PENDING_PRESENTATION_DISPLAY_STATE_KEY = "pending_presentation_display"
+RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY = "inkypi_rendered_visible_message_keys"
 REQUEST_TIMEOUT = (4, 18)
 TELEGRAM_MEDIA_IMAGE_LIMITS = ImageLimits(max_bytes=25 * 1024 * 1024)
 MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
-class TelegramDigest(BasePlugin):
+class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -65,9 +69,114 @@ class TelegramDigest(BasePlugin):
         now = self._now_utc()
         payload = self._payload(settings, device_config, now)
         image = self._render_page(dimensions, payload, settings, now)
+        image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY] = tuple(
+            self._rendered_message_keys(payload)
+        )
+        source_state = str((payload.get("status") or {}).get("source_state") or "")
+        provenance = {
+            "live": SourceProvenance.LIVE,
+            "cache": SourceProvenance.STALE_CACHE,
+        }.get(source_state, SourceProvenance.LOCAL_FALLBACK)
+        attach_source_provenance(image, provenance)
+        if provenance is SourceProvenance.LOCAL_FALLBACK:
+            image.info["inkypi_skip_cache"] = True
         if not theme_render_only:
             self._remember_displayed_messages(payload, settings, now)
         return image
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        preparation = super().prepare_presentation(
+            settings,
+            device_config,
+            request=request,
+            resolved_theme_context=resolved_theme_context,
+        )
+        if not preparation.changed:
+            return preparation
+        state = self._read_state()
+        if not self._valid_state(state):
+            return preparation
+        status = state.get("status") if isinstance(state.get("status"), dict) else {}
+        rendered_key_values = preparation.image.info.get(
+            RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY,
+        )
+        if not isinstance(rendered_key_values, (list, tuple)):
+            raise RuntimeError("Telegram prepared render did not report visible messages")
+        rendered_keys = self._rendered_message_keys(
+            {
+                "_rendered_visible_keys": list(rendered_key_values)
+            }
+        )
+        state[PENDING_PRESENTATION_DISPLAY_STATE_KEY] = {
+            "request_id": request.request_id,
+            "keys": rendered_keys,
+            "source_state": str(status.get("source_state") or ""),
+            "account_api": bool(status.get("account_api")),
+        }
+        self._write_state(state)
+        return preparation
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        """Mark only physically committed account messages as plugin-read."""
+        if receipt is None:
+            return None
+        try:
+            state = self._read_state()
+            if not self._valid_state(state):
+                return None
+            pending = state.get(PENDING_PRESENTATION_DISPLAY_STATE_KEY)
+            if not isinstance(pending, dict):
+                return None
+            if str(pending.get("request_id") or "") != receipt.request_id:
+                return None
+            display_read = state.get("display_read")
+            display_read = dict(display_read) if isinstance(display_read, dict) else {}
+            if display_read.get("last_display_commit_id") == receipt.display_commit_id:
+                return None
+            displayed_settings = dict(settings or {})
+            displayed_settings[DISPLAY_RENDER_SETTING] = True
+            committed_at = datetime.fromisoformat(
+                str(receipt.committed_at).replace("Z", "+00:00")
+            )
+            committed_payload = {
+                "_rendered_visible_keys": list(pending.get("keys") or []),
+                "status": {
+                    "source_state": str(pending.get("source_state") or ""),
+                    "account_api": bool(pending.get("account_api")),
+                },
+            }
+            self._remember_displayed_messages(
+                committed_payload,
+                displayed_settings,
+                committed_at,
+            )
+            next_state = self._read_state()
+            if not self._valid_state(next_state):
+                next_state = dict(state)
+            next_display_read = next_state.get("display_read")
+            next_display_read = (
+                dict(next_display_read) if isinstance(next_display_read, dict) else {}
+            )
+            next_display_read["last_display_commit_id"] = receipt.display_commit_id
+            next_display_read["last_receipt_request_id"] = receipt.request_id
+            next_state["display_read"] = next_display_read
+            current_pending = next_state.get(PENDING_PRESENTATION_DISPLAY_STATE_KEY)
+            if (
+                isinstance(current_pending, dict)
+                and str(current_pending.get("request_id") or "") == receipt.request_id
+            ):
+                next_state.pop(PENDING_PRESENTATION_DISPLAY_STATE_KEY, None)
+            self._write_state(next_state)
+        except Exception as exc:
+            logger.warning("Could not reconcile Telegram display receipt: %s", exc)
+        return None
 
     def _payload(self, settings, device_config, now):
         cache = self._read_state()
@@ -182,7 +291,28 @@ class TelegramDigest(BasePlugin):
             raise RuntimeError("Missing TELEGRAM_API_ID or TELEGRAM_API_HASH")
         if not config["session_ready"]:
             raise RuntimeError(f"Telegram account session is not authorized yet: {config['session_file']}")
-        return asyncio.run(self._fetch_account_payload_async(settings, cache, now, max_messages, config))
+        errors = []
+        for session_path in config.get("session_candidates") or [config["session_path"]]:
+            session_file = self._session_file_for(session_path)
+            if not session_file.is_file():
+                continue
+            candidate = dict(config)
+            candidate["session_path"] = str(session_path)
+            candidate["session_file"] = str(session_file)
+            try:
+                return asyncio.run(
+                    self._fetch_account_payload_async(
+                        settings,
+                        cache,
+                        now,
+                        max_messages,
+                        candidate,
+                    )
+                )
+            except Exception as exc:
+                errors.append(str(exc))
+        detail = errors[-1] if errors else "no usable session file"
+        raise RuntimeError(f"Telegram account session is not authorized yet: {detail}")
 
     async def _fetch_account_payload_async(self, settings, cache, now, max_messages, config):
         client_class = self._telethon_client_class()
@@ -366,11 +496,15 @@ class TelegramDigest(BasePlugin):
         api_id = self._setting_or_env(settings, ("telegramApiId", "apiId"), device_config, "TELEGRAM_API_ID")
         api_hash = self._setting_or_env(settings, ("telegramApiHash", "apiHash"), device_config, "TELEGRAM_API_HASH")
         session_path = self._setting_or_env(settings, ("telegramSessionPath", "sessionPath"), device_config, "TELEGRAM_SESSION_PATH")
-        session_path = self._resolve_session_path(session_path)
+        session_candidates = self._session_path_candidates(session_path)
+        session_path = session_candidates[0]
         session_file = self._session_file_for(session_path)
-        if session_file.is_file():
+        for candidate in session_candidates:
+            candidate_file = self._session_file_for(candidate)
+            if not candidate_file.is_file():
+                continue
             try:
-                session_file.chmod(0o600)
+                candidate_file.chmod(0o600)
             except OSError as exc:
                 logger.warning("Could not restrict Telegram session permissions: %s", exc)
         return {
@@ -378,22 +512,54 @@ class TelegramDigest(BasePlugin):
             "api_hash": str(api_hash or "").strip(),
             "session_path": str(Path(session_path).expanduser()),
             "session_file": str(session_file),
-            "session_ready": session_file.is_file(),
+            "session_ready": any(
+                self._session_file_for(candidate).is_file()
+                for candidate in session_candidates
+            ),
+            "session_candidates": [str(candidate) for candidate in session_candidates],
         }
 
     def _resolve_session_path(self, configured_path):
+        return self._session_path_candidates(configured_path)[0]
+
+    def _session_path_candidates(self, configured_path):
         if configured_path:
             path = Path(str(configured_path)).expanduser()
             if not path.is_absolute() and os.getenv("INKYPI_DATA_DIR", "").strip():
                 path = self.data_dir() / path
+            paths = [path]
         else:
-            path = self.data_dir(
+            runtime_root_raw = os.getenv("INKYPI_DATA_DIR", "").strip()
+            shared_runtime_path = (
+                Path(runtime_root_raw).expanduser() / "telegram_account"
+                if runtime_root_raw
+                else None
+            )
+            plugin_runtime_path = self.data_dir(
                 leaf="telegram_account",
                 legacy_leaf=Path("cache") / "telegram_account",
                 create=False,
             )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+            if (
+                shared_runtime_path is not None
+                and self._session_file_for(shared_runtime_path).is_file()
+            ):
+                # The hardened service migration and the one-shot account
+                # authorizer both place the durable Telethon session here.
+                paths = [shared_runtime_path, plugin_runtime_path]
+            else:
+                paths = [plugin_runtime_path]
+        unique_paths = []
+        seen = set()
+        for candidate in paths:
+            candidate = Path(candidate).expanduser()
+            marker = str(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            unique_paths.append(candidate)
+        unique_paths[0].parent.mkdir(parents=True, exist_ok=True)
+        return unique_paths
 
     def _access_mode(self, settings, device_config):
         explicit = str(settings.get("accessMode") or settings.get("authMode") or "").strip().casefold()
@@ -985,6 +1151,9 @@ class TelegramDigest(BasePlugin):
     def _attach_display_read_state(self, payload, cache):
         if not isinstance(payload, dict):
             return payload
+        pending = (cache or {}).get(PENDING_PRESENTATION_DISPLAY_STATE_KEY)
+        if isinstance(pending, dict):
+            payload[PENDING_PRESENTATION_DISPLAY_STATE_KEY] = dict(pending)
         keys = self._display_read_key_list(cache)
         if not keys:
             return payload

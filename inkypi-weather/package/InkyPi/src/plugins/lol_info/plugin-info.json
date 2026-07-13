@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+  "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true, "supports_presentation_refresh": true},
   "theme": {"presentation": "ui", "day": {"background": "#edf3f4", "accent": "#1a7080"}, "night": {"background": "#081416", "accent": "#65bdc9"}},
   "display_name": "LoLInfo",
   "id": "lol_info",

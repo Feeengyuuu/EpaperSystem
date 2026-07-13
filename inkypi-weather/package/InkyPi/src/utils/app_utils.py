@@ -348,10 +348,22 @@ def generate_startup_image(dimensions=(800,480)):
     return image
 
 def parse_form(request_form):
-    request_dict = request_form.to_dict()
+    request_dict = {}
     for key in request_form.keys():
+        values = request_form.getlist(key)
         if key.endswith('[]'):
-            request_dict[key] = request_form.getlist(key)
+            request_dict[key] = values
+        elif values:
+            # Checkbox templates pair a hidden ``false`` with a checked
+            # ``true``. Templates use both DOM orders, so presence of true is
+            # authoritative regardless of position; other scalar duplicates
+            # keep Werkzeug's historical first-value behavior.
+            normalized = {str(value).strip().casefold() for value in values}
+            request_dict[key] = (
+                "true"
+                if "false" in normalized and "true" in normalized
+                else values[0]
+            )
     return request_dict
 
 

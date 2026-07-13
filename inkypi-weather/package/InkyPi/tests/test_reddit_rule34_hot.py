@@ -10,10 +10,24 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.reddit_rule34_hot.reddit_rule34_hot as reddit_mod  # noqa: E402
+from plugins.base_plugin.refresh_on_display_presentation import (  # noqa: E402
+    RefreshOnDisplayPresentationMixin,
+)
 from plugins.reddit_rule34_hot.reddit_rule34_hot import RedditRule34Hot  # noqa: E402
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "reddit_rule34_hot_tests"
+
+
+def test_reddit_uses_generic_refresh_on_display_adapter_not_pixiv_bank():
+    assert (
+        RedditRule34Hot.prepare_presentation
+        is RefreshOnDisplayPresentationMixin.prepare_presentation
+    )
+    assert (
+        RedditRule34Hot.reconcile_presentation_receipt
+        is RefreshOnDisplayPresentationMixin.reconcile_presentation_receipt
+    )
 
 
 class DummyDeviceConfig:
