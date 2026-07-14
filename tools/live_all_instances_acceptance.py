@@ -2109,6 +2109,11 @@ def _parser() -> argparse.ArgumentParser:
             "then restore the original configuration"
         ),
     )
+    parser.add_argument(
+        "--print-summary",
+        action="store_true",
+        help="Print the summary.json from --output-dir and exit",
+    )
     return parser
 
 
@@ -2117,6 +2122,24 @@ def main(argv=None) -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.print_summary:
+        if not args.output_dir:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "print_summary_requires_output_dir",
+            }))
+            return 2
+        try:
+            payload = _read_json(
+                Path(args.output_dir) / "summary.json",
+                code="summary_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
     try:
         secret = Path(args.flask_secret).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError):

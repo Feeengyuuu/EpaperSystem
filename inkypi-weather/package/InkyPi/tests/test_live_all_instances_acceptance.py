@@ -1657,6 +1657,54 @@ def test_cycle_interval_freeze_cli_is_opt_in_and_parameterized(acceptance):
     )
 
 
+def test_print_summary_flag_prints_existing_summary(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    (output_dir / "summary.json").write_text(
+        json.dumps({"status": "failed", "passed": 17, "failed": 9}),
+        encoding="utf-8",
+    )
+
+    exit_code = acceptance.main([
+        "--output-dir", str(output_dir),
+        "--print-summary",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed["failed"] == 9
+
+
+def test_print_summary_flag_aborts_cleanly_without_summary(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+
+    missing_dir = acceptance.main([
+        "--output-dir", str(tmp_path / "missing"),
+        "--print-summary",
+    ])
+    no_dir = acceptance.main(["--print-summary"])
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert missing_dir == 2
+    assert no_dir == 2
+    assert json.loads(lines[0])["abort_code"] == "summary_read_failed"
+    assert (
+        json.loads(lines[1])["abort_code"]
+        == "print_summary_requires_output_dir"
+    )
+
+
 def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
     acceptance,
     tmp_path,
