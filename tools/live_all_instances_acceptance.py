@@ -2120,6 +2120,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Print the runtime state document from --runtime-state and exit",
     )
     parser.add_argument(
+        "--merge-env-from",
+        default=None,
+        help=(
+            "Merge keys missing from --env-target out of this env file, "
+            "then exit; existing target keys are never overwritten and "
+            "values are never printed"
+        ),
+    )
+    parser.add_argument(
+        "--env-target",
+        default="/etc/inkypi/inkypi.env",
+        help="Target env file for --merge-env-from",
+    )
+    parser.add_argument(
         "--set-open-display-control",
         choices=("true", "false"),
         default=None,
@@ -2158,11 +2172,101 @@ PRINTABLE_CONFIG_KEYS = frozenset({
 })
 
 
+def _parse_env_lines(text):
+    """Yield (key, raw_line) for KEY=VALUE lines; values are never inspected."""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        if key:
+            yield key, raw_line
+
+
+def _merge_env_file(source_path: Path, target_path: Path) -> int:
+    try:
+        source_text = source_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        print(json.dumps({
+            "status": "aborted",
+            "abort_code": "env_source_read_failed",
+        }))
+        return 2
+    try:
+        target_text = (
+            target_path.read_text(encoding="utf-8")
+            if target_path.exists()
+            else ""
+        )
+    except (OSError, UnicodeError):
+        print(json.dumps({
+            "status": "aborted",
+            "abort_code": "env_target_read_failed",
+        }))
+        return 2
+
+    existing_keys = {key for key, _line in _parse_env_lines(target_text)}
+    added_keys, added_lines = [], []
+    skipped = []
+    for key, raw_line in _parse_env_lines(source_text):
+        if key in existing_keys:
+            if key not in skipped:
+                skipped.append(key)
+            continue
+        if key in added_keys:
+            continue
+        added_keys.append(key)
+        added_lines.append(raw_line)
+
+    if added_lines:
+        merged = target_text
+        if merged and not merged.endswith("\n"):
+            merged += "\n"
+        merged += "\n".join(added_lines) + "\n"
+        temporary = target_path.with_name(
+            f".{target_path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(merged)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target_path)
+        except OSError:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "env_target_write_failed",
+            }))
+            return 2
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+    print(json.dumps({
+        "status": "merged",
+        "added_keys": added_keys,
+        "skipped_existing_keys": skipped,
+        "target": str(target_path),
+    }, ensure_ascii=True))
+    return 0
+
+
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.merge_env_from is not None:
+        return _merge_env_file(Path(args.merge_env_from), Path(args.env_target))
     if args.set_open_display_control is not None:
         desired = args.set_open_display_control == "true"
         try:

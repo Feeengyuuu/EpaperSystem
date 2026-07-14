@@ -1823,6 +1823,65 @@ def test_set_open_display_control_stops_writes_and_restarts(
     assert persisted["name"] == "frame"
 
 
+def test_merge_env_adds_missing_keys_without_overwriting_or_printing_values(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    source = tmp_path / "legacy.env"
+    source.write_text(
+        "# legacy keys\n"
+        "MASSIVE_API_KEY=massive-secret\n"
+        "PIXIV_PHPSESSID='pixiv-secret'\n"
+        "OPEN_WEATHER_MAP_SECRET=old-weather-secret\n"
+        "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "inkypi.env"
+    target.write_text(
+        "OPEN_WEATHER_MAP_SECRET=current-weather-secret\n",
+        encoding="utf-8",
+    )
+
+    exit_code = acceptance.main([
+        "--merge-env-from", str(source),
+        "--env-target", str(target),
+    ])
+
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+    merged = target.read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert payload["added_keys"] == ["MASSIVE_API_KEY", "PIXIV_PHPSESSID"]
+    assert payload["skipped_existing_keys"] == ["OPEN_WEATHER_MAP_SECRET"]
+    assert "massive-secret" not in printed
+    assert "pixiv-secret" not in printed
+    assert "MASSIVE_API_KEY=massive-secret" in merged
+    assert "PIXIV_PHPSESSID='pixiv-secret'" in merged
+    assert "OPEN_WEATHER_MAP_SECRET=current-weather-secret" in merged
+    assert "old-weather-secret" not in merged
+
+
+def test_merge_env_aborts_cleanly_when_source_is_missing(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+
+    exit_code = acceptance.main([
+        "--merge-env-from", str(tmp_path / "missing.env"),
+        "--env-target", str(tmp_path / "inkypi.env"),
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["abort_code"] == "env_source_read_failed"
+
+
 def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
     acceptance,
     tmp_path,
