@@ -135,6 +135,107 @@ def test_configured_device_names_and_ips_are_allowed_hosts(tmp_path):
         assert response.status_code == 200, host
 
 
+def _display_control_app(tmp_path, *, open_display_control):
+    from flask import Blueprint
+
+    class DisplayDeviceConfig:
+        def get_config(self, key=None, default=None):
+            values = {
+                "name": "living-room-frame",
+                "open_display_control": open_display_control,
+            }
+            return values if key is None else values.get(key, default)
+
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    store = CredentialStore(tmp_path)
+    bootstrap = store.create_bootstrap_token()
+    store.consume_bootstrap_token(bootstrap, "strong-password")
+
+    plugin_bp = Blueprint("plugin", __name__)
+
+    @plugin_bp.post("/display_plugin_instance")
+    def display_plugin_instance():
+        return jsonify({"ok": True})
+
+    @plugin_bp.post("/refresh_plugin_instance")
+    def refresh_plugin_instance():
+        return jsonify({"ok": True})
+
+    @plugin_bp.post("/delete_plugin_instance")
+    def delete_plugin_instance():
+        return jsonify({"ok": True})
+
+    app.register_blueprint(plugin_bp)
+    install_request_guards(app, store, DisplayDeviceConfig())
+    return app
+
+
+def _anonymous_csrf(client, token="c" * 43):
+    with client.session_transaction() as session:
+        session["csrf_token"] = token
+    return token
+
+
+def test_display_control_skips_auth_only_when_opened(tmp_path):
+    client = _display_control_app(
+        tmp_path,
+        open_display_control=True,
+    ).test_client()
+    token = _anonymous_csrf(client)
+
+    display = client.post(
+        "/display_plugin_instance",
+        json={},
+        headers={"X-CSRF-Token": token},
+    )
+    refresh = client.post(
+        "/refresh_plugin_instance",
+        json={},
+        headers={"X-CSRF-Token": token},
+    )
+    delete = client.post(
+        "/delete_plugin_instance",
+        json={},
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert display.status_code == 200
+    assert refresh.status_code == 200
+    assert delete.status_code == 401
+    assert delete.get_json()["error_code"] == "authentication_required"
+
+
+def test_display_control_still_requires_csrf_when_opened(tmp_path):
+    client = _display_control_app(
+        tmp_path,
+        open_display_control=True,
+    ).test_client()
+    _anonymous_csrf(client)
+
+    response = client.post("/display_plugin_instance", json={})
+
+    assert response.status_code == 403
+    assert response.get_json()["error_code"] == "csrf_failed"
+
+
+def test_display_control_requires_auth_by_default(tmp_path):
+    client = _display_control_app(
+        tmp_path,
+        open_display_control=False,
+    ).test_client()
+    token = _anonymous_csrf(client)
+
+    response = client.post(
+        "/display_plugin_instance",
+        json={},
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert response.status_code == 401
+    assert response.get_json()["error_code"] == "authentication_required"
+
+
 def test_machine_mdns_name_is_an_allowed_host(tmp_path, monkeypatch):
     monkeypatch.setattr(request_guard.socket, "gethostname", lambda: "testframe")
     monkeypatch.setattr(

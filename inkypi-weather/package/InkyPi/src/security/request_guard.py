@@ -23,6 +23,12 @@ MACHINE_HOSTS_REFRESH_SECONDS = 60.0
 PUBLIC_MUTATION_ENDPOINTS = frozenset(
     {"auth.login", "auth.setup", "auth.recover"}
 )
+# Non-destructive "make the frame show/refresh content" actions that a device
+# owner may opt to expose to the LAN without an admin login.  Destructive and
+# configuration mutations always require authentication.
+DISPLAY_CONTROL_ENDPOINTS = frozenset(
+    {"plugin.display_plugin_instance", "plugin.refresh_plugin_instance"}
+)
 ADMIN_SESSION_KEY = "admin_identity"
 CSRF_SESSION_KEY = "csrf_token"
 CSRF_HEADER = "X-CSRF-Token"
@@ -142,7 +148,15 @@ def install_request_guards(
             )
 
         public_mutation = request.endpoint in PUBLIC_MUTATION_ENDPOINTS
-        if not public_mutation and not current_admin_authenticated():
+        display_control = (
+            request.endpoint in DISPLAY_CONTROL_ENDPOINTS
+            and _open_display_control_enabled(device_config)
+        )
+        if (
+            not public_mutation
+            and not display_control
+            and not current_admin_authenticated()
+        ):
             return _failure("authentication_required", 401)
 
         if not _same_origin_when_present():
@@ -284,6 +298,15 @@ def _machine_hosts() -> set[str]:
         except OSError:
             pass
     return hosts
+
+
+def _open_display_control_enabled(device_config) -> bool:
+    try:
+        return bool(
+            device_config.get_config("open_display_control", default=False)
+        )
+    except Exception:
+        return False
 
 
 def _device_allowed_hosts(device_config) -> set[str]:
