@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlparse, urlsplit
 from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_font
 from utils.browser_renderer import get_browser_renderer
-from utils.image_utils import text_width
+from utils.image_utils import resize_image, text_width
 from runtime.refresh_contracts import TaskContext
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
@@ -610,6 +610,7 @@ class Newspaper(BasePlugin):
                 )
             current = bank.ensure_current(profile, ready)
             record, image = bank.selection_media(profile, current)
+            image = self._normalize_display_image(image, dimensions)
             check_deadline()
             bank.save(
                 document,
@@ -664,7 +665,7 @@ class Newspaper(BasePlugin):
         if pending is None and not fresh_ready:
             raise RuntimeError("Newspaper presentation bank has no fresh media")
         selection = pending or bank.choose_selection(profile, fresh_ready)
-        image = self._render_bank_selection(bank, profile, selection)
+        image = self._render_bank_selection(bank, profile, selection, dimensions)
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
                 image,
@@ -743,9 +744,9 @@ class Newspaper(BasePlugin):
     def _presentation_media_dir(self):
         return self.data_dir(leaf="presentation-media", create=False)
 
-    def _render_bank_selection(self, bank, profile, selection):
+    def _render_bank_selection(self, bank, profile, selection, dimensions):
         _record, image = bank.selection_media(profile, selection)
-        return image
+        return self._normalize_display_image(image, dimensions)
 
     def _recover_protected_selections(
         self,
@@ -826,6 +827,7 @@ class Newspaper(BasePlugin):
         if current is None:
             raise RuntimeError("Newspaper theme redraw has no current selection")
         record, image = bank.selection_media(profile, current)
+        image = self._normalize_display_image(image, dimensions)
         theme = settings.get("_inkypi_theme") or self.resolve_theme(
             settings,
             device_config,
@@ -991,30 +993,40 @@ class Newspaper(BasePlugin):
         if source["type"] == "headlines":
             headlines = self._fetch_web_headlines(source["value"], deadline=deadline)
             if headlines:
-                return self._render_headlines_page(source, headlines, device_config)
-            return None
-
-        if source["type"] == "url":
+                image = self._render_headlines_page(source, headlines, device_config)
+            else:
+                image = None
+        elif source["type"] == "url":
             image = self._fetch_url_screenshot(
                 source["value"],
                 device_config,
                 deadline=deadline,
             )
-            if image:
-                return image
-            return None
-
-        if source["type"] == "lywb":
-            return self._fetch_luoyang_evening_news_cover(
+        elif source["type"] == "lywb":
+            image = self._fetch_luoyang_evening_news_cover(
+                device_config,
+                deadline=deadline,
+            )
+        else:
+            image = self._fetch_newspaper_cover(
+                source["value"],
                 device_config,
                 deadline=deadline,
             )
 
-        return self._fetch_newspaper_cover(
-            source["value"],
-            device_config,
-            deadline=deadline,
-        )
+        if image is None:
+            return None
+        dimensions = self.get_dimensions(device_config)
+        return self._normalize_display_image(image, dimensions)
+
+    @staticmethod
+    def _normalize_display_image(image, dimensions):
+        if image.size == dimensions:
+            return image
+        source_info = dict(image.info)
+        normalized = resize_image(image, dimensions, ("keep-width",))
+        normalized.info.update(source_info)
+        return normalized
 
     def _fetch_url_screenshot(self, url, device_config, *, deadline=None):
         dimensions = self.get_dimensions(device_config)

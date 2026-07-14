@@ -70,6 +70,26 @@ def request(request_id="1" * 32, origin="origin-display"):
     )
 
 
+def seed_legacy_wrong_size_bank(plugin, settings, color="white"):
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(settings, sources, (800, 480))
+    document, profile = bank.load_for_data()
+    transaction = bank.transaction()
+    record = bank.ingest(
+        profile,
+        sources[0],
+        Image.new("RGB", (700, 1000), color),
+        transaction=transaction,
+    )
+    profile["current_selection"] = {
+        "record_key": record["record_key"],
+        "request_id": None,
+    }
+    profile["refill_in_progress"] = False
+    bank.save(document, transaction=transaction)
+    return record
+
+
 def receipt(request_id="1" * 32, display="prepared-display"):
     return PresentationCommitReceipt(
         request_id=request_id,
@@ -224,6 +244,23 @@ def test_url_source_returns_none_when_screenshot_fails(monkeypatch):
     assert image is None
 
 
+def test_newspaper_source_is_normalized_to_exact_display_dimensions(monkeypatch):
+    plugin = make_plugin("exact-provider-dimensions")
+    source = plugin._parse_media_sources("China Daily|newspaper|chi_cd")[0]
+    raw = Image.new("RGB", (700, 1000), "white")
+
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_newspaper_cover",
+        lambda *_args, **_kwargs: raw,
+    )
+
+    image = plugin._fetch_source_image(source, DeviceConfig())
+
+    assert image.size == (800, 480)
+    assert image.mode == "RGB"
+
+
 def test_luoyang_evening_news_builds_a01_pdf_url():
     plugin = make_plugin("lywb-url")
 
@@ -322,6 +359,53 @@ def test_newspaper_declares_prepared_bank_presentation():
     plugin = make_plugin("presentation-mode")
 
     assert plugin.presentation_mode({}) is PresentationMode.PREPARED_BANK
+
+
+def test_newspaper_data_normalizes_legacy_wrong_size_current(monkeypatch):
+    plugin = make_plugin("legacy-data-size")
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    seed_legacy_wrong_size_bank(plugin, settings)
+    monkeypatch.setattr(plugin, "_fetch_source_image", lambda *_args, **_kwargs: None)
+
+    image = plugin.generate_image(settings, DeviceConfig())
+
+    assert image.size == (800, 480)
+
+
+def test_newspaper_prepare_normalizes_legacy_wrong_size_selection():
+    plugin = make_plugin("legacy-prepare-size")
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    seed_legacy_wrong_size_bank(plugin, settings)
+
+    prepared = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request(),
+        resolved_theme_context={
+            "mode": "day",
+            "palette": {"background": (255, 255, 255), "accent": (51, 51, 51)},
+        },
+    )
+
+    assert prepared.image.size == (800, 480)
+
+
+def test_newspaper_theme_only_normalizes_legacy_wrong_size_current():
+    plugin = make_plugin("legacy-theme-size")
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    seed_legacy_wrong_size_bank(plugin, settings)
+    themed_settings = {
+        **settings,
+        "_theme_render_only": True,
+        "_inkypi_theme": {
+            "mode": "day",
+            "palette": {"background": (255, 255, 255), "accent": (51, 51, 51)},
+        },
+    }
+
+    image = plugin.generate_image(themed_settings, DeviceConfig())
+
+    assert image.size == (800, 480)
 
 
 def test_newspaper_data_limits_browser_and_http_attempts(monkeypatch):
