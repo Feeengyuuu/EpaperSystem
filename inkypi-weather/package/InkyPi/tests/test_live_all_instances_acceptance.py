@@ -398,6 +398,10 @@ def test_ready_retries_transient_503_then_accepts_recovery(
     assert clock[0] == acceptance.HEALTH_POLL_INTERVAL_SECONDS
 
 
+def test_default_health_recovery_window_covers_heavy_physical_refresh(acceptance):
+    assert acceptance.HEALTH_RETRY_SECONDS >= 90
+
+
 def test_ready_requires_http_200_degraded_to_recover_at_strict_boundary(
     acceptance,
     tmp_path,
