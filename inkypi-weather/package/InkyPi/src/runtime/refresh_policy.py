@@ -149,12 +149,11 @@ def choose_refresh_candidate(
         return AdmissionDecision(None, state)
 
     if tier is ResourceTier.SOFT:
-        presentation = [
-            candidate
-            for candidate in auxiliary
-            if candidate.lane is RefreshLane.PRESENTATION
-        ]
-        if (not data and not presentation) or not _soft_spacing_elapsed(
+        # Soft pressure is enforced by admission SPACING, not by lane type:
+        # every lane renders through the same plugin machinery, and deferring
+        # THEME indefinitely freezes rotation because it gates on the theme
+        # transition completing.  Keep the healthy-tier lane fairness here.
+        if (not data and not auxiliary) or not _soft_spacing_elapsed(
             state,
             now_monotonic,
             thresholds,
@@ -183,7 +182,7 @@ def choose_refresh_candidate(
                 ),
             )
         if data and (
-            not presentation or state.consecutive_data_admissions < 3
+            not auxiliary or state.consecutive_data_admissions < 3
         ):
             return AdmissionDecision(
                 data[0],
@@ -198,7 +197,7 @@ def choose_refresh_candidate(
                 ),
             )
         return AdmissionDecision(
-            presentation[0],
+            auxiliary[0],
             replace(
                 state,
                 consecutive_data_admissions=0,

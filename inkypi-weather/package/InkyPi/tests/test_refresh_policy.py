@@ -786,7 +786,7 @@ def test_pending_presentation_prioritizes_its_required_data_before_unrelated_bac
         assert decision.candidate == matching
 
 
-def test_soft_admits_spaced_three_data_then_one_presentation_but_never_live_theme():
+def test_soft_admits_spaced_three_data_then_one_auxiliary_turn():
     data = [_candidate("soft-data")]
     auxiliary = [
         _presentation_candidate("soft-presentation"),
@@ -829,11 +829,11 @@ def test_soft_admits_spaced_three_data_then_one_presentation_but_never_live_them
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.PRESENTATION,
+        RefreshLane.LIVE,
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.PRESENTATION,
+        RefreshLane.LIVE,
     ]
     assert state.last_soft_renderer_admitted_monotonic == 170.0
 
@@ -987,7 +987,50 @@ def test_soft_admits_one_data_only_after_spacing():
     assert admitted.state.last_soft_data_admitted_monotonic == 160.0
 
 
-def test_soft_never_admits_live_or_theme():
+def test_soft_theme_gets_a_turn_after_three_data_admissions():
+    """A pending theme transition must not starve under sustained soft tier.
+
+    Rotation is gated on the theme transition completing, so indefinitely
+    deferring THEME work freezes the display while data retries churn.
+    """
+    data = [_candidate("soft-data")]
+    auxiliary = [
+        _candidate(
+            "soft-theme",
+            lane=RefreshLane.THEME,
+            reason=DueReason.THEME,
+        ),
+    ]
+    thresholds = ResourceThresholds(soft_spacing_seconds=10.0)
+    state = AdmissionState()
+    selected_lanes = []
+
+    for now_monotonic in range(100, 180, 10):
+        decision = choose_refresh_candidate(
+            data,
+            auxiliary,
+            tier=ResourceTier.SOFT,
+            state=state,
+            now_monotonic=float(now_monotonic),
+            thresholds=thresholds,
+        )
+        assert decision.candidate is not None
+        selected_lanes.append(decision.candidate.lane)
+        state = decision.state
+
+    assert selected_lanes == [
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.THEME,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.DATA,
+        RefreshLane.THEME,
+    ]
+
+
+def test_soft_admits_live_and_theme_when_nothing_else_is_due():
     auxiliary = [
         _candidate(
             "live",
@@ -1000,19 +1043,19 @@ def test_soft_never_admits_live_or_theme():
             reason=DueReason.THEME,
         ),
     ]
-    state = AdmissionState()
 
     decision = choose_refresh_candidate(
         [],
         auxiliary,
         tier=ResourceTier.SOFT,
-        state=state,
+        state=AdmissionState(),
         now_monotonic=1000.0,
         thresholds=ResourceThresholds(),
     )
 
-    assert decision.candidate is None
-    assert decision.state == state
+    assert decision.candidate is not None
+    assert decision.candidate.lane in {RefreshLane.LIVE, RefreshLane.THEME}
+    assert decision.state.consecutive_data_admissions == 0
 
 
 def test_hard_admits_nothing():
