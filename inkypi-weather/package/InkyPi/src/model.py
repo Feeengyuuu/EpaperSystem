@@ -316,8 +316,38 @@ class PlaylistManager:
 
             instance = playlist.reserve_next_plugin(eligible_instance_uuids)
             if instance is None:
-                return None
+                starved_since = self._parse_rotation_timestamp(
+                    playlist.plugin_rotation_starved_since,
+                    current_datetime,
+                )
+                if starved_since is None:
+                    playlist.plugin_rotation_starved_since = (
+                        current_datetime.isoformat()
+                    )
+                    return None
+                starved_seconds = (
+                    current_datetime - starved_since
+                ).total_seconds()
+                if starved_seconds < max(3 * normalized_interval, 300.0):
+                    return None
+                instance = playlist.reserve_next_plugin(
+                    eligible_instance_uuids,
+                    allow_round_concession=True,
+                )
+                if instance is None:
+                    return None
+            playlist.plugin_rotation_starved_since = None
             return PlaylistSelectionSnapshot(playlist.name, instance.snapshot())
+
+    @staticmethod
+    def _parse_rotation_timestamp(value, reference):
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return PluginInstance.align_datetime_tz(parsed, reference)
 
     def validate_rotation_reservation(
         self,
@@ -978,6 +1008,7 @@ class Playlist:
         plugin_rotation_queue=None,
         plugin_rotation_pool=None,
         plugin_rotation_recent_history=None,
+        plugin_rotation_starved_since=None,
     ):
         self.name = name
         self.start_time = start_time
@@ -987,6 +1018,7 @@ class Playlist:
         self.plugin_rotation_queue = list(plugin_rotation_queue or [])
         self.plugin_rotation_pool = list(plugin_rotation_pool or [])
         self.plugin_rotation_recent_history = list(plugin_rotation_recent_history or [])
+        self.plugin_rotation_starved_since = plugin_rotation_starved_since
         # Reservations are process-local. The persisted queue remains unchanged
         # until a successful playlist DISPLAY commit acknowledges the member.
         self._plugin_rotation_reserved_key = None
@@ -1133,12 +1165,21 @@ class Playlist:
 
         return self.plugins[self.current_plugin_index]
 
-    def reserve_next_plugin(self, eligible_instance_uuids=None):
+    def reserve_next_plugin(
+        self,
+        eligible_instance_uuids=None,
+        *,
+        allow_round_concession=False,
+    ):
         """Reserve an eligible member from the full persisted shuffle bag.
 
         Eligibility is only an admission filter: ineligible configured members
         remain in the current round. Selection does not remove the reservation
         from ``plugin_rotation_queue``; acknowledgement after display commit does.
+
+        ``allow_round_concession`` ends a round early when every remaining
+        member is ineligible: a round that can never finish is a rotation
+        deadlock, not fairness, so the caller may bound how long it waits.
         """
         if eligible_instance_uuids is not None:
             eligible_instance_uuids = frozenset(eligible_instance_uuids)
@@ -1186,9 +1227,27 @@ class Playlist:
                 None,
             )
             if reserved_key is None:
-                # The round still contains configured members, but none currently
-                # has a valid cache. Do not refill and do not discard them.
-                return None
+                if not allow_round_concession:
+                    # The round still contains configured members, but none
+                    # currently has a valid cache. Do not refill and do not
+                    # discard them.
+                    return None
+                # Bounded starvation concession: complete the blocked round and
+                # start a fresh one so eligible members keep rotating.
+                self.plugin_rotation_queue = list(plugin_keys)
+                random.shuffle(self.plugin_rotation_queue)
+                self._avoid_automatic_round_boundary_repeat()
+                reserved_key = next(
+                    (
+                        key
+                        for key in self.plugin_rotation_queue
+                        if eligible_instance_uuids is None
+                        or key in eligible_instance_uuids
+                    ),
+                    None,
+                )
+                if reserved_key is None:
+                    return None
             self._plugin_rotation_reserved_key = reserved_key
 
         return next(
@@ -1382,6 +1441,7 @@ class Playlist:
             "plugin_rotation_queue": list(self.plugin_rotation_queue),
             "plugin_rotation_pool": list(self.plugin_rotation_pool),
             "plugin_rotation_recent_history": list(self.plugin_rotation_recent_history),
+            "plugin_rotation_starved_since": self.plugin_rotation_starved_since,
         }
 
     @classmethod
@@ -1395,6 +1455,10 @@ class Playlist:
             plugin_rotation_queue=data.get("plugin_rotation_queue", []),
             plugin_rotation_pool=data.get("plugin_rotation_pool", []),
             plugin_rotation_recent_history=data.get("plugin_rotation_recent_history", []),
+            plugin_rotation_starved_since=data.get(
+                "plugin_rotation_starved_since",
+                None,
+            ),
         )
 
 class PluginInstance:

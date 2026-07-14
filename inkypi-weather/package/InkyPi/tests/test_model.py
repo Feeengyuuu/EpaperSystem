@@ -1166,6 +1166,91 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert playlist.to_dict() == before
         assert playlist.plugin_rotation_queue == ["one-uuid", "three-uuid"]
 
+    def _starving_rotation_manager(self):
+        return self._manager(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+                plugin_rotation_queue=["one-uuid"],
+                plugin_rotation_pool=["one-uuid", "two-uuid", "three-uuid"],
+                plugin_rotation_recent_history=["two-uuid", "three-uuid"],
+            ),
+            active_playlist="Default",
+        )
+
+    def test_rotation_starvation_grants_bounded_round_concession(
+        self,
+        monkeypatch,
+    ):
+        manager = self._starving_rotation_manager()
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        start = datetime(2026, 7, 14, 10, 0)
+        anchor = start - timedelta(seconds=600)
+        eligible = {"two-uuid", "three-uuid"}
+
+        starved = manager.reserve_next_active_instance(
+            start,
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+        )
+        still_starved = manager.reserve_next_active_instance(
+            start + timedelta(seconds=899),
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+        )
+        conceded = manager.reserve_next_active_instance(
+            start + timedelta(seconds=901),
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+        )
+
+        assert starved is None
+        assert still_starved is None
+        assert conceded is not None
+        assert conceded.instance.instance_uuid == "two-uuid"
+        playlist = manager.playlists[0]
+        assert set(playlist.plugin_rotation_queue) == {
+            "one-uuid",
+            "two-uuid",
+            "three-uuid",
+        }
+        assert playlist.plugin_rotation_starved_since is None
+
+    def test_rotation_starvation_timestamp_persists_and_not_due_does_not_starve(
+        self,
+    ):
+        manager = self._starving_rotation_manager()
+        now = datetime(2026, 7, 14, 10, 0)
+
+        not_due = manager.reserve_next_active_instance(
+            now,
+            latest_refresh=now,
+            interval_seconds=300,
+            eligible_instance_uuids={"two-uuid"},
+        )
+        assert not_due is None
+        assert manager.playlists[0].plugin_rotation_starved_since is None
+
+        starved = manager.reserve_next_active_instance(
+            now,
+            latest_refresh=now - timedelta(seconds=600),
+            interval_seconds=300,
+            eligible_instance_uuids={"two-uuid"},
+        )
+        assert starved is None
+        stamped = manager.playlists[0].plugin_rotation_starved_since
+        assert stamped is not None
+
+        restored = PlaylistManager.from_dict(manager.to_dict())
+        assert restored.playlists[0].plugin_rotation_starved_since == stamped
+
     def test_automatic_rotation_restart_does_not_consume_unacknowledged_reservation(
         self,
         monkeypatch,
