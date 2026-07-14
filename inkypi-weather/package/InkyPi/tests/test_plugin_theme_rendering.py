@@ -206,13 +206,31 @@ def test_render_themed_image_uses_detached_supplied_context_without_resolving(
     assert injected["requested_mode"] == "night"
     assert injected["mode"] == "night"
     assert injected["palette"] == {
-        "background": [16, 24, 32],
-        "accent": [242, 170, 76],
+        "background": (16, 24, 32),
+        "accent": (242, 170, 76),
     }
     assert injected is not supplied
     assert injected["palette"] is not supplied["palette"]
     injected["palette"]["background"] = (1, 2, 3)
     assert supplied["palette"]["background"] == (16, 24, 32)
+
+
+def test_frozen_supplied_context_yields_pil_safe_palette_colors():
+    from runtime.refresh_contracts import freeze_payload
+
+    plugin = _recording_plugin()
+    frozen = freeze_payload(_full_theme_context("night"))
+
+    plugin.render_themed_image(
+        {},
+        FakeDeviceConfig(),
+        resolved_theme_context=frozen,
+    )
+
+    palette = plugin.seen_settings["_inkypi_theme"]["palette"]
+    for role, color in palette.items():
+        assert isinstance(color, tuple), role
+        Image.new("RGB", (2, 2), color)
 
 
 def test_nested_auto_renderer_uses_command_pinned_shared_context(monkeypatch):

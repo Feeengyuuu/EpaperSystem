@@ -189,6 +189,24 @@ def resolve_palette_roles(
     return resolved
 
 
+def normalize_palette_colors(theme: Any) -> Any:
+    """Re-coerce palette role colors to PIL-safe tuples.
+
+    Frozen theme contexts thaw sequences back as lists, and Pillow rejects
+    list colors ("color must be int or tuple"), so every consumer of a thawed
+    context must pass through this normalization.
+    """
+    if not isinstance(theme, dict):
+        return theme
+    palette = theme.get("palette")
+    if isinstance(palette, dict):
+        theme["palette"] = {
+            role: tuple(color) if isinstance(color, list) else color
+            for role, color in palette.items()
+        }
+    return theme
+
+
 def get_theme_palette(theme: Any = None) -> dict[str, tuple[int, int, int]]:
     if isinstance(theme, dict):
         mode = _normalize_mode(theme.get("mode")) or "day"

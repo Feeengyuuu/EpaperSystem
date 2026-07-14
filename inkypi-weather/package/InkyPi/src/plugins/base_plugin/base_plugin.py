@@ -17,6 +17,7 @@ from utils.image_loader import AdaptiveImageLoader
 from utils.theme_utils import (
     EFFECTIVE_THEME_CONTEXT_INFO_KEY,
     is_valid_effective_theme_context,
+    normalize_palette_colors,
     pinned_theme_context,
     resolve_plugin_theme,
 )
@@ -130,7 +131,7 @@ class BasePlugin:
         theme = (
             self.resolve_theme(settings, device_config)
             if resolved_theme_context is None
-            else thaw_payload(resolved_theme_context)
+            else normalize_palette_colors(thaw_payload(resolved_theme_context))
         )
         render_settings = dict(settings or {})
         render_settings["_inkypi_theme"] = theme
