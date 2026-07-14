@@ -83,24 +83,237 @@ def test_ai_image_download_uses_shared_session_and_http_errors(monkeypatch):
     ]
 
 
-def test_apod_http_500_fails_fast_with_timeout(monkeypatch):
+def test_apod_http_500_fails_fast_without_logging_api_key(monkeypatch, caplog):
     calls = []
+    api_key = "nasa-super-secret"
 
     class Session:
         def get(self, url, params=None, timeout=None):
             calls.append({"url": url, "params": params, "timeout": timeout})
-            return FakeResponse(status_code=500, text="server error")
+            return FakeResponse(
+                status_code=500,
+                text=f"server echoed api_key={api_key}",
+            )
 
     monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
 
     with pytest.raises(RuntimeError, match="Failed to retrieve NASA APOD"):
-        Apod({"id": "apod"}).generate_image({}, FakeDeviceConfig({"NASA_SECRET": "nasa-key"}))
+        Apod({"id": "apod"}).generate_image(
+            {},
+            FakeDeviceConfig({"NASA_SECRET": api_key}),
+        )
 
     assert calls == [{
         "url": "https://api.nasa.gov/planetary/apod",
-        "params": {"api_key": "nasa-key"},
+        "params": {"api_key": api_key},
         "timeout": 10,
     }]
+    assert api_key not in caplog.text
+
+
+def test_apod_random_mode_retries_a_different_date_until_image(monkeypatch):
+    api_calls = []
+    loaded_image = object()
+
+    class Session:
+        responses = [
+            FakeResponse(
+                json_data={
+                    "date": "2024-05-07",
+                    "media_type": "video",
+                    "title": "A video APOD",
+                }
+            ),
+            FakeResponse(
+                json_data={
+                    "date": "2024-05-08",
+                    "hdurl": "https://images.example/apod.jpg",
+                    "media_type": "image",
+                    "title": "An image APOD",
+                }
+            ),
+        ]
+
+        def get(self, url, params=None, timeout=None):
+            api_calls.append({
+                "url": url,
+                "params": dict(params or {}),
+                "timeout": timeout,
+            })
+            return self.responses.pop(0)
+
+    class ImageLoader:
+        def __init__(self):
+            self.calls = []
+
+        def from_url(self, url, dimensions, timeout_ms=None):
+            self.calls.append((url, dimensions, timeout_ms))
+            return loaded_image
+
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+    monkeypatch.setattr(apod_module, "randint", lambda _start, _end: 0)
+
+    plugin = Apod({"id": "apod"})
+    plugin.image_loader = ImageLoader()
+    monkeypatch.setattr(plugin, "_overlay_nasa_logo", lambda image: image)
+    monkeypatch.setattr(plugin, "_write_apod_context", lambda *_args: None)
+
+    result = plugin.generate_image(
+        {"randomizeApod": "true"},
+        FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+    )
+
+    assert result is loaded_image
+    assert len(api_calls) == 2
+    assert api_calls[0]["params"]["date"] != api_calls[1]["params"]["date"]
+    assert all(call["params"]["api_key"] == "nasa-key" for call in api_calls)
+    assert plugin.image_loader.calls == [
+        ("https://images.example/apod.jpg", (800, 480), 40000),
+    ]
+
+
+def test_apod_random_mode_retries_when_first_image_cannot_be_loaded(monkeypatch):
+    api_calls = []
+    loaded_image = object()
+
+    class Session:
+        responses = [
+            FakeResponse(
+                json_data={
+                    "date": "2024-05-07",
+                    "hdurl": "https://images.example/oversized.jpg",
+                    "media_type": "image",
+                    "title": "An oversized image APOD",
+                }
+            ),
+            FakeResponse(
+                json_data={
+                    "date": "2024-05-08",
+                    "hdurl": "https://images.example/usable.jpg",
+                    "media_type": "image",
+                    "title": "A usable image APOD",
+                }
+            ),
+        ]
+
+        def get(self, url, params=None, timeout=None):
+            api_calls.append(
+                {
+                    "url": url,
+                    "params": dict(params or {}),
+                    "timeout": timeout,
+                }
+            )
+            return self.responses.pop(0)
+
+    class ImageLoader:
+        def __init__(self):
+            self.calls = []
+
+        def from_url(self, url, dimensions, timeout_ms=None):
+            self.calls.append((url, dimensions, timeout_ms))
+            if url.endswith("oversized.jpg"):
+                return None
+            return loaded_image
+
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+    monkeypatch.setattr(apod_module, "randint", lambda _start, _end: 0)
+
+    plugin = Apod({"id": "apod"})
+    plugin.image_loader = ImageLoader()
+    monkeypatch.setattr(plugin, "_overlay_nasa_logo", lambda image: image)
+    monkeypatch.setattr(plugin, "_write_apod_context", lambda *_args: None)
+
+    result = plugin.generate_image(
+        {"randomizeApod": "true"},
+        FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+    )
+
+    assert result is loaded_image
+    assert len(api_calls) == 2
+    assert api_calls[0]["params"]["date"] != api_calls[1]["params"]["date"]
+    assert plugin.image_loader.calls == [
+        ("https://images.example/oversized.jpg", (800, 480), 40000),
+        ("https://images.example/usable.jpg", (800, 480), 40000),
+    ]
+
+
+def test_apod_random_mode_stops_after_five_unique_non_image_dates(monkeypatch):
+    api_calls = []
+
+    class Session:
+        def get(self, url, params=None, timeout=None):
+            api_calls.append({
+                "url": url,
+                "params": dict(params or {}),
+                "timeout": timeout,
+            })
+            return FakeResponse(
+                json_data={
+                    "date": params["date"],
+                    "media_type": "video",
+                    "title": "A video APOD",
+                }
+            )
+
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+    monkeypatch.setattr(apod_module, "randint", lambda _start, _end: 0)
+
+    with pytest.raises(
+        RuntimeError,
+        match="No usable APOD image found after 5 random dates",
+    ):
+        Apod({"id": "apod"}).generate_image(
+            {"randomizeApod": "true"},
+            FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+        )
+
+    assert len(api_calls) == 5
+    assert len({call["params"]["date"] for call in api_calls}) == 5
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected_params"),
+    [
+        ({}, {"api_key": "nasa-key"}),
+        (
+            {"customDate": "2024-05-07"},
+            {"api_key": "nasa-key", "date": "2024-05-07"},
+        ),
+    ],
+)
+def test_apod_non_random_mode_fails_once_for_non_image_media(
+    monkeypatch,
+    settings,
+    expected_params,
+):
+    api_calls = []
+
+    class Session:
+        def get(self, url, params=None, timeout=None):
+            api_calls.append({
+                "url": url,
+                "params": dict(params or {}),
+                "timeout": timeout,
+            })
+            return FakeResponse(
+                json_data={
+                    "date": "2024-05-07",
+                    "media_type": "video",
+                    "title": "A video APOD",
+                }
+            )
+
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+
+    with pytest.raises(RuntimeError, match="APOD is not an image"):
+        Apod({"id": "apod"}).generate_image(
+            settings,
+            FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+        )
+
+    assert len(api_calls) == 1
+    assert api_calls[0]["params"] == expected_params
 
 
 def test_unsplash_missing_api_key_fails_before_network(monkeypatch):
@@ -171,4 +384,3 @@ def test_image_album_missing_api_key_fails_before_provider():
 
     with pytest.raises(RuntimeError, match="Immich API Key not configured"):
         ImageAlbum({"id": "image_album"}).generate_image(settings, FakeDeviceConfig())
-

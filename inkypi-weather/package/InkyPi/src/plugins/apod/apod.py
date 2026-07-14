@@ -18,6 +18,9 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+RANDOM_APOD_MAX_ATTEMPTS = 5
+
+
 class Apod(BasePlugin):
     NASA_LOGO_FILE = "nasa_logo.png"
 
@@ -39,56 +42,118 @@ class Apod(BasePlugin):
             logger.error("NASA API Key not configured")
             raise RuntimeError("NASA API Key not configured.")
 
-        params = {"api_key": api_key}
-
-        # Determine date to fetch
-        if settings.get("randomizeApod") == "true":
-            start = datetime(2015, 1, 1)
-            end = datetime.today()
-            delta_days = (end - start).days
-            random_date = start + timedelta(days=randint(0, delta_days))
-            params["date"] = random_date.strftime("%Y-%m-%d")
-            logger.info(f"Fetching random APOD from date: {params['date']}")
-        elif settings.get("customDate"):
-            params["date"] = settings["customDate"]
-            logger.info(f"Fetching APOD from custom date: {params['date']}")
-        else:
-            logger.info("Fetching today's APOD")
-
-        logger.debug("Requesting NASA APOD API...")
         session = get_http_session()
-        response = session.get("https://api.nasa.gov/planetary/apod", params=params, timeout=10)
+        params = {"api_key": api_key}
+        randomize = settings.get("randomizeApod") == "true"
+        dimensions = self.get_dimensions(device_config)
+        image = None
+        image_url = None
 
-        if response.status_code != 200:
-            logger.error(f"NASA API error (status {response.status_code}): {response.text}")
-            raise RuntimeError("Failed to retrieve NASA APOD.")
+        if randomize:
+            data = None
+            for random_date in self._random_apod_dates():
+                params["date"] = random_date
+                logger.info(f"Fetching random APOD from date: {random_date}")
+                candidate = self._fetch_apod(session, params)
+                if candidate.get("media_type") != "image":
+                    logger.warning(
+                        f"APOD media type for {random_date} is "
+                        f"'{candidate.get('media_type')}', not 'image'"
+                    )
+                    continue
 
-        data = response.json()
-        logger.debug(f"APOD API response received: {data.get('title', 'No title')}")
+                candidate_url = candidate.get("hdurl") or candidate.get("url")
+                candidate_image = self.image_loader.from_url(
+                    candidate_url,
+                    dimensions,
+                    timeout_ms=40000,
+                )
+                if candidate_image:
+                    data = candidate
+                    image_url = candidate_url
+                    image = candidate_image
+                    break
+                logger.warning(
+                    "Could not load random APOD image for %s; trying another date",
+                    random_date,
+                )
 
-        if data.get("media_type") != "image":
-            logger.warning(f"APOD media type is '{data.get('media_type')}', not 'image'")
-            raise RuntimeError("APOD is not an image today.")
+            if image is None:
+                raise RuntimeError(
+                    "No usable APOD image found after "
+                    f"{RANDOM_APOD_MAX_ATTEMPTS} random dates."
+                )
+        else:
+            if settings.get("customDate"):
+                params["date"] = settings["customDate"]
+                logger.info(f"Fetching APOD from custom date: {params['date']}")
+            else:
+                logger.info("Fetching today's APOD")
 
-        image_url = data.get("hdurl") or data.get("url")
+            data = self._fetch_apod(session, params)
+            if data.get("media_type") != "image":
+                logger.warning(
+                    f"APOD media type is '{data.get('media_type')}', not 'image'"
+                )
+                if settings.get("customDate"):
+                    raise RuntimeError(
+                        "APOD is not an image for the requested date."
+                    )
+                raise RuntimeError("APOD is not an image today.")
+            image_url = data.get("hdurl") or data.get("url")
+            image = self.image_loader.from_url(
+                image_url,
+                dimensions,
+                timeout_ms=40000,
+            )
+            if not image:
+                logger.error("Failed to load APOD image")
+                raise RuntimeError("Failed to load APOD image.")
+
         logger.info(f"APOD image URL: {image_url}")
         logger.debug(f"Using {'HD URL' if data.get('hdurl') else 'standard URL'}")
-
-        # Get target dimensions
-        dimensions = self.get_dimensions(device_config)
-
-        # Use adaptive image loader for memory-efficient processing
-        image = self.image_loader.from_url(image_url, dimensions, timeout_ms=40000)
-
-        if not image:
-            logger.error("Failed to load APOD image")
-            raise RuntimeError("Failed to load APOD image.")
 
         image = self._overlay_nasa_logo(image)
         self._write_apod_context(data, image_url)
 
         logger.info("=== APOD Plugin: Image generation complete ===")
         return image
+
+    def _fetch_apod(self, session, params):
+        logger.debug("Requesting NASA APOD API...")
+        response = session.get(
+            "https://api.nasa.gov/planetary/apod",
+            params=params,
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+            logger.error(f"NASA API error (status {response.status_code})")
+            raise RuntimeError("Failed to retrieve NASA APOD.")
+
+        data = response.json()
+        logger.debug(
+            f"APOD API response received: {data.get('title', 'No title')}"
+        )
+        return data
+
+    @staticmethod
+    def _random_apod_dates():
+        start = datetime(2015, 1, 1)
+        end = datetime.today()
+        day_count = (end - start).days + 1
+        attempt_count = min(RANDOM_APOD_MAX_ATTEMPTS, day_count)
+        used_offsets = set()
+
+        for _ in range(attempt_count):
+            random_offset = randint(0, day_count - 1)
+            for step in range(day_count):
+                offset = (random_offset + step) % day_count
+                if offset in used_offsets:
+                    continue
+                used_offsets.add(offset)
+                yield (start + timedelta(days=offset)).strftime("%Y-%m-%d")
+                break
 
     def _write_apod_context(self, data, image_url):
         title = str(data.get("title") or "Astronomy Picture of the Day").strip()
