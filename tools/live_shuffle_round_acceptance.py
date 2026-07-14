@@ -291,7 +291,8 @@ def atomic_write_json(path, document: dict) -> None:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-            os.fchmod(stream.fileno(), stat.S_IMODE(original_stat.st_mode))
+            if hasattr(os, "fchmod"):
+                os.fchmod(stream.fileno(), stat.S_IMODE(original_stat.st_mode))
             if hasattr(os, "fchown"):
                 try:
                     os.fchown(
