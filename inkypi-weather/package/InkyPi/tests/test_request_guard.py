@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from security.credentials import CredentialStore
 from security.rate_limit import BoundedRateLimiter
+import security.request_guard as request_guard
 from security.request_guard import install_request_guards
 
 
@@ -132,6 +133,66 @@ def test_configured_device_names_and_ips_are_allowed_hosts(tmp_path):
             base_url=base_url,
         )
         assert response.status_code == 200, host
+
+
+def test_machine_mdns_name_is_an_allowed_host(tmp_path, monkeypatch):
+    monkeypatch.setattr(request_guard.socket, "gethostname", lambda: "testframe")
+    monkeypatch.setattr(
+        request_guard.socket,
+        "getfqdn",
+        lambda *args: "testframe",
+    )
+    app = _secured_app(tmp_path)
+
+    client = app.test_client()
+    base_url = "http://testframe.local"
+    token = _authenticate(client, base_url=base_url)
+    response = client.post(
+        "/mutate",
+        json={},
+        headers={"Host": "testframe.local", "X-CSRF-Token": token},
+        base_url=base_url,
+    )
+
+    assert response.status_code == 200
+
+
+def test_interface_ip_added_after_startup_is_allowed_after_one_refresh(
+    tmp_path,
+    monkeypatch,
+):
+    app = _secured_app(tmp_path)
+    calls = []
+
+    def fake_machine_hosts():
+        calls.append(True)
+        return {"203.0.113.7"}
+
+    monkeypatch.setattr(request_guard, "_machine_hosts", fake_machine_hosts)
+
+    client = app.test_client()
+    base_url = "http://203.0.113.7"
+    token = _authenticate(client, base_url=base_url)
+    allowed = client.post(
+        "/mutate",
+        json={},
+        headers={"Host": "203.0.113.7", "X-CSRF-Token": token},
+        base_url=base_url,
+    )
+
+    evil_client = app.test_client()
+    evil_token = _authenticate(evil_client, base_url="http://evil.test")
+    rejected = evil_client.post(
+        "/mutate",
+        json={},
+        headers={"Host": "evil.test", "X-CSRF-Token": evil_token},
+        base_url="http://evil.test",
+    )
+
+    assert allowed.status_code == 200
+    assert rejected.status_code == 400
+    assert rejected.get_json()["error_code"] == "host_not_allowed"
+    assert len(calls) == 1
 
 
 def test_form_csrf_token_is_accepted(tmp_path):

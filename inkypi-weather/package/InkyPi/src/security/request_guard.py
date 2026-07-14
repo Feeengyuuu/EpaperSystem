@@ -9,6 +9,7 @@ import math
 import os
 import secrets
 import socket
+import time
 from urllib.parse import urlsplit
 
 from flask import current_app, jsonify, request, session
@@ -18,6 +19,7 @@ from security.rate_limit import BoundedRateLimiter
 
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+MACHINE_HOSTS_REFRESH_SECONDS = 60.0
 PUBLIC_MUTATION_ENDPOINTS = frozenset(
     {"auth.login", "auth.setup", "auth.recover"}
 )
@@ -83,6 +85,8 @@ def install_request_guards(
         "device_config": device_config,
         "rate_limiter": limiter,
         "allowed_hosts": allowed_hosts,
+        "machine_hosts": _machine_hosts(),
+        "machine_hosts_refreshed_at": None,
     }
     app.extensions["inkypi_request_guard"] = state
     app.config["CREDENTIAL_STORE"] = credential_store
@@ -100,9 +104,27 @@ def install_request_guards(
             return None
 
         host = _authority_hostname(request.host)
-        current_hosts = allowed_hosts | _device_allowed_hosts(device_config)
-        if host is None or host not in current_hosts:
+        if host is None:
             return _failure("host_not_allowed", 400)
+        current_hosts = (
+            allowed_hosts
+            | state["machine_hosts"]
+            | _device_allowed_hosts(device_config)
+        )
+        if host not in current_hosts:
+            # DHCP leases and mDNS names can change after startup; refresh the
+            # machine-derived set at most once per window before rejecting.
+            refreshed_at = state["machine_hosts_refreshed_at"]
+            now = time.monotonic()
+            if (
+                refreshed_at is None
+                or now - refreshed_at >= MACHINE_HOSTS_REFRESH_SECONDS
+            ):
+                state["machine_hosts_refreshed_at"] = now
+                state["machine_hosts"] = _machine_hosts()
+                current_hosts |= state["machine_hosts"]
+            if host not in current_hosts:
+                return _failure("host_not_allowed", 400)
 
         action = request.endpoint or request.path
         limit, window = _rate_policy(action)
@@ -221,10 +243,23 @@ def _same_origin_when_present() -> bool:
 def _initial_allowed_hosts(device_config) -> set[str]:
     hosts = {"localhost", "127.0.0.1", "::1"}
     hosts.update(_device_allowed_hosts(device_config))
+    for candidate in os.getenv("INKYPI_ALLOWED_HOSTS", "").split(","):
+        normalized = _authority_hostname(candidate)
+        if normalized:
+            hosts.add(normalized)
+    return hosts
+
+
+def _machine_hosts() -> set[str]:
+    """Names and addresses this machine is reachable as, right now."""
+
+    hosts: set[str] = set()
     for candidate in (socket.gethostname(), socket.getfqdn()):
         normalized = _authority_hostname(candidate)
         if normalized:
             hosts.add(normalized)
+            if "." not in normalized and ":" not in normalized:
+                hosts.add(f"{normalized}.local")
     try:
         for item in socket.getaddrinfo(socket.gethostname(), None):
             normalized = _authority_hostname(item[4][0])
@@ -232,10 +267,22 @@ def _initial_allowed_hosts(device_config) -> set[str]:
                 hosts.add(normalized)
     except OSError:
         pass
-    for candidate in os.getenv("INKYPI_ALLOWED_HOSTS", "").split(","):
-        normalized = _authority_hostname(candidate)
-        if normalized:
-            hosts.add(normalized)
+    # A connected UDP socket never transmits; it only asks the kernel which
+    # source address routes toward the (documentation-range) target.  This is
+    # the address DHCP actually handed out, which getaddrinfo(hostname) hides
+    # behind 127.0.1.1 on Debian-family systems.
+    for family, probe_target in (
+        (socket.AF_INET, ("192.0.2.1", 9)),
+        (socket.AF_INET6, ("2001:db8::1", 9)),
+    ):
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe:
+                probe.connect(probe_target)
+                normalized = _authority_hostname(probe.getsockname()[0])
+                if normalized:
+                    hosts.add(normalized)
+        except OSError:
+            pass
     return hosts
 
 
