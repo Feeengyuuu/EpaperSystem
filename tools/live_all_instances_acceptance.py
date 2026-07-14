@@ -2114,7 +2114,48 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the summary.json from --output-dir and exit",
     )
+    parser.add_argument(
+        "--print-runtime-state",
+        action="store_true",
+        help="Print the runtime state document from --runtime-state and exit",
+    )
+    parser.add_argument(
+        "--set-open-display-control",
+        choices=("true", "false"),
+        default=None,
+        help=(
+            "Stop the service, set open_display_control in the device "
+            "config, restart, and exit"
+        ),
+    )
+    parser.add_argument(
+        "--print-cache-tree",
+        action="store_true",
+        help=(
+            "Print cache filenames, sizes, and mtimes under --cache-root "
+            "(never content) and exit"
+        ),
+    )
+    parser.add_argument(
+        "--print-config-keys",
+        default=None,
+        help=(
+            "Print an allowlisted non-secret subset of device config keys "
+            "(comma separated) and exit"
+        ),
+    )
     return parser
+
+
+PRINTABLE_CONFIG_KEYS = frozenset({
+    "active_theme",
+    "active_theme_refresh_failure",
+    "displayed_instance_uuid",
+    "name",
+    "open_display_control",
+    "plugin_cycle_interval_seconds",
+    "timezone",
+})
 
 
 def main(argv=None) -> int:
@@ -2122,6 +2163,90 @@ def main(argv=None) -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.set_open_display_control is not None:
+        desired = args.set_open_display_control == "true"
+        try:
+            document = _read_json(
+                Path(args.config),
+                code="config_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        document = copy.deepcopy(document)
+        document["open_display_control"] = desired
+        controller = SystemdController()
+        controller.stop()
+        try:
+            atomic_write_json(Path(args.config), document)
+        except AuditFailure as error:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": error.code,
+                "service_left_stopped": True,
+            }))
+            return 2
+        controller.start()
+        print(json.dumps({
+            "status": "updated",
+            "open_display_control": desired,
+        }))
+        return 0
+    if args.print_cache_tree:
+        root = Path(args.cache_root)
+        entries = []
+        for path in sorted(root.rglob("*")):
+            try:
+                if not path.is_file():
+                    continue
+                info = path.stat()
+            except OSError:
+                continue
+            entries.append({
+                "name": str(path.relative_to(root)),
+                "size": info.st_size,
+                "mtime": datetime.fromtimestamp(
+                    info.st_mtime,
+                    timezone.utc,
+                ).isoformat(),
+            })
+        print(json.dumps({"entries": entries}, ensure_ascii=True))
+        return 0
+    if args.print_config_keys is not None:
+        try:
+            document = _read_json(
+                Path(args.config),
+                code="config_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        requested = {
+            key.strip()
+            for key in args.print_config_keys.split(",")
+            if key.strip()
+        }
+        payload = {
+            key: document[key]
+            for key in sorted(requested & PRINTABLE_CONFIG_KEYS)
+            if key in document
+        }
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    if args.print_runtime_state:
+        try:
+            payload = _read_json(
+                Path(args.runtime_state),
+                code="runtime_state_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
     if args.print_summary:
         if not args.output_dir:
             print(json.dumps({

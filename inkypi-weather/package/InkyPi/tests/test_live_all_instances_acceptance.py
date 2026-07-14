@@ -1705,6 +1705,124 @@ def test_print_summary_flag_aborts_cleanly_without_summary(
     )
 
 
+def test_print_runtime_state_flag_prints_state_document(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    state_path = tmp_path / "runtime_state.json"
+    state_path.write_text(
+        json.dumps({"instances": {"abc": {"data": {"last_error": "boom"}}}}),
+        encoding="utf-8",
+    )
+
+    exit_code = acceptance.main([
+        "--runtime-state", str(state_path),
+        "--print-runtime-state",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed["instances"]["abc"]["data"]["last_error"] == "boom"
+
+
+def test_print_config_keys_prints_only_allowlisted_scalars(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    config_path = tmp_path / "device.json"
+    config_path.write_text(
+        json.dumps({
+            "active_theme": "night",
+            "plugin_cycle_interval_seconds": 300,
+            "displayed_instance_uuid": "abc",
+            "plugin_settings_secret": "must-not-leak",
+        }),
+        encoding="utf-8",
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--print-config-keys", "active_theme,plugin_cycle_interval_seconds,plugin_settings_secret",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed == {
+        "active_theme": "night",
+        "plugin_cycle_interval_seconds": 300,
+    }
+
+
+def test_print_cache_tree_lists_names_sizes_and_mtimes_only(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    (cache_root / "abc-1-1-day.png").write_bytes(b"px")
+
+    exit_code = acceptance.main([
+        "--cache-root", str(cache_root),
+        "--print-cache-tree",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed["entries"][0]["name"] == "abc-1-1-day.png"
+    assert printed["entries"][0]["size"] == 2
+    assert "mtime" in printed["entries"][0]
+
+
+def test_set_open_display_control_stops_writes_and_restarts(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps({"name": "frame"}), encoding="utf-8")
+    events = []
+
+    class _FakeController:
+        def stop(self):
+            events.append("stop")
+
+        def start(self):
+            interval = json.loads(
+                config_path.read_text(encoding="utf-8")
+            ).get("open_display_control")
+            events.append(f"start:{interval}")
+
+    monkeypatch.setattr(
+        acceptance,
+        "SystemdController",
+        lambda: _FakeController(),
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--set-open-display-control", "true",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed["open_display_control"] is True
+    assert events == ["stop", "start:True"]
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["open_display_control"] is True
+    assert persisted["name"] == "frame"
+
+
 def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
     acceptance,
     tmp_path,
