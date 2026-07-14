@@ -1847,3 +1847,14 @@ def test_comic_vine_issue_cache_path_is_windows_safe(tmp_path, monkeypatch):
 
     assert "comicvine_123" in path.name
     assert ":" not in path.name
+
+
+def test_runtime_cache_dir_uses_safe_namespace_component(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(runtime_root))
+    monkeypatch.delenv("INKYPI_GCD_COMIC_COVERS_CACHE", raising=False)
+    plugin = GcdComicCovers({"id": "gcd_comic_covers"})
+
+    relative = plugin._cache_dir().relative_to(runtime_root)
+
+    assert not any(part.startswith(".") for part in relative.parts)

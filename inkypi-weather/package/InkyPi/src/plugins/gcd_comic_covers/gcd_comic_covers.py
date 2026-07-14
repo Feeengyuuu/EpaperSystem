@@ -2031,7 +2031,18 @@ class GcdComicCovers(BasePlugin):
         return self._cache_dir() / "comicvine" / f"{today.isoformat()}-recent-{int(limit)}.json"
 
     def _cache_dir(self):
-        return self.cache_dir(env_var="INKYPI_GCD_COMIC_COVERS_CACHE", leaf=".gcd_comic_covers_cache", create=False)
+        # The managed CacheManager rejects hidden path components; keep the
+        # dotted directory only for the legacy development layout.
+        leaf = (
+            "gcd_comic_covers_cache"
+            if os.getenv("INKYPI_CACHE_DIR", "").strip()
+            else ".gcd_comic_covers_cache"
+        )
+        return self.cache_dir(
+            env_var="INKYPI_GCD_COMIC_COVERS_CACHE",
+            leaf=leaf,
+            create=False,
+        )
 
     def _dedupe_candidates(self, candidates):
         deduped = {}
