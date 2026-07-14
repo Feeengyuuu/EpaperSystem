@@ -502,6 +502,25 @@ def test_ready_aborts_immediately_if_boot_id_changes(acceptance, tmp_path):
     assert clock[0] == 0
 
 
+def test_reset_health_boot_tracking_accepts_new_boot_after_intentional_restart(
+    acceptance,
+    tmp_path,
+):
+    clock = [0.0]
+    session = _ReadySession([
+        _Response({"status": "ready", "boot_id": "boot-1"}),
+        _Response({"status": "ready", "boot_id": "boot-2"}),
+    ])
+    runner = _runner_for_ready_test(acceptance, tmp_path, session, clock)
+
+    runner._ready()
+    runner.reset_health_boot_tracking()
+    health = runner._ready()
+
+    assert health["status"] == "ready"
+    assert health["boot_id_hash"] == acceptance.hash_identifier("boot-2")
+
+
 def test_data_evidence_requires_new_attempt_success_cache_and_exact_revision(acceptance):
     instance = _instance(acceptance)
     started = datetime(2026, 7, 13, 19, 0, tzinfo=timezone.utc)
@@ -1430,3 +1449,256 @@ def test_safe_instance_result_never_serializes_name_uuid_settings_or_raw_error(a
     assert "private raw provider error" not in encoded
     assert "top-secret" not in encoded
     assert '"settings":' not in encoded
+
+
+def test_cycle_interval_freeze_restores_only_original_interval(acceptance):
+    original = _config()
+    original["plugin_cycle_interval_seconds"] = 300
+    original["refresh_info"] = {
+        "refresh_time": "2026-07-13T18:00:00+00:00",
+        "image_hash": "before-freeze",
+    }
+
+    prepared = acceptance.prepare_cycle_interval_freeze(
+        original,
+        interval_seconds=86400,
+    )
+
+    assert original["plugin_cycle_interval_seconds"] == 300
+    assert prepared.document["plugin_cycle_interval_seconds"] == 86400
+
+    current = json.loads(json.dumps(prepared.document))
+    current["refresh_info"] = {
+        "refresh_time": "2026-07-13T18:10:00+00:00",
+        "image_hash": "real-runtime-write",
+    }
+    current["runtime_written_field"] = {"keep": True}
+
+    restored = acceptance.restore_cycle_interval(current, prepared)
+
+    assert restored["plugin_cycle_interval_seconds"] == 300
+    assert restored["refresh_info"]["image_hash"] == "real-runtime-write"
+    assert restored["runtime_written_field"] == {"keep": True}
+
+
+def test_cycle_interval_freeze_removes_interval_when_originally_absent(acceptance):
+    original = _config()
+    prepared = acceptance.prepare_cycle_interval_freeze(
+        original,
+        interval_seconds=86400,
+    )
+
+    restored = acceptance.restore_cycle_interval(prepared.document, prepared)
+
+    assert "plugin_cycle_interval_seconds" not in restored
+
+
+class _CycleFreezeController:
+    def __init__(self, config_path, events):
+        self.config_path = config_path
+        self.events = events
+
+    def stop(self):
+        self.events.append("stop")
+
+    def start(self):
+        interval = json.loads(self.config_path.read_text(encoding="utf-8")).get(
+            "plugin_cycle_interval_seconds",
+            "default",
+        )
+        self.events.append(f"start:{interval}")
+
+
+class _CycleFreezeRunner:
+    def __init__(self, acceptance, config_path, output_dir, events):
+        self.acceptance = acceptance
+        self.config_path = config_path
+        self.output_dir = output_dir
+        self.events = events
+
+    def reset_health_boot_tracking(self):
+        self.events.append("reset_boot")
+
+    def _ready(self):
+        interval = json.loads(self.config_path.read_text(encoding="utf-8")).get(
+            "plugin_cycle_interval_seconds",
+            "default",
+        )
+        self.events.append(f"ready:{interval}")
+        return {"status": "ready"}
+
+    def run(self):
+        current = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.events.append(
+            f"cas_plan:{current['plugin_cycle_interval_seconds']}"
+        )
+        current["refresh_info"] = {
+            "refresh_time": "2026-07-13T18:10:00+00:00",
+            "image_hash": "real-runtime-write",
+        }
+        current["runtime_written_field"] = {"keep": True}
+        self.acceptance.atomic_write_json(self.config_path, current)
+        return {
+            "schema_version": 1,
+            "status": "passed",
+            "passed": 26,
+            "failed": 0,
+        }
+
+
+def test_cycle_interval_freeze_orders_ready_before_plan_and_restores_in_finally(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    original = _config()
+    original["plugin_cycle_interval_seconds"] = 300
+    original["refresh_info"] = {"image_hash": "before-freeze"}
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    events = []
+    runner = _CycleFreezeRunner(
+        acceptance,
+        config_path,
+        tmp_path / "evidence",
+        events,
+    )
+    controller = _CycleFreezeController(config_path, events)
+    orchestrator = acceptance.CycleIntervalFreezeAcceptance(
+        runner=runner,
+        controller=controller,
+        interval_seconds=86400,
+    )
+
+    summary = orchestrator.run()
+
+    restored = json.loads(config_path.read_text(encoding="utf-8"))
+    assert events == [
+        "stop",
+        "start:86400",
+        "reset_boot",
+        "ready:86400",
+        "cas_plan:86400",
+        "stop",
+        "start:300",
+        "reset_boot",
+        "ready:300",
+    ]
+    assert restored["plugin_cycle_interval_seconds"] == 300
+    assert restored["refresh_info"]["image_hash"] == "real-runtime-write"
+    assert restored["runtime_written_field"] == {"keep": True}
+    assert summary["cycle_interval_freeze_seconds"] == 86400
+    assert summary["cycle_interval_restored"] is True
+    assert summary["service_ready_restored"] is True
+
+
+def test_cycle_interval_freeze_keeps_service_stopped_when_restore_write_fails(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "device.json"
+    original = _config()
+    original["plugin_cycle_interval_seconds"] = 300
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    events = []
+    runner = _CycleFreezeRunner(
+        acceptance,
+        config_path,
+        tmp_path / "evidence",
+        events,
+    )
+    controller = _CycleFreezeController(config_path, events)
+    real_atomic_write = acceptance.atomic_write_json
+    writes = 0
+
+    def fail_restore_write(path, document):
+        nonlocal writes
+        writes += 1
+        if writes == 3:
+            raise acceptance.AuditAbort("injected_restore_write_failure")
+        return real_atomic_write(path, document)
+
+    monkeypatch.setattr(acceptance, "atomic_write_json", fail_restore_write)
+    orchestrator = acceptance.CycleIntervalFreezeAcceptance(
+        runner=runner,
+        controller=controller,
+        interval_seconds=86400,
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        orchestrator.run()
+
+    current = json.loads(config_path.read_text(encoding="utf-8"))
+    persisted = json.loads(
+        (runner.output_dir / "summary.json").read_text(encoding="utf-8")
+    )
+    assert captured.value.code == "cycle_freeze_restore_config_failed"
+    assert current["plugin_cycle_interval_seconds"] == 86400
+    assert events == [
+        "stop",
+        "start:86400",
+        "reset_boot",
+        "ready:86400",
+        "cas_plan:86400",
+        "stop",
+    ]
+    assert persisted["status"] == "aborted"
+    assert persisted["abort_code"] == "cycle_freeze_restore_config_failed"
+    assert persisted["service_left_stopped"] is True
+
+
+def test_cycle_interval_freeze_cli_is_opt_in_and_parameterized(acceptance):
+    assert acceptance._parser().parse_args([]).freeze_cycle_interval_seconds is None
+    assert (
+        acceptance._parser()
+        .parse_args(["--freeze-cycle-interval-seconds", "43200"])
+        .freeze_cycle_interval_seconds
+        == 43200
+    )
+
+
+def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    secret_path = tmp_path / "flask_secret"
+    secret_path.write_text("unit-test-secret", encoding="utf-8")
+    created = {}
+
+    class _FakeRunner:
+        def __init__(self, **_kwargs):
+            self.output_dir = tmp_path / "evidence"
+
+        def run(self):
+            raise AssertionError(
+                "runner.run must go through the freeze orchestrator"
+            )
+
+    class _FakeOrchestrator:
+        def __init__(self, *, runner, controller, interval_seconds):
+            created["runner"] = runner
+            created["controller"] = controller
+            created["interval_seconds"] = interval_seconds
+
+        def run(self):
+            return {"status": "passed", "passed": 26, "failed": 0}
+
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(acceptance, "AcceptanceRunner", _FakeRunner)
+    monkeypatch.setattr(
+        acceptance,
+        "CycleIntervalFreezeAcceptance",
+        _FakeOrchestrator,
+    )
+
+    exit_code = acceptance.main([
+        "--flask-secret", str(secret_path),
+        "--output-dir", str(tmp_path / "evidence"),
+        "--freeze-cycle-interval-seconds", "86400",
+    ])
+
+    assert exit_code == 0
+    assert created["interval_seconds"] == 86400
+    assert isinstance(created["runner"], _FakeRunner)
+    assert isinstance(created["controller"], acceptance.SystemdController)

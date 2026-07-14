@@ -9,6 +9,7 @@ physical-display-commit, and HTTP image evidence for each exact instance revisio
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -19,6 +20,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
+import subprocess
 import sys
 import time
 from urllib.parse import urljoin
@@ -96,6 +99,7 @@ SAFE_JOB_FIELDS = (
     "cancel_requested_at",
 )
 _SAFE_FILE_TOKEN = re.compile(r"[^a-zA-Z0-9_.-]+")
+_MISSING = object()
 
 
 class AuditFailure(RuntimeError):
@@ -113,6 +117,14 @@ class AuditAbort(AuditFailure):
 
 class EvidenceFailure(AuditFailure):
     """One instance failed acceptance; the next instance may still be tested."""
+
+
+@dataclass(frozen=True)
+class PreparedCycleIntervalFreeze:
+    document: dict
+    original_interval_present: bool
+    original_interval_value: object
+    interval_seconds: int
 
 
 @dataclass(frozen=True)
@@ -1223,6 +1235,219 @@ def _read_json(path: Path, *, code: str, abort: bool) -> dict:
     return payload
 
 
+def prepare_cycle_interval_freeze(
+    config: dict,
+    *,
+    interval_seconds: int,
+) -> PreparedCycleIntervalFreeze:
+    """Prepare a full config document with only the cycle interval frozen."""
+
+    if not isinstance(config, dict):
+        raise AuditAbort("freeze_config_not_object")
+    if (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int)
+        or interval_seconds < 1
+    ):
+        raise AuditAbort("freeze_cycle_interval_invalid")
+    original_interval_present = "plugin_cycle_interval_seconds" in config
+    original_interval_value = (
+        copy.deepcopy(config["plugin_cycle_interval_seconds"])
+        if original_interval_present
+        else _MISSING
+    )
+    document = copy.deepcopy(config)
+    document["plugin_cycle_interval_seconds"] = interval_seconds
+    return PreparedCycleIntervalFreeze(
+        document=document,
+        original_interval_present=original_interval_present,
+        original_interval_value=original_interval_value,
+        interval_seconds=interval_seconds,
+    )
+
+
+def restore_cycle_interval(
+    current: dict,
+    prepared: PreparedCycleIntervalFreeze,
+) -> dict:
+    """Restore only the pre-test cycle interval onto the latest config."""
+
+    if not isinstance(current, dict):
+        raise AuditAbort("freeze_restore_config_not_object")
+    document = copy.deepcopy(current)
+    if prepared.original_interval_present:
+        document["plugin_cycle_interval_seconds"] = copy.deepcopy(
+            prepared.original_interval_value,
+        )
+    else:
+        document.pop("plugin_cycle_interval_seconds", None)
+    return document
+
+
+def atomic_write_json(path, document: dict) -> None:
+    """Atomically replace JSON while preserving owner and permission bits."""
+
+    target = Path(path)
+    try:
+        original_stat = target.stat()
+    except OSError as error:
+        raise AuditAbort("config_stat_failed") from error
+    encoded = json.dumps(
+        document,
+        ensure_ascii=True,
+        indent=2,
+        sort_keys=True,
+    ).encode("utf-8") + b"\n"
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+    descriptor = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            stat.S_IMODE(original_stat.st_mode),
+        )
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+            if hasattr(os, "fchmod"):
+                os.fchmod(stream.fileno(), stat.S_IMODE(original_stat.st_mode))
+            if hasattr(os, "fchown"):
+                try:
+                    os.fchown(
+                        stream.fileno(),
+                        original_stat.st_uid,
+                        original_stat.st_gid,
+                    )
+                except OSError:
+                    pass
+        os.replace(temporary, target)
+        try:
+            directory_fd = os.open(target.parent, os.O_RDONLY)
+        except OSError:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(directory_fd)
+    except AuditFailure:
+        raise
+    except OSError as error:
+        raise AuditAbort("config_atomic_write_failed") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class SystemdController:
+    def __init__(
+        self,
+        *,
+        service_name="inkypi.service",
+        run=subprocess.run,
+        timeout_seconds=90,
+    ):
+        self.service_name = str(service_name)
+        self._run = run
+        self.timeout_seconds = int(timeout_seconds)
+
+    def _call(self, action: str) -> None:
+        try:
+            completed = self._run(
+                ["systemctl", action, self.service_name],
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise AuditAbort(f"service_{action}_failed") from error
+        if completed.returncode != 0:
+            raise AuditAbort(f"service_{action}_failed")
+
+    def stop(self) -> None:
+        self._call("stop")
+
+    def start(self) -> None:
+        self._call("start")
+
+
+class CycleIntervalFreezeAcceptance:
+    """Run the acceptance sweep with the plugin cycle interval frozen.
+
+    The service is stopped around each config write so the runtime never sees
+    a partially applied document.  If the restore write fails, the service is
+    intentionally left stopped: restarting it would keep the frozen interval
+    live on the device with nobody watching.
+    """
+
+    def __init__(self, *, runner, controller, interval_seconds: int):
+        self.runner = runner
+        self.controller = controller
+        self.interval_seconds = interval_seconds
+
+    def run(self) -> dict:
+        config_path = Path(self.runner.config_path)
+        original = _read_json(
+            config_path,
+            code="cycle_freeze_config_read_failed",
+            abort=True,
+        )
+        prepared = prepare_cycle_interval_freeze(
+            original,
+            interval_seconds=self.interval_seconds,
+        )
+        self.controller.stop()
+        atomic_write_json(config_path, prepared.document)
+        self._start_and_wait_ready()
+        try:
+            summary = self.runner.run()
+        finally:
+            self._restore(config_path, prepared)
+        summary["cycle_interval_freeze_seconds"] = prepared.interval_seconds
+        summary["cycle_interval_restored"] = True
+        summary["service_ready_restored"] = True
+        return summary
+
+    def _start_and_wait_ready(self) -> None:
+        self.controller.start()
+        self.runner.reset_health_boot_tracking()
+        self.runner._ready()
+
+    def _restore(
+        self,
+        config_path: Path,
+        prepared: PreparedCycleIntervalFreeze,
+    ) -> None:
+        self.controller.stop()
+        current = _read_json(
+            config_path,
+            code="cycle_freeze_restore_read_failed",
+            abort=True,
+        )
+        document = restore_cycle_interval(current, prepared)
+        try:
+            atomic_write_json(config_path, document)
+        except AuditFailure as error:
+            write_safe_json(Path(self.runner.output_dir) / "summary.json", {
+                "schema_version": 1,
+                "status": "aborted",
+                "abort_code": "cycle_freeze_restore_config_failed",
+                "service_left_stopped": True,
+            })
+            raise AuditAbort("cycle_freeze_restore_config_failed") from error
+        self._start_and_wait_ready()
+
+
 def timeout_for(instance: InstancePlan) -> int:
     return (
         HEAVY_TIMEOUT_SECONDS
@@ -1266,6 +1491,11 @@ class AcceptanceRunner:
         self.sleep = sleep
         self._boot_hash = None
         self._health_events = []
+
+    def reset_health_boot_tracking(self) -> None:
+        """Forget the pinned boot id ahead of an intentional service restart."""
+
+        self._boot_hash = None
 
     def _record_health_event(self, status, reason_codes) -> None:
         event = {
@@ -1870,6 +2100,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--plugin-root", default=DEFAULT_PLUGIN_ROOT)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument(
+        "--freeze-cycle-interval-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Freeze plugin_cycle_interval_seconds to this value for the run, "
+            "then restore the original configuration"
+        ),
+    )
     return parser
 
 
@@ -1896,7 +2135,15 @@ def main(argv=None) -> int:
             data_root=args.data_root,
             plugin_root=args.plugin_root,
         )
-        summary = runner.run()
+        if args.freeze_cycle_interval_seconds is not None:
+            orchestrator = CycleIntervalFreezeAcceptance(
+                runner=runner,
+                controller=SystemdController(),
+                interval_seconds=args.freeze_cycle_interval_seconds,
+            )
+            summary = orchestrator.run()
+        else:
+            summary = runner.run()
     except AuditAbort as error:
         print(json.dumps({"status": "aborted", "abort_code": error.code}))
         return 2
