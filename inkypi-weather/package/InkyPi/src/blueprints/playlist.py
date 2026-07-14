@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
@@ -99,16 +99,76 @@ def add_plugin():
         return jsonify({"error": f"An error occurred: {error}"}), 500
     return jsonify({"success": True, "message": "Scheduled refresh configured."})
 
+def _timestamp_sort_key(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _latest_success_timestamp(runtime_instance, fallback):
+    """Newest content-render success across runtime lanes and legacy config.
+
+    The theme lane is excluded: a theme-only redraw changes presentation, not
+    content, so it must not advance the page's "Refreshed" badge.
+    """
+    candidates = []
+    if runtime_instance is not None:
+        lanes = (
+            runtime_instance.data,
+            runtime_instance.live,
+            runtime_instance.presentation,
+        )
+        candidates.extend(
+            lane.last_success_at for lane in lanes if lane.last_success_at
+        )
+        if runtime_instance.legacy_cache_success_at:
+            candidates.append(runtime_instance.legacy_cache_success_at)
+    if fallback:
+        candidates.append(fallback)
+    if not candidates:
+        return None
+    return max(candidates, key=_timestamp_sort_key)
+
+
+def _overlay_runtime_refresh_times(playlist_config, refresh_task):
+    """Merge runtime success timestamps into the serialized playlist payload.
+
+    Successful refreshes are persisted in the runtime state store, not the
+    playlist config, so the page must read both and show the newest.
+    """
+    try:
+        runtime_instances = refresh_task.runtime_state.snapshot().instances
+    except Exception:
+        return playlist_config
+    for playlist in playlist_config.get("playlists", []):
+        for plugin in playlist.get("plugins", []):
+            merged = _latest_success_timestamp(
+                runtime_instances.get(plugin.get("instance_uuid")),
+                plugin.get("latest_refresh_time"),
+            )
+            if merged:
+                plugin["latest_refresh_time"] = merged
+    return playlist_config
+
+
 @playlist_bp.route('/playlist')
 def playlists():
     device_config = current_app.config['DEVICE_CONFIG']
+    refresh_task = current_app.config['REFRESH_TASK']
     playlist_manager = device_config.get_playlist_manager()
     refresh_info = device_config.get_refresh_info()
     plugins_list = device_config.get_plugins()
 
     return render_template(
         'playlist.html',
-        playlist_config=playlist_manager.to_dict(),
+        playlist_config=_overlay_runtime_refresh_times(
+            playlist_manager.to_dict(),
+            refresh_task,
+        ),
         refresh_info=refresh_info.to_dict(),
         plugins={p["id"]: p for p in plugins_list}
     )

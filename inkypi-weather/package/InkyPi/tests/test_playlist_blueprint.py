@@ -13,6 +13,7 @@ import blueprints.playlist as playlist_blueprint
 import blueprints.plugin as plugin_blueprint
 import utils.app_utils as app_utils
 from model import PlaylistManager
+from runtime.runtime_state import InstanceRuntimeState, RefreshLaneState
 
 
 INVALID_REFRESH_SETTINGS = [
@@ -114,6 +115,9 @@ class RecordingManager:
 
     def get_playlist_names(self):
         return self.manager.get_playlist_names()
+
+    def to_dict(self):
+        return self.manager.to_dict()
 
 
 class RecordingQueue:
@@ -535,6 +539,94 @@ def test_failed_create_and_update_mutations_have_no_write_or_signal(playlist_env
     assert duplicate.status_code == 400
     assert missing.status_code == 400
     assert not any(event[0] in {"write", "signal"} for event in playlist_env.events)
+
+
+def _playlist_page_env(playlist_env, monkeypatch):
+    captured = {}
+
+    def fake_render(_template, **kwargs):
+        captured.update(kwargs)
+        return "rendered"
+
+    monkeypatch.setattr(playlist_blueprint, "render_template", fake_render)
+    playlist_env.device_config.get_refresh_info = lambda: SimpleNamespace(
+        to_dict=lambda: {},
+    )
+    playlist_env.device_config.get_plugins = lambda: []
+    return captured
+
+
+def test_playlist_page_overlays_runtime_success_times(playlist_env, monkeypatch):
+    captured = _playlist_page_env(playlist_env, monkeypatch)
+    playlist_env.task.runtime_state = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            instances={
+                "home-uuid": InstanceRuntimeState(
+                    data=RefreshLaneState(
+                        last_success_at="2026-07-14T02:00:00+00:00",
+                    ),
+                ),
+            },
+        ),
+    )
+
+    response = playlist_env.client.get("/playlist")
+
+    assert response.status_code == 200
+    plugins = {
+        plugin["name"]: plugin
+        for playlist in captured["playlist_config"]["playlists"]
+        for plugin in playlist["plugins"]
+    }
+    assert plugins["Home"]["latest_refresh_time"] == "2026-07-14T02:00:00+00:00"
+    assert plugins["Office"]["latest_refresh_time"] is None
+
+
+def test_playlist_page_renders_without_runtime_state(playlist_env, monkeypatch):
+    captured = _playlist_page_env(playlist_env, monkeypatch)
+
+    response = playlist_env.client.get("/playlist")
+
+    assert response.status_code == 200
+    assert "playlist_config" in captured
+
+
+def test_latest_success_prefers_newest_content_lane_and_ignores_theme():
+    runtime = InstanceRuntimeState(
+        data=RefreshLaneState(last_success_at="2026-07-10T00:00:00+00:00"),
+        presentation=RefreshLaneState(
+            last_success_at="2026-07-14T03:00:00+00:00",
+        ),
+        theme=RefreshLaneState(last_success_at="2026-07-15T00:00:00+00:00"),
+    )
+
+    merged = playlist_blueprint._latest_success_timestamp(
+        runtime,
+        "2026-07-09T17:00:00-07:00",
+    )
+
+    assert merged == "2026-07-14T03:00:00+00:00"
+
+
+def test_latest_success_keeps_config_fallback_when_it_is_newest():
+    runtime = InstanceRuntimeState(
+        data=RefreshLaneState(last_success_at="2026-07-10T00:00:00+00:00"),
+    )
+
+    merged = playlist_blueprint._latest_success_timestamp(
+        runtime,
+        "2026-07-12T09:00:00-07:00",
+    )
+
+    assert merged == "2026-07-12T09:00:00-07:00"
+
+
+def test_latest_success_handles_missing_runtime_and_naive_fallback():
+    assert playlist_blueprint._latest_success_timestamp(None, None) is None
+    assert (
+        playlist_blueprint._latest_success_timestamp(None, "2026-07-01T00:00:00")
+        == "2026-07-01T00:00:00"
+    )
 
 
 def test_playlist_mutations_do_not_traverse_live_plugin_lists():
