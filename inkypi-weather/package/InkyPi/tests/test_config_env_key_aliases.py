@@ -176,6 +176,33 @@ def test_load_env_key_does_not_reparse_unchanged_env_files(monkeypatch):
     assert len(calls) == first_call_count
 
 
+def test_load_env_key_uses_injected_environment_when_env_file_is_protected(
+    monkeypatch,
+):
+    env_path = cache_dir_for("protected_service_env") / ".env"
+    env_path.write_text("NASA_SECRET=file-value\n", encoding="utf-8")
+    monkeypatch.setenv("NASA_SECRET", "systemd-injected-value")
+
+    config = Config.__new__(Config)
+    config.runtime_paths = object()
+    monkeypatch.setattr(config, "_env_file_candidates", lambda: [str(env_path)])
+    real_access = config_module.os.access
+    monkeypatch.setattr(
+        config_module.os,
+        "access",
+        lambda path, mode: (
+            False if Path(path) == env_path else real_access(path, mode)
+        ),
+    )
+
+    def protected_load(*_args, **_kwargs):
+        raise AssertionError("protected env file must not be opened")
+
+    monkeypatch.setattr(config_module, "load_dotenv", protected_load)
+
+    assert config.load_env_key("NASA_SECRET") == "systemd-injected-value"
+
+
 def test_write_config_persists_device_json_through_store(monkeypatch, tmp_path):
     config, config_path = _device_config(
         monkeypatch,

@@ -473,6 +473,14 @@ def display_plugin_instance():
     playlist_name = data.get("playlist_name")
     plugin_id = data.get("plugin_id")
     plugin_instance_name = data.get("plugin_instance")
+    request_presentation = data.get("request_presentation", True)
+
+    if not isinstance(request_presentation, bool):
+        return _error_response(
+            "request_presentation must be a boolean",
+            "refresh_rejected",
+            400,
+        )
 
     try:
         selection = playlist_manager.resolve_plugin_instance_snapshot(
@@ -491,6 +499,7 @@ def display_plugin_instance():
             force=False,
             display_cached_only=True,
             force_hardware_write=True,
+            request_presentation_after_display=request_presentation,
             expected_playlist_name=selection.playlist_name,
             expected_generation=snapshot.structural_generation,
             expected_settings_revision=snapshot.settings_revision,

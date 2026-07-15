@@ -4306,6 +4306,7 @@ class RefreshTask:
         expected_settings_revision=None,
         require_active=True,
         force_hardware_write=False,
+        request_presentation_after_display=True,
     ):
         """Queue an immutable, cache-only playlist display command by UUID."""
         if not self.running and self.refresh_queue.snapshot().accepting:
@@ -4402,6 +4403,9 @@ class RefreshTask:
                 else resolved_theme_mode
             ),
             force_hardware_write=bool(force_hardware_write),
+            allow_prepared_presentation=bool(
+                request_presentation_after_display
+            ),
         )
         job = self.refresh_queue.submit(command)
         return self._job_payload(self.refresh_queue.get_entry(job.id))

@@ -571,11 +571,21 @@ def _with_job_context(
     return EvidenceFailure(error.code, safe_details=details)
 
 
-def submit_job(session, base_url: str, endpoint: str, instance: InstancePlan) -> dict:
+def submit_job(
+    session,
+    base_url: str,
+    endpoint: str,
+    instance: InstancePlan,
+    *,
+    extra_payload: dict | None = None,
+) -> dict:
+    request_payload = instance.request_payload()
+    if extra_payload:
+        request_payload.update(extra_payload)
     try:
         response = session.post(
             _url(base_url, endpoint),
-            json=instance.request_payload(),
+            json=request_payload,
             timeout=HTTP_TIMEOUT_SECONDS,
         )
     except requests.RequestException as error:
@@ -1473,6 +1483,7 @@ class AcceptanceRunner:
         cache_root=DEFAULT_CACHE_ROOT,
         data_root=DEFAULT_DATA_ROOT,
         plugin_root=DEFAULT_PLUGIN_ROOT,
+        verify_post_display_presentation=True,
         utcnow=lambda: datetime.now(timezone.utc),
         monotonic=time.monotonic,
         sleep=time.sleep,
@@ -1486,6 +1497,9 @@ class AcceptanceRunner:
         self.cache_root = Path(cache_root)
         self.data_root = Path(data_root)
         self.plugin_root = Path(plugin_root)
+        self.verify_post_display_presentation = bool(
+            verify_post_display_presentation
+        )
         self.utcnow = utcnow
         self.monotonic = monotonic
         self.sleep = sleep
@@ -1891,6 +1905,11 @@ class AcceptanceRunner:
                 self.base_url,
                 "/display_plugin_instance",
                 instance,
+                extra_payload=(
+                    None
+                    if self.verify_post_display_presentation
+                    else {"request_presentation": False}
+                ),
             )
             display_job = poll_job(
                 self.session,
@@ -1908,6 +1927,21 @@ class AcceptanceRunner:
                 artifact_suffix="display",
                 display_started_at=display_started_at,
             )
+
+            if not self.verify_post_display_presentation:
+                return safe_instance_result(
+                    instance,
+                    status="passed",
+                    data_job=data_job,
+                    display_job=display_job,
+                    data_evidence=data_evidence,
+                    display_evidence=display_evidence,
+                    presentation_evidence={
+                        "completion": "not_required_after_fresh_data",
+                        "request_origin": "suppressed",
+                    },
+                    artifacts=artifacts,
+                )
 
             presentation_evidence = None
             current_request = self._presentation_request(runtime, instance)
@@ -2100,6 +2134,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--plugin-root", default=DEFAULT_PLUGIN_ROOT)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument(
+        "--verify-post-display-presentation",
+        action="store_true",
+        help=(
+            "Also wait for the legacy refresh-after-display receipt. By "
+            "default, fresh DATA evidence plus one physical display is final."
+        ),
+    )
     parser.add_argument(
         "--freeze-cycle-interval-seconds",
         type=int,
@@ -2386,6 +2428,9 @@ def main(argv=None) -> int:
             cache_root=args.cache_root,
             data_root=args.data_root,
             plugin_root=args.plugin_root,
+            verify_post_display_presentation=(
+                args.verify_post_display_presentation
+            ),
         )
         if args.freeze_cycle_interval_seconds is not None:
             orchestrator = CycleIntervalFreezeAcceptance(

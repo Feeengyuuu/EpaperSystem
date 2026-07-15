@@ -10255,6 +10255,35 @@ def test_manual_cache_display_records_request_but_live_theme_followups_do_not(
     assert results["theme"] is None
 
 
+def test_exact_manual_display_can_suppress_redundant_presentation_request(
+    monkeypatch,
+):
+    task, _config, _clock, playlist, _display = _make_presentation_task(
+        "manual-display-suppresses-presentation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    task.start()
+    try:
+        assert task.wait_until_waiting(timeout=1.0)
+        job = task.submit_playlist_display(
+            instance.instance_uuid,
+            expected_playlist_name=playlist.name,
+            expected_generation=instance.structural_generation,
+            expected_settings_revision=instance.settings_revision,
+            request_presentation_after_display=False,
+        )
+        result = task.wait_for_job(job["id"], timeout=1.0)
+    finally:
+        task.stop(join_timeout=1.0)
+
+    assert result["status"] == "completed"
+    state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
+    assert state is None or state.presentation_request is None
+
+
 def test_refresh_on_display_rerender_rejects_unattested_output():
     plugin = UnattestedRefreshOnDisplayPlugin()
     request = PresentationRequestContext(

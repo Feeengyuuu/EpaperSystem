@@ -1552,13 +1552,15 @@ class PixivR18Ranking(BasePlugin):
         return _get_value(illust, "illust_id", "") or _get_value(illust, "id", "")
 
     def _load_session_cookie(self, device_config):
-        value = ""
+        value = str(os.getenv("PIXIV_PHPSESSID", "") or "").strip()
+        if value:
+            return value
         if device_config is not None and hasattr(device_config, "load_env_key"):
             try:
                 value = device_config.load_env_key("PIXIV_PHPSESSID") or ""
             except Exception as exc:
                 logger.warning("Could not read PIXIV_PHPSESSID from device config: %s", exc)
-        return str(value or os.getenv("PIXIV_PHPSESSID", "") or "").strip()
+        return str(value or "").strip()
 
     def _ranking_mode(self, settings):
         mode = str(settings.get("rankingMode") or DEFAULT_RANKING_MODE).strip()

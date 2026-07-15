@@ -1354,6 +1354,88 @@ def test_run_instance_rejects_missing_expected_presentation_request(
     assert captured.value.code == "presentation_request_missing"
 
 
+def test_run_instance_can_verify_fresh_data_display_without_post_display_refresh(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    base = _instance(acceptance)
+    instance = acceptance.InstancePlan(
+        index=base.index,
+        playlist_name=base.playlist_name,
+        plugin_id=base.plugin_id,
+        instance_name=base.instance_name,
+        instance_uuid=base.instance_uuid,
+        structural_generation=base.structural_generation,
+        settings_revision=base.settings_revision,
+        expects_presentation_refresh=True,
+    )
+    timestamp = datetime(2026, 7, 13, 19, 2, tzinfo=timezone.utc).isoformat()
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(_runtime(instance, timestamp, request=None, receipt=None)),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(_manifest(instance, "a" * 64, timestamp)),
+        encoding="utf-8",
+    )
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=tmp_path / "unused-config.json",
+        runtime_state_path=runtime_path,
+        display_manifest_path=manifest_path,
+        output_dir=tmp_path / "evidence",
+        verify_post_display_presentation=False,
+    )
+    submissions = []
+
+    def submit(_session, _url, endpoint, _instance, **kwargs):
+        submissions.append((endpoint, kwargs))
+        return {"id": "job"}
+
+    monkeypatch.setattr(acceptance, "submit_job", submit)
+    monkeypatch.setattr(
+        acceptance,
+        "poll_job",
+        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_data_evidence",
+        lambda *_args, **_kwargs: ({}, {"fresh": True}),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_capture_display",
+        lambda *_args, **_kwargs: (
+            _runtime(instance, timestamp, request=None, receipt=None, commit_id="b" * 32),
+            _manifest(instance, "b" * 64, timestamp, commit_id="b" * 32),
+            {"hardware_written": True},
+            {"image": "display.png", "headers": "display.headers.json"},
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_presentation",
+        lambda *_args, **_kwargs: pytest.fail("post-display refresh must not be awaited"),
+    )
+
+    result = runner._run_instance(instance)
+
+    assert result["status"] == "passed"
+    assert result["presentation_evidence"] == {
+        "completion": "not_required_after_fresh_data",
+        "request_origin": "suppressed",
+    }
+    assert submissions[1] == (
+        "/display_plugin_instance",
+        {"extra_payload": {"request_presentation": False}},
+    )
+
+
 def test_wait_for_display_presentation_start_accepts_late_exact_request(
     acceptance,
     tmp_path,

@@ -1015,9 +1015,26 @@ def test_display_submits_only_the_resolved_immutable_uuid(plugin_env):
             "expected_settings_revision": 1,
             "require_active": False,
             "force_hardware_write": True,
+            "request_presentation_after_display": True,
         },
     )
     assert not any(event[0] == "submit_manual" for event in plugin_env.events)
+
+
+def test_display_can_suppress_redundant_post_display_refresh(plugin_env):
+    response = plugin_env.client.post(
+        "/display_plugin_instance",
+        json={
+            "playlist_name": "Default",
+            "plugin_id": "weather",
+            "plugin_instance": "Home",
+            "request_presentation": False,
+        },
+    )
+
+    assert response.status_code == 202
+    submit = next(event for event in plugin_env.events if event[0] == "submit_display")
+    assert submit[2]["request_presentation_after_display"] is False
 
 
 def test_data_refresh_submits_the_resolved_exact_cas_without_display(plugin_env):

@@ -49,6 +49,27 @@ class DummyDeviceConfig:
         return ""
 
 
+def test_session_cookie_prefers_process_environment_over_protected_env_file(
+    monkeypatch,
+):
+    calls = []
+
+    class ProtectedEnvConfig:
+        def load_env_key(self, _key):
+            calls.append(_key)
+            raise PermissionError("service user cannot read root-owned env file")
+
+    monkeypatch.setenv("PIXIV_PHPSESSID", "process-session")
+
+    assert (
+        PixivR18Ranking({"id": "pixiv_r18_ranking"})._load_session_cookie(
+            ProtectedEnvConfig()
+        )
+        == "process-session"
+    )
+    assert calls == []
+
+
 class RecordingLoader:
     def __init__(self):
         self.paths = []

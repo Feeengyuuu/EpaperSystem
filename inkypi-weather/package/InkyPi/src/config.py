@@ -306,18 +306,27 @@ class Config:
         cached_mtimes = getattr(self, "_env_file_mtimes", None)
         current_mtimes = {}
         for env_file in self._env_file_candidates():
-            if env_file and os.path.isfile(env_file):
+            if (
+                env_file
+                and os.path.isfile(env_file)
+                and os.access(env_file, os.R_OK)
+            ):
                 try:
                     current_mtimes[env_file] = os.path.getmtime(env_file)
                 except OSError:
                     current_mtimes[env_file] = None
         if cached_mtimes is not None and current_mtimes == cached_mtimes:
             return
-        for env_file in current_mtimes:
-            load_dotenv(env_file, override=True)
+        loaded_mtimes = {}
+        for env_file, mtime in current_mtimes.items():
+            try:
+                load_dotenv(env_file, override=True)
+            except OSError:
+                continue
+            loaded_mtimes[env_file] = mtime
         if getattr(self, "runtime_paths", None) is None:
             load_dotenv(override=True)
-        self._env_file_mtimes = current_mtimes
+        self._env_file_mtimes = loaded_mtimes
 
     def _env_key_candidates(self, key):
         """Returns accepted names for a logical environment key."""
