@@ -760,10 +760,6 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
 
     def _draw_background(self, draw, width, height, palette):
         draw.rectangle((0, 0, width, height), fill=palette["bg"])
-        for x in range(-80, width + 80, 90):
-            draw.line((x, 0, x + 180, height), fill=palette["pattern"], width=2)
-        for y in range(28, height, 64):
-            draw.line((0, y, width, y - 34), fill=(26, 27, 31), width=1)
         draw.rectangle((0, 0, width - 1, height - 1), outline=(87, 68, 37), width=4)
 
     def _draw_crest(self, draw, box, palette):

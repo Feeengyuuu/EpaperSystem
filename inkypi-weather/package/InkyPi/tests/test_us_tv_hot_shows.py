@@ -10,6 +10,22 @@ from plugins.box_office_top_movies.box_office_top_movies import BoxOfficeMovie  
 from plugins.us_tv_hot_shows.us_tv_hot_shows import UsTvHotShows  # noqa: E402
 
 
+def test_streaming_background_stays_solid_for_color_epaper():
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+
+    for colors in (
+        {"mode": "paper", "paper": (244, 238, 246), "line": (185, 188, 194), "shadow": (255, 255, 255)},
+        {"mode": "streaming", "paper": (20, 13, 25), "line": (46, 48, 56), "shadow": (0, 0, 0)},
+    ):
+        image = Image.new("RGB", (96, 64), colors["paper"])
+
+        plugin._draw_streaming_background(image, colors)
+
+        assert image.getcolors(maxcolors=image.width * image.height) == [
+            (image.width * image.height, colors["paper"])
+        ]
+
+
 class DummyDeviceConfig:
     def get_resolution(self):
         return (800, 480)

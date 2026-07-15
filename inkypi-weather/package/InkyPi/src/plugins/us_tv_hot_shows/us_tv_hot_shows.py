@@ -386,18 +386,7 @@ class UsTvHotShows(BoxOfficeTopMovies):
         return image
 
     def _draw_streaming_background(self, image, colors):
-        width, height = image.size
-        draw = ImageDraw.Draw(image)
-        if colors["mode"] == "paper":
-            for y in range(0, height, 18):
-                draw.line((0, y, width, y), fill=colors["line"], width=1)
-            return
-        for y in range(height):
-            ratio = y / max(1, height - 1)
-            shade = tuple(int(colors["paper"][i] * (1 - ratio * 0.13)) for i in range(3))
-            draw.line((0, y, width, y), fill=shade)
-        for x in range(0, width, max(22, width // 34)):
-            draw.rectangle((x, 0, x + 2, height), fill=colors["shadow"])
+        image.paste(colors["paper"], (0, 0, image.width, image.height))
 
     def _title_for_source(self, source_label):
         if source_label == "Demo Fallback":

@@ -29,6 +29,25 @@ from plugins.base_plugin.render_provenance import read_source_provenance  # noqa
 from security.ssrf import validate_browser_target  # noqa: E402
 
 
+def test_background_layer_stays_flat_for_color_epaper():
+    plugin = TechPulse({"id": "tech_pulse"})
+    background = (12, 17, 28)
+    image = Image.new("RGB", (96, 64), background)
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_background_grid(
+        draw,
+        image.width,
+        image.height,
+        {"grid": (31, 38, 51), "rule": (64, 70, 84)},
+        1.0,
+    )
+
+    assert image.getcolors(maxcolors=image.width * image.height) == [
+        (image.width * image.height, background)
+    ]
+
+
 class FakeDeviceConfig:
     def __init__(self, resolution=(800, 480), timezone_name="America/Los_Angeles", orientation="horizontal"):
         self.resolution = resolution

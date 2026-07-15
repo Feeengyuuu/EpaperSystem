@@ -10,6 +10,23 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
 
+def test_dashboard_background_layer_stays_flat_for_color_epaper():
+    plugin = LoLInfo({"id": "lol_info"})
+    background = (8, 20, 22)
+    image = Image.new("RGB", (96, 64), background)
+
+    plugin._draw_background(
+        ImageDraw.Draw(image),
+        image.width,
+        image.height,
+        stripe=(16, 31, 34),
+    )
+
+    assert image.getcolors(maxcolors=image.width * image.height) == [
+        (image.width * image.height, background)
+    ]
+
+
 def install_import_stubs():
     base_pkg = types.ModuleType("plugins.base_plugin")
     sys.modules.setdefault("plugins.base_plugin", base_pkg)

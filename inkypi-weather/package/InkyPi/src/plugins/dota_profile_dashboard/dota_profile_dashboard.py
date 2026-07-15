@@ -615,10 +615,7 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         return image
 
     def _draw_background_pattern(self, draw, width, height):
-        for x in range(-40, width, 86):
-            for y in range(-30, height, 72):
-                draw.line((x, y + 34, x + 34, y), fill=(12, 22, 36), width=10)
-                draw.line((x + 34, y, x + 68, y + 34), fill=(12, 22, 36), width=10)
+        return None
 
     def _rect(self, draw, box, fill, outline):
         draw.rectangle(box, fill=fill, outline=outline, width=2)

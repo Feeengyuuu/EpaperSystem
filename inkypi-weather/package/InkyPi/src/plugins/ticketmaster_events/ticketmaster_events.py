@@ -741,18 +741,14 @@ class TicketmasterEvents(BoxOfficeTopMovies):
 
     def _draw_background(self, draw, dimensions, colors):
         width, height = dimensions
+        draw.rectangle((0, 0, width, height), fill=colors["paper"])
         if colors["mode"] == "dark":
-            draw.rectangle((0, 0, width, height), fill=colors["paper"])
             return
         if colors["mode"] == "color":
-            draw.rectangle((0, 0, width, height), fill=colors["paper"])
             draw.rectangle((0, 0, width, 74), fill=colors["header_band"])
             draw.rectangle((0, 74, width, 80), fill=colors["accent"])
             draw.rectangle((0, height - 42, width, height), fill=colors["footer_band"])
             draw.rectangle((0, 0, 10, height), fill=colors["accent"])
-            return
-        for y in range(0, height, 48):
-            draw.line((0, y, width, y), fill=colors["line"], width=1)
 
     def _palette(self, settings):
         injected = settings.get("_inkypi_theme")

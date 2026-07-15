@@ -2,7 +2,7 @@ import sys
 import types
 from pathlib import Path
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
@@ -44,6 +44,19 @@ install_import_stubs()
 
 from config import Config  # noqa: E402
 from plugins.wow_profile_dashboard.wow_profile_dashboard import WowProfileDashboard  # noqa: E402
+
+
+def test_dashboard_background_interior_stays_flat_for_color_epaper():
+    plugin = WowProfileDashboard({"id": "wow_profile_dashboard"})
+    palette = {"bg": (8, 9, 12), "pattern": (24, 26, 31)}
+    image = Image.new("RGB", (96, 64), palette["bg"])
+
+    plugin._draw_background(ImageDraw.Draw(image), image.width, image.height, palette)
+
+    interior = image.crop((4, 4, image.width - 4, image.height - 4))
+    assert interior.getcolors(maxcolors=interior.width * interior.height) == [
+        (interior.width * interior.height, palette["bg"])
+    ]
 
 
 class FakeDeviceConfig:

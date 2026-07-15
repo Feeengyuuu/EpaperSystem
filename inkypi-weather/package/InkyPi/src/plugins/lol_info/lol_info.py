@@ -1805,8 +1805,7 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         draw.rectangle(box, fill=fill, outline=outline, width=2)
 
     def _draw_background(self, draw, width, height, stripe=(18, 16, 20)):
-        for x in range(-40, width, 88):
-            draw.line((x, 0, x + 80, height), fill=stripe, width=8)
+        return None
 
     def _font(self, size, bold=False, prefer_hangul=False):
         font = get_base_ui_font(int(size), bold=bool(bold))

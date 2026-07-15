@@ -60,6 +60,23 @@ def image_digest(image):
     return hashlib.sha256(image.tobytes()).hexdigest()
 
 
+def test_north_america_box_office_background_stays_solid_for_color_epaper():
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    colors = {
+        "mode": "cinema",
+        "paper": (18, 13, 11),
+        "line": (46, 48, 56),
+        "shadow": (0, 0, 0),
+    }
+    image = Image.new("RGB", (96, 64), colors["paper"])
+
+    plugin._draw_cinema_background(image, colors)
+
+    assert image.getcolors(maxcolors=image.width * image.height) == [
+        (image.width * image.height, colors["paper"])
+    ]
+
+
 def test_north_america_cache_invalidates_when_tmdb_credentials_appear(
     monkeypatch,
     tmp_path,

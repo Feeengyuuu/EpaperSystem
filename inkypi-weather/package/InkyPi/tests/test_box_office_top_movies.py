@@ -60,6 +60,22 @@ def image_digest(image):
     return hashlib.sha256(image.tobytes()).hexdigest()
 
 
+def test_cinema_background_stays_solid_for_color_epaper():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+
+    for colors in (
+        {"mode": "paper", "paper": (239, 233, 215), "line": (208, 198, 178), "shadow": (224, 216, 196)},
+        {"mode": "cinema", "paper": (11, 13, 15), "line": (46, 48, 56), "shadow": (0, 0, 0)},
+    ):
+        image = Image.new("RGB", (96, 64), colors["paper"])
+
+        plugin._draw_cinema_background(image, colors)
+
+        assert image.getcolors(maxcolors=image.width * image.height) == [
+            (image.width * image.height, colors["paper"])
+        ]
+
+
 def test_parse_the_numbers_weekend_table():
     html = """
     <table>

@@ -705,12 +705,7 @@ class TechPulse(BasePlugin):
         return Path(self.get_plugin_dir(TITLE_WORDMARK_IMAGE))
 
     def _draw_background_grid(self, draw, width, height, palette, scale):
-        step = max(30, int(48 * scale))
-        for x in range(0, width, step):
-            draw.line((x, 0, x, height), fill=palette["grid"], width=1)
-        for y in range(0, height, step):
-            draw.line((0, y, width, y), fill=palette["grid"], width=1)
-        draw.line((0, int(height * 0.78), width, int(height * 0.78)), fill=palette["rule"], width=1)
+        return None
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -31,6 +31,18 @@ class DummyDeviceConfig:
 
     def load_env_key(self, _key):
         return None
+
+
+def test_paper_background_stays_solid_for_color_epaper():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = {"mode": "paper", "paper": (246, 241, 227), "line": (190, 184, 170)}
+    image = Image.new("RGB", (96, 64), colors["paper"])
+
+    plugin._draw_background(ImageDraw.Draw(image), image.size, colors)
+
+    assert image.getcolors(maxcolors=image.width * image.height) == [
+        (image.width * image.height, colors["paper"])
+    ]
 
 
 class DummyEnvDeviceConfig(DummyDeviceConfig):

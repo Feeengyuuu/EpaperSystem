@@ -3,7 +3,7 @@ import sys
 import types
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
@@ -53,6 +53,18 @@ from plugins.dota_profile_dashboard.dota_profile_dashboard import (  # noqa: E40
     DEFAULT_STEAM_ID64,
     DotaProfileDashboard,
 )
+
+
+def test_dashboard_background_layer_stays_flat_for_color_epaper():
+    plugin = DotaProfileDashboard({"id": "dota_profile_dashboard"})
+    background = (5, 9, 16)
+    image = Image.new("RGB", (96, 64), background)
+
+    plugin._draw_background_pattern(ImageDraw.Draw(image), image.width, image.height)
+
+    assert image.getcolors(maxcolors=image.width * image.height) == [
+        (image.width * image.height, background)
+    ]
 
 
 class FakeDeviceConfig:

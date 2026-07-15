@@ -904,19 +904,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return image
 
     def _draw_cinema_background(self, image, colors):
-        width, height = image.size
-        draw = ImageDraw.Draw(image)
-        if colors["mode"] != "cinema":
-            for y in range(0, height, 16):
-                draw.line((0, y, width, y), fill=colors["line"], width=1)
-            return
-
-        for y in range(height):
-            ratio = y / max(1, height - 1)
-            shade = tuple(int(colors["paper"][i] * (1 - ratio * 0.16)) for i in range(3))
-            draw.line((0, y, width, y), fill=shade)
-        for x in range(0, width, max(18, width // 36)):
-            draw.rectangle((x, 0, x + 3, height), fill=colors["shadow"])
+        image.paste(colors["paper"], (0, 0, image.width, image.height))
 
     def _cinema_placeholder_box(self, width, height, margin, top, row_top):
         target_w, target_h = CINEMA_PLACEHOLDER_SIZE
