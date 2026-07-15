@@ -150,6 +150,7 @@ def choose_refresh_candidate(
             _candidate_order(candidate),
         ),
     )
+    live = [candidate for candidate in auxiliary if candidate.lane is RefreshLane.LIVE]
 
     if tier is ResourceTier.HARD:
         return AdmissionDecision(None, state)
@@ -165,6 +166,15 @@ def choose_refresh_candidate(
             thresholds,
         ):
             return AdmissionDecision(None, state)
+        if live:
+            return AdmissionDecision(
+                live[0],
+                replace(
+                    state,
+                    consecutive_data_admissions=0,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
         if urgent_presentation:
             return AdmissionDecision(
                 urgent_presentation[0],
@@ -211,6 +221,11 @@ def choose_refresh_candidate(
             ),
         )
 
+    if live:
+        return AdmissionDecision(
+            live[0],
+            replace(state, consecutive_data_admissions=0),
+        )
     if urgent_presentation:
         return AdmissionDecision(
             urgent_presentation[0],

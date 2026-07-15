@@ -790,7 +790,6 @@ def test_soft_admits_spaced_three_data_then_one_auxiliary_turn():
     data = [_candidate("soft-data")]
     auxiliary = [
         _presentation_candidate("soft-presentation"),
-        _candidate("soft-live", lane=RefreshLane.LIVE, reason=DueReason.LIVE),
         _candidate(
             "soft-theme",
             lane=RefreshLane.THEME,
@@ -829,11 +828,11 @@ def test_soft_admits_spaced_three_data_then_one_auxiliary_turn():
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.LIVE,
+        RefreshLane.PRESENTATION,
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.LIVE,
+        RefreshLane.PRESENTATION,
     ]
     assert state.last_soft_renderer_admitted_monotonic == 170.0
 
@@ -854,7 +853,7 @@ def test_displayed_live_wins_auxiliary_turn_over_older_presentation():
 
     for tier in (ResourceTier.SOFT, ResourceTier.HEALTHY):
         decision = choose_refresh_candidate(
-            [],
+            [_candidate("ordinary-data")],
             [older_presentation, displayed_live],
             tier=tier,
             state=AdmissionState(),
@@ -939,13 +938,13 @@ def test_missing_metric_degrades_to_soft():
     ) is ResourceTier.HARD
 
 
-def test_healthy_admits_exactly_one_and_gives_data_three_of_four_slots():
+def test_healthy_admits_exactly_one_and_gives_data_three_of_four_non_live_slots():
     data = [_candidate("data")]
     auxiliary = [
         _candidate(
-            "live",
-            lane=RefreshLane.LIVE,
-            reason=DueReason.LIVE,
+            "theme",
+            lane=RefreshLane.THEME,
+            reason=DueReason.THEME,
         )
     ]
     state = AdmissionState()
@@ -968,11 +967,11 @@ def test_healthy_admits_exactly_one_and_gives_data_three_of_four_slots():
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.LIVE,
+        RefreshLane.THEME,
         RefreshLane.DATA,
         RefreshLane.DATA,
         RefreshLane.DATA,
-        RefreshLane.LIVE,
+        RefreshLane.THEME,
     ]
 
 
