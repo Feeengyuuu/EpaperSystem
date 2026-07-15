@@ -1,9 +1,10 @@
 {
     "schema_version": 2,
-    "capabilities": {"supports_live_refresh": false, "supports_day_night_theme": true},
+    "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
     "theme": {"presentation": "ui", "day": {"background": "#f1f4ec", "accent": "#3d7a45"}, "night": {"background": "#0b150c", "accent": "#7fd58a"}},
     "display_name": "Stock Tracker",
     "id": "stocktracker",
     "class": "StockTracker",
-    "repository": "https://github.com/efhkdmbc/InkyPi-StockTracker"
+    "repository": "https://github.com/efhkdmbc/InkyPi-StockTracker",
+    "refresh_on_display": true
 }

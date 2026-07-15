@@ -1,6 +1,8 @@
 import sys
+import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +24,11 @@ from plugins.stocktracker.stocktracker import (  # noqa: E402
     StockTracker,
 )
 from utils.massive_market_data import MassiveBar  # noqa: E402
+from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    attach_source_provenance,
+)
 
 
 class FakeDeviceConfig:
@@ -170,6 +177,32 @@ def test_stock_tracker_can_pin_and_sink_holdings_display_order():
     ordered = plugin._ordered_holdings(stock_data, "SPCX", "SPY")
 
     assert [row["symbol"] for row in ordered] == ["SPCX", "AAPL", "NVDA", "SPY"]
+
+
+def test_stock_tracker_declares_and_prepares_fresh_before_display(monkeypatch):
+    manifest_path = Path(stocktracker_module.__file__).with_name("plugin-info.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert manifest["refresh_on_display"] is True
+
+    plugin = StockTracker({"id": "stocktracker"})
+    image = attach_source_provenance(
+        stocktracker_module.Image.new("RGB", (800, 480), "white"),
+        SourceProvenance.LIVE,
+    )
+    monkeypatch.setattr(plugin, "render_themed_image", lambda *_args, **_kwargs: image)
+    request = SimpleNamespace(request_id="a" * 32)
+
+    assert plugin.presentation_mode({"refreshOnDisplay": True}) is PresentationMode.PREPARED_BANK
+    preparation = plugin.prepare_presentation(
+        {"refreshOnDisplay": True},
+        FakeDeviceConfig(),
+        request=request,
+        resolved_theme_context=_canonical_theme("day"),
+    )
+    assert preparation.changed is True
+    assert preparation.request_id == "a" * 32
+    assert preparation.image.size == (800, 480)
 
 
 def test_stock_tracker_keeps_spcx_visible_by_default():

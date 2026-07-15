@@ -36,6 +36,8 @@ Note:
 """
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 
 import os
 import sys
@@ -330,7 +332,7 @@ class _SimpleHistory:
 		return _SimpleHistory([(index, self.loc.values[index]) for index in self.index])
 
 
-class StockTracker(BasePlugin):
+class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 	"""Stock portfolio tracker plugin for InkyPi"""
 
@@ -416,7 +418,7 @@ class StockTracker(BasePlugin):
 			)
 
 		account_value_override = portfolio_meta.get("account_value")
-		return self._create_dashboard(
+		image = self._create_dashboard(
 			stock_data,
 			dimensions,
 			history_points,
@@ -429,6 +431,10 @@ class StockTracker(BasePlugin):
 			theme_context=theme_context,
 			updated_at=updated_at,
 		)
+		if hasattr(image, "info"):
+			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
+			return attach_source_provenance(image, provenance)
+		return image
 
 	@staticmethod
 	def _enabled(value):
