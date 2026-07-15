@@ -154,6 +154,18 @@ def test_non_live_refresh_on_display_plugins_have_background_presentation_lane()
         assert capabilities.get("supports_presentation_refresh") is True
 
 
+def test_static_no_change_plugins_do_not_opt_into_presentation_preflight():
+    for plugin_id in ("daily_ai_news", "tech_pulse"):
+        info = json.loads(
+            (PLUGIN_SOURCE_ROOT / plugin_id / "plugin-info.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        capabilities = info.get("capabilities") or {}
+        assert capabilities.get("supports_presentation_refresh") is False
+
+
 @pytest.mark.parametrize(
     ("settings", "plugin_config", "expected"),
     [
