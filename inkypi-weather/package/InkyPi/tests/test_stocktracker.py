@@ -613,6 +613,106 @@ def test_stock_tracker_can_fetch_stock_data_from_massive_without_yfinance(monkey
     assert StockTracker._source_label([data]) == "Massive market data"
 
 
+def test_stock_tracker_robinhood_mcp_uses_official_positions_and_quotes_without_csv_fallback(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = StockTracker({"id": "stocktracker"})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+
+    class FakeClient:
+        def __init__(self, token_path=None):
+            assert token_path == "/secure/robinhood.json"
+
+        def fetch_snapshot(self, account_hash):
+            assert account_hash == "b76f3558212e"
+            return {
+                "positions": [{"symbol": "SPCX", "quantity": 2.5}],
+                "quotes": {
+                    "SPCX": {
+                        "price": 136.12,
+                        "previous_close": 130.0,
+                        "timestamp": "2026-07-14T21:00:00Z",
+                        "extended_hours": True,
+                    }
+                },
+                "portfolio_meta": {
+                    "account_value": 365.8,
+                    "cash_balance": 25.5,
+                    "buying_power": 50.25,
+                    "pending_deposits": 0.0,
+                    "currency": "USD",
+                },
+            }
+
+    monkeypatch.setattr(stocktracker_module, "RobinhoodMCPClient", FakeClient)
+    monkeypatch.setattr(
+        plugin,
+        "_portfolio_holdings_from_settings",
+        lambda *_args: pytest.fail("Robinhood MCP must not inspect CSV or inline holdings"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_stock_data",
+        lambda *_args, **_kwargs: pytest.fail("Robinhood MCP must not call fallback market providers"),
+    )
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(plugin, "_create_dashboard", lambda stock_data, *_args, **kwargs: (stock_data, kwargs))
+
+    rows, render = plugin.generate_image(
+        {
+            "data_provider": "robinhood_mcp",
+            "robinhood_account_hash": "b76f3558212e",
+            "robinhood_token_path": "/secure/robinhood.json",
+            "portfolio_csv_path": "/old/portfolio.csv",
+            "tickers": "OLD",
+            "shares": "99",
+        },
+        device,
+    )
+
+    spcx = next(row for row in rows if row["symbol"] == "SPCX")
+    assert spcx["shares"] == 2.5
+    assert spcx["price"] == 136.12
+    assert spcx["total_value"] == pytest.approx(340.3)
+    assert spcx["quote_time"] == "2026-07-14T21:00:00Z"
+    assert spcx["data_provider"] == "robinhood_mcp"
+    assert next(row for row in rows if row["symbol"] == "CASH")["shares"] == 25.5
+    assert render["account_value_override"] == 365.8
+    assert render["header_brand"] == "robinhood"
+    assert StockTracker._source_label(rows) == "Robinhood official real-time"
+
+
+def test_stock_tracker_robinhood_mcp_failure_never_falls_back(monkeypatch, tmp_path):
+    plugin = StockTracker({"id": "stocktracker"})
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+
+    class FailingClient:
+        def __init__(self, token_path=None):
+            pass
+
+        def fetch_snapshot(self, account_hash):
+            raise RuntimeError("official quote unavailable")
+
+    monkeypatch.setattr(stocktracker_module, "RobinhoodMCPClient", FailingClient)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_stock_data",
+        lambda *_args, **_kwargs: pytest.fail("fallback provider must remain disabled"),
+    )
+
+    with pytest.raises(RuntimeError, match="Robinhood official MCP refresh failed"):
+        plugin.generate_image(
+            {
+                "data_provider": "robinhood_mcp",
+                "robinhood_account_hash": "b76f3558212e",
+            },
+            FakeDeviceConfig(),
+        )
+
+
 def test_stocktracker_preserves_shared_fallback_weight_rasters(monkeypatch):
     plugin = StockTracker({"id": "stocktracker"})
     sample = "Readable UI"

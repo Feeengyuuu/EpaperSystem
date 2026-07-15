@@ -2112,12 +2112,18 @@ def test_stocktracker_config_diagnostics_never_prints_private_values(
     assert exit_code == 0
     assert payload == {
         "csv_exists": False,
+        "existing_csv_active_spcx": False,
         "existing_csv_has_spcx": False,
         "has_csv_setting": True,
         "has_inline_shares": True,
         "has_inline_tickers": True,
         "inline_has_spcx": False,
         "instance_count": 1,
+        "latest_source_generated_at": None,
+        "latest_source_has_spcx": False,
+        "latest_source_symbol_count": 0,
+        "source_cache_files": 0,
+        "service_csv_readable": False,
     }
     assert "PRIVATE" not in printed
     assert "99" not in printed
@@ -2152,7 +2158,100 @@ def test_stocktracker_config_diagnostics_detects_spcx_without_printing_holdings(
     payload = json.loads(printed)
     assert exit_code == 0
     assert payload["csv_exists"] is True
+    assert payload["existing_csv_active_spcx"] is True
     assert payload["existing_csv_has_spcx"] is True
     assert payload["inline_has_spcx"] is True
     assert "PRIVATE" not in printed
     assert "99" not in printed
+
+
+def test_configure_robinhood_mcp_removes_every_stale_money_fallback(acceptance):
+    config = _config()
+    plugins = config["playlist_config"]["playlists"][0]["plugins"]
+    plugins[0]["plugin_id"] = "stocktracker"
+    plugins[0]["settings_revision"] = 4
+    plugins[0]["plugin_settings"] = {
+        "period": "1mo",
+        "portfolio_csv_path": "/old/portfolio.csv",
+        "portfolio_csv_file": "/old/upload.csv",
+        "tickers": "OLD,SPCX",
+        "shares": "99,1",
+        "cash_balance": "123",
+        "ticker_theme": "auto",
+    }
+
+    updated, count = acceptance.configure_robinhood_mcp(
+        config,
+        account_hash="b76f3558212e",
+        token_path="/var/lib/inkypi/secrets/robinhood_mcp.json",
+    )
+
+    assert count == 1
+    item = updated["playlist_config"]["playlists"][0]["plugins"][0]
+    settings = item["plugin_settings"]
+    assert item["settings_revision"] == 5
+    assert settings["data_provider"] == "robinhood_mcp"
+    assert settings["robinhood_account_hash"] == "b76f3558212e"
+    assert settings["robinhood_token_path"] == "/var/lib/inkypi/secrets/robinhood_mcp.json"
+    assert settings["refreshOnDisplay"] is True
+    assert settings["holdings_pin_symbols"] == "SPCX"
+    assert settings["header_brand"] == "robinhood"
+    assert settings["ticker_theme"] == "auto"
+    for stale_key in (
+        "portfolio_csv_path",
+        "portfolio_csv_file",
+        "tickers",
+        "shares",
+        "cash_balance",
+    ):
+        assert stale_key not in settings
+
+
+def test_install_robinhood_token_validates_and_never_prints_secret(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    source = tmp_path / "staged-token.json"
+    target = tmp_path / "secrets" / "robinhood_mcp.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mcp_url": "https://agent.robinhood.com/mcp/trading",
+                "token_url": "https://api.robinhood.com/oauth2/token/",
+                "registration": {"client_id": "private-client"},
+                "token": {
+                    "access_token": "private-access",
+                    "refresh_token": "private-refresh",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(acceptance, "_chown_inkypi", lambda _path: None)
+
+    exit_code = acceptance.main(
+        [
+            "--install-robinhood-token-from",
+            str(source),
+            "--robinhood-token-target",
+            str(target),
+        ]
+    )
+
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+    assert exit_code == 0
+    assert payload == {
+        "has_refresh_token": True,
+        "status": "installed",
+        "target": str(target),
+    }
+    assert not source.exists()
+    assert target.exists()
+    assert "private-client" not in printed
+    assert "private-access" not in printed
+    assert "private-refresh" not in printed

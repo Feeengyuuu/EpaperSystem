@@ -81,6 +81,7 @@ from utils.massive_market_data import (
 	load_massive_api_key,
 	massive_ticker_candidates,
 )
+from utils.robinhood_mcp import RobinhoodMCPClient
 from utils.theme_utils import get_theme_palette
 import csv
 import hashlib
@@ -164,7 +165,7 @@ EXTENDED_HISTORY_INTERVAL = "1m"
 PORTFOLIO_HISTORY_DIR_ENV = "INKYPI_STOCKTRACKER_HISTORY_DIR"
 PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
-SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v1"
+SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
 SOURCE_CACHE_LEAF = "source"
 
 _LEGACY_STOCK_COLORS = {
@@ -351,9 +352,16 @@ class StockTracker(BasePlugin):
 		if not isinstance(theme_context, Mapping):
 			theme_context = self.resolve_theme(settings, device_config)
 
-		period, holdings = self._portfolio_holdings_from_settings(settings)
-		portfolio_meta = self._portfolio_meta_from_settings(settings)
 		data_provider = self._data_provider(settings)
+		portfolio_meta = self._portfolio_meta_from_settings(settings)
+		if data_provider == "robinhood_mcp":
+			period = settings.get("period", "1mo")
+			account_hash = str(settings.get("robinhood_account_hash") or "").strip().lower()
+			if not account_hash:
+				raise RuntimeError("Robinhood official MCP requires robinhood_account_hash")
+			holdings = [(f"ROBINHOOD-MCP-{account_hash}", 0.0)]
+		else:
+			period, holdings = self._portfolio_holdings_from_settings(settings)
 		source_key = self._source_cache_key(period, holdings, portfolio_meta, data_provider)
 		theme_render_only = self._enabled(settings.get("_theme_render_only"))
 
@@ -366,22 +374,29 @@ class StockTracker(BasePlugin):
 			stock_data = cached["stock_data"]
 			history_points = cached["history_points"]
 			updated_at = cached["generated_at"]
+			portfolio_meta = cached.get("portfolio_meta") or portfolio_meta
 		else:
-			massive_client = self._massive_client(device_config, data_provider)
-			stock_data = []
-			for ticker, share_count in holdings:
+			if data_provider == "robinhood_mcp":
 				try:
-					data = self._fetch_stock_data(
-						ticker,
-						share_count,
-						period,
-						data_provider=data_provider,
-						massive_client=massive_client,
-					)
-					if data:
-						stock_data.append(data)
+					stock_data, portfolio_meta = self._fetch_robinhood_mcp_data(settings)
 				except Exception as e:
-					raise RuntimeError(f"Error fetching {ticker}: {str(e)}")
+					raise RuntimeError(f"Robinhood official MCP refresh failed: {str(e)}") from e
+			else:
+				massive_client = self._massive_client(device_config, data_provider)
+				stock_data = []
+				for ticker, share_count in holdings:
+					try:
+						data = self._fetch_stock_data(
+							ticker,
+							share_count,
+							period,
+							data_provider=data_provider,
+							massive_client=massive_client,
+						)
+						if data:
+							stock_data.append(data)
+					except Exception as e:
+						raise RuntimeError(f"Error fetching {ticker}: {str(e)}")
 
 			stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
 			if not stock_data:
@@ -397,6 +412,7 @@ class StockTracker(BasePlugin):
 				stock_data,
 				history_points,
 				updated_at,
+				portfolio_meta,
 			)
 
 		account_value_override = portfolio_meta.get("account_value")
@@ -507,7 +523,7 @@ class StockTracker(BasePlugin):
 			stock_data.append(record)
 		return stock_data
 
-	def _write_source_cache(self, source_key, stock_data, history_points, generated_at):
+	def _write_source_cache(self, source_key, stock_data, history_points, generated_at, portfolio_meta=None):
 		path = self._source_cache_file(source_key, create=True)
 		payload = {
 			"schema": SOURCE_CACHE_SCHEMA_VERSION,
@@ -522,6 +538,11 @@ class StockTracker(BasePlugin):
 				)
 				if point
 			],
+			"portfolio_meta": {
+				key: value
+				for key, value in (portfolio_meta or {}).items()
+				if value is None or isinstance(value, (str, int, float, bool))
+			},
 		}
 		temp = path.with_suffix(path.suffix + ".tmp")
 		try:
@@ -567,6 +588,9 @@ class StockTracker(BasePlugin):
 			"stock_data": stock_data,
 			"history_points": history_points,
 			"generated_at": generated_at,
+			"portfolio_meta": payload.get("portfolio_meta")
+			if isinstance(payload.get("portfolio_meta"), dict)
+			else {},
 		}
 
 	def _portfolio_holdings_from_settings(self, settings):
@@ -612,15 +636,69 @@ class StockTracker(BasePlugin):
 	@staticmethod
 	def _data_provider(settings):
 		provider = str((settings or {}).get("data_provider") or "auto").strip().lower()
-		return provider if provider in {"auto", "massive", "yfinance"} else "auto"
+		return provider if provider in {"auto", "massive", "yfinance", "robinhood_mcp"} else "auto"
 
 	def _massive_client(self, device_config, data_provider):
-		if data_provider == "yfinance":
+		if data_provider in {"yfinance", "robinhood_mcp"}:
 			return None
 		api_key = load_massive_api_key(device_config)
 		if not api_key:
 			return None
 		return MassiveMarketData(api_key)
+
+	def _fetch_robinhood_mcp_data(self, settings):
+		account_hash = str(settings.get("robinhood_account_hash") or "").strip().lower()
+		token_path = str(settings.get("robinhood_token_path") or "").strip() or None
+		snapshot = RobinhoodMCPClient(token_path=token_path).fetch_snapshot(account_hash)
+		quotes = snapshot.get("quotes") or {}
+		stock_data = []
+		for position in snapshot.get("positions") or []:
+			symbol = str(position.get("symbol") or "").strip().upper()
+			shares = float(position.get("quantity"))
+			quote = quotes.get(symbol)
+			if not isinstance(quote, dict):
+				raise RuntimeError(f"Missing official Robinhood quote for {symbol}")
+			current_price = float(quote["price"])
+			previous_close = float(quote["previous_close"])
+			quote_time = str(quote.get("timestamp") or "").strip()
+			if not quote_time:
+				raise RuntimeError(f"Missing official Robinhood quote timestamp for {symbol}")
+			change = current_price - previous_close
+			change_percent = (change / previous_close) * 100 if previous_close else 0.0
+			history = _SimpleHistory(
+				[
+					(f"{quote_time}-previous-close", previous_close),
+					(quote_time, current_price),
+				]
+			)
+			stock_data.append(
+				{
+					"symbol": symbol,
+					"name": symbol,
+					"price": current_price,
+					"regular_price": previous_close,
+					"change": change,
+					"change_percent": change_percent,
+					"shares": shares,
+					"total_value": current_price * shares,
+					"total_change": change * shares,
+					"history": history,
+					"quote_source": "robinhood_extended"
+					if quote.get("extended_hours")
+					else "robinhood_realtime",
+					"quote_time": quote_time,
+					"extended_hours": bool(quote.get("extended_hours")),
+					"data_provider": "robinhood_mcp",
+				}
+			)
+		if not stock_data:
+			raise RuntimeError("Robinhood official MCP returned no equity positions")
+		portfolio_meta = snapshot.get("portfolio_meta")
+		if not isinstance(portfolio_meta, dict):
+			raise RuntimeError("Robinhood official MCP returned no portfolio metadata")
+		portfolio_meta = dict(portfolio_meta)
+		portfolio_meta["official_mcp"] = True
+		return stock_data, portfolio_meta
 
 	def _resolve_portfolio_csv_path(self, csv_path):
 		csv_path = os.path.expanduser(str(csv_path).strip())
@@ -960,6 +1038,8 @@ class StockTracker(BasePlugin):
 			return "robinhood"
 		if explicit in ("none", "off", "stocktracker"):
 			return None
+		if self._data_provider(settings) == "robinhood_mcp":
+			return "robinhood"
 
 		csv_path = str(settings.get("portfolio_csv_file") or settings.get("portfolio_csv_path") or "").lower()
 		if "robinhood" in csv_path:
@@ -993,7 +1073,9 @@ class StockTracker(BasePlugin):
 				"history": self._constant_value_history(stock_data),
 				"quote_source": "account_cash",
 				"extended_hours": False,
-				"data_provider": "robinhood",
+				"data_provider": "robinhood_mcp"
+				if portfolio_meta.get("official_mcp")
+				else "robinhood",
 				"is_cash": True,
 				"price_text": currency,
 				"shares_text": "Cash",
@@ -1839,9 +1921,11 @@ class StockTracker(BasePlugin):
 
 	@staticmethod
 	def _source_label(stock_data):
+		providers = {str(data.get("data_provider") or "yfinance") for data in stock_data}
+		if "robinhood_mcp" in providers:
+			return "Robinhood official real-time"
 		if any(data.get("extended_hours") for data in stock_data):
 			return "Yahoo realtime + extended hours"
-		providers = {str(data.get("data_provider") or "yfinance") for data in stock_data}
 		if "robinhood" in providers:
 			providers.discard("robinhood")
 			if not providers:
@@ -1869,6 +1953,7 @@ class StockTracker(BasePlugin):
 			('ytd', 'Year to Date')
 		]
 		template_params['data_provider_options'] = [
+			('robinhood_mcp', 'Robinhood official MCP (real-time account)'),
 			('auto', 'Auto: Massive first, yfinance fallback'),
 			('massive', 'Massive only'),
 			('yfinance', 'yfinance only'),

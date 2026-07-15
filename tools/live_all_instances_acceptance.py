@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -2271,6 +2272,21 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--install-robinhood-token-from",
+        default=None,
+        help="Validate and securely install a staged official Robinhood MCP OAuth token, then exit",
+    )
+    parser.add_argument(
+        "--robinhood-token-target",
+        default="/var/lib/inkypi/secrets/robinhood_mcp.json",
+        help="Restricted service-readable target for --install-robinhood-token-from",
+    )
+    parser.add_argument(
+        "--configure-robinhood-mcp-account-hash",
+        default=None,
+        help="Switch every StockTracker instance to official Robinhood MCP using this account hash",
+    )
+    parser.add_argument(
         "--print-cache-tree",
         action="store_true",
         help=(
@@ -2304,26 +2320,159 @@ PRINTABLE_CONFIG_KEYS = frozenset({
     "timezone",
 })
 
+ROBINHOOD_MCP_URL = "https://agent.robinhood.com/mcp/trading"
+ROBINHOOD_TOKEN_URL = "https://api.robinhood.com/oauth2/token/"
+STALE_STOCKTRACKER_ACCOUNT_KEYS = frozenset({
+    "portfolio_csv_path",
+    "portfolio_csv_file",
+    "tickers",
+    "shares",
+    "cash_balance",
+    "cash",
+    "buying_power",
+    "pending_deposits",
+    "account_value",
+    "portfolio_value",
+    "total_value",
+})
 
-def stocktracker_config_diagnostics(document: dict) -> dict:
+
+def configure_robinhood_mcp(document, *, account_hash, token_path):
+    account_hash = str(account_hash or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{12}", account_hash):
+        raise AuditAbort("robinhood_account_hash_invalid")
+    updated = copy.deepcopy(document)
+    playlist_config = updated.get("playlist_config") if isinstance(updated, dict) else None
+    playlists = playlist_config.get("playlists") if isinstance(playlist_config, dict) else None
+    if not isinstance(playlists, list):
+        raise AuditAbort("config_playlist_structure")
+    count = 0
+    for playlist in playlists:
+        if not isinstance(playlist, dict):
+            continue
+        for item in playlist.get("plugins") or []:
+            if not isinstance(item, dict) or item.get("plugin_id") != "stocktracker":
+                continue
+            settings = item.get("plugin_settings")
+            if not isinstance(settings, dict):
+                settings = {}
+            settings = copy.deepcopy(settings)
+            for key in STALE_STOCKTRACKER_ACCOUNT_KEYS:
+                settings.pop(key, None)
+            settings.update({
+                "data_provider": "robinhood_mcp",
+                "robinhood_account_hash": account_hash,
+                "robinhood_token_path": str(token_path),
+                "refreshOnDisplay": True,
+                "holdings_pin_symbols": "SPCX",
+                "header_brand": "robinhood",
+            })
+            item["plugin_settings"] = settings
+            revision = item.get("settings_revision")
+            item["settings_revision"] = revision + 1 if isinstance(revision, int) else 1
+            count += 1
+    if count == 0:
+        raise AuditAbort("stocktracker_not_configured")
+    return updated, count
+
+
+def _validated_robinhood_token(path):
+    try:
+        if path.stat().st_size > 128 * 1024:
+            raise ValueError("oversized")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise AuditAbort("robinhood_token_invalid") from error
+    registration = payload.get("registration") if isinstance(payload, dict) else None
+    token = payload.get("token") if isinstance(payload, dict) else None
+    valid = (
+        payload.get("schema_version") == 1
+        and payload.get("mcp_url") == ROBINHOOD_MCP_URL
+        and payload.get("token_url") == ROBINHOOD_TOKEN_URL
+        and isinstance(registration, dict)
+        and bool(str(registration.get("client_id") or "").strip())
+        and isinstance(token, dict)
+        and bool(str(token.get("access_token") or "").strip())
+        and bool(str(token.get("refresh_token") or "").strip())
+    )
+    if not valid:
+        raise AuditAbort("robinhood_token_invalid")
+    return payload
+
+
+def _chown_inkypi(path):
+    import grp
+    import pwd
+
+    os.chown(path, pwd.getpwnam("inkypi").pw_uid, grp.getgrnam("inkypi").gr_gid)
+
+
+def _install_robinhood_token(source_path, target_path):
+    if source_path.resolve() == target_path.resolve():
+        raise AuditAbort("robinhood_token_paths_conflict")
+    payload = _validated_robinhood_token(source_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = target_path.with_name(f".{target_path.name}.{secrets.token_hex(8)}.tmp")
+    descriptor = None
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
+            json.dump(payload, stream, ensure_ascii=True, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target_path)
+        os.chmod(target_path, 0o600)
+        _chown_inkypi(target_path)
+        source_path.unlink()
+    except OSError as error:
+        raise AuditAbort("robinhood_token_install_failed") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return {
+        "status": "installed",
+        "target": str(target_path),
+        "has_refresh_token": True,
+    }
+
+
+def _active_stocktracker_settings(document: dict) -> list[dict]:
     instances = []
+    playlist_config = document.get("playlist_config") if isinstance(document, dict) else None
+    playlists = playlist_config.get("playlists") if isinstance(playlist_config, dict) else None
+    if isinstance(playlists, list):
+        current_time = _current_config_time(
+            document,
+            datetime.now(timezone.utc),
+        ).strftime("%H:%M")
+        active = [
+            playlist for playlist in playlists
+            if isinstance(playlist, dict) and _playlist_is_active(playlist, current_time)
+        ]
+        if active:
+            playlist = min(active, key=_playlist_duration)
+            instances = [
+                item.get("plugin_settings") or {}
+                for item in playlist.get("plugins") or []
+                if isinstance(item, dict) and item.get("plugin_id") == "stocktracker"
+            ]
+    return instances
 
-    def visit(value):
-        if isinstance(value, dict):
-            if value.get("plugin_id") == "stocktracker":
-                instances.append(value.get("plugin_settings") or {})
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
 
-    visit(document)
+def stocktracker_config_diagnostics(document: dict, *, cache_root=None) -> dict:
+    instances = _active_stocktracker_settings(document)
     csv_paths = [
         str(settings.get("portfolio_csv_path") or settings.get("portfolio_csv_file") or "").strip()
         for settings in instances
     ]
     existing_csv_has_spcx = False
+    existing_csv_active_spcx = False
+    service_csv_readable = False
     for path in csv_paths:
         try:
             csv_text = Path(path).read_text(
@@ -2335,16 +2484,96 @@ def stocktracker_config_diagnostics(document: dict) -> dict:
             )
         except OSError:
             continue
+        try:
+            service_csv_readable = subprocess.run(
+                ["runuser", "-u", "inkypi", "--", "test", "-r", path],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode == 0
+        except OSError:
+            service_csv_readable = False
         if existing_csv_has_spcx:
-            break
+            try:
+                with Path(path).open(newline="", encoding="utf-8-sig") as stream:
+                    total = 0.0
+                    for raw_row in csv.DictReader(stream):
+                        row = {
+                            re.sub(r"[^a-z0-9]", "", str(key).lower()): value
+                            for key, value in raw_row.items()
+                        }
+                        symbol = next((
+                            str(row.get(field) or "").strip().upper()
+                            for field in ("symbol", "ticker", "tickersymbol", "instrument", "securitysymbol")
+                            if str(row.get(field) or "").strip()
+                        ), "")
+                        if symbol != "SPCX":
+                            continue
+                        raw_quantity = next((
+                            str(row.get(field) or "").strip()
+                            for field in ("shares", "share", "quantity", "qty", "currentquantity", "position")
+                            if str(row.get(field) or "").strip()
+                        ), "")
+                        negative = raw_quantity.startswith("(") and raw_quantity.endswith(")")
+                        clean_quantity = raw_quantity.strip("()").replace("$", "").replace(",", "").replace("%", "").strip()
+                        try:
+                            quantity = float(clean_quantity)
+                        except ValueError:
+                            continue
+                        if negative:
+                            quantity = -quantity
+                        action = " ".join(
+                            str(row.get(field) or "").strip().lower()
+                            for field in ("action", "type", "activitytype", "transactiontype", "transcode", "description")
+                            if str(row.get(field) or "").strip()
+                        )
+                        if any(hint in action for hint in ("sell", "sold", "transfer out", "outgoing", "journal out", "removed")):
+                            quantity = -abs(quantity)
+                        elif any(hint in action for hint in ("buy", "bought", "reinvest", "transfer in", "incoming", "journal in", "received")):
+                            quantity = abs(quantity)
+                        elif str(row.get("transcode") or "").upper() == "SPL":
+                            quantity = abs(quantity)
+                        total += quantity
+                    existing_csv_active_spcx = total > 0.0001
+            except (OSError, csv.Error):
+                pass
+            if existing_csv_active_spcx:
+                break
     inline_symbols = {
         symbol.strip().upper()
         for settings in instances
         for symbol in str(settings.get("tickers") or "").split(",")
         if symbol.strip()
     }
+    latest_source_generated_at = None
+    latest_source_has_spcx = False
+    latest_source_symbol_count = 0
+    source_cache_files = 0
+    if cache_root:
+        source_root = Path(cache_root) / "plugins" / "stocktracker" / "source"
+        candidates = []
+        try:
+            candidates = sorted(source_root.glob("*.json"), key=lambda path: path.stat().st_mtime)
+        except OSError:
+            candidates = []
+        source_cache_files = len(candidates)
+        if candidates:
+            try:
+                payload = json.loads(candidates[-1].read_text(encoding="utf-8"))
+                rows = payload.get("stock_data") or []
+                symbols = {
+                    str(row.get("symbol") or "").strip().upper()
+                    for row in rows
+                    if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+                }
+                latest_source_generated_at = payload.get("generated_at")
+                latest_source_has_spcx = "SPCX" in symbols
+                latest_source_symbol_count = len(symbols)
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pass
     return {
         "csv_exists": any(path and os.path.isfile(path) for path in csv_paths),
+        "existing_csv_active_spcx": existing_csv_active_spcx,
         "existing_csv_has_spcx": existing_csv_has_spcx,
         "has_csv_setting": any(csv_paths),
         "has_inline_shares": any(
@@ -2355,6 +2584,11 @@ def stocktracker_config_diagnostics(document: dict) -> dict:
         ),
         "inline_has_spcx": "SPCX" in inline_symbols,
         "instance_count": len(instances),
+        "latest_source_generated_at": latest_source_generated_at,
+        "latest_source_has_spcx": latest_source_has_spcx,
+        "latest_source_symbol_count": latest_source_symbol_count,
+        "source_cache_files": source_cache_files,
+        "service_csv_readable": service_csv_readable,
     }
 
 
@@ -2451,6 +2685,50 @@ def main(argv=None) -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.install_robinhood_token_from is not None:
+        try:
+            payload = _install_robinhood_token(
+                Path(args.install_robinhood_token_from),
+                Path(args.robinhood_token_target),
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    if args.configure_robinhood_mcp_account_hash is not None:
+        try:
+            document = _read_json(
+                Path(args.config),
+                code="config_read_failed",
+                abort=True,
+            )
+            document, updated_instances = configure_robinhood_mcp(
+                document,
+                account_hash=args.configure_robinhood_mcp_account_hash,
+                token_path=args.robinhood_token_target,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        controller = SystemdController()
+        controller.stop()
+        try:
+            atomic_write_json(Path(args.config), document)
+        except AuditFailure as error:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": error.code,
+                "service_left_stopped": True,
+            }))
+            return 2
+        controller.start()
+        print(json.dumps({
+            "status": "updated",
+            "data_provider": "robinhood_mcp",
+            "updated_instances": updated_instances,
+        }, sort_keys=True))
+        return 0
     if args.merge_env_from is not None:
         return _merge_env_file(Path(args.merge_env_from), Path(args.env_target))
     if args.set_open_display_control is not None:
@@ -2513,7 +2791,10 @@ def main(argv=None) -> int:
         except AuditFailure as error:
             print(json.dumps({"status": "aborted", "abort_code": error.code}))
             return 2
-        print(json.dumps(stocktracker_config_diagnostics(document), sort_keys=True))
+        print(json.dumps(stocktracker_config_diagnostics(
+            document,
+            cache_root=args.cache_root,
+        ), sort_keys=True))
         return 0
     if args.print_config_keys is not None:
         try:
