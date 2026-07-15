@@ -821,6 +821,67 @@ def test_stock_tracker_portfolio_curve_excludes_dates_missing_from_any_holding()
     assert plugin._portfolio_values(stock_data) == [500.0, 560.0]
 
 
+def test_stock_tracker_curve_uses_official_history_before_older_local_snapshots():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        {
+            **_stock("SPCX", [150.0, 170.0], 2.0),
+            "history": stocktracker_module._SimpleHistory([
+                ("2026-06-03T00:00:00Z", 150.0),
+                ("2026-06-04T00:00:00Z", 170.0),
+            ]),
+        },
+        {
+            **_stock("AAPL", [200.0, 220.0], 1.0),
+            "history": stocktracker_module._SimpleHistory([
+                ("2026-06-03T00:00:00Z", 200.0),
+                ("2026-06-04T00:00:00Z", 220.0),
+            ]),
+        },
+    ]
+    local_history = [
+        {"date": "2026-04-01", "timestamp": "2026-04-01T18:00:00", "value": 1.0},
+        {"date": "2026-06-01", "timestamp": "2026-06-01T18:00:00", "value": 450.0},
+        {"date": "2026-06-02", "timestamp": "2026-06-02T18:00:00", "value": 480.0},
+        {"date": "2026-06-03", "timestamp": "2026-06-03T18:00:00", "value": 999.0},
+    ]
+
+    values = plugin._portfolio_curve_values(
+        stock_data,
+        local_history,
+        period="1mo",
+        now=datetime(2026, 6, 4, 20, 0),
+    )
+
+    assert values == [450.0, 480.0, 500.0, 560.0]
+
+
+def test_stock_tracker_snapshot_reads_imported_history_without_copying_it_into_current_file(tmp_path, monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    current_path = history_dir / "current-holdings.json"
+    imported_path = history_dir / "imported-history.json"
+    imported_path.write_text(
+        json.dumps([{"date": "2026-06-01", "timestamp": "2026-06-01T18:00:00", "value": 100.0}]),
+        encoding="utf-8",
+    )
+    current_path.write_text(
+        json.dumps([{"date": "2026-06-02", "timestamp": "2026-06-02T18:00:00", "value": 200.0}]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(plugin, "_portfolio_history_path", lambda _stock_data: str(current_path))
+
+    combined = plugin._record_portfolio_snapshot(
+        [_stock("SPCX", [150.0, 170.0], 2.0)],
+        now=datetime(2026, 6, 3, 18, 0),
+    )
+
+    assert [point["date"] for point in combined] == ["2026-06-01", "2026-06-02", "2026-06-03"]
+    persisted_current = json.loads(current_path.read_text(encoding="utf-8"))
+    assert [point["date"] for point in persisted_current] == ["2026-06-02", "2026-06-03"]
+
+
 def test_stock_tracker_robinhood_mcp_failure_never_falls_back(monkeypatch, tmp_path):
     plugin = StockTracker({"id": "stocktracker"})
     monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))

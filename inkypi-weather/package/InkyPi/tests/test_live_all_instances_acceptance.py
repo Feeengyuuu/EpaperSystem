@@ -2290,3 +2290,56 @@ def test_stocktracker_history_diagnostics_reports_dates_without_values(acceptanc
     assert "123456" not in printed
     assert "234567" not in printed
     assert "private-holdings-hash" not in printed
+
+
+def test_stocktracker_history_migration_merges_latest_daily_records_without_changing_sources(acceptance, tmp_path):
+    durable = tmp_path / "data" / "plugins" / "stocktracker" / "history"
+    legacy = tmp_path / "legacy" / "src" / "plugins" / "stocktracker" / ".stocktracker_history"
+    durable.mkdir(parents=True)
+    legacy.mkdir(parents=True)
+    durable_source = durable / "current-holdings.json"
+    legacy_source = legacy / "old-holdings.json"
+    durable_source.write_text(
+        json.dumps([
+            {"date": "2026-06-02", "timestamp": "2026-06-02T20:00:00", "value": 220.0},
+        ]),
+        encoding="utf-8",
+    )
+    legacy_source.write_text(
+        json.dumps([
+            {"date": "2026-06-01", "timestamp": "2026-06-01T18:00:00", "value": 100.0},
+            {"date": "2026-06-02", "timestamp": "2026-06-02T08:00:00", "value": 200.0},
+        ]),
+        encoding="utf-8",
+    )
+    original_durable = durable_source.read_bytes()
+    original_legacy = legacy_source.read_bytes()
+    chowned = []
+
+    result = acceptance.migrate_stocktracker_history(
+        data_root=tmp_path / "data",
+        plugin_root=tmp_path / "missing-plugins",
+        install_root=tmp_path / "missing-install",
+        legacy_root=tmp_path / "legacy",
+        chown_fn=lambda path: chowned.append(Path(path)),
+    )
+
+    target = durable / "imported-history.json"
+    imported = json.loads(target.read_text(encoding="utf-8"))
+    assert [point["date"] for point in imported] == ["2026-06-01", "2026-06-02"]
+    assert imported[-1]["value"] == 220.0
+    assert durable_source.read_bytes() == original_durable
+    assert legacy_source.read_bytes() == original_legacy
+    assert chowned == [durable, target]
+    assert result == {
+        "earliest_date": "2026-06-01",
+        "imported_records": 2,
+        "latest_date": "2026-06-02",
+        "source_files": 2,
+        "source_records": 3,
+        "status": "migrated",
+        "target": str(target),
+    }
+    printed = json.dumps(result, sort_keys=True)
+    assert "100.0" not in printed
+    assert "220.0" not in printed

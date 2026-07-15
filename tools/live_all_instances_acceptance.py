@@ -18,6 +18,7 @@ from email.utils import parsedate_to_datetime
 import hashlib
 from io import BytesIO
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -2312,6 +2313,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print only StockTracker history file counts and date coverage, never values",
     )
+    parser.add_argument(
+        "--migrate-stocktracker-history",
+        action="store_true",
+        help="Merge legacy StockTracker daily history into durable imported-history.json and exit",
+    )
     return parser
 
 
@@ -2599,7 +2605,7 @@ def stocktracker_config_diagnostics(document: dict, *, cache_root=None) -> dict:
     }
 
 
-def stocktracker_history_diagnostics(
+def _stocktracker_history_roots(
     *,
     data_root,
     plugin_root,
@@ -2618,6 +2624,11 @@ def stocktracker_history_diagnostics(
         release_dirs = []
     for index, release in enumerate(release_dirs):
         roots[f"release_{index}"] = release / "src" / "plugins" / "stocktracker" / ".stocktracker_history"
+    return roots
+
+
+def _stocktracker_history_files(**kwargs):
+    roots = _stocktracker_history_roots(**kwargs)
 
     files = []
     roots_with_history = set()
@@ -2628,6 +2639,8 @@ def stocktracker_history_diagnostics(
         except OSError:
             candidates = []
         for path in candidates:
+            if path.name == "imported-history.json":
+                continue
             try:
                 resolved = path.resolve()
             except OSError:
@@ -2635,12 +2648,55 @@ def stocktracker_history_diagnostics(
             if resolved in seen:
                 continue
             seen.add(resolved)
-            files.append(path)
+            files.append((label, path))
             roots_with_history.add("release_legacy" if label.startswith("release_") else label)
+    return files, roots_with_history
+
+
+def _normalized_stocktracker_history_item(item):
+    if not isinstance(item, dict):
+        return None
+    date = str(item.get("date") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return None
+    try:
+        value = float(item.get("value"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    normalized = {
+        "date": date,
+        "timestamp": str(item.get("timestamp") or date),
+        "value": value,
+    }
+    for key in ("change", "change_percent"):
+        try:
+            number = float(item.get(key))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            normalized[key] = number
+    return normalized
+
+
+def stocktracker_history_diagnostics(
+    *,
+    data_root,
+    plugin_root,
+    install_root="/opt/inkypi",
+    legacy_root="/usr/local/inkypi",
+):
+    files, roots_with_history = _stocktracker_history_files(
+        data_root=data_root,
+        plugin_root=plugin_root,
+        install_root=install_root,
+        legacy_root=legacy_root,
+    )
 
     dates = []
     records = 0
-    for path in files:
+    for _label, path in files:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
@@ -2660,6 +2716,82 @@ def stocktracker_history_diagnostics(
         "earliest_date": min(dates) if dates else None,
         "latest_date": max(dates) if dates else None,
         "roots_with_history": sorted(roots_with_history),
+    }
+
+
+def migrate_stocktracker_history(
+    *,
+    data_root,
+    plugin_root,
+    install_root="/opt/inkypi",
+    legacy_root="/usr/local/inkypi",
+    chown_fn=None,
+):
+    files, _roots_with_history = _stocktracker_history_files(
+        data_root=data_root,
+        plugin_root=plugin_root,
+        install_root=install_root,
+        legacy_root=legacy_root,
+    )
+    by_date = {}
+    source_records = 0
+    priorities = {"durable": 3, "current_legacy": 2, "legacy_install": 1}
+    for label, path in files:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, list):
+            continue
+        priority = priorities.get(label, 0)
+        for item in payload:
+            point = _normalized_stocktracker_history_item(item)
+            if point is None:
+                continue
+            source_records += 1
+            ordering = (point["timestamp"], priority)
+            existing = by_date.get(point["date"])
+            if existing is None or ordering > existing[0]:
+                by_date[point["date"]] = (ordering, point)
+
+    imported = [by_date[date][1] for date in sorted(by_date)]
+    target_dir = Path(data_root) / "plugins" / "stocktracker" / "history"
+    target = target_dir / "imported-history.json"
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+    descriptor = None
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        os.chmod(target_dir, 0o750)
+        if chown_fn is not None:
+            chown_fn(target_dir)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
+            json.dump(imported, stream, ensure_ascii=True, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        os.chmod(target, 0o640)
+        if chown_fn is not None:
+            chown_fn(target)
+    except OSError as error:
+        raise AuditAbort("stocktracker_history_migration_failed") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    dates = sorted(by_date)
+    return {
+        "status": "migrated",
+        "source_files": len(files),
+        "source_records": source_records,
+        "imported_records": len(imported),
+        "earliest_date": dates[0] if dates else None,
+        "latest_date": dates[-1] if dates else None,
+        "target": str(target),
     }
 
 
@@ -2872,6 +3004,18 @@ def main(argv=None) -> int:
             data_root=args.data_root,
             plugin_root=args.plugin_root,
         ), sort_keys=True))
+        return 0
+    if args.migrate_stocktracker_history:
+        try:
+            result = migrate_stocktracker_history(
+                data_root=args.data_root,
+                plugin_root=args.plugin_root,
+                chown_fn=_chown_inkypi,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(result, sort_keys=True))
         return 0
     if args.print_config_keys is not None:
         try:

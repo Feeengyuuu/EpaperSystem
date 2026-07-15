@@ -92,7 +92,7 @@ import json
 import logging
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -423,6 +423,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			dimensions,
 			history_points,
 			tracking_window_label=self._tracking_window_label(period),
+			tracking_period=period,
 			holdings_pin_symbols=self._symbols_setting(settings.get("holdings_pin_symbols")),
 			holdings_sink_symbols=self._symbols_setting(settings.get("holdings_sink_symbols")),
 			account_value_override=account_value_override,
@@ -1134,7 +1135,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	def _threshold_image(img):
 		return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
-	def _portfolio_values(self, stock_data, account_value_override=None):
+	def _portfolio_series(self, stock_data, account_value_override=None):
 		histories = [
 			data.get("history")
 			for data in stock_data
@@ -1146,29 +1147,104 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		for history in histories[1:]:
 			common_dates.intersection_update(history.index)
 		dates = [date for date in histories[0].index if date in common_dates]
-		values = []
+		series = []
 		for date in dates:
 			total = 0
 			for data in stock_data:
 				history = data.get("history")
 				if history is not None and date in history.index:
 					total += float(history.loc[date, "Close"]) * data["shares"]
-			values.append(total)
-		if account_value_override is not None and values:
-			values[-1] = account_value_override
-		return values
+			series.append((str(date), total))
+		if account_value_override is not None and series:
+			series[-1] = (series[-1][0], account_value_override)
+		return series
+
+	def _portfolio_values(self, stock_data, account_value_override=None):
+		return [
+			value
+			for _date_key, value in self._portfolio_series(
+				stock_data,
+				account_value_override=account_value_override,
+			)
+		]
+
+	@staticmethod
+	def _history_cutoff_date(period, now):
+		period = str(period or "1mo").strip().lower()
+		if period == "ytd":
+			return now.date().replace(month=1, day=1)
+		days = {
+			"1d": 1,
+			"5d": 5,
+			"1mo": 32,
+			"3mo": 95,
+			"6mo": 190,
+			"1y": 370,
+		}.get(period, 32)
+		return (now - timedelta(days=days)).date()
+
+	@staticmethod
+	def _series_date(date_key):
+		match = re.search(r"\d{4}-\d{2}-\d{2}", str(date_key or ""))
+		if not match:
+			return None
+		try:
+			return datetime.strptime(match.group(0), "%Y-%m-%d").date()
+		except ValueError:
+			return None
+
+	def _portfolio_curve_values(
+		self,
+		stock_data,
+		history_points=None,
+		*,
+		period="1mo",
+		now=None,
+		account_value_override=None,
+	):
+		now = now or datetime.now()
+		official_series = self._portfolio_series(
+			stock_data,
+			account_value_override=account_value_override,
+		)
+		official_dates = [
+			date
+			for date in (self._series_date(date_key) for date_key, _value in official_series)
+			if date is not None
+		]
+		cutoff = self._history_cutoff_date(period, now)
+		earliest_official = min(official_dates) if official_dates else None
+		local_by_date = {}
+		for item in history_points or []:
+			point = self._normalize_portfolio_history_entry(item)
+			if point is None:
+				continue
+			point_date = self._series_date(point["date"])
+			if point_date is None or point_date < cutoff:
+				continue
+			if earliest_official is not None and point_date >= earliest_official:
+				continue
+			local_by_date[point_date] = float(point["value"])
+		local_values = [local_by_date[date] for date in sorted(local_by_date)]
+		return local_values + [value for _date_key, value in official_series]
 
 	def _record_portfolio_snapshot(self, stock_data, now=None, account_value_override=None):
 		now = now or datetime.now()
 		snapshot = self._portfolio_snapshot(stock_data, now, account_value_override=account_value_override)
 		history_path = self._portfolio_history_path(stock_data)
-		history = self._read_portfolio_history(history_path)
-		history = self._upsert_portfolio_snapshot(history, snapshot)
+		current_history = self._read_portfolio_history(history_path)
+		current_history = self._upsert_portfolio_snapshot(current_history, snapshot)
 		try:
-			self._write_portfolio_history(history_path, history)
+			self._write_portfolio_history(history_path, current_history)
 		except Exception as e:
 			logging.warning(f"Could not write stock portfolio history: {type(e).__name__}: {e}")
-		return history
+		imported_path = os.path.join(os.path.dirname(history_path), "imported-history.json")
+		if os.path.abspath(imported_path) == os.path.abspath(history_path):
+			return current_history
+		combined = self._read_portfolio_history(imported_path)
+		for point in current_history:
+			combined = self._upsert_portfolio_snapshot(combined, point)
+		return combined
 
 	def _portfolio_totals(self, stock_data, account_value_override=None):
 		calculated_value = sum(self._finite_float(data.get("total_value")) for data in stock_data)
@@ -1916,6 +1992,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		dimensions,
 		history_points=None,
 		tracking_window_label=None,
+		tracking_period="1mo",
 		holdings_pin_symbols=None,
 		holdings_sink_symbols=None,
 		account_value_override=None,
@@ -1946,7 +2023,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				img,
 				draw,
 				(304, 60, width - 24, 204),
-				self._portfolio_values(stock_data, account_value_override=account_value_override),
+				self._portfolio_curve_values(
+					stock_data,
+					history_points,
+					period=tracking_period,
+					now=updated_at,
+					account_value_override=account_value_override,
+				),
 				history_points,
 			)
 			self._draw_holdings(
