@@ -447,6 +447,27 @@ def plan_fingerprint(plan: tuple[InstancePlan, ...]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def select_acceptance_plan(
+    plan: tuple[InstancePlan, ...],
+    plugin_ids,
+) -> tuple[InstancePlan, ...]:
+    requested = {
+        str(plugin_id).strip()
+        for plugin_id in (plugin_ids or ())
+        if str(plugin_id).strip()
+    }
+    if not requested:
+        return plan
+    configured = {instance.plugin_id for instance in plan}
+    if requested - configured:
+        raise AuditAbort("requested_plugin_not_configured")
+    return tuple(
+        instance
+        for instance in plan
+        if instance.plugin_id in requested
+    )
+
+
 def inspect_png(payload: bytes, *, expected_size=EXPECTED_IMAGE_SIZE) -> ImageEvidence:
     if not isinstance(payload, bytes) or not payload:
         raise EvidenceFailure("image_payload_missing")
@@ -1483,6 +1504,7 @@ class AcceptanceRunner:
         cache_root=DEFAULT_CACHE_ROOT,
         data_root=DEFAULT_DATA_ROOT,
         plugin_root=DEFAULT_PLUGIN_ROOT,
+        selected_plugin_ids=(),
         verify_post_display_presentation=True,
         utcnow=lambda: datetime.now(timezone.utc),
         monotonic=time.monotonic,
@@ -1497,6 +1519,7 @@ class AcceptanceRunner:
         self.cache_root = Path(cache_root)
         self.data_root = Path(data_root)
         self.plugin_root = Path(plugin_root)
+        self.selected_plugin_ids = frozenset(selected_plugin_ids or ())
         self.verify_post_display_presentation = bool(
             verify_post_display_presentation
         )
@@ -2046,8 +2069,12 @@ class AcceptanceRunner:
         except OSError:
             pass
         health = self._ready()
-        plan = self._config_plan()
-        fingerprint = plan_fingerprint(plan)
+        configured_plan = self._config_plan()
+        fingerprint = plan_fingerprint(configured_plan)
+        plan = select_acceptance_plan(
+            configured_plan,
+            self.selected_plugin_ids,
+        )
         started_at = self.utcnow().astimezone(timezone.utc).isoformat()
         results = []
         summary = {
@@ -2056,9 +2083,10 @@ class AcceptanceRunner:
             "started_at": started_at,
             "health": health,
             "health_events": self._health_events,
-            "playlist": plan[0].playlist_name,
+            "playlist": configured_plan[0].playlist_name,
             "plan_fingerprint": fingerprint,
-            "expected_instances": EXPECTED_INSTANCE_COUNT,
+            "expected_instances": len(plan),
+            "configured_instances": len(configured_plan),
             "results": results,
         }
         write_safe_json(self.output_dir / "summary.json", summary)
@@ -2133,6 +2161,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-root", default=DEFAULT_CACHE_ROOT)
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--plugin-root", default=DEFAULT_PLUGIN_ROOT)
+    parser.add_argument(
+        "--only-plugin-ids",
+        default="",
+        help=(
+            "Comma-separated plugin ids to rerun in configured playlist order; "
+            "the complete playlist remains stability-checked"
+        ),
+    )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument(
         "--verify-post-display-presentation",
@@ -2428,6 +2464,11 @@ def main(argv=None) -> int:
             cache_root=args.cache_root,
             data_root=args.data_root,
             plugin_root=args.plugin_root,
+            selected_plugin_ids={
+                plugin_id.strip()
+                for plugin_id in args.only_plugin_ids.split(",")
+                if plugin_id.strip()
+            },
             verify_post_display_presentation=(
                 args.verify_post_display_presentation
             ),

@@ -557,6 +557,31 @@ def _instance_for_plugin(acceptance, plugin_id):
     )
 
 
+def test_select_acceptance_plan_filters_requested_plugins_in_playlist_order(acceptance):
+    plan = (
+        _instance_for_plugin(acceptance, "weather"),
+        _instance_for_plugin(acceptance, "steam_profile_dashboard"),
+        _instance_for_plugin(acceptance, "sports_dashboard"),
+    )
+
+    selected = acceptance.select_acceptance_plan(
+        plan,
+        {"sports_dashboard", "weather"},
+    )
+
+    assert [item.plugin_id for item in selected] == ["weather", "sports_dashboard"]
+
+
+def test_select_acceptance_plan_rejects_unknown_requested_plugin(acceptance):
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.select_acceptance_plan(
+            (_instance_for_plugin(acceptance, "weather"),),
+            {"missing_plugin"},
+        )
+
+    assert captured.value.code == "requested_plugin_not_configured"
+
+
 def _bank_document(instance, *, attempt_field, attempted_at, status):
     return {
         "instance_profiles": {instance.instance_uuid: "private-profile-key"},
