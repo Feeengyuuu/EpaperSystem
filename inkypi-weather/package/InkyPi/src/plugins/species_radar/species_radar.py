@@ -99,7 +99,10 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 DEFAULT_NIGHT_START_HOUR = 18
 DEFAULT_NIGHT_END_HOUR = 6
-MAX_DATA_SECONDS = 75
+# Dual-location refreshes include GBIF queries, common-name enrichment, photo
+# media, and map preparation.  Keep the plugin below the 180-second manual job
+# ceiling while allowing the complete live pipeline to finish on the Pi.
+MAX_DATA_SECONDS = 150
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
 EARTH_RADIUS_KM = 6371.0088

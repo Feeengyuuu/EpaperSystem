@@ -2348,7 +2348,7 @@ def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_p
     with pytest.raises(RuntimeError, match="deadline"):
         plugin.generate_image(settings, DummyDeviceConfig())
 
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert clock["value"] <= species_mod.MAX_DATA_SECONDS + 40.0
     assert _tree_snapshot(tmp_path) == baseline
 
@@ -3044,3 +3044,6 @@ def test_species_cleanup_save_failure_restores_media_state_and_document(tmp_path
     assert profile == profile_before
     assert document == document_before
     assert _tree_snapshot(tmp_path) == tree_before
+
+def test_live_data_budget_fits_dual_location_provider_pipeline():
+    assert species_mod.MAX_DATA_SECONDS == 150

@@ -322,6 +322,7 @@ def test_live_reference_slice_resolves_exact_effective_triggers_and_reasons():
         "magazine_covers",
         "pixiv_r18_ranking",
         "simple_calendar",
+        "sports_dashboard",
         "species_radar",
         "steam_daily_art",
         "tech_pulse",
@@ -338,8 +339,8 @@ def test_live_reference_slice_resolves_exact_effective_triggers_and_reasons():
 
     assert resolved_reasons == expected_reasons
     assert set(resolved_reasons) == manifest_default_ids | {"daily_ai_news", "newspaper"}
-    assert len(set(resolved_reasons) - {"newspaper"}) == 12
-    assert len(resolved_reasons) == 13
+    assert len(set(resolved_reasons) - {"newspaper"}) == 13
+    assert len(resolved_reasons) == 14
     assert json.dumps(LIVE_PRESENTATION_REFERENCE_ROWS, sort_keys=True) == before
 
 

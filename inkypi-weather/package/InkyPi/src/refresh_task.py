@@ -2246,6 +2246,12 @@ class RefreshTask:
                     error=str(error),
                 )
             except Exception as error:
+                logger.exception(
+                    "Refresh command failed. | source: %s | intent: %s | plugin_id: %s",
+                    command.source,
+                    command.intent,
+                    command.plugin_id,
+                )
                 abort = self._classify_command_abort(command, context)
                 if abort is None:
                     try:

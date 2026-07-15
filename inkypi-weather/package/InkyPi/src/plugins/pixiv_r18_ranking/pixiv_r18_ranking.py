@@ -55,7 +55,10 @@ MAX_STRIP_CELLS = 3
 MAX_RANKING_PAGES = 5
 MAX_DATA_NEW_MEDIA = 12
 MAX_DATA_ATTEMPTS = 36
-MAX_DATA_SECONDS = 30
+# A cold Pi must fetch the ranking document before it can download and safely
+# downsample the first media object.  Thirty seconds routinely expired between
+# those two provider operations on the live device.
+MAX_DATA_SECONDS = 90
 MAX_MEDIA_REDIRECTS = 4
 MAX_RANKING_JSON_BYTES = 4 * 1024 * 1024
 # Compatibility export consumed by reddit_rule34_hot and older plugin modules.

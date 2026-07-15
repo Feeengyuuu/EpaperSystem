@@ -2623,3 +2623,6 @@ def test_state_actual_replace_crossing_deadline_restores_old_bytes_and_document(
     assert _pixiv_media_snapshot(bank) == media_before
     assert document == document_before
     assert not any(path.name.endswith(".tmp") for path in bank.state_path.parent.iterdir())
+
+def test_live_data_budget_allows_pi_media_download_after_ranking_fetch():
+    assert pixiv_mod.MAX_DATA_SECONDS == 90
