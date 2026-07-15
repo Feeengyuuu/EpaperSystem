@@ -47,6 +47,7 @@ POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_CACHE_ROOT = "/var/cache/inkypi"
 DEFAULT_DATA_ROOT = "/var/lib/inkypi/data"
 DEFAULT_PLUGIN_ROOT = "/opt/inkypi/current/src/plugins"
+APT_CACHE_ROOT = Path("/var/cache/apt")
 HEALTH_RETRY_SECONDS = 120
 HEALTH_POLL_INTERVAL_SECONDS = 1.0
 HEALTH_EVENT_LIMIT = 128
@@ -2282,6 +2283,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--clean-apt-generated-cache",
+        action="store_true",
+        help=(
+            "Remove only regenerable APT pkgcache/srcpkgcache files and "
+            "downloaded .deb archives, then exit"
+        ),
+    )
+    parser.add_argument(
         "--install-robinhood-token-from",
         default=None,
         help="Validate and securely install a staged official Robinhood MCP OAuth token, then exit",
@@ -3008,6 +3017,33 @@ def main(argv=None) -> int:
             "status": "updated",
             "plugin_cycle_interval_seconds": desired,
         }))
+        return 0
+    if args.clean_apt_generated_cache:
+        candidates = [
+            APT_CACHE_ROOT / "pkgcache.bin",
+            APT_CACHE_ROOT / "srcpkgcache.bin",
+        ]
+        archives = APT_CACHE_ROOT / "archives"
+        try:
+            candidates.extend(sorted(archives.glob("*.deb")))
+            removed = []
+            for path in candidates:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                size = path.stat().st_size
+                path.unlink()
+                removed.append(size)
+        except OSError:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "apt_cache_cleanup_failed",
+            }))
+            return 2
+        print(json.dumps({
+            "status": "cleaned",
+            "files_removed": len(removed),
+            "bytes_removed": sum(removed),
+        }, sort_keys=True))
         return 0
     if args.print_cache_tree:
         root = Path(args.cache_root)

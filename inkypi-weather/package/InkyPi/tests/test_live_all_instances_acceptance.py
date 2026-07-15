@@ -2022,6 +2022,39 @@ def test_set_plugin_cycle_interval_stops_writes_and_restarts(
     assert persisted["name"] == "frame"
 
 
+def test_clean_apt_generated_cache_removes_only_regenerable_files(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    cache_root = tmp_path / "cache" / "apt"
+    archives = cache_root / "archives"
+    archives.mkdir(parents=True)
+    (cache_root / "pkgcache.bin").write_bytes(b"pkg")
+    (cache_root / "srcpkgcache.bin").write_bytes(b"src")
+    (archives / "download.deb").write_bytes(b"deb")
+    keep = cache_root / "keep.txt"
+    keep.write_bytes(b"keep")
+    monkeypatch.setattr(acceptance, "APT_CACHE_ROOT", cache_root)
+
+    exit_code = acceptance.main(["--clean-apt-generated-cache"])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed == {
+        "bytes_removed": 9,
+        "files_removed": 3,
+        "status": "cleaned",
+    }
+    assert keep.read_bytes() == b"keep"
+    assert sorted(path.name for path in cache_root.rglob("*")) == [
+        "archives",
+        "keep.txt",
+    ]
+
+
 def test_merge_env_adds_missing_keys_without_overwriting_or_printing_values(
     acceptance,
     tmp_path,
