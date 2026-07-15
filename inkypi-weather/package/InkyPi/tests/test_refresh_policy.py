@@ -838,6 +838,33 @@ def test_soft_admits_spaced_three_data_then_one_auxiliary_turn():
     assert state.last_soft_renderer_admitted_monotonic == 170.0
 
 
+def test_displayed_live_wins_auxiliary_turn_over_older_presentation():
+    older_presentation = _candidate(
+        "older-presentation",
+        lane=RefreshLane.PRESENTATION,
+        reason=DueReason.PRESENTATION,
+        due_since=datetime(2026, 7, 15, 19, 0, tzinfo=UTC),
+    )
+    displayed_live = _candidate(
+        "displayed-live",
+        lane=RefreshLane.LIVE,
+        reason=DueReason.LIVE,
+        due_since=datetime(2026, 7, 15, 20, 0, tzinfo=UTC),
+    )
+
+    for tier in (ResourceTier.SOFT, ResourceTier.HEALTHY):
+        decision = choose_refresh_candidate(
+            [],
+            [older_presentation, displayed_live],
+            tier=tier,
+            state=AdmissionState(),
+            now_monotonic=1000.0,
+            thresholds=ResourceThresholds(soft_spacing_seconds=60.0),
+        )
+
+        assert decision.candidate == displayed_live
+
+
 def test_hard_admits_no_presentation():
     state = AdmissionState(
         consecutive_data_admissions=3,

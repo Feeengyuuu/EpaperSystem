@@ -143,7 +143,13 @@ def choose_refresh_candidate(
             # presentation forever after that attempt has already happened.
             urgent_presentation.append(candidate)
         filtered_auxiliary.append(candidate)
-    auxiliary = filtered_auxiliary
+    auxiliary = sorted(
+        filtered_auxiliary,
+        key=lambda candidate: (
+            candidate.lane is not RefreshLane.LIVE,
+            _candidate_order(candidate),
+        ),
+    )
 
     if tier is ResourceTier.HARD:
         return AdmissionDecision(None, state)
