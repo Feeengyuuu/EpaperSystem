@@ -3,6 +3,7 @@ import sys
 import types
 import json
 import urllib.request
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -520,6 +521,125 @@ def _sample_ewc_detail_schedule_html():
       </article>
     </section>
     """
+
+
+def _sample_ewc_next_flight_html():
+    structures = [
+        {
+            "phase": {"id": "phase-groups", "name": "Group Stage", "slug": "group-stage"},
+            "groups": [{"id": "group-a", "name": "Group A", "slug": "group-a"}],
+            "series": [
+                {
+                    "id": "series-completed",
+                    "phase_id": "phase-groups",
+                    "state": "COMPLETED",
+                    "scheduled_start": "2026-07-15T11:20:00Z",
+                    "actual_start": "2026-07-15T11:59:29Z",
+                    "actual_end": "2026-07-15T12:32:50Z",
+                    "format": {"type": "BEST_OF", "best_of": 1},
+                    "structure": {
+                        "kind": "BRACKET_SERIES",
+                        "group_ids": ["group-a"],
+                        "label": "Group A - Opening Match #1",
+                        "round_name": "Opening Matches",
+                    },
+                    "result": {
+                        "status": "FINAL",
+                        "winner_slots": [1],
+                        "slots": [
+                            {"slot": 1, "score": 1, "is_winner": True},
+                            {"slot": 2, "score": 0, "is_winner": False},
+                        ],
+                    },
+                    "slots": [
+                        {
+                            "slot": 1,
+                            "competitor": {
+                                "club": {"id": "club-g2", "name": "G2 Esports", "short_name": "G2"},
+                                "team": {"id": "team-g2", "name": "G2 Esports", "short_name": "G2"},
+                                "roster": [{"nickname": "Caps", "role": "PLAYER", "ingame_role": "mid"}],
+                            },
+                        },
+                        {
+                            "slot": 2,
+                            "competitor": {
+                                "club": {"id": "club-furia", "name": "FURIA", "short_name": "FUR"},
+                                "team": {"id": "team-furia", "name": "FURIA", "short_name": "FUR"},
+                                "roster": [{"nickname": "Tutsz", "role": "PLAYER", "ingame_role": "mid"}],
+                            },
+                        },
+                    ],
+                    "games": [
+                        {
+                            "id": "game-1",
+                            "name": "Game 1",
+                            "state": "COMPLETED",
+                            "sequence_number": 1,
+                            "result": {
+                                "winner_slots": [1],
+                                "slots": [{"slot": 1, "score": 11}, {"slot": 2, "score": 4}],
+                            },
+                        }
+                    ],
+                    "streams": [{"language": "en", "platform": "YOUTUBE", "url": "https://youtube.example/live"}],
+                },
+                {
+                    "id": "series-upcoming",
+                    "phase_id": "phase-groups",
+                    "state": "SCHEDULED",
+                    "scheduled_start": "2026-07-16T11:00:00Z",
+                    "format": {"type": "BEST_OF", "best_of": 3},
+                    "structure": {"kind": "BRACKET_SERIES", "group_ids": ["group-a"], "label": "Group A - Winners Match"},
+                    "slots": [
+                        {"slot": 1, "competitor": {"club": {"id": "club-t1", "name": "T1"}, "team": {"name": "T1"}}},
+                        {"slot": 2, "competitor": {"club": {"id": "club-blg", "name": "Bilibili Gaming"}, "team": {"name": "Bilibili Gaming"}}},
+                    ],
+                    "games": [],
+                    "streams": [],
+                },
+            ],
+        }
+    ]
+    flight = '9:["$","div",null,{"initialStructures":' + json.dumps(structures, separators=(",", ":")) + '}]'
+    return "<html><body><script>self.__next_f.push([1," + json.dumps(flight) + "])\u003c/script></body></html>".replace("\u003c/script>", "</script>")
+
+
+def _sample_ewc_multi_competitor_next_flight_html():
+    structures = [
+        {
+            "phase": {"id": "phase-groups", "name": "Group Stage"},
+            "groups": [{"id": "group-a", "name": "Group A"}],
+            "series": [
+                {
+                    "id": "free-fire-round-1",
+                    "phase_id": "phase-groups",
+                    "state": "COMPLETED",
+                    "scheduled_start": "2026-07-15T09:00:00Z",
+                    "actual_end": "2026-07-15T10:00:00Z",
+                    "format": {"type": "BATTLE_ROYALE"},
+                    "structure": {"kind": "GROUP_SERIES", "group_ids": ["group-a"], "label": "Group A - Round 1"},
+                    "result": {
+                        "status": "FINAL",
+                        "winner_slots": [2],
+                        "slots": [
+                            {"slot": 1, "placement": 3, "is_winner": False},
+                            {"slot": 2, "placement": 1, "is_winner": True},
+                            {"slot": 3, "placement": 2, "is_winner": False},
+                        ],
+                    },
+                    "slots": [
+                        {"slot": 1, "competitor": {"club": {"id": "club-a", "name": "EVOS"}, "team": {"name": "EVOS"}}},
+                        {"slot": 2, "competitor": {"club": {"id": "club-b", "name": "Team Falcons"}, "team": {"name": "Team Falcons"}}},
+                        {"slot": 3, "competitor": {"club": {"id": "club-c", "name": "Fluxo"}, "team": {"name": "Fluxo"}}},
+                    ],
+                    "games": [{"id": "round-1", "name": "Round 1", "state": "COMPLETED"}],
+                    "streams": [],
+                }
+            ],
+        }
+    ]
+    flight = '9:["$","div",null,{"initialStructures":' + json.dumps(structures, separators=(",", ":")) + '}]'
+    return "<script>self.__next_f.push([1," + json.dumps(flight) + "])</script>"
 def _sample_worldcup_fixture():
     return {
         "fixture": {
@@ -1602,6 +1722,314 @@ def test_ewc_detail_schedule_parser_pairs_official_match_rows():
     assert completed["score_b"] == 1
 
 
+def test_ewc_detail_parser_reads_next_flight_series_before_legacy_html():
+    la = ZoneInfo("America/Los_Angeles")
+
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_next_flight_html(),
+        la,
+        "league-of-legends",
+        "League of Legends",
+        "https://esportsworldcup.com/en/competitions/2026/league-of-legends",
+        year="2026",
+    )
+
+    assert [match["event_id"] for match in matches] == ["series-completed", "series-upcoming"]
+    completed, upcoming = matches
+    assert completed["status"] == "COMPLETED"
+    assert completed["start"].strftime("%Y-%m-%d %H:%M") == "2026-07-15 04:20"
+    assert completed["end"].strftime("%Y-%m-%d %H:%M") == "2026-07-15 05:32"
+    assert completed["stage"] == "Group A - Opening Match #1"
+    assert completed["best_of"] == 1
+    assert completed["team_a"] == "G2 Esports"
+    assert completed["team_b"] == "FURIA"
+    assert completed["team_a_short"] == "G2"
+    assert completed["team_b_short"] == "FUR"
+    assert completed["score_a"] == 1
+    assert completed["score_b"] == 0
+    assert completed["team_a_logo"].endswith("/assets/clubs/club-g2/LOGO_LIGHT.png")
+    assert completed["team_a_roster"] == ["Caps"]
+    assert completed["games"][0]["score_a"] == 11
+    assert completed["games"][0]["score_b"] == 4
+    assert completed["stream_url"] == "https://youtube.example/live"
+    assert upcoming["status"] == "UPCOMING"
+    assert upcoming["best_of"] == 3
+    assert upcoming["score_a"] is None
+    assert upcoming["score_b"] is None
+
+
+def test_ewc_detail_parser_keeps_multi_competitor_rounds_displayable():
+    la = ZoneInfo("America/Los_Angeles")
+
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_multi_competitor_next_flight_html(),
+        la,
+        "free-fire",
+        "Free Fire",
+        "https://esportsworldcup.com/en/competitions/2026/free-fire",
+        year="2026",
+    )
+
+    assert len(matches) == 1
+    round_event = matches[0]
+    assert round_event["kind"] == "match"
+    assert round_event["multi_competitor"] is True
+    assert round_event["participant_count"] == 3
+    assert round_event["leader"] == "Team Falcons"
+    assert round_event["leader_logo"].endswith("/assets/clubs/club-b/LOGO_LIGHT.png")
+    assert [participant["placement"] for participant in round_event["participants"]] == [3, 1, 2]
+
+
+def test_ewc_missing_official_club_logos_use_team_specific_fallbacks():
+    expected_hosts = {
+        "2068035472055078912": "prosettings.net",
+        "2068035483304202240": "nigmagalaxy.com",
+        "2069127996567982080": "teamapexgaming.com",
+    }
+
+    for club_id, host in expected_hosts.items():
+        logo_url = SportsDashboard._ewc_club_logo_url(club_id)
+        assert urlparse(logo_url).hostname == host
+        match = {"team_a_logo": logo_url}
+        assert SportsDashboard._ewc_team_logo_url(match, "a") == logo_url
+
+
+def test_ewc_geng_broken_official_logo_can_use_bundled_short_name_logo():
+    match = {
+        "team_a": "Gen.G Esports",
+        "team_a_short": "GEN",
+        "team_a_logo": SportsDashboard._ewc_club_logo_url("2068035474038984704"),
+    }
+
+    assert SportsDashboard._ewc_compact_team_name(match, "a") == "GEN"
+    assert SportsDashboard._load_local_team_logo("GEN", 44) is not None
+
+
+def test_ewc_next_flight_parser_skips_empty_placeholder_before_real_structures():
+    empty_flight = '1:["$","div",null,{"initialStructures":[]}]'
+    empty_script = "<script>self.__next_f.push([1," + json.dumps(empty_flight) + "])</script>"
+    html = empty_script + _sample_ewc_next_flight_html()
+
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        html,
+        ZoneInfo("America/Los_Angeles"),
+        "league-of-legends",
+        "League of Legends",
+        "https://esportsworldcup.com/en/competitions/2026/league-of-legends",
+        year="2026",
+    )
+
+    assert {match["event_id"] for match in matches} == {"series-completed", "series-upcoming"}
+
+
+def test_ewc_next_flight_parser_deduplicates_partial_then_full_series_pushes():
+    structures = SportsDashboard._extract_ewc_initial_structures(_sample_ewc_next_flight_html())
+    partial = json.loads(json.dumps(structures))
+    partial[0]["series"] = partial[0]["series"][:1]
+
+    def flight_script(payload):
+        flight = '9:["$","div",null,{"initialStructures":' + json.dumps(payload, separators=(",", ":")) + '}]'
+        return "<script>self.__next_f.push([1," + json.dumps(flight) + "])</script>"
+
+    html = flight_script(partial) + flight_script(structures)
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        html,
+        ZoneInfo("America/Los_Angeles"),
+        "league-of-legends",
+        "League of Legends",
+        "https://esportsworldcup.com/en/competitions/2026/league-of-legends",
+        year="2026",
+    )
+
+    assert [match["event_id"] for match in matches].count("series-completed") == 1
+    assert {match["event_id"] for match in matches} == {"series-completed", "series-upcoming"}
+
+
+def test_ewc_live_and_pregame_detail_cache_uses_live_refresh_interval():
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    base = {
+        "kind": "match",
+        "start": now - timedelta(minutes=10),
+        "end": now + timedelta(hours=2),
+        "status": "LIVE",
+    }
+    pregame = dict(base, start=now + timedelta(minutes=20), end=now + timedelta(hours=3), status="UPCOMING")
+    later = dict(base, start=now + timedelta(hours=2), end=now + timedelta(hours=5), status="UPCOMING")
+
+    assert SportsDashboard._ewc_detail_effective_cache_seconds([base], now, 600) == 60
+    assert SportsDashboard._ewc_detail_effective_cache_seconds([pregame], now, 600) == 60
+    assert SportsDashboard._ewc_detail_effective_cache_seconds([later], now, 600) == 600
+
+
+def test_ewc_detail_candidates_keep_all_active_events_ahead_of_recent_pages():
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    events = []
+    for index in range(6):
+        events.append(
+            {
+                "slug": f"active-{index}",
+                "game": f"Active {index}",
+                "source_url": f"https://esportsworldcup.com/en/competitions/2026/active-{index}",
+                "start": now - timedelta(days=3, hours=index),
+                "end": now + timedelta(days=1),
+            }
+        )
+    for index in range(5):
+        events.append(
+            {
+                "slug": f"recent-{index}",
+                "game": f"Recent {index}",
+                "source_url": f"https://esportsworldcup.com/en/competitions/2026/recent-{index}",
+                "start": now - timedelta(days=6, hours=index),
+                "end": now - timedelta(hours=index + 1),
+            }
+        )
+
+    candidates = SportsDashboard._ewc_detail_candidate_events(events, now, 7)
+
+    assert [item["slug"] for item in candidates[:6]] == [f"active-{index}" for index in range(6)]
+    assert len([item for item in candidates if item["slug"].startswith("active-")]) == 6
+
+
+def test_ewc_detail_cache_refreshes_only_stale_pregame_page(monkeypatch):
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_detail_page_ttl")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=la)
+    settings = {"ewcDetailCacheSeconds": 600}
+    events = [
+        {
+            "slug": "pregame",
+            "game": "Pregame",
+            "year": "2026",
+            "source_url": "https://esportsworldcup.com/en/competitions/2026/pregame",
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        },
+        {
+            "slug": "later",
+            "game": "Later",
+            "year": "2026",
+            "source_url": "https://esportsworldcup.com/en/competitions/2026/later",
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        },
+    ]
+    pregame_match = {
+        "kind": "match",
+        "event_id": "pregame-match",
+        "slug": "pregame",
+        "game": "Pregame",
+        "start": now + timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "UPCOMING",
+        "team_a": "A",
+        "team_b": "B",
+    }
+    later_match = dict(
+        pregame_match,
+        event_id="later-match",
+        slug="later",
+        game="Later",
+        start=now + timedelta(hours=2),
+        end=now + timedelta(hours=4),
+    )
+    cache = {
+        "version": "sports-dashboard-ewc-detail-v2",
+        "cache_key": plugin._ewc_detail_cache_key(settings, la),
+        "fetched_at": (now - timedelta(seconds=61)).astimezone(timezone.utc).isoformat(),
+        "pages": {
+            "2026:pregame": {
+                "page_key": "2026:pregame",
+                "fetched_at": (now - timedelta(seconds=61)).astimezone(timezone.utc).isoformat(),
+                "matches": SportsDashboard._encode_ewc_events([pregame_match]),
+            },
+            "2026:later": {
+                "page_key": "2026:later",
+                "fetched_at": (now - timedelta(seconds=300)).astimezone(timezone.utc).isoformat(),
+                "matches": SportsDashboard._encode_ewc_events([later_match]),
+            },
+        },
+    }
+    plugin._write_json_file(plugin._ewc_detail_cache_path(), cache)
+    fetched = []
+
+    def fetch(event, _timezone_info, now_utc):
+        fetched.append(event["slug"])
+        refreshed = dict(pregame_match, status="LIVE")
+        return {
+            "page_key": "2026:pregame",
+            "slug": "pregame",
+            "game": "Pregame",
+            "year": "2026",
+            "fetched_at": now_utc.isoformat(),
+            "matches": SportsDashboard._encode_ewc_events([refreshed]),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch)
+
+    matches, _source = plugin._load_ewc_detail_matches(settings, la, events, now, 7)
+
+    assert fetched == ["pregame"]
+    assert {match["event_id"] for match in matches} == {"pregame-match", "later-match"}
+    assert next(match for match in matches if match["event_id"] == "pregame-match")["status"] == "LIVE"
+
+
+def test_ewc_detail_empty_refresh_preserves_nonempty_stale_page(monkeypatch):
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_detail_empty_refresh")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=la)
+    settings = {"ewcDetailCacheSeconds": 600}
+    event = {
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "year": "2026",
+        "source_url": "https://esportsworldcup.com/en/competitions/2026/league-of-legends",
+        "start": now - timedelta(days=1),
+        "end": now + timedelta(days=2),
+    }
+    cached_match = {
+        "kind": "match",
+        "event_id": "still-valid",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "start": now + timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "UPCOMING",
+        "team_a": "T1",
+        "team_b": "G2",
+    }
+    page_key = "2026:league-of-legends"
+    plugin._write_json_file(
+        plugin._ewc_detail_cache_path(),
+        {
+            "version": "sports-dashboard-ewc-detail-v2",
+            "cache_key": plugin._ewc_detail_cache_key(settings, la),
+            "fetched_at": (now - timedelta(minutes=2)).astimezone(timezone.utc).isoformat(),
+            "pages": {
+                page_key: {
+                    "page_key": page_key,
+                    "fetched_at": (now - timedelta(minutes=2)).astimezone(timezone.utc).isoformat(),
+                    "matches": SportsDashboard._encode_ewc_events([cached_match]),
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ewc_detail_page",
+        lambda *_args: {"page_key": page_key, "fetched_at": now.isoformat(), "matches": []},
+    )
+
+    matches, source = plugin._load_ewc_detail_matches(settings, la, [event], now, 7)
+
+    assert [match["event_id"] for match in matches] == ["still-valid"]
+    assert source == "EWC DETAIL STALE"
+
+
 def test_select_ewc_events_prioritizes_and_rotates_live_matches():
     la = ZoneInfo("America/Los_Angeles")
     matches = SportsDashboard._parse_ewc_detail_schedule_html(
@@ -1764,6 +2192,81 @@ def test_select_ewc_events_rotates_overlapping_match_lists_by_game():
     assert [match["game"] for match in selected_valorant["upcoming_matches"]] == ["VALORANT"]
     assert selected_valorant["recent_matches"] == []
 
+
+def test_select_ewc_events_rotates_upcoming_games_with_matching_recent_and_future_lists():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=la)
+
+    def match(slug, game, event_id, start, status, team_a):
+        return {
+            "kind": "match",
+            "event_id": event_id,
+            "match_id": event_id,
+            "slug": slug,
+            "game": game,
+            "start": start,
+            "end": start + timedelta(hours=2),
+            "status": status,
+            "stage": "Group Stage",
+            "team_a": team_a,
+            "team_b": "Opponent",
+            "score_a": 1 if status == "COMPLETED" else None,
+            "score_b": 0 if status == "COMPLETED" else None,
+        }
+
+    dota_recent = match("dota2", "Dota 2", "dota-recent", now - timedelta(hours=3), "COMPLETED", "Falcons")
+    dota_next = match("dota2", "Dota 2", "dota-next", now + timedelta(hours=1), "UPCOMING", "Liquid")
+    lol_recent = match("league-of-legends", "League of Legends", "lol-recent", now - timedelta(hours=2), "COMPLETED", "G2")
+    lol_next = match("league-of-legends", "League of Legends", "lol-next", now + timedelta(hours=3), "UPCOMING", "T1")
+
+    dota = SportsDashboard._select_ewc_events(
+        [lol_next, dota_recent, lol_recent, dota_next], now, 21, rotation_seed=0
+    )
+    lol = SportsDashboard._select_ewc_events(
+        [lol_next, dota_recent, lol_recent, dota_next], now, 21, rotation_seed=1
+    )
+
+    assert dota["selected_match_group"]["slug"] == "dota2"
+    assert [item["event_id"] for item in dota["upcoming_matches"]] == ["dota-next"]
+    assert [item["event_id"] for item in dota["recent_matches"]] == ["dota-recent"]
+    assert lol["selected_match_group"]["slug"] == "league-of-legends"
+    assert [item["event_id"] for item in lol["upcoming_matches"]] == ["lol-next"]
+    assert [item["event_id"] for item in lol["recent_matches"]] == ["lol-recent"]
+
+
+def test_select_ewc_events_live_game_preempts_upcoming_game_rotation():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=la)
+    live = {
+        "kind": "match",
+        "event_id": "free-fire-live",
+        "slug": "free-fire",
+        "game": "Free Fire",
+        "start": now - timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "LIVE",
+        "stage": "Group Stage",
+        "multi_competitor": True,
+        "participant_count": 12,
+    }
+    upcoming = {
+        "kind": "match",
+        "event_id": "lol-next",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "start": now + timedelta(minutes=10),
+        "end": now + timedelta(hours=3),
+        "status": "UPCOMING",
+        "stage": "Group Stage",
+        "team_a": "T1",
+        "team_b": "G2",
+    }
+
+    for seed in range(4):
+        selected = SportsDashboard._select_ewc_events([upcoming, live], now, 21, rotation_seed=seed)
+        assert selected["selected_match_group"]["slug"] == "free-fire"
+        assert selected["main_match"]["event_id"] == "free-fire-live"
+
 def test_ewc_live_state_file_marks_live_match_group():
     plugin = _plugin()
     cache_dir = _sports_dashboard_tmp("ewc_live_state")
@@ -1797,6 +2300,42 @@ def test_ewc_live_state_file_marks_live_match_group():
     assert state["team_a"] == "Alliance"
     assert state["team_b"] == "Team Falcons"
     assert state["live_until"] == "2026-07-08T21:00:00+00:00"
+
+
+def test_ewc_live_state_uses_nonselected_group_for_pregame_refresh():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_nonselected_pregame_state")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=la)
+    near = {
+        "kind": "match",
+        "event_id": "near-match",
+        "slug": "near-game",
+        "game": "Near Game",
+        "start": now + timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "UPCOMING",
+        "team_a": "A",
+        "team_b": "B",
+    }
+    later = dict(
+        near,
+        event_id="later-match",
+        slug="later-game",
+        game="Later Game",
+        start=now + timedelta(hours=2),
+        end=now + timedelta(hours=4),
+    )
+    selected = SportsDashboard._select_ewc_events([near, later], now, 21, rotation_seed=1)
+    assert selected["selected_match_group"]["slug"] == "later-game"
+
+    plugin._write_ewc_live_state(selected, now, "EWC DETAIL")
+
+    state = json.loads((cache_dir / "ewc_live_state.json").read_text(encoding="utf-8"))
+    assert state["has_live"] is True
+    assert state["event_id"] == "near-match"
+    assert state["slug"] == "near-game"
 
 
 def test_ewc_competition_window_without_matches_is_not_live_state():
@@ -1919,6 +2458,58 @@ def test_ewc_sidebar_render_draws_detail_match_names_and_official_logos(monkeypa
     assert "Team RRQ" in seen_texts
     assert "100 Thieves" in seen_texts
     assert image.getpixel((560, 80)) != COLORS["paper"]
+
+
+def test_ewc_sidebar_draws_upcoming_and_recent_for_selected_game(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=la)
+    main = {
+        "kind": "match",
+        "event_id": "lol-main",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "start": now + timedelta(minutes=30),
+        "end": now + timedelta(hours=3),
+        "status": "UPCOMING",
+        "stage": "Group A",
+        "team_a": "T1",
+        "team_b": "G2",
+    }
+    future = dict(main, event_id="lol-future", start=now + timedelta(hours=3), team_a="BLG", team_b="Gen.G")
+    recent = dict(
+        main,
+        event_id="lol-recent",
+        start=now - timedelta(hours=3),
+        end=now - timedelta(hours=1),
+        status="COMPLETED",
+        score_a=2,
+        score_b=1,
+    )
+    selected = {
+        "main": main,
+        "main_match": main,
+        "live": [],
+        "live_matches": [],
+        "upcoming": [main, future],
+        "upcoming_matches": [main, future],
+        "recent": [recent],
+        "recent_matches": [recent],
+    }
+    section_titles = []
+
+    monkeypatch.setattr(plugin, "_draw_ewc_logo", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_ewc_match_focus_card", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_ewc_match_row", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_section_header",
+        lambda _draw, _right_x, _right_w, _y, title, _accent: section_titles.append(title),
+    )
+
+    plugin._draw_ewc_sidebar(Image.new("RGB", (800, 480), "white"), 552, selected, "EWC DETAIL", now)
+
+    assert section_titles == ["UPCOMING", "RECENT"]
 
 
 def test_ewc_match_focus_card_draws_game_logo_and_name_without_box_chrome(monkeypatch):

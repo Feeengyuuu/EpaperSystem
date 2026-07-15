@@ -336,20 +336,62 @@ class EsportsMixin:
             and cache.get("cache_key") == cache_key
             and isinstance(cache.get("pages"), Mapping)
         )
-        if has_compatible_cache and not force_refresh and self._cache_is_fresh_seconds(cache, cache_seconds, now_utc):
-            matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
-            return matches, "EWC DETAIL CACHE" if matches else ""
-
-        pages = dict(cache.get("pages") or {}) if has_compatible_cache else {}
-        fetched_any = False
+        cached_pages = dict(cache.get("pages") or {}) if has_compatible_cache else {}
+        candidate_keys = {
+            self._ewc_detail_page_key(event)
+            for event in candidates
+            if self._ewc_detail_page_key(event)
+        }
+        pages = {
+            key: page
+            for key, page in cached_pages.items()
+            if key in candidate_keys and isinstance(page, Mapping)
+        }
+        events_to_fetch = []
         for event in candidates:
+            page_key = self._ewc_detail_page_key(event)
+            page = pages.get(page_key) if page_key else None
+            page_matches = self._decode_ewc_events((page or {}).get("matches") or [], timezone_info)
+            page_cache_seconds = self._ewc_detail_effective_cache_seconds(page_matches, now, cache_seconds)
+            if (
+                force_refresh
+                or not isinstance(page, Mapping)
+                or not self._cache_is_fresh_seconds(page, page_cache_seconds, now_utc)
+            ):
+                events_to_fetch.append(event)
+        if not events_to_fetch:
+            cached_matches = self._decode_ewc_events(
+                self._ewc_detail_cached_matches({"pages": pages}, candidates),
+                timezone_info,
+            )
+            return cached_matches, "EWC DETAIL CACHE" if cached_matches else ""
+
+        fetched_any = False
+        stale_any = False
+        for event in events_to_fetch:
             try:
                 page = self._fetch_ewc_detail_page(event, timezone_info, now_utc)
             except Exception as exc:
+                stale_any = True
                 logger.warning(
                     "EWC detail fetch failed for %s: %s",
                     event.get("slug") or event.get("game") or "unknown",
                     _safe_exception_text(exc),
+                )
+                continue
+            old_page = pages.get(page.get("page_key"))
+            if not page.get("matches") and isinstance(old_page, Mapping) and old_page.get("matches"):
+                stale_any = True
+                logger.warning(
+                    "EWC detail fetch returned no matches for %s; preserving non-empty cached page",
+                    event.get("slug") or event.get("game") or "unknown",
+                )
+                continue
+            if not page.get("matches"):
+                stale_any = True
+                logger.warning(
+                    "EWC detail fetch returned no matches for %s",
+                    event.get("slug") or event.get("game") or "unknown",
                 )
                 continue
             pages[page["page_key"]] = page
@@ -368,10 +410,12 @@ class EsportsMixin:
                 logger.warning("Failed to write EWC detail cache: %s", exc)
             cache = payload
         elif has_compatible_cache:
-            matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+            matches = self._decode_ewc_events(self._ewc_detail_cached_matches({"pages": pages}, candidates), timezone_info)
             return matches, "EWC DETAIL STALE" if matches else ""
 
         matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+        if stale_any and matches:
+            return matches, "EWC DETAIL STALE"
         return matches, "EWC DETAIL" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
 
     def _fetch_ewc_detail_page(self, event, timezone_info, now_utc):
@@ -416,7 +460,9 @@ class EsportsMixin:
         )
         lower = now - timedelta(days=DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS)
         upper = now + timedelta(days=lookahead_days)
-        candidates = []
+        active = []
+        future = []
+        recent = []
         seen = set()
         for event in events or []:
             if not isinstance(event, Mapping):
@@ -436,9 +482,26 @@ class EsportsMixin:
                 end = start + timedelta(days=1)
             if end < lower or start > upper:
                 continue
-            candidates.append(dict(event))
+            candidate = dict(event)
+            if start <= now <= end:
+                active.append(candidate)
+            elif start > now:
+                future.append(candidate)
+            else:
+                recent.append(candidate)
             seen.add(slug)
-        return sorted(candidates, key=lambda item: (item.get("start") or now, item.get("game") or ""))[:DEFAULT_EWC_DETAIL_MAX_PAGES]
+        active.sort(key=lambda item: (item.get("end") or now, item.get("game") or ""))
+        future.sort(key=lambda item: (item.get("start") or now, item.get("game") or ""))
+        recent.sort(key=lambda item: (item.get("end") or item.get("start") or now), reverse=True)
+        remaining = max(0, DEFAULT_EWC_DETAIL_MAX_PAGES - len(active))
+        return active + (future + recent)[:remaining]
+
+    @staticmethod
+    def _ewc_detail_page_key(event):
+        event = event or {}
+        slug = str(event.get("slug") or "").strip().lower()
+        year = str(event.get("year") or SportsDashboard._ewc_year_from_url(event.get("source_url")) or "").strip()
+        return f"{year or 'unknown'}:{slug}" if slug else ""
 
     @staticmethod
     def _ewc_detail_cached_matches(cache, candidates):
@@ -469,6 +532,316 @@ class EsportsMixin:
         return hashlib.sha1(f"detail|{url}|{self._timezone_key(timezone_info)}".encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _ewc_detail_effective_cache_seconds(matches, now, configured_seconds):
+        try:
+            configured = max(60, int(configured_seconds))
+        except (TypeError, ValueError):
+            configured = DEFAULT_EWC_DETAIL_CACHE_SECONDS
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        for match in matches or []:
+            if not isinstance(match, Mapping):
+                continue
+            if SportsDashboard._is_ewc_live_event(match, current):
+                return min(configured, DEFAULT_EWC_LIVE_REFRESH_SECONDS)
+            start = match.get("start")
+            if not isinstance(start, datetime):
+                continue
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=current.tzinfo)
+            else:
+                start = start.astimezone(current.tzinfo)
+            if current <= start <= current + EWC_LIVE_PREGAME_WINDOW:
+                return min(configured, DEFAULT_EWC_LIVE_REFRESH_SECONDS)
+        return configured
+
+    @staticmethod
+    def _extract_ewc_initial_structures(html_text):
+        html = str(html_text or "")
+        search_from = 0
+        decoder = json.JSONDecoder()
+        collected = []
+        seen_series = set()
+        while True:
+            marker = html.find("initialStructures", search_from)
+            if marker < 0:
+                return collected
+            script_start = html.rfind("<script", 0, marker)
+            script_content_start = html.find(">", script_start) + 1 if script_start >= 0 else -1
+            script_end = html.find("</script>", marker)
+            if script_content_start <= 0 or script_end < 0:
+                search_from = marker + len("initialStructures")
+                continue
+            script = html[script_content_start:script_end].strip()
+            push_marker = "self.__next_f.push("
+            push_start = script.find(push_marker)
+            if push_start < 0:
+                search_from = marker + len("initialStructures")
+                continue
+            try:
+                pushed, _ = decoder.raw_decode(script[push_start + len(push_marker):])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                search_from = marker + len("initialStructures")
+                continue
+            if not isinstance(pushed, list) or len(pushed) < 2 or not isinstance(pushed[1], str):
+                search_from = marker + len("initialStructures")
+                continue
+            flight = pushed[1]
+            flight_marker = flight.find("initialStructures")
+            if flight_marker < 0:
+                search_from = marker + len("initialStructures")
+                continue
+            value_start = flight.find(":", flight_marker)
+            if value_start < 0:
+                search_from = marker + len("initialStructures")
+                continue
+            try:
+                structures, _ = decoder.raw_decode(flight, value_start + 1)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                search_from = marker + len("initialStructures")
+                continue
+            if isinstance(structures, list):
+                for structure in structures:
+                    if not isinstance(structure, Mapping):
+                        continue
+                    series_ids = tuple(
+                        str(series.get("id") or "")
+                        for series in (structure.get("series") or [])
+                        if isinstance(series, Mapping)
+                    )
+                    signature = series_ids or (json.dumps(structure, sort_keys=True, default=str),)
+                    if signature in seen_series:
+                        continue
+                    seen_series.add(signature)
+                    collected.append(structure)
+            search_from = script_end + len("</script>")
+
+    @staticmethod
+    def _ewc_structured_status(series):
+        state = str((series or {}).get("state") or "").strip().upper()
+        result_status = str(((series or {}).get("result") or {}).get("status") or "").strip().upper()
+        if state in {"COMPLETED", "FINAL", "FINISHED"} or result_status == "FINAL":
+            return "COMPLETED"
+        if state in {"LIVE", "STARTED", "IN_PROGRESS", "RUNNING", "ONGOING", "ACTIVE"}:
+            return "LIVE"
+        return "UPCOMING"
+
+    @staticmethod
+    def _ewc_club_logo_url(club_id):
+        value = str(club_id or "").strip()
+        if not value:
+            return ""
+        fallback = EWC_CLUB_LOGO_FALLBACKS.get(value)
+        if fallback:
+            return fallback
+        return f"https://tds-cdn.ewc.efg.gg/assets/clubs/{value}/LOGO_LIGHT.png"
+
+    @staticmethod
+    def _ewc_structured_participant(slot, result_slots):
+        slot = slot if isinstance(slot, Mapping) else {}
+        competitor = slot.get("competitor") if isinstance(slot.get("competitor"), Mapping) else {}
+        team = competitor.get("team") if isinstance(competitor.get("team"), Mapping) else {}
+        club = competitor.get("club") if isinstance(competitor.get("club"), Mapping) else {}
+        person = competitor.get("person") if isinstance(competitor.get("person"), Mapping) else {}
+        source = slot.get("source") if isinstance(slot.get("source"), Mapping) else {}
+        name = str(
+            team.get("name")
+            or club.get("name")
+            or person.get("nickname")
+            or person.get("name")
+            or competitor.get("nickname")
+            or competitor.get("name")
+            or source.get("label")
+            or "TBD"
+        ).strip() or "TBD"
+        short_name = str(
+            team.get("short_name")
+            or club.get("short_name")
+            or person.get("nickname")
+            or name
+        ).strip() or name
+        slot_number = SportsDashboard._lpl_int_value(slot.get("slot"))
+        result = result_slots.get(slot_number, {}) if slot_number is not None else {}
+        score = result.get("score") if result.get("score") is not None else competitor.get("score")
+        placement = result.get("placement") if result.get("placement") is not None else competitor.get("placement")
+        roster = []
+        for member in competitor.get("roster") or []:
+            if not isinstance(member, Mapping):
+                continue
+            role = str(member.get("role") or "").strip().upper()
+            if role and role not in {"PLAYER", "SUBSTITUTE"}:
+                continue
+            nickname = str(member.get("nickname") or member.get("name") or "").strip()
+            if nickname:
+                roster.append(nickname)
+        return {
+            "slot": slot_number,
+            "name": name,
+            "short_name": short_name,
+            "logo_url": SportsDashboard._ewc_club_logo_url(club.get("id")),
+            "score": SportsDashboard._lpl_int_value(score),
+            "placement": SportsDashboard._lpl_int_value(placement),
+            "is_winner": bool(result.get("is_winner")) or str(result.get("outcome") or "").upper() == "WIN",
+            "roster": roster,
+        }
+
+    @staticmethod
+    def _ewc_structured_game_summary(game):
+        game = game if isinstance(game, Mapping) else {}
+        result = game.get("result") if isinstance(game.get("result"), Mapping) else {}
+        result_slots = {
+            SportsDashboard._lpl_int_value(item.get("slot")): item
+            for item in (result.get("slots") or [])
+            if isinstance(item, Mapping) and SportsDashboard._lpl_int_value(item.get("slot")) is not None
+        }
+        return {
+            "id": str(game.get("id") or "").strip(),
+            "name": str(game.get("name") or "").strip(),
+            "state": str(game.get("state") or "").strip().upper(),
+            "sequence": SportsDashboard._lpl_int_value(game.get("sequence_number")),
+            "actual_start": str(game.get("actual_start") or "").strip(),
+            "actual_end": str(game.get("actual_end") or "").strip(),
+            "score_a": SportsDashboard._lpl_int_value((result_slots.get(1) or {}).get("score")),
+            "score_b": SportsDashboard._lpl_int_value((result_slots.get(2) or {}).get("score")),
+            "winner_slots": [
+                value for value in (
+                    SportsDashboard._lpl_int_value(item)
+                    for item in (result.get("winner_slots") or [])
+                ) if value is not None
+            ],
+        }
+
+    @staticmethod
+    def _parse_ewc_next_flight_matches(html_text, timezone_info, slug, game, source_url, year_value):
+        structures = SportsDashboard._extract_ewc_initial_structures(html_text)
+        if not structures:
+            return []
+        parsed = []
+        parsed_indexes = {}
+        for structure_payload in structures:
+            if not isinstance(structure_payload, Mapping):
+                continue
+            phase = structure_payload.get("phase") if isinstance(structure_payload.get("phase"), Mapping) else {}
+            groups = {
+                str(group.get("id") or ""): group
+                for group in (structure_payload.get("groups") or [])
+                if isinstance(group, Mapping) and group.get("id")
+            }
+            for series in structure_payload.get("series") or []:
+                if not isinstance(series, Mapping):
+                    continue
+                start = SportsDashboard._parse_start_time(
+                    series.get("scheduled_start") or series.get("actual_start"),
+                    timezone_info,
+                )
+                if not start:
+                    continue
+                actual_end = SportsDashboard._parse_start_time(series.get("actual_end"), timezone_info)
+                status = SportsDashboard._ewc_structured_status(series)
+                end = actual_end or (start + EWC_MATCH_DEFAULT_DURATION)
+                result = series.get("result") if isinstance(series.get("result"), Mapping) else {}
+                result_slots = {
+                    SportsDashboard._lpl_int_value(item.get("slot")): item
+                    for item in (result.get("slots") or [])
+                    if isinstance(item, Mapping) and SportsDashboard._lpl_int_value(item.get("slot")) is not None
+                }
+                slots = sorted(
+                    [item for item in (series.get("slots") or []) if isinstance(item, Mapping)],
+                    key=lambda item: SportsDashboard._lpl_int_value(item.get("slot")) or 999,
+                )
+                participants = [
+                    SportsDashboard._ewc_structured_participant(item, result_slots)
+                    for item in slots
+                ]
+                series_structure = series.get("structure") if isinstance(series.get("structure"), Mapping) else {}
+                group_ids = [str(item) for item in (series_structure.get("group_ids") or []) if item]
+                group_names = [str((groups.get(group_id) or {}).get("name") or "").strip() for group_id in group_ids]
+                group_names = [name for name in group_names if name]
+                stage = str(
+                    series_structure.get("label")
+                    or series_structure.get("round_name")
+                    or (" / ".join(group_names) if group_names else "")
+                    or phase.get("name")
+                    or "MATCH"
+                ).strip() or "MATCH"
+                format_payload = series.get("format") if isinstance(series.get("format"), Mapping) else {}
+                streams = [item for item in (series.get("streams") or []) if isinstance(item, Mapping) and item.get("url")]
+                preferred_streams = sorted(
+                    streams,
+                    key=lambda item: (
+                        0 if str(item.get("language") or "").lower() == "en" else 1,
+                        0 if str(item.get("platform") or "").upper() in {"YOUTUBE", "TWITCH"} else 1,
+                    ),
+                )
+                event_id = str(series.get("id") or "").strip()
+                if not event_id:
+                    event_id = f"ewc-{year_value}-{slug}-{start.strftime('%Y%m%d-%H%M')}-{len(parsed) + 1}"
+                event = {
+                    "kind": "match",
+                    "event_id": event_id,
+                    "match_id": event_id,
+                    "series_id": event_id,
+                    "game": game,
+                    "slug": slug,
+                    "year": str(year_value),
+                    "source_url": source_url,
+                    "start": start,
+                    "end": end,
+                    "status": status,
+                    "stage": stage,
+                    "phase": str(phase.get("name") or "").strip(),
+                    "group": " / ".join(group_names),
+                    "round": str(series_structure.get("round_name") or "").strip(),
+                    "format": str(format_payload.get("type") or "").strip().upper(),
+                    "best_of": SportsDashboard._lpl_int_value(format_payload.get("best_of")),
+                    "participants": participants,
+                    "participant_count": len(participants),
+                    "games": [SportsDashboard._ewc_structured_game_summary(item) for item in (series.get("games") or [])],
+                    "stream_url": str((preferred_streams[0] if preferred_streams else {}).get("url") or "").strip(),
+                }
+                if len(participants) == 2:
+                    event.update(
+                        {
+                            "multi_competitor": False,
+                            "team_a": participants[0]["name"],
+                            "team_b": participants[1]["name"],
+                            "team_a_short": participants[0]["short_name"],
+                            "team_b_short": participants[1]["short_name"],
+                            "team_a_logo": participants[0]["logo_url"],
+                            "team_b_logo": participants[1]["logo_url"],
+                            "team_a_roster": participants[0]["roster"],
+                            "team_b_roster": participants[1]["roster"],
+                            "score_a": participants[0]["score"],
+                            "score_b": participants[1]["score"],
+                        }
+                    )
+                else:
+                    leader = next(
+                        (
+                            item for item in participants
+                            if item.get("is_winner") or item.get("placement") == 1
+                        ),
+                        None,
+                    )
+                    event.update(
+                        {
+                            "multi_competitor": True,
+                            "leader": (leader or {}).get("name") or "",
+                            "leader_logo": (leader or {}).get("logo_url") or "",
+                            "leader_score": (leader or {}).get("score"),
+                            "leader_placement": (leader or {}).get("placement"),
+                        }
+                    )
+                existing_index = parsed_indexes.get(event_id)
+                if existing_index is None:
+                    parsed_indexes[event_id] = len(parsed)
+                    parsed.append(event)
+                else:
+                    parsed[existing_index] = event
+        return sorted(parsed, key=lambda item: (item["start"], item.get("stage") or "", item.get("event_id") or ""))
+
+    @staticmethod
     def _parse_ewc_detail_schedule_html(html_text, timezone_info, slug, game, source_url, year=None):
         if not html_text:
             return []
@@ -482,6 +855,17 @@ class EsportsMixin:
             year_value = int(year_text)
         except ValueError:
             year_value = datetime.now(timezone_info).year
+
+        structured_matches = SportsDashboard._parse_ewc_next_flight_matches(
+            html_text,
+            timezone_info,
+            slug,
+            game,
+            source_url,
+            year_value,
+        )
+        if structured_matches:
+            return structured_matches
 
         time_pattern = re.compile(
             r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*[A-Za-z]{3}\.?\s+\d{1,2}(?:st|nd|rd|th)?\s+-\s+\d{1,2}:\d{2}(?:\s*[AP]M)?\b",
@@ -907,20 +1291,16 @@ class EsportsMixin:
                 rotation_bucket,
             )
         elif upcoming_matches:
-            next_start = upcoming_matches[0]["start"]
-            same_start = [event for event in upcoming_matches if event["start"] == next_start]
             selected_match_group = SportsDashboard._ewc_match_group_for_display(
-                same_start,
+                upcoming_matches,
                 live_matches,
                 upcoming_matches,
                 recent_matches,
                 rotation_bucket,
             )
         elif recent_matches:
-            latest_start = recent_matches[0]["start"]
-            same_recent_start = [event for event in recent_matches if event["start"] == latest_start]
             selected_match_group = SportsDashboard._ewc_match_group_for_display(
-                same_recent_start,
+                recent_matches,
                 live_matches,
                 upcoming_matches,
                 recent_matches,
@@ -972,6 +1352,9 @@ class EsportsMixin:
             "live_matches": group_live_matches if selected_match_group else live_matches,
             "upcoming_matches": group_upcoming_matches if selected_match_group else upcoming_matches,
             "recent_matches": group_recent_matches if selected_match_group else recent_matches,
+            "all_live_matches": live_matches,
+            "all_upcoming_matches": upcoming_matches,
+            "all_recent_matches": recent_matches,
             "selected_match_group": selected_match_group,
             "display_window_active": display_window_active,
         }
@@ -1131,13 +1514,27 @@ class EsportsMixin:
         current_utc = current.astimezone(timezone.utc)
         live_matches = [
             match
-            for match in (selected.get("live_matches") or [])
+            for match in (selected.get("all_live_matches") or selected.get("live_matches") or [])
             if self._is_ewc_match_item(match)
         ]
+        upcoming_matches = [
+            match
+            for match in (selected.get("all_upcoming_matches") or selected.get("upcoming_matches") or [])
+            if self._is_ewc_match_item(match)
+        ]
+        pregame_matches = []
+        for match in upcoming_matches:
+            start = match.get("start")
+            if not isinstance(start, datetime):
+                continue
+            start_local = start.replace(tzinfo=current.tzinfo) if start.tzinfo is None else start.astimezone(current.tzinfo)
+            if current <= start_local <= current + EWC_LIVE_PREGAME_WINDOW:
+                pregame_matches.append(match)
+        pregame_matches.sort(key=lambda match: match.get("start") or datetime.max.replace(tzinfo=current.tzinfo))
         main_match = selected.get("main_match") or (live_matches[0] if live_matches else {})
         if main_match and not self._is_ewc_match_item(main_match):
             main_match = {}
-        event = live_matches[0] if live_matches else (main_match or {})
+        event = live_matches[0] if live_matches else (pregame_matches[0] if pregame_matches else (main_match or {}))
         event_start = event.get("start") if isinstance(event, Mapping) else None
         event_end = event.get("end") if isinstance(event, Mapping) else None
         if isinstance(event_start, datetime) and event_start.tzinfo is None:
@@ -1147,10 +1544,7 @@ class EsportsMixin:
         if not isinstance(event_end, datetime) and isinstance(event_start, datetime):
             event_end = event_start + EWC_MATCH_DEFAULT_DURATION
 
-        has_live = bool(live_matches)
-        if not has_live and isinstance(event_start, datetime):
-            start_local = event_start.astimezone(current.tzinfo)
-            has_live = current <= start_local and start_local - current <= EWC_LIVE_PREGAME_WINDOW
+        has_live = bool(live_matches or pregame_matches)
         live_until = event_end.astimezone(timezone.utc).isoformat() if has_live and isinstance(event_end, datetime) else None
         selected_group = selected.get("selected_match_group") or {}
         payload = {
@@ -3439,13 +3833,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
-
-
 
 
 

@@ -81,8 +81,13 @@ MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
 EWC_STATE_VERSION = "sports-dashboard-ewc-v1"
-EWC_DETAIL_STATE_VERSION = "sports-dashboard-ewc-detail-v1"
+EWC_DETAIL_STATE_VERSION = "sports-dashboard-ewc-detail-v2"
 EWC_LIVE_STATE_VERSION = "sports-dashboard-ewc-live-v1"
+EWC_CLUB_LOGO_FALLBACKS = {
+    "2068035472055078912": "https://prosettings.net/wp-content/uploads/full-sense.png",
+    "2068035483304202240": "https://nigmagalaxy.com/wp-content/uploads/2025/03/Logo_mark.png",
+    "2069127996567982080": "https://teamapexgaming.com/assets/tag-logo.webp",
+}
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
 NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
