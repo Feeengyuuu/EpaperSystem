@@ -146,7 +146,7 @@ def _plugin():
     return SportsDashboard({"id": "sports_dashboard"})
 
 
-def test_sports_dashboard_manifest_restores_internal_panel_refresh_on_display():
+def test_sports_dashboard_manifest_disables_internal_panel_refresh_on_display():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -156,8 +156,8 @@ def test_sports_dashboard_manifest_restores_internal_panel_refresh_on_display():
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    assert manifest["capabilities"]["supports_presentation_refresh"] is True
-    assert manifest["refresh_on_display"] is True
+    assert manifest["capabilities"]["supports_presentation_refresh"] is False
+    assert manifest["refresh_on_display"] is False
 
 
 def test_sports_dashboard_presentation_rerenders_from_cache_without_forcing_providers(monkeypatch):

@@ -33,7 +33,7 @@
 | DailyPorn | `pixiv_r18_ranking` | 21600 秒 | 展示时 presentation | 无 |
 | Date | `simple_calendar` | 21600 秒 | 展示时 presentation | 无 |
 | SpeciesRadar | `species_radar` | 21600 秒 | 展示时 presentation | 无 |
-| SportsDashboard | `sports_dashboard` | 900 秒 | 展示时 presentation | 当前页有任何已接入的活动赛事时，统一进入 60 秒快刷通道 |
+| SportsDashboard | `sports_dashboard` | 900 秒 | 直接展示缓存；内部 presentation 刷新已关闭 | 当前页有任何已接入的活动赛事时，统一进入 60 秒快刷通道；新图生成后立即展示 |
 | Steam Charts | `steam_charts` | 3600 秒 | 展示缓存 | 无 |
 | SteamDailyArt | `steam_daily_art` | 3600 秒 | 展示时 presentation | 无 |
 | SteamDaily | `steam_profile_dashboard` | 300 秒 | 展示缓存 | 无 |
@@ -55,6 +55,7 @@
 - 上述赛事的直播图像刷新默认均为 **60 秒**，设置允许范围为 60–900 秒；多个赛事同时直播时取最短的已配置间隔。
 - 直播状态来自各赛事状态文件与提供方实时响应，而不是仅根据开赛时间猜测。World Cup 只是本次实机验证恰好可用的 ESPN 样本。
 - 直播快刷只在 SportsDashboard 当前正在屏幕上展示时运行，离开页面即停止独立快刷。
+- SportsDashboard 自己的 `refresh_on_display` 与 presentation capability 已关闭；轮播或手动进入页面不会额外触发内部面板翻页/重生成。实时赛事的新数据图仍由直播通道生成，并通过精确跟随展示立即上屏。
 - 当前页直播到期时：
   - `HEALTHY` / `SOFT` 资源层：直播刷新可以抢占普通后台数据刷新；
   - `HARD` 资源层：阻止直播生成，避免内存耗尽；当前阈值为可用内存低于 70 MB 或 swap 达到 75%；
