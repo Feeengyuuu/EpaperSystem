@@ -1193,7 +1193,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		except ValueError:
 			return None
 
-	def _portfolio_curve_values(
+	def _portfolio_curve(
 		self,
 		stock_data,
 		history_points=None,
@@ -1224,9 +1224,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				continue
 			if earliest_official is not None and point_date >= earliest_official:
 				continue
-			local_by_date[point_date] = float(point["value"])
-		local_values = [local_by_date[date] for date in sorted(local_by_date)]
-		return local_values + [value for _date_key, value in official_series]
+			local_by_date[point_date] = point
+		supplemental = [local_by_date[date] for date in sorted(local_by_date)]
+		values = [float(point["value"]) for point in supplemental]
+		values.extend(value for _date_key, value in official_series)
+		return values, supplemental
+
+	def _portfolio_curve_values(self, stock_data, history_points=None, **kwargs):
+		values, _supplemental = self._portfolio_curve(stock_data, history_points, **kwargs)
+		return values
 
 	def _record_portfolio_snapshot(self, stock_data, now=None, account_value_override=None):
 		now = now or datetime.now()
@@ -1434,7 +1440,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			font=self._font(10),
 		)
 
-	def _draw_sparkline(self, img, draw, box, values, history_points=None):
+	def _draw_sparkline(
+		self,
+		img,
+		draw,
+		box,
+		values,
+		history_points=None,
+		history_markers_on_prefix=False,
+	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
 		self._draw_box(
@@ -1495,7 +1509,12 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			draw.ellipse((points[0][0] - 3, points[0][1] - 3, points[0][0] + 3, points[0][1] + 3), fill=chart_bg, outline=line_color, width=2)
 		if len(points) >= 2:
 			self._draw_latest_value_marker(draw, points[-1], line_color)
-		self._draw_history_markers(draw, history_points, points)
+		self._draw_history_markers(
+			draw,
+			history_points,
+			points,
+			curve_prefix=history_markers_on_prefix,
+		)
 
 		self._draw_chart_label(
 			draw,
@@ -1607,12 +1626,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			sampled_points.append((int(round(x)), int(round(y))))
 		return sampled_points
 
-	def _history_marker_points(self, curve_points, history_points):
+	def _history_marker_points(self, curve_points, history_points, curve_prefix=False):
 		colors = _active_stock_colors()
 		if not history_points:
 			return []
 		ordered_points = sorted(history_points, key=lambda point: str(point.get("timestamp") or point["date"]))
-		coords = self._sample_curve_points(curve_points, len(ordered_points))
+		if curve_prefix:
+			coords = list(curve_points[: len(ordered_points)])
+		else:
+			coords = self._sample_curve_points(curve_points, len(ordered_points))
 		previous_value = None
 		marker_points = []
 		for idx, point in enumerate(ordered_points):
@@ -1625,9 +1647,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			marker_points.append({"point": coords[idx], "fill": fill, "history": point})
 		return marker_points
 
-	def _draw_history_markers(self, draw, history_points, curve_points):
+	def _draw_history_markers(self, draw, history_points, curve_points, curve_prefix=False):
 		colors = _active_stock_colors()
-		marker_points = self._history_marker_points(curve_points, history_points)
+		marker_points = self._history_marker_points(
+			curve_points,
+			history_points,
+			curve_prefix=curve_prefix,
+		)
 		if not marker_points:
 			return
 		radius = 4 if len(marker_points) <= 36 else 3
@@ -2019,18 +2045,20 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				account_value_override=account_value_override,
 				updated_at=updated_at,
 			)
+			curve_values, supplemental_history = self._portfolio_curve(
+				stock_data,
+				history_points,
+				period=tracking_period,
+				now=updated_at,
+				account_value_override=account_value_override,
+			)
 			self._draw_sparkline(
 				img,
 				draw,
 				(304, 60, width - 24, 204),
-				self._portfolio_curve_values(
-					stock_data,
-					history_points,
-					period=tracking_period,
-					now=updated_at,
-					account_value_override=account_value_override,
-				),
-				history_points,
+				curve_values,
+				supplemental_history,
+				history_markers_on_prefix=True,
 			)
 			self._draw_holdings(
 				img,
