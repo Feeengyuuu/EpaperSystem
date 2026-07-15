@@ -124,6 +124,8 @@ class PreparedCycleIntervalFreeze:
     document: dict
     original_interval_present: bool
     original_interval_value: object
+    original_background_min_available_present: bool
+    original_background_min_available_value: object
     interval_seconds: int
 
 
@@ -1287,12 +1289,29 @@ def prepare_cycle_interval_freeze(
         if original_interval_present
         else _MISSING
     )
+    background_key = "background_cache_refresh_min_available_mb"
+    original_background_min_available_present = background_key in config
+    original_background_min_available_value = (
+        copy.deepcopy(config[background_key])
+        if original_background_min_available_present
+        else _MISSING
+    )
     document = copy.deepcopy(config)
     document["plugin_cycle_interval_seconds"] = interval_seconds
+    # Explicit acceptance must own the refresh queue.  A very high memory
+    # threshold makes the normal background-cache pass defer itself without
+    # changing any plugin's saved settings or production refresh policy.
+    document[background_key] = 1_000_000
     return PreparedCycleIntervalFreeze(
         document=document,
         original_interval_present=original_interval_present,
         original_interval_value=original_interval_value,
+        original_background_min_available_present=(
+            original_background_min_available_present
+        ),
+        original_background_min_available_value=(
+            original_background_min_available_value
+        ),
         interval_seconds=interval_seconds,
     )
 
@@ -1312,6 +1331,13 @@ def restore_cycle_interval(
         )
     else:
         document.pop("plugin_cycle_interval_seconds", None)
+    background_key = "background_cache_refresh_min_available_mb"
+    if prepared.original_background_min_available_present:
+        document[background_key] = copy.deepcopy(
+            prepared.original_background_min_available_value,
+        )
+    else:
+        document.pop(background_key, None)
     return document
 
 

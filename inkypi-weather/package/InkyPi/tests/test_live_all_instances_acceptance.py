@@ -1561,6 +1561,7 @@ def test_safe_instance_result_never_serializes_name_uuid_settings_or_raw_error(a
 def test_cycle_interval_freeze_restores_only_original_interval(acceptance):
     original = _config()
     original["plugin_cycle_interval_seconds"] = 300
+    original["background_cache_refresh_min_available_mb"] = 96
     original["refresh_info"] = {
         "refresh_time": "2026-07-13T18:00:00+00:00",
         "image_hash": "before-freeze",
@@ -1573,6 +1574,7 @@ def test_cycle_interval_freeze_restores_only_original_interval(acceptance):
 
     assert original["plugin_cycle_interval_seconds"] == 300
     assert prepared.document["plugin_cycle_interval_seconds"] == 86400
+    assert prepared.document["background_cache_refresh_min_available_mb"] == 1_000_000
 
     current = json.loads(json.dumps(prepared.document))
     current["refresh_info"] = {
@@ -1584,6 +1586,7 @@ def test_cycle_interval_freeze_restores_only_original_interval(acceptance):
     restored = acceptance.restore_cycle_interval(current, prepared)
 
     assert restored["plugin_cycle_interval_seconds"] == 300
+    assert restored["background_cache_refresh_min_available_mb"] == 96
     assert restored["refresh_info"]["image_hash"] == "real-runtime-write"
     assert restored["runtime_written_field"] == {"keep": True}
 
@@ -1598,6 +1601,7 @@ def test_cycle_interval_freeze_removes_interval_when_originally_absent(acceptanc
     restored = acceptance.restore_cycle_interval(prepared.document, prepared)
 
     assert "plugin_cycle_interval_seconds" not in restored
+    assert "background_cache_refresh_min_available_mb" not in restored
 
 
 class _CycleFreezeController:
