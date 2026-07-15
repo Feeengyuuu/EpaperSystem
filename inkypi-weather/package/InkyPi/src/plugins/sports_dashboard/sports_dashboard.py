@@ -90,8 +90,16 @@ class SportsDashboard(
             sources.append("lpl")
         if self._live_state_active(self._msi_live_state_path(), MSI_LIVE_STATE_VERSION, current_dt):
             sources.append("msi")
+        if self._live_state_active(self._lck_live_state_path(), LCK_LIVE_STATE_VERSION, current_dt):
+            sources.append("lck")
         if self._live_state_active(self._ewc_live_state_path(), EWC_LIVE_STATE_VERSION, current_dt):
             sources.append("ewc")
+        if self._live_state_active(
+            self._valve_esports_live_state_path(),
+            VALVE_ESPORTS_LIVE_STATE_VERSION,
+            current_dt,
+        ):
+            sources.append("valve_esports")
         if self._live_state_active(self._nba_live_state_path(), NBA_LIVE_STATE_VERSION, current_dt):
             sources.append("nba")
         if self._live_state_active(
@@ -101,6 +109,8 @@ class SportsDashboard(
             live_status_fallback=True,
         ):
             sources.append("offseason_hub")
+        if self._live_state_active(self._f1_live_state_path(), F1_LIVE_STATE_VERSION, current_dt):
+            sources.append("f1")
         return [source for source in sources if self._live_image_refresh_enabled(settings, source)]
 
     def _live_image_refresh_enabled(self, settings, source):
@@ -110,10 +120,16 @@ class SportsDashboard(
             return self._bool_setting(settings, "worldCupLiveRefreshEnabled", True)
         if source == "offseason_hub":
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
-        if source in {"lpl", "msi"}:
+        if source in {"lpl", "lck", "msi"}:
             return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
         if source == "ewc":
             return self._bool_setting(settings, "ewcLiveRefreshEnabled", True)
+        if source == "valve_esports":
+            return self._bool_setting(settings, "valveEsportsEnabled", True) and self._bool_setting(
+                settings, "valveEsportsLiveRefreshEnabled", True
+            )
+        if source == "f1":
+            return self._bool_setting(settings, "f1LiveRefreshEnabled", True)
         return False
 
     def _live_image_refresh_interval(self, settings, source):
@@ -123,10 +139,14 @@ class SportsDashboard(
             return self._int_setting(settings, "worldCupLiveRefreshIntervalSeconds", 60, 60, 900)
         if source == "offseason_hub":
             return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
-        if source in {"lpl", "msi"}:
+        if source in {"lpl", "lck", "msi"}:
             return self._int_setting(settings, "lplLiveRefreshIntervalSeconds", 60, 60, 900)
         if source == "ewc":
             return self._int_setting(settings, "ewcLiveRefreshIntervalSeconds", DEFAULT_EWC_LIVE_REFRESH_SECONDS, 60, 900)
+        if source == "valve_esports":
+            return self._int_setting(settings, "valveEsportsLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "f1":
+            return self._int_setting(settings, "f1LiveRefreshIntervalSeconds", 60, 60, 900)
         return 60
 
     def _live_state_active(self, path, version, current_dt, live_status_fallback=False):

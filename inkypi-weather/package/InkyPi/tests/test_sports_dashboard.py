@@ -1313,10 +1313,22 @@ def test_live_refresh_state_reads_active_source_files():
             240,
         ),
         (
+            "lck_live_state.json",
+            "sports-dashboard-lck-live-v1",
+            "lplLiveRefreshIntervalSeconds",
+            210,
+        ),
+        (
             "ewc_live_state.json",
             "sports-dashboard-ewc-live-v1",
             "ewcLiveRefreshIntervalSeconds",
             150,
+        ),
+        (
+            "valve_esports_live_state.json",
+            "sports-dashboard-valve-esports-live-v1",
+            "valveEsportsLiveRefreshIntervalSeconds",
+            270,
         ),
         (
             "nba_live_state.json",
@@ -1329,6 +1341,12 @@ def test_live_refresh_state_reads_active_source_files():
             "sports-dashboard-offseason-hub-v1",
             "offseasonHubLiveRefreshIntervalSeconds",
             360,
+        ),
+        (
+            "f1_live_state.json",
+            "sports-dashboard-f1-live-v1",
+            "f1LiveRefreshIntervalSeconds",
+            420,
         ),
     ]
     current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
