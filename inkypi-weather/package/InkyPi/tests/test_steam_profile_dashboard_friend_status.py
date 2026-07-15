@@ -30,6 +30,77 @@ class _SteamDeviceConfig:
         return "test-key"
 
 
+class _CommunityPresenceResponse:
+    def __init__(self, text, *, error=None):
+        self.text = text
+        self._error = error
+
+    def raise_for_status(self):
+        if self._error:
+            raise self._error
+
+
+def test_offline_web_api_state_is_corrected_by_live_community_presence(monkeypatch):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    requests = []
+
+    class Session:
+        def get(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return _CommunityPresenceResponse(
+                "<profile><steamID>Player</steamID><onlineState>online</onlineState></profile>"
+            )
+
+    monkeypatch.setattr(steam_profile_module, "get_http_session", lambda: Session())
+
+    profile = plugin._reconcile_community_presence(
+        {"steamid": "76561198176386838", "personastate": 0},
+        "76561198176386838",
+    )
+
+    assert profile["personastate"] == 1
+    assert profile["_inkypi_presence_source"] == "steam_community_xml"
+    assert requests == [(
+        "https://steamcommunity.com/profiles/76561198176386838/",
+        {"params": {"xml": 1}, "timeout": 12},
+    )]
+
+
+def test_non_offline_web_api_state_does_not_request_community_presence(monkeypatch):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    monkeypatch.setattr(
+        steam_profile_module,
+        "get_http_session",
+        lambda: (_ for _ in ()).throw(AssertionError("community lookup should not run")),
+    )
+
+    profile = plugin._reconcile_community_presence(
+        {"steamid": "76561198176386838", "personastate": 1},
+        "76561198176386838",
+    )
+
+    assert profile["personastate"] == 1
+    assert "_inkypi_presence_source" not in profile
+
+
+def test_failed_community_presence_check_preserves_offline_web_api_state(monkeypatch):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return _CommunityPresenceResponse("", error=RuntimeError("rate limited"))
+
+    monkeypatch.setattr(steam_profile_module, "get_http_session", lambda: Session())
+
+    profile = plugin._reconcile_community_presence(
+        {"steamid": "76561198176386838", "personastate": 0},
+        "76561198176386838",
+    )
+
+    assert profile["personastate"] == 0
+    assert "_inkypi_presence_source" not in profile
+
+
 def test_friend_game_status_keeps_long_title_inside_row_bounds():
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     image = Image.new("RGB", (240, 80), "white")

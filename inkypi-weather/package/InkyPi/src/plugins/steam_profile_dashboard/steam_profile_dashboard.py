@@ -10,6 +10,7 @@ from utils.safe_image import safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context, get_theme_palette
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from datetime import datetime, timezone
+from xml.etree import ElementTree
 import hashlib
 import html
 import json
@@ -27,6 +28,7 @@ STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 STEAM_APP_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
 STEAM_APP_CAPSULE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_184x69.jpg"
 STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/badges/"
+STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
 STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-badgerice-v35"
@@ -343,7 +345,8 @@ class SteamProfileDashboard(BasePlugin):
             players = summary.get("response", {}).get("players", [])
             if not players:
                 raise RuntimeError("未找到 Steam 个人资料。")
-            return players[0], 1, warnings
+            profile = self._reconcile_community_presence(players[0], steam_id)
+            return profile, 1, warnings
         except Exception as e:
             warnings.append("实时状态不可用")
             raise RuntimeError(f"Steam 实时状态不可用：{e}")
@@ -373,7 +376,7 @@ class SteamProfileDashboard(BasePlugin):
         players = summary.get("response", {}).get("players", [])
         if not players:
             raise RuntimeError("未找到 Steam 个人资料。")
-        profile = players[0]
+        profile = self._reconcile_community_presence(players[0], steam_id)
 
         level_data = call("/IPlayerService/GetSteamLevel/v1/", {"steamid": steam_id})
         badges_data = {}
@@ -462,6 +465,55 @@ class SteamProfileDashboard(BasePlugin):
         response = session.get(f"{STEAM_API_BASE}{path}", params=payload, timeout=35)
         response.raise_for_status()
         return response.json()
+
+    def _reconcile_community_presence(self, profile, steam_id):
+        """Cross-check an API-reported offline state against Steam Community.
+
+        GetPlayerSummaries can temporarily report personastate=0 while the
+        public Steam Community profile already reports the account online.
+        Only an explicit online/in-game Community response overrides the API;
+        errors and ambiguous responses preserve the original state.
+        """
+        if not isinstance(profile, dict):
+            return profile
+        try:
+            if int(profile.get("personastate", 0) or 0) != 0:
+                return profile
+        except (TypeError, ValueError):
+            return profile
+
+        normalized_id = str(steam_id or profile.get("steamid") or "").strip()
+        if not normalized_id.isdigit():
+            return profile
+
+        try:
+            session = get_http_session()
+            response = session.get(
+                STEAM_COMMUNITY_PROFILE_URL.format(steam_id=normalized_id),
+                params={"xml": 1},
+                timeout=12,
+            )
+            response.raise_for_status()
+            root = ElementTree.fromstring(response.text)
+            community_state = str(root.findtext("onlineState") or "").strip().lower()
+            if community_state not in {"online", "in-game"}:
+                return profile
+
+            reconciled = dict(profile)
+            reconciled["personastate"] = 1
+            reconciled["_inkypi_presence_source"] = "steam_community_xml"
+            if community_state == "in-game" and not reconciled.get("gameextrainfo"):
+                game_name = str(root.findtext("./inGameInfo/gameName") or "").strip()
+                if game_name:
+                    reconciled["gameextrainfo"] = game_name
+            logger.info(
+                "Steam Community presence corrected API offline state for SteamID %s.",
+                normalized_id,
+            )
+            return reconciled
+        except Exception as e:
+            logger.warning("Steam Community presence cross-check unavailable: %s", e)
+            return profile
 
     def _fetch_store_appdetails(self, appid, settings):
         if not appid:
