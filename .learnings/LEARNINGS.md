@@ -603,3 +603,26 @@ Defer the failed reservation to the tail of the current shuffle round without ac
 - Tags: stale-cache, fail-closed, shuffle-bag, e-paper, pre-refresh
 
 ---
+
+## [LRN-20260715-003] correction
+
+**Logged**: 2026-07-15T00:20:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+When restoring an InkyPi plugin's original appearance, recover its plugin-specific font from git history instead of applying the current global base font policy.
+
+### Details
+Money/StockTracker originally used bundled Jost and Jost SemiBold files. A later global YaHei migration changed it to NotoSansSC at runtime, so restoring only colors or layout could not reproduce the original visual character.
+
+### Suggested Action
+Trace the plugin through git history, identify the exact bundled font files and weight mapping, add a test against the loaded font filenames, and scope the exception to that plugin.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py, inkypi-weather/package/InkyPi/src/static/fonts/Jost.ttf, inkypi-weather/package/InkyPi/src/static/fonts/Jost-SemiBold.ttf
+- Tags: stocktracker, typography, original-design, jost, git-history
+
+---
