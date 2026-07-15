@@ -534,3 +534,26 @@ For plugins whose composition changes independently of provider freshness, decla
 - Tags: sports-dashboard, presentation-refresh, panel-rotation, cache, scheduler
 
 ---
+
+## [LRN-20260714-004] correction
+
+**Logged**: 2026-07-14T21:40:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: scheduler
+
+### Summary
+Fresh-before-display must fail closed; a timed-out presentation refresh must never write the last-good cache as if it were current.
+
+### Details
+The pre-refresh scheduler initially waited for fresh presentation data but deliberately fell back to the last-good cache after 180 seconds or under hard resource pressure. On physical e-paper this made an old Steam Charts page appear again after a failed provider request, violating the requirement that the first visible page already be fresh.
+
+### Suggested Action
+Defer the failed reservation to the tail of the current shuffle round without acknowledging it, persist the queue, and immediately allow another healthy plugin to be selected. Keep the failed member in the pool for a later retry, but never consume or display it until fresh preparation succeeds.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/model.py, inkypi-weather/package/InkyPi/src/refresh_task.py
+- Tags: stale-cache, fail-closed, shuffle-bag, e-paper, pre-refresh
+
+---

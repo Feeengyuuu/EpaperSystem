@@ -382,6 +382,22 @@ class PlaylistManager:
                 return None
             return playlist.acknowledge_rotation_display(instance_uuid)
 
+    def defer_rotation_reservation(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+    ) -> bool:
+        """Move a failed reservation to the round tail without consuming it."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return False
+            playlist = match[0]
+            if playlist.name != expected_playlist_name:
+                return False
+            return playlist.defer_rotation_reservation(instance_uuid)
+
     def rollback_rotation_acknowledgement(
         self,
         acknowledgement: PlaylistRotationAcknowledgement,
@@ -1299,6 +1315,17 @@ class Playlist:
             before_state=before_state,
             after_state=after_state,
         )
+
+    def defer_rotation_reservation(self, instance_uuid):
+        """Retry a failed member after the other members in this shuffle round."""
+        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        self._reconcile_automatic_rotation_bag(plugin_keys)
+        if not self.is_rotation_reservation_current(instance_uuid):
+            return False
+        self.plugin_rotation_queue.remove(instance_uuid)
+        self.plugin_rotation_queue.append(instance_uuid)
+        self._plugin_rotation_reserved_key = None
+        return True
 
     def rollback_rotation_acknowledgement(self, acknowledgement):
         if (

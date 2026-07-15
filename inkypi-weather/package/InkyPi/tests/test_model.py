@@ -1278,6 +1278,33 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert "two-uuid" not in restarted_again.plugin_rotation_queue
         assert restarted_again.reserve_next_plugin({"two-uuid"}) is None
 
+    def test_automatic_rotation_can_defer_failed_reservation_without_consuming_it(
+        self,
+        monkeypatch,
+    ):
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin("One", instance_uuid="one-uuid"),
+                    self._plugin("Two", instance_uuid="two-uuid"),
+                    self._plugin("Three", instance_uuid="three-uuid"),
+                ],
+            )
+        )
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+
+        assert playlist.reserve_next_plugin().instance_uuid == "one-uuid"
+        assert playlist.defer_rotation_reservation("one-uuid") is True
+
+        assert playlist.plugin_rotation_queue == [
+            "two-uuid",
+            "three-uuid",
+            "one-uuid",
+        ]
+        assert playlist.plugin_rotation_recent_history == []
+        assert playlist.reserve_next_plugin().instance_uuid == "two-uuid"
+
     def test_automatic_rotation_refills_only_after_every_ack_and_avoids_boundary_repeat(
         self,
         monkeypatch,

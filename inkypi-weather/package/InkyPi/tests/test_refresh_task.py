@@ -7514,7 +7514,7 @@ def test_rotation_defers_display_until_presentation_prepared(tmp_path):
     assert ready.payload.get("presentation_request_id") == request.request_id
 
 
-def test_rotation_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
+def test_rotation_never_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
     task, instance = _prepared_rotation_task(
         make_test_dir("rotation-prepare-stall")
     )
@@ -7525,9 +7525,10 @@ def test_rotation_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
         first_dt + timedelta(seconds=181)
     )
 
-    assert fallback is not None
-    assert fallback.intent is RefreshIntent.DISPLAY_CACHE
-    assert fallback.instance_uuid == instance.instance_uuid
+    playlist = task.device_config.get_playlist_manager().playlists[0]
+    assert fallback is None
+    assert instance.instance_uuid in playlist.plugin_rotation_queue
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
 
 
 def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch):
@@ -10166,6 +10167,39 @@ def test_rotation_preflight_records_one_coalesced_presentation_request(monkeypat
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == original
 
 
+def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(monkeypatch):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-timeout-defers-stale-cache",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_cached_display_command(PRESENTATION_NOW)
+
+    assert command is None
+    assert playlist.plugin_rotation_queue == [
+        second.instance_uuid,
+        first.instance_uuid,
+    ]
+    assert playlist.plugin_rotation_recent_history == []
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+
 def test_prepared_refresh_on_display_rotation_consumes_shuffle_bag_once(
     monkeypatch,
 ):
@@ -11158,7 +11192,7 @@ def test_restart_replays_requested_or_prepared_presentation_without_duplicate_se
     assert [event[0] for event in plugin.events].count("prepare") == (1 if restart_state == "requested" else 0)
 
 
-def test_hard_pressure_rotates_cache_without_presentation_renderer(monkeypatch):
+def test_hard_pressure_defers_stale_cache_without_presentation_renderer(monkeypatch):
     task, device_config, _clock, playlist, display = _make_presentation_task("presentation-hard-pressure")
     instance = playlist.plugins[0].snapshot()
     _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
@@ -11175,12 +11209,11 @@ def test_hard_pressure_rotates_cache_without_presentation_renderer(monkeypatch):
 
     task._schedule_if_due()
     entry = task.refresh_queue.take(timeout=0)
-    assert entry is not None
-    assert entry.command.intent is RefreshIntent.DISPLAY_CACHE
-    task._process_queue_entry(entry)
 
-    assert len(display.calls) == 1
-    assert task.refresh_queue.take(timeout=0) is None
+    assert entry is None
+    assert len(display.calls) == 0
+    assert instance.instance_uuid in playlist.plugin_rotation_queue
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == request
 
 

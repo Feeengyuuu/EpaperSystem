@@ -1432,17 +1432,26 @@ class RefreshTask:
                         ).total_seconds() >= max(0.0, wait_seconds)
                         if resource_tier is not ResourceTier.HARD and not timed_out:
                             return None
+                        reason = (
+                            "hard_resource_pressure"
+                            if resource_tier is ResourceTier.HARD
+                            else "timeout"
+                        )
+                        deferred = manager.defer_rotation_reservation(
+                            selection.instance.instance_uuid,
+                            expected_playlist_name=selection.playlist_name,
+                        )
+                        if deferred:
+                            self._write_device_config()
                         logger.warning(
-                            "Rotation presentation preflight unavailable; using the last good cache. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s",
+                            "Rotation presentation preflight unavailable; deferred stale cache behind the remaining shuffle round. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s | deferred: %s",
                             selection.instance.plugin_id,
                             selection.instance.instance_uuid,
                             request.request_id,
-                            (
-                                "hard_resource_pressure"
-                                if resource_tier is ResourceTier.HARD
-                                else "timeout"
-                            ),
+                            reason,
+                            deferred,
                         )
+                        return None
         return self._playlist_command(
             selection.playlist_name,
             selection.instance,
