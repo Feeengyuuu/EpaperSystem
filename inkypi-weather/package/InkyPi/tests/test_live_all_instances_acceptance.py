@@ -2257,3 +2257,36 @@ def test_install_robinhood_token_validates_and_never_prints_secret(
     assert "private-client" not in printed
     assert "private-access" not in printed
     assert "private-refresh" not in printed
+
+
+def test_stocktracker_history_diagnostics_reports_dates_without_values(acceptance, tmp_path):
+    durable = tmp_path / "data" / "plugins" / "stocktracker" / "history"
+    durable.mkdir(parents=True)
+    (durable / "private-holdings-hash.json").write_text(
+        json.dumps(
+            [
+                {"date": "2026-06-01", "value": 123456.78},
+                {"date": "2026-07-14", "value": 234567.89},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = acceptance.stocktracker_history_diagnostics(
+        data_root=tmp_path / "data",
+        plugin_root=tmp_path / "plugins",
+        install_root=tmp_path / "missing-install",
+        legacy_root=tmp_path / "missing-legacy",
+    )
+
+    printed = json.dumps(result, sort_keys=True)
+    assert result == {
+        "earliest_date": "2026-06-01",
+        "files": 1,
+        "latest_date": "2026-07-14",
+        "records": 2,
+        "roots_with_history": ["durable"],
+    }
+    assert "123456" not in printed
+    assert "234567" not in printed
+    assert "private-holdings-hash" not in printed

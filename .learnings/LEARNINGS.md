@@ -6,6 +6,52 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260715-001] correction
+
+**Logged**: 2026-07-15T00:05:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+When a live plugin may be failing because its user login, cookie, OAuth grant, or account selection is missing, stop and ask the user before changing providers or adding a fallback.
+
+### Details
+Several InkyPi providers worked in older releases with authenticated user context. Replacing an unavailable authenticated source with sample data, stale CSV input, or an unrelated public source can make the plugin appear healthy while violating the user's live-data requirement.
+
+### Suggested Action
+First identify whether the failure boundary is authentication or account metadata. If it is, report exactly what user action or non-secret identifier is needed and wait. Resume code changes only after the user authorizes that provider and completes the required login.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins, tools/live_all_instances_acceptance.py
+- Tags: authentication, oauth, live-data, fail-closed, user-input
+
+---
+
+## [LRN-20260715-002] best_practice
+
+**Logged**: 2026-07-15T00:10:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+Multi-symbol portfolio charts must align every holding onto shared historical keys and one shared live key before summing values.
+
+### Details
+Robinhood returns current quote timestamps that differ by a few seconds between symbols. Summing against the first symbol's keys silently counted only symbols with identical timestamps, creating a false low point and a dramatic straight-line jump to the overridden account total.
+
+### Suggested Action
+Use only dates present for every held symbol, append all current prices under one snapshot-level live key, and retain each symbol's original quote timestamp separately for provenance. Test with deliberately different quote timestamps and missing historical dates.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py, inkypi-weather/package/InkyPi/tests/test_stocktracker.py
+- Tags: stocktracker, robinhood-mcp, time-series, alignment, chart
+
+---
+
 ## [LRN-20260714-003] correction
 
 **Logged**: 2026-07-14T21:25:00-07:00

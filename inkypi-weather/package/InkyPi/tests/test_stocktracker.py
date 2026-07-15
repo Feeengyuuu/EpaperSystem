@@ -659,8 +659,9 @@ def test_stock_tracker_robinhood_mcp_uses_official_positions_and_quotes_without_
         def __init__(self, token_path=None):
             assert token_path == "/secure/robinhood.json"
 
-        def fetch_snapshot(self, account_hash):
+        def fetch_snapshot(self, account_hash, period="1mo"):
             assert account_hash == "b76f3558212e"
+            assert period == "1mo"
             return {
                 "positions": [{"symbol": "SPCX", "quantity": 2.5}],
                 "quotes": {
@@ -670,6 +671,15 @@ def test_stock_tracker_robinhood_mcp_uses_official_positions_and_quotes_without_
                         "timestamp": "2026-07-14T21:00:00Z",
                         "extended_hours": True,
                     }
+                },
+                "histories": {
+                    "SPCX": [
+                        ("2026-06-16T00:00:00Z", 120.0),
+                        ("2026-06-23T00:00:00Z", 125.0),
+                        ("2026-06-30T00:00:00Z", 123.0),
+                        ("2026-07-07T00:00:00Z", 132.0),
+                        ("2026-07-14T00:00:00Z", 135.0),
+                    ]
                 },
                 "portfolio_meta": {
                     "account_value": 365.8,
@@ -712,10 +722,103 @@ def test_stock_tracker_robinhood_mcp_uses_official_positions_and_quotes_without_
     assert spcx["total_value"] == pytest.approx(340.3)
     assert spcx["quote_time"] == "2026-07-14T21:00:00Z"
     assert spcx["data_provider"] == "robinhood_mcp"
+    assert len(spcx["history"].index) == 6
+    assert [spcx["history"].loc[key, "Close"] for key in spcx["history"].index] == [
+        120.0,
+        125.0,
+        123.0,
+        132.0,
+        135.0,
+        136.12,
+    ]
     assert next(row for row in rows if row["symbol"] == "CASH")["shares"] == 25.5
     assert render["account_value_override"] == 365.8
     assert render["header_brand"] == "robinhood"
     assert StockTracker._source_label(rows) == "Robinhood official real-time"
+
+
+def test_stock_tracker_robinhood_mcp_aligns_all_holdings_on_one_live_portfolio_point(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+
+    class FakeClient:
+        def __init__(self, token_path=None):
+            pass
+
+        def fetch_snapshot(self, account_hash, period="1mo"):
+            return {
+                "positions": [
+                    {"symbol": "SPCX", "quantity": 2.0},
+                    {"symbol": "AAPL", "quantity": 1.0},
+                ],
+                "quotes": {
+                    "SPCX": {
+                        "price": 170.0,
+                        "previous_close": 155.0,
+                        "timestamp": "2026-07-14T21:00:01Z",
+                        "extended_hours": True,
+                    },
+                    "AAPL": {
+                        "price": 220.0,
+                        "previous_close": 210.0,
+                        "timestamp": "2026-07-14T21:00:03Z",
+                        "extended_hours": True,
+                    },
+                },
+                "histories": {
+                    "SPCX": [
+                        ("2026-07-11T00:00:00Z", 150.0),
+                        ("2026-07-14T00:00:00Z", 155.0),
+                    ],
+                    "AAPL": [
+                        ("2026-07-11T00:00:00Z", 200.0),
+                        ("2026-07-14T00:00:00Z", 210.0),
+                    ],
+                },
+                "portfolio_meta": {
+                    "account_value": 585.0,
+                    "cash_balance": 25.0,
+                    "buying_power": 25.0,
+                    "currency": "USD",
+                },
+            }
+
+    monkeypatch.setattr(stocktracker_module, "RobinhoodMCPClient", FakeClient)
+
+    stock_data, portfolio_meta = plugin._fetch_robinhood_mcp_data({
+        "robinhood_account_hash": "b76f3558212e",
+        "period": "1mo",
+    })
+
+    assert stock_data[0]["quote_time"] != stock_data[1]["quote_time"]
+    assert stock_data[0]["history"].index[-1] == stock_data[1]["history"].index[-1]
+    assert plugin._portfolio_values(stock_data) == [500.0, 520.0, 560.0]
+    assert plugin._portfolio_values(
+        stock_data,
+        account_value_override=portfolio_meta["account_value"],
+    ) == [500.0, 520.0, 585.0]
+
+
+def test_stock_tracker_portfolio_curve_excludes_dates_missing_from_any_holding():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        {
+            **_stock("SPCX", [150.0, 155.0, 170.0], 2.0),
+            "history": stocktracker_module._SimpleHistory([
+                ("2026-07-11", 150.0),
+                ("2026-07-14", 155.0),
+                ("current", 170.0),
+            ]),
+        },
+        {
+            **_stock("AAPL", [200.0, 220.0], 1.0),
+            "history": stocktracker_module._SimpleHistory([
+                ("2026-07-11", 200.0),
+                ("current", 220.0),
+            ]),
+        },
+    ]
+
+    assert plugin._portfolio_values(stock_data) == [500.0, 560.0]
 
 
 def test_stock_tracker_robinhood_mcp_failure_never_falls_back(monkeypatch, tmp_path):
@@ -726,7 +829,7 @@ def test_stock_tracker_robinhood_mcp_failure_never_falls_back(monkeypatch, tmp_p
         def __init__(self, token_path=None):
             pass
 
-        def fetch_snapshot(self, account_hash):
+        def fetch_snapshot(self, account_hash, period="1mo"):
             raise RuntimeError("official quote unavailable")
 
     monkeypatch.setattr(stocktracker_module, "RobinhoodMCPClient", FailingClient)

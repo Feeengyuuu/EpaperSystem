@@ -2307,6 +2307,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print only privacy-safe StockTracker configuration booleans and exit",
     )
+    parser.add_argument(
+        "--print-stocktracker-history-diagnostics",
+        action="store_true",
+        help="Print only StockTracker history file counts and date coverage, never values",
+    )
     return parser
 
 
@@ -2594,6 +2599,70 @@ def stocktracker_config_diagnostics(document: dict, *, cache_root=None) -> dict:
     }
 
 
+def stocktracker_history_diagnostics(
+    *,
+    data_root,
+    plugin_root,
+    install_root="/opt/inkypi",
+    legacy_root="/usr/local/inkypi",
+):
+    roots = {
+        "durable": Path(data_root) / "plugins" / "stocktracker" / "history",
+        "current_legacy": Path(plugin_root) / "stocktracker" / ".stocktracker_history",
+        "legacy_install": Path(legacy_root) / "src" / "plugins" / "stocktracker" / ".stocktracker_history",
+    }
+    releases = Path(install_root) / "releases"
+    try:
+        release_dirs = list(releases.iterdir())
+    except OSError:
+        release_dirs = []
+    for index, release in enumerate(release_dirs):
+        roots[f"release_{index}"] = release / "src" / "plugins" / "stocktracker" / ".stocktracker_history"
+
+    files = []
+    roots_with_history = set()
+    seen = set()
+    for label, root in roots.items():
+        try:
+            candidates = list(root.glob("*.json"))
+        except OSError:
+            candidates = []
+        for path in candidates:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            files.append(path)
+            roots_with_history.add("release_legacy" if label.startswith("release_") else label)
+
+    dates = []
+    records = 0
+    for path in files:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            date = str(item.get("date") or "").strip()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                dates.append(date)
+                records += 1
+    return {
+        "files": len(files),
+        "records": records,
+        "earliest_date": min(dates) if dates else None,
+        "latest_date": max(dates) if dates else None,
+        "roots_with_history": sorted(roots_with_history),
+    }
+
+
 def _parse_env_lines(text):
     """Yield (key, raw_line) for KEY=VALUE lines; values are never inspected."""
     for raw_line in text.splitlines():
@@ -2796,6 +2865,12 @@ def main(argv=None) -> int:
         print(json.dumps(stocktracker_config_diagnostics(
             document,
             cache_root=args.cache_root,
+        ), sort_keys=True))
+        return 0
+    if args.print_stocktracker_history_diagnostics:
+        print(json.dumps(stocktracker_history_diagnostics(
+            data_root=args.data_root,
+            plugin_root=args.plugin_root,
         ), sort_keys=True))
         return 0
     if args.print_config_keys is not None:

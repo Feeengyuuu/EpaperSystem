@@ -7,7 +7,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -22,6 +22,7 @@ READ_ONLY_TOOLS = frozenset(
         "get_portfolio",
         "get_equity_positions",
         "get_equity_quotes",
+        "get_equity_historicals",
     }
 )
 
@@ -389,7 +390,77 @@ class RobinhoodMCPClient:
             "currency": currency,
         }
 
-    def fetch_snapshot(self, account_hash):
+    @staticmethod
+    def _historical_window(period, now=None):
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        current = current.astimezone(timezone.utc).replace(microsecond=0)
+        period = str(period or "1mo").strip().lower()
+        if period == "1d":
+            return current - timedelta(days=3), current, "5minute"
+        if period == "5d":
+            return current - timedelta(days=10), current, "30minute"
+        if period == "3mo":
+            return current - timedelta(days=95), current, "day"
+        if period == "6mo":
+            return current - timedelta(days=190), current, "day"
+        if period == "1y":
+            return current - timedelta(days=370), current, "day"
+        if period == "ytd":
+            return current.replace(month=1, day=1, hour=0, minute=0, second=0), current, "day"
+        return current - timedelta(days=32), current, "day"
+
+    @staticmethod
+    def _rfc3339(value):
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _histories(self, symbols, period, *, now=None):
+        start_time, end_time, interval = self._historical_window(period, now=now)
+        histories = {}
+        for start in range(0, len(symbols), 10):
+            batch = symbols[start : start + 10]
+            payload = self.call_tool(
+                "get_equity_historicals",
+                {
+                    "symbols": batch,
+                    "start_time": self._rfc3339(start_time),
+                    "end_time": self._rfc3339(end_time),
+                    "interval": interval,
+                    "bounds": "regular",
+                    "adjustment_type": "split",
+                },
+            )
+            data = payload.get("data") if isinstance(payload, dict) else None
+            results = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(results, list):
+                raise RobinhoodMCPError("Robinhood historical response has no results")
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                symbol = str(result.get("symbol") or "").strip().upper()
+                if symbol not in batch:
+                    continue
+                points = []
+                for bar in result.get("bars") or []:
+                    if not isinstance(bar, dict):
+                        continue
+                    timestamp = str(bar.get("begins_at") or "").strip()
+                    close = self._optional_number(bar.get("close_price"))
+                    if timestamp and close is not None and close > 0:
+                        points.append((timestamp, close))
+                points = list(dict(points).items())
+                if len(points) >= 2:
+                    histories[symbol] = points
+        missing = [symbol for symbol in symbols if symbol not in histories]
+        if missing:
+            raise RobinhoodMCPError(
+                "Robinhood MCP is missing official price history for held symbol(s): "
+                + ", ".join(missing)
+            )
+        return histories
+
+    def fetch_snapshot(self, account_hash, period="1mo", *, now=None):
         account_hash = str(account_hash or "").strip().lower()
         if len(account_hash) != 12 or any(character not in "0123456789abcdef" for character in account_hash):
             raise RobinhoodMCPError("Robinhood account hash must be a 12-character SHA-256 prefix")
@@ -397,10 +468,12 @@ class RobinhoodMCPClient:
         positions = self._positions(account_number)
         symbols = [position["symbol"] for position in positions]
         quotes = self._quotes(symbols)
+        histories = self._histories(symbols, period, now=now)
         portfolio_meta = self._portfolio_meta(account_number)
         return {
             "account_hash": account_hash,
             "positions": positions,
             "quotes": quotes,
+            "histories": histories,
             "portfolio_meta": portfolio_meta,
         }

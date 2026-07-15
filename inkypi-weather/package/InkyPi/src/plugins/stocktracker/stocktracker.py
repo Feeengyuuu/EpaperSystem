@@ -655,8 +655,20 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	def _fetch_robinhood_mcp_data(self, settings):
 		account_hash = str(settings.get("robinhood_account_hash") or "").strip().lower()
 		token_path = str(settings.get("robinhood_token_path") or "").strip() or None
-		snapshot = RobinhoodMCPClient(token_path=token_path).fetch_snapshot(account_hash)
+		period = str(settings.get("period") or "1mo").strip() or "1mo"
+		snapshot = RobinhoodMCPClient(token_path=token_path).fetch_snapshot(
+			account_hash,
+			period=period,
+		)
 		quotes = snapshot.get("quotes") or {}
+		histories = snapshot.get("histories") or {}
+		quote_times = [
+			str((quotes.get(str(position.get("symbol") or "").strip().upper()) or {}).get("timestamp") or "").strip()
+			for position in snapshot.get("positions") or []
+		]
+		if not quote_times or any(not quote_time for quote_time in quote_times):
+			raise RuntimeError("Missing official Robinhood quote timestamp for held position")
+		current_history_key = f"current:{max(quote_times)}"
 		stock_data = []
 		for position in snapshot.get("positions") or []:
 			symbol = str(position.get("symbol") or "").strip().upper()
@@ -671,11 +683,12 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				raise RuntimeError(f"Missing official Robinhood quote timestamp for {symbol}")
 			change = current_price - previous_close
 			change_percent = (change / previous_close) * 100 if previous_close else 0.0
+			history_points = histories.get(symbol)
+			if not isinstance(history_points, list) or len(history_points) < 2:
+				raise RuntimeError(f"Missing official Robinhood history for {symbol}")
 			history = _SimpleHistory(
-				[
-					(f"{quote_time}-previous-close", previous_close),
-					(quote_time, current_price),
-				]
+				[(str(timestamp), float(close)) for timestamp, close in history_points]
+				+ [(current_history_key, current_price)]
 			)
 			stock_data.append(
 				{
@@ -1106,13 +1119,24 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
 	def _portfolio_values(self, stock_data, account_value_override=None):
-		dates = list(stock_data[0]["history"].index)
+		histories = [
+			data.get("history")
+			for data in stock_data
+			if not getattr(data.get("history"), "empty", True)
+		]
+		if not histories:
+			return []
+		common_dates = set(histories[0].index)
+		for history in histories[1:]:
+			common_dates.intersection_update(history.index)
+		dates = [date for date in histories[0].index if date in common_dates]
 		values = []
 		for date in dates:
 			total = 0
 			for data in stock_data:
-				if date in data["history"].index:
-					total += float(data["history"].loc[date, "Close"]) * data["shares"]
+				history = data.get("history")
+				if history is not None and date in history.index:
+					total += float(history.loc[date, "Close"]) * data["shares"]
 			values.append(total)
 		if account_value_override is not None and values:
 			values[-1] = account_value_override

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,26 @@ def test_robinhood_snapshot_selects_hashed_account_paginates_and_uses_newest_tra
                     ]
                 }
             },
+            "get_equity_historicals": {
+                "data": {
+                    "results": [
+                        {
+                            "symbol": "SPCX",
+                            "bars": [
+                                {"begins_at": "2026-07-10T00:00:00Z", "close_price": "128.00"},
+                                {"begins_at": "2026-07-11T00:00:00Z", "close_price": "131.00"},
+                            ],
+                        },
+                        {
+                            "symbol": "AAPL",
+                            "bars": [
+                                {"begins_at": "2026-07-10T00:00:00Z", "close_price": "210.00"},
+                                {"begins_at": "2026-07-11T00:00:00Z", "close_price": "215.00"},
+                            ],
+                        },
+                    ]
+                }
+            },
             "get_portfolio": {
                 "data": {
                     "total_value": "1000.50",
@@ -89,7 +110,11 @@ def test_robinhood_snapshot_selects_hashed_account_paginates_and_uses_newest_tra
         }
     )
 
-    snapshot = client.fetch_snapshot(_account_hash(account_number))
+    snapshot = client.fetch_snapshot(
+        _account_hash(account_number),
+        period="1mo",
+        now=datetime(2026, 7, 15, 6, tzinfo=timezone.utc),
+    )
 
     assert snapshot["account_hash"] == _account_hash(account_number)
     assert snapshot["positions"] == [
@@ -110,11 +135,30 @@ def test_robinhood_snapshot_selects_hashed_account_paginates_and_uses_newest_tra
         "pending_deposits": 5.0,
         "currency": "USD",
     }
+    assert snapshot["histories"] == {
+        "SPCX": [
+            ("2026-07-10T00:00:00Z", 128.0),
+            ("2026-07-11T00:00:00Z", 131.0),
+        ],
+        "AAPL": [
+            ("2026-07-10T00:00:00Z", 210.0),
+            ("2026-07-11T00:00:00Z", 215.0),
+        ],
+    }
     position_calls = [arguments for name, arguments in client.calls if name == "get_equity_positions"]
     assert position_calls == [
         {"account_number": account_number},
         {"account_number": account_number, "cursor": "cursor-2"},
     ]
+    historical_call = next(arguments for name, arguments in client.calls if name == "get_equity_historicals")
+    assert historical_call == {
+        "symbols": ["SPCX", "AAPL"],
+        "start_time": "2026-06-13T06:00:00Z",
+        "end_time": "2026-07-15T06:00:00Z",
+        "interval": "day",
+        "bounds": "regular",
+        "adjustment_type": "split",
+    }
 
 
 def test_robinhood_snapshot_fails_closed_when_any_held_symbol_has_no_quote():
@@ -139,6 +183,35 @@ def test_robinhood_client_refuses_every_trading_tool():
 
     with pytest.raises(RobinhoodMCPError, match="not allowlisted"):
         client.call_tool("place_equity_order", {"symbol": "SPCX"})
+
+
+def test_robinhood_snapshot_fails_closed_when_held_symbol_has_no_history():
+    account_number = "fake-account-history"
+    client = FakeRobinhoodClient(
+        {
+            "get_accounts": {"data": [{"account_number": account_number}]},
+            "get_equity_positions": {
+                "data": {"results": [{"symbol": "SPCX", "quantity": "1"}]}
+            },
+            "get_equity_quotes": {
+                "data": {
+                    "results": [
+                        {
+                            "symbol": "SPCX",
+                            "last_trade_price": "136.12",
+                            "venue_last_trade_time": "2026-07-14T20:00:00Z",
+                            "previous_close": "130.00",
+                        }
+                    ]
+                }
+            },
+            "get_equity_historicals": {"data": {"results": []}},
+            "get_portfolio": {"data": {}},
+        }
+    )
+
+    with pytest.raises(RobinhoodMCPError, match="missing official price history.*SPCX"):
+        client.fetch_snapshot(_account_hash(account_number), period="1mo")
 
 
 class FakeResponse:
