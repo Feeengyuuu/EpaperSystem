@@ -635,7 +635,7 @@ def test_bank_provider_state_paths_match_plugin_persistence_contracts(
             cache_root
             / "plugins"
             / "gcd_comic_covers"
-            / ".gcd_comic_covers_cache"
+            / "gcd_comic_covers_cache"
             / "state.json"
         ),
         "magazine_covers": (
@@ -678,6 +678,14 @@ def test_bank_provider_state_paths_match_plugin_persistence_contracts(
     }
 
     assert actual == expected
+
+
+def test_daily_art_requires_bank_evidence_only_for_every_refresh_cadence(acceptance):
+    daily = {"plugin_settings": {"rotationCadence": "daily"}}
+    every_refresh = {"plugin_settings": {"rotationCadence": "every_refresh"}}
+
+    assert acceptance._bank_provider_expectation(daily, "daily_art") is False
+    assert acceptance._bank_provider_expectation(every_refresh, "daily_art") is True
 
 
 def test_pixiv_bank_path_honors_cache_override_before_data_default(
@@ -2044,3 +2052,40 @@ def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
     assert created["interval_seconds"] == 86400
     assert isinstance(created["runner"], _FakeRunner)
     assert isinstance(created["controller"], acceptance.SystemdController)
+
+
+def test_stocktracker_config_diagnostics_never_prints_private_values(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    config = _config()
+    settings = config["playlist_config"]["playlists"][0]["plugins"][0]
+    settings["plugin_id"] = "stocktracker"
+    settings["plugin_settings"] = {
+        "tickers": "PRIVATE",
+        "shares": "99",
+        "portfolio_csv_path": str(tmp_path / "missing.csv"),
+    }
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--print-stocktracker-diagnostics",
+    ])
+
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+    assert exit_code == 0
+    assert payload == {
+        "csv_exists": False,
+        "has_csv_setting": True,
+        "has_inline_shares": True,
+        "has_inline_tickers": True,
+        "instance_count": 1,
+    }
+    assert "PRIVATE" not in printed
+    assert "99" not in printed

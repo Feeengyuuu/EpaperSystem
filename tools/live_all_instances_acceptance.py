@@ -156,7 +156,7 @@ BANK_PROVIDER_EVIDENCE_SPECS = {
     ),
     "gcd_comic_covers": BankProviderEvidenceSpec(
         root_kind="cache",
-        leaf=(".gcd_comic_covers_cache",),
+        leaf=("gcd_comic_covers_cache",),
         state_filename="state.json",
         attempt_field="last_provider_attempt_at",
         override_env="INKYPI_GCD_COMIC_COVERS_CACHE",
@@ -203,6 +203,7 @@ class InstancePlan:
     structural_generation: int
     settings_revision: int
     expects_presentation_refresh: bool
+    expects_bank_provider_evidence: bool = True
 
     @property
     def uuid_hash(self) -> str:
@@ -358,6 +359,16 @@ def _presentation_expectation(raw: dict, plugin_id: str, plugin_root) -> bool:
     return True
 
 
+def _bank_provider_expectation(raw: dict, plugin_id: str) -> bool:
+    if plugin_id not in BANK_PROVIDER_EVIDENCE_SPECS:
+        return False
+    settings = raw.get("plugin_settings") or {}
+    if plugin_id == "daily_art":
+        cadence = str(settings.get("rotationCadence") or "daily").strip().lower()
+        return cadence == "every_refresh"
+    return True
+
+
 def build_acceptance_plan(
     config: dict,
     *,
@@ -428,6 +439,10 @@ def build_acceptance_plan(
                 plugin_id,
                 plugin_root,
             ),
+            expects_bank_provider_evidence=_bank_provider_expectation(
+                raw,
+                plugin_id,
+            ),
         ))
     return tuple(plan)
 
@@ -442,6 +457,7 @@ def plan_fingerprint(plan: tuple[InstancePlan, ...]) -> str:
             item.structural_generation,
             item.settings_revision,
             item.expects_presentation_refresh,
+            item.expects_bank_provider_evidence,
         )
         for item in plan
     ]
@@ -723,6 +739,8 @@ def resolve_bank_provider_state_path(
     data_root,
     environ=None,
 ) -> Path | None:
+    if not instance.expects_bank_provider_evidence:
+        return None
     spec = BANK_PROVIDER_EVIDENCE_SPECS.get(instance.plugin_id)
     if spec is None:
         return None
@@ -2262,6 +2280,11 @@ def _parser() -> argparse.ArgumentParser:
             "(comma separated) and exit"
         ),
     )
+    parser.add_argument(
+        "--print-stocktracker-diagnostics",
+        action="store_true",
+        help="Print only privacy-safe StockTracker configuration booleans and exit",
+    )
     return parser
 
 
@@ -2274,6 +2297,37 @@ PRINTABLE_CONFIG_KEYS = frozenset({
     "plugin_cycle_interval_seconds",
     "timezone",
 })
+
+
+def stocktracker_config_diagnostics(document: dict) -> dict:
+    instances = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            if value.get("plugin_id") == "stocktracker":
+                instances.append(value.get("plugin_settings") or {})
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(document)
+    csv_paths = [
+        str(settings.get("portfolio_csv_path") or settings.get("portfolio_csv_file") or "").strip()
+        for settings in instances
+    ]
+    return {
+        "csv_exists": any(path and os.path.isfile(path) for path in csv_paths),
+        "has_csv_setting": any(csv_paths),
+        "has_inline_shares": any(
+            str(settings.get("shares") or "").strip() for settings in instances
+        ),
+        "has_inline_tickers": any(
+            str(settings.get("tickers") or "").strip() for settings in instances
+        ),
+        "instance_count": len(instances),
+    }
 
 
 def _parse_env_lines(text):
@@ -2420,6 +2474,18 @@ def main(argv=None) -> int:
                 ).isoformat(),
             })
         print(json.dumps({"entries": entries}, ensure_ascii=True))
+        return 0
+    if args.print_stocktracker_diagnostics:
+        try:
+            document = _read_json(
+                Path(args.config),
+                code="config_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(stocktracker_config_diagnostics(document), sort_keys=True))
         return 0
     if args.print_config_keys is not None:
         try:

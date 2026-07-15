@@ -465,3 +465,49 @@ Build subtree artifacts with `git -c core.autocrlf=false archive`, then scan eve
 - Tags: git-archive, windows, autocrlf, release-artifact, rollback
 
 ---
+
+## [LRN-20260714-001] best_practice
+
+**Logged**: 2026-07-14T19:00:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: operations
+
+### Summary
+Live InkyPi deployment and acceptance must test the exact privileged command, use the pinned IPv4 SSH identity, and follow the current pre-refresh display contract.
+
+### Details
+`sudo -n true` incorrectly suggested passwordless deployment was unavailable because sudoers intentionally permits only specific update, service, and acceptance commands. The device hostname could also select an unreachable IPv6 address after a DHCP change even though the pinned key and host record were valid. Finally, an older acceptance helper waited for a post-display presentation receipt after the scheduler had changed to prepare fresh content before display, producing a false failure after a successful internet refresh and hardware write.
+
+### Suggested Action
+Inspect `sudo -n -l` and execute the exact whitelisted command when testing privilege. Resolve the device's current IPv4 address and keep `HostKeyAlias`, `IdentitiesOnly`, the repository key, and pinned known-hosts file. For explicit per-plugin acceptance, force one DATA refresh, suppress redundant post-display presentation, request one cache display, and require fresh-data evidence plus a committed hardware-write image.
+
+### Metadata
+- Source: conversation
+- Related Files: tools/epaperpod-deploy-zip.ps1, tools/live_all_instances_acceptance.py, inkypi-weather/package/InkyPi/src/refresh_task.py
+- Tags: sudoers, ssh, ipv4, host-key-alias, acceptance, pre-refresh, hardware-write
+
+---
+
+## [LRN-20260714-002] best_practice
+
+**Logged**: 2026-07-14T19:45:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+Cache-only display can freeze a plugin's time-bucket panel rotation even when its selector logic remains intact.
+
+### Details
+Sports Dashboard still contained its right-side league priorities and bottom-panel sport rotation, but the scheduler reused the last rendered image on every display. Because no presentation refresh was declared, current time buckets were never evaluated again and the internal panels appeared permanently stuck.
+
+### Suggested Action
+For plugins whose composition changes independently of provider freshness, declare presentation refresh and re-render from the current provider caches immediately before display. Do not force every upstream provider during presentation preparation; keep provider refresh policy and display-time composition as separate contracts.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard, inkypi-weather/package/InkyPi/src/refresh_task.py
+- Tags: sports-dashboard, presentation-refresh, panel-rotation, cache, scheduler
+
+---

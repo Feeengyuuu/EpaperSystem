@@ -571,7 +571,7 @@ class StockTracker(BasePlugin):
 
 	def _portfolio_holdings_from_settings(self, settings):
 		period = settings.get('period', '1mo')
-		csv_path = (settings.get('portfolio_csv_file') or settings.get('portfolio_csv_path') or '').strip()
+		csv_path = (settings.get('portfolio_csv_path') or settings.get('portfolio_csv_file') or '').strip()
 		if csv_path:
 			resolved_path = self._resolve_portfolio_csv_path(csv_path)
 			return period, self._load_portfolio_csv(resolved_path)
