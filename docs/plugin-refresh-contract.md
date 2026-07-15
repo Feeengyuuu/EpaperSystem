@@ -64,12 +64,13 @@
 
 ## 2026-07-15 实机执行证据
 
-- ESPN 官方数据在验证窗口内由 `87' 1-1` 推进到 `89' 1-1`。
+- ESPN 官方数据在验证窗口内由 `87' 1-1` 推进到 `90'+9' 1-2`。
 - `13:50:33`：`source=live, intent=live_refresh, plugin_id=sports_dashboard`。
 - `13:50:40`：同一实例立即进入 `source=live, intent=display_cache`，中间没有普通后台插件插队。
 - `13:51:36`：Waveshare 完成物理刷新并进入休眠。
-- `/api/current_image` 与 SportsDashboard 最新插件缓存 SHA-256 完全相同；画面显示 `ESPN DATA 1:50 PM`、`ESPN 87' 1-1`。
-- 发布身份精确匹配 `deploy-20260715-live-urgent-3a66bc7c`，服务 `NRestarts=0`。
+- 全赛事发布重启后，`13:57:01` 再次执行 `live_refresh`，`13:57:38` 进入精确跟随展示；后续 60 秒轮次继续运行。
+- `/api/current_image` 与该轮 SportsDashboard 插件缓存 SHA-256 都为 `DCA689F9BBC20A3C3B08E1932657D1997426CC87D4072E5BF64C8E82CDAD2209`；画面显示 `ESPN DATA 1:58 PM`、`ESPN 90'+6' 1-2`。
+- 发布身份精确匹配 `deploy-20260715-all-sports-live-12d2f390`，服务 `NRestarts=0`。
 
 ## 已知外部数据源告警
 
