@@ -120,6 +120,7 @@ _RENDERER_INTENTS = frozenset(
     }
 )
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
+DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
@@ -1346,6 +1347,102 @@ class RefreshTask:
             or candidate.settings_revision != selection.instance.settings_revision
         ):
             return None
+
+        presentation_request_id = None
+        allow_prepared_presentation = False
+        plugin_config = self.device_config.get_plugin(selection.instance.plugin_id)
+        if plugin_supports_presentation_refresh(plugin_config):
+            try:
+                refresh_before_display = resolve_refresh_on_display_for_config(
+                    thaw_payload(selection.instance.settings),
+                    plugin_config,
+                )
+            except PluginSettingError as error:
+                logger.warning(
+                    "Ignoring invalid refresh-on-display setting during rotation preflight. | plugin_id: %s | error: %s",
+                    selection.instance.plugin_id,
+                    error,
+                )
+                refresh_before_display = False
+            except Exception:
+                logger.exception(
+                    "Rotation preflight trigger resolution failed closed. | plugin_id: %s",
+                    selection.instance.plugin_id,
+                )
+                refresh_before_display = False
+
+            if refresh_before_display:
+                runtime_snapshot = self.runtime_state.snapshot()
+                state = runtime_snapshot.instances.get(
+                    selection.instance.instance_uuid,
+                    InstanceRuntimeState(),
+                )
+                request = state.presentation_request
+                if request is None or (
+                    request.structural_generation
+                    != selection.instance.structural_generation
+                    or request.settings_revision
+                    != selection.instance.settings_revision
+                ):
+                    request_id = uuid4().hex
+                    origin_commit_id = (
+                        runtime_snapshot.display_commit_id
+                        or f"rotation-preflight-{request_id}"
+                    )
+                    request = PresentationRequestState(
+                        request_id=request_id,
+                        requested_at=current_dt.isoformat(),
+                        structural_generation=selection.instance.structural_generation,
+                        settings_revision=selection.instance.settings_revision,
+                        origin_theme_mode=candidate.theme_mode,
+                        origin_display_commit_id=origin_commit_id,
+                    )
+                    self.runtime_state.request_presentation(
+                        selection.instance.instance_uuid,
+                        request,
+                    )
+                    request = (
+                        self.runtime_state.snapshot()
+                        .instances.get(
+                            selection.instance.instance_uuid,
+                            InstanceRuntimeState(),
+                        )
+                        .presentation_request
+                    )
+
+                if request is not None:
+                    if (
+                        request.prepared_at is not None
+                        and request.prepared_theme_mode == candidate.theme_mode
+                    ):
+                        presentation_request_id = request.request_id
+                        allow_prepared_presentation = True
+                    else:
+                        requested_at = self._parse_iso_datetime(request.requested_at)
+                        wait_seconds = self._config_float(
+                            "rotation_presentation_wait_seconds",
+                            DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS,
+                        )
+                        resource_tier = classify_resource_tier(
+                            self._resource_sample(),
+                            self._resource_thresholds(),
+                        )
+                        timed_out = requested_at is not None and (
+                            current_dt - requested_at
+                        ).total_seconds() >= max(0.0, wait_seconds)
+                        if resource_tier is not ResourceTier.HARD and not timed_out:
+                            return None
+                        logger.warning(
+                            "Rotation presentation preflight unavailable; using the last good cache. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s",
+                            selection.instance.plugin_id,
+                            selection.instance.instance_uuid,
+                            request.request_id,
+                            (
+                                "hard_resource_pressure"
+                                if resource_tier is ResourceTier.HARD
+                                else "timeout"
+                            ),
+                        )
         return self._playlist_command(
             selection.playlist_name,
             selection.instance,
@@ -1357,6 +1454,8 @@ class RefreshTask:
             current_dt=current_dt,
             cache_theme_mode=candidate.theme_mode,
             automatic_rotation=True,
+            allow_prepared_presentation=allow_prepared_presentation,
+            presentation_request_id=presentation_request_id,
         )
 
     def _select_prepared_display_retry_command(

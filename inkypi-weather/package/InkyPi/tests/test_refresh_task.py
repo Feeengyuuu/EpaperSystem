@@ -7447,6 +7447,88 @@ def test_stop_flushes_runtime_state_synchronously_after_entering_drain():
     assert states == [LifecycleState.DRAINING]
 
 
+class PresentationRuntimeDeviceConfig(RuntimeDeviceConfig):
+    """Marks the ``prepared_plugin`` id as a refresh-on-display presenter."""
+
+    def get_plugin(self, plugin_id):
+        if plugin_id == "prepared_plugin":
+            return {
+                "id": plugin_id,
+                "refresh_on_display": True,
+                "_manifest": SimpleNamespace(
+                    capabilities=SimpleNamespace(
+                        supports_presentation_refresh=True,
+                    ),
+                    theme=None,
+                ),
+            }
+        return {"id": plugin_id}
+
+
+def _prepared_rotation_task(tmp_path):
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("prepared_plugin", "Prepared"),
+    )
+    device_config = PresentationRuntimeDeviceConfig(tmp_path, [playlist])
+    device_config.config["plugin_cycle_interval_seconds"] = 60
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
+    task = RefreshTask(device_config, RecordingDisplayManager())
+    _write_runtime_cache(task, playlist.plugins[0])
+    return task, playlist.plugins[0]
+
+
+def test_rotation_defers_display_until_presentation_prepared(tmp_path):
+    task, instance = _prepared_rotation_task(
+        make_test_dir("rotation-prepare-ahead")
+    )
+    first_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+
+    deferred = task._select_cached_display_command(first_dt)
+
+    request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert deferred is None
+    assert request is not None
+    assert request.prepared_at is None
+
+    still_waiting = task._select_cached_display_command(
+        first_dt + timedelta(seconds=30)
+    )
+    assert still_waiting is None
+
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        request.request_id,
+        (first_dt + timedelta(seconds=45)).isoformat(),
+        None,
+    )
+    ready = task._select_cached_display_command(
+        first_dt + timedelta(seconds=60)
+    )
+
+    assert ready is not None
+    assert ready.intent is RefreshIntent.DISPLAY_CACHE
+    assert ready.payload.get("presentation_request_id") == request.request_id
+
+
+def test_rotation_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
+    task, instance = _prepared_rotation_task(
+        make_test_dir("rotation-prepare-stall")
+    )
+    first_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+
+    assert task._select_cached_display_command(first_dt) is None
+    fallback = task._select_cached_display_command(
+        first_dt + timedelta(seconds=181)
+    )
+
+    assert fallback is not None
+    assert fallback.intent is RefreshIntent.DISPLAY_CACHE
+    assert fallback.instance_uuid == instance.instance_uuid
+
+
 def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch):
     tmp_path = make_test_dir("cache-only-random-display")
     playlist = _runtime_playlist(
@@ -9977,7 +10059,14 @@ def test_automatic_rotation_keeps_member_when_transaction_skips_hardware_write(
     ).isoformat()
     monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
     _install_display_provider_plugin_sentinels(monkeypatch)
-    command = task._select_cached_display_command(PRESENTATION_NOW)
+    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+    request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    _seed_prepared_presentation(task, instance, request)
+    command = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
     before = list(playlist.plugin_rotation_queue)
 
     with pytest.raises(RuntimeError, match="did not write the panel"):
@@ -10050,7 +10139,7 @@ def test_exact_manual_display_rejects_unproven_hardware_write(monkeypatch):
     assert device_config.write_count == 0
 
 
-def test_normal_cache_commit_records_one_coalesced_presentation_request(monkeypatch):
+def test_rotation_preflight_records_one_coalesced_presentation_request(monkeypatch):
     task, device_config, clock, playlist, _display = _make_presentation_task("presentation-normal-display-request")
     instance = playlist.plugins[0].snapshot()
     _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
@@ -10065,28 +10154,18 @@ def test_normal_cache_commit_records_one_coalesced_presentation_request(monkeypa
     )
     _install_display_provider_plugin_sentinels(monkeypatch)
 
-    task._schedule_if_due()
-    first = task.refresh_queue.take(timeout=0)
-    assert first is not None
-    assert first.command.intent is RefreshIntent.DISPLAY_CACHE
-    assert first.command.allow_prepared_presentation is True
-    task._process_queue_entry(first)
+    assert task._select_cached_display_command(now[0]) is None
     original = task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request
 
     assert original is not None
-    device_config.refresh_info.refresh_time = (now[0] - timedelta(minutes=2)).isoformat()
     clock.advance(61)
     now[0] += timedelta(seconds=61)
-    task._schedule_if_due()
-    second = task.refresh_queue.take(timeout=0)
-    assert second is not None
-    assert second.command.intent is RefreshIntent.DISPLAY_CACHE
-    task._process_queue_entry(second)
+    assert task._select_cached_display_command(now[0]) is None
 
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == original
 
 
-def test_prepared_refresh_on_display_followup_does_not_consume_shuffle_bag_twice(
+def test_prepared_refresh_on_display_rotation_consumes_shuffle_bag_once(
     monkeypatch,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
@@ -10100,38 +10179,31 @@ def test_prepared_refresh_on_display_followup_does_not_consume_shuffle_bag_twice
     monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
     _install_display_provider_plugin_sentinels(monkeypatch)
 
-    automatic = task._select_cached_display_command(PRESENTATION_NOW)
-    assert automatic.payload["automatic_rotation"] is True
-    first = _queue_and_process(task, automatic)
-    assert first.job.status is JobStatus.SUCCEEDED
+    assert task._select_cached_display_command(PRESENTATION_NOW) is None
     request = task.runtime_state.snapshot().instances[
         instance.instance_uuid
     ].presentation_request
     assert request is not None
-    anchor = device_config.refresh_info.refresh_time
-    rotation_after_automatic = (
-        list(playlist.plugin_rotation_queue),
-        list(playlist.plugin_rotation_recent_history),
-    )
-    assert rotation_after_automatic == ([], [instance.instance_uuid])
-
     _seed_prepared_presentation(
         task,
         instance,
         request,
         image=Image.new("RGB", (32, 16), "white"),
     )
-    followup = _presentation_followup_command(task, playlist, instance, request)
-    assert followup.payload.get("automatic_rotation") is None
-
-    result = _queue_and_process(task, followup)
-
-    assert result.job.status is JobStatus.SUCCEEDED
-    assert (
+    automatic = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert automatic.payload["automatic_rotation"] is True
+    first = _queue_and_process(task, automatic)
+    assert first.job.status is JobStatus.SUCCEEDED
+    rotation_after_automatic = (
         list(playlist.plugin_rotation_queue),
         list(playlist.plugin_rotation_recent_history),
-    ) == rotation_after_automatic
-    assert device_config.refresh_info.refresh_time == anchor
+    )
+    assert rotation_after_automatic == ([], [instance.instance_uuid])
+    assert task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request is None
 
 
 def test_manual_cache_display_records_request_but_live_theme_followups_do_not(
