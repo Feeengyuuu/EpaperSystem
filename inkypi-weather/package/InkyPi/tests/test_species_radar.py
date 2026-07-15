@@ -2195,19 +2195,20 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     first = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     first_profile = _species_profile(first)
 
-    assert len(first_profile["records"]) == 8
-    assert len(photos) == 8
-    assert len(maps) == 4
+    assert len(first_profile["records"]) == 3
+    assert len(photos) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
+    assert len(maps) == species_mod.MAX_MAP_FETCHES_PER_DATA_PASS
     assert first_profile["seen_ids"] == []
-    assert first_profile["refill_cursor"] == 12
+    assert first_profile["refill_cursor"] == 4
     assert first_profile["refill_in_progress"] is True
 
-    plugin.generate_image(settings, DummyDeviceConfig())
+    for _ in range(3):
+        plugin.generate_image(settings, DummyDeviceConfig())
     second = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     second_profile = _species_profile(second)
     assert len(second_profile["records"]) == 12
     assert len(photos) == 12
-    assert len(maps) == 8
+    assert len(maps) == 4
     assert second_profile["refill_in_progress"] is False
 
 
@@ -2337,7 +2338,7 @@ def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_p
         assert deadline is not None
         assert clock["value"] < deadline
         calls.append(url)
-        clock["value"] += 40.0
+        clock["value"] += 60.0
         return Image.new("RGB", (80, 60), "green")
 
     monkeypatch.setattr(plugin, "_download_image_for_data", slow_photo)
@@ -2348,8 +2349,8 @@ def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_p
     with pytest.raises(RuntimeError, match="deadline"):
         plugin.generate_image(settings, DummyDeviceConfig())
 
-    assert len(calls) == 4
-    assert clock["value"] <= species_mod.MAX_DATA_SECONDS + 40.0
+    assert len(calls) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
+    assert clock["value"] <= species_mod.MAX_DATA_SECONDS + 60.0
     assert _tree_snapshot(tmp_path) == baseline
 
 
@@ -2378,7 +2379,10 @@ def test_species_failed_photo_and_map_attempts_are_still_bounded(tmp_path, monke
 
     with pytest.raises(RuntimeError, match="bank|unavailable"):
         plugin.generate_image(bound_species_settings(), DummyDeviceConfig())
-    assert attempts == {"photo": 8, "map": 4}
+    assert attempts == {
+        "photo": species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS,
+        "map": species_mod.MAX_MAP_FETCHES_PER_DATA_PASS,
+    }
 
 
 class SpeciesApprovedTarget:

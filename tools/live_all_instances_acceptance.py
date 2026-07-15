@@ -1410,7 +1410,7 @@ class SystemdController:
         *,
         service_name="inkypi.service",
         run=subprocess.run,
-        timeout_seconds=90,
+        timeout_seconds=240,
     ):
         self.service_name = str(service_name)
         self._run = run

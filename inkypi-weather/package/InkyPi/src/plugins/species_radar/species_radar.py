@@ -103,6 +103,9 @@ DEFAULT_NIGHT_END_HOUR = 6
 # media, and map preparation.  Keep the plugin below the 180-second manual job
 # ceiling while allowing the complete live pipeline to finish on the Pi.
 MAX_DATA_SECONDS = 150
+MAX_OBSERVATIONS_PER_DATA_PASS = 4
+MAX_PHOTO_FETCHES_PER_DATA_PASS = 3
+MAX_MAP_FETCHES_PER_DATA_PASS = 1
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
 EARTH_RADIUS_KM = 6371.0088
@@ -422,7 +425,7 @@ class SpeciesRadar(BasePlugin):
                 cursor %= len(source_observations)
                 observations = (
                     source_observations[cursor:] + source_observations[:cursor]
-                )[:12]
+                )[:MAX_OBSERVATIONS_PER_DATA_PASS]
             else:
                 observations = []
             for observation in observations:
@@ -436,7 +439,10 @@ class SpeciesRadar(BasePlugin):
                     continue
                 photo = None
                 map_image = None
-                if observation.get("image_url") and photo_count < 8:
+                if (
+                    observation.get("image_url")
+                    and photo_count < MAX_PHOTO_FETCHES_PER_DATA_PASS
+                ):
                     photo_count += 1
                     try:
                         photo = self._download_image_for_data(
@@ -451,7 +457,7 @@ class SpeciesRadar(BasePlugin):
                         logger.warning("Species photo candidate failed for %s: %s", observation_id, exc)
                 if (
                     self._enabled(settings.get("showObservationMap"), default=True)
-                    and map_count < 4
+                    and map_count < MAX_MAP_FETCHES_PER_DATA_PASS
                 ):
                     map_count += 1
                     try:

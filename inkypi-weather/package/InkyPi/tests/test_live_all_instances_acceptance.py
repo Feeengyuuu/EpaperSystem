@@ -1768,6 +1768,12 @@ def test_cycle_interval_freeze_cli_is_opt_in_and_parameterized(acceptance):
     )
 
 
+def test_systemd_controller_waits_out_the_manual_refresh_ceiling(acceptance):
+    controller = acceptance.SystemdController()
+
+    assert controller.timeout_seconds == 240
+
+
 def test_print_summary_flag_prints_existing_summary(
     acceptance,
     tmp_path,
