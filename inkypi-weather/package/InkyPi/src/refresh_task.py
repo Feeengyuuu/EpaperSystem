@@ -1323,6 +1323,7 @@ class RefreshTask:
             exact_theme_only=True,
         )
         latest_refresh = self.device_config.get_refresh_info()
+        latest_display_dt = latest_refresh.get_refresh_datetime()
         try:
             interval = float(
                 self.device_config.get_config(
@@ -1334,7 +1335,7 @@ class RefreshTask:
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
         selection = manager.reserve_next_active_instance(
             current_dt,
-            latest_refresh=latest_refresh.get_refresh_datetime(),
+            latest_refresh=latest_display_dt,
             interval_seconds=interval,
             eligible_instance_uuids=frozenset(candidates),
         )
@@ -1378,11 +1379,22 @@ class RefreshTask:
                     InstanceRuntimeState(),
                 )
                 request = state.presentation_request
-                if request is None or (
+                presentation_satisfied = (
+                    request is None
+                    and self._presentation_succeeded_since_display(
+                        state,
+                        latest_display_dt,
+                        current_dt,
+                    )
+                )
+                request_revision_changed = request is not None and (
                     request.structural_generation
                     != selection.instance.structural_generation
                     or request.settings_revision
                     != selection.instance.settings_revision
+                )
+                if not presentation_satisfied and (
+                    request is None or request_revision_changed
                 ):
                     request_id = uuid4().hex
                     origin_commit_id = (
@@ -1466,6 +1478,21 @@ class RefreshTask:
             allow_prepared_presentation=allow_prepared_presentation,
             presentation_request_id=presentation_request_id,
         )
+
+    def _presentation_succeeded_since_display(
+        self,
+        state,
+        latest_display_dt,
+        current_dt,
+    ):
+        last_success = self._parse_iso_datetime(state.presentation.last_success_at)
+        if last_success is None:
+            return False
+        last_success = self._align_datetime_tz(last_success, current_dt)
+        if latest_display_dt is None:
+            return True
+        latest_display_dt = self._align_datetime_tz(latest_display_dt, current_dt)
+        return last_success > latest_display_dt
 
     def _select_prepared_display_retry_command(
         self,

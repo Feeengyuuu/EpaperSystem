@@ -10201,6 +10201,47 @@ def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(
     assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
 
 
+def test_rotation_preflight_no_change_displays_cached_member_without_request_loop(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-no-change-breaks-request-loop"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+    request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert request is not None
+    assert task.runtime_state.satisfy_presentation_no_change(
+        instance.instance_uuid,
+        request.request_id,
+        request.requested_at,
+    )
+
+    command = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.payload["automatic_rotation"] is True
+    assert command.allow_prepared_presentation is False
+    assert task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request is None
+
+
 def test_prepared_refresh_on_display_rotation_consumes_shuffle_bag_once(
     monkeypatch,
 ):
