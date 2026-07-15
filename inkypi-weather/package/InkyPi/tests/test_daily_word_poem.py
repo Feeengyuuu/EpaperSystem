@@ -54,7 +54,7 @@ def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
     return {"mode": mode, "palette": palette, "css": {}}
 
 
-def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
+def test_default_font_is_original_jost_but_explicit_literary_font_is_preserved(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     sentinel = object()
     calls = []
@@ -69,13 +69,13 @@ def test_default_font_is_yahei_but_explicit_literary_font_is_preserved(tmp_path,
     assert plugin._load_font("", 18) is sentinel
     assert plugin._load_font("康熙字典体", 18, "bold") is sentinel
     assert calls == [
-        ("Microsoft YaHei", 18, "normal"),
-        ("Microsoft YaHei", 18, "normal"),
+        ("Jost", 18, "normal"),
+        ("Jost", 18, "normal"),
         ("康熙字典体", 18, "bold"),
     ]
 
 
-def test_settings_default_font_is_microsoft_yahei():
+def test_settings_default_font_is_original_jost():
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_word_poem" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
     script = " ".join(html.split())
@@ -87,24 +87,24 @@ def test_settings_default_font_is_microsoft_yahei():
         has_stored = stored is not missing
         if "const hasStoredFont =" in script:
             assert "&& pluginSettings.font_family !== undefined;" in script
-            assert "const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');" in script
-            assert "if (yahei && (!hasStoredFont || !fontFamily.value)) {" in script
+            assert "const jost = [...fontFamily.options].find((option) => option.value === 'Jost');" in script
+            assert "if (jost && (!hasStoredFont || !fontFamily.value)) {" in script
             if not has_stored or not current:
-                current = "Microsoft YaHei"
+                current = "Jost"
         else:
             assert "if (fontFamily && !fontFamily.value) {" in script
             if not current:
-                current = "Microsoft YaHei"
+                current = "Jost"
         return current
 
-    assert word_module.DEFAULT_FONT == "Microsoft YaHei"
-    assert native_initial != "Microsoft YaHei"
-    assert "fontFamily.value = 'Microsoft YaHei';" in html
-    assert "fontFamily.value = 'Jost';" not in html
+    assert word_module.DEFAULT_FONT == "Jost"
+    assert "Jost" in word_module.get_available_font_names(default=word_module.DEFAULT_FONT)
+    assert "fontFamily.value = 'Jost';" in html
+    assert "fontFamily.value = 'Microsoft YaHei';" not in html
     assert submitted_font("Jost") == "Jost"
     assert submitted_font("康熙字典体") == "康熙字典体"
-    assert submitted_font("") == "Microsoft YaHei"
-    assert submitted_font() == "Microsoft YaHei"
+    assert submitted_font("") == "Jost"
+    assert submitted_font() == "Jost"
 
 
 def test_custom_word_list_picks_one_word_per_day(tmp_path):
