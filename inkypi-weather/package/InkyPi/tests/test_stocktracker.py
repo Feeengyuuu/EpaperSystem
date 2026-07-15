@@ -849,23 +849,14 @@ def test_stock_tracker_robinhood_mcp_failure_never_falls_back(monkeypatch, tmp_p
         )
 
 
-def test_stocktracker_preserves_shared_fallback_weight_rasters(monkeypatch):
+def test_stocktracker_restores_original_jost_font_files():
     plugin = StockTracker({"id": "stocktracker"})
-    sample = "Readable UI"
 
-    for bold in (False, True):
-        shared = stocktracker_module.get_base_ui_font(48, bold=bold)
-        expected = bytes(shared.getmask(sample))
-        monkeypatch.setattr(
-            stocktracker_module,
-            "get_base_ui_font",
-            lambda size, bold=False, shared=shared: shared,
-        )
+    regular = plugin._font(48, bold=False)
+    semibold = plugin._font(48, bold=True)
 
-        font = plugin._font(48, bold=bold)
-
-        assert font is shared
-        assert bytes(font.getmask(sample)) == expected
+    assert Path(regular.path).name == "Jost.ttf"
+    assert Path(semibold.path).name == "Jost-SemiBold.ttf"
 
 
 def test_stock_auto_ticker_and_main_pixels_use_pinned_weather_theme(monkeypatch, tmp_path):
