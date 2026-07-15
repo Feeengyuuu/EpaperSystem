@@ -48,6 +48,40 @@ def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
     return {"mode": mode, "palette": palette, "css": {}}
 
 
+def test_ai_client_has_bounded_timeout_and_no_automatic_retries(monkeypatch):
+    plugin = _plugin()
+    created = {}
+
+    class _Response:
+        output_text = '{"lede":"今日更新","mainland":[],"world":[],"sources":[]}'
+
+    class _Responses:
+        @staticmethod
+        def create(**_kwargs):
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    def fake_openai(**kwargs):
+        created.update(kwargs)
+        return _Client()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", fake_openai)
+
+    plugin._summarize_with_openai(
+        "fake-key",
+        "gpt-5-nano",
+        {},
+        [],
+        {},
+        datetime(2026, 7, 15, 2, 0),
+    )
+
+    assert created["timeout"] == daily_ai_news_module.DEFAULT_AI_TIMEOUT_SECONDS
+    assert created["max_retries"] == 0
+
+
 def test_effective_feeds_expands_legacy_bbc_only_settings():
     plugin = _plugin()
     feeds_text = "BBC World|https://feeds.bbci.co.uk/news/world/rss.xml"

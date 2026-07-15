@@ -1978,6 +1978,50 @@ def test_set_open_display_control_stops_writes_and_restarts(
     assert persisted["name"] == "frame"
 
 
+def test_set_plugin_cycle_interval_stops_writes_and_restarts(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    config_path = tmp_path / "device.json"
+    config_path.write_text(
+        json.dumps({"name": "frame", "plugin_cycle_interval_seconds": 86400}),
+        encoding="utf-8",
+    )
+    events = []
+
+    class _FakeController:
+        def stop(self):
+            events.append("stop")
+
+        def start(self):
+            interval = json.loads(
+                config_path.read_text(encoding="utf-8")
+            )["plugin_cycle_interval_seconds"]
+            events.append(f"start:{interval}")
+
+    monkeypatch.setattr(
+        acceptance,
+        "SystemdController",
+        lambda: _FakeController(),
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--set-plugin-cycle-interval-seconds", "300",
+    ])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert printed["plugin_cycle_interval_seconds"] == 300
+    assert events == ["stop", "start:300"]
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["plugin_cycle_interval_seconds"] == 300
+    assert persisted["name"] == "frame"
+
+
 def test_merge_env_adds_missing_keys_without_overwriting_or_printing_values(
     acceptance,
     tmp_path,

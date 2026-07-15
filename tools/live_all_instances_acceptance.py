@@ -2273,6 +2273,15 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--set-plugin-cycle-interval-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Stop the service, set plugin_cycle_interval_seconds in the "
+            "device config, restart, and exit"
+        ),
+    )
+    parser.add_argument(
         "--install-robinhood-token-from",
         default=None,
         help="Validate and securely install a staged official Robinhood MCP OAuth token, then exit",
@@ -2962,6 +2971,42 @@ def main(argv=None) -> int:
         print(json.dumps({
             "status": "updated",
             "open_display_control": desired,
+        }))
+        return 0
+    if args.set_plugin_cycle_interval_seconds is not None:
+        desired = args.set_plugin_cycle_interval_seconds
+        if desired < 1:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "plugin_cycle_interval_invalid",
+            }))
+            return 2
+        try:
+            document = _read_json(
+                Path(args.config),
+                code="config_read_failed",
+                abort=True,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        document = copy.deepcopy(document)
+        document["plugin_cycle_interval_seconds"] = desired
+        controller = SystemdController()
+        controller.stop()
+        try:
+            atomic_write_json(Path(args.config), document)
+        except AuditFailure as error:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": error.code,
+                "service_left_stopped": True,
+            }))
+            return 2
+        controller.start()
+        print(json.dumps({
+            "status": "updated",
+            "plugin_cycle_interval_seconds": desired,
         }))
         return 0
     if args.print_cache_tree:

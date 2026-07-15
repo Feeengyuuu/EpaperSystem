@@ -64,6 +64,7 @@ SECTION_WORDMARK_Y_OFFSET = -3
 SECTION_HEADER_RULE_Y_OFFSET = 27
 SUMMARY_SCHEMA_VERSION = "mainland-world-rss-only-dedupe-v16"
 DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
+DEFAULT_AI_TIMEOUT_SECONDS = 30
 DEFAULT_MAX_FEEDS = 16
 RECENT_NEWS_HISTORY_DAYS = 4
 RECENT_NEWS_HISTORY_LIMIT = 80
@@ -1575,7 +1576,11 @@ class DailyAINews(BasePlugin):
         provider: str = "openai",
         base_url: str | None = None,
     ) -> dict[str, Any]:
-        client_kwargs = {"api_key": api_key}
+        client_kwargs = {
+            "api_key": api_key,
+            "timeout": DEFAULT_AI_TIMEOUT_SECONDS,
+            "max_retries": 0,
+        }
         if base_url:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
