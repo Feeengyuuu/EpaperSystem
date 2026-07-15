@@ -3051,3 +3051,44 @@ def test_species_cleanup_save_failure_restores_media_state_and_document(tmp_path
 
 def test_live_data_budget_fits_dual_location_provider_pipeline():
     assert species_mod.MAX_DATA_SECONDS == 150
+
+
+def test_live_payload_enriches_only_the_records_one_data_pass_can_ingest(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    observations = [bank_observation(index) for index in range(1, 11)]
+    captured = []
+    monkeypatch.setattr(
+        plugin,
+        "_location_specs",
+        lambda *_args: [{
+            "id": "primary",
+            "location": {"name": "Fremont"},
+            "radius_km": 25,
+            "lookback_days": 365,
+        }],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_location_payload",
+        lambda *_args: {
+            "observations": observations,
+            "location": {"id": "primary", "name": "Fremont"},
+            "total_count": len(observations),
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_enrich_common_names",
+        lambda values: captured.extend(values),
+    )
+
+    plugin._fetch_live_payload(
+        {},
+        datetime(2026, 7, 15, tzinfo=timezone.utc),
+        {"name": "Fremont"},
+    )
+
+    assert len(captured) == species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS

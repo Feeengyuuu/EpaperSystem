@@ -106,6 +106,7 @@ MAX_DATA_SECONDS = 150
 MAX_OBSERVATIONS_PER_DATA_PASS = 4
 MAX_PHOTO_FETCHES_PER_DATA_PASS = 3
 MAX_MAP_FETCHES_PER_DATA_PASS = 1
+MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 4
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
 EARTH_RADIUS_KM = 6371.0088
@@ -1046,7 +1047,9 @@ class SpeciesRadar(BasePlugin):
             detail = "; ".join(failures) if failures else "no location payloads"
             raise RuntimeError(f"GBIF returned no usable nearby observations with still images ({detail})")
 
-        self._enrich_common_names(observations[:12])
+        self._enrich_common_names(
+            observations[:MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS]
+        )
         category_counts = self._category_counts(observations)
         location_counts = self._location_counts(observations)
         primary_location = dict((location_payloads[0].get("location") if location_payloads else specs[0]["location"]) or location)
