@@ -3053,8 +3053,8 @@ def test_live_data_budget_fits_dual_location_provider_pipeline():
     assert species_mod.MAX_DATA_SECONDS == 150
 
 
-def test_live_data_budget_limits_optional_common_name_enrichment_to_one_record():
-    assert species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS == 1
+def test_live_data_budget_keeps_optional_common_name_enrichment_off_critical_path():
+    assert species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS == 0
 
 
 def test_live_payload_enriches_only_the_records_one_data_pass_can_ingest(

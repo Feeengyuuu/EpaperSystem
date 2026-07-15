@@ -507,6 +507,20 @@ def test_stock_tracker_prefers_current_csv_path_over_stale_legacy_file_setting(t
     assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
 
 
+def test_stock_tracker_uses_existing_legacy_csv_when_current_path_is_stale(tmp_path):
+    csv_path = Path(__file__).resolve().parent / "fixtures" / "stock_holdings.csv"
+    plugin = StockTracker({"id": "stocktracker"})
+
+    period, holdings = plugin._portfolio_holdings_from_settings({
+        "portfolio_csv_path": str(tmp_path / "removed-current.csv"),
+        "portfolio_csv_file": str(csv_path),
+        "period": "1mo",
+    })
+
+    assert period == "1mo"
+    assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
+
+
 def test_stock_tracker_loads_robinhood_activity_csv():
     csv_path = Path(__file__).resolve().parent / "fixtures" / "robinhood_activity.csv"
     plugin = StockTracker({"id": "stocktracker"})

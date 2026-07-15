@@ -571,10 +571,25 @@ class StockTracker(BasePlugin):
 
 	def _portfolio_holdings_from_settings(self, settings):
 		period = settings.get('period', '1mo')
-		csv_path = (settings.get('portfolio_csv_path') or settings.get('portfolio_csv_file') or '').strip()
-		if csv_path:
-			resolved_path = self._resolve_portfolio_csv_path(csv_path)
-			return period, self._load_portfolio_csv(resolved_path)
+		csv_paths = [
+			str(value).strip()
+			for value in (
+				settings.get('portfolio_csv_path'),
+				settings.get('portfolio_csv_file'),
+			)
+			if str(value or '').strip()
+		]
+		if csv_paths:
+			first_error = None
+			for csv_path in dict.fromkeys(csv_paths):
+				try:
+					resolved_path = self._resolve_portfolio_csv_path(csv_path)
+				except RuntimeError as error:
+					if first_error is None:
+						first_error = error
+					continue
+				return period, self._load_portfolio_csv(resolved_path)
+			raise first_error
 
 		try:
 			tickers_str = settings.get('tickers', '').strip()
