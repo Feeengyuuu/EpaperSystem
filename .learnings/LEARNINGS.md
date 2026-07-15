@@ -6,6 +6,29 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260714-003] correction
+
+**Logged**: 2026-07-14T21:25:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+When a live InkyPi plugin regresses after scheduler or presentation-bank work, compare the last physically successful implementation before reducing provider functionality.
+
+### Details
+Species Radar had previously refreshed successfully by downloading media only for the single observation being displayed. The newer presentation bank multiplied one refresh into several observation, photo, map, and optional-name requests, then repeatedly missed the Pi data deadline. StockTracker also already had a working inline holdings path, but stale CSV settings prevented that path from being reached after the old CSV disappeared.
+
+### Suggested Action
+Use the last known-good tag or commit as the workload and fallback reference. Preserve the old per-display provider workload inside the new incremental bank, and allow a configured real-data fallback when persisted file paths become stale. Do not interpret a previously solved live-device behavior as a greenfield tuning problem.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/species_radar/species_radar.py, inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py
+- Tags: regression, known-good, live-device, incremental-bank, stale-path, fallback
+
+---
+
 ## [LRN-20260710-009] best_practice
 
 **Logged**: 2026-07-10T23:20:00-07:00

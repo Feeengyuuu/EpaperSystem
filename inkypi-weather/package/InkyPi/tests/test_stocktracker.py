@@ -521,6 +521,21 @@ def test_stock_tracker_uses_existing_legacy_csv_when_current_path_is_stale(tmp_p
     assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
 
 
+def test_stock_tracker_falls_back_to_inline_holdings_when_saved_csv_paths_are_stale(tmp_path):
+    plugin = StockTracker({"id": "stocktracker"})
+
+    period, holdings = plugin._portfolio_holdings_from_settings({
+        "portfolio_csv_path": str(tmp_path / "removed-current.csv"),
+        "portfolio_csv_file": str(tmp_path / "removed-legacy.csv"),
+        "tickers": "AAPL,NVDA",
+        "shares": "2,3.5",
+        "period": "5d",
+    })
+
+    assert period == "5d"
+    assert holdings == [("AAPL", 2.0), ("NVDA", 3.5)]
+
+
 def test_stock_tracker_loads_robinhood_activity_csv():
     csv_path = Path(__file__).resolve().parent / "fixtures" / "robinhood_activity.csv"
     plugin = StockTracker({"id": "stocktracker"})

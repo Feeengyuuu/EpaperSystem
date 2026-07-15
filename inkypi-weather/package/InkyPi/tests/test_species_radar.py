@@ -2195,20 +2195,20 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     first = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     first_profile = _species_profile(first)
 
-    assert len(first_profile["records"]) == 3
+    assert len(first_profile["records"]) == 1
     assert len(photos) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
     assert len(maps) == species_mod.MAX_MAP_FETCHES_PER_DATA_PASS
     assert first_profile["seen_ids"] == []
-    assert first_profile["refill_cursor"] == 4
+    assert first_profile["refill_cursor"] == 1
     assert first_profile["refill_in_progress"] is True
 
-    for _ in range(3):
+    for _ in range(11):
         plugin.generate_image(settings, DummyDeviceConfig())
     second = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     second_profile = _species_profile(second)
     assert len(second_profile["records"]) == 12
     assert len(photos) == 12
-    assert len(maps) == 4
+    assert len(maps) == 12
     assert second_profile["refill_in_progress"] is False
 
 
@@ -2338,7 +2338,7 @@ def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_p
         assert deadline is not None
         assert clock["value"] < deadline
         calls.append(url)
-        clock["value"] += 60.0
+        clock["value"] += species_mod.MAX_DATA_SECONDS + 1.0
         return Image.new("RGB", (80, 60), "green")
 
     monkeypatch.setattr(plugin, "_download_image_for_data", slow_photo)
@@ -3055,6 +3055,12 @@ def test_live_data_budget_fits_dual_location_provider_pipeline():
 
 def test_live_data_budget_keeps_optional_common_name_enrichment_off_critical_path():
     assert species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS == 0
+
+
+def test_live_data_pass_matches_legacy_single_observation_media_workload():
+    assert species_mod.MAX_OBSERVATIONS_PER_DATA_PASS == 1
+    assert species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS == 1
+    assert species_mod.MAX_MAP_FETCHES_PER_DATA_PASS == 1
 
 
 def test_live_payload_enriches_only_the_records_one_data_pass_can_ingest(

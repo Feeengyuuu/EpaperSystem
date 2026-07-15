@@ -103,8 +103,8 @@ DEFAULT_NIGHT_END_HOUR = 6
 # media, and map preparation.  Keep the plugin below the 180-second manual job
 # ceiling while allowing the complete live pipeline to finish on the Pi.
 MAX_DATA_SECONDS = 150
-MAX_OBSERVATIONS_PER_DATA_PASS = 4
-MAX_PHOTO_FETCHES_PER_DATA_PASS = 3
+MAX_OBSERVATIONS_PER_DATA_PASS = 1
+MAX_PHOTO_FETCHES_PER_DATA_PASS = 1
 MAX_MAP_FETCHES_PER_DATA_PASS = 1
 MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 0
 MAX_PROVIDER_REDIRECTS = 4

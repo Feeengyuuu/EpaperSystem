@@ -579,8 +579,8 @@ class StockTracker(BasePlugin):
 			)
 			if str(value or '').strip()
 		]
+		first_error = None
 		if csv_paths:
-			first_error = None
 			for csv_path in dict.fromkeys(csv_paths):
 				try:
 					resolved_path = self._resolve_portfolio_csv_path(csv_path)
@@ -589,13 +589,14 @@ class StockTracker(BasePlugin):
 						first_error = error
 					continue
 				return period, self._load_portfolio_csv(resolved_path)
-			raise first_error
 
 		try:
 			tickers_str = settings.get('tickers', '').strip()
 			shares_str = settings.get('shares', '').strip()
 
 			if not tickers_str or not shares_str:
+				if first_error is not None:
+					raise first_error
 				raise RuntimeError("Please provide both tickers and shares, or upload a portfolio CSV")
 
 			tickers = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
