@@ -1,0 +1,92 @@
+{
+  "league": "LPL",
+  "league_id": "98767991314006698",
+  "source": "https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US&leagueId=98767991314006698",
+  "synced_at": "2026-07-15T00:00:00+00:00",
+  "teams": [
+    {
+      "code": "AL",
+      "name": "Anyone's Legend",
+      "source": "http://static.lolesports.com/teams/1641199582689_.png",
+      "file": "al.png"
+    },
+    {
+      "code": "BLG",
+      "name": "BILIBILI GAMING",
+      "source": "http://static.lolesports.com/teams/1682322954525_Bilibili_Gaming_logo_20211.png",
+      "file": "blg.png"
+    },
+    {
+      "code": "EDG",
+      "name": "EDWARD GAMING",
+      "source": "http://static.lolesports.com/teams/1631819297476_edg-2021-worlds.png",
+      "file": "edg.png"
+    },
+    {
+      "code": "IG",
+      "name": "Invictus Gaming",
+      "source": "http://static.lolesports.com/teams/1634762917340_300px-Invictus_Gaming_logo.png",
+      "file": "ig.png"
+    },
+    {
+      "code": "JDG",
+      "name": "Beijing JDG Esports",
+      "source": "http://static.lolesports.com/teams/1627457924722_29.png",
+      "file": "jdg.png"
+    },
+    {
+      "code": "LGD",
+      "name": "LGD GAMING",
+      "source": "http://static.lolesports.com/teams/LGD-FullonDark-1.png",
+      "file": "lgd.png"
+    },
+    {
+      "code": "LNG",
+      "name": "Suzhou LNG Esports",
+      "source": "http://static.lolesports.com/teams/1717487697003_LNGlogo.png",
+      "file": "lng.png"
+    },
+    {
+      "code": "NIP",
+      "name": "Shenzhen NINJAS IN PYJAMAS",
+      "source": "http://static.lolesports.com/teams/1673425724696_NIP-Symbol-RGB-NeonYellow1.png",
+      "file": "nip.png"
+    },
+    {
+      "code": "OMG",
+      "name": "Oh My God",
+      "source": "http://static.lolesports.com/teams/1686821355861_OMG_2023_logo-01.png",
+      "file": "omg.png"
+    },
+    {
+      "code": "TES",
+      "name": "TOP ESPORTS",
+      "source": "http://static.lolesports.com/teams/1592592064571_TopEsportsTES-01-FullonDark.png",
+      "file": "tes.png"
+    },
+    {
+      "code": "TT",
+      "name": "THUNDER TALK GAMING",
+      "source": "http://static.lolesports.com/teams/TT-FullonDark.png",
+      "file": "tt.png"
+    },
+    {
+      "code": "UP",
+      "name": "Ultra Prime",
+      "source": "http://static.lolesports.com/teams/ultraprime.png",
+      "file": "up.png"
+    },
+    {
+      "code": "WBG",
+      "name": "WeiboGaming",
+      "source": "http://static.lolesports.com/teams/1641202879910_3.png",
+      "file": "wbg.png"
+    },
+    {
+      "code": "WE",
+      "name": "Xi'an Team WE",
+      "source": "http://static.lolesports.com/teams/1634763008788_220px-Team_WE_logo.png",
+      "file": "we.png"
+    }
+  ]
+}

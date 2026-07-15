@@ -251,6 +251,7 @@ MIN_LPL_SIDEBAR_WIDTH = 240
 LOCAL_TEAM_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos"))
 LOCAL_CS2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "cs2")
 LOCAL_DOTA2_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "dota2")
+LOCAL_LPL_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl")
 LOCAL_LCK_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck")
 LOCAL_DECOR_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "decor"))
 LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
@@ -2839,7 +2840,11 @@ class SportsDashboardCommonMixin:
         if not code:
             return []
         candidates = []
-        for directory in (LOCAL_TEAM_LOGO_DIR, LOCAL_LCK_TEAM_LOGO_DIR):
+        for directory in (
+            LOCAL_TEAM_LOGO_DIR,
+            LOCAL_LPL_TEAM_LOGO_DIR,
+            LOCAL_LCK_TEAM_LOGO_DIR,
+        ):
             candidates.extend(
                 os.path.join(directory, f"{code}{extension}")
                 for extension in (".png", ".webp", ".jpg", ".jpeg")

@@ -60,6 +60,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_EWC_GAME_LOGO_DIR,
     LOCAL_TI_LOGO_PATH,
     LOCAL_LPL_LOGO_PATH,
+    LOCAL_LPL_TEAM_LOGO_DIR,
     LOCAL_LCK_LOGO_PATH,
     LOCAL_LCK_TEAM_LOGO_DIR,
     LOCAL_LPL_MARBLE_FILLER_PATH,
@@ -14309,6 +14310,40 @@ def test_worldcup_title_wordmark_draws_inside_header_slot():
     assert bbox[2] <= 52 + 178
     assert bbox[1] >= 6
     assert bbox[3] <= 6 + 27
+
+def test_lpl_team_logos_are_synced_and_loadable():
+    expected_codes = {
+        "AL",
+        "BLG",
+        "EDG",
+        "IG",
+        "JDG",
+        "LGD",
+        "LNG",
+        "NIP",
+        "OMG",
+        "TES",
+        "TT",
+        "UP",
+        "WBG",
+        "WE",
+    }
+    logo_dir = Path(LOCAL_LPL_TEAM_LOGO_DIR)
+    manifest_path = logo_dir / "manifest.json"
+
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert {team["code"] for team in manifest["teams"]} == expected_codes
+
+    for code in expected_codes:
+        path = logo_dir / f"{code.lower()}.png"
+        assert path.exists(), code
+        logo = SportsDashboard._load_local_team_logo(code, 34)
+        assert logo is not None, code
+        assert logo.size[0] <= 34
+        assert logo.size[1] <= 34
+        assert logo.getchannel("A").getextrema()[1] > 0
+
 
 def test_lck_team_logos_are_synced_and_loadable():
     expected_codes = {"BFX", "BRO", "DK", "DNS", "GEN", "HLE", "KRX", "KT", "NS", "T1"}
