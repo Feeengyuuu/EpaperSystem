@@ -686,7 +686,7 @@ def test_theme_only_redraw_keeps_random_bag_and_hero_while_palette_changes(tmp_p
     assert theme_http_calls == []
     assert rotation_path.read_bytes() == rotation_before
     assert rendered_heroes == [selected_key, selected_key]
-    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert day_image.getpixel((0, 0)) == COMIC_PAPER
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
@@ -1017,7 +1017,7 @@ def test_google_observation_map_url_uses_marker_and_existing_key_alias(tmp_path)
     assert query["markers"][0].endswith("37.55000,-121.99000")
 
 
-def test_palette_uses_canonical_roles_without_changing_category_tokens(tmp_path):
+def test_palette_uses_original_day_roles_without_changing_category_tokens(tmp_path):
     plugin = make_plugin(tmp_path)
     theme = _canonical_theme(
         "day",
@@ -1030,9 +1030,9 @@ def test_palette_uses_canonical_roles_without_changing_category_tokens(tmp_path)
     )
     palette = plugin._palette({"_inkypi_theme": theme})
 
-    assert palette["paper"] == theme["palette"]["background"]
-    assert palette["ink"] == theme["palette"]["ink"]
-    assert palette["accent"] == theme["palette"]["accent"]
+    assert palette["paper"] == COMIC_PAPER
+    assert palette["ink"] == COMIC_INK
+    assert palette["accent"] == COMIC_BLUE
     assert CATEGORY_STYLES["植物"]["color"] == COMIC_GREEN
     assert CATEGORY_STYLES["植物"]["light"] == COMIC_PANEL_GREEN
     assert CATEGORY_STYLES["鸟类"]["color"] == COMIC_BLUE
@@ -1202,7 +1202,7 @@ def test_palette_switches_from_resolved_canonical_context_without_playlist_dupli
     night = plugin._palette({"_inkypi_theme": night_theme})
 
     assert day["night"] is False
-    assert day["paper"] == day_theme["palette"]["background"]
+    assert day["paper"] == COMIC_PAPER
     assert night["night"] is True
     assert night["paper"] == night_theme["palette"]["background"]
 

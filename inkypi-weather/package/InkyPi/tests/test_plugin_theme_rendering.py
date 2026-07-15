@@ -460,7 +460,7 @@ def test_media_chrome_preserves_800x480_inner_bytes_and_source_metadata():
     assert result.info["inkypi_theme_mode"] == "night"
 
 
-def test_media_day_and_night_chrome_differ_without_changing_inner_media():
+def test_media_day_preserves_original_pixels_while_night_adds_chrome():
     source = _pattern_image()
     expected_inner = source.crop((8, 8, 792, 472)).tobytes()
     device = FakeDeviceConfig({"theme_mode": "day"})
@@ -474,9 +474,8 @@ def test_media_day_and_night_chrome_differ_without_changing_inner_media():
         image=source.copy(),
     ).render_themed_image({"themeMode": "night"}, device)
 
-    assert day.getpixel((0, 0)) == (247, 241, 227)
+    assert day.tobytes() == source.tobytes()
     assert night.getpixel((0, 0)) == (16, 24, 32)
-    assert day.getpixel((6, 6)) == (155, 52, 36)
     assert night.getpixel((6, 6)) == (242, 170, 76)
     assert day.crop((8, 8, 792, 472)).tobytes() == expected_inner
     assert night.crop((8, 8, 792, 472)).tobytes() == expected_inner

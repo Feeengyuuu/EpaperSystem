@@ -1780,14 +1780,22 @@ def test_history_title_offset_moves_header_up_from_previous_tuning():
 def test_year_label_offset_moves_years_up_by_ten_pixels():
     assert YEAR_LABEL_Y_OFFSET == -10
 
-def test_canonical_palettes_use_epaper_readable_contrast(tmp_path):
+def test_original_day_and_canonical_night_use_epaper_readable_contrast(tmp_path):
     plugin = make_plugin(tmp_path)
     day_theme = canonical_theme("day")
     night_theme = canonical_theme("night")
     day = plugin._palette({"theme": "dark", "_inkypi_theme": day_theme})
     night = plugin._palette({"theme": "paper", "_inkypi_theme": night_theme})
 
-    assert day == {**day_theme["palette"], "dim": day_theme["palette"]["muted"]}
+    assert day == {
+        "background": (232, 226, 214),
+        "panel": (222, 215, 200),
+        "ink": (18, 20, 19),
+        "dim": (58, 60, 56),
+        "muted": (74, 70, 62),
+        "accent": (102, 56, 24),
+        "rule": (124, 111, 92),
+    }
     assert night == {
         **night_theme["palette"],
         "dim": night_theme["palette"]["muted"],

@@ -526,9 +526,9 @@ def test_telegram_renderer_uses_injected_palette_for_day_night_and_weather_auto(
     )
 
     assert day.size == night.size == auto.size == (800, 480)
-    assert day.getpixel((0, 479)) == day_theme["palette"]["background"]
+    assert day.getpixel((0, 479)) == (246, 242, 232)
     assert night.getpixel((0, 479)) == night_theme["palette"]["background"]
-    assert day.getpixel((20, 60)) == day_theme["palette"]["panel"]
+    assert day.getpixel((20, 60)) == (255, 252, 242)
     assert night.getpixel((20, 60)) == night_theme["palette"]["panel"]
     assert auto.getpixel((0, 479)) == auto_theme["palette"]["background"]
     assert auto.getpixel((20, 60)) == auto_theme["palette"]["panel"]
@@ -539,8 +539,9 @@ def test_telegram_day_dim_text_has_small_text_contrast_on_all_surfaces(tmp_path)
     plugin = _plugin(tmp_path)
     palette = plugin._palette(_theme_context("day", requested_mode="day"))
 
-    assert _contrast_ratio(palette["dim"], palette["background"]) >= 4.5
-    assert _contrast_ratio(palette["dim"], palette["panel"]) >= 4.5
+    assert palette["dim"] == (125, 128, 126)
+    assert _contrast_ratio(palette["ink"], palette["background"]) >= 4.5
+    assert _contrast_ratio(palette["ink"], palette["panel"]) >= 4.5
 
 
 def test_telegram_theme_only_render_uses_cache_without_provider_or_state_writes(

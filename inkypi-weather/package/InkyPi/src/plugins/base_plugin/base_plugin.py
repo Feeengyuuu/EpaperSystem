@@ -159,7 +159,10 @@ class BasePlugin:
             image.info.pop(EFFECTIVE_THEME_CONTEXT_INFO_KEY, None)
         manifest = self.config.get("_manifest")
         manifest_theme = getattr(manifest, "theme", None)
-        if getattr(manifest_theme, "presentation", None) == "media":
+        if (
+            getattr(manifest_theme, "presentation", None) == "media"
+            and theme["mode"] == "night"
+        ):
             image = apply_media_theme_chrome(
                 image,
                 self.get_plugin_id(),

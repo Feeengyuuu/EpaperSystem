@@ -364,6 +364,16 @@ def test_stock_tracker_selects_day_and_night_ticker_palettes():
     assert StockTracker._ticker_theme_key("auto", _canonical_theme("night")) == "night"
 
 
+def test_stock_day_theme_restores_original_dashboard_colors():
+    from plugins.stocktracker.stocktracker import (
+        _LEGACY_STOCK_COLORS,
+        _stock_render_colors,
+    )
+
+    assert _stock_render_colors(_canonical_theme("day")) is _LEGACY_STOCK_COLORS
+    assert _stock_render_colors(_canonical_theme("night")) is not _LEGACY_STOCK_COLORS
+
+
 def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
     plugin = StockTracker({"id": "stocktracker"})
     stock_data = _hidden_ticker_stock_data()
@@ -932,7 +942,7 @@ def test_stocktracker_restores_original_jost_font_files():
     assert Path(semibold.path).name == "Jost-SemiBold.ttf"
 
 
-def test_stock_auto_ticker_and_main_pixels_use_pinned_weather_theme(monkeypatch, tmp_path):
+def test_stock_auto_ticker_uses_pinned_mode_with_original_day_colors(monkeypatch, tmp_path):
     plugin = StockTracker({"id": "stocktracker"})
     device = FakeDeviceConfig()
     stock_data = _hidden_ticker_stock_data()
@@ -968,9 +978,9 @@ def test_stock_auto_ticker_and_main_pixels_use_pinned_weather_theme(monkeypatch,
 
     assert plugin._ticker_theme_key("auto", day_theme) == "day"
     assert plugin._ticker_theme_key("auto", night_theme) == "night"
-    assert day.getpixel((0, 100)) == day_theme["palette"]["background"]
+    assert day.getpixel((0, 100)) == stocktracker_module.PAPER
     assert night.getpixel((0, 100)) == night_theme["palette"]["background"]
-    assert day.getpixel((40, 250)) == day_theme["palette"]["panel"]
+    assert day.getpixel((40, 250)) == stocktracker_module.PANEL
     assert night.getpixel((40, 250)) == night_theme["palette"]["panel"]
     ticker_region = (36, 420, 764, 449)
     assert _region_near_color_count(

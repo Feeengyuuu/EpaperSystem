@@ -2415,6 +2415,8 @@ class SportsDashboardCommonMixin:
     def _sports_dashboard_colors(theme_context):
         mode = str((theme_context or {}).get("mode") or "day").strip().lower()
         colors = dict(DEEP_NIGHT_COLORS if mode == "night" else DAY_COLORS)
+        if mode != "night":
+            return colors
         palette = (theme_context or {}).get("palette")
         if not isinstance(palette, Mapping):
             return colors

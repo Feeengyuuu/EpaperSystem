@@ -764,7 +764,7 @@ def test_generate_image_renders_card_wall_without_network():
     assert any(pixel != (0, 0, 0) for pixel in image.crop((10, 10, 790, 470)).getdata())
 
 
-def test_theme_uses_injected_palette_over_conflicting_legacy_alias():
+def test_theme_uses_original_day_palette_over_conflicting_legacy_alias():
     plugin = _plugin()
     context = _canonical_theme(
         "day",
@@ -779,11 +779,11 @@ def test_theme_uses_injected_palette_over_conflicting_legacy_alias():
     theme = plugin._theme({"themeMode": "dark", "_inkypi_theme": context}, FakeDeviceConfig(mode="night"))
 
     assert theme["mode"] == "light"
-    assert theme["bg"] == context["palette"]["background"]
-    assert theme["panel"] == context["palette"]["panel"]
-    assert theme["ink"] == context["palette"]["ink"]
-    assert theme["muted"] == context["palette"]["muted"]
-    assert theme["line"] == context["palette"]["rule"]
+    assert theme["bg"] == (255, 255, 255)
+    assert theme["panel"] == (255, 255, 255)
+    assert theme["ink"] == (0, 0, 0)
+    assert theme["muted"] == (0, 0, 0)
+    assert theme["line"] == (0, 0, 0)
 
 
 def test_render_themed_image_accepts_frozen_scheduler_theme_context():
@@ -811,7 +811,7 @@ def test_render_themed_image_accepts_frozen_scheduler_theme_context():
         resolved_theme_context=freeze_payload(context),
     )
 
-    assert image.getpixel((0, 0)) == context["palette"]["background"]
+    assert image.getpixel((0, 0)) == (255, 255, 255)
 
 
 def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
@@ -871,7 +871,7 @@ def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
     night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, FakeDeviceConfig(mode="day"))
 
     assert calls == {"statuses": 1}
-    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert day_image.getpixel((0, 0)) == (255, 255, 255)
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 

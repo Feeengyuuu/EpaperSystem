@@ -639,7 +639,7 @@ class SimpleCalendar(BasePlugin):
         language = self._get_locale_key(settings.get("language") or settings.get("locale", "en"))
         locale_data = LOCALE_DATA.get(language)
 
-        theme_palette = self._canonical_theme_palette(settings.get("_inkypi_theme"))
+        theme_palette = self._theme_palette_for_render(settings.get("_inkypi_theme"))
         primary_color = self._parse_color(settings.get("primaryColor"), (230, 26, 26))
         highlight_color = self._parse_color(settings.get("highlightColor"), (163, 13, 13))
         if theme_palette:
@@ -3041,6 +3041,12 @@ class SimpleCalendar(BasePlugin):
             role: cls._coerce_palette_color(roles.get(role), fallback)
             for role, fallback in fallbacks.items()
         }
+
+    @classmethod
+    def _theme_palette_for_render(cls, theme):
+        if not isinstance(theme, dict) or theme.get("mode") != "night":
+            return None
+        return cls._canonical_theme_palette(theme)
 
     @staticmethod
     def _coerce_palette_color(value, fallback):

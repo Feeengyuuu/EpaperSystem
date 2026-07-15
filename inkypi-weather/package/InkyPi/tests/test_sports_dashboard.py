@@ -225,7 +225,7 @@ def test_league_accent_palettes_are_distinct():
         assert palette["msi_tag"] != palette["ewc_tag"]
 
 
-def test_canonical_theme_roles_override_structure_without_collapsing_league_accents():
+def test_original_day_roles_preserve_structure_and_league_accents():
     plugin = _plugin()
     theme = _canonical_theme(
         "day",
@@ -239,15 +239,7 @@ def test_canonical_theme_roles_override_structure_without_collapsing_league_acce
 
     colors = plugin._sports_dashboard_colors(theme)
 
-    assert colors is not DAY_COLORS
-    assert colors["paper"] == theme["palette"]["background"]
-    assert colors["panel"] == theme["palette"]["panel"]
-    assert colors["panel2"] == theme["palette"]["panel"]
-    assert colors["text"] == theme["palette"]["ink"]
-    assert colors["muted"] == theme["palette"]["muted"]
-    assert colors["line"] == theme["palette"]["rule"]
-    assert colors["border"] == theme["palette"]["rule"]
-    assert colors["blue"] == theme["palette"]["accent"]
+    assert colors == DAY_COLORS
     assert len({colors[key] for key in ("worldcup_accent", "nba_accent", "lpl_accent", "lck_accent")}) == 4
 
 

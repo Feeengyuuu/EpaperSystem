@@ -956,7 +956,11 @@ class DailyWordPoem(BasePlugin):
 
     def _page_palette(self, settings, theme_context=None):
         injected_theme = settings.get("_inkypi_theme") if isinstance(settings, dict) else None
-        if isinstance(injected_theme, dict) and isinstance(injected_theme.get("palette"), dict):
+        if (
+            isinstance(injected_theme, dict)
+            and injected_theme.get("mode") == "night"
+            and isinstance(injected_theme.get("palette"), dict)
+        ):
             palette = injected_theme["palette"]
             mode = injected_theme.get("mode", "day")
             theme_label = "MIDNIGHT READING" if mode == "night" else "DAY READING"
@@ -969,8 +973,8 @@ class DailyWordPoem(BasePlugin):
                 theme_label,
             )
 
-        palette = get_theme_palette(theme_context)
         mode = (theme_context or {}).get("mode", "day") if isinstance(theme_context, dict) else "day"
+        palette = get_theme_palette("night" if mode == "night" else "day")
 
         if mode == "night":
             fallback_bg = palette["background"]

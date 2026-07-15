@@ -68,6 +68,31 @@ def _active_color(name, fallback):
 
 
 def _render_colors(theme):
+    if not isinstance(theme, dict) or theme.get("mode") != "night":
+        return {
+            "paper": PAPER,
+            "panel": PANEL,
+            "panel_blue": PANEL_BLUE,
+            "panel_gold": PANEL_GOLD,
+            "panel_green": PANEL_GREEN,
+            "panel_orange": PANEL_ORANGE,
+            "ink": INK,
+            "muted": MUTED,
+            "rule": RULE,
+            "accent_blue": ACCENT_BLUE,
+            "accent_cyan": ACCENT_CYAN,
+            "accent_gold": ACCENT_GOLD,
+            "accent_orange": ACCENT_ORANGE,
+            "cinnabar": CINNABAR,
+            "malachite": MALACHITE,
+            "accent_purple": ACCENT_PURPLE,
+            "brown": BROWN,
+            "filament_gray": FILAMENT_GRAY,
+            "filament_black": FILAMENT_BLACK,
+            "filament_white": FILAMENT_WHITE,
+            "filament_dark_border": FILAMENT_DARK_BORDER,
+            "filament_light_border": FILAMENT_LIGHT_BORDER,
+        }
     roles = theme.get("palette") if isinstance(theme, dict) else None
     roles = roles if isinstance(roles, dict) else {}
 

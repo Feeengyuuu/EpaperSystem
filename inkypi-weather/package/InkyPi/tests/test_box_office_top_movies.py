@@ -342,30 +342,23 @@ def test_box_office_cache_invalidates_when_tmdb_credentials_appear(
     assert len(load_calls) == 2
 
 
-def test_box_office_uses_injected_canonical_palette_and_source_only_cache_key():
+def test_box_office_restores_original_day_palette_and_source_only_cache_key():
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
     day_theme = canonical_theme("day")
     settings = {"themeMode": "cinema", "_inkypi_theme": day_theme}
 
     palette = plugin._palette(settings)
 
-    assert palette == {
-        "mode": "paper",
-        "paper": day_theme["palette"]["background"],
-        "ink": day_theme["palette"]["ink"],
-        "muted": day_theme["palette"]["muted"],
-        "accent": day_theme["palette"]["accent"],
-        "localized": day_theme["palette"]["accent"],
-        "line": day_theme["palette"]["rule"],
-        "outline": day_theme["palette"]["ink"],
-        "shadow": day_theme["palette"]["panel"],
-    }
+    assert palette["paper"] == (239, 233, 215)
+    assert palette["ink"] == (32, 35, 36)
+    assert palette["accent"] == (176, 41, 45)
+    assert palette["localized"] == (115, 72, 58)
     assert plugin._palette({**settings, "themeMode": "paper"}) == palette
     assert plugin._cache_key(settings, (800, 480), 5) == plugin._cache_key(
         {
             **settings,
             "themeMode": "paper",
-            "_inkypi_theme": canonical_theme("night"),
+            "_inkypi_theme": day_theme,
         },
         (480, 800),
         5,

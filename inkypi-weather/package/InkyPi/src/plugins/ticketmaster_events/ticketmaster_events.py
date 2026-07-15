@@ -756,7 +756,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
 
     def _palette(self, settings):
         injected = settings.get("_inkypi_theme")
-        if isinstance(injected, dict) and injected.get("mode") in {"day", "night"}:
+        if isinstance(injected, dict) and injected.get("mode") == "night":
             canonical = injected.get("palette") or {}
             paper = tuple(canonical.get("background", (229, 236, 232)))
             panel = tuple(canonical.get("panel", paper))

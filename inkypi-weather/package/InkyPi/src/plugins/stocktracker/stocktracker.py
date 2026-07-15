@@ -215,6 +215,8 @@ def _stock_render_colors(theme_context):
 	if not isinstance(theme_context, Mapping):
 		return _LEGACY_STOCK_COLORS
 	mode = "night" if str(theme_context.get("mode") or "").strip().lower() == "night" else "day"
+	if mode == "day":
+		return _LEGACY_STOCK_COLORS
 	canonical = get_theme_palette(mode)
 	supplied = theme_context.get("palette")
 	if isinstance(supplied, Mapping):

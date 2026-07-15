@@ -91,6 +91,12 @@ class Weather(BasePlugin):
         template_params['style_settings'] = True
         return template_params
 
+    @staticmethod
+    def _settings_for_theme(settings, theme_context):
+        if not isinstance(theme_context, dict) or theme_context.get("mode") != "night":
+            return dict(settings or {})
+        return apply_theme_to_plugin_settings(settings, theme_context)
+
     def generate_image(self, settings, device_config):
         self._openweather_force_refresh = self._force_refresh_requested(settings)
         self._openweather_cache_hits = set()
@@ -231,7 +237,7 @@ class Weather(BasePlugin):
             astronomy=canonical_astronomy or {},
         )
         template_params["theme"] = theme_context
-        template_params["plugin_settings"] = apply_theme_to_plugin_settings(
+        template_params["plugin_settings"] = self._settings_for_theme(
             settings,
             theme_context,
         )

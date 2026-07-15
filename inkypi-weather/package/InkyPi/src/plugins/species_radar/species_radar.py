@@ -2799,6 +2799,17 @@ LIMIT 8
     def _palette(self, settings, now=None, device_config=None):
         settings = settings or {}
         context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config or settings, now=now)
+        if context.get("mode") != "night":
+            return {
+                "paper": COMIC_PAPER,
+                "panel": COMIC_PANEL,
+                "ink": COMIC_INK,
+                "dim": (55, 50, 39),
+                "muted": COMIC_MUTED,
+                "accent": COMIC_BLUE,
+                "rule": COMIC_RULE,
+                "night": False,
+            }
         canonical = context["palette"]
         return {
             "paper": canonical["background"],

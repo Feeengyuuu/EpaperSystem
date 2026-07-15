@@ -1872,6 +1872,31 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _palette(self, theme_context=None):
         mode = str((theme_context or {}).get("mode") or "day").lower()
         night = mode == "night"
+        if not night:
+            return {
+                "background": (246, 242, 232),
+                "panel": (255, 252, 242),
+                "chip": (239, 235, 224),
+                "rule": (206, 198, 181),
+                "ink": (29, 33, 38),
+                "muted": (78, 85, 91),
+                "dim": (125, 128, 126),
+                "cyan": (0, 135, 170),
+                "amber": (188, 116, 32),
+                "chat_background": (239, 235, 224),
+                "chat_header": (233, 232, 222),
+                "chat_row": (243, 239, 229),
+                "chat_row_alt": (236, 233, 223),
+                "channel_colors": (
+                    (17, 82, 130),
+                    (31, 111, 70),
+                    (139, 86, 18),
+                    (100, 62, 137),
+                    (147, 55, 42),
+                    (17, 112, 107),
+                    (116, 105, 21),
+                ),
+            }
         background = self._theme_role(
             theme_context,
             "background",

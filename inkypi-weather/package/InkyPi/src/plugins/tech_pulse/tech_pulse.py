@@ -714,6 +714,22 @@ class TechPulse(BasePlugin):
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        if theme.get("mode") != "night":
+            return {
+                "background": (245, 240, 226),
+                "panel": (255, 251, 241),
+                "row": (250, 245, 233),
+                "metric": (244, 237, 220),
+                "chip": (239, 230, 211),
+                "grid": (234, 225, 207),
+                "rule": (202, 188, 160),
+                "ink": (24, 27, 31),
+                "muted": (91, 96, 104),
+                "dim": (128, 128, 128),
+                "orange": (255, 102, 0),
+                "amber": (176, 102, 12),
+                "cyan": (0, 108, 135),
+            }
         roles = {
             name: tuple(value)
             for name, value in theme["palette"].items()

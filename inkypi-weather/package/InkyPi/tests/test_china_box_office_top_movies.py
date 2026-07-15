@@ -156,30 +156,23 @@ def test_china_sample_fallback_is_local_and_not_persisted(monkeypatch, tmp_path)
     assert context_writes == []
 
 
-def test_china_box_office_uses_injected_canonical_palette_and_source_only_cache_key():
+def test_china_box_office_restores_original_day_palette_and_source_only_cache_key():
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
     day_theme = canonical_theme("day")
     settings = {"themeMode": "cinema", "_inkypi_theme": day_theme}
 
     palette = plugin._palette(settings)
 
-    assert palette == {
-        "mode": "paper",
-        "paper": day_theme["palette"]["background"],
-        "ink": day_theme["palette"]["ink"],
-        "muted": day_theme["palette"]["muted"],
-        "accent": day_theme["palette"]["accent"],
-        "localized": day_theme["palette"]["accent"],
-        "line": day_theme["palette"]["rule"],
-        "outline": day_theme["palette"]["ink"],
-        "shadow": day_theme["palette"]["panel"],
-    }
+    assert palette["paper"] == (240, 235, 222)
+    assert palette["ink"] == (34, 34, 31)
+    assert palette["accent"] == (184, 39, 48)
+    assert palette["localized"] == (124, 72, 55)
     assert plugin._palette({**settings, "themeMode": "paper"}) == palette
     assert plugin._cache_key(settings, (800, 480), 5) == plugin._cache_key(
         {
             **settings,
             "themeMode": "paper",
-            "_inkypi_theme": canonical_theme("night"),
+            "_inkypi_theme": day_theme,
         },
         (480, 800),
         5,

@@ -673,6 +673,18 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        if theme.get("mode") != "night":
+            return {
+                "mode": "paper",
+                "paper": (240, 235, 222),
+                "ink": (34, 34, 31),
+                "muted": (95, 87, 74),
+                "accent": (184, 39, 48),
+                "localized": (124, 72, 55),
+                "line": (210, 199, 181),
+                "outline": (39, 39, 36),
+                "shadow": (224, 216, 198),
+            }
         palette = theme["palette"]
         return {
             "mode": "cinema" if theme["mode"] == "night" else "paper",

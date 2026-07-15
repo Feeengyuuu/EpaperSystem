@@ -6,6 +6,60 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260715-004] best_practice
+
+**Logged**: 2026-07-15T01:10:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+When authoritative and saved time series are combined, filter by source precedence and time window before drawing, and align markers to the actual supplemental segment.
+
+### Details
+Money's official Robinhood history must own every overlapping date. Durable local history may only extend the curve before the first official date and inside the selected period. Sampling local-history markers across the completed curve falsely implied that official points came from local records.
+
+### Suggested Action
+Merge dated points before extracting values, keep the authoritative source on overlap, return the exact supplemental prefix length with the curve, and place markers only on those prefix coordinates.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/stocktracker/stocktracker.py, inkypi-weather/package/InkyPi/tests/test_stocktracker.py
+- Tags: time-series, source-precedence, chart-markers, robinhood, stocktracker
+- Pattern-Key: chart.authoritative_series_precedence
+- Recurrence-Count: 1
+- First-Seen: 2026-07-15
+- Last-Seen: 2026-07-15
+
+---
+
+## [LRN-20260715-005] best_practice
+
+**Logged**: 2026-07-15T01:12:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Do not treat a single image-viewer rendering anomaly as a generated-image regression.
+
+### Details
+The original-detail viewer temporarily omitted visible text from a live Money screenshot even though the PNG SHA and region pixel frequencies matched the known-good image. Reopening the same exact file in high-detail mode showed the complete page.
+
+### Suggested Action
+Before changing rendering code, verify the same file hash, compare representative pixel regions, and reopen the identical image through a second viewer detail mode.
+
+### Metadata
+- Source: error
+- Related Files: tools/live_all_instances_acceptance.py
+- Tags: image-viewer, screenshot, sha256, pixel-verification, false-positive
+- Pattern-Key: verify.image_viewer_anomaly
+- Recurrence-Count: 1
+- First-Seen: 2026-07-15
+- Last-Seen: 2026-07-15
+
+---
+
 ## [LRN-20260715-001] correction
 
 **Logged**: 2026-07-15T00:05:00-07:00

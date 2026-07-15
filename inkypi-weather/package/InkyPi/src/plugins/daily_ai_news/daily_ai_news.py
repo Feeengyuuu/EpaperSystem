@@ -2091,30 +2091,17 @@ class DailyAINews(BasePlugin):
         payload = self._simplify_chinese_payload(payload)
         brief = payload.get("brief") or {}
 
-        canonical = theme_context.get("palette") if isinstance(theme_context, dict) else None
-        if isinstance(canonical, dict):
-            bg = canonical["background"]
-            header_bg = canonical["panel"]
-            ink = canonical["ink"]
-            muted = canonical["muted"]
-            dim = muted
-            rule = canonical["rule"]
-            red = canonical["accent"]
-            gold = tuple(round((accent * 3 + secondary) / 4) for accent, secondary in zip(red, muted))
-            cyan = tuple(round((accent + secondary) / 2) for accent, secondary in zip(red, muted))
-            green = tuple(round((accent + secondary * 3) / 4) for accent, secondary in zip(red, muted))
-        else:
-            palette = get_theme_palette(theme_context)
-            bg = palette["background"]
-            header_bg = palette["header"]
-            ink = palette["ink"]
-            muted = palette["muted"]
-            dim = palette["dim"]
-            rule = palette["rule"]
-            red = palette["red"]
-            gold = palette["gold"]
-            cyan = palette["cyan"]
-            green = palette["green"]
+        palette = self._render_palette(theme_context)
+        bg = palette["background"]
+        header_bg = palette["header"]
+        ink = palette["ink"]
+        muted = palette["muted"]
+        dim = palette["dim"]
+        rule = palette["rule"]
+        red = palette["red"]
+        gold = palette["gold"]
+        cyan = palette["cyan"]
+        green = palette["green"]
 
         img = self._base_background(dimensions, bg, (theme_context or {}).get("mode", "day"))
         draw = ImageDraw.Draw(img)
@@ -2241,6 +2228,37 @@ class DailyAINews(BasePlugin):
         footer = self._footer_text(payload, brief)
         draw.text((margin, height - 20), footer, font=footer_font, fill=dim)
         return img
+
+    @staticmethod
+    def _render_palette(theme_context):
+        if not isinstance(theme_context, dict) or theme_context.get("mode") != "night":
+            return get_theme_palette("day")
+        canonical = theme_context.get("palette")
+        if not isinstance(canonical, dict):
+            return get_theme_palette("night")
+        red = canonical["accent"]
+        muted = canonical["muted"]
+        return {
+            "background": canonical["background"],
+            "header": canonical["panel"],
+            "ink": canonical["ink"],
+            "muted": muted,
+            "dim": muted,
+            "rule": canonical["rule"],
+            "red": red,
+            "gold": tuple(
+                round((accent * 3 + secondary) / 4)
+                for accent, secondary in zip(red, muted)
+            ),
+            "cyan": tuple(
+                round((accent + secondary) / 2)
+                for accent, secondary in zip(red, muted)
+            ),
+            "green": tuple(
+                round((accent + secondary * 3) / 4)
+                for accent, secondary in zip(red, muted)
+            ),
+        }
 
     def _render_news_section_items(self, brief: dict[str, Any], payload: dict[str, Any], section: str) -> list[Any]:
         max_count = MAINLAND_NEWS_MAX if section == "mainland" else WORLD_NEWS_MAX

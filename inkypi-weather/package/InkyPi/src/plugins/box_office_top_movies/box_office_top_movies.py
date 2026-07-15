@@ -1059,6 +1059,18 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        if theme.get("mode") != "night":
+            return {
+                "mode": "paper",
+                "paper": (239, 233, 215),
+                "ink": (32, 35, 36),
+                "muted": (91, 85, 74),
+                "accent": (176, 41, 45),
+                "localized": (115, 72, 58),
+                "line": (208, 198, 178),
+                "outline": (40, 40, 38),
+                "shadow": (224, 216, 196),
+            }
         palette = theme["palette"]
         return {
             "mode": "cinema" if theme["mode"] == "night" else "paper",

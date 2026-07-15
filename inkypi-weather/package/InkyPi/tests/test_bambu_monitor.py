@@ -632,7 +632,7 @@ def test_theme_only_cold_cache_stays_local_and_preserves_offline_semantics(tmp_p
     assert not (tmp_path / "cache").exists()
 
 
-def test_canonical_theme_palette_overrides_legacy_mode_and_changes_pixels(tmp_path):
+def test_original_day_palette_and_canonical_night_change_pixels(tmp_path):
     plugin = _plugin(tmp_path)
     settings = _connected_settings()
     settings.update({"cacheSeconds": 3600, "cameraEnabled": False})
@@ -656,7 +656,7 @@ def test_canonical_theme_palette_overrides_legacy_mode_and_changes_pixels(tmp_pa
     day = plugin.generate_image(day_settings, _BambuDeviceConfig())
     night = plugin.generate_image(night_settings, _BambuDeviceConfig())
 
-    assert day.getpixel((0, 0)) == _theme_context("day")["palette"]["background"]
+    assert day.getpixel((0, 0)) == bambu_module.PAPER
     assert night.getpixel((0, 0)) == _theme_context("night")["palette"]["background"]
     assert day.tobytes() != night.tobytes()
     assert bambu_module._ACTIVE_COLORS.get() is None

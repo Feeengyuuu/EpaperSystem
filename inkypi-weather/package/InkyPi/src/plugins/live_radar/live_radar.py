@@ -1979,6 +1979,21 @@ class LiveRadar(BasePlugin):
     def _theme(self, settings, device_config):
         settings = settings or {}
         context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config)
+        if context.get("mode") != "night":
+            return {
+                "mode": "light",
+                "bg": (255, 255, 255),
+                "ink": (0, 0, 0),
+                "muted": (0, 0, 0),
+                "line": (0, 0, 0),
+                "panel": (255, 255, 255),
+                "accent": (0, 0, 0),
+                "live_fill": (255, 255, 255),
+                "live_ink": (0, 0, 0),
+                "live_muted": (0, 0, 0),
+                "live_line": (0, 0, 0),
+                "replay_fill": (255, 255, 255),
+            }
         palette = context["palette"]
         # Immutable scheduler payloads thaw tuples into mutable lists. Pillow's
         # RGB constructors require tuples, so normalize only at this renderer

@@ -692,9 +692,15 @@ class SteamProfileDashboard(BasePlugin):
         text = str(appid or "").strip()
         return text if text.isdigit() else ""
 
+    @staticmethod
+    def _render_palette(theme_context):
+        if not isinstance(theme_context, dict) or theme_context.get("mode") != "night":
+            return get_theme_palette("day")
+        return get_theme_palette(theme_context)
+
     def _render_dashboard(self, data, dimensions, theme_context=None):
         width, height = dimensions
-        palette = get_theme_palette(theme_context)
+        palette = self._render_palette(theme_context)
         bg = palette["background"]
         panel = palette["panel"]
         panel_border = palette["border"]

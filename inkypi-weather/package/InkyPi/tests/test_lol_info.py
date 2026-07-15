@@ -115,7 +115,7 @@ def _theme_payload(plugin):
     return payload
 
 
-def test_lol_renderer_uses_injected_palette_for_day_night_and_weather_auto(
+def test_lol_renderer_uses_original_day_and_injected_night_palette(
     tmp_path,
 ):
     plugin = make_plugin(tmp_path)
@@ -144,9 +144,9 @@ def test_lol_renderer_uses_injected_palette_for_day_night_and_weather_auto(
     )
 
     assert day.size == night.size == auto.size == (800, 480)
-    assert day.getpixel((420, 10)) == day_theme["palette"]["background"]
+    assert day.getpixel((420, 10)) == (5, 7, 12)
     assert night.getpixel((420, 10)) == night_theme["palette"]["background"]
-    assert day.getpixel((22, 22)) == day_theme["palette"]["rule"]
+    assert day.getpixel((22, 22)) == (236, 232, 206)
     assert night.getpixel((22, 22)) == night_theme["palette"]["rule"]
     assert auto.getpixel((420, 10)) == auto_theme["palette"]["background"]
     assert auto.getpixel((22, 22)) == auto_theme["palette"]["rule"]

@@ -262,7 +262,7 @@ def test_page_palette_switches_between_day_and_midnight(tmp_path):
     assert night[-1] == "MIDNIGHT READING"
 
 
-def test_injected_palette_is_authoritative_over_legacy_style_colors(tmp_path):
+def test_original_day_keeps_legacy_style_colors(tmp_path):
     plugin = _plugin(tmp_path)
     theme = _canonical_theme(
         "day",
@@ -282,13 +282,9 @@ def test_injected_palette_is_authoritative_over_legacy_style_colors(tmp_path):
 
     bg, text, accent, muted, faint, label = plugin._page_palette(settings, theme)
 
-    assert (bg, text, accent, muted, faint) == (
-        theme["palette"]["background"],
-        theme["palette"]["ink"],
-        theme["palette"]["accent"],
-        theme["palette"]["muted"],
-        theme["palette"]["rule"],
-    )
+    assert (bg, text, accent) == ((1, 2, 3), (4, 5, 6), (7, 8, 9))
+    assert muted != theme["palette"]["muted"]
+    assert faint != theme["palette"]["rule"]
     assert label == "DAY READING"
 
 
@@ -661,7 +657,7 @@ def test_theme_only_warm_daily_cache_changes_only_palette_without_network(tmp_pa
     day_image = plugin.generate_image({**legacy_style, "_theme_render_only": True, "_inkypi_theme": day}, device)
     night_image = plugin.generate_image({**legacy_style, "_theme_render_only": True, "_inkypi_theme": night}, device)
 
-    assert day_image.getpixel((0, 0)) == day["palette"]["background"]
+    assert day_image.getpixel((0, 0)) == (1, 2, 3)
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 

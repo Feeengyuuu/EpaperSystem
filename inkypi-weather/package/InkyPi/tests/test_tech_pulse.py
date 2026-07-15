@@ -316,21 +316,11 @@ def test_tech_pulse_theme_only_uses_stale_source_cache_without_network(
     day = plugin.generate_image(day_settings, FakeDeviceConfig())
     night = plugin.generate_image(night_settings, FakeDeviceConfig())
 
-    expected_day = canonical_theme("day")["palette"]
-    assert plugin._palette(day_settings) == {
-        **expected_day,
-        "row": expected_day["panel"],
-        "metric": expected_day["panel"],
-        "chip": expected_day["panel"],
-        "grid": expected_day["rule"],
-        "dim": expected_day["muted"],
-        "orange": expected_day["accent"],
-        "amber": expected_day["accent"],
-        "cyan": expected_day["accent"],
-    }
-    assert plugin._palette({**day_settings, "themeMode": "dark"}) == plugin._palette(
-        day_settings,
-    )
+    expected_day = plugin._palette(day_settings)
+    assert expected_day["background"] == (245, 240, 226)
+    assert expected_day["panel"] == (255, 251, 241)
+    assert expected_day["orange"] == (255, 102, 0)
+    assert plugin._palette({**day_settings, "themeMode": "dark"}) == expected_day
     assert calls == {"fetch": 0, "preview": 0}
     assert image_digest(day) != image_digest(night)
 

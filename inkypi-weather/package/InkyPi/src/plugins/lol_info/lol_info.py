@@ -1087,6 +1087,21 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _render_colors(self, theme_context):
         mode = str((theme_context or {}).get("mode") or "night").lower()
         night = mode == "night"
+        if not night:
+            return {
+                "background": (5, 7, 12),
+                "background_stripe": (5, 7, 12),
+                "panel": (18, 22, 35),
+                "surface": (18, 22, 35),
+                "bar": (18, 22, 35),
+                "rule": (236, 232, 206),
+                "ink": (255, 250, 222),
+                "muted": (202, 190, 150),
+                "gold": (255, 205, 54),
+                "cyan": (107, 204, 255),
+                "green": (82, 202, 128),
+                "red": (255, 82, 74),
+            }
         background = self._theme_role(theme_context, "background", (5, 7, 12))
         panel = self._theme_role(theme_context, "panel", (18, 22, 35))
         ink = self._theme_role(theme_context, "ink", (255, 250, 222))

@@ -1467,6 +1467,16 @@ class DailyWikiPage(BasePlugin):
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        if theme.get("mode") != "night":
+            return {
+                "background": (232, 226, 214),
+                "panel": (222, 215, 200),
+                "ink": (18, 20, 19),
+                "dim": (58, 60, 56),
+                "muted": (74, 70, 62),
+                "accent": (102, 56, 24),
+                "rule": (124, 111, 92),
+            }
         palette = theme["palette"]
         return {
             "background": tuple(palette["background"]),

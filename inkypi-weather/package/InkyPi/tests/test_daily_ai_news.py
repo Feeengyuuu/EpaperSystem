@@ -545,8 +545,9 @@ def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monk
     day_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": day}, device)
     night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, device)
 
-    assert day_image.getpixel((0, 479)) == day["palette"]["background"]
-    assert day_image.getpixel((0, 0)) == day["palette"]["panel"]
+    original_day = daily_ai_news_module.get_theme_palette("day")
+    assert day_image.getpixel((0, 479)) == original_day["background"]
+    assert day_image.getpixel((0, 0)) == original_day["header"]
     assert night_image.getpixel((0, 479)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
