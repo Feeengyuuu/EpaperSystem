@@ -2412,6 +2412,8 @@ def _install_robinhood_token(source_path, target_path):
         raise AuditAbort("robinhood_token_paths_conflict")
     payload = _validated_robinhood_token(source_path)
     target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(target_path.parent, 0o700)
+    _chown_inkypi(target_path.parent)
     temporary = target_path.with_name(f".{target_path.name}.{secrets.token_hex(8)}.tmp")
     descriptor = None
     try:

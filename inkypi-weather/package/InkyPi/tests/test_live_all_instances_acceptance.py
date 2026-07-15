@@ -2231,7 +2231,8 @@ def test_install_robinhood_token_validates_and_never_prints_secret(
         encoding="utf-8",
     )
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
-    monkeypatch.setattr(acceptance, "_chown_inkypi", lambda _path: None)
+    chowned = []
+    monkeypatch.setattr(acceptance, "_chown_inkypi", lambda path: chowned.append(path))
 
     exit_code = acceptance.main(
         [
@@ -2252,6 +2253,7 @@ def test_install_robinhood_token_validates_and_never_prints_secret(
     }
     assert not source.exists()
     assert target.exists()
+    assert chowned == [target.parent, target]
     assert "private-client" not in printed
     assert "private-access" not in printed
     assert "private-refresh" not in printed
