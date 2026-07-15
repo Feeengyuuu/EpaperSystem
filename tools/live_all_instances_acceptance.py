@@ -9,6 +9,7 @@ physical-display-commit, and HTTP image evidence for each exact instance revisio
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2237,6 +2238,11 @@ def _parser() -> argparse.ArgumentParser:
         help="Print the summary.json from --output-dir and exit",
     )
     parser.add_argument(
+        "--print-output-png-base64",
+        default=None,
+        help="Print one basename-only PNG artifact from --output-dir as base64 and exit",
+    )
+    parser.add_argument(
         "--print-runtime-state",
         action="store_true",
         help="Print the runtime state document from --runtime-state and exit",
@@ -2317,8 +2323,29 @@ def stocktracker_config_diagnostics(document: dict) -> dict:
         str(settings.get("portfolio_csv_path") or settings.get("portfolio_csv_file") or "").strip()
         for settings in instances
     ]
+    existing_csv_has_spcx = False
+    for path in csv_paths:
+        try:
+            csv_text = Path(path).read_text(
+                encoding="utf-8-sig",
+                errors="ignore",
+            )
+            existing_csv_has_spcx = bool(
+                re.search(r"(?<![A-Z0-9])SPCX(?![A-Z0-9])", csv_text.upper())
+            )
+        except OSError:
+            continue
+        if existing_csv_has_spcx:
+            break
+    inline_symbols = {
+        symbol.strip().upper()
+        for settings in instances
+        for symbol in str(settings.get("tickers") or "").split(",")
+        if symbol.strip()
+    }
     return {
         "csv_exists": any(path and os.path.isfile(path) for path in csv_paths),
+        "existing_csv_has_spcx": existing_csv_has_spcx,
         "has_csv_setting": any(csv_paths),
         "has_inline_shares": any(
             str(settings.get("shares") or "").strip() for settings in instances
@@ -2326,6 +2353,7 @@ def stocktracker_config_diagnostics(document: dict) -> dict:
         "has_inline_tickers": any(
             str(settings.get("tickers") or "").strip() for settings in instances
         ),
+        "inline_has_spcx": "SPCX" in inline_symbols,
         "instance_count": len(instances),
     }
 
@@ -2538,6 +2566,28 @@ def main(argv=None) -> int:
             print(json.dumps({"status": "aborted", "abort_code": error.code}))
             return 2
         print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    if args.print_output_png_base64 is not None:
+        name = args.print_output_png_base64
+        if (
+            not args.output_dir
+            or Path(name).name != name
+            or Path(name).suffix.lower() != ".png"
+        ):
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "invalid_output_png_request",
+            }))
+            return 2
+        try:
+            payload = (Path(args.output_dir) / name).read_bytes()
+        except OSError:
+            print(json.dumps({
+                "status": "aborted",
+                "abort_code": "output_png_read_failed",
+            }))
+            return 2
+        print(base64.b64encode(payload).decode("ascii"))
         return 0
     try:
         secret = Path(args.flask_secret).read_text(encoding="utf-8").strip()

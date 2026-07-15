@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import base64
 import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
 from io import BytesIO
@@ -1830,6 +1831,35 @@ def test_print_summary_flag_aborts_cleanly_without_summary(
     )
 
 
+def test_print_output_png_base64_allows_only_a_png_basename(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    payload = b"\x89PNG\r\nprivate-evidence"
+    (output_dir / "money.png").write_bytes(payload)
+
+    exit_code = acceptance.main([
+        "--output-dir", str(output_dir),
+        "--print-output-png-base64", "money.png",
+    ])
+    encoded = capsys.readouterr().out.strip()
+    traversal_code = acceptance.main([
+        "--output-dir", str(output_dir),
+        "--print-output-png-base64", "../money.png",
+    ])
+    traversal = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert base64.b64decode(encoded) == payload
+    assert traversal_code == 2
+    assert traversal["abort_code"] == "invalid_output_png_request"
+
+
 def test_print_runtime_state_flag_prints_state_document(
     acceptance,
     tmp_path,
@@ -2082,10 +2112,47 @@ def test_stocktracker_config_diagnostics_never_prints_private_values(
     assert exit_code == 0
     assert payload == {
         "csv_exists": False,
+        "existing_csv_has_spcx": False,
         "has_csv_setting": True,
         "has_inline_shares": True,
         "has_inline_tickers": True,
+        "inline_has_spcx": False,
         "instance_count": 1,
     }
+    assert "PRIVATE" not in printed
+    assert "99" not in printed
+
+
+def test_stocktracker_config_diagnostics_detects_spcx_without_printing_holdings(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    portfolio_path = tmp_path / "portfolio.csv"
+    portfolio_path.write_text("ticker,shares\nSPCX,7\nPRIVATE,99\n", encoding="utf-8")
+    config = _config()
+    settings = config["playlist_config"]["playlists"][0]["plugins"][0]
+    settings["plugin_id"] = "stocktracker"
+    settings["plugin_settings"] = {
+        "tickers": "SPCX,PRIVATE",
+        "shares": "7,99",
+        "portfolio_csv_path": str(portfolio_path),
+    }
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--print-stocktracker-diagnostics",
+    ])
+
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+    assert exit_code == 0
+    assert payload["csv_exists"] is True
+    assert payload["existing_csv_has_spcx"] is True
+    assert payload["inline_has_spcx"] is True
     assert "PRIVATE" not in printed
     assert "99" not in printed

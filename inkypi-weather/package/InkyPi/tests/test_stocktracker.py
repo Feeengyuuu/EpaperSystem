@@ -172,6 +172,19 @@ def test_stock_tracker_can_pin_and_sink_holdings_display_order():
     assert [row["symbol"] for row in ordered] == ["SPCX", "AAPL", "NVDA", "SPY"]
 
 
+def test_stock_tracker_keeps_spcx_visible_by_default():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        _stock("AAPL", [100], 100),
+        _stock("NVDA", [100], 90),
+        _stock("SPCX", [100], 1),
+    ]
+
+    ordered = plugin._ordered_holdings(stock_data)
+
+    assert [row["symbol"] for row in ordered] == ["SPCX", "AAPL", "NVDA"]
+
+
 def test_stock_tracker_sinks_cash_below_equity_holdings_by_default():
     plugin = StockTracker({"id": "stocktracker"})
     cash = _stock("CASH", [1], 10_000)

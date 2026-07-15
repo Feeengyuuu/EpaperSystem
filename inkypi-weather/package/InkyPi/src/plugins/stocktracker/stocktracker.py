@@ -1437,9 +1437,13 @@ class StockTracker(BasePlugin):
 			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 	def _ordered_holdings(self, stock_data, pin_symbols=None, sink_symbols=None):
+		configured_pins = self._symbols_setting(pin_symbols)
+		pin_order = ("SPCX",) + tuple(
+			symbol for symbol in configured_pins if symbol != "SPCX"
+		)
 		pin_rank = {
 			symbol: index
-			for index, symbol in enumerate(self._symbols_setting(pin_symbols))
+			for index, symbol in enumerate(pin_order)
 		}
 		sink_set = set(self._symbols_setting(sink_symbols))
 
