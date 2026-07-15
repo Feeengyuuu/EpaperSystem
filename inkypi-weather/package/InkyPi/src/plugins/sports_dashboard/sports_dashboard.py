@@ -20,6 +20,8 @@ from .esports_render import EsportsRenderMixin
 from .f1 import F1Mixin
 from .offseason_hub import OffseasonHubMixin
 from .offseason_render import OffseasonRenderMixin
+from plugins.base_plugin.presentation import PresentationMode, PresentationPreparation
+from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from utils.safe_image import safe_open_image
 
 
@@ -35,6 +37,42 @@ class SportsDashboard(
     OffseasonRenderMixin,
     BasePlugin,
 ):
+    def presentation_mode(self, settings):
+        return PresentationMode.PREPARED_BANK
+
+    def reconcile_presentation_receipt(self, settings, receipt):
+        return None
+
+    def prepare_presentation(
+        self,
+        settings,
+        device_config,
+        *,
+        request,
+        resolved_theme_context,
+    ):
+        presentation_settings = dict(settings or {})
+        presentation_settings["_inkypiPresentationRefresh"] = True
+        image = self.render_themed_image(
+            presentation_settings,
+            device_config,
+            resolved_theme_context=resolved_theme_context,
+        )
+        provenance = read_source_provenance(image)
+        if (
+            image.info.get("inkypi_skip_cache")
+            or provenance not in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}
+        ):
+            source = provenance.value if provenance is not None else "non_cacheable"
+            raise RuntimeError(
+                f"sports panel rotation did not produce a fresh cacheable image: {source}"
+            )
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=image,
+            changed=True,
+        )
+
     def get_live_refresh_state(self, settings, current_dt):
         settings = settings or {}
         active_intervals = []

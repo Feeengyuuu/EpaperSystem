@@ -44,6 +44,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
     read_source_provenance,
 )
+from plugins.base_plugin.presentation import PresentationMode
 from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
@@ -143,6 +144,54 @@ class FakeDeviceConfig:
 
 def _plugin():
     return SportsDashboard({"id": "sports_dashboard"})
+
+
+def test_sports_dashboard_manifest_restores_internal_panel_refresh_on_display():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "plugin-info.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert manifest["refresh_on_display"] is True
+
+
+def test_sports_dashboard_presentation_rerenders_from_cache_without_forcing_providers(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    def render(settings, device_config, *, resolved_theme_context):
+        captured["settings"] = dict(settings)
+        captured["device_config"] = device_config
+        captured["theme"] = resolved_theme_context
+        return attach_source_provenance(
+            Image.new("RGB", (800, 480), "white"),
+            SourceProvenance.FRESH_CACHE,
+        )
+
+    monkeypatch.setattr(plugin, "render_themed_image", render)
+    request = types.SimpleNamespace(request_id="a" * 32)
+    device_config = object()
+    theme = {"mode": "day"}
+
+    assert plugin.presentation_mode({}) is PresentationMode.PREPARED_BANK
+    prepared = plugin.prepare_presentation(
+        {"worldCupTopHeight": "208"},
+        device_config,
+        request=request,
+        resolved_theme_context=theme,
+    )
+
+    assert prepared.changed is True
+    assert prepared.request_id == "a" * 32
+    assert captured["settings"]["_inkypiPresentationRefresh"] is True
+    assert "forceRefresh" not in captured["settings"]
+    assert captured["device_config"] is device_config
+    assert captured["theme"] is theme
 
 
 def _canonical_theme(mode, *, background, panel, ink, muted, rule, accent):
