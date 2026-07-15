@@ -1875,8 +1875,8 @@ class RefreshTask:
         return None
 
     def _live_due_candidates(self, active, runtime_instances, current_dt, tier):
-        """Return exact-display live candidates admitted only in the healthy tier."""
-        if tier is not ResourceTier.HEALTHY:
+        """Return exact-display live candidates unless memory pressure is critical."""
+        if tier is ResourceTier.HARD:
             return []
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
         if displayed_uuid is None:

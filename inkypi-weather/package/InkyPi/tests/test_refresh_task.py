@@ -8448,11 +8448,12 @@ def test_sports_normal_interval_is_selected_when_background_flag_is_false(
         (True, True, True, ResourceSample(512, 0), True),
         (True, False, True, ResourceSample(512, 0), False),
         (True, True, False, ResourceSample(512, 0), False),
-        (True, True, True, ResourceSample(100, 0), False),
+        (True, True, True, ResourceSample(100, 0), True),
+        (True, True, True, ResourceSample(60, 0), False),
         (False, True, True, ResourceSample(512, 0), False),
     ],
 )
-def test_sports_live_requires_enabled_hook_displayed_uuid_and_healthy_tier(
+def test_sports_live_requires_enabled_hook_displayed_uuid_and_non_hard_tier(
     monkeypatch,
     enabled,
     hook_active,
