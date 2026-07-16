@@ -2391,12 +2391,19 @@ class SportsDashboardCommonMixin:
             for provenance in panel_provenances
             if isinstance(provenance, SourceProvenance)
         ]
-        if SourceProvenance.LOCAL_FALLBACK in provenances:
+        has_untrusted_provenance = len(provenances) != len(panel_provenances)
+        if has_untrusted_provenance:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        elif SourceProvenance.LOCAL_FALLBACK in provenances:
             provenance = SourceProvenance.LOCAL_FALLBACK
         elif SourceProvenance.STALE_CACHE in provenances:
             provenance = SourceProvenance.STALE_CACHE
         elif force_refresh and any(
-            panel_provenance is not SourceProvenance.LIVE
+            panel_provenance
+            not in {
+                SourceProvenance.LIVE,
+                SourceProvenance.FRESH_CACHE,
+            }
             for panel_provenance in provenances
         ):
             provenance = SourceProvenance.STALE_CACHE

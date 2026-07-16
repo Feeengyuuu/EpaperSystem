@@ -13889,9 +13889,37 @@ def test_generate_image_attests_complete_fresh_remote_cache(monkeypatch):
         left_provenance=SourceProvenance.FRESH_CACHE,
         nba_source_state="ESPN CACHE",
         lol_source_state="LPL CACHE",
+        force_refresh=True,
     )
 
     assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+    assert "inkypi_skip_cache" not in image.info
+
+
+def test_forced_composite_refresh_accepts_live_and_fresh_cache_panels(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.LIVE,
+        nba_source_state="ESPN CACHE",
+        lol_source_state="LIVE DATA",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert "inkypi_skip_cache" not in image.info
+
+
+def test_forced_composite_refresh_rejects_unknown_panel_provenance():
+    image = _plugin()._attest_sports_dashboard_image(
+        Image.new("RGB", (800, 480), "white"),
+        SourceProvenance.LIVE,
+        "unknown",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
 
 
 def test_generate_image_attests_stale_remote_panels_and_skips_promotion(monkeypatch):
@@ -13913,10 +13941,9 @@ def test_generate_image_attests_stale_remote_panels_and_skips_promotion(monkeypa
     [
         ("NBA FALLBACK", SourceProvenance.LOCAL_FALLBACK),
         ("ESPN STALE", SourceProvenance.STALE_CACHE),
-        ("ESPN CACHE", SourceProvenance.STALE_CACHE),
     ],
 )
-def test_forced_composite_refresh_fails_closed_when_any_visible_panel_is_not_live(
+def test_forced_composite_refresh_fails_closed_for_stale_or_fallback_panels(
     monkeypatch,
     mixed_source_state,
     expected,

@@ -844,3 +844,26 @@ Retry the normal patch helper once; if the same sandbox failure recurs, keep the
 - Tags: apply-patch, windows-sandbox, git-apply, encoding
 
 ---
+
+## [LRN-20260716-005] best_practice
+
+**Logged**: 2026-07-16T13:10:43-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+A completed manual refresh job is not proof that the rendered image was promoted to the plugin cache.
+
+### Details
+Sports Dashboard treated every forced composite containing FRESH_CACHE as STALE_CACHE, even when all panels were trusted LIVE or fresh-cache sources. The job therefore completed successfully while inkypi_skip_cache silently prevented promotion, and the following display job wrote an old LPL image. Forced rendering must accept both LIVE and FRESH_CACHE while continuing to reject stale, local-fallback, or untrusted sources.
+
+### Suggested Action
+After manual refresh, verify both the job result and the plugin-instance cache Last-Modified/hash before displaying it. Cover mixed LIVE plus FRESH_CACHE provenance with a regression test and keep stale/local fallback tests fail-closed.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py
+- Tags: manual-refresh, provenance, fresh-cache, cache-promotion, live-proof
+
+---
