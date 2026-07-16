@@ -17,10 +17,10 @@ Corrections, insights, and knowledge gaps captured during development.
 A prepared bank can contain several valid records while the rendered page still appears to have only one if the bank-to-view adapter drops related records.
 
 ### Details
-Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback even after the bank had accumulated several independent GBIF records. Increasing provider work attacked the wrong layer and exceeded the Pi data deadline.
+Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback. Increasing media downloads attacked the wrong layer and exceeded the Pi data deadline; the already-fetched GBIF metadata is sufficient for related text and placeholder thumbnails.
 
 ### Suggested Action
-When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven provider workload, pass a bounded set of ready related records and their cached media into the existing renderer, and test both payload cardinality and provider-free media access.
+When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven provider workload, persist a bounded related-metadata pool, prefer ready records with cached media, and let missing thumbnails use offline placeholders. Test payload cardinality, persistence, and provider-free media access.
 
 ### Metadata
 - Source: user_feedback

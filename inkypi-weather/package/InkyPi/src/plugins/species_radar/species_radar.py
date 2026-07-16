@@ -419,6 +419,8 @@ class SpeciesRadar(BasePlugin):
                 and payload.get("cache_key") != expected_cache_key
             )
             source_observations = [] if stale_fallback else list(payload.get("observations") or [])
+            if source_observations:
+                bank.set_related_observations(profile, source_observations)
             photo_count = 0
             map_count = 0
             existing = {record.get("observation_id") for record in profile.get("records") or []}
@@ -653,8 +655,11 @@ class SpeciesRadar(BasePlugin):
         )
         provenance = "fresh_cache" if is_fresh else "stale_cache"
         render_record = {**record, "provenance": provenance}
-        related_records = []
+        related_observations = []
         related_photos = {}
+        related_identities = {
+            self._observation_identity(record.get("observation") or {})
+        }
         for candidate in profile.get("records") or []:
             if candidate.get("record_key") == record.get("record_key"):
                 continue
@@ -672,17 +677,30 @@ class SpeciesRadar(BasePlugin):
                     exc,
                 )
                 continue
-            related_records.append(candidate)
-            image_url = candidate.get("observation", {}).get("image_url")
+            candidate_observation = candidate.get("observation") or {}
+            candidate_identity = self._observation_identity(candidate_observation)
+            if not candidate_identity or candidate_identity in related_identities:
+                continue
+            related_identities.add(candidate_identity)
+            related_observations.append(candidate_observation)
+            image_url = candidate_observation.get("image_url")
             if image_url and candidate_photo is not None:
                 related_photos[image_url] = candidate_photo
-            if len(related_records) >= MAX_RELATED_RECORDS_PER_PAGE:
+            if len(related_observations) >= MAX_RELATED_RECORDS_PER_PAGE:
+                break
+        for candidate in profile.get("related_observations") or []:
+            candidate_identity = self._observation_identity(candidate)
+            if not candidate_identity or candidate_identity in related_identities:
+                continue
+            related_identities.add(candidate_identity)
+            related_observations.append(candidate)
+            if len(related_observations) >= MAX_RELATED_RECORDS_PER_PAGE:
                 break
         check()
         payload = self._payload_for_bank_record(
             render_record,
             profile,
-            related_records=related_records,
+            related_observations=related_observations,
         )
         payload["theme_mode"] = self._theme_mode(settings, now)
         check()
@@ -709,12 +727,12 @@ class SpeciesRadar(BasePlugin):
         check()
         return image
 
-    def _payload_for_bank_record(self, record, profile, *, related_records=()):
+    def _payload_for_bank_record(self, record, profile, *, related_observations=()):
         observation = dict(record["observation"])
         observations = [observation]
         observations.extend(
-            dict(candidate["observation"])
-            for candidate in related_records
+            dict(candidate)
+            for candidate in related_observations
         )
         location_name = (
             observation.get("radar_location_name")

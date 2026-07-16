@@ -36,6 +36,7 @@ REFILL_THRESHOLD = 4
 MAX_PROFILES = 64
 MAX_RECORDS_PER_PROFILE = 24
 MAX_SEEN_IDS = 5000
+MAX_RELATED_OBSERVATIONS = 5
 MAX_STATE_BYTES = 4 * 1024 * 1024
 SOURCE_FRESH_SECONDS = 6 * 60 * 60
 PHOTO_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
@@ -499,6 +500,11 @@ class SpeciesPresentationBank:
         if prune:
             profile["records"] = survivors[-MAX_RECORDS_PER_PROFILE:]
         return ready
+
+    def set_related_observations(self, profile, observations):
+        profile["related_observations"] = self._normalize_related_observations(
+            observations,
+        )
 
     def protected_records(self, profile):
         by_key = {item["record_key"]: item for item in profile.get("records") or []}
@@ -1146,6 +1152,7 @@ class SpeciesPresentationBank:
             "instance_uuid": self.instance_uuid,
             "bucket_key": self.bucket_key,
             "records": [],
+            "related_observations": [],
             "seen_ids": [],
             "current_selection": None,
             "pending_selection": None,
@@ -1176,6 +1183,9 @@ class SpeciesPresentationBank:
         profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         records = [item for item in profile.get("records") or [] if self._valid_record(item)]
         profile["records"] = records[-MAX_RECORDS_PER_PROFILE:]
+        profile["related_observations"] = self._normalize_related_observations(
+            profile.get("related_observations") or [],
+        )
         profile["seen_ids"] = [str(value) for value in profile.get("seen_ids") or [] if value][-MAX_SEEN_IDS:]
         valid = {item["record_key"] for item in records}
         for name in ("current_selection", "pending_selection"):
@@ -1183,6 +1193,23 @@ class SpeciesPresentationBank:
             if selection is not None and not self._valid_selection(selection, valid):
                 raise RuntimeError("Species protected selection metadata is invalid")
         return profile
+
+    def _normalize_related_observations(self, observations):
+        normalized = []
+        identities = set()
+        for observation in observations or []:
+            try:
+                candidate = self.normalize_observation(observation)
+            except RuntimeError:
+                continue
+            identity = _observation_id(candidate)
+            if not identity or identity in identities:
+                continue
+            identities.add(identity)
+            normalized.append(candidate)
+            if len(normalized) >= MAX_RELATED_OBSERVATIONS:
+                break
+        return normalized
 
     def _valid_record(self, record):
         if not isinstance(record, dict) or not _valid_hash(record.get("record_key")):

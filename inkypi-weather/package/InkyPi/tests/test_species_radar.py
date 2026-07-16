@@ -2014,9 +2014,15 @@ def test_species_prepare_is_provider_free_and_context_commits_only_exact_receipt
     assert final_profile["displayed_context"]["observation_id"] == pending_record["observation_id"]
 
 
-def test_species_banked_page_restores_recent_records_and_gallery_media(tmp_path, monkeypatch):
+def test_species_banked_page_restores_related_metadata_with_placeholder_media(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
-    bank, _document, profile, current = _warm_species_bank(tmp_path, count=5)
+    bank, document, profile, current = _warm_species_bank(tmp_path, count=1)
+    bank.set_related_observations(
+        profile,
+        [bank_observation(index) for index in range(2, 6)],
+    )
+    bank.save(document)
+    _document, profile = bank.load_warm()
     captured = {}
 
     def capture_render(_dimensions, payload, _settings, _now, _device_config=None):
@@ -2045,7 +2051,8 @@ def test_species_banked_page_restores_recent_records_and_gallery_media(tmp_path,
         if record["record_key"] == current["record_key"]
     )
     assert len(set(captured["ids"])) == 5
-    assert all(isinstance(photo, Image.Image) for photo in captured["photos"])
+    assert isinstance(captured["photos"][0], Image.Image)
+    assert captured["photos"][1:] == [None, None, None, None]
 
 
 def test_species_pending_survives_restart_theme_location_and_bucket(tmp_path, monkeypatch):
@@ -2230,6 +2237,13 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     first_profile = _species_profile(first)
 
     assert len(first_profile["records"]) == 1
+    assert [item["gbif_key"] for item in first_profile["related_observations"]] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+    ]
     assert len(photos) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
     assert len(maps) == species_mod.MAX_MAP_FETCHES_PER_DATA_PASS
     assert first_profile["seen_ids"] == []
