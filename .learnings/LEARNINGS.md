@@ -17,15 +17,15 @@ Corrections, insights, and knowledge gaps captured during development.
 A prepared bank can contain several valid records while the rendered page still appears to have only one if the bank-to-view adapter drops related records.
 
 ### Details
-Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback. Increasing full-size media downloads attacked the wrong layer and exceeded the Pi data deadline. Restoring metadata with placeholders was also incomplete: related records must merge the existing local Chinese-name cache and use bounded small-image prefetching so the real thumbnail strip survives cache-only display.
+Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. It also advanced through a shuffled observation pool on each normal display without repeats until the round was exhausted, while theme-only redraws did not advance. The prepared-bank adapter initially passed only one ready record, so both the gallery and the rotation appeared frozen. Increasing full-size media downloads attacked the wrong layer and exceeded the Pi data deadline. Related records must merge the existing local Chinese-name cache, use bounded medium-image prefetching, and promote those cached images into the ready presentation bank so both the gallery and display rotation survive cache-only display.
 
 ### Suggested Action
-When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven full-size provider workload, persist a bounded related-metadata pool, merge local enrichment caches during rendering, and prefetch display-sized thumbnails inside a separate soft deadline with a hard save reserve. Test payload cardinality, names, thumbnails, deadline exhaustion, persistence, and provider-free display access.
+When a banked plugin loses multi-item composition, inspect the persisted bank, ready-record pool, and final render payload separately. Preserve the proven full-size provider workload, persist a bounded related-metadata pool, merge local enrichment caches during rendering, prefetch display-sized media inside a separate soft deadline with a hard save reserve, and promote that cached media into ready records. Test payload cardinality, names, thumbnails, no-repeat full-round rotation, theme-only non-advancement, deadline exhaustion, persistence, and provider-free display access.
 
 ### Metadata
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/species_radar/species_radar.py, inkypi-weather/package/InkyPi/tests/test_species_radar.py
-- Tags: prepared-bank, view-adapter, gallery, cached-media, cached-names, soft-deadline, species-radar
+- Tags: prepared-bank, view-adapter, gallery, cached-media, cached-names, soft-deadline, shuffle-rotation, species-radar
 - Pattern-Key: plugin.prepared_bank_view_cardinality
 - Recurrence-Count: 1
 - First-Seen: 2026-07-15

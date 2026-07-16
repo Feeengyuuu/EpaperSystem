@@ -110,7 +110,7 @@ MAX_RELATED_RECORDS_PER_PAGE = 4
 MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 0
 MAX_RELATED_THUMBNAILS_PER_DATA_PASS = 4
 RELATED_THUMBNAIL_TOTAL_SECONDS = 12
-RELATED_THUMBNAIL_SAVE_RESERVE_SECONDS = 10
+RELATED_THUMBNAIL_SAVE_RESERVE_SECONDS = 20
 RELATED_THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
@@ -530,6 +530,17 @@ class SpeciesRadar(BasePlugin):
                     excluded_identity=excluded_identity,
                     deadline=deadline,
                 )
+                related_records = self._ingest_related_cached_records(
+                    bank,
+                    profile,
+                    source_observations,
+                    existing=existing,
+                    deadline=deadline,
+                )
+                if payload_source_state == "live":
+                    live_record_keys.update(
+                        record["record_key"] for record in related_records
+                    )
             check_or_rollback()
             ready = bank.ready_records(profile, prune=True)
             check_or_rollback()
@@ -2432,7 +2443,8 @@ LIMIT 8
             if not image_url:
                 continue
             cache_file = self._photo_cache_file(image_url)
-            if self._open_cached_photo(cache_file) is not None:
+            cached = self._open_cached_photo(cache_file)
+            if cached is not None and max(cached.size) >= 480:
                 continue
             source_url = self._related_thumbnail_source_url(image_url)
             try:
@@ -2450,7 +2462,7 @@ LIMIT 8
                     payload,
                     limits=RELATED_THUMBNAIL_IMAGE_LIMITS,
                 ).convert("RGB")
-                image.thumbnail((240, 180), Image.LANCZOS)
+                image.thumbnail((800, 600), Image.LANCZOS)
                 if self._monotonic() >= soft_deadline:
                     break
                 self._write_photo_cache(cache_file, image)
@@ -2461,6 +2473,52 @@ LIMIT 8
                     identity,
                     exc,
                 )
+
+    def _ingest_related_cached_records(
+        self,
+        bank,
+        profile,
+        observations,
+        *,
+        existing,
+        deadline,
+    ):
+        """Build the display rotation bank from provider-free cached media."""
+        added = []
+        for observation in observations or []:
+            if len(added) >= MAX_RELATED_RECORDS_PER_PAGE:
+                break
+            if self._monotonic() >= float(deadline) - 10:
+                break
+            observation_id = self._clean_text(observation.get("gbif_key"))
+            if not observation_id:
+                observation_id = self._observation_identity(observation)
+            if not observation_id or observation_id in existing:
+                continue
+            image_url = self._clean_text(observation.get("image_url"))
+            if not image_url:
+                continue
+            photo = self._open_cached_photo(self._photo_cache_file(image_url))
+            if photo is None:
+                continue
+            try:
+                record = bank.ingest(
+                    profile,
+                    observation,
+                    photo,
+                    None,
+                    deadline_check=lambda: self._check_data_deadline(deadline),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Species cached rotation candidate failed for %s: %s",
+                    observation_id,
+                    exc,
+                )
+                continue
+            existing.add(record["observation_id"])
+            added.append(record)
+        return added
 
     @staticmethod
     def _related_thumbnail_source_url(url):
@@ -2473,7 +2531,7 @@ LIMIT 8
             return parts.geturl()
         path = re.sub(
             r"/(?:original|large|medium|small|square)\.(?:jpe?g)$",
-            "/small.jpg",
+            "/medium.jpg",
             parts.path,
             flags=re.IGNORECASE,
         )

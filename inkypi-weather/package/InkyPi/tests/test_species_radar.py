@@ -2014,6 +2014,35 @@ def test_species_prepare_is_provider_free_and_context_commits_only_exact_receipt
     assert final_profile["displayed_context"]["observation_id"] == pending_record["observation_id"]
 
 
+def test_species_presentation_rotates_full_pool_without_repeat_until_round_exhausted(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    settings = bound_species_settings()
+    _warm_species_bank(tmp_path, count=5)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: pytest.fail("presentation opened HTTP"))
+
+    displayed = []
+    for index in range(5):
+        request_id = f"{index + 1:032x}"
+        plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=species_request(request_id),
+            resolved_theme_context=species_theme("day"),
+        )
+        state = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+        profile = _species_profile(state)
+        pending = profile["pending_selection"]
+        pending_record = next(
+            record
+            for record in profile["records"]
+            if record["record_key"] == pending["record_key"]
+        )
+        displayed.append(pending_record["observation_id"])
+        plugin.reconcile_presentation_receipt(settings, species_receipt(request_id))
+
+    assert len(set(displayed)) == 5
+
+
 def test_species_banked_page_restores_cached_related_names_and_thumbnails(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     bank, document, profile, current = _warm_species_bank(tmp_path, count=1)
@@ -2105,13 +2134,13 @@ def test_species_cached_name_prefers_real_chinese_over_non_cjk_zh_label(tmp_path
     assert observation["display_name"] == "白头鹎"
 
 
-def test_species_related_thumbnail_prefetch_uses_small_inaturalist_images(tmp_path, monkeypatch):
+def test_species_related_thumbnail_prefetch_uses_medium_inaturalist_images(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     observations = [bank_observation(index) for index in range(1, 6)]
     for observation in observations:
         observation["image_url"] = observation["image_url"].replace("medium.jpg", "original.jpg")
     payload = BytesIO()
-    Image.new("RGB", (240, 180), "teal").save(payload, "JPEG")
+    Image.new("RGB", (640, 480), "teal").save(payload, "JPEG")
     requested = []
 
     def download(url, **kwargs):
@@ -2127,9 +2156,41 @@ def test_species_related_thumbnail_prefetch_uses_small_inaturalist_images(tmp_pa
     )
 
     assert len(requested) == 4
-    assert all(url.endswith("/small.jpg") for url, _kwargs in requested)
+    assert all(url.endswith("/medium.jpg") for url, _kwargs in requested)
     assert all(kwargs["max_bytes"] <= 2 * 1024 * 1024 for _url, kwargs in requested)
     assert all(plugin._open_cached_photo(plugin._photo_cache_file(item["image_url"])) is not None for item in observations[1:])
+
+
+def test_species_cached_related_media_refills_full_display_rotation_pool(tmp_path):
+    plugin = make_plugin(tmp_path)
+    bank = _make_species_bank(tmp_path)
+    document, profile = bank.load_for_data()
+    observations = [bank_observation(index) for index in range(1, 6)]
+    primary = bank.ingest(
+        profile,
+        observations[0],
+        Image.new("RGB", (800, 480), "navy"),
+        Image.new("RGB", (220, 90), "green"),
+    )
+    for index, observation in enumerate(observations[1:], start=2):
+        cache_file = plugin._photo_cache_file(observation["image_url"])
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (640, 480), (index * 25, 80, 120)).save(cache_file, "PNG")
+
+    added = plugin._ingest_related_cached_records(
+        bank,
+        profile,
+        observations,
+        existing={primary["observation_id"]},
+        deadline=time.monotonic() + 30,
+    )
+    bank.save(document)
+
+    ready = bank.ready_records(profile, prune=False)
+    assert len(added) == 4
+    assert len(ready) == 5
+    assert len({record["observation_id"] for record in ready}) == 5
+    assert sum(record.get("map_key") is not None for record in ready) == 1
 
 
 def test_species_related_thumbnail_prefetch_is_optional_when_budget_is_exhausted(tmp_path, monkeypatch):
@@ -2310,6 +2371,14 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     photos = []
     maps = []
     monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: payload)
+    def cache_related(observations, *, excluded_identity, deadline):
+        del excluded_identity, deadline
+        for observation in observations[1:5]:
+            cache_file = plugin._photo_cache_file(observation["image_url"])
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (640, 480), "teal").save(cache_file, "PNG")
+
+    monkeypatch.setattr(plugin, "_prefetch_related_thumbnails_for_data", cache_related)
     monkeypatch.setattr(
         plugin,
         "_download_image_for_data",
@@ -2327,7 +2396,7 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     first = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     first_profile = _species_profile(first)
 
-    assert len(first_profile["records"]) == 1
+    assert len(first_profile["records"]) == 5
     assert [item["gbif_key"] for item in first_profile["related_observations"]] == [
         "1",
         "2",
@@ -2514,6 +2583,7 @@ def test_species_failed_photo_and_map_attempts_are_still_bounded(tmp_path, monke
 
     monkeypatch.setattr(plugin, "_download_image_for_data", fail_photo)
     monkeypatch.setattr(plugin, "_load_map_for_data", fail_map)
+    monkeypatch.setattr(plugin, "_prefetch_related_thumbnails_for_data", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_render_page", lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"))
 
     with pytest.raises(RuntimeError, match="bank|unavailable"):
