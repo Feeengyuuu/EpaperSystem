@@ -164,6 +164,29 @@ def _minimal_png(width, height):
     )
 
 
+def test_triptych_selection_falls_back_to_one_portrait_when_bank_is_partial():
+    plugin = make_plugin("partial-triptych-bank")
+    settings = bind_presentation_instance_identity(
+        {"fitMode": "triptych", "sourceMode": "all_archive", "maxPage": 0},
+        "partial-triptych-instance",
+    )
+    bank = plugin._presentation_bank(settings, DeviceConfig().get_resolution())
+    ready = [
+        {
+            "media_key": f"portrait-{index}",
+            "page_url": f"https://example.com/poster-{index}",
+            "image_url": f"https://example.com/poster-{index}.jpg",
+            "width": 200,
+            "height": 400,
+        }
+        for index in range(2)
+    ]
+
+    selection = bank.choose_selection({}, ready, "triptych", set(), set())
+
+    assert selection["media_keys"] in (["portrait-0"], ["portrait-1"])
+
+
 def test_data_hydrates_bank_without_consuming_discard_or_last_displayed_state(monkeypatch):
     plugin = make_plugin("data-bank")
     legacy = {

@@ -312,7 +312,10 @@ class PosterPresentationBank:
                         "media_keys": [item["media_key"] for item in portraits],
                         "request_id": None,
                     }
-            raise RuntimeError("BacktotheDate bank has fewer than three portrait posters")
+            return {
+                "media_keys": [portraits[0]["media_key"]],
+                "request_id": None,
+            }
 
         return {"media_keys": [candidates[0]["media_key"]], "request_id": None}
 
