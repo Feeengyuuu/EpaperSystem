@@ -111,7 +111,7 @@ def choose_refresh_candidate(
 ) -> AdmissionDecision:
     """Admit at most one deterministically ordered refresh candidate."""
     data = sorted(data_candidates, key=_candidate_order)
-    auxiliary = sorted(auxiliary_candidates, key=_candidate_order)
+    auxiliary = _order_auxiliary_candidates(auxiliary_candidates)
     data_by_instance_uuid = {
         candidate.instance.instance_uuid: candidate for candidate in data
     }
@@ -144,11 +144,8 @@ def choose_refresh_candidate(
             urgent_presentation.append(candidate)
         filtered_auxiliary.append(candidate)
     auxiliary = sorted(
-        filtered_auxiliary,
-        key=lambda candidate: (
-            candidate.lane is not RefreshLane.LIVE,
-            _candidate_order(candidate),
-        ),
+        _order_auxiliary_candidates(filtered_auxiliary),
+        key=lambda candidate: candidate.lane is not RefreshLane.LIVE,
     )
     live = [candidate for candidate in auxiliary if candidate.lane is RefreshLane.LIVE]
 
@@ -521,6 +518,42 @@ def _candidate_order(candidate: DueCandidate):
         last_attempt,
         candidate.instance.instance_uuid,
     )
+
+
+def _presentation_candidate_order(candidate: DueCandidate):
+    due_since = _instant_key(candidate.due_since)
+    last_attempt = (
+        due_since
+        if candidate.last_attempt_at is None
+        else _instant_key(candidate.last_attempt_at)
+    )
+    return (
+        candidate.last_attempt_at is not None,
+        last_attempt,
+        due_since,
+        candidate.instance.instance_uuid,
+    )
+
+
+def _order_auxiliary_candidates(candidates):
+    """Keep lane ordering while making presentation retries round-robin fair."""
+    ordered = sorted(candidates, key=_candidate_order)
+    presentations = iter(
+        sorted(
+            (
+                candidate
+                for candidate in ordered
+                if candidate.lane is RefreshLane.PRESENTATION
+            ),
+            key=_presentation_candidate_order,
+        )
+    )
+    return [
+        next(presentations)
+        if candidate.lane is RefreshLane.PRESENTATION
+        else candidate
+        for candidate in ordered
+    ]
 
 
 def _soft_spacing_elapsed(

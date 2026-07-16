@@ -1215,6 +1215,35 @@ def test_equal_due_candidates_order_by_last_attempt_then_uuid():
     assert uuid_tiebreak.candidate.instance.instance_uuid == "uuid-a"
 
 
+def test_presentation_candidate_never_attempted_beats_older_failed_request():
+    """A retrying old request must not starve a newer display request."""
+    failed_old_request = _candidate(
+        "failed-old",
+        lane=RefreshLane.PRESENTATION,
+        reason=DueReason.PRESENTATION,
+        due_since=datetime(2026, 7, 11, 8, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 11, 11, 55, tzinfo=UTC),
+    )
+    waiting_new_request = _candidate(
+        "waiting-new",
+        lane=RefreshLane.PRESENTATION,
+        reason=DueReason.PRESENTATION,
+        due_since=datetime(2026, 7, 11, 11, 50, tzinfo=UTC),
+        last_attempt_at=None,
+    )
+
+    decision = choose_refresh_candidate(
+        [],
+        [failed_old_request, waiting_new_request],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == waiting_new_request
+
+
 def test_data_candidates_order_bootstrap_before_due_since():
     old_interval = _candidate(
         "old-interval",
