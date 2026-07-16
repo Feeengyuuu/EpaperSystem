@@ -345,15 +345,24 @@ def evaluate_presentation_due(
     ):
         return DueEvaluation(None)
 
+    due_since = _parse_lane_time(request.requested_at, now)
+    if due_since is None:
+        return DueEvaluation(None)
+    recorded_last_attempt = _parse_lane_time(lane.last_attempt_at, now)
+    attempted_current_request = (
+        recorded_last_attempt is not None
+        and _instant_key(recorded_last_attempt) >= _instant_key(due_since)
+    )
+    last_attempt = recorded_last_attempt if attempted_current_request else None
     next_retry = _parse_lane_time(lane.next_retry_at, now)
     if (
         next_retry is not None
         and _instant_key(next_retry) > _instant_key(now)
+        and (
+            recorded_last_attempt is None
+            or attempted_current_request
+        )
     ):
-        return DueEvaluation(None)
-
-    due_since = _parse_lane_time(request.requested_at, now)
-    if due_since is None:
         return DueEvaluation(None)
     return DueEvaluation(
         DueCandidate(
@@ -361,7 +370,7 @@ def evaluate_presentation_due(
             lane=RefreshLane.PRESENTATION,
             due_since=due_since,
             reason=DueReason.PRESENTATION,
-            last_attempt_at=_parse_lane_time(lane.last_attempt_at, now),
+            last_attempt_at=last_attempt,
         )
     )
 

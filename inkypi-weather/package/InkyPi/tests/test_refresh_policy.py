@@ -655,6 +655,32 @@ def test_presentation_due_requires_cache_request_revision_and_retry_deadline():
     assert all(result.candidate is None for result in not_due)
 
 
+def test_presentation_due_ignores_attempt_from_before_current_request():
+    now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    requested_at = datetime(2026, 7, 11, 11, 30, tzinfo=UTC)
+    old_request_attempt = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+
+    due = refresh_policy.evaluate_presentation_due(
+        _instance(),
+        InstanceRuntimeState(
+            presentation=_lane(
+                attempt=old_request_attempt,
+                retry=now + timedelta(minutes=5),
+            ),
+            presentation_request=_presentation_request(
+                requested_at=requested_at
+            ),
+        ),
+        has_displayable_cache=True,
+        resolved_theme_mode="day",
+        now=now,
+    )
+
+    assert due.candidate is not None
+    assert due.candidate.due_since == requested_at
+    assert due.candidate.last_attempt_at is None
+
+
 def test_prepared_request_is_not_renderer_due_until_displayed():
     now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
     requested_at = datetime(2026, 7, 11, 11, 0, tzinfo=UTC)
