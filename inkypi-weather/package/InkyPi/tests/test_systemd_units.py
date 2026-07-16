@@ -50,6 +50,27 @@ def test_main_unit_is_unprivileged_and_hardened():
     assert unit["Service"]["CapabilityBoundingSet"] == "CAP_NET_BIND_SERVICE"
 
 
+def test_updates_repair_runtime_env_without_persistent_root_service_hook():
+    source = (INSTALL_ROOT / "inkypi.service").read_text(encoding="utf-8")
+    helper_path = INSTALL_ROOT / "repair_env_permissions.py"
+    helper = helper_path.read_text(encoding="utf-8")
+    bootstrap = (INSTALL_ROOT / "bootstrap_admin.py").read_text(encoding="utf-8")
+
+    assert "ExecStartPre=+" not in source
+    assert "repair_env_permissions.py" not in source
+    assert "from repair_env_permissions import repair_runtime_env_permissions" in bootstrap
+    assert 'if args.command == "ensure-bootstrap" and os.name != "nt":' in bootstrap
+    assert "repair_runtime_env_permissions()" in bootstrap
+    assert "os.O_NOFOLLOW" in helper
+    assert "os.O_DIRECTORY" in helper
+    assert "dir_fd=directory_fd" in helper
+    assert "stat.S_ISREG" in helper
+    assert "os.fchown(" in helper
+    assert "os.fchmod(" in helper
+    assert "os.chown(" not in helper
+    assert "os.chmod(" not in helper
+
+
 def test_privileged_socket_is_root_owned_and_group_bounded():
     socket_unit = _parse_unit(
         INSTALL_ROOT / "privileged" / "inkypi-privileged.socket"

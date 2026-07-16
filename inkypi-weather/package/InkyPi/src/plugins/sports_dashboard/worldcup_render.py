@@ -82,6 +82,14 @@ class WorldCupRenderMixin:
         )
         if recent_rows:
             recent_y = max(upcoming_used_bottom + 1, content_bottom - 53)
+            self._draw_worldcup_pitch_strip_in_gap(
+                image,
+                draw,
+                right_x1,
+                right_x2,
+                upcoming_used_bottom + 1,
+                recent_y - 1,
+            )
             self._draw_worldcup_recent_rows(
                 image,
                 draw,
@@ -710,6 +718,29 @@ class WorldCupRenderMixin:
         if tla:
             return tla
         return team[:5] if team else "TBD"
+
+    def _draw_worldcup_pitch_strip_in_gap(self, image, draw, x1, x2, gap_top, gap_bottom):
+        x1 = int(x1)
+        x2 = int(x2)
+        gap_top = int(gap_top)
+        gap_bottom = int(gap_bottom)
+        strip_width = 248
+        strip_height = 13
+        available_width = x2 - x1 + 1
+        available_height = gap_bottom - gap_top + 1
+        if available_width < strip_width or available_height < strip_height:
+            return False
+        strip_x1 = x1 + (available_width - strip_width) // 2
+        strip_y1 = gap_top + (available_height - strip_height) // 2
+        self._draw_worldcup_pitch_strip(
+            image,
+            draw,
+            strip_x1,
+            strip_y1,
+            strip_x1 + strip_width - 1,
+            strip_y1 + strip_height - 1,
+        )
+        return True
 
     def _draw_worldcup_pitch_strip(self, image, draw, x1, y1, x2, y2):
         x1 = int(x1)

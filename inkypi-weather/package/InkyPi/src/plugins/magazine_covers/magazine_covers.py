@@ -526,7 +526,7 @@ class MagazineCovers(BasePlugin):
                 ) % len(sources)
                 if record is not None:
                     existing_fresh_sources.add(record["source_id"])
-                    if provider_record is record:
+                    if provider_record is record and not record.get("_content_duplicate"):
                         live_record_keys.add(record["record_key"])
                     ready = bank.ready_records(profile, prune=True, now=now)
             profile["library_last_attempt_at"] = now.isoformat()
@@ -1412,7 +1412,61 @@ class MagazineCovers(BasePlugin):
             score += 18
         if width >= 700 or height >= 700:
             score += 14
+        issue_date = self._candidate_issue_date(candidate)
+        if issue_date is not None:
+            age_days = (self._now_utc().date() - issue_date.date()).days
+            if age_days > 730:
+                score -= 240
+            elif age_days > 365:
+                score -= 180
+            elif age_days > 180:
+                score -= 120
+            elif age_days > 90:
+                score -= 45
+            elif age_days >= -45:
+                score += max(-45, 45 - (2 * max(age_days, 0)))
         return score
+
+    def _candidate_issue_date(self, candidate):
+        alt = str(candidate.get("alt", ""))
+        catalog_mdy = "edition" in alt.lower()
+        for text in (alt, candidate.get("url", "")):
+            for match in re.finditer(
+                r"(?<!\d)(\d{2,4})[._/-](\d{1,2})[._/-](\d{2,4})(?!\d)",
+                str(text),
+            ):
+                first, second, third = match.groups()
+                parsed = self._unambiguous_issue_date(
+                    first,
+                    second,
+                    third,
+                    allow_catalog_mdy=catalog_mdy,
+                )
+                if parsed is not None:
+                    return parsed
+        return None
+
+    @staticmethod
+    def _unambiguous_issue_date(first, second, third, *, allow_catalog_mdy=False):
+        values = [int(first), int(second), int(third)]
+        year = month = day = None
+        if len(first) == 4:
+            year, month, day = values
+        elif len(third) == 4:
+            month, day, year = values
+        elif len(first) == 2 and len(third) == 2:
+            if values[0] > 12:
+                year, month, day = 2000 + values[0], values[1], values[2]
+            elif values[1] > 12:
+                month, day, year = values[0], values[1], 2000 + values[2]
+            elif allow_catalog_mdy:
+                month, day, year = values[0], values[1], 2000 + values[2]
+        if year is None:
+            return None
+        try:
+            return datetime(year, month, day, tzinfo=timezone.utc)
+        except ValueError:
+            return None
 
     def _download_candidate_image(self, candidate, dimensions, deadline=None):
         if deadline is None:

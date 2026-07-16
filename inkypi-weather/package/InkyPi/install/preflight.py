@@ -28,6 +28,7 @@ REQUIRED_RELEASE_PATHS = (
     "install/inkypi.service",
     "install/inkypi",
     "install/inkypi-update",
+    "install/repair_env_permissions.py",
     "install/bootstrap_admin.py",
     "install/requirements.txt",
     "cli/inkypi-plugin",

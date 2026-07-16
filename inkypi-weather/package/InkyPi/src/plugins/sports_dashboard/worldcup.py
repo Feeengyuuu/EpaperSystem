@@ -1096,14 +1096,11 @@ class WorldCupMixin:
             key_names = (
                 "worldCupOddsApiIoKey",
                 "oddsApiIoKey",
-                "worldCupOddsApiKey",
-                "oddsApiKey",
-                "theOddsApiKey",
             )
             env_names = (
                 "WORLD_CUP_ODDS_API_IO_KEY",
-                "Odds_API_IO_KEY",
                 "ODDS_API_IO_KEY",
+                "Odds_API_IO_KEY",
                 "ODDSAPI_IO_KEY",
                 "worldCupOddsApiIoKey",
                 "oddsApiIoKey",
@@ -1151,8 +1148,8 @@ class WorldCupMixin:
                     return True
         env_names = (
             "WORLD_CUP_ODDS_API_IO_KEY",
-            "Odds_API_IO_KEY",
             "ODDS_API_IO_KEY",
+            "Odds_API_IO_KEY",
             "ODDSAPI_IO_KEY",
             "worldCupOddsApiIoKey",
             "oddsApiIoKey",
@@ -2319,7 +2316,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
 
 
 

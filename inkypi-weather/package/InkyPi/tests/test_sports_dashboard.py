@@ -2064,6 +2064,68 @@ def test_select_ewc_events_prioritizes_and_rotates_live_matches():
     assert selected_second["main_match"]["team_a"] == "FNATIC"
 
 
+def test_select_ewc_events_prioritizes_lol_when_other_game_is_also_live():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 17, 12, 0, tzinfo=la)
+
+    def live_match(slug, game, event_id, team_a):
+        return {
+            "kind": "match",
+            "event_id": event_id,
+            "match_id": event_id,
+            "slug": slug,
+            "game": game,
+            "start": now - timedelta(minutes=20),
+            "end": now + timedelta(hours=2),
+            "status": "LIVE",
+            "stage": "Group Stage",
+            "team_a": team_a,
+            "team_b": "Opponent",
+        }
+
+    lol = live_match("league-of-legends", "League of Legends", "lol-live", "T1")
+    dota = live_match("dota2", "Dota 2", "dota-live", "Liquid")
+
+    for seed in range(6):
+        selected = SportsDashboard._select_ewc_events([dota, lol], now, 21, rotation_seed=seed)
+        assert selected["selected_match_group"]["slug"] == "league-of-legends"
+        assert selected["main_match"]["event_id"] == "lol-live"
+        assert [item["event_id"] for item in selected["live_matches"]] == ["lol-live"]
+        assert {item["event_id"] for item in selected["all_live_matches"]} == {"lol-live", "dota-live"}
+
+
+def test_select_ewc_events_rotates_multiple_lol_matches_while_other_game_is_live():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 17, 12, 0, tzinfo=la)
+
+    def live_match(slug, game, event_id, team_a):
+        return {
+            "kind": "match",
+            "event_id": event_id,
+            "match_id": event_id,
+            "slug": slug,
+            "game": game,
+            "start": now - timedelta(minutes=20),
+            "end": now + timedelta(hours=2),
+            "status": "LIVE",
+            "stage": "Group Stage",
+            "team_a": team_a,
+            "team_b": "Opponent",
+        }
+
+    lol_first = live_match("league-of-legends", "League of Legends", "lol-live-1", "T1")
+    lol_second = live_match("league-of-legends", "League of Legends", "lol-live-2", "G2")
+    dota = live_match("dota2", "Dota 2", "dota-live", "Liquid")
+
+    first = SportsDashboard._select_ewc_events([dota, lol_first, lol_second], now, 21, rotation_seed=0)
+    second = SportsDashboard._select_ewc_events([dota, lol_first, lol_second], now, 21, rotation_seed=1)
+
+    assert first["selected_match_group"]["slug"] == "league-of-legends"
+    assert second["selected_match_group"]["slug"] == "league-of-legends"
+    assert {first["main_match"]["event_id"], second["main_match"]["event_id"]} == {"lol-live-1", "lol-live-2"}
+    assert {item["event_id"] for item in first["all_live_matches"]} == {"lol-live-1", "lol-live-2", "dota-live"}
+
+
 def test_select_ewc_events_uses_next_match_and_rotates_same_start_time():
     la = ZoneInfo("America/Los_Angeles")
     matches = SportsDashboard._parse_ewc_detail_schedule_html(
@@ -2664,6 +2726,119 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
     )
     assert choice["kind"] == "lol"
     assert choice["choice"]["league_key"] == "LPL"
+
+
+def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            {
+                "event_id": "ewc-lol",
+                "game": "League of Legends",
+                "start": now + timedelta(days=1),
+                "end": now + timedelta(days=4),
+                "status": "UPCOMING",
+            }
+        ],
+        now,
+        upcoming_window_days=21,
+    )
+    lpl_selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(days=3),
+                "state": "unstarted",
+                "team_a": "BLG",
+                "team_b": "TES",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "wins_a": None,
+                "wins_b": None,
+                "best_of": 3,
+                "block": "Split 3",
+            }
+        ],
+        now,
+    )
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": lpl_selected,
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={"selected": ewc_selected, "source_state": "EWC LIVE", "priority": 2},
+    )
+
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main"]["game"] == "League of Legends"
+
+
+def test_right_sidebar_uses_global_earliest_ewc_match_not_rotated_later_game():
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    def ewc_match(event_id, slug, game, start):
+        return {
+            "kind": "match",
+            "event_id": event_id,
+            "match_id": event_id,
+            "slug": slug,
+            "game": game,
+            "start": start,
+            "end": start + timedelta(hours=3),
+            "status": "UPCOMING",
+            "team_a": f"{game} Team A",
+            "team_b": f"{game} Team B",
+            "stage": "Group Stage",
+        }
+
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            ewc_match("lol-0717", "league-of-legends", "League of Legends", now + timedelta(days=1)),
+            ewc_match("dota-0720", "dota2", "Dota 2", now + timedelta(days=4)),
+        ],
+        now,
+        upcoming_window_days=21,
+        rotation_seed=1,
+    )
+    assert ewc_selected["main"]["game"] == "Dota 2"
+    assert ewc_selected["all_upcoming_matches"][0]["game"] == "League of Legends"
+
+    lpl_selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(days=2),
+                "state": "unstarted",
+                "team_a": "BLG",
+                "team_b": "TES",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "wins_a": None,
+                "wins_b": None,
+                "best_of": 3,
+                "block": "Split 3",
+            }
+        ],
+        now,
+    )
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [{"league_key": "LPL", "selected": lpl_selected, "source_state": "LIVE DATA", "priority": 0}],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={"selected": ewc_selected, "source_state": "EWC LIVE", "priority": 2},
+    )
+
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main"]["event_id"] == "lol-0717"
+    assert choice["selected"]["selected_match_group"]["slug"] == "league-of-legends"
 
 
 def test_right_sidebar_uses_ewc_next_match_when_no_live_right_competition():
@@ -12733,6 +12908,67 @@ def test_worldcup_compact_panel_draws_recent_section_in_bottom_gap(monkeypatch):
     assert image.getpixel((calls[0]["x1"] + 4, calls[0]["y"] + 5)) == COLORS["worldcup_accent"]
 
 
+def test_worldcup_compact_panel_places_pitch_strip_between_upcoming_and_recent(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 6, 12, 20, 0, tzinfo=timezone.utc)
+
+    def event(day, state, team_a, team_b, wins_a=None, wins_b=None):
+        return {
+            "start": datetime(2026, 6, day, 19, 0, tzinfo=timezone.utc),
+            "state": state,
+            "status": state,
+            "team_a": team_a,
+            "team_b": team_b,
+            "team_a_tla": team_a[:3].upper(),
+            "team_b_tla": team_b[:3].upper(),
+            "team_a_flag": "",
+            "team_b_flag": "",
+            "wins_a": wins_a,
+            "wins_b": wins_b,
+            "block": "Group Stage",
+        }
+
+    main = event(13, "TIMED", "USA", "Mexico")
+    second = event(14, "TIMED", "Brazil", "Morocco")
+    recent = event(11, "FT", "Mexico", "South Africa", 2, 1)
+    selected = {
+        "live": [],
+        "upcoming": [main, second],
+        "recent": [recent],
+        "main": main,
+        "visible_matches": 4,
+    }
+    upcoming_bottoms = []
+    recent_tops = []
+    pitch_boxes = []
+    original_mini = plugin._draw_worldcup_mini_rows
+    original_recent = plugin._draw_worldcup_recent_rows
+
+    def record_mini(*args, **kwargs):
+        bottom = original_mini(*args, **kwargs)
+        upcoming_bottoms.append(bottom)
+        return bottom
+
+    def record_recent(image, draw, x1, x2, y, bottom, events):
+        recent_tops.append(y)
+        return original_recent(image, draw, x1, x2, y, bottom, events)
+
+    monkeypatch.setattr(plugin, "_draw_worldcup_mini_rows", record_mini)
+    monkeypatch.setattr(plugin, "_draw_worldcup_recent_rows", record_recent)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_worldcup_pitch_strip",
+        lambda _image, _draw, x1, y1, x2, y2: pitch_boxes.append((x1, y1, x2, y2)),
+    )
+
+    plugin._render_worldcup_api_panel((556, 208), selected, "FOOTBALL LIVE", now, 4, now)
+
+    assert recent_tops == [146]
+    assert len(pitch_boxes) == 1
+    x1, y1, x2, y2 = pitch_boxes[0]
+    assert (x2 - x1 + 1, y2 - y1 + 1) == (248, 13)
+    assert upcoming_bottoms[0] < y1 <= y2 < recent_tops[0]
+
 def test_worldcup_api_parser_converts_fixture_to_local_match_row():
     la = ZoneInfo("America/Los_Angeles")
 
@@ -12916,6 +13152,24 @@ def test_worldcup_formation_pair_includes_team_labels():
     assert pair == ("USA 4-3-3", "3-4-2-1 NED")
 
 
+def test_worldcup_pitch_strip_gap_uses_native_size_and_omits_tight_gaps(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (556, 208), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+
+    monkeypatch.setattr(
+        plugin,
+        "_draw_worldcup_pitch_strip",
+        lambda _image, _draw, x1, y1, x2, y2: calls.append((x1, y1, x2, y2)),
+    )
+
+    assert plugin._draw_worldcup_pitch_strip_in_gap(image, draw, 282, 543, 112, 145) is True
+    assert calls == [(289, 122, 536, 134)]
+
+    assert plugin._draw_worldcup_pitch_strip_in_gap(image, draw, 282, 543, 140, 145) is False
+    assert calls == [(289, 122, 536, 134)]
+
 def test_worldcup_tactics_strip_draws_pitch_when_lineups_missing():
     plugin = _plugin()
     assert Path(LOCAL_WORLDCUP_PITCH_STRIP_PATH).exists()
@@ -13006,15 +13260,35 @@ def test_worldcup_the_odds_api_provider_does_not_reuse_odds_api_io_key():
     assert SportsDashboard._worldcup_odds_api_key({}, device_config, "theoddsapi") == ""
 
 
-def test_odds_api_io_live_alias_takes_priority_over_old_uppercase_key():
+def test_odds_api_io_canonical_key_takes_priority_over_legacy_alias():
     device_config = FakeDeviceConfig()
-    device_config.env["ODDS_API_IO_KEY"] = "old-secret"
-    device_config.env["Odds_API_IO_KEY"] = "new-secret"
+    device_config.env["ODDS_API_IO_KEY"] = "new-secret"
+    device_config.env["Odds_API_IO_KEY"] = "old-secret"
 
     assert SportsDashboard._worldcup_odds_provider({}, device_config) == "oddsapiio"
     assert SportsDashboard._worldcup_odds_api_key({}, device_config, "oddsapiio") == "new-secret"
     assert SportsDashboard._nba_odds_api_key({}, device_config, "oddsapiio") == "new-secret"
     assert SportsDashboard._lpl_odds_api_key({}, device_config) == "new-secret"
+
+
+def test_odds_provider_keys_do_not_cross_wire_when_both_are_configured():
+    device_config = FakeDeviceConfig()
+    device_config.env["THE_ODDS_API_KEY"] = "the-odds-secret"
+    device_config.env["ODDS_API_IO_KEY"] = "odds-api-io-secret"
+
+    assert SportsDashboard._the_odds_api_key({}, device_config) == "the-odds-secret"
+    assert SportsDashboard._worldcup_odds_api_key({}, device_config, "theoddsapi") == "the-odds-secret"
+    assert SportsDashboard._worldcup_odds_api_key({}, device_config, "oddsapiio") == "odds-api-io-secret"
+    assert SportsDashboard._nba_odds_api_key({}, device_config, "theoddsapi") == "the-odds-secret"
+    assert SportsDashboard._nba_odds_api_key({}, device_config, "oddsapiio") == "odds-api-io-secret"
+    assert SportsDashboard._lpl_odds_api_key({}, device_config) == "odds-api-io-secret"
+
+
+def test_lpl_odds_api_io_key_never_falls_back_to_the_odds_api_key():
+    device_config = FakeDeviceConfig()
+    device_config.env["THE_ODDS_API_KEY"] = "wrong-provider-secret"
+
+    assert SportsDashboard._lpl_odds_api_key({}, device_config) == ""
 
 
 def test_odds_api_io_legacy_league_slugs_map_to_current_feed_slugs():
@@ -14604,6 +14878,156 @@ def _sample_valve_csapi_major_payload():
             "team2": {"name": "Team B", "score": 1},
         },
     ]
+
+
+def test_hltv_major_event_parser_selects_latest_started_main_event():
+    html = """
+    <a href="/events/8302/pgl-singapore-major-2026" class="a-reset standard-box big-event">
+      <div class="big-event-name">PGL Singapore Major 2026</div>
+      <span data-unix="1795518000000">Nov 24th</span>
+      <span data-unix="1797159600000">Dec 13th</span>
+    </a>
+    <a href="/events/8301/iem-cologne-major-2026" class="a-reset small-event standard-box">
+      <div class="text-ellipsis">IEM Cologne Major 2026</div>
+      <span data-unix="1781172000000">Jun 11th</span>
+      <span data-unix="1782036000000">Jun 21st</span>
+    </a>
+    <a href="/events/9029/iem-cologne-major-2026-stage-2" class="a-reset small-event standard-box">
+      <div class="text-ellipsis">IEM Cologne Major 2026 Stage 2</div>
+      <span data-unix="1780740000000">Jun 6th</span>
+      <span data-unix="1780999200000">Jun 9th</span>
+    </a>
+    """
+
+    events = SportsDashboard._parse_hltv_major_events(html)
+    selected = SportsDashboard._select_hltv_major_event(
+        events,
+        datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert [event["event_id"] for event in events] == ["8302", "8301"]
+    assert selected["event_id"] == "8301"
+    assert selected["event_name"] == "IEM Cologne Major 2026"
+
+
+def test_hltv_major_results_parser_normalizes_payload_for_existing_cs_parser():
+    html = """
+    <div class="result-con" data-zonedgrouping-entry-unix="1782065159000">
+      <a href="/matches/2395002/furia-vs-falcons-iem-cologne-major-2026" class="a-reset">
+        <div class="result"><table><tr>
+          <td class="team-cell"><div class="line-align team1">
+            <div class="team">FURIA</div><img class="team-logo" src="https://img.example/furia.svg">
+          </div></td>
+          <td class="result-score"><span class="score-lost">0</span> - <span class="score-won">3</span></td>
+          <td class="team-cell"><div class="line-align team2">
+            <img class="team-logo" src="https://img.example/falcons.png"><div class="team team-won">Falcons</div>
+          </div></td>
+          <td><div class="map map-text">bo5</div></td>
+        </tr></table></div>
+      </a>
+    </div>
+    """
+
+    matches = SportsDashboard._parse_hltv_major_results(
+        html,
+        {"event_id": "8301", "event_name": "IEM Cologne Major 2026"},
+    )
+
+    assert matches == [
+        {
+            "id": 2395002,
+            "event": "IEM Cologne Major 2026",
+            "date": "2026-06-21",
+            "best_of": 5,
+            "source": "HLTV",
+            "team1": {
+                "name": "FURIA",
+                "score": 0,
+                "logo_url": "https://img.example/furia.svg",
+            },
+            "team2": {
+                "name": "Falcons",
+                "score": 3,
+                "logo_url": "https://img.example/falcons.png",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize("failure_kind", ["tls", "http_500"])
+def test_valve_csapi_fetch_uses_hltv_fallback_without_disabling_tls(monkeypatch, failure_kind):
+    plugin = _plugin()
+    calls = []
+
+    class FailedResponse:
+        def raise_for_status(self):
+            raise RuntimeError("500 Server Error")
+
+    class FailedSession:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if failure_kind == "tls":
+                raise RuntimeError("certificate verify failed: certificate has expired")
+            return FailedResponse()
+
+    fallback_matches = _sample_valve_csapi_major_payload()
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FailedSession())
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_hltv_major_matches",
+        lambda _session, _settings, _now: fallback_matches,
+    )
+
+    payload = plugin._fetch_valve_csapi_payload(
+        {},
+        "cache-key",
+        datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert payload["provider"] == "hltv"
+    assert payload["matches"] == fallback_matches
+    assert calls[0][0] == "https://api.csapi.de/matches/latest"
+    assert "verify" not in calls[0][1]
+
+
+def test_valve_csapi_cache_source_state_tracks_hltv_fallback():
+    assert SportsDashboard._valve_cs_source_state({"provider": "hltv"}, "LIVE") == "HLTV LIVE"
+    assert SportsDashboard._valve_cs_source_state({"provider": "hltv"}, "CACHE") == "HLTV CACHE"
+    assert SportsDashboard._valve_cs_source_state({"provider": "csapi"}, "STALE") == "CSAPI STALE"
+
+
+def test_valve_loader_preserves_selected_hltv_freshness_state(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    card = {
+        "series": "CS",
+        "event_name": "IEM Cologne Major 2026",
+        "status": "ACTIVE",
+        "window_active": True,
+        "order": 0,
+        "main": {"start": now},
+        "source_state": "HLTV DATA",
+    }
+    monkeypatch.setattr(SportsDashboard, "_valve_dota2_preview_enabled", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_csapi_matches",
+        lambda *_args, **_kwargs: ([{"id": 1}], "HLTV CACHE", now.isoformat()),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_parse_valve_cs_major_cards",
+        lambda *_args, **_kwargs: [dict(card)],
+    )
+
+    selected, source_state = plugin._load_valve_esports(
+        {"valveEsportsOpenDotaEnabled": "false"},
+        timezone.utc,
+        now,
+    )
+
+    assert selected["primary"]["source_state"] == "HLTV CACHE"
+    assert source_state == "HLTV CACHE"
 
 
 def _sample_valve_ti_payload():

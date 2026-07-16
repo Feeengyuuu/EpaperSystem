@@ -142,8 +142,11 @@ def magazine_theme_context(mode):
     }
 
 
-def cover_for_source(source, *, color=(80, 110, 140), suffix="current"):
+def cover_for_source(source, *, color=None, suffix="current"):
     slug = source["name"].lower().replace(" ", "-")
+    if color is None:
+        digest = uuid.uuid5(uuid.NAMESPACE_URL, source["url"]).bytes
+        color = tuple(32 + value % 192 for value in digest[:3])
     return {
         "image": Image.new("RGB", (240, 420), color),
         "image_url": f"https://cdn.shopify.com/{slug}-{suffix}.jpg",
@@ -446,6 +449,164 @@ def test_mature_sources_boost_candidate_score():
     )
 
     assert score >= 150
+
+
+def test_magazine_candidate_score_downranks_unambiguously_old_issue_dates(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    )
+    source = {
+        "name": "Billboard",
+        "url": "https://magazineshop.us/collections/billboard",
+    }
+    common = {
+        "class": "product-card magazine-cover",
+        "id": "",
+        "width": "800",
+        "height": "1100",
+    }
+
+    recent = plugin._candidate_score(
+        source,
+        {
+            **common,
+            "url": "https://cdn.shopify.com/billboard-06.22.26-cover.jpg",
+            "alt": "Billboard 06.22.26 Edition magazine cover",
+        },
+    )
+    old = plugin._candidate_score(
+        source,
+        {
+            **common,
+            "url": "https://cdn.shopify.com/billboard-25.08.30-cover.jpg",
+            "alt": "Billboard 25.08.30 Edition magazine cover",
+        },
+    )
+
+    assert old <= recent - 100
+
+
+def test_magazine_candidate_score_prefers_newer_reliable_issue_within_sixty_days(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    )
+    source = {
+        "name": "TIME",
+        "url": "https://magazineshop.us/collections/time",
+    }
+    common = {
+        "class": "product-card magazine-cover",
+        "id": "",
+        "width": "800",
+        "height": "1100",
+    }
+
+    july = plugin._candidate_score(
+        source,
+        {
+            **common,
+            "url": "https://cdn.shopify.com/time-07.06.26-cover.jpg",
+            "alt": "TIME 07.06.26 Edition magazine cover",
+        },
+    )
+    june = plugin._candidate_score(
+        source,
+        {
+            **common,
+            "url": "https://cdn.shopify.com/time-06.22.26-cover.jpg",
+            "alt": "TIME 06.22.26 Edition magazine cover",
+        },
+    )
+
+    assert july >= june + 20
+
+
+def test_magazine_candidate_ranking_orders_current_issues_before_old_catalog(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    )
+    source = {
+        "name": "Billboard",
+        "url": "https://magazineshop.us/collections/billboard",
+    }
+    common = {
+        "class": "product-card magazine-cover",
+        "id": "",
+        "width": "800",
+        "height": "1100",
+    }
+    parser = SimpleNamespace(
+        meta_images=[],
+        images=[
+            {
+                **common,
+                "url": "https://cdn.shopify.com/billboard-25.08.30-cover.jpg",
+                "alt": "Billboard 25.08.30 Edition magazine cover",
+            },
+            {
+                **common,
+                "url": "https://cdn.shopify.com/billboard-06.22.26-cover.jpg",
+                "alt": "Billboard 06.22.26 Edition magazine cover",
+            },
+            {
+                **common,
+                "url": "https://cdn.shopify.com/billboard-07.06.26-cover.jpg",
+                "alt": "Billboard 07.06.26 Edition magazine cover",
+            },
+        ],
+    )
+
+    ranked = plugin._rank_candidates(source, parser)
+
+    assert [candidate["url"] for candidate in ranked] == [
+        "https://cdn.shopify.com/billboard-07.06.26-cover.jpg",
+        "https://cdn.shopify.com/billboard-06.22.26-cover.jpg",
+        "https://cdn.shopify.com/billboard-25.08.30-cover.jpg",
+    ]
+
+
+def test_magazine_issue_recency_does_not_beat_large_portrait_quality(monkeypatch):
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    )
+    source = {"name": "TIME", "url": "https://magazineshop.us/collections/time"}
+
+    tiny_new = plugin._candidate_score(
+        source,
+        {
+            "url": "https://cdn.shopify.com/time-07.06.26-cover.jpg",
+            "alt": "TIME 07.06.26 Edition magazine cover",
+            "class": "product-card",
+            "id": "",
+            "width": "100",
+            "height": "140",
+        },
+    )
+    large_older = plugin._candidate_score(
+        source,
+        {
+            "url": "https://cdn.shopify.com/time-06.22.26-cover.jpg",
+            "alt": "TIME 06.22.26 Edition magazine cover",
+            "class": "product-card",
+            "id": "",
+            "width": "800",
+            "height": "1100",
+        },
+    )
+
+    assert large_older > tiny_new
 
 
 def test_custom_saved_sources_are_not_expanded_with_defaults():
@@ -795,8 +956,9 @@ def test_contain_mode_uses_plain_background_without_blur():
     assert max(fitted.getpixel((400, 40))) < 16
 
 
-def test_triptych_mode_loads_three_direct_sources_and_remembers_all(monkeypatch):
+def test_triptych_stateless_preview_loads_three_sources_without_persisting(tmp_path, monkeypatch):
     plugin = MagazineCovers({"id": "magazine_covers"})
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(tmp_path))
     sources = "Alpha|https://example.com/a\nBeta|https://example.com/b\nGamma|https://example.com/c"
     colors = {
         "Alpha": (255, 0, 0),
@@ -826,19 +988,13 @@ def test_triptych_mode_loads_three_direct_sources_and_remembers_all(monkeypatch)
         },
         DummyDeviceConfig(),
     )
-    state = plugin._read_state()
-
     assert image.size == (800, 480)
     assert {name for name, _force_refresh in calls} == {"Alpha", "Beta", "Gamma"}
     assert all(force_refresh is False for _name, force_refresh in calls)
     assert image.getpixel((133, 240)) == colors[calls[0][0]]
     assert image.getpixel((400, 240)) == colors[calls[1][0]]
     assert image.getpixel((666, 240)) == colors[calls[2][0]]
-    assert set(state["last_source_ids"]) == {
-        "Alpha|https://example.com/a",
-        "Beta|https://example.com/b",
-        "Gamma|https://example.com/c",
-    }
+    assert not plugin._state_path().exists()
 
 
 def test_daily_library_triptych_uses_three_cached_covers(monkeypatch):
@@ -1016,7 +1172,11 @@ def test_daily_library_refreshes_again_after_daily_interval(monkeypatch):
 
     def fake_load_cover(source, dimensions, force_refresh=False, deadline=None):
         calls.append((source["name"], force_refresh, current_time[0].isoformat()))
-        image = Image.new("RGB", dimensions, "white")
+        image = Image.new(
+            "RGB",
+            dimensions,
+            "red" if source["name"] == "Alpha" else "blue",
+        )
         cover = {
             "image": image,
             "image_url": f"https://example.com/{source['name'].lower()}.jpg",
@@ -1050,7 +1210,7 @@ def test_daily_library_refreshes_again_after_daily_interval(monkeypatch):
     assert calls == []
 
 
-def test_daily_library_refreshes_when_day_pool_changes(monkeypatch):
+def test_daily_library_date_rollover_keeps_warm_pool_until_refresh_interval(monkeypatch):
     plugin = MagazineCovers({"id": "magazine_covers"})
     monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(make_test_tmp_dir("daily-day-key")))
 
@@ -1064,7 +1224,11 @@ def test_daily_library_refreshes_when_day_pool_changes(monkeypatch):
     def fake_load_cover(source, dimensions, force_refresh=False, deadline=None):
         calls.append((source["name"], force_refresh, current_day[0]))
         cover = {
-            "image": Image.new("RGB", dimensions, "white"),
+            "image": Image.new(
+                "RGB",
+                dimensions,
+                "red" if source["name"] == "Alpha" else "blue",
+            ),
             "image_url": f"https://example.com/{source['name'].lower()}-{current_day[0]}.jpg",
             "page_url": source["url"],
             "title": source["name"],
@@ -1089,7 +1253,10 @@ def test_daily_library_refreshes_when_day_pool_changes(monkeypatch):
     current_time[0] += timedelta(hours=1)
     current_day[0] = "2026-06-02"
     plugin.generate_image(settings, DummyDeviceConfig())
+    assert calls == []
 
+    current_time[0] += timedelta(hours=22)
+    plugin.generate_image(settings, DummyDeviceConfig())
     assert [call[:2] for call in calls] == [("Alpha", True), ("Beta", True)]
     state = magazine_presentation_state(plugin)
     assert magazine_profile(state, "legacy-day-key")["date_key"] == "2026-06-02"
@@ -1292,6 +1459,360 @@ def test_magazine_warm_presentation_is_provider_free_and_receipt_commits_once(
     assert profile["date_buckets"]["2026-07-12"]["seen_source_ids"][-3:] == pending_ids
 
 
+def test_magazine_restart_after_date_rollover_continues_unfinished_shuffle_round(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(count=18, fitMode="triptych")
+    now = [datetime(2026, 7, 12, 23, 30, tzinfo=timezone.utc)]
+    provider_calls = []
+
+    monkeypatch.setattr(random, "shuffle", lambda _values: None)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now[0])
+    monkeypatch.setattr(
+        plugin,
+        "_presentation_date_key",
+        lambda _device: now[0].date().isoformat(),
+    )
+    monkeypatch.setattr(magazine_module, "write_context", lambda *_args, **_kwargs: None)
+
+    def load_cover(source, _dimensions, force_refresh=False, deadline=None):
+        assert force_refresh is True
+        assert deadline is not None
+        provider_calls.append(source["name"])
+        return cover_for_source(source)
+
+    monkeypatch.setattr(plugin, "_load_cover", load_cover)
+    for _index in range(3):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    first_state = magazine_presentation_state(plugin)
+    first_current_ids = magazine_selection_ids(
+        first_state,
+        magazine_profile(first_state)["current_selection"],
+    )
+    plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=magazine_request(
+            "1" * 32,
+            origin="display-day-one",
+            requested_at="2026-07-12T23:31:00+00:00",
+        ),
+        resolved_theme_context=None,
+    )
+    pending_state = magazine_presentation_state(plugin)
+    first_pending_ids = magazine_selection_ids(
+        pending_state,
+        magazine_profile(pending_state)["pending_selection"],
+    )
+    plugin.reconcile_presentation_receipt(
+        settings,
+        magazine_receipt(
+            "1" * 32,
+            display="display-day-one-prepared",
+            committed_at="2026-07-12T23:32:00+00:00",
+        ),
+    )
+    assert set(first_current_ids).isdisjoint(first_pending_ids)
+    assert len(provider_calls) == 18
+
+    restarted = make_banked_plugin(tmp_path)
+    now[0] = datetime(2026, 7, 13, 0, 5, tzinfo=timezone.utc)
+    monkeypatch.setattr(restarted, "_now_utc", lambda: now[0])
+    monkeypatch.setattr(
+        restarted,
+        "_presentation_date_key",
+        lambda _device: now[0].date().isoformat(),
+    )
+    monkeypatch.setattr(
+        restarted,
+        "_load_cover",
+        lambda *_args, **_kwargs: pytest.fail("date rollover presentation used provider"),
+    )
+
+    restarted.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=magazine_request(
+            "2" * 32,
+            origin="display-day-two",
+            requested_at="2026-07-13T00:05:00+00:00",
+        ),
+        resolved_theme_context=None,
+    )
+    second_state = magazine_presentation_state(restarted)
+    second_pending_ids = magazine_selection_ids(
+        second_state,
+        magazine_profile(second_state)["pending_selection"],
+    )
+
+    assert set(second_pending_ids).isdisjoint(first_current_ids)
+    assert set(second_pending_ids).isdisjoint(first_pending_ids)
+
+
+def test_magazine_stable_profile_migrates_existing_date_scoped_bank(tmp_path):
+    from plugins.magazine_covers import presentation_bank
+
+    state_path = tmp_path / "presentation-state.json"
+    media_dir = tmp_path / "presentation-media"
+    old_bank = presentation_bank.MagazinePresentationBank(
+        state_path,
+        media_dir,
+        fingerprint="a" * 64,
+        base_fingerprint="b" * 64,
+        profile_settings_key="c" * 64,
+        instance_uuid="instance",
+        date_key="2026-07-12",
+    )
+    document, profile = old_bank.load_for_data()
+    source = {"name": "Alpha", "url": "https://magazineshop.us/collections/alpha"}
+    record = old_bank.ingest(
+        profile,
+        source,
+        cover_for_source(source),
+        Image.new("RGB", (40, 60), "red"),
+        fetched_at="2026-07-12T23:30:00+00:00",
+    )
+    profile["current_selection"] = {
+        "record_keys": [record["record_key"]],
+        "request_id": None,
+        "date_key": "2026-07-12",
+        "layout": "single",
+        "reset_seen": False,
+    }
+    profile["records"][0].pop("content_hash")
+    profile["date_buckets"] = {
+        "2026-07-12": {"seen_source_ids": [record["source_id"]]},
+    }
+    old_bank.save(document)
+
+    stable_bank = presentation_bank.MagazinePresentationBank(
+        state_path,
+        media_dir,
+        fingerprint="d" * 64,
+        base_fingerprint="e" * 64,
+        profile_settings_key="c" * 64,
+        instance_uuid="instance",
+        date_key="2026-07-13",
+    )
+    migrated_document, migrated_profile = stable_bank.load_warm()
+
+    assert migrated_document["instance_profiles"]["instance"] == "d" * 64
+    assert "a" * 64 not in migrated_document["profiles"]
+    assert migrated_profile["date_key"] == "2026-07-13"
+    assert migrated_profile["current_selection"]["record_keys"] == [record["record_key"]]
+    migrated_record = migrated_profile["records"][0]
+    assert migrated_record["content_hash"]
+    assert migrated_profile["date_buckets"]["2026-07-12"]["seen_content_ids"] == [
+        f"content:{migrated_record['content_hash']}"
+    ]
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["instance_profiles"]["instance"] == "d" * 64
+
+
+def test_magazine_ingest_deduplicates_identical_pixels_across_changed_urls(tmp_path):
+    from plugins.magazine_covers import presentation_bank
+
+    bank = presentation_bank.MagazinePresentationBank(
+        tmp_path / "presentation-state.json",
+        tmp_path / "presentation-media",
+        fingerprint="a" * 64,
+        base_fingerprint="b" * 64,
+        profile_settings_key="c" * 64,
+        instance_uuid="instance",
+        date_key="2026-07-13",
+    )
+    _document, profile = bank.load_for_data()
+    alpha = {"name": "Alpha", "url": "https://magazineshop.us/collections/alpha"}
+    beta = {"name": "Beta", "url": "https://magazineshop.us/collections/beta"}
+    pixels = Image.new("RGB", (40, 60), "red")
+
+    first = bank.ingest(
+        profile,
+        alpha,
+        {**cover_for_source(alpha), "image_url": "https://cdn.shopify.com/alpha-v1.jpg"},
+        pixels,
+        fetched_at="2026-07-13T00:00:00+00:00",
+    )
+    duplicate = bank.ingest(
+        profile,
+        beta,
+        {**cover_for_source(beta), "image_url": "https://cdn.shopify.com/beta-v9.jpg"},
+        pixels.copy(),
+        fetched_at="2026-07-13T00:01:00+00:00",
+    )
+
+    assert duplicate["content_hash"] == first["content_hash"]
+    assert duplicate["record_key"] == first["record_key"]
+    assert len(profile["records"]) == 1
+    assert len(list(bank.media_dir.glob("*.png"))) == 1
+
+
+def test_magazine_legacy_record_backfills_hash_before_changed_url_dedup(tmp_path):
+    from plugins.magazine_covers import presentation_bank
+
+    kwargs = {
+        "fingerprint": "a" * 64,
+        "base_fingerprint": "b" * 64,
+        "profile_settings_key": "c" * 64,
+        "instance_uuid": "instance",
+        "date_key": "2026-07-13",
+    }
+    state_path = tmp_path / "presentation-state.json"
+    media_dir = tmp_path / "presentation-media"
+    bank = presentation_bank.MagazinePresentationBank(state_path, media_dir, **kwargs)
+    document, profile = bank.load_for_data()
+    alpha = {"name": "Alpha", "url": "https://magazineshop.us/collections/alpha"}
+    beta = {"name": "Beta", "url": "https://magazineshop.us/collections/beta"}
+    pixels = Image.new("RGB", (40, 60), "red")
+    bank.ingest(
+        profile,
+        alpha,
+        cover_for_source(alpha, color="red", suffix="legacy"),
+        pixels,
+        fetched_at="2026-07-13T00:00:00+00:00",
+    )
+    profile["records"][0].pop("content_hash")
+    bank.save(document)
+
+    restarted = presentation_bank.MagazinePresentationBank(state_path, media_dir, **kwargs)
+    restarted_document, restarted_profile = restarted.load_for_data()
+    duplicate = restarted.ingest(
+        restarted_profile,
+        beta,
+        cover_for_source(beta, color="red", suffix="new-url"),
+        pixels.copy(),
+        fetched_at="2026-07-13T00:01:00+00:00",
+    )
+    restarted.save(restarted_document)
+
+    assert duplicate["_content_duplicate"] is True
+    assert len(restarted_profile["records"]) == 1
+    assert restarted_profile["records"][0]["content_hash"]
+
+
+def test_magazine_legacy_duplicate_records_are_unique_within_triptych(tmp_path):
+    from plugins.magazine_covers import presentation_bank
+
+    kwargs = {
+        "fingerprint": "a" * 64,
+        "base_fingerprint": "b" * 64,
+        "profile_settings_key": "c" * 64,
+        "instance_uuid": "instance",
+        "date_key": "2026-07-13",
+    }
+    state_path = tmp_path / "presentation-state.json"
+    media_dir = tmp_path / "presentation-media"
+    bank = presentation_bank.MagazinePresentationBank(state_path, media_dir, **kwargs)
+    document, profile = bank.load_for_data()
+    sources = [
+        {"name": name, "url": f"https://magazineshop.us/collections/{name.lower()}"}
+        for name in ("Alpha", "Beta", "Gamma")
+    ]
+    records = [
+        bank.ingest(
+            profile,
+            source,
+            cover_for_source(source, color=color),
+            Image.new("RGB", (40, 60), color),
+            fetched_at="2026-07-13T00:00:00+00:00",
+        )
+        for source, color in zip(sources, ("red", "green", "blue"))
+    ]
+    alpha_payload = bank.media.get_bytes(records[0]["media_key"], suffix=".png")
+    bank.media.put_bytes(records[1]["media_key"], alpha_payload, suffix=".png")
+    for record in profile["records"]:
+        record.pop("content_hash")
+    bank.save(document)
+
+    restarted = presentation_bank.MagazinePresentationBank(state_path, media_dir, **kwargs)
+    _document, migrated = restarted.load_for_data()
+    selection = restarted.choose_selection(
+        migrated,
+        restarted.ready_records(
+            migrated,
+            prune=False,
+            now="2026-07-13T00:01:00+00:00",
+        ),
+        "triptych",
+        "sequential",
+    )
+    by_key = {record["record_key"]: record for record in migrated["records"]}
+    selected_hashes = [by_key[key]["content_hash"] for key in selection["record_keys"]]
+
+    assert len(selected_hashes) == 2
+    assert len(selected_hashes) == len(set(selected_hashes))
+
+
+def test_magazine_seen_content_does_not_block_new_cover_from_same_source(tmp_path):
+    from plugins.magazine_covers import presentation_bank
+
+    bank = presentation_bank.MagazinePresentationBank(
+        tmp_path / "presentation-state.json",
+        tmp_path / "presentation-media",
+        fingerprint="a" * 64,
+        base_fingerprint="b" * 64,
+        profile_settings_key="c" * 64,
+        instance_uuid="instance",
+        date_key="2026-07-13",
+    )
+    document, profile = bank.load_for_data()
+    time_source = {"name": "TIME", "url": "https://magazineshop.us/collections/time"}
+    other_source = {"name": "Alpha", "url": "https://magazineshop.us/collections/alpha"}
+    old_time = bank.ingest(
+        profile,
+        time_source,
+        cover_for_source(time_source, color="red", suffix="old"),
+        Image.new("RGB", (40, 60), "red"),
+        fetched_at="2026-07-13T00:00:00+00:00",
+    )
+    profile["current_selection"] = {
+        "record_keys": [old_time["record_key"]],
+        "request_id": None,
+        "date_key": "2026-07-13",
+        "layout": "single",
+        "reset_seen": False,
+    }
+    bank.apply_trusted_origin(
+        document,
+        profile,
+        magazine_request(
+            "3" * 32,
+            origin="display-old-time",
+            requested_at="2026-07-13T00:01:00+00:00",
+        ),
+    )
+    new_time = bank.ingest(
+        profile,
+        time_source,
+        cover_for_source(time_source, color="green", suffix="new"),
+        Image.new("RGB", (40, 60), "green"),
+        fetched_at="2026-07-13T00:02:00+00:00",
+    )
+    bank.ingest(
+        profile,
+        other_source,
+        cover_for_source(other_source, color="blue"),
+        Image.new("RGB", (40, 60), "blue"),
+        fetched_at="2026-07-13T00:02:00+00:00",
+    )
+
+    chosen = bank.choose_selection(
+        profile,
+        bank.ready_records(
+            profile,
+            prune=False,
+            now="2026-07-13T00:03:00+00:00",
+        ),
+        "contain",
+        "sequential",
+    )
+
+    assert chosen["record_keys"] == [new_time["record_key"]]
+
+
 def test_magazine_failed_foreign_canceled_and_replayed_receipts_are_byte_noops(
     tmp_path,
     monkeypatch,
@@ -1360,7 +1881,7 @@ def test_magazine_instances_are_isolated_and_raw_identity_spoof_is_stateless(
     assert magazine_cache_tree(tmp_path) == baseline
 
 
-def test_magazine_pending_survives_restart_theme_and_date_profile_change(
+def test_magazine_pending_survives_restart_theme_and_date_rollover(
     tmp_path,
     monkeypatch,
 ):
@@ -1391,10 +1912,15 @@ def test_magazine_pending_survives_restart_theme_and_date_profile_change(
     assert second.image.info["inkypi_theme_mode"] == "night"
 
     monkeypatch.setattr(restarted, "_presentation_date_key", lambda _device: "2026-07-13")
+    monkeypatch.setattr(
+        restarted,
+        "_now_utc",
+        lambda: datetime(2026, 7, 13, 0, 15, tzinfo=timezone.utc),
+    )
     monkeypatch.setattr(restarted, "_load_cover", lambda source, *_args, **_kwargs: cover_for_source(source, suffix="next"))
     restarted.generate_image(settings, DummyDeviceConfig())
     changed = magazine_presentation_state(restarted)
-    assert changed["instance_profiles"]["magazine-test-instance"] != old_fingerprint
+    assert changed["instance_profiles"]["magazine-test-instance"] == old_fingerprint
     assert changed["profiles"][old_fingerprint]["pending_selection"] == old_pending
     restarted.reconcile_presentation_receipt(settings, magazine_receipt("f" * 32))
     committed = magazine_presentation_state(restarted)["profiles"][old_fingerprint]

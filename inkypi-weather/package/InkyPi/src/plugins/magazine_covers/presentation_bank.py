@@ -356,11 +356,14 @@ def settings_key(settings, sources):
 
 
 def settings_fingerprint(settings, sources, dimensions, date_key):
+    # The date is presentation metadata, not a pixel-affecting setting. Keeping
+    # it out of the profile identity lets a warm shuffle round survive midnight
+    # and process restarts while freshness is still enforced per record.
+    del date_key
     return _json_hash(
         {
             "settings_key": settings_key(settings, sources),
             "dimensions": [int(dimensions[0]), int(dimensions[1])],
-            "date_key": str(date_key),
         }
     )
 
@@ -382,6 +385,28 @@ def _json_hash(payload):
         separators=(",", ":"),
     ).encode("utf-8")
     return sha256(encoded).hexdigest()
+
+
+def _record_content_id(record):
+    content_hash = record.get("content_hash")
+    if _valid_hash(content_hash):
+        return f"content:{content_hash}"
+    record_key = record.get("record_key")
+    if _valid_hash(record_key):
+        return f"record:{record_key}"
+    raise RuntimeError("Magazine cover has no stable display identity")
+
+
+def _unique_content_records(records):
+    unique = []
+    content_ids = set()
+    for record in records:
+        content_id = _record_content_id(record)
+        if content_id in content_ids:
+            continue
+        content_ids.add(content_id)
+        unique.append(record)
+    return unique
 
 
 class MagazinePresentationBank:
@@ -429,9 +454,11 @@ class MagazinePresentationBank:
         profiles = document["profiles"]
         profile = profiles.get(self.fingerprint)
         if not isinstance(profile, dict):
-            self._make_profile_room(document, required_slots=1)
-            profile = self._empty_profile(document.get("date_buckets"))
-            profiles[self.fingerprint] = profile
+            profile = self._adopt_compatible_instance_profile(document)
+            if profile is None:
+                self._make_profile_room(document, required_slots=1)
+                profile = self._empty_profile(document.get("date_buckets"))
+                profiles[self.fingerprint] = profile
         else:
             profile = self._normalize_profile(profile, document.get("date_buckets"))
             profiles[self.fingerprint] = profile
@@ -444,6 +471,9 @@ class MagazinePresentationBank:
 
     def load_warm(self):
         document = self._migrate_document(self._read_document())
+        migrated_profile = None
+        if self.fingerprint not in document["profiles"]:
+            migrated_profile = self._adopt_compatible_instance_profile(document)
         fingerprint = document["instance_profiles"].get(self.instance_uuid)
         if fingerprint != self.fingerprint:
             raise RuntimeError("Magazine presentation bank is cold for this plugin instance")
@@ -456,7 +486,10 @@ class MagazinePresentationBank:
         profile["last_used_at"] = _utc_now()
         document["profiles"][self.fingerprint] = profile
         self._make_profile_room(document, required_slots=0)
-        self._loaded_document = document
+        if migrated_profile is not None:
+            self.save(document)
+        else:
+            self._loaded_document = document
         return document, profile
 
     def load_receipt_profile(self, request_id):
@@ -492,7 +525,7 @@ class MagazinePresentationBank:
                     survivors.append(record)
                 continue
             survivors.append(record)
-            if record.get("date_key") == self.date_key and self.record_provenance(record, now=now) != "stale_cache":
+            if self.record_provenance(record, now=now) != "stale_cache":
                 ready.append(record)
         if prune and len(survivors) != len(profile["records"]):
             profile["records"] = survivors[-MAX_RECORDS_PER_PROFILE:]
@@ -530,12 +563,24 @@ class MagazinePresentationBank:
     def ingest(self, profile, source, cover, image, *, fetched_at=None):
         normalized = self.normalize_cover(source, cover)
         normalized_image = self._normalize_media_image(image)
-        media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
         output = BytesIO()
         normalized_image.save(output, format="PNG", optimize=True)
         payload = output.getvalue()
         if not payload or len(payload) > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("Magazine cover media exceeds its object budget")
+        content_hash = sha256(payload).hexdigest()
+        records = list(profile["records"])
+        for index, candidate in enumerate(records):
+            if candidate.get("content_hash") == content_hash:
+                refreshed = {
+                    **candidate,
+                    "fetched_at": _iso_datetime(fetched_at),
+                    "date_key": self.date_key,
+                }
+                records[index] = refreshed
+                profile["records"] = records
+                return {**refreshed, "_content_duplicate": True}
+        media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
         self.media.put_bytes(media_key, payload, suffix=".png")
         source_id = normalized["source_id"]
         record_key = sha256(f"{source_id}\0{normalized['image_url']}".encode("utf-8")).hexdigest()
@@ -543,23 +588,23 @@ class MagazinePresentationBank:
             **normalized,
             "record_key": record_key,
             "media_key": media_key,
+            "content_hash": content_hash,
             "width": normalized_image.width,
             "height": normalized_image.height,
             "fetched_at": _iso_datetime(fetched_at),
             "date_key": self.date_key,
         }
-        records = list(profile["records"])
         replaced = False
+        protected = self._protected_record_keys(profile)
         for index, candidate in enumerate(records):
-            if candidate.get("record_key") == record_key or candidate.get("source_id") == source_id:
-                if candidate.get("record_key") in self._protected_record_keys(profile):
+            if candidate.get("source_id") == source_id:
+                if candidate.get("record_key") in protected:
                     break
                 records[index] = record
                 replaced = True
                 break
         if not replaced:
             records.append(record)
-        protected = self._protected_record_keys(profile)
         while len(records) > MAX_RECORDS_PER_PROFILE:
             victim = next(
                 (
@@ -590,6 +635,7 @@ class MagazinePresentationBank:
         self.media.put_bytes(expected_media_key, payload, suffix=".png")
         updated = {
             **record,
+            "content_hash": sha256(payload).hexdigest(),
             "width": normalized_image.width,
             "height": normalized_image.height,
             "media_recovered_at": _iso_datetime(recovered_at),
@@ -624,27 +670,37 @@ class MagazinePresentationBank:
             raise RuntimeError("Magazine presentation bank has no fresh cover records")
         current_keys = set((profile.get("current_selection") or {}).get("record_keys", []))
         pending_keys = set((profile.get("pending_selection") or {}).get("record_keys", []))
-        bucket = profile.get("date_buckets", {}).get(self.date_key, {})
-        seen_ids = {str(value) for value in bucket.get("seen_source_ids", [])}
-        candidates = [
+        blocked_keys = current_keys | pending_keys
+        blocked_content_ids = {
+            _record_content_id(record)
+            for record in profile.get("records", [])
+            if record.get("record_key") in blocked_keys
+        }
+        seen_content_ids = {
+            str(value)
+            for bucket in profile.get("date_buckets", {}).values()
+            if isinstance(bucket, dict)
+            for value in bucket.get("seen_content_ids", [])
+        }
+        candidates = _unique_content_records(
             record
             for record in ready
-            if record["record_key"] not in current_keys
-            and record["record_key"] not in pending_keys
-            and record["source_id"] not in seen_ids
-        ]
+            if record["record_key"] not in blocked_keys
+            and _record_content_id(record) not in blocked_content_ids
+            and _record_content_id(record) not in seen_content_ids
+        )
         reset_seen = False
         if not candidates:
-            candidates = [
+            candidates = _unique_content_records(
                 record
                 for record in ready
-                if record["record_key"] not in current_keys
-                and record["record_key"] not in pending_keys
-            ]
+                if record["record_key"] not in blocked_keys
+                and _record_content_id(record) not in blocked_content_ids
+            )
             reset_seen = bool(candidates)
         if not candidates:
-            candidates = list(ready)
-            reset_seen = bool(seen_ids)
+            candidates = _unique_content_records(ready)
+            reset_seen = bool(seen_content_ids)
         if str(rotation_mode).strip().lower() not in {"rotate", "sequential", "single"}:
             random.shuffle(candidates)
         count = 3 if str(fit_mode).lower() in {"triptych", "three_covers", "gallery"} else 1
@@ -843,7 +899,7 @@ class MagazinePresentationBank:
         profile["settings_fingerprint"] = self.base_fingerprint
         profile["settings_key"] = self.profile_settings_key
         profile["instance_uuid"] = self.instance_uuid
-        profile["date_key"] = str(source.get("date_key") or self.date_key)
+        profile["date_key"] = str(self.date_key)
         profile["date_buckets"] = deepcopy(_bounded_date_buckets(source.get("date_buckets")))
         attempted_at = _coerce_datetime(profile.get("library_last_attempt_at"))
         profile["library_last_attempt_at"] = (
@@ -854,8 +910,20 @@ class MagazinePresentationBank:
         normalized_records = []
         for record in profile.get("records") or []:
             if self._valid_record(record):
-                normalized_records.append({**record, **self.normalize_cover(record, record)})
+                normalized = {**record, **self.normalize_cover(record, record)}
+                if not _valid_hash(normalized.get("content_hash")):
+                    try:
+                        payload = self.media.get_bytes(normalized["media_key"], suffix=".png")
+                    except RuntimeError:
+                        payload = None
+                    if payload:
+                        normalized["content_hash"] = sha256(payload).hexdigest()
+                normalized_records.append(normalized)
         profile["records"] = normalized_records[-MAX_RECORDS_PER_PROFILE:]
+        profile["date_buckets"] = _migrate_seen_content_history(
+            profile["date_buckets"],
+            profile["records"],
+        )
         profile["refill_in_progress"] = profile.get("refill_in_progress") is True
         try:
             profile["hydration_cursor"] = max(0, int(profile.get("hydration_cursor") or 0))
@@ -878,6 +946,29 @@ class MagazinePresentationBank:
                 raise RuntimeError("Magazine protected selection metadata is invalid")
         return profile
 
+    def _adopt_compatible_instance_profile(self, document):
+        """Move a legacy date-scoped profile onto the stable instance key."""
+        profiles = document["profiles"]
+        mappings = document["instance_profiles"]
+        previous_fingerprint = mappings.get(self.instance_uuid)
+        if previous_fingerprint == self.fingerprint:
+            return profiles.get(self.fingerprint)
+        previous = profiles.get(previous_fingerprint)
+        if not (
+            isinstance(previous, dict)
+            and previous.get("instance_uuid") == self.instance_uuid
+            and previous.get("settings_key") == self.profile_settings_key
+            and self.fingerprint not in profiles
+        ):
+            return None
+        profile = self._normalize_profile(previous, document.get("date_buckets"))
+        profiles.pop(previous_fingerprint, None)
+        profiles[self.fingerprint] = profile
+        mappings[self.instance_uuid] = self.fingerprint
+        if document.get("active_fingerprint") == previous_fingerprint:
+            document["active_fingerprint"] = self.fingerprint
+        return profile
+
     def _valid_record(self, record):
         if not isinstance(record, dict):
             return False
@@ -897,6 +988,9 @@ class MagazinePresentationBank:
             normalized = self.normalize_cover(record, record)
             self._validate_media_dimensions((record["width"], record["height"]))
         except RuntimeError:
+            return False
+        content_hash = record.get("content_hash")
+        if content_hash is not None and not _valid_hash(content_hash):
             return False
         expected_media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
         expected_record_key = sha256(
@@ -1022,13 +1116,25 @@ def _commit_records(profile, records, selection, committed_at):
     buckets = profile.setdefault("date_buckets", {})
     bucket = buckets.setdefault(date_key, {})
     if selection.get("reset_seen"):
-        bucket["seen_source_ids"] = []
+        for candidate in buckets.values():
+            if isinstance(candidate, dict):
+                candidate["seen_source_ids"] = []
+                candidate["seen_content_ids"] = []
     seen = [str(value) for value in bucket.get("seen_source_ids", []) if value]
+    seen_content = [
+        str(value)
+        for value in bucket.get("seen_content_ids", [])
+        if _valid_content_id(value)
+    ]
     for record in records:
         source_id = record["source_id"]
         if source_id not in seen:
             seen.append(source_id)
+        content_id = _record_content_id(record)
+        if content_id not in seen_content:
+            seen_content.append(content_id)
     bucket["seen_source_ids"] = seen[-MAX_SEEN_SOURCES:]
+    bucket["seen_content_ids"] = seen_content[-MAX_SEEN_SOURCES:]
     existing_at = _coerce_datetime(bucket.get("committed_at"))
     if existing_at is None or incoming_at >= existing_at:
         bucket["last_source_id"] = records[-1]["source_id"]
@@ -1112,6 +1218,64 @@ def _validate_date_buckets(buckets):
             raise RuntimeError("Magazine seen history exceeds the limit")
         if any(not isinstance(value, str) or len(value) > 800 for value in seen):
             raise RuntimeError("Magazine seen source metadata exceeds the limit")
+        seen_content = bucket.get("seen_content_ids", [])
+        if not isinstance(seen_content, list) or len(seen_content) > MAX_SEEN_SOURCES:
+            raise RuntimeError("Magazine seen content history exceeds the limit")
+        if any(not _valid_content_id(value) for value in seen_content):
+            raise RuntimeError("Magazine seen content metadata is invalid")
+
+
+def _valid_content_id(value):
+    if not isinstance(value, str):
+        return False
+    prefix, separator, digest = value.partition(":")
+    return separator == ":" and prefix in {"content", "record"} and _valid_hash(digest)
+
+
+def _migrate_seen_content_history(buckets, records):
+    migrated = deepcopy(_bounded_date_buckets(buckets))
+    upgraded_record_ids = {
+        f"record:{record['record_key']}": _record_content_id(record)
+        for record in records
+        if _valid_hash(record.get("record_key"))
+        and _valid_hash(record.get("content_hash"))
+    }
+    for date_key, bucket in migrated.items():
+        if "seen_content_ids" in bucket:
+            values = bucket.get("seen_content_ids")
+            bucket["seen_content_ids"] = list(
+                dict.fromkeys(
+                    upgraded_record_ids.get(value, value)
+                    for value in (values if isinstance(values, list) else [])
+                    if _valid_content_id(value)
+                )
+            )[-MAX_SEEN_SOURCES:]
+            continue
+        seen_sources = {
+            str(value)
+            for value in bucket.get("seen_source_ids", [])
+            if isinstance(value, str) and value
+        }
+        content_ids = []
+        for source_id in seen_sources:
+            matching = [
+                record
+                for record in records
+                if record.get("source_id") == source_id
+                and record.get("date_key") == date_key
+            ]
+            if not matching:
+                matching = [
+                    record
+                    for record in records
+                    if record.get("source_id") == source_id
+                ]
+            for record in matching:
+                content_id = _record_content_id(record)
+                if content_id not in content_ids:
+                    content_ids.append(content_id)
+        bucket["seen_content_ids"] = content_ids[-MAX_SEEN_SOURCES:]
+    return migrated
 
 
 def _bounded_date_buckets(value):

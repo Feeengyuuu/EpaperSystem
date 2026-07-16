@@ -813,12 +813,12 @@ class SportsDashboard(
 
     @staticmethod
     def _the_odds_api_key(settings, device_config=None):
-        for key_name in ("theOddsApiKey", "oddsApiKey", "worldCupOddsApiKey", "oddsApiIoKey", "worldCupOddsApiIoKey"):
+        for key_name in ("theOddsApiKey", "oddsApiKey", "worldCupOddsApiKey"):
             value = str(settings.get(key_name) or "").strip()
             if value:
                 return value
         if device_config and hasattr(device_config, "get_config"):
-            for key_name in ("theOddsApiKey", "oddsApiKey", "worldCupOddsApiKey", "oddsApiIoKey", "worldCupOddsApiIoKey"):
+            for key_name in ("theOddsApiKey", "oddsApiKey", "worldCupOddsApiKey"):
                 value = str(device_config.get_config(key_name, "") or "").strip()
                 if value:
                     return value
@@ -826,15 +826,9 @@ class SportsDashboard(
             "THE_ODDS_API_KEY",
             "ODDS_API_KEY",
             "WORLD_CUP_ODDS_API_KEY",
-            "Odds_API_IO_KEY",
-            "ODDS_API_IO_KEY",
-            "ODDSAPI_IO_KEY",
-            "WORLD_CUP_ODDS_API_IO_KEY",
             "theOddsApiKey",
             "oddsApiKey",
             "worldCupOddsApiKey",
-            "oddsApiIoKey",
-            "worldCupOddsApiIoKey",
         )
         if device_config and hasattr(device_config, "load_env_key"):
             for env_name in env_names:

@@ -772,8 +772,8 @@ class NBAMixin:
             env_names = (
                 "NBA_ODDS_API_IO_KEY",
                 "NBA_ODDSAPI_IO_KEY",
-                "Odds_API_IO_KEY",
                 "ODDS_API_IO_KEY",
+                "Odds_API_IO_KEY",
                 "ODDSAPI_IO_KEY",
                 "nbaOddsApiIoKey",
                 "oddsApiIoKey",
@@ -977,8 +977,8 @@ class NBAMixin:
         env_names = (
             "NBA_ODDS_API_IO_KEY",
             "NBA_ODDSAPI_IO_KEY",
-            "Odds_API_IO_KEY",
             "ODDS_API_IO_KEY",
+            "Odds_API_IO_KEY",
             "ODDSAPI_IO_KEY",
             "nbaOddsApiIoKey",
             "oddsApiIoKey",

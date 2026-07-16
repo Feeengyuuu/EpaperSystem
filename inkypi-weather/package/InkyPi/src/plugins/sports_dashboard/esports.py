@@ -1,7 +1,201 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from html.parser import HTMLParser
 
 SportsDashboard = None
+
+
+class _HltvMajorEventParser(HTMLParser):
+    """Extract Major event metadata from HLTV's public event listings."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.events = []
+        self._current = None
+        self._name_tag = None
+        self._name_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        classes = set(str(attributes.get("class") or "").split())
+        if self._current is None and tag == "a":
+            href = str(attributes.get("href") or "")
+            match = re.fullmatch(r"/events/(\d+)/[^?#]+", href)
+            if match and ({"big-event", "small-event"} & classes):
+                self._current = {
+                    "event_id": match.group(1),
+                    "event_url": urljoin(HLTV_BASE_URL, href),
+                    "event_name_parts": [],
+                    "timestamps": [],
+                }
+                return
+        if self._current is None:
+            return
+        raw_timestamp = str(attributes.get("data-unix") or "").strip()
+        if raw_timestamp.isdigit():
+            self._current["timestamps"].append(int(raw_timestamp))
+        if {"big-event-name", "text-ellipsis"} & classes:
+            self._name_tag = tag
+            self._name_depth = 1
+        elif self._name_tag == tag:
+            self._name_depth += 1
+
+    def handle_data(self, data):
+        if self._current is not None and self._name_tag and str(data).strip():
+            self._current["event_name_parts"].append(str(data).strip())
+
+    def handle_endtag(self, tag):
+        if self._current is None:
+            return
+        if self._name_tag == tag:
+            self._name_depth -= 1
+            if self._name_depth <= 0:
+                self._name_tag = None
+                self._name_depth = 0
+        if tag != "a":
+            return
+        name = " ".join(self._current["event_name_parts"]).strip()
+        timestamps = self._current["timestamps"]
+        if name and len(timestamps) >= 2:
+            self.events.append(
+                {
+                    "event_id": self._current["event_id"],
+                    "event_url": self._current["event_url"],
+                    "event_name": name,
+                    "start_unix_ms": min(timestamps),
+                    "end_unix_ms": max(timestamps),
+                }
+            )
+        self._current = None
+        self._name_tag = None
+        self._name_depth = 0
+
+
+class _HltvMajorResultsParser(HTMLParser):
+    """Normalize an HLTV event results page into the existing CSAPI schema."""
+
+    def __init__(self, event):
+        super().__init__(convert_charrefs=True)
+        self.event = dict(event or {})
+        self.matches = []
+        self._current = None
+        self._div_depth = 0
+        self._side = None
+        self._side_depth = None
+        self._team_name_side = None
+        self._team_name_depth = None
+        self._score_capture = False
+        self._best_of_depth = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        classes = set(str(attributes.get("class") or "").split())
+        if self._current is None:
+            if tag == "div" and "result-con" in classes:
+                self._current = {
+                    "timestamp": str(attributes.get("data-zonedgrouping-entry-unix") or ""),
+                    "match_id": "",
+                    "team1_name": [],
+                    "team2_name": [],
+                    "team1_logo": "",
+                    "team2_logo": "",
+                    "score": [],
+                    "best_of": [],
+                }
+                self._div_depth = 1
+            return
+
+        if tag == "div":
+            self._div_depth += 1
+            if "line-align" in classes and "team1" in classes:
+                self._side = "team1"
+                self._side_depth = self._div_depth
+            elif "line-align" in classes and "team2" in classes:
+                self._side = "team2"
+                self._side_depth = self._div_depth
+            if "team" in classes and self._side:
+                self._team_name_side = self._side
+                self._team_name_depth = self._div_depth
+            if "map-text" in classes:
+                self._best_of_depth = self._div_depth
+        elif tag == "td" and "result-score" in classes:
+            self._score_capture = True
+        elif tag == "a":
+            href = str(attributes.get("href") or "")
+            match = re.fullmatch(r"/matches/(\d+)/[^?#]+", href)
+            if match:
+                self._current["match_id"] = match.group(1)
+        elif tag == "img" and self._side and "team-logo" in classes:
+            logo_key = f"{self._side}_logo"
+            if not self._current[logo_key]:
+                self._current[logo_key] = urljoin(
+                    HLTV_BASE_URL,
+                    str(attributes.get("src") or "").strip(),
+                )
+
+    def handle_data(self, data):
+        if self._current is None or not str(data).strip():
+            return
+        value = str(data).strip()
+        if self._team_name_side:
+            self._current[f"{self._team_name_side}_name"].append(value)
+        if self._score_capture:
+            self._current["score"].append(value)
+        if self._best_of_depth is not None:
+            self._current["best_of"].append(value)
+
+    def handle_endtag(self, tag):
+        if self._current is None:
+            return
+        if tag == "td" and self._score_capture:
+            self._score_capture = False
+        if tag != "div":
+            return
+        if self._team_name_depth == self._div_depth:
+            self._team_name_side = None
+            self._team_name_depth = None
+        if self._best_of_depth == self._div_depth:
+            self._best_of_depth = None
+        if self._side_depth == self._div_depth:
+            self._side = None
+            self._side_depth = None
+        self._div_depth -= 1
+        if self._div_depth == 0:
+            self._finish_current()
+
+    def _finish_current(self):
+        current = self._current
+        self._current = None
+        match_id = str(current.get("match_id") or "").strip()
+        timestamp = str(current.get("timestamp") or "").strip()
+        score_text = " ".join(current.get("score") or [])
+        score_match = re.search(r"(\d+)\s*-\s*(\d+)", score_text)
+        best_of_text = " ".join(current.get("best_of") or [])
+        best_of_match = re.search(r"\bbo\s*(\d+)\b", best_of_text, re.IGNORECASE)
+        team1_name = " ".join(current.get("team1_name") or []).strip()
+        team2_name = " ".join(current.get("team2_name") or []).strip()
+        if not (match_id.isdigit() and timestamp.isdigit() and score_match and team1_name and team2_name):
+            return
+        match_date = datetime.fromtimestamp(int(timestamp) / 1000, timezone.utc).date().isoformat()
+        self.matches.append(
+            {
+                "id": int(match_id),
+                "event": str(self.event.get("event_name") or "Counter-Strike Major").strip(),
+                "date": match_date,
+                "best_of": int(best_of_match.group(1)) if best_of_match else None,
+                "source": "HLTV",
+                "team1": {
+                    "name": team1_name,
+                    "score": int(score_match.group(1)),
+                    "logo_url": current.get("team1_logo") or "",
+                },
+                "team2": {
+                    "name": team2_name,
+                    "score": int(score_match.group(2)),
+                    "logo_url": current.get("team2_logo") or "",
+                },
+            }
+        )
 
 
 class EsportsMixin:
@@ -1283,8 +1477,15 @@ class EsportsMixin:
         rotation_bucket = SportsDashboard._ewc_rotation_bucket(rotation_seed if rotation_seed is not None else now)
         selected_match_group = None
         if live_matches:
+            live_candidates = live_matches
+            live_group_keys = {SportsDashboard._ewc_match_group_key(match) for match in live_matches}
+            live_group_keys.discard("")
+            if len(live_group_keys) > 1:
+                lol_live_matches = [match for match in live_matches if SportsDashboard._is_ewc_lol_match(match)]
+                if lol_live_matches:
+                    live_candidates = lol_live_matches
             selected_match_group = SportsDashboard._ewc_match_group_for_display(
-                live_matches,
+                live_candidates,
                 live_matches,
                 upcoming_matches,
                 recent_matches,
@@ -1409,6 +1610,13 @@ class EsportsMixin:
                 str(group.get("key") or ""),
             ),
         )
+
+    @staticmethod
+    def _is_ewc_lol_match(match):
+        match = match or {}
+        slug = str(match.get("slug") or "").strip().lower()
+        game = re.sub(r"[^a-z0-9]+", "-", str(match.get("game") or "").strip().lower()).strip("-")
+        return slug in {"league-of-legends", "lol"} or game in {"league-of-legends", "lol"}
 
     @staticmethod
     def _ewc_match_group_key(match):
@@ -1584,6 +1792,88 @@ class EsportsMixin:
             return start.timestamp()
         return default
 
+    @staticmethod
+    def _ewc_sidebar_earliest_upcoming(selected):
+        selected = selected or {}
+        pools = (
+            selected.get("all_upcoming_matches"),
+            selected.get("upcoming_matches"),
+            selected.get("upcoming"),
+        )
+        candidates = []
+        seen = set()
+        for pool in pools:
+            for event in pool or []:
+                if not isinstance(event, Mapping) or not isinstance(event.get("start"), datetime):
+                    continue
+                identity = id(event)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                try:
+                    timestamp = event["start"].timestamp()
+                except (OSError, OverflowError, ValueError):
+                    continue
+                candidates.append((timestamp, event))
+        if candidates:
+            return min(candidates, key=lambda candidate: candidate[0])[1]
+
+        main = selected.get("main")
+        if isinstance(main, Mapping) and isinstance(main.get("start"), datetime):
+            return main
+        return None
+
+    @staticmethod
+    def _ewc_sidebar_focus_selected(selected, event):
+        focused = dict(selected or {})
+        if not isinstance(event, Mapping):
+            return focused
+
+        focused["main"] = event
+        if not SportsDashboard._is_ewc_match_item(event):
+            focused["main_match"] = None
+            return focused
+
+        group_key = SportsDashboard._ewc_match_group_key(event)
+        all_live = list(focused.get("all_live_matches") or [])
+        all_upcoming = list(focused.get("all_upcoming_matches") or focused.get("upcoming_matches") or [])
+        all_recent = list(focused.get("all_recent_matches") or [])
+        group_live = SportsDashboard._ewc_matches_for_group(all_live, group_key)
+        group_upcoming = SportsDashboard._ewc_matches_for_group(all_upcoming, group_key)
+        group_recent = SportsDashboard._ewc_matches_for_group(all_recent, group_key)
+
+        grouped_choices = SportsDashboard._ewc_grouped_match_choices(all_upcoming or [event])
+        selected_group = next(
+            (dict(group) for group in grouped_choices if group.get("key") == group_key),
+            {
+                "key": group_key,
+                "slug": str(event.get("slug") or "").strip().lower(),
+                "game": str(event.get("game") or "EWC").strip() or "EWC",
+                "matches": list(group_upcoming or [event]),
+            },
+        )
+        selected_group.update(
+            {
+                "rotation_group_count": max(1, len(grouped_choices)),
+                "live_matches": group_live,
+                "upcoming_matches": group_upcoming,
+                "recent_matches": group_recent,
+            }
+        )
+        focused.update(
+            {
+                "main_match": event,
+                "live": group_live,
+                "upcoming": group_upcoming,
+                "recent": group_recent,
+                "live_matches": group_live,
+                "upcoming_matches": group_upcoming,
+                "recent_matches": group_recent,
+                "selected_match_group": selected_group,
+            }
+        )
+        return focused
+
     def _load_lol_esports_sidebar_cards(self, settings, device_config, timezone_info, now):
         lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
         lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
@@ -1688,6 +1978,11 @@ class EsportsMixin:
         ewc_phase = SportsDashboard._ewc_sidebar_candidate_phase(ewc_card)
         if ewc_phase is not None:
             ewc_selected = (ewc_card or {}).get("selected") or {}
+            if ewc_phase == 1:
+                earliest_ewc_event = SportsDashboard._ewc_sidebar_earliest_upcoming(ewc_selected)
+                ewc_selected = SportsDashboard._ewc_sidebar_focus_selected(ewc_selected, earliest_ewc_event)
+            focused_ewc_card = dict(ewc_card or {})
+            focused_ewc_card["selected"] = ewc_selected
             candidates.append(
                 {
                     "kind": "ewc",
@@ -1695,7 +1990,7 @@ class EsportsMixin:
                     "source_state": (ewc_card or {}).get("source_state") or "EWC DATA",
                     "phase": ewc_phase,
                     "priority": SportsDashboard._right_sidebar_ewc_priority(),
-                    "tie": SportsDashboard._ewc_sidebar_main_timestamp(ewc_card, float("inf")),
+                    "tie": SportsDashboard._ewc_sidebar_main_timestamp(focused_ewc_card, float("inf")),
                 }
             )
 
@@ -1714,8 +2009,36 @@ class EsportsMixin:
         if candidates:
             if not SportsDashboard._right_sidebar_has_active_competition(candidates):
                 return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
-            return sorted(candidates, key=lambda item: (item["phase"], item["priority"], item.get("tie") or ""))[0]
+            return sorted(candidates, key=SportsDashboard._right_sidebar_candidate_sort_key)[0]
         return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
+
+    @staticmethod
+    def _right_sidebar_candidate_sort_key(item):
+        try:
+            phase = int((item or {}).get("phase"))
+        except (TypeError, ValueError):
+            phase = 99
+        try:
+            priority = int((item or {}).get("priority"))
+        except (TypeError, ValueError):
+            priority = 99
+        kind = str((item or {}).get("kind") or "").strip().lower()
+
+        # LoL league cards and EWC cards both carry a real next-match time.
+        # Within the upcoming phase, surface the earliest match before applying
+        # the historical league/provider preference as a deterministic tie-break.
+        if phase == 1 and kind in {"lol", "ewc"}:
+            try:
+                scheduled_at = float((item or {}).get("tie"))
+            except (TypeError, ValueError):
+                scheduled_at = float("inf")
+            if scheduled_at != scheduled_at or scheduled_at in {float("inf"), float("-inf")}:
+                scheduled_at = float("inf")
+            return (phase, 0, scheduled_at, priority, kind)
+
+        # Valve cards represent an active tournament/result window rather than
+        # a comparable next-match timestamp, so retain their existing priority.
+        return (phase, 1, float(priority), str((item or {}).get("tie") or ""), kind)
 
     @staticmethod
     def _lol_sidebar_candidate_phase(card):
@@ -1843,7 +2166,10 @@ class EsportsMixin:
         if self._bool_setting(settings, "valveEsportsCsapiEnabled", True):
             try:
                 matches, source_state, _fetched_at = self._load_valve_csapi_matches(settings, timezone_info)
-                cards.extend(self._parse_valve_cs_major_cards(matches, timezone_info, now, settings))
+                provider_cards = self._parse_valve_cs_major_cards(matches, timezone_info, now, settings)
+                for card in provider_cards:
+                    card["source_state"] = source_state
+                cards.extend(provider_cards)
                 source_states.append(source_state)
             except Exception as exc:
                 logger.warning("CSAPI Major fetch failed: %s", _safe_exception_text(exc))
@@ -1851,7 +2177,10 @@ class EsportsMixin:
             try:
                 matches, source_state, _fetched_at = self._load_valve_opendota_matches(settings, timezone_info)
                 team_profiles = self._load_valve_opendota_team_profiles(settings, self._valve_ti_team_ids(matches))
-                cards.extend(self._parse_valve_ti_cards(matches, timezone_info, now, settings, team_profiles))
+                provider_cards = self._parse_valve_ti_cards(matches, timezone_info, now, settings, team_profiles)
+                for card in provider_cards:
+                    card["source_state"] = source_state
+                cards.extend(provider_cards)
                 source_states.append(source_state)
             except Exception as exc:
                 logger.warning("OpenDota TI fetch failed: %s", _safe_exception_text(exc))
@@ -1964,47 +2293,154 @@ class EsportsMixin:
         cache_hours = self._int_setting(settings, "valveEsportsCacheHours", DEFAULT_VALVE_ESPORTS_CACHE_HOURS, 1, 48)
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("matches"), list)
         if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
-            return cache["matches"], "CSAPI CACHE", cache.get("fetched_at")
+            return cache["matches"], self._valve_cs_source_state(cache, "CACHE"), cache.get("fetched_at")
         if self._valve_esports_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:
-                return cache["matches"], "CSAPI STALE", cache.get("fetched_at")
+                return cache["matches"], self._valve_cs_source_state(cache, "STALE"), cache.get("fetched_at")
             return [], "CSAPI LIMIT", None
         try:
             payload = self._fetch_valve_csapi_payload(settings, cache_key, now_utc)
         except Exception:
             if has_compatible_cache:
-                return cache["matches"], "CSAPI STALE", cache.get("fetched_at")
+                return cache["matches"], self._valve_cs_source_state(cache, "STALE"), cache.get("fetched_at")
             raise
         try:
             self._write_json_file(cache_path, payload)
         except OSError as exc:
             logger.warning("Failed to write CSAPI cache: %s", exc)
-        return payload["matches"], "CSAPI LIVE", payload.get("fetched_at")
+        return payload["matches"], self._valve_cs_source_state(payload, "LIVE"), payload.get("fetched_at")
+
+    @staticmethod
+    def _valve_cs_source_state(payload, state):
+        provider = str((payload or {}).get("provider") or "csapi").strip().lower()
+        label = "HLTV" if provider == "hltv" else "CSAPI"
+        return f"{label} {str(state or '').strip().upper()}".strip()
 
     def _fetch_valve_csapi_payload(self, settings, cache_key, now_utc):
         base_url = str(settings.get("valveEsportsCsapiBaseUrl") or CSAPI_BASE_URL).strip().rstrip("/") or CSAPI_BASE_URL
         limit = self._int_setting(settings, "valveEsportsCsLimit", DEFAULT_VALVE_ESPORTS_CS_LIMIT, 10, 500)
         session = get_http_session()
+        provider = "csapi"
         try:
-            response = session.get(
-                f"{base_url}/matches/latest",
-                params={"limit": str(limit)},
-                headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
-                timeout=25,
-            )
+            try:
+                response = session.get(
+                    f"{base_url}/matches/latest",
+                    params={"limit": str(limit)},
+                    headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
+                    timeout=25,
+                )
+                response.raise_for_status()
+                matches = response.json()
+                if not isinstance(matches, list) or not matches:
+                    raise ValueError("CSAPI returned no match records")
+            except Exception as primary_error:
+                if base_url.casefold() != CSAPI_BASE_URL.casefold():
+                    raise
+                logger.info(
+                    "CSAPI primary unavailable; using live HLTV Major fallback: %s",
+                    _safe_exception_text(primary_error),
+                )
+                matches = self._fetch_hltv_major_matches(session, settings, now_utc)
+                provider = "hltv"
         finally:
             self._record_valve_esports_call(settings, now_utc)
-        response.raise_for_status()
-        matches = response.json()
-        if not isinstance(matches, list):
-            matches = []
         return {
             "version": VALVE_ESPORTS_STATE_VERSION,
             "cache_key": cache_key,
             "fetched_at": now_utc.isoformat(),
-            "provider": "csapi",
+            "provider": provider,
             "matches": matches,
         }
+
+    def _fetch_hltv_major_matches(self, session, settings, now_utc):
+        headers = {
+            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "EpaperSystem/ValveEsports",
+        }
+        events = []
+        for url in (HLTV_MAJOR_EVENTS_URL, HLTV_MAJOR_ARCHIVE_URL):
+            response = session.get(
+                url,
+                params={"eventType": "MAJOR"},
+                headers=headers,
+                timeout=25,
+            )
+            response.raise_for_status()
+            events.extend(self._parse_hltv_major_events(response.text))
+        event = self._select_hltv_major_event(events, now_utc)
+        if not event:
+            raise ValueError("HLTV did not publish a started main Major event")
+        response = session.get(
+            f"{HLTV_BASE_URL}/results",
+            params={"event": event["event_id"]},
+            headers=headers,
+            timeout=25,
+        )
+        response.raise_for_status()
+        matches = self._parse_hltv_major_results(response.text, event)
+        if not matches:
+            raise ValueError("HLTV Major results page contained no completed matches")
+        return matches
+
+    @staticmethod
+    def _parse_hltv_major_events(document):
+        parser = _HltvMajorEventParser()
+        parser.feed(str(document or ""))
+        parser.close()
+        result = []
+        seen = set()
+        for event in parser.events:
+            event_name = str(event.get("event_name") or "").strip()
+            normalized = event_name.casefold()
+            if not SportsDashboard._is_valve_cs_major_name(event_name):
+                continue
+            if any(
+                marker in normalized
+                for marker in (
+                    " stage 1",
+                    " stage 2",
+                    "opening stage",
+                    "challengers stage",
+                    "elimination stage",
+                )
+            ):
+                continue
+            event_id = str(event.get("event_id") or "")
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            result.append(event)
+        return result
+
+    @staticmethod
+    def _select_hltv_major_event(events, now_utc):
+        now_value = now_utc if isinstance(now_utc, datetime) else datetime.now(timezone.utc)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone.utc)
+        now_ms = int(now_value.astimezone(timezone.utc).timestamp() * 1000)
+        started = [
+            event
+            for event in events or []
+            if SportsDashboard._lpl_int_value(event.get("start_unix_ms")) is not None
+            and int(event["start_unix_ms"]) <= now_ms
+        ]
+        if not started:
+            return None
+        return max(
+            started,
+            key=lambda event: (
+                SportsDashboard._lpl_int_value(event.get("end_unix_ms")) or 0,
+                SportsDashboard._lpl_int_value(event.get("start_unix_ms")) or 0,
+                str(event.get("event_id") or ""),
+            ),
+        )
+
+    @staticmethod
+    def _parse_hltv_major_results(document, event):
+        parser = _HltvMajorResultsParser(event)
+        parser.feed(str(document or ""))
+        parser.close()
+        return parser.matches
 
     def _load_valve_opendota_matches(self, settings, timezone_info):
         now_utc = datetime.now(timezone.utc)
@@ -2137,6 +2573,7 @@ class EsportsMixin:
                 continue
             team1 = item.get("team1") or {}
             team2 = item.get("team2") or {}
+            source_name = str(item.get("source") or "CSAPI").strip() or "CSAPI"
             match = {
                 "series": "CS",
                 "event_name": event_name,
@@ -2155,12 +2592,16 @@ class EsportsMixin:
                 "rank_b": SportsDashboard._lpl_int_value(team2.get("rank")),
                 "best_of": SportsDashboard._lpl_int_value(item.get("best_of")),
                 "maps": SportsDashboard._parse_csapi_maps(item.get("maps")),
-                "source": "CSAPI",
+                "source": source_name,
                 "score_kind": "MAPS",
             }
             grouped.setdefault(event_name, []).append(match)
         cards = []
         for event_name, events in grouped.items():
+            source_name = next(
+                (str(event.get("source") or "").strip() for event in events if str(event.get("source") or "").strip()),
+                "CSAPI",
+            )
             cards.append(
                 SportsDashboard._valve_esports_card_from_events(
                     "CS",
@@ -2170,7 +2611,7 @@ class EsportsMixin:
                     LOCAL_CS_MAJOR_LOGO_PATH,
                     0,
                     settings,
-                    "CSAPI",
+                    source_name,
                 )
             )
         return [card for card in cards if card]
@@ -3518,7 +3959,24 @@ class EsportsMixin:
                 value = str(device_config.get_config(key_name, "") or "").strip()
                 if value:
                     return value
-        return SportsDashboard._the_odds_api_key(settings, device_config)
+        env_names = (
+            "LPL_ODDS_API_IO_KEY",
+            "ODDS_API_IO_KEY",
+            "Odds_API_IO_KEY",
+            "ODDSAPI_IO_KEY",
+            "lplOddsApiIoKey",
+            "oddsApiIoKey",
+        )
+        if device_config and hasattr(device_config, "load_env_key"):
+            for env_name in env_names:
+                value = str(device_config.load_env_key(env_name) or "").strip()
+                if value:
+                    return value
+        for env_name in env_names:
+            value = str(os.environ.get(env_name) or "").strip()
+            if value:
+                return value
+        return ""
 
     def _load_lpl_odds(self, settings, api_key):
         now_utc = datetime.now(timezone.utc)
@@ -3833,13 +4291,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
-
-
 
 
 

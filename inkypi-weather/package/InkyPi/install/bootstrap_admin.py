@@ -11,6 +11,7 @@ import sys
 
 if os.name != "nt":
     import pwd
+    from repair_env_permissions import repair_runtime_env_permissions
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if os.name != "nt" and os.geteuid() != 0:
         parser.error("this command must be run as root")
+
+    if args.command == "ensure-bootstrap" and os.name != "nt":
+        try:
+            repair_runtime_env_permissions()
+        except (KeyError, OSError, RuntimeError) as error:
+            print(f"runtime env permission repair failed: {error}", file=sys.stderr)
+            return 1
 
     store = CredentialStore(SimpleNamespace(data_dir=Path(args.data_dir)))
     try:

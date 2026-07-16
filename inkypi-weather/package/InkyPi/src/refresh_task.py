@@ -1588,6 +1588,20 @@ class RefreshTask:
         if last_success is None:
             return False
         last_success = self._align_datetime_tz(last_success, current_dt)
+        receipt = state.presentation_receipt
+        if receipt is not None:
+            # A prepared display records its receipt commit as lane success.
+            # That success belongs to the image already shown; only a later
+            # NO_CHANGE success can satisfy the next rotation preflight.
+            receipt_committed_at = self._parse_iso_datetime(receipt.committed_at)
+            if receipt_committed_at is None:
+                return False
+            receipt_committed_at = self._align_datetime_tz(
+                receipt_committed_at,
+                current_dt,
+            )
+            if last_success <= receipt_committed_at:
+                return False
         if latest_display_dt is None:
             return True
         latest_display_dt = self._align_datetime_tz(latest_display_dt, current_dt)

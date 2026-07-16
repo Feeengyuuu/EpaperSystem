@@ -11509,6 +11509,178 @@ def test_restart_replays_requested_or_prepared_presentation_without_duplicate_se
     assert [event[0] for event in plugin.events].count("prepare") == (1 if restart_state == "requested" else 0)
 
 
+def test_restart_does_not_reuse_committed_receipt_as_next_presentation_preflight(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "presentation-restart-committed-receipt"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    _seed_prepared_presentation(task, instance, request)
+    committed_at = PRESENTATION_NOW + timedelta(seconds=2)
+    receipt = PresentationCommitReceipt(
+        request_id=request.request_id,
+        committed_at=committed_at.isoformat(),
+        display_commit_id="committed-presentation-image",
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=None,
+    )
+    assert task.runtime_state.commit_presentation(
+        instance.instance_uuid,
+        receipt,
+        last_good_cache=LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=receipt.committed_at,
+        ),
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        receipt.display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=receipt.committed_at,
+    )
+    assert task.runtime_state.flush()
+
+    # RefreshInfo is sampled before the hardware-backed display manifest commit,
+    # so its persisted rotation anchor can be slightly older than the receipt.
+    device_config.refresh_info.refresh_time = (
+        committed_at - timedelta(milliseconds=1)
+    ).isoformat()
+    restarted = RefreshTask(
+        device_config,
+        PresentationTransactionDisplayManager(),
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    monkeypatch.setattr(
+        restarted,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = restarted._select_cached_display_command(
+        committed_at + timedelta(seconds=61)
+    )
+    state = restarted.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert command is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != receipt.request_id
+    assert (
+        state.presentation_request.origin_display_commit_id
+        == receipt.display_commit_id
+    )
+    assert state.presentation_receipt == receipt
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_restart_allows_later_no_change_success_after_prior_receipt(monkeypatch):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "presentation-restart-no-change-after-receipt"
+    )
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    prior_request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="a" * 32,
+        requested_at=PRESENTATION_NOW - timedelta(minutes=20),
+    )
+    assert task.runtime_state.mark_presentation_prepared(
+        instance.instance_uuid,
+        prior_request.request_id,
+        (PRESENTATION_NOW - timedelta(minutes=19)).isoformat(),
+        None,
+    )
+    prior_receipt = PresentationCommitReceipt(
+        request_id=prior_request.request_id,
+        committed_at=(PRESENTATION_NOW - timedelta(minutes=18)).isoformat(),
+        display_commit_id="prior-prepared-display",
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        theme_mode=None,
+    )
+    assert task.runtime_state.commit_presentation(
+        instance.instance_uuid,
+        prior_receipt,
+        last_good_cache=LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=prior_receipt.committed_at,
+        ),
+    )
+    no_change_request = _seed_presentation_request(
+        task,
+        instance,
+        request_id="b" * 32,
+        requested_at=PRESENTATION_NOW,
+        origin_commit_id="no-change-origin",
+    )
+    assert task.runtime_state.satisfy_presentation_no_change(
+        instance.instance_uuid,
+        no_change_request.request_id,
+        no_change_request.requested_at,
+    )
+    assert task.runtime_state.flush()
+
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=1)
+    ).isoformat()
+    restarted = RefreshTask(
+        device_config,
+        PresentationTransactionDisplayManager(),
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    monkeypatch.setattr(
+        restarted,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = restarted._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=61)
+    )
+    state = restarted.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert command is not None
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.allow_prepared_presentation is False
+    assert state.presentation_request is None
+    assert state.presentation_receipt == prior_receipt
+
+
+@pytest.mark.parametrize(
+    "receipt_committed_at",
+    [
+        "not-an-iso-timestamp",
+        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
+    ],
+)
+def test_presentation_satisfaction_fails_closed_for_invalid_or_reverse_receipt_time(
+    receipt_committed_at,
+):
+    task, _device_config, _clock, _playlist, _display = _make_presentation_task(
+        "presentation-invalid-receipt-time"
+    )
+    state = SimpleNamespace(
+        presentation=SimpleNamespace(last_success_at=PRESENTATION_NOW.isoformat()),
+        presentation_receipt=SimpleNamespace(committed_at=receipt_committed_at),
+    )
+
+    assert task._presentation_succeeded_since_display(
+        state,
+        PRESENTATION_NOW - timedelta(seconds=1),
+        PRESENTATION_NOW + timedelta(seconds=2),
+    ) is False
+
+
 def test_hard_pressure_defers_stale_cache_without_presentation_renderer(monkeypatch):
     task, device_config, _clock, playlist, display = _make_presentation_task("presentation-hard-pressure")
     instance = playlist.plugins[0].snapshot()
