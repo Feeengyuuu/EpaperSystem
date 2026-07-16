@@ -17,15 +17,15 @@ Corrections, insights, and knowledge gaps captured during development.
 A prepared bank can contain several valid records while the rendered page still appears to have only one if the bank-to-view adapter drops related records.
 
 ### Details
-Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback. Increasing media downloads attacked the wrong layer and exceeded the Pi data deadline; the already-fetched GBIF metadata is sufficient for related text and placeholder thumbnails.
+Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback. Increasing full-size media downloads attacked the wrong layer and exceeded the Pi data deadline. Restoring metadata with placeholders was also incomplete: related records must merge the existing local Chinese-name cache and use bounded small-image prefetching so the real thumbnail strip survives cache-only display.
 
 ### Suggested Action
-When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven provider workload, persist a bounded related-metadata pool, prefer ready records with cached media, and let missing thumbnails use offline placeholders. Test payload cardinality, persistence, and provider-free media access.
+When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven full-size provider workload, persist a bounded related-metadata pool, merge local enrichment caches during rendering, and prefetch display-sized thumbnails inside a separate soft deadline with a hard save reserve. Test payload cardinality, names, thumbnails, deadline exhaustion, persistence, and provider-free display access.
 
 ### Metadata
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/species_radar/species_radar.py, inkypi-weather/package/InkyPi/tests/test_species_radar.py
-- Tags: prepared-bank, view-adapter, gallery, cached-media, species-radar
+- Tags: prepared-bank, view-adapter, gallery, cached-media, cached-names, soft-deadline, species-radar
 - Pattern-Key: plugin.prepared_bank_view_cardinality
 - Recurrence-Count: 1
 - First-Seen: 2026-07-15

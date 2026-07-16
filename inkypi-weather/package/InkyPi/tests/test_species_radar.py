@@ -2014,20 +2014,38 @@ def test_species_prepare_is_provider_free_and_context_commits_only_exact_receipt
     assert final_profile["displayed_context"]["observation_id"] == pending_record["observation_id"]
 
 
-def test_species_banked_page_restores_related_metadata_with_placeholder_media(tmp_path, monkeypatch):
+def test_species_banked_page_restores_cached_related_names_and_thumbnails(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     bank, document, profile, current = _warm_species_bank(tmp_path, count=1)
+    related = [bank_observation(index) for index in range(2, 6)]
+    for observation in related:
+        observation["common_name_zh"] = ""
+        observation["common_name_en"] = ""
+        observation["common_name"] = ""
+        observation["display_name"] = observation["scientific_name"]
     bank.set_related_observations(
         profile,
-        [bank_observation(index) for index in range(2, 6)],
+        related,
     )
     bank.save(document)
+    plugin._write_json(
+        plugin._vernacular_cache_path(),
+        {
+            f"wikidata-zh-v3:species example {index}": f"中文名{index}"
+            for index in range(2, 6)
+        },
+    )
+    for index, observation in enumerate(related, start=2):
+        cache_file = plugin._photo_cache_file(observation["image_url"])
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (80, 60), (index * 20, 90, 120)).save(cache_file, "PNG")
     _document, profile = bank.load_warm()
     captured = {}
 
     def capture_render(_dimensions, payload, _settings, _now, _device_config=None):
         observations = payload["observations"]
         captured["ids"] = [item["gbif_key"] for item in observations]
+        captured["names"] = [item.get("common_name_zh") for item in observations]
         captured["photos"] = [
             plugin._download_image(item["image_url"], (80, 60))
             for item in observations
@@ -2051,8 +2069,81 @@ def test_species_banked_page_restores_related_metadata_with_placeholder_media(tm
         if record["record_key"] == current["record_key"]
     )
     assert len(set(captured["ids"])) == 5
+    assert captured["names"][1:] == ["中文名2", "中文名3", "中文名4", "中文名5"]
     assert isinstance(captured["photos"][0], Image.Image)
-    assert captured["photos"][1:] == [None, None, None, None]
+    assert all(isinstance(photo, Image.Image) for photo in captured["photos"][1:])
+
+
+def test_species_cached_name_prefers_real_chinese_over_non_cjk_zh_label(tmp_path):
+    plugin = make_plugin(tmp_path)
+    observation = bank_observation(8)
+    observation.update(
+        {
+            "scientific_name": "Pycnonotus sinensis",
+            "species": "Pycnonotus sinensis",
+            "taxon_key": "2486150",
+            "species_key": "2486150",
+            "display_name": "Pycnonotus sinensis",
+            "common_name": "",
+            "common_name_zh": "",
+            "common_name_en": "",
+        }
+    )
+    cache = {
+        "vernacular-candidates-v2:2486150": {
+            "any": "Bulbul chino",
+            "en": "Chinese Bulbul",
+            "zh": "Roeggyaeujhau",
+        },
+        "wikidata-zh-v3:pycnonotus sinensis": "白头鹎",
+    }
+
+    plugin._merge_cached_common_names(observation, cache)
+
+    assert observation["common_name_zh"] == "白头鹎"
+    assert observation["common_name_en"] == "Chinese Bulbul"
+    assert observation["display_name"] == "白头鹎"
+
+
+def test_species_related_thumbnail_prefetch_uses_small_inaturalist_images(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    observations = [bank_observation(index) for index in range(1, 6)]
+    for observation in observations:
+        observation["image_url"] = observation["image_url"].replace("medium.jpg", "original.jpg")
+    payload = BytesIO()
+    Image.new("RGB", (240, 180), "teal").save(payload, "JPEG")
+    requested = []
+
+    def download(url, **kwargs):
+        requested.append((url, kwargs))
+        return payload.getvalue()
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    plugin._prefetch_related_thumbnails_for_data(
+        observations,
+        excluded_identity=plugin._observation_identity(observations[0]),
+        deadline=time.monotonic() + 30,
+    )
+
+    assert len(requested) == 4
+    assert all(url.endswith("/small.jpg") for url, _kwargs in requested)
+    assert all(kwargs["max_bytes"] <= 2 * 1024 * 1024 for _url, kwargs in requested)
+    assert all(plugin._open_cached_photo(plugin._photo_cache_file(item["image_url"])) is not None for item in observations[1:])
+
+
+def test_species_related_thumbnail_prefetch_is_optional_when_budget_is_exhausted(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    calls = []
+    monkeypatch.setattr(plugin, "_download_provider_bytes", lambda *_args, **_kwargs: calls.append(True))
+
+    plugin._prefetch_related_thumbnails_for_data(
+        [bank_observation(index) for index in range(1, 6)],
+        excluded_identity="",
+        deadline=time.monotonic(),
+    )
+
+    assert calls == []
 
 
 def test_species_pending_survives_restart_theme_location_and_bucket(tmp_path, monkeypatch):

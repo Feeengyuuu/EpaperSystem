@@ -108,6 +108,10 @@ MAX_PHOTO_FETCHES_PER_DATA_PASS = 1
 MAX_MAP_FETCHES_PER_DATA_PASS = 1
 MAX_RELATED_RECORDS_PER_PAGE = 4
 MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 0
+MAX_RELATED_THUMBNAILS_PER_DATA_PASS = 4
+RELATED_THUMBNAIL_TOTAL_SECONDS = 12
+RELATED_THUMBNAIL_SAVE_RESERVE_SECONDS = 10
+RELATED_THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
 EARTH_RADIUS_KM = 6371.0088
@@ -124,6 +128,13 @@ MAP_DATA_IMAGE_LIMITS = ImageLimits(
     max_width=8192,
     max_height=8192,
     max_pixels=32_000_000,
+    allowed_formats=frozenset({"JPEG", "PNG", "WEBP", "GIF"}),
+)
+RELATED_THUMBNAIL_IMAGE_LIMITS = ImageLimits(
+    max_bytes=RELATED_THUMBNAIL_MAX_BYTES,
+    max_width=4096,
+    max_height=4096,
+    max_pixels=12_000_000,
     allowed_formats=frozenset({"JPEG", "PNG", "WEBP", "GIF"}),
 )
 _MEDIA_RENDER_CONTEXT = ContextVar(
@@ -502,6 +513,23 @@ class SpeciesRadar(BasePlugin):
                 profile["refill_cursor"] = (
                     cursor + len(observations)
                 ) % len(source_observations)
+                current_record_key = (
+                    profile.get("current_selection") or {}
+                ).get("record_key")
+                current_observation = next(
+                    (
+                        item.get("observation") or {}
+                        for item in profile.get("records") or []
+                        if item.get("record_key") == current_record_key
+                    ),
+                    observations[0] if observations else {},
+                )
+                excluded_identity = self._observation_identity(current_observation)
+                self._prefetch_related_thumbnails_for_data(
+                    source_observations,
+                    excluded_identity=excluded_identity,
+                    deadline=deadline,
+                )
             check_or_rollback()
             ready = bank.ready_records(profile, prune=True)
             check_or_rollback()
@@ -654,7 +682,14 @@ class SpeciesRadar(BasePlugin):
             and 0 <= age_seconds <= DEFAULT_REFRESH_HOURS * 60 * 60
         )
         provenance = "fresh_cache" if is_fresh else "stale_cache"
-        render_record = {**record, "provenance": provenance}
+        name_cache = self._read_vernacular_cache()
+        render_observation = dict(record.get("observation") or {})
+        self._merge_cached_common_names(render_observation, name_cache)
+        render_record = {
+            **record,
+            "observation": render_observation,
+            "provenance": provenance,
+        }
         related_observations = []
         related_photos = {}
         related_identities = {
@@ -677,7 +712,8 @@ class SpeciesRadar(BasePlugin):
                     exc,
                 )
                 continue
-            candidate_observation = candidate.get("observation") or {}
+            candidate_observation = dict(candidate.get("observation") or {})
+            self._merge_cached_common_names(candidate_observation, name_cache)
             candidate_identity = self._observation_identity(candidate_observation)
             if not candidate_identity or candidate_identity in related_identities:
                 continue
@@ -688,12 +724,19 @@ class SpeciesRadar(BasePlugin):
                 related_photos[image_url] = candidate_photo
             if len(related_observations) >= MAX_RELATED_RECORDS_PER_PAGE:
                 break
-        for candidate in profile.get("related_observations") or []:
+        for stored_candidate in profile.get("related_observations") or []:
+            candidate = dict(stored_candidate)
+            self._merge_cached_common_names(candidate, name_cache)
             candidate_identity = self._observation_identity(candidate)
             if not candidate_identity or candidate_identity in related_identities:
                 continue
             related_identities.add(candidate_identity)
             related_observations.append(candidate)
+            image_url = candidate.get("image_url")
+            if image_url:
+                cached_photo = self._open_cached_photo(self._photo_cache_file(image_url))
+                if cached_photo is not None:
+                    related_photos[image_url] = cached_photo
             if len(related_observations) >= MAX_RELATED_RECORDS_PER_PAGE:
                 break
         check()
@@ -1478,6 +1521,55 @@ class SpeciesRadar(BasePlugin):
             observation["display_name"] = display_name
             observation["common_name_lookup_attempted"] = True
 
+    def _merge_cached_common_names(self, observation, cache=None):
+        """Merge already-fetched names without allowing display-time provider I/O."""
+        if not isinstance(observation, dict):
+            return
+        cache = self._read_vernacular_cache() if cache is None else cache
+        if not isinstance(cache, dict):
+            cache = {}
+
+        existing_common = self._clean_text(observation.get("common_name"))
+        existing_zh = self._to_simplified_chinese(observation.get("common_name_zh"))
+        existing_en = self._clean_text(observation.get("common_name_en"))
+        display_name = self._clean_text(observation.get("display_name"))
+        scientific_name = self._clean_text(
+            observation.get("species") or observation.get("scientific_name")
+        )
+        if not existing_zh and existing_common and self._contains_cjk(existing_common):
+            existing_zh = self._to_simplified_chinese(existing_common)
+        if not existing_zh and display_name and self._contains_cjk(display_name):
+            existing_zh = self._to_simplified_chinese(display_name)
+        if not existing_en and existing_common and not self._contains_cjk(existing_common):
+            existing_en = existing_common
+
+        taxon_key = self._clean_text(
+            observation.get("species_key") or observation.get("taxon_key")
+        )
+        vernacular = cache.get(f"vernacular-candidates-v2:{taxon_key}")
+        if not isinstance(vernacular, dict):
+            vernacular = {}
+        wikidata_name = self._to_simplified_chinese(
+            cache.get(f"wikidata-zh-v3:{scientific_name.casefold()}")
+        )
+        if wikidata_name and not self._contains_cjk(wikidata_name):
+            wikidata_name = ""
+        vernacular_zh = self._to_simplified_chinese(vernacular.get("zh"))
+        if vernacular_zh and not self._contains_cjk(vernacular_zh):
+            vernacular_zh = ""
+        zh_name = existing_zh or wikidata_name or vernacular_zh
+        en_name = existing_en or self._clean_text(vernacular.get("en"))
+        any_name = self._clean_text(vernacular.get("any"))
+        if not zh_name and any_name and self._contains_cjk(any_name):
+            zh_name = self._to_simplified_chinese(any_name)
+        if not en_name and any_name and not self._contains_cjk(any_name):
+            en_name = any_name
+
+        observation["common_name_zh"] = zh_name
+        observation["common_name_en"] = en_name
+        observation["common_name"] = zh_name or en_name or ""
+        observation["display_name"] = zh_name or en_name or scientific_name or display_name
+
     def _ensure_display_common_name(self, observation):
         if not isinstance(observation, dict):
             return
@@ -1517,7 +1609,10 @@ class SpeciesRadar(BasePlugin):
         cache_key = f"vernacular-candidates-v2:{taxon_key}"
         cached = cache.get(cache_key)
         if isinstance(cached, dict):
-            return {"zh": self._to_simplified_chinese(cached.get("zh")), "en": self._clean_text(cached.get("en")), "any": self._to_simplified_chinese(cached.get("any"))}
+            zh_name = self._to_simplified_chinese(cached.get("zh"))
+            if zh_name and not self._contains_cjk(zh_name):
+                zh_name = ""
+            return {"zh": zh_name, "en": self._clean_text(cached.get("en")), "any": self._to_simplified_chinese(cached.get("any"))}
         try:
             data = self._get_json(GBIF_VERNACULAR_URL.format(taxon_key=taxon_key), params={"limit": 100})
             results = data.get("results") if isinstance(data, dict) else []
@@ -2305,6 +2400,84 @@ LIMIT 8
             raise
         except Exception as exc:
             raise RuntimeError("Species photo could not be decoded") from exc
+
+    def _prefetch_related_thumbnails_for_data(
+        self,
+        observations,
+        *,
+        excluded_identity,
+        deadline,
+    ):
+        """Best-effort small-image warming that never consumes the save reserve."""
+        now = self._monotonic()
+        soft_deadline = min(
+            float(deadline) - RELATED_THUMBNAIL_SAVE_RESERVE_SECONDS,
+            now + RELATED_THUMBNAIL_TOTAL_SECONDS,
+        )
+        if soft_deadline <= now:
+            return
+
+        fetched = 0
+        seen = set()
+        for observation in observations or []:
+            if fetched >= MAX_RELATED_THUMBNAILS_PER_DATA_PASS:
+                break
+            if self._monotonic() >= soft_deadline:
+                break
+            identity = self._observation_identity(observation)
+            if not identity or identity == excluded_identity or identity in seen:
+                continue
+            seen.add(identity)
+            image_url = self._clean_text(observation.get("image_url"))
+            if not image_url:
+                continue
+            cache_file = self._photo_cache_file(image_url)
+            if self._open_cached_photo(cache_file) is not None:
+                continue
+            source_url = self._related_thumbnail_source_url(image_url)
+            try:
+                payload = self._download_provider_bytes(
+                    source_url,
+                    source="photo",
+                    max_bytes=RELATED_THUMBNAIL_MAX_BYTES,
+                    timeout=4,
+                    deadline=soft_deadline,
+                    headers=IMAGE_HEADERS,
+                )
+                if self._monotonic() >= soft_deadline:
+                    break
+                image = safe_open_image(
+                    payload,
+                    limits=RELATED_THUMBNAIL_IMAGE_LIMITS,
+                ).convert("RGB")
+                image.thumbnail((240, 180), Image.LANCZOS)
+                if self._monotonic() >= soft_deadline:
+                    break
+                self._write_photo_cache(cache_file, image)
+                fetched += 1
+            except Exception as exc:
+                logger.warning(
+                    "Species related thumbnail failed for %s: %s",
+                    identity,
+                    exc,
+                )
+
+    @staticmethod
+    def _related_thumbnail_source_url(url):
+        parts = urlsplit(str(url or "").strip())
+        host = (parts.hostname or "").casefold()
+        if host not in {
+            "inaturalist-open-data.s3.amazonaws.com",
+            "static.inaturalist.org",
+        }:
+            return parts.geturl()
+        path = re.sub(
+            r"/(?:original|large|medium|small|square)\.(?:jpe?g)$",
+            "/small.jpg",
+            parts.path,
+            flags=re.IGNORECASE,
+        )
+        return parts._replace(path=path).geturl()
 
     def _load_map_for_data(
         self,
