@@ -1970,11 +1970,12 @@ def test_ewc_detail_cache_refreshes_only_stale_pregame_page(monkeypatch):
 
     monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch)
 
-    matches, _source = plugin._load_ewc_detail_matches(settings, la, events, now, 7)
+    matches, source = plugin._load_ewc_detail_matches(settings, la, events, now, 7)
 
     assert fetched == ["pregame"]
     assert {match["event_id"] for match in matches} == {"pregame-match", "later-match"}
     assert next(match for match in matches if match["event_id"] == "pregame-match")["status"] == "LIVE"
+    assert source == "EWC DETAIL LIVE"
 
 
 def test_ewc_detail_empty_refresh_preserves_nonempty_stale_page(monkeypatch):
@@ -13496,6 +13497,93 @@ def test_worldcup_api_live_cache_uses_short_refresh_window():
     assert fixtures == [fresh_fixture]
     assert source_state == "API LIVE"
 
+
+def test_worldcup_scoreboard_force_refresh_bypasses_exhausted_internal_budget(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._worldcup_scoreboard_calls_left = lambda *_args: 0
+    la = ZoneInfo("America/Los_Angeles")
+    scoreboard = _sample_worldcup_espn_scoreboard_payload()
+    calls = []
+
+    def fetch(_settings, _timezone_info, cache_key, now_utc):
+        calls.append(cache_key)
+        return {
+            "version": "sports-dashboard-worldcup-scoreboard-v1",
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "scoreboard": scoreboard,
+        }
+
+    plugin._fetch_worldcup_scoreboard_payload = fetch
+
+    payload, source_state, _fetched_at = plugin._load_worldcup_scoreboard(
+        {"forceRefresh": "true"},
+        la,
+    )
+
+    assert calls
+    assert payload == scoreboard
+    assert source_state == "ESPN LIVE"
+
+
+def test_nba_scoreboard_force_refresh_bypasses_exhausted_internal_budget(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._nba_scoreboard_calls_left = lambda *_args: 0
+    la = ZoneInfo("America/Los_Angeles")
+    scoreboard = _sample_nba_scoreboard_payload()
+    calls = []
+
+    def fetch(_settings, _timezone_info, cache_key, now_utc):
+        calls.append(cache_key)
+        return {
+            "version": "sports-dashboard-nba-scoreboard-v1",
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "scoreboard": scoreboard,
+        }
+
+    plugin._fetch_nba_scoreboard_payload = fetch
+
+    payload, source_state, _fetched_at = plugin._load_nba_scoreboard(
+        {"forceRefresh": "true"},
+        la,
+    )
+
+    assert calls
+    assert payload == scoreboard
+    assert source_state == "ESPN LIVE"
+
+
+def test_offseason_hub_force_refresh_bypasses_exhausted_internal_budget(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._offseason_hub_calls_left = lambda *_args: 0
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(la)
+    calls = []
+
+    def fetch(_settings, _timezone_info, cache_key, now_utc):
+        calls.append(cache_key)
+        return {
+            "version": "sports-dashboard-offseason-hub-v1",
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "payloads": {"pga": {"events": []}},
+        }
+
+    plugin._fetch_offseason_hub_payload = fetch
+
+    payload, source_state, _fetched_at = plugin._load_offseason_hub_payload(
+        {"forceRefresh": "true"},
+        la,
+        now,
+    )
+
+    assert calls
+    assert payload["payloads"] == {"pga": {"events": []}}
+    assert source_state == "HUB LIVE"
 
 def test_worldcup_scoreboard_default_daily_budget_supports_minute_refresh(tmp_path):
     plugin = _plugin()

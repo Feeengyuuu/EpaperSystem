@@ -867,3 +867,26 @@ After manual refresh, verify both the job result and the plugin-instance cache L
 - Tags: manual-refresh, provenance, fresh-cache, cache-promotion, live-proof
 
 ---
+
+## [LRN-20260716-006] best_practice
+
+**Logged**: 2026-07-16T13:47:45-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+A sports source-state label is a cache-provenance contract, not merely diagnostic text.
+
+### Details
+The EWC detail loader returned fresh remote matches as EWC DETAIL, but the provenance classifier only trusts explicit LIVE or CACHE states. A successful manual render was therefore marked LOCAL_FALLBACK and never promoted. Manual force was also blocked by soft daily budgets on key-free ESPN and hub providers even though automatic refreshes still need those budgets.
+
+### Suggested Action
+Label successful remote loads with LIVE, and cover every new source-state string with provenance tests. Explicit force may bypass internal soft budgets only for key-free providers; never bypass keyed or vendor-enforced quotas.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/worldcup.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/nba.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/offseason_hub.py
+- Tags: ewc, provenance, live, manual-refresh, soft-budget
+
+---

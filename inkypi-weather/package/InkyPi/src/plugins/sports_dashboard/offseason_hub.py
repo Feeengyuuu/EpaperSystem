@@ -47,7 +47,7 @@ class OffseasonHubMixin:
         ):
             return cache, "HUB CACHE", cache.get("fetched_at")
 
-        if self._offseason_hub_calls_left(settings, now_utc) <= 0:
+        if not force_refresh and self._offseason_hub_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:
                 return cache, "HUB STALE", cache.get("fetched_at")
             return {}, "HUB LIMIT", None

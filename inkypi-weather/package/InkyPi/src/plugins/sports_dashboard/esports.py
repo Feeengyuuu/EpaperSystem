@@ -610,7 +610,7 @@ class EsportsMixin:
         matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
         if stale_any and matches:
             return matches, "EWC DETAIL STALE"
-        return matches, "EWC DETAIL" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
+        return matches, "EWC DETAIL LIVE" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
 
     def _fetch_ewc_detail_page(self, event, timezone_info, now_utc):
         source_url = str((event or {}).get("source_url") or "").strip()

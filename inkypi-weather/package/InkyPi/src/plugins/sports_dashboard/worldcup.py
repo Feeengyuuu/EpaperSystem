@@ -475,7 +475,7 @@ class WorldCupMixin:
         ):
             return cache["scoreboard"], "ESPN CACHE", cache.get("fetched_at")
 
-        if self._worldcup_scoreboard_calls_left(settings, now_utc) <= 0:
+        if not force_refresh and self._worldcup_scoreboard_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:
                 return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
             return {}, "ESPN LIMIT", None
