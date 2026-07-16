@@ -106,6 +106,7 @@ MAX_DATA_SECONDS = 150
 MAX_OBSERVATIONS_PER_DATA_PASS = 1
 MAX_PHOTO_FETCHES_PER_DATA_PASS = 1
 MAX_MAP_FETCHES_PER_DATA_PASS = 1
+MAX_RELATED_RECORDS_PER_PAGE = 4
 MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 0
 MAX_PROVIDER_REDIRECTS = 4
 MAX_PROVIDER_JSON_BYTES = 4 * 1024 * 1024
@@ -652,11 +653,40 @@ class SpeciesRadar(BasePlugin):
         )
         provenance = "fresh_cache" if is_fresh else "stale_cache"
         render_record = {**record, "provenance": provenance}
+        related_records = []
+        related_photos = {}
+        for candidate in profile.get("records") or []:
+            if candidate.get("record_key") == record.get("record_key"):
+                continue
+            if candidate.get("bucket_key") != record.get("bucket_key"):
+                continue
+            try:
+                candidate_photo = bank.load_photo(
+                    candidate,
+                    deadline_check=check,
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Species related bank photo failed for %s: %s",
+                    candidate.get("observation_id"),
+                    exc,
+                )
+                continue
+            related_records.append(candidate)
+            image_url = candidate.get("observation", {}).get("image_url")
+            if image_url and candidate_photo is not None:
+                related_photos[image_url] = candidate_photo
+            if len(related_records) >= MAX_RELATED_RECORDS_PER_PAGE:
+                break
         check()
-        payload = self._payload_for_bank_record(render_record, profile)
+        payload = self._payload_for_bank_record(
+            render_record,
+            profile,
+            related_records=related_records,
+        )
         payload["theme_mode"] = self._theme_mode(settings, now)
         check()
-        media = {"__map__": map_image}
+        media = {"__map__": map_image, **related_photos}
         image_url = record["observation"].get("image_url")
         if image_url and photo is not None:
             media[image_url] = photo
@@ -679,8 +709,13 @@ class SpeciesRadar(BasePlugin):
         check()
         return image
 
-    def _payload_for_bank_record(self, record, profile):
+    def _payload_for_bank_record(self, record, profile, *, related_records=()):
         observation = dict(record["observation"])
+        observations = [observation]
+        observations.extend(
+            dict(candidate["observation"])
+            for candidate in related_records
+        )
         location_name = (
             observation.get("radar_location_name")
             or observation.get("location")
@@ -690,12 +725,13 @@ class SpeciesRadar(BasePlugin):
             "schema": CACHE_SCHEMA_VERSION,
             "source": "GBIF",
             "source_state": record.get("provenance") or "fresh_cache",
-            "observations": [observation],
+            "observations": observations,
             "location": {"name": location_name},
             "location_summary": location_name,
-            "location_counts": {location_name: 1},
-            "category_counts": {observation.get("category_label"): 1},
+            "location_counts": self._location_counts(observations),
+            "category_counts": self._category_counts(observations),
             "radius_km": observation.get("radar_radius_km") or DEFAULT_RADIUS_KM,
+            "display_pool_size": len(observations),
             "display_observation_key": record["observation_id"],
             "display_rotation": "prepared_bank",
             "bank_instance_uuid": profile.get("instance_uuid"),

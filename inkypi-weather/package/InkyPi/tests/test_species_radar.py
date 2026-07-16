@@ -2014,6 +2014,40 @@ def test_species_prepare_is_provider_free_and_context_commits_only_exact_receipt
     assert final_profile["displayed_context"]["observation_id"] == pending_record["observation_id"]
 
 
+def test_species_banked_page_restores_recent_records_and_gallery_media(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    bank, _document, profile, current = _warm_species_bank(tmp_path, count=5)
+    captured = {}
+
+    def capture_render(_dimensions, payload, _settings, _now, _device_config=None):
+        observations = payload["observations"]
+        captured["ids"] = [item["gbif_key"] for item in observations]
+        captured["photos"] = [
+            plugin._download_image(item["image_url"], (80, 60))
+            for item in observations
+        ]
+        return Image.new("RGB", (800, 480), "white")
+
+    monkeypatch.setattr(plugin, "_render_page", capture_render)
+
+    plugin._render_bank_selection(
+        bank,
+        profile,
+        current,
+        (800, 480),
+        bound_species_settings(),
+    )
+
+    assert len(captured["ids"]) == 5
+    assert captured["ids"][0] == next(
+        record["observation"]["gbif_key"]
+        for record in profile["records"]
+        if record["record_key"] == current["record_key"]
+    )
+    assert len(set(captured["ids"])) == 5
+    assert all(isinstance(photo, Image.Image) for photo in captured["photos"])
+
+
 def test_species_pending_survives_restart_theme_location_and_bucket(tmp_path, monkeypatch):
     first = make_plugin(tmp_path)
     settings = bound_species_settings()

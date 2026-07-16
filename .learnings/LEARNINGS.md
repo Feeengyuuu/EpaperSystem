@@ -6,6 +6,33 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260715-006] correction
+
+**Logged**: 2026-07-15T17:25:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: plugin
+
+### Summary
+A prepared bank can contain several valid records while the rendered page still appears to have only one if the bank-to-view adapter drops related records.
+
+### Details
+Species Radar's older renderer expected a selected hero followed by other observations for its recent list and thumbnail strip. The prepared-bank adapter passed only the selected record, so the UI always showed the single-record fallback even after the bank had accumulated several independent GBIF records. Increasing provider work attacked the wrong layer and exceeded the Pi data deadline.
+
+### Suggested Action
+When a banked plugin loses multi-item composition, inspect the persisted bank and the final render payload separately. Preserve the proven provider workload, pass a bounded set of ready related records and their cached media into the existing renderer, and test both payload cardinality and provider-free media access.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/species_radar/species_radar.py, inkypi-weather/package/InkyPi/tests/test_species_radar.py
+- Tags: prepared-bank, view-adapter, gallery, cached-media, species-radar
+- Pattern-Key: plugin.prepared_bank_view_cardinality
+- Recurrence-Count: 1
+- First-Seen: 2026-07-15
+- Last-Seen: 2026-07-15
+
+---
+
 ## [LRN-20260715-004] best_practice
 
 **Logged**: 2026-07-15T01:10:00-07:00
