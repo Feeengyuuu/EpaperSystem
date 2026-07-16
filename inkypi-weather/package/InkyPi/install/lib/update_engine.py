@@ -691,7 +691,7 @@ class ArtifactPreparer:
                 release_id,
             ],
             cwd=candidate,
-            timeout=120,
+            timeout=600,
         )
 
         _fsync_tree(candidate)

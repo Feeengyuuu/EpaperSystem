@@ -867,6 +867,10 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
         if any("preflight.py" in str(item) for item in command)
     )
     assert install_index < check_index < preflight_index
+    check_kwargs = calls[check_index][1]
+    assert check_kwargs["timeout"] == 120
+    preflight_kwargs = calls[preflight_index][1]
+    assert preflight_kwargs["timeout"] == 600
 
 
 def _compatible_venv_fixture(layout, tmp_path):

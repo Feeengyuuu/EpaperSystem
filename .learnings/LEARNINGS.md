@@ -890,3 +890,26 @@ Label successful remote loads with LIVE, and cover every new source-state string
 - Tags: ewc, provenance, live, manual-refresh, soft-budget
 
 ---
+
+## [LRN-20260716-007] best_practice
+
+**Logged**: 2026-07-16T14:33:16-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Full application preflight needs a slow-device timeout distinct from post-switch health timeout.
+
+### Details
+The transactional updater safely rejected a candidate before activation because the Raspberry Pi exceeded the hard-coded 120-second app preflight limit after intensive dependency hashing. The CLI health timeout controls only post-switch readyz and cannot fix this stage. The failed update correctly removed staging while leaving current, the service, and the uploaded artifact intact.
+
+### Suggested Action
+Keep the full no-hardware app probe, but allow 600 seconds for cold-cache Raspberry Pi storage. Verify pre-switch failure leaves current untouched, and still require post-switch readyz plus a plugin-specific manual refresh before accepting the release.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/install/lib/update_engine.py, inkypi-weather/package/InkyPi/tests/test_install_update.py
+- Tags: updater, preflight, timeout, raspberry-pi, rollback, live-proof
+
+---
