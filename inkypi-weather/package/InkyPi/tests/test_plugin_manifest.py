@@ -455,7 +455,6 @@ def test_all_builtin_manifests_are_v2_and_only_audited_plugins_are_live():
     assert manifests
     assert all(item.schema_version == 2 for item in manifests)
     assert {item.id for item in manifests if item.capabilities.supports_live_refresh} == {
-        "live_radar",
         "sports_dashboard",
     }
     assert all(
@@ -465,10 +464,10 @@ def test_all_builtin_manifests_are_v2_and_only_audited_plugins_are_live():
     )
 
 
-def test_live_radar_manifest_declares_live_and_presentation_capabilities():
+def test_live_radar_manifest_declares_static_display_and_presentation_capabilities():
     manifest = PluginManifest.from_path(PLUGIN_SOURCE_ROOT / "live_radar" / "plugin-info.json")
 
-    assert manifest.capabilities.supports_live_refresh is True
+    assert manifest.capabilities.supports_live_refresh is False
     assert manifest.capabilities.supports_presentation_refresh is True
 
 

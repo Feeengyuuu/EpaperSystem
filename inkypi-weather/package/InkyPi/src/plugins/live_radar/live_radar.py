@@ -191,41 +191,6 @@ class LiveRadar(BasePlugin):
         del settings
         return PresentationMode.NO_CHANGE
 
-    def get_live_refresh_state(self, settings, current_dt):
-        settings = settings or {}
-        explicit_rooms = {}
-        rooms_json = settings.get("roomsJson")
-        if rooms_json is not None and str(rooms_json).strip():
-            parsed_json_rooms = self._parse_rooms_json(rooms_json)
-            if parsed_json_rooms:
-                explicit_rooms["roomsJson"] = json.dumps(
-                    parsed_json_rooms,
-                    ensure_ascii=False,
-                )
-        rooms_text = settings.get("roomsText")
-        if rooms_text is not None and str(rooms_text).strip():
-            explicit_rooms["roomsText"] = rooms_text
-        if not explicit_rooms:
-            return None
-
-        rooms = self._parse_rooms(explicit_rooms)
-        if not rooms:
-            return None
-        api_url = str(settings.get("apiUrl") or DEFAULT_API_URL).strip() or DEFAULT_API_URL
-        fetch_avatars = self._bool_setting(settings.get("fetchAvatars"), True)
-        cache_entry = self._read_cache_read_only(self._cache_key(rooms, api_url, fetch_avatars))
-        results = cache_entry.get("results") if isinstance(cache_entry, dict) else None
-        if not self._results_have_success(results):
-            return None
-        try:
-            fetched_at = float(cache_entry.get("fetched_at"))
-            age_seconds = current_dt.timestamp() - fetched_at
-        except (AttributeError, TypeError, ValueError, OverflowError, OSError):
-            return None
-        if not math.isfinite(age_seconds) or age_seconds < 60:
-            return None
-        return {"active": True, "interval_seconds": 60}
-
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["style_settings"] = False
@@ -2253,15 +2218,6 @@ class LiveRadar(BasePlugin):
     def _read_cache(self, cache_key):
         try:
             path = self._cache_path(cache_key)
-            if path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("Could not read LiveRadar cache: %s", exc)
-        return {}
-
-    def _read_cache_read_only(self, cache_key):
-        try:
-            path = self.cache_dir(leaf="cache", create=False) / f"{cache_key}.json"
             if path.exists():
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:

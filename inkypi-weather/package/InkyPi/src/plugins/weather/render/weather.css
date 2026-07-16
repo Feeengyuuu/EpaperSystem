@@ -14,7 +14,8 @@
   width: 100%;
   height: 100%;
   font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
-  background: var(--theme-background, transparent);
+  background-color: var(--theme-background, #ffffff);
+  background-image: none;
   color: var(--theme-ink, inherit);
 }
 

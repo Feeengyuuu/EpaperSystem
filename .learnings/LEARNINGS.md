@@ -707,3 +707,49 @@ Trace the plugin through git history, identify the exact bundled font files and 
 - Tags: stocktracker, typography, original-design, jost, git-history
 
 ---
+
+## [LRN-20260715-004] best_practice
+
+**Logged**: 2026-07-15T22:45:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: scheduler
+
+### Summary
+A five-minute e-paper rotation target needs one end-to-end deadline budget, not only a shorter scheduler sleep.
+
+### Details
+The live frame still stalled after polling was tightened because ordinary data renders occupied the single worker, the shuffle bag waited `3 * interval` (15 minutes) before conceding an ineligible remainder, and a day/night transition required an exact-theme cache. The working policy wakes precisely near 300 seconds, reserves and prepares the next distinct member immediately after an automatic display, gives a failed theme/cache refresh 30 seconds before using the authoritative last-good cache, caps production shuffle starvation at 60 seconds, and reserves 60 seconds for the physical Waveshare write. Ordinary background refreshes remain enabled outside the final guarded window. Live proof measured two committed automatic displays 303.294 seconds apart.
+
+### Suggested Action
+Treat 300 seconds as the target and 420 seconds as the total operational budget. Test scheduler polling, worker admission, presentation prefetch, shuffle starvation, theme-cache fallback, and physical commit timing together. Prove the result from consecutive persisted `refresh_time` values plus hardware logs, not from configuration constants alone.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/src/model.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_model.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: five-minute-rotation, seven-minute-deadline, prefetch, shuffle-starvation, theme-cache, hardware-write
+
+---
+
+## [LRN-20260715-005] correction
+
+**Logged**: 2026-07-15T22:45:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: release
+
+### Summary
+Do not build a clean InkyPi release by copying `/opt/inkypi/current`; it includes the installed virtual environment.
+
+### Details
+Copying the committed live release directory into `/var/tmp` produced a 500 MB staging tree and a 353 MB ZIP because `venv_inkypi` is installed after extraction. The normal source artifact was only about 147 MB. Reusing the previously verified source ZIP as the device-side baseline, extracting it, overlaying the tested files, and zipping that directory preserved the expected release shape.
+
+### Suggested Action
+For device-side micro-releases, always extract a known clean source artifact before overlaying changes. Inspect uncompressed size and archive contents before updater execution, and reject artifacts containing `venv_inkypi` or other installed runtime state.
+
+### Metadata
+- Source: error
+- Related Files: install/inkypi_update.py, tools/epaperpod-deploy-zip.ps1
+- Tags: release-artifact, virtualenv, device-side-packaging, zip, preflight
+
+---

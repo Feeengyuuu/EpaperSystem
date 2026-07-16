@@ -2,6 +2,7 @@ import threading
 import time
 import os
 import logging
+import math
 import ctypes
 import gc
 import hashlib
@@ -120,7 +121,13 @@ _RENDERER_INTENTS = frozenset(
     }
 )
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
-DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 180
+DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
+DEFAULT_ROTATION_MAX_INTERVAL_SECONDS = 7 * 60
+DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS = 2 * 60
+DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS = 30
+DEFAULT_ROTATION_HARDWARE_BUDGET_SECONDS = 60
+DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS = 1
+DEFAULT_IDLE_SCHEDULER_POLL_SECONDS = 30
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
@@ -444,6 +451,8 @@ class RefreshTask:
         self._resource_tier = None
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
         self._oldest_data_overdue_seconds = None
+        self._rotation_deadline_guard_active = False
+        self._rotation_cache_starved_since = None
         self._display_transactions_enabled = False
         bind_runtime_state = getattr(display_manager, "bind_runtime_state", None)
         if callable(bind_runtime_state):
@@ -1058,7 +1067,57 @@ class RefreshTask:
         )
         if interval <= 0:
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
-        return max(1.0, min(30.0, interval))
+        poll_cap = DEFAULT_IDLE_SCHEDULER_POLL_SECONDS
+        try:
+            active = self.device_config.get_playlist_manager().snapshot_active_playlist(
+                self._get_current_datetime()
+            )
+            if active is not None and active.plugins:
+                remaining = self._get_rotation_wait_seconds()
+                if math.isfinite(remaining):
+                    poll_cap = max(
+                        DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS,
+                        min(DEFAULT_IDLE_SCHEDULER_POLL_SECONDS, remaining),
+                    )
+        except Exception:
+            logger.exception("Could not inspect active playlist for scheduler polling.")
+        return max(1.0, min(poll_cap, interval))
+
+    def _rotation_presentation_wait_seconds(self):
+        configured_wait = max(
+            0.0,
+            self._config_float(
+                "rotation_presentation_wait_seconds",
+                DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS,
+            ),
+        )
+        cycle_interval = max(
+            0.0,
+            self._config_float(
+                "plugin_cycle_interval_seconds",
+                DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+            ),
+        )
+        remaining_budget = max(
+            0.0,
+            DEFAULT_ROTATION_MAX_INTERVAL_SECONDS - cycle_interval,
+        )
+        return min(configured_wait, remaining_budget)
+
+    def _rotation_starvation_concession_seconds(self):
+        cycle_interval = max(
+            0.0,
+            self._config_float(
+                "plugin_cycle_interval_seconds",
+                DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+            ),
+        )
+        return max(
+            0.0,
+            DEFAULT_ROTATION_MAX_INTERVAL_SECONDS
+            - cycle_interval
+            - DEFAULT_ROTATION_HARDWARE_BUDGET_SECONDS,
+        )
 
     def _select_scheduled_command(self, current_dt) -> RefreshCommand | None:
         """Select display work using only immutable PlaylistManager APIs."""
@@ -1135,6 +1194,7 @@ class RefreshTask:
             current_dt,
             latest_refresh=latest_refresh.get_refresh_datetime(),
             interval_seconds=interval,
+            max_starvation_seconds=self._rotation_starvation_concession_seconds(),
         )
         if selection is not None:
             return self._playlist_command(
@@ -1307,21 +1367,12 @@ class RefreshTask:
 
     def _select_cached_display_command(self, current_dt) -> RefreshCommand | None:
         """Select one random eligible cache without loading plugin code."""
+        self._rotation_deadline_guard_active = False
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
+            self._rotation_cache_starved_since = None
             return None
-        theme_context = get_theme_context(self.device_config, now=current_dt)
-        if self._has_theme_changed(theme_context, current_dt):
-            # The exact displayed theme refresh owns this transition.  Avoid
-            # queueing an opposite-theme DISPLAY_CACHE command that could
-            # absorb its cache-only follow-up and lose the pinned context.
-            return None
-        candidates = self._active_cache_candidates(
-            active,
-            theme_context,
-            exact_theme_only=True,
-        )
         latest_refresh = self.device_config.get_refresh_info()
         latest_display_dt = latest_refresh.get_refresh_datetime()
         try:
@@ -1333,14 +1384,65 @@ class RefreshTask:
             )
         except (TypeError, ValueError, OverflowError):
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
+        rotation_due = manager.should_refresh(
+            latest_display_dt,
+            interval,
+            current_dt,
+        )
+        theme_context = get_theme_context(self.device_config, now=current_dt)
+        theme_changed = self._has_theme_changed(theme_context, current_dt)
+        if theme_changed and not rotation_due:
+            self._rotation_cache_starved_since = None
+            return None
+
+        candidates = self._active_cache_candidates(
+            active,
+            theme_context,
+            exact_theme_only=True,
+        )
+        recovery_elapsed = None
+        if rotation_due and (theme_changed or not candidates):
+            if self._rotation_cache_starved_since is None:
+                self._rotation_cache_starved_since = current_dt
+            recovery_elapsed = max(
+                0.0,
+                (current_dt - self._rotation_cache_starved_since).total_seconds(),
+            )
+            if recovery_elapsed < DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS:
+                return None
+            fallback_candidates = self._active_cache_candidates(
+                active,
+                theme_context,
+                exact_theme_only=False,
+            )
+            if fallback_candidates:
+                candidates = fallback_candidates
+            elif not candidates:
+                return None
+        else:
+            self._rotation_cache_starved_since = None
+
+        starvation_cap = self._rotation_starvation_concession_seconds()
+        if recovery_elapsed is not None:
+            starvation_cap = max(0.0, starvation_cap - recovery_elapsed)
         selection = manager.reserve_next_active_instance(
             current_dt,
             latest_refresh=latest_display_dt,
             interval_seconds=interval,
             eligible_instance_uuids=frozenset(candidates),
+            max_starvation_seconds=starvation_cap,
         )
         if selection is None:
+            self._rotation_deadline_guard_active = bool(
+                candidates
+                and manager.should_refresh(
+                    latest_display_dt,
+                    interval,
+                    current_dt,
+                )
+            )
             return None
+        self._rotation_cache_starved_since = None
         candidate = candidates.get(selection.instance.instance_uuid)
         if candidate is None or (
             candidate.structural_generation
@@ -1431,10 +1533,7 @@ class RefreshTask:
                         allow_prepared_presentation = True
                     else:
                         requested_at = self._parse_iso_datetime(request.requested_at)
-                        wait_seconds = self._config_float(
-                            "rotation_presentation_wait_seconds",
-                            DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS,
-                        )
+                        wait_seconds = self._rotation_presentation_wait_seconds()
                         resource_tier = classify_resource_tier(
                             self._resource_sample(),
                             self._resource_thresholds(),
@@ -1690,15 +1789,6 @@ class RefreshTask:
         auxiliary_candidates.extend(presentation_candidates)
         if theme_candidate is not None:
             auxiliary_candidates.append(theme_candidate)
-        decision = choose_refresh_candidate(
-            data_candidates,
-            auxiliary_candidates,
-            tier=tier,
-            state=self._admission_state,
-            now_monotonic=self._clock(),
-            thresholds=thresholds,
-        )
-        self._admission_state = decision.state
         self._resource_tier = tier
         self._due_counts = {
             RefreshLane.DATA.value: len(data_candidates),
@@ -1714,6 +1804,62 @@ class RefreshTask:
             )
         else:
             self._oldest_data_overdue_seconds = None
+
+        # A presentation request for the reserved next rotation member is part
+        # of the display critical path.  Prepare it before ordinary data work,
+        # even when that data is older, so the next cached image is ready as
+        # soon as the five-minute dwell expires.
+        reserved_instance_uuids = {
+            instance.instance_uuid
+            for instance in active.plugins
+            if manager.validate_rotation_reservation(
+                instance.instance_uuid,
+                expected_playlist_name=active.name,
+            )
+        }
+        for presentation_candidate in presentation_candidates:
+            presentation_instance = presentation_candidate.instance
+            if presentation_instance.instance_uuid not in reserved_instance_uuids:
+                continue
+            request = runtime_instances[
+                presentation_instance.instance_uuid
+            ].presentation_request
+            if request is None:
+                continue
+            return self._playlist_command(
+                active.name,
+                presentation_instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.PRESENTATION_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=90,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                presentation_request_id=request.request_id,
+            )
+
+        # Do not start a provider/render job that can occupy the single worker
+        # across the imminent display deadline.  Existing plugin data remains
+        # usable from cache and ordinary refreshes resume immediately after the
+        # display commit.
+        if (
+            (reserved_instance_uuids or self._rotation_deadline_guard_active)
+            and
+            self._get_rotation_wait_seconds()
+            <= DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
+        ):
+            return None
+
+        decision = choose_refresh_candidate(
+            data_candidates,
+            auxiliary_candidates,
+            tier=tier,
+            state=self._admission_state,
+            now_monotonic=self._clock(),
+            thresholds=thresholds,
+        )
+        self._admission_state = decision.state
         candidate = decision.candidate
         if candidate is None:
             return self._select_theme_catchup_command(
@@ -3554,7 +3700,14 @@ class RefreshTask:
                 if thawed_theme_context:
                     self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_playlist_display_commit(command)
-                if command.allow_prepared_presentation:
+                if command.payload.get("automatic_rotation") is True:
+                    self._request_next_presentation_after_display(
+                        current_dt,
+                        commit_id,
+                        committed_at,
+                        displayed_instance_uuid=instance.instance_uuid,
+                    )
+                elif command.allow_prepared_presentation:
                     self._request_presentation_after_display(
                         instance,
                         commit_id,
@@ -3858,6 +4011,51 @@ class RefreshTask:
             request,
         )
 
+    def _request_next_presentation_after_display(
+        self,
+        current_dt,
+        display_commit_id,
+        committed_at,
+        *,
+        displayed_instance_uuid=None,
+    ):
+        """Reserve and start preparing the next rotation member immediately."""
+        manager = self.device_config.get_playlist_manager()
+        eligible_instance_uuids = None
+        if displayed_instance_uuid is not None:
+            active = manager.snapshot_active_playlist(current_dt)
+            if active is None:
+                return False
+            eligible_instance_uuids = {
+                instance.instance_uuid
+                for instance in active.plugins
+                if instance.instance_uuid != displayed_instance_uuid
+            }
+            if not eligible_instance_uuids:
+                return False
+        selection = manager.reserve_next_active_instance(
+            current_dt,
+            latest_refresh=None,
+            interval_seconds=0,
+            eligible_instance_uuids=eligible_instance_uuids,
+            max_starvation_seconds=self._rotation_starvation_concession_seconds(),
+        )
+        if selection is None:
+            return False
+        requested = self._request_presentation_after_display(
+            selection.instance,
+            display_commit_id,
+            committed_at,
+        )
+        if requested:
+            logger.info(
+                "Reserved next rotation member for immediate presentation preparation. | "
+                "plugin_id: %s | instance_uuid: %s",
+                selection.instance.plugin_id,
+                selection.instance.instance_uuid,
+            )
+        return requested
+
     def _enqueue_live_display_followup(
         self,
         command,
@@ -4070,8 +4268,8 @@ class RefreshTask:
                     entry.command if entry is not None else None,
                 )
 
-    def _get_refresh_wait_seconds(self):
-        """Return time until the next playlist tick, aligned to the latest refresh time."""
+    def _get_rotation_wait_seconds(self):
+        """Return time until the next playlist tick without evaluating plugins."""
         interval = self.device_config.get_config(
             "plugin_cycle_interval_seconds",
             default=DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
@@ -4096,7 +4294,12 @@ class RefreshTask:
             localize = getattr(current_dt.tzinfo, "localize", None)
             latest_refresh_dt = localize(latest_refresh_dt) if localize else latest_refresh_dt.replace(tzinfo=current_dt.tzinfo)
         elapsed = (current_dt - latest_refresh_dt).total_seconds()
-        wait_seconds = max(0, min(interval, interval - elapsed))
+        return max(0, min(interval, interval - elapsed))
+
+    def _get_refresh_wait_seconds(self):
+        """Return time until any scheduler work is due."""
+        wait_seconds = self._get_rotation_wait_seconds()
+        current_dt = self._get_current_datetime()
         live_wait_seconds = self._live_refresh_wait_seconds(current_dt)
         if live_wait_seconds is not None:
             if live_wait_seconds <= 0 < wait_seconds:

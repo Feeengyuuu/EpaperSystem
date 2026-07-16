@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,22 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
 )
 from utils import theme_utils
 from utils.theme_utils import EFFECTIVE_THEME_CONTEXT_INFO_KEY
+
+
+WEATHER_PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "src" / "plugins" / "weather"
+
+
+def test_weather_background_uses_native_solid_epaper_colors():
+    manifest = json.loads(
+        (WEATHER_PLUGIN_ROOT / "plugin-info.json").read_text(encoding="utf-8")
+    )
+    css = (WEATHER_PLUGIN_ROOT / "render" / "weather.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert manifest["theme"]["day"]["background"] == "#ffffff"
+    assert manifest["theme"]["night"]["background"] == "#000000"
+    assert "background-image: none" in css
 
 
 class FakeDeviceConfig:

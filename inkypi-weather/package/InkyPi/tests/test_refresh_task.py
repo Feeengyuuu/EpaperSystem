@@ -10039,6 +10039,269 @@ def _normal_cache_display_command(task, playlist, instance, *, source=CommandSou
     )
 
 
+def test_rotation_deadline_policy_prioritizes_five_minute_switches(monkeypatch):
+    task, device_config, _clock, _playlist, _display = _make_presentation_task(
+        "rotation-deadline-policy"
+    )
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    device_config.config["rotation_presentation_wait_seconds"] = 999
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=299)
+    ).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    assert refresh_task_module.DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS == 60
+    assert refresh_task_module.DEFAULT_ROTATION_MAX_INTERVAL_SECONDS == 420
+    assert task._rotation_presentation_wait_seconds() == 120
+    assert task._scheduler_poll_seconds() == 1
+
+
+def test_successful_rotation_immediately_requests_the_next_presentation():
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "prefetch-next-presentation-after-display",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    acknowledgement = task.device_config.playlist_manager.acknowledge_rotation_display(
+        first.instance_uuid,
+        expected_playlist_name=playlist.name,
+    )
+    assert acknowledgement is not None
+
+    requested = task._request_next_presentation_after_display(
+        PRESENTATION_NOW,
+        "current-display-commit",
+        PRESENTATION_NOW.isoformat(),
+    )
+
+    states = task.runtime_state.snapshot().instances
+    assert requested is True
+    assert first.instance_uuid not in states
+    assert states[second.instance_uuid].presentation_request is not None
+    assert (
+        states[second.instance_uuid].presentation_request.origin_display_commit_id
+        == "current-display-commit"
+    )
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+
+def test_non_presented_automatic_display_still_prefetches_next_presentation(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "automatic-display-prefetches-next",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=50,
+        current_dt=PRESENTATION_NOW,
+        cache_theme_mode=None,
+        automatic_rotation=True,
+        allow_prepared_presentation=False,
+    )
+
+    task._execute_command(command)
+
+    states = task.runtime_state.snapshot().instances
+    assert states[second.instance_uuid].presentation_request is not None
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+
+def test_reserved_next_presentation_preempts_due_background_data(monkeypatch):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "reserved-presentation-preempts-data",
+        latest_refresh_time=None,
+    )
+    instance = playlist.plugins[0].snapshot()
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=301)
+    ).isoformat()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    selection = device_config.playlist_manager.reserve_next_active_instance(
+        PRESENTATION_NOW,
+        latest_refresh=device_config.refresh_info.get_refresh_datetime(),
+        interval_seconds=300,
+        eligible_instance_uuids={instance.instance_uuid},
+    )
+    assert selection is not None
+    _seed_presentation_request(task, instance)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(PRESENTATION_NOW)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert command.instance_uuid == instance.instance_uuid
+    assert command.priority == 90
+
+
+def test_rotation_guard_stops_new_background_work_before_due_display(monkeypatch):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "rotation-guard-background-work",
+        latest_refresh_time=None,
+    )
+    instance = playlist.plugins[0].snapshot()
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=181)
+    ).isoformat()
+    selection = device_config.playlist_manager.reserve_next_active_instance(
+        PRESENTATION_NOW,
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={instance.instance_uuid},
+    )
+    assert selection is not None
+    guarded = task._select_independent_refresh_command(PRESENTATION_NOW)
+
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=60)
+    ).isoformat()
+    unguarded = task._select_independent_refresh_command(PRESENTATION_NOW)
+
+    assert refresh_task_module.DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS == 120
+    assert guarded is None
+    assert unguarded is not None
+    assert unguarded.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_starved_rotation_guards_worker_and_preserves_hardware_budget(monkeypatch):
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("one", "One", latest_refresh_time=None),
+        _runtime_plugin_data("two", "Two", latest_refresh_time=None),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("starved-rotation-deadline-guard"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        now - timedelta(seconds=600)
+    ).isoformat()
+    first, second = playlist.plugins
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid]
+    playlist.plugin_rotation_recent_history = [second.instance_uuid]
+    _write_runtime_cache(task, second, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    blocked = task._select_cached_display_command(now)
+    background = task._select_independent_refresh_command(now)
+    conceded = task._select_cached_display_command(
+        now + timedelta(seconds=61)
+    )
+
+    assert blocked is None
+    assert task._rotation_deadline_guard_active is False
+    assert task._rotation_starvation_concession_seconds() == 60
+    assert background is None
+    assert conceded is not None
+    assert conceded.instance_uuid == second.instance_uuid
+
+
+def test_due_rotation_uses_last_good_theme_cache_after_short_recovery_window(
+    monkeypatch,
+):
+    now = datetime(2026, 7, 15, 22, 0, tzinfo=timezone.utc)
+    plugin_data = _runtime_plugin_data(
+        "themed_plugin",
+        "Themed Plugin",
+        latest_refresh_time=None,
+    )
+    plugin_data["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("rotation-theme-cache-recovery"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    device_config.config.update({"theme_mode": "auto", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        now - timedelta(seconds=600)
+    ).isoformat()
+    device_config.get_plugin = lambda _plugin_id: {
+        "id": "themed_plugin",
+        "_manifest": _theme_manifest("themed_plugin"),
+    }
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_theme_cache(
+        task,
+        instance,
+        "day",
+        Image.new("RGB", (32, 16), "white"),
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (now - timedelta(minutes=10)).isoformat(),
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="day",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=(now - timedelta(minutes=10)).isoformat(),
+        ),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_theme_context",
+        lambda _config, now=None: {
+            "mode": "night",
+            "source": "weather",
+            "reason": "sunset",
+        },
+    )
+
+    initial = task._select_cached_display_command(now)
+    still_recovering = task._select_cached_display_command(
+        now + timedelta(seconds=29)
+    )
+    fallback = task._select_cached_display_command(
+        now + timedelta(seconds=31)
+    )
+
+    assert initial is None
+    assert still_recovering is None
+    assert refresh_task_module.DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS == 30
+    assert fallback is not None
+    assert fallback.instance_uuid == instance.instance_uuid
+    assert fallback.payload["cache_theme_mode"] == "day"
+
+
 def _presentation_followup_command(task, playlist, instance, request):
     return task._playlist_command(
         playlist.name,

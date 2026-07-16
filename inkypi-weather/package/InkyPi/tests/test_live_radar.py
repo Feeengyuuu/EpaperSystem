@@ -112,7 +112,14 @@ def test_live_radar_declares_explicit_no_change_presentation_mode():
     assert plugin.presentation_mode({"forceRefresh": True}) is PresentationMode.NO_CHANGE
 
 
-def test_live_refresh_state_activates_only_for_matching_cache_at_sixty_seconds(
+def test_live_radar_holds_one_snapshot_for_the_full_display_window():
+    plugin = _plugin()
+
+    assert LiveRadar.get_live_refresh_state is BasePlugin.get_live_refresh_state
+    assert plugin.get_live_refresh_state({}, datetime.now(timezone.utc)) is None
+
+
+def test_live_refresh_state_stays_inactive_for_matching_cache_at_sixty_seconds(
     monkeypatch,
     tmp_path,
 ):
@@ -153,10 +160,7 @@ def test_live_refresh_state_activates_only_for_matching_cache_at_sixty_seconds(
     )
     before = _tree_snapshot(cache_root)
 
-    assert plugin.get_live_refresh_state(settings, current_dt) == {
-        "active": True,
-        "interval_seconds": 60,
-    }
+    assert plugin.get_live_refresh_state(settings, current_dt) is None
     assert _tree_snapshot(cache_root) == before
 
 
@@ -239,7 +243,7 @@ def test_live_refresh_state_rejects_explicit_invalid_rooms_without_cache_access(
     ],
     ids=["valid-json", "empty-json-valid-text", "invalid-json-valid-text"],
 )
-def test_live_refresh_state_keeps_explicit_valid_json_and_text_sources(settings):
+def test_live_refresh_state_ignores_explicit_valid_json_and_text_sources(settings):
     plugin = _plugin()
     current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
     reads = []
@@ -253,11 +257,8 @@ def test_live_refresh_state_keeps_explicit_valid_json_and_text_sources(settings)
 
     plugin._read_cache_read_only = read_cache
 
-    assert plugin.get_live_refresh_state(settings, current_dt) == {
-        "active": True,
-        "interval_seconds": 60,
-    }
-    assert len(reads) == 1
+    assert plugin.get_live_refresh_state(settings, current_dt) is None
+    assert reads == []
 
 
 @pytest.mark.parametrize(

@@ -284,6 +284,7 @@ class PlaylistManager:
         latest_refresh,
         interval_seconds,
         eligible_instance_uuids=None,
+        max_starvation_seconds=None,
     ) -> PlaylistSelectionSnapshot | None:
         """Reserve, but do not consume, one due automatic display candidate."""
         eligible_instance_uuids = self._normalize_eligible_instance_uuids(
@@ -297,6 +298,18 @@ class PlaylistManager:
             raise ValueError("interval_seconds must be finite") from exc
         if not math.isfinite(normalized_interval):
             raise ValueError("interval_seconds must be finite")
+        starvation_limit = max(3 * normalized_interval, 300.0)
+        if max_starvation_seconds is not None:
+            try:
+                normalized_starvation_cap = float(max_starvation_seconds)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("max_starvation_seconds must be finite") from exc
+            if not math.isfinite(normalized_starvation_cap):
+                raise ValueError("max_starvation_seconds must be finite")
+            starvation_limit = min(
+                starvation_limit,
+                max(0.0, normalized_starvation_cap),
+            )
 
         with self._lock:
             playlist = self._determine_active_playlist_locked(current_datetime)
@@ -328,7 +341,7 @@ class PlaylistManager:
                 starved_seconds = (
                     current_datetime - starved_since
                 ).total_seconds()
-                if starved_seconds < max(3 * normalized_interval, 300.0):
+                if starved_seconds < starvation_limit:
                     return None
                 instance = playlist.reserve_next_plugin(
                     eligible_instance_uuids,

@@ -1223,6 +1223,41 @@ class TestPlaylistManagerSchedulerSnapshots:
         }
         assert playlist.plugin_rotation_starved_since is None
 
+    def test_rotation_starvation_honors_explicit_shorter_concession_cap(
+        self,
+        monkeypatch,
+    ):
+        manager = self._starving_rotation_manager()
+        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        start = datetime(2026, 7, 14, 10, 0)
+        anchor = start - timedelta(seconds=600)
+        eligible = {"two-uuid", "three-uuid"}
+
+        assert manager.reserve_next_active_instance(
+            start,
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+            max_starvation_seconds=120,
+        ) is None
+        assert manager.reserve_next_active_instance(
+            start + timedelta(seconds=119),
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+            max_starvation_seconds=120,
+        ) is None
+        conceded = manager.reserve_next_active_instance(
+            start + timedelta(seconds=121),
+            latest_refresh=anchor,
+            interval_seconds=300,
+            eligible_instance_uuids=eligible,
+            max_starvation_seconds=120,
+        )
+
+        assert conceded is not None
+        assert conceded.instance.instance_uuid == "two-uuid"
+
     def test_rotation_starvation_timestamp_persists_and_not_due_does_not_starve(
         self,
     ):
