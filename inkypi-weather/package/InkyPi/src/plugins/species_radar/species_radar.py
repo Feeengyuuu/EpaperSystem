@@ -12,6 +12,7 @@ import re
 import socket
 import ssl
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
@@ -103,8 +104,8 @@ DEFAULT_NIGHT_END_HOUR = 6
 # media, and map preparation.  Keep the plugin below the 180-second manual job
 # ceiling while allowing the complete live pipeline to finish on the Pi.
 MAX_DATA_SECONDS = 150
-MAX_OBSERVATIONS_PER_DATA_PASS = 1
-MAX_PHOTO_FETCHES_PER_DATA_PASS = 1
+MAX_OBSERVATIONS_PER_DATA_PASS = 4
+MAX_PHOTO_FETCHES_PER_DATA_PASS = 3
 MAX_MAP_FETCHES_PER_DATA_PASS = 1
 MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS = 0
 MAX_PROVIDER_REDIRECTS = 4
@@ -418,8 +419,6 @@ class SpeciesRadar(BasePlugin):
                 and payload.get("cache_key") != expected_cache_key
             )
             source_observations = [] if stale_fallback else list(payload.get("observations") or [])
-            photo_count = 0
-            map_count = 0
             existing = {record.get("observation_id") for record in profile.get("records") or []}
             cursor = int(profile.get("refill_cursor") or 0)
             if source_observations:
@@ -429,6 +428,59 @@ class SpeciesRadar(BasePlugin):
                 )[:MAX_OBSERVATIONS_PER_DATA_PASS]
             else:
                 observations = []
+            photos = {}
+            maps = {}
+            media_tasks = {}
+            photo_count = 0
+            map_count = 0
+            maps_enabled = self._enabled(settings.get("showObservationMap"), default=True)
+            media_workers = (
+                MAX_PHOTO_FETCHES_PER_DATA_PASS + MAX_MAP_FETCHES_PER_DATA_PASS
+            )
+            with ThreadPoolExecutor(max_workers=media_workers) as executor:
+                for observation in observations:
+                    observation_id = self._observation_identity(observation)
+                    if not observation_id or observation_id in existing:
+                        continue
+                    if observation.get("image_url") and photo_count < MAX_PHOTO_FETCHES_PER_DATA_PASS:
+                        photo_count += 1
+                        future = executor.submit(
+                            self._download_image_for_data,
+                            observation.get("image_url"),
+                            dimensions,
+                            deadline=deadline,
+                        )
+                        media_tasks[future] = ("photo", observation_id)
+                    if maps_enabled and map_count < MAX_MAP_FETCHES_PER_DATA_PASS:
+                        map_count += 1
+                        future = executor.submit(
+                            self._load_map_for_data,
+                            settings,
+                            device_config,
+                            observation,
+                            (195, 86),
+                            deadline=deadline,
+                        )
+                        media_tasks[future] = ("map", observation_id)
+                for future in as_completed(media_tasks):
+                    media_type, observation_id = media_tasks[future]
+                    try:
+                        media = future.result()
+                    except Exception as exc:
+                        if self._monotonic() >= deadline:
+                            bank.rollback_pending_ingests()
+                            raise RuntimeError("Species DATA deadline is exhausted") from exc
+                        logger.warning(
+                            "Species %s candidate failed for %s: %s",
+                            media_type,
+                            observation_id,
+                            exc,
+                        )
+                        continue
+                    if media_type == "photo":
+                        photos[observation_id] = media
+                    else:
+                        maps[observation_id] = media
             for observation in observations:
                 try:
                     check_or_rollback()
@@ -438,42 +490,8 @@ class SpeciesRadar(BasePlugin):
                 observation_id = self._observation_identity(observation)
                 if not observation_id or observation_id in existing:
                     continue
-                photo = None
-                map_image = None
-                if (
-                    observation.get("image_url")
-                    and photo_count < MAX_PHOTO_FETCHES_PER_DATA_PASS
-                ):
-                    photo_count += 1
-                    try:
-                        photo = self._download_image_for_data(
-                            observation.get("image_url"),
-                            dimensions,
-                            deadline=deadline,
-                        )
-                    except Exception as exc:
-                        if self._monotonic() >= deadline:
-                            bank.rollback_pending_ingests()
-                            raise RuntimeError("Species DATA deadline is exhausted") from exc
-                        logger.warning("Species photo candidate failed for %s: %s", observation_id, exc)
-                if (
-                    self._enabled(settings.get("showObservationMap"), default=True)
-                    and map_count < MAX_MAP_FETCHES_PER_DATA_PASS
-                ):
-                    map_count += 1
-                    try:
-                        map_image = self._load_map_for_data(
-                            settings,
-                            device_config,
-                            observation,
-                            (195, 86),
-                            deadline=deadline,
-                        )
-                    except Exception as exc:
-                        if self._monotonic() >= deadline:
-                            bank.rollback_pending_ingests()
-                            raise RuntimeError("Species DATA deadline is exhausted") from exc
-                        logger.warning("Species map candidate failed for %s: %s", observation_id, exc)
+                photo = photos.get(observation_id)
+                map_image = maps.get(observation_id)
                 if observation.get("image_url") and photo is None:
                     continue
                 try:
