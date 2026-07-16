@@ -6,33 +6,6 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
-## [LRN-20260715-006] correction
-
-**Logged**: 2026-07-15T17:10:00-07:00
-**Priority**: high
-**Status**: resolved
-**Area**: plugin
-
-### Summary
-A prepared-bank refill cap must be evaluated together with the instance's data-refresh cadence, not only against one job's timeout.
-
-### Details
-Species Radar was reduced to one observation, one photo, and one map per data pass to fit the Pi deadline, while its data interval remained six hours. Presentation refresh is deliberately provider-free, so the display could not grow the bank between data passes and correctly reported that no second record existed. Bounded concurrent media preparation restores several independent records without multiplying the wall-clock network time.
-
-### Suggested Action
-For long-cadence prepared-bank plugins, require one successful data pass to create a useful minimum rotation. Keep provider and media counts bounded, overlap independent I/O within the same deadline, and test both first-pass ready count and presentation-time provider isolation.
-
-### Metadata
-- Source: user_feedback
-- Related Files: inkypi-weather/package/InkyPi/src/plugins/species_radar/species_radar.py, inkypi-weather/package/InkyPi/tests/test_species_radar.py
-- Tags: prepared-bank, refill, cadence, concurrency, species-radar, raspberry-pi
-- Pattern-Key: plugin.prepared_bank_refill_cadence
-- Recurrence-Count: 1
-- First-Seen: 2026-07-15
-- Last-Seen: 2026-07-15
-
----
-
 ## [LRN-20260715-004] best_practice
 
 **Logged**: 2026-07-15T01:10:00-07:00

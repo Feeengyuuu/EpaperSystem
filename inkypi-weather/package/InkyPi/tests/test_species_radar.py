@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import sys
-import threading
 import time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -2196,72 +2195,21 @@ def test_species_data_refill_caps_observations_photos_maps_and_continues(tmp_pat
     first = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     first_profile = _species_profile(first)
 
-    assert len(first_profile["records"]) == 3
+    assert len(first_profile["records"]) == 1
     assert len(photos) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
     assert len(maps) == species_mod.MAX_MAP_FETCHES_PER_DATA_PASS
     assert first_profile["seen_ids"] == []
-    assert first_profile["refill_cursor"] == 4
+    assert first_profile["refill_cursor"] == 1
     assert first_profile["refill_in_progress"] is True
 
-    for _ in range(3):
+    for _ in range(11):
         plugin.generate_image(settings, DummyDeviceConfig())
     second = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
     second_profile = _species_profile(second)
     assert len(second_profile["records"]) == 12
     assert len(photos) == 12
-    assert len(maps) == 4
+    assert len(maps) == 12
     assert second_profile["refill_in_progress"] is False
-
-
-def test_species_data_refill_prefetches_bounded_media_concurrently(tmp_path, monkeypatch):
-    plugin = make_plugin(tmp_path)
-    settings = bound_species_settings()
-    payload = {
-        "source": "GBIF",
-        "location": {"name": "Fremont, CA"},
-        "location_summary": "Fremont, CA",
-        "observations": [bank_observation(index) for index in range(1, 5)],
-        "category_counts": {},
-        "location_counts": {},
-    }
-    active = 0
-    peak = 0
-    lock = threading.Lock()
-
-    def bounded_media(color):
-        nonlocal active, peak
-        with lock:
-            active += 1
-            peak = max(peak, active)
-        try:
-            time.sleep(0.05)
-            return Image.new("RGB", (80, 60), color)
-        finally:
-            with lock:
-                active -= 1
-
-    monkeypatch.setattr(plugin, "_daily_payload", lambda *_args: payload)
-    monkeypatch.setattr(
-        plugin,
-        "_download_image_for_data",
-        lambda *_args, **_kwargs: bounded_media("green"),
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_load_map_for_data",
-        lambda *_args, **_kwargs: bounded_media("blue"),
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_render_page",
-        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
-    )
-
-    plugin.generate_image(settings, DummyDeviceConfig())
-
-    state = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
-    assert len(_species_profile(state)["records"]) == 3
-    assert peak >= 2
 
 
 @pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
@@ -2401,7 +2349,7 @@ def test_species_data_deadline_is_checked_between_every_provider_operation(tmp_p
     with pytest.raises(RuntimeError, match="deadline"):
         plugin.generate_image(settings, DummyDeviceConfig())
 
-    assert 1 <= len(calls) <= species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
+    assert len(calls) == species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS
     assert clock["value"] <= species_mod.MAX_DATA_SECONDS + 60.0
     assert _tree_snapshot(tmp_path) == baseline
 
@@ -3109,9 +3057,9 @@ def test_live_data_budget_keeps_optional_common_name_enrichment_off_critical_pat
     assert species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS == 0
 
 
-def test_live_data_pass_prepares_multiple_records_with_bounded_media_workload():
-    assert species_mod.MAX_OBSERVATIONS_PER_DATA_PASS == 4
-    assert species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS == 3
+def test_live_data_pass_matches_legacy_single_observation_media_workload():
+    assert species_mod.MAX_OBSERVATIONS_PER_DATA_PASS == 1
+    assert species_mod.MAX_PHOTO_FETCHES_PER_DATA_PASS == 1
     assert species_mod.MAX_MAP_FETCHES_PER_DATA_PASS == 1
 
 
