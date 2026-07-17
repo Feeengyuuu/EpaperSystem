@@ -913,3 +913,94 @@ Keep the full no-hardware app probe, but allow 600 seconds for cold-cache Raspbe
 - Tags: updater, preflight, timeout, raspberry-pi, rollback, live-proof
 
 ---
+
+## [LRN-20260716-008] correction
+
+**Logged**: 2026-07-16T18:02:24-07:00
+**Priority**: high
+**Status**: pending
+**Area**: frontend
+
+### Summary
+The pit-telemetry F1 SportsDashboard redesign was rejected and must remain paused.
+
+### Details
+The implemented 556x268 F1 panel, including the generated header strip and dense two-column telemetry layout, did not meet the user's visual expectations. It was not merged, deployed, or pushed. Treat commit `12d8e3bf19c1` on local branch `codex/paused-f1-dashboard-redesign` as a recoverable experiment, not an approved design baseline.
+
+### Suggested Action
+When F1 work resumes, restart with small visual-direction mockups and explicit approval before rebuilding or reconnecting runtime rotation. Do not reuse this layout by default.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/f1_render.py
+- Tags: sports-dashboard, f1, ui, img-2, paused, rejected-direction
+- Pattern-Key: sports_dashboard.f1_rejected_pit_telemetry_direction
+- Recurrence-Count: 1
+- First-Seen: 2026-07-16
+- Last-Seen: 2026-07-16
+
+---
+
+## [LRN-20260716-009] best_practice
+
+**Logged**: 2026-07-16T18:37:56-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+SecretSchema changes must regenerate both compatibility artifacts before the full suite can pass.
+
+### Details
+Adding a new secret alias only to `install/api_key_registry.json` does not affect the runtime schema, while changing only `src/config/secret_schema.json` leaves the generated registry and `.env.example` stale. The repository contract compares both artifacts byte-for-byte with `SecretSchema` output.
+
+### Suggested Action
+Update `src/config/secret_schema.json`, then run `install/configure_api_keys.py --generate-artifacts`. Verify `tests/test_secret_schema.py` and `tests/test_secret_schema_plugin_contract.py` before the full suite.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/config/secret_schema.json, inkypi-weather/package/InkyPi/install/configure_api_keys.py, inkypi-weather/package/InkyPi/install/api_key_registry.json, inkypi-weather/package/InkyPi/.env.example
+- Tags: secret-schema, generated-artifacts, api-key-registry, env-example, tests
+- Pattern-Key: config.secret_schema_regenerate_artifacts
+- Recurrence-Count: 1
+- First-Seen: 2026-07-16
+- Last-Seen: 2026-07-16
+
+### Resolution
+- **Resolved**: 2026-07-16T18:37:56-07:00
+- **Commit/PR**: 9cc2e326
+- **Notes**: Regenerated both artifacts and verified the full suite with 3971 passing tests.
+
+---
+
+## [LRN-20260716-010] best_practice
+
+**Logged**: 2026-07-16T18:37:56-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Windows pytest fixture paths can outgrow normal worktree deletion limits.
+
+### Details
+`git worktree remove --force` unregistered the temporary worktree but stopped with `Filename too long`, leaving an unregistered directory containing paths up to 357 characters. The safe recovery was to confirm the target remained under `.worktrees`, confirm it no longer appeared in `git worktree list`, confirm no `.git` metadata remained, and then delete only that residual directory through the Windows extended-length path prefix.
+
+### Suggested Action
+Keep pytest temp roots short for temporary worktrees. If cleanup still fails, verify provenance and Git registration before using `\\?\` long-path removal on the exact orphaned directory.
+
+### Metadata
+- Source: error
+- Related Files: tools/run_inkypi_tests.ps1
+- Tags: windows, git-worktree, pytest, long-path, cleanup
+- Pattern-Key: windows.worktree_remove_long_path_residual
+- Recurrence-Count: 1
+- First-Seen: 2026-07-16
+- Last-Seen: 2026-07-16
+
+### Resolution
+- **Resolved**: 2026-07-16T18:37:56-07:00
+- **Commit/PR**: operational
+- **Notes**: Removed only the verified unregistered main-validation residual and confirmed the target no longer existed.
+
+---
