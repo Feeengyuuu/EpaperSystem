@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import requests
+from utils.http_client import get_http_session
 
 
 DEFAULT_TOKEN_PATH = "/var/lib/inkypi/secrets/robinhood_mcp.json"
@@ -37,7 +37,7 @@ class RobinhoodMCPClient:
     def __init__(self, token_path=None, *, http=None, timeout=30):
         configured_path = token_path or os.getenv("ROBINHOOD_MCP_TOKEN_FILE") or DEFAULT_TOKEN_PATH
         self.token_path = Path(configured_path).expanduser()
-        self.http = http or requests.Session()
+        self.http = http or get_http_session()
         self.timeout = timeout
         self._credentials = None
         self._session_id = None

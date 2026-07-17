@@ -415,6 +415,7 @@
       ],
       "required": false,
       "aliases": [
+        "LPL_ODDS_API_IO_KEY",
         "Odds_API_IO_KEY",
         "ODDSAPI_IO_KEY",
         "WORLD_CUP_ODDS_API_IO_KEY",

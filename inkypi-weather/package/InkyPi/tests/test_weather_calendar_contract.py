@@ -489,7 +489,7 @@ def _contrast_ratio(first, second):
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def test_calendar_canonical_palette_changes_pixels_with_readable_contrast(monkeypatch):
+def test_calendar_preserves_day_palette_and_uses_readable_night_palette(monkeypatch):
     monkeypatch.setattr(
         "plugins.simple_calendar.simple_calendar.read_contexts", lambda *args, **kwargs: []
     )
@@ -511,21 +511,24 @@ def test_calendar_canonical_palette_changes_pixels_with_readable_contrast(monkey
     )
 
     assert day.tobytes() != night.tobytes()
-    for image, theme in (
-        (day, _calendar_theme("day")),
-        (night, _calendar_theme("night")),
-    ):
-        palette = theme["palette"]
-        colors = {
-            color
-            for _count, color in image.getcolors(
-                maxcolors=image.width * image.height
-            )
-        }
-        assert palette["background"] in colors
-        assert palette["panel"] in colors
-        assert palette["ink"] in colors
-        assert _contrast_ratio(palette["background"], palette["ink"]) >= 4.5
+
+    day_colors = {
+        color
+        for _count, color in day.getcolors(maxcolors=day.width * day.height)
+    }
+    assert (255, 255, 255) in day_colors
+    assert (248, 248, 247) in day_colors
+    assert (0, 0, 0) in day_colors
+
+    night_palette = _calendar_theme("night")["palette"]
+    night_colors = {
+        color
+        for _count, color in night.getcolors(maxcolors=night.width * night.height)
+    }
+    assert night_palette["background"] in night_colors
+    assert night_palette["panel"] in night_colors
+    assert night_palette["ink"] in night_colors
+    assert _contrast_ratio(night_palette["background"], night_palette["ink"]) >= 4.5
 
 
 def test_calendar_normal_render_still_uses_open_meteo_when_context_is_missing(
