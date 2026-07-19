@@ -1378,6 +1378,53 @@ class TestPlaylistManagerSchedulerSnapshots:
             "three-uuid",
         }
 
+    def test_automatic_rotation_keeps_three_other_plugins_between_repeats(
+        self,
+        monkeypatch,
+    ):
+        instance_uuids = [
+            "one-uuid",
+            "two-uuid",
+            "three-uuid",
+            "four-uuid",
+            "five-uuid",
+        ]
+        playlist = Playlist.from_dict(
+            self._playlist(
+                "Default",
+                plugins=[
+                    self._plugin(name.title(), instance_uuid=instance_uuid)
+                    for name, instance_uuid in zip(
+                        ("one", "two", "three", "four", "five"),
+                        instance_uuids,
+                    )
+                ],
+            )
+        )
+        shuffle_calls = []
+
+        def adversarial_round_boundary(items):
+            shuffle_calls.append(tuple(items))
+            if len(shuffle_calls) > 1:
+                items.reverse()
+
+        monkeypatch.setattr(
+            "src.model.random.shuffle",
+            adversarial_round_boundary,
+        )
+
+        displayed = []
+        for _ in range(2 * len(instance_uuids)):
+            reserved = playlist.reserve_next_plugin(set(instance_uuids))
+            displayed.append(reserved.instance_uuid)
+            assert playlist.acknowledge_rotation_display(reserved.instance_uuid)
+
+        previous_positions = {}
+        for position, instance_uuid in enumerate(displayed):
+            if instance_uuid in previous_positions:
+                assert position - previous_positions[instance_uuid] >= 4
+            previous_positions[instance_uuid] = position
+
     def test_automatic_rotation_initializes_legacy_bag_without_repeating_displayed(
         self,
         monkeypatch,

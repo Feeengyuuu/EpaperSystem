@@ -103,6 +103,7 @@ DEFAULT_ROOMS_TEXT = "\n".join(
 )
 CACHE_SCHEMA_VERSION = "live-radar-card-wall-v1"
 BATCH_LIMIT = 10
+BATCH_FAILURE_COOLDOWN_SECONDS = 5 * 60
 COVER_MAX_BYTES = 5 * 1024 * 1024
 COVER_MAX_SIZE = (960, 540)
 AVATAR_MAX_BYTES = 2 * 1024 * 1024
@@ -329,25 +330,49 @@ class LiveRadar(BasePlugin):
         all_results = []
         for start in range(0, len(rooms), BATCH_LIMIT):
             chunk = rooms[start : start + BATCH_LIMIT]
+            if len(chunk) > 1 and self._batch_circuit_is_open():
+                logger.info("LiveRadar multi-room batch is cooling down; fetching rooms individually.")
+                all_results.extend(
+                    self._fetch_statuses_individually(session, chunk, api_url, timeout, fetch_avatars)
+                )
+                continue
             try:
                 all_results.extend(self._post_status_chunk(session, chunk, api_url, timeout, fetch_avatars))
+                if len(chunk) > 1:
+                    self._batch_circuit_until = 0.0
             except Exception as exc:
                 logger.warning("LiveRadar batch fetch failed; retrying individually: %s", exc)
-                for room in chunk:
-                    try:
-                        all_results.extend(self._post_status_chunk(session, [room], api_url, timeout, fetch_avatars))
-                    except Exception as room_exc:
-                        logger.warning("LiveRadar room fetch failed for %s/%s: %s", room["platform"], room["id"], room_exc)
-                        all_results.append(
-                            {
-                                "ok": False,
-                                "platform": room["platform"],
-                                "id": room["id"],
-                                "error": str(room_exc),
-                                "status": self._default_status(room, is_error=True),
-                            }
-                        )
+                if len(chunk) > 1:
+                    self._batch_circuit_until = self._batch_clock_now() + BATCH_FAILURE_COOLDOWN_SECONDS
+                all_results.extend(
+                    self._fetch_statuses_individually(session, chunk, api_url, timeout, fetch_avatars)
+                )
         return self._repair_bilibili_results(session, rooms, all_results, timeout, fetch_avatars)
+
+    def _batch_clock_now(self):
+        clock = getattr(self, "_batch_clock", time.monotonic)
+        return float(clock())
+
+    def _batch_circuit_is_open(self):
+        return float(getattr(self, "_batch_circuit_until", 0.0) or 0.0) > self._batch_clock_now()
+
+    def _fetch_statuses_individually(self, session, rooms, api_url, timeout, fetch_avatars):
+        results = []
+        for room in rooms:
+            try:
+                results.extend(self._post_status_chunk(session, [room], api_url, timeout, fetch_avatars))
+            except Exception as room_exc:
+                logger.warning("LiveRadar room fetch failed for %s/%s: %s", room["platform"], room["id"], room_exc)
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": room["platform"],
+                        "id": room["id"],
+                        "error": str(room_exc),
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+        return results
 
     def _post_status_chunk(self, session, rooms, api_url, timeout, fetch_avatars):
         payload = {

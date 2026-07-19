@@ -25,6 +25,13 @@ from plugins.base_plugin.render_provenance import SourceProvenance, read_source_
 from utils.safe_image import safe_open_image
 
 
+_WORLD_CUP_RELEASE_ONE_SHOT = {
+    "event_id": "760516",
+    "starts_at": "2026-07-18T21:00:00+00:00",
+    "ends_at": "2026-07-19T01:00:00+00:00",
+}
+
+
 class SportsDashboard(
     SportsDashboardCommonMixin,
     WorldCupMixin,
@@ -82,9 +89,16 @@ class SportsDashboard(
             return None
         return {"active": True, "interval_seconds": min(active_intervals)}
 
+    def wants_background_live_refresh(self, settings, current_dt):
+        return self._worldcup_release_one_shot_window_active(current_dt)
+
     def _active_live_refresh_sources(self, settings, current_dt):
         sources = []
-        if self._live_state_active(self._worldcup_live_state_path(), WORLD_CUP_LIVE_STATE_VERSION, current_dt):
+        if self._live_state_active(
+            self._worldcup_live_state_path(),
+            WORLD_CUP_LIVE_STATE_VERSION,
+            current_dt,
+        ) or self._worldcup_release_one_shot_window_active(current_dt):
             sources.append("worldcup")
         if self._live_state_active(self._lpl_live_state_path(), LPL_LIVE_STATE_VERSION, current_dt):
             sources.append("lpl")
@@ -111,13 +125,21 @@ class SportsDashboard(
             sources.append("offseason_hub")
         if self._live_state_active(self._f1_live_state_path(), F1_LIVE_STATE_VERSION, current_dt):
             sources.append("f1")
-        return [source for source in sources if self._live_image_refresh_enabled(settings, source)]
+        return [
+            source
+            for source in sources
+            if self._live_image_refresh_enabled(settings, source, current_dt)
+        ]
 
-    def _live_image_refresh_enabled(self, settings, source):
+    def _live_image_refresh_enabled(self, settings, source, current_dt=None):
         if source == "nba":
             return self._bool_setting(settings, "nbaLiveRefreshEnabled", True)
         if source == "worldcup":
-            return self._bool_setting(settings, "worldCupLiveRefreshEnabled", True)
+            return self._bool_setting(
+                settings,
+                "worldCupLiveRefreshEnabled",
+                True,
+            ) or self._worldcup_one_shot_live_refresh_active(settings, current_dt)
         if source == "offseason_hub":
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
         if source in {"lpl", "lck", "msi"}:
@@ -131,6 +153,37 @@ class SportsDashboard(
         if source == "f1":
             return self._bool_setting(settings, "f1LiveRefreshEnabled", True)
         return False
+
+    def _worldcup_one_shot_live_refresh_active(self, settings, current_dt):
+        expected_event_id = str(settings.get("worldCupLiveRefreshOnceEventId") or "").strip()
+        configured_until = settings.get("worldCupLiveRefreshOnceUntil")
+        if not expected_event_id and not configured_until:
+            return self._worldcup_release_one_shot_window_active(current_dt)
+        enabled_until = self._parse_live_state_datetime(
+            configured_until
+        )
+        if not expected_event_id or not enabled_until:
+            return False
+        current = current_dt if isinstance(current_dt, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        if current.astimezone(timezone.utc) > enabled_until:
+            return False
+        state = self._read_json_file(self._worldcup_live_state_path())
+        return str(state.get("event_id") or "").strip() == expected_event_id
+
+    def _worldcup_release_one_shot_window_active(self, current_dt):
+        current = current_dt if isinstance(current_dt, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        current = current.astimezone(timezone.utc)
+        starts_at = self._parse_live_state_datetime(
+            _WORLD_CUP_RELEASE_ONE_SHOT["starts_at"]
+        )
+        ends_at = self._parse_live_state_datetime(
+            _WORLD_CUP_RELEASE_ONE_SHOT["ends_at"]
+        )
+        return bool(starts_at and ends_at and starts_at <= current <= ends_at)
 
     def _live_image_refresh_interval(self, settings, source):
         if source == "nba":

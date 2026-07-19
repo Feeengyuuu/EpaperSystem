@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 RENDERER_VERSION = "browser-renderer-v2-ssrf-proxy"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
+HTML_CIRCUIT_TTL_SECONDS = 300.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
 MAX_HTML_BYTES = 5 * 1024 * 1024
 _GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
@@ -163,6 +164,8 @@ class BrowserRenderer:
         popen=subprocess.Popen,
         clock=time.monotonic,
         negative_ttl_seconds=NEGATIVE_CACHE_TTL_SECONDS,
+        html_circuit_ttl_seconds=HTML_CIRCUIT_TTL_SECONDS,
+        run_as_root=None,
         ssrf_policy=None,
         egress_proxy=None,
     ):
@@ -177,8 +180,15 @@ class BrowserRenderer:
         self._popen = popen
         self._clock = clock
         self.negative_ttl_seconds = max(0.0, float(negative_ttl_seconds))
+        self.html_circuit_ttl_seconds = max(0.0, float(html_circuit_ttl_seconds))
+        if run_as_root is None:
+            get_euid = getattr(os, "geteuid", None)
+            run_as_root = callable(get_euid) and get_euid() == 0
+        self.run_as_root = bool(run_as_root)
         self._negative_cache = {}
         self._negative_lock = threading.Lock()
+        self._html_circuit_until = 0.0
+        self._html_circuit_lock = threading.Lock()
         self._processes = {}
         self._process_lock = threading.Lock()
         self.ssrf_policy = ssrf_policy or get_ssrf_policy()
@@ -216,6 +226,8 @@ class BrowserRenderer:
         if len(encoded) > MAX_HTML_BYTES:
             logger.warning("Browser HTML input exceeded %s bytes", MAX_HTML_BYTES)
             return None
+        if self._html_circuit_open():
+            return None
         key = self._cache_key("html", hashlib.sha256(encoded).hexdigest(), viewport)
         if self._negative_hit(key):
             return None
@@ -233,6 +245,7 @@ class BrowserRenderer:
             context=context,
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
+            failure_scope="html",
         )
 
     def render_url(
@@ -285,6 +298,7 @@ class BrowserRenderer:
             context=context,
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
+            failure_scope="url",
         )
 
     def close(self):
@@ -504,6 +518,7 @@ class BrowserRenderer:
         context,
         timeout_seconds,
         timezone_name,
+        failure_scope,
     ):
         if self._closed or not self.binary:
             self._remember_negative(key)
@@ -560,15 +575,21 @@ class BrowserRenderer:
                     logger.warning("Chromium render timed out for %s", _safe_target(target))
                     self._stop_process(process)
                     self._remember_negative(key)
+                    if failure_scope == "html":
+                        self._remember_html_failure()
                     return None
                 finally:
                     self._unregister_process(process)
                 context.raise_if_cancelled()
                 if process.returncode != 0 or not output_path.is_file():
                     self._remember_negative(key)
+                    if failure_scope == "html":
+                        self._remember_html_failure()
                     return None
                 image = safe_open_image(output_path)
                 self._forget_negative(key)
+                if failure_scope == "html":
+                    self._forget_html_failure()
                 return image
         except TaskCancelled:
             if process is not None and process.poll() is None:
@@ -580,6 +601,8 @@ class BrowserRenderer:
                 self._stop_process(process)
             logger.exception("Chromium render failed")
             self._remember_negative(key)
+            if failure_scope == "html":
+                self._remember_html_failure()
             return None
         finally:
             if process is not None:
@@ -624,16 +647,21 @@ class BrowserRenderer:
             "--disable-dev-shm-usage",
             "--disable-extensions",
             "--disable-gpu",
+            "--disable-gpu-memory-buffer-compositor-resources",
             "--disable-plugins",
             "--disable-quic",
+            "--disable-zero-copy",
             "--disable-sync",
             "--disable-features=Translate,DownloadBubble,OptimizationHints,DnsOverHttps",
             "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
             "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
             "--hide-scrollbars",
+            "--in-process-gpu",
+            "--js-flags=--jitless",
             "--mute-audio",
             "--no-first-run",
             "--renderer-process-limit=1",
+            "--use-gl=swiftshader",
             "--disk-cache-size=1",
             "--media-cache-size=1",
             f"--proxy-server={proxy_url}",
@@ -641,6 +669,8 @@ class BrowserRenderer:
             f"--timeout={timeout_ms}",
             f"--virtual-time-budget={timeout_ms}",
         ]
+        if self.run_as_root:
+            command.append("--no-sandbox")
         if timezone_name:
             command.append(f"--timezone-for-testing={str(timezone_name)[:80]}")
         command.append(str(target))
@@ -694,6 +724,18 @@ class BrowserRenderer:
     def _forget_negative(self, key):
         with self._negative_lock:
             self._negative_cache.pop(key, None)
+
+    def _html_circuit_open(self):
+        with self._html_circuit_lock:
+            return self._html_circuit_until > self._clock()
+
+    def _remember_html_failure(self):
+        with self._html_circuit_lock:
+            self._html_circuit_until = self._clock() + self.html_circuit_ttl_seconds
+
+    def _forget_html_failure(self):
+        with self._html_circuit_lock:
+            self._html_circuit_until = 0.0
 
     def _prune_negative_locked(self, now):
         self._negative_cache = {

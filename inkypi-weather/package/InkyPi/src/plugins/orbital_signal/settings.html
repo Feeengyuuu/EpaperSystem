@@ -1,0 +1,47 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="true">
+
+<div class="form-group">
+  <label class="form-label" for="refreshMinutes">Data cache (minutes)</label>
+  <input class="form-control" type="number" min="15" max="720" step="15" name="refreshMinutes" id="refreshMinutes" value="60">
+  <small>Refreshes only when the plugin is rendered. No internal live polling.</small>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="fontFamily">Font</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}
+      <option value="{{ font_name }}">{{ font_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> Ignore cache once</label>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const ownFields = ['refreshMinutes', 'fontFamily', 'forceRefresh', 'refreshOnDisplay'];
+    if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+      for (const key of ownFields) {
+        if (pluginSettings[key] === undefined) continue;
+        const el = document.getElementById(key);
+        if (!el) continue;
+        const value = pluginSettings[key];
+        if (el.type === 'checkbox') {
+          el.checked = value === true || value === 'on' || value === 'true';
+        } else {
+          el.value = value;
+        }
+      }
+    }
+    const fontFamily = document.getElementById('fontFamily');
+    const hasStoredFont = typeof loadPluginSettings !== 'undefined'
+      && loadPluginSettings
+      && pluginSettings.fontFamily !== undefined;
+    if (fontFamily) {
+      const yahei = [...fontFamily.options].find((option) => option.value === 'Microsoft YaHei');
+      if (yahei && (!hasStoredFont || !fontFamily.value)) fontFamily.value = 'Microsoft YaHei';
+    }
+  });
+</script>

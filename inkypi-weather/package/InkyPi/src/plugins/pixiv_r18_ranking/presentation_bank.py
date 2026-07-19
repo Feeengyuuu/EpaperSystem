@@ -89,6 +89,10 @@ _TEXT_LIMITS = {
 _PIXIV_HOST_SUFFIXES = ("pixiv.net", "pximg.net")
 
 
+class PixivPresentationBankCold(RuntimeError):
+    """The instance has not completed its first background data refresh yet."""
+
+
 def settings_key(settings):
     """Canonical effective defaults; excludes secrets and runtime-only keys."""
 
@@ -282,7 +286,7 @@ class PixivPresentationBank:
         document = self._migrate_document(self._read_document())
         fingerprint = document["instance_profiles"].get(self.instance_uuid)
         if fingerprint != self.fingerprint:
-            raise RuntimeError("Pixiv presentation bank is cold for this instance")
+            raise PixivPresentationBankCold("Pixiv presentation bank is cold for this instance")
         profile = document["profiles"].get(fingerprint)
         if not isinstance(profile, dict):
             raise RuntimeError("Pixiv presentation bank is unavailable")

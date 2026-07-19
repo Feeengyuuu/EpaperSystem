@@ -128,6 +128,7 @@ DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS = 30
 DEFAULT_ROTATION_HARDWARE_BUDGET_SECONDS = 60
 DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS = 1
 DEFAULT_IDLE_SCHEDULER_POLL_SECONDS = 30
+DEFAULT_INDEPENDENT_REFRESH_STARVATION_SECONDS = 5 * 60
 DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS = 180
 DEFAULT_MANUAL_UPDATE_JOB_RETENTION = 50
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
@@ -1303,6 +1304,7 @@ class RefreshTask:
             latest = self._snapshot_latest_refresh_dt(instance)
             latest_timestamp = float("-inf") if latest is None else latest.timestamp()
             candidates.append((
+                not live_due,
                 not missing_work,
                 latest_timestamp,
                 instance.plugin_id,
@@ -1311,11 +1313,11 @@ class RefreshTask:
             ))
 
         limit = self._background_cache_refresh_max_per_pass()
-        selected = sorted(candidates, key=lambda item: item[:4])[:limit]
+        selected = sorted(candidates, key=lambda item: item[:5])[:limit]
         return tuple(
             self._playlist_command(
                 active.name,
-                item[4],
+                item[5],
                 source=CommandSource.BACKGROUND,
                 intent=RefreshIntent.DATA_REFRESH,
                 display_cached_only=False,
@@ -1365,6 +1367,44 @@ class RefreshTask:
                 candidates[instance.instance_uuid] = candidate
         return candidates
 
+    def _rotation_cache_candidates_outside_refresh_backoff(
+        self,
+        candidates,
+        current_dt,
+    ):
+        """Exclude stale caches while their data or presentation retry cools down."""
+        runtime_instances = self.runtime_state.snapshot().instances
+        eligible = {}
+        for instance_uuid, candidate in candidates.items():
+            state = runtime_instances.get(instance_uuid, InstanceRuntimeState())
+            data_retry = self._parse_iso_datetime(state.data.next_retry_at)
+            if data_retry is not None:
+                data_retry = self._align_datetime_tz(data_retry, current_dt)
+                if data_retry > current_dt:
+                    continue
+            request = state.presentation_request
+            failed_at = self._parse_iso_datetime(
+                state.presentation.last_failure_at
+            )
+            next_retry = self._parse_iso_datetime(
+                state.presentation.next_retry_at
+            )
+            requested_at = self._parse_iso_datetime(
+                request.requested_at if request is not None else None
+            )
+            if (
+                failed_at is not None
+                and next_retry is not None
+                and requested_at is not None
+            ):
+                failed_at = self._align_datetime_tz(failed_at, current_dt)
+                next_retry = self._align_datetime_tz(next_retry, current_dt)
+                requested_at = self._align_datetime_tz(requested_at, current_dt)
+                if failed_at >= requested_at and next_retry > current_dt:
+                    continue
+            eligible[instance_uuid] = candidate
+        return eligible
+
     def _select_cached_display_command(self, current_dt) -> RefreshCommand | None:
         """Select one random eligible cache without loading plugin code."""
         self._rotation_deadline_guard_active = False
@@ -1400,6 +1440,10 @@ class RefreshTask:
             theme_context,
             exact_theme_only=True,
         )
+        candidates = self._rotation_cache_candidates_outside_refresh_backoff(
+            candidates,
+            current_dt,
+        )
         recovery_elapsed = None
         if rotation_due and (theme_changed or not candidates):
             if self._rotation_cache_starved_since is None:
@@ -1414,6 +1458,12 @@ class RefreshTask:
                 active,
                 theme_context,
                 exact_theme_only=False,
+            )
+            fallback_candidates = (
+                self._rotation_cache_candidates_outside_refresh_backoff(
+                    fallback_candidates,
+                    current_dt,
+                )
             )
             if fallback_candidates:
                 candidates = fallback_candidates
@@ -1450,6 +1500,29 @@ class RefreshTask:
             or candidate.settings_revision != selection.instance.settings_revision
         ):
             return None
+
+        if (
+            not self._snapshot_background_cache_disabled(selection.instance)
+            and self._snapshot_should_refresh(selection.instance, current_dt)
+            and not self._snapshot_retry_delayed(selection.instance, current_dt)
+            and self._restart_request is None
+            and classify_resource_tier(
+                self._resource_sample(),
+                self._resource_thresholds(),
+            ) is not ResourceTier.HARD
+        ):
+            return self._playlist_command(
+                selection.playlist_name,
+                selection.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=95,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                automatic_rotation=True,
+            )
 
         presentation_request_id = None
         allow_prepared_presentation = False
@@ -1551,16 +1624,24 @@ class RefreshTask:
                         deferred = manager.defer_rotation_reservation(
                             selection.instance.instance_uuid,
                             expected_playlist_name=selection.playlist_name,
+                            eligible_instance_uuids=frozenset(candidates),
                         )
-                        if deferred:
+                        released = False
+                        if not deferred and resource_tier is ResourceTier.HARD:
+                            released = manager.release_rotation_reservation(
+                                selection.instance.instance_uuid,
+                                expected_playlist_name=selection.playlist_name,
+                            )
+                        if deferred or released:
                             self._write_device_config()
                         logger.warning(
-                            "Rotation presentation preflight unavailable; deferred stale cache behind the remaining shuffle round. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s | deferred: %s",
+                            "Rotation presentation preflight unavailable; deferred stale cache behind the remaining shuffle round. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s | deferred: %s | released: %s",
                             selection.instance.plugin_id,
                             selection.instance.instance_uuid,
                             request.request_id,
                             reason,
                             deferred,
+                            released,
                         )
                         return None
         return self._playlist_command(
@@ -1713,6 +1794,15 @@ class RefreshTask:
             ),
         )
 
+    def _independent_refresh_starvation_seconds(self):
+        return max(
+            0.0,
+            self._config_float(
+                "independent_refresh_starvation_seconds",
+                DEFAULT_INDEPENDENT_REFRESH_STARVATION_SECONDS,
+            ),
+        )
+
     def _select_independent_refresh_command(
         self,
         current_dt,
@@ -1819,6 +1909,56 @@ class RefreshTask:
         else:
             self._oldest_data_overdue_seconds = None
 
+        reserved_instance_uuids = {
+            instance.instance_uuid
+            for instance in active.plugins
+            if manager.validate_rotation_reservation(
+                instance.instance_uuid,
+                expected_playlist_name=active.name,
+            )
+        }
+        if (
+            reserved_instance_uuids
+            and self._admission_state.consecutive_data_admissions < 1
+            and self._get_rotation_wait_seconds()
+            > DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
+        ):
+            starvation_seconds = self._independent_refresh_starvation_seconds()
+            starved_data = [
+                candidate
+                for candidate in data_candidates
+                if candidate.reason
+                in {DueReason.INTERVAL, DueReason.SCHEDULED}
+                and (
+                    current_dt
+                    - self._align_datetime_tz(candidate.due_since, current_dt)
+                ).total_seconds()
+                >= starvation_seconds
+            ]
+            if starved_data:
+                concession = choose_refresh_candidate(
+                    starved_data,
+                    [],
+                    tier=tier,
+                    state=self._admission_state,
+                    now_monotonic=self._clock(),
+                    thresholds=thresholds,
+                )
+                if concession.candidate is not None:
+                    self._admission_state = concession.state
+                    candidate = concession.candidate
+                    return self._playlist_command(
+                        active.name,
+                        candidate.instance,
+                        source=CommandSource.BACKGROUND,
+                        intent=RefreshIntent.DATA_REFRESH,
+                        force=False,
+                        display_cached_only=False,
+                        priority=96,
+                        kind=CommandKind.CACHE_REFRESH,
+                        current_dt=current_dt,
+                    )
+
         # A presentation request for the reserved next rotation member is part
         # of the display critical path.  Give the exact same instance one due
         # data attempt first so a NO_CHANGE presentation cannot bless an old
@@ -1828,14 +1968,6 @@ class RefreshTask:
         data_by_instance_uuid = {
             candidate.instance.instance_uuid: candidate
             for candidate in data_candidates
-        }
-        reserved_instance_uuids = {
-            instance.instance_uuid
-            for instance in active.plugins
-            if manager.validate_rotation_reservation(
-                instance.instance_uuid,
-                expected_playlist_name=active.name,
-            )
         }
         for presentation_candidate in presentation_candidates:
             presentation_instance = presentation_candidate.instance
@@ -1856,6 +1988,10 @@ class RefreshTask:
                     self._align_datetime_tz(data_attempt, presentation_due)
                     <= presentation_due
                 ):
+                    self._admission_state = replace(
+                        self._admission_state,
+                        consecutive_data_admissions=0,
+                    )
                     return self._playlist_command(
                         active.name,
                         presentation_instance,
@@ -1868,6 +2004,10 @@ class RefreshTask:
                         current_dt=current_dt,
                         automatic_rotation=True,
                     )
+            self._admission_state = replace(
+                self._admission_state,
+                consecutive_data_admissions=0,
+            )
             return self._playlist_command(
                 active.name,
                 presentation_instance,
@@ -1879,6 +2019,7 @@ class RefreshTask:
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
                 presentation_request_id=request.request_id,
+                automatic_rotation=True,
             )
 
         # Do not start a provider/render job that can occupy the single worker
@@ -1938,7 +2079,12 @@ class RefreshTask:
                 priority=70,
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
-                expected_displayed_instance_uuid=candidate.instance.instance_uuid,
+                expected_displayed_instance_uuid=(
+                    candidate.instance.instance_uuid
+                    if candidate.requires_displayed_instance
+                    else None
+                ),
+                background_live_refresh=not candidate.requires_displayed_instance,
             )
         if candidate.lane is RefreshLane.PRESENTATION:
             request = runtime_instances[candidate.instance.instance_uuid].presentation_request
@@ -2067,18 +2213,46 @@ class RefreshTask:
         if tier is ResourceTier.HARD:
             return []
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
-        if displayed_uuid is None:
-            return []
         candidates = []
         for instance in active.plugins:
-            if instance.instance_uuid != displayed_uuid:
-                continue
+            is_displayed = instance.instance_uuid == displayed_uuid
             if self._snapshot_background_cache_disabled(instance):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             if not plugin_supports_live_refresh(plugin_config):
                 continue
-            live_state = self._snapshot_live_refresh_state(instance, current_dt)
+            plugin = None
+            if not is_displayed:
+                if instance.plugin_id != "sports_dashboard":
+                    continue
+                plugin = self._get_plugin_for_snapshot(
+                    instance,
+                    require_live_refresh=True,
+                )
+                background_hook = getattr(
+                    plugin,
+                    "wants_background_live_refresh",
+                    None,
+                ) if plugin is not None else None
+                if not callable(background_hook):
+                    continue
+                try:
+                    background_enabled = bool(
+                        background_hook(thaw_payload(instance.settings), current_dt)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Plugin '%s' background live-refresh hook failed.",
+                        instance.plugin_id,
+                    )
+                    continue
+                if not background_enabled:
+                    continue
+            live_state = self._snapshot_live_refresh_state(
+                instance,
+                current_dt,
+                plugin=plugin,
+            )
             if not live_state:
                 continue
             runtime = runtime_instances.get(
@@ -2110,6 +2284,7 @@ class RefreshTask:
                     due_since=due_since,
                     reason=DueReason.LIVE,
                     last_attempt_at=last_attempt,
+                    requires_displayed_instance=is_displayed,
                 )
             )
         return candidates
@@ -2633,8 +2808,13 @@ class RefreshTask:
         return delay
 
     def _record_degraded_data_result(self, command, provenance, current_dt):
+        provenance_value = (
+            provenance.value
+            if provenance is not None
+            else "non_cacheable_result"
+        )
         error = RuntimeError(
-            f"DATA source is display-safe but unhealthy: {provenance.value}"
+            f"DATA source is display-safe but unhealthy: {provenance_value}"
         )
         self.scheduler_state.record_failure(error)
         self._record_intent_failure(command, error, current_dt)
@@ -2918,7 +3098,30 @@ class RefreshTask:
             error,
             current_dt,
         )
+        self._release_failed_rotation_reservation(
+            presentation_command
+        )
         self.scheduler_state.set_next_attempt(self._clock() + self._scheduler_poll_seconds())
+
+    def _release_failed_rotation_reservation(self, command):
+        if not command.payload.get("automatic_rotation"):
+            return False
+        playlist_name = command.payload.get("playlist_name")
+        if command.instance_uuid is None or not playlist_name:
+            return False
+        released = (
+            self.device_config.get_playlist_manager().release_rotation_reservation(
+                command.instance_uuid,
+                expected_playlist_name=playlist_name,
+            )
+        )
+        if released:
+            logger.warning(
+                "Failed rotation presentation released its reservation during retry backoff. | plugin_id: %s | instance_uuid: %s",
+                command.plugin_id,
+                command.instance_uuid,
+            )
+        return released
 
     def _render_presentation_command(self, command, resolved, context):
         """Prepare provider-free presentation bytes on the shared worker."""
@@ -3487,6 +3690,14 @@ class RefreshTask:
         return selection
 
     def _live_display_target_is_current(self, command):
+        if command.payload.get("background_live_refresh") is True:
+            return (
+                command.source is CommandSource.LIVE
+                and command.intent is RefreshIntent.LIVE_REFRESH
+                and command.kind is CommandKind.CACHE_REFRESH
+                and command.plugin_id == "sports_dashboard"
+                and command.payload.get("expected_displayed_instance_uuid") is None
+            )
         expected_displayed_uuid = command.payload.get(
             "expected_displayed_instance_uuid"
         )
@@ -3614,6 +3825,20 @@ class RefreshTask:
                 promoted_for_intent = True
 
             if (
+                command.intent is RefreshIntent.LIVE_REFRESH
+                and command.plugin_id == "sports_dashboard"
+            ):
+                logger.info(
+                    "Sports dashboard live cache decision. | generated: %s | "
+                    "cacheable: %s | provenance: %s | promoted: %s | theme: %s",
+                    generated,
+                    cacheable,
+                    source_provenance.value if source_provenance is not None else "none",
+                    promoted_for_intent,
+                    theme_mode or "none",
+                )
+
+            if (
                 command.intent is RefreshIntent.THEME_CATCHUP
                 and not promoted_for_intent
             ):
@@ -3622,6 +3847,17 @@ class RefreshTask:
                 )
 
             if degraded_data_result:
+                self._execution_local.degraded_data_result = True
+                self._record_degraded_data_result(
+                    command,
+                    source_provenance,
+                    current_dt,
+                )
+            elif (
+                command.intent is RefreshIntent.DATA_REFRESH
+                and generated
+                and not promoted_for_intent
+            ):
                 self._execution_local.degraded_data_result = True
                 self._record_degraded_data_result(
                     command,
@@ -4106,6 +4342,8 @@ class RefreshTask:
         theme_mode,
     ):
         """Queue an exact cache-only display after a successful visible live refresh."""
+        if command.payload.get("background_live_refresh") is True:
+            return None
         if not self._live_display_target_is_current(command):
             return None
         instance = resolved_snapshot.instance
@@ -4233,6 +4471,8 @@ class RefreshTask:
                 error,
                 self._get_current_datetime(),
             )
+            if lane in {RefreshLane.DATA, RefreshLane.PRESENTATION}:
+                self._release_failed_rotation_reservation(command)
             self.scheduler_state.set_next_attempt(
                 self._clock() + self._scheduler_poll_seconds()
             )
@@ -4431,6 +4671,7 @@ class RefreshTask:
         presentation_request_id=None,
         automatic_rotation=False,
         force_hardware_write=False,
+        background_live_refresh=False,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -4460,6 +4701,8 @@ class RefreshTask:
             payload["expected_displayed_instance_uuid"] = str(
                 expected_displayed_instance_uuid
             )
+        if background_live_refresh:
+            payload["background_live_refresh"] = True
         if preserve_rotation_anchor:
             payload["preserve_rotation_anchor"] = True
         if resolved_theme_context is None:

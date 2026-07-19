@@ -466,7 +466,9 @@ class WorldCupMixin:
         cache_path = self._worldcup_scoreboard_cache_path()
         cache = self._read_json_file(cache_path)
         cache_key = self._worldcup_scoreboard_cache_key(settings, timezone_info, now_utc)
-        force_refresh = self._force_refresh_requested(settings)
+        force_refresh = self._force_refresh_requested(
+            settings
+        ) or self._worldcup_release_one_shot_window_active(now_utc)
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("scoreboard"), dict)
         if (
             has_compatible_cache
@@ -2316,8 +2318,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
-
 
 
 

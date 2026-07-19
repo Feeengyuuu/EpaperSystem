@@ -258,6 +258,35 @@ def test_weather_success_publishes_astronomy_before_resolve_and_render(
     assert image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY]["mode"] == "day"
 
 
+def test_weather_fresh_facts_use_cacheable_pillow_fallback_when_browser_is_down(
+    monkeypatch,
+):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+    plugin.render_image = lambda *_a, **_k: None
+
+    image = plugin.generate_image(_settings(), FakeDeviceConfig())
+
+    assert image.size == (64, 32)
+    assert image.info["inkypi_visual_fallback"] == "weather_pillow"
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert "inkypi_skip_cache" not in image.info
+    assert len(image.getcolors(maxcolors=image.width * image.height)) > 1
+
+
 def test_weather_context_write_failure_aborts_before_render(monkeypatch):
     plugin = _plugin()
     _install_openweather(plugin)

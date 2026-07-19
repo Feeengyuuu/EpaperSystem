@@ -577,6 +577,59 @@ def test_fetch_statuses_falls_back_to_single_room_after_batch_failure(monkeypatc
     assert [result["id"] for result in results] == ["0", "1"]
 
 
+def test_fetch_statuses_cools_down_failed_multi_room_batches(monkeypatch):
+    plugin = _plugin()
+    now = [100.0]
+    plugin._batch_clock = lambda: now[0]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload=None, error=None):
+            self.payload = payload or {}
+            self.error = error
+
+        def raise_for_status(self):
+            if self.error:
+                raise RuntimeError(self.error)
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            room_ids = [room["id"] for room in json["rooms"]]
+            calls.append(room_ids)
+            if len(room_ids) > 1 and now[0] < 500.0:
+                return FakeResponse(error="batch failed")
+            return FakeResponse(
+                {
+                    "ok": True,
+                    "results": [
+                        {
+                            "ok": True,
+                            "platform": room["platform"],
+                            "id": room["id"],
+                            "status": {"isLive": False, "owner": room["id"]},
+                        }
+                        for room in json["rooms"]
+                    ],
+                }
+            )
+
+    monkeypatch.setattr("plugins.live_radar.live_radar.get_http_session", lambda: FakeSession())
+    rooms = [{"platform": "douyu", "id": str(i), "label": "", "isFav": False} for i in range(2)]
+
+    plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+    plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert calls == [["0", "1"], ["0"], ["1"], ["0"], ["1"]]
+
+    now[0] = 500.0
+    plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert calls[-1] == ["0", "1"]
+
+
 def test_fetch_statuses_repairs_bilibili_batch_failures_with_direct_api(monkeypatch):
     plugin = _plugin()
     calls = []

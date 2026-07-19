@@ -54,6 +54,7 @@ class DueCandidate:
     due_since: datetime
     reason: DueReason
     last_attempt_at: datetime | None
+    requires_displayed_instance: bool = False
 
 
 @dataclass(frozen=True)
@@ -515,16 +516,30 @@ def _finite_metric(value: float | None) -> float | None:
 
 def _candidate_order(candidate: DueCandidate):
     due_since = _instant_key(candidate.due_since)
-    last_attempt = (
-        due_since
+    recorded_last_attempt = (
+        None
         if candidate.last_attempt_at is None
         else _instant_key(candidate.last_attempt_at)
     )
+    attempted_current_due = (
+        recorded_last_attempt is not None
+        and (
+            candidate.reason is DueReason.BOOTSTRAP_MISSING
+            or recorded_last_attempt >= due_since
+        )
+    )
+    bootstrap_first_attempt = (
+        candidate.reason is DueReason.BOOTSTRAP_MISSING
+        and not attempted_current_due
+    )
+    fairness_time = recorded_last_attempt if attempted_current_due else due_since
     return (
+        not bootstrap_first_attempt,
+        attempted_current_due,
+        fairness_time,
         candidate.reason is not DueReason.BOOTSTRAP_MISSING,
         due_since,
-        candidate.last_attempt_at is not None,
-        last_attempt,
+        due_since if recorded_last_attempt is None else recorded_last_attempt,
         candidate.instance.instance_uuid,
     )
 

@@ -48,6 +48,23 @@ def make_plugin(tmp_path, monkeypatch):
     return plugin
 
 
+def test_missing_optional_logo_is_negatively_cached(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    calls = []
+    plugin._logo_candidate_urls = lambda _item: ["https://cdn.example.test/missing-logo.png"]
+
+    def missing(url):
+        calls.append(url)
+        raise RuntimeError("Steam media request failed with status 404")
+
+    plugin._download_logo = missing
+
+    assert plugin._download_first_available_logo({"id": 7}) == (None, None)
+    assert plugin._download_first_available_logo({"id": 7}) == (None, None)
+
+    assert calls == ["https://cdn.example.test/missing-logo.png"]
+
+
 def base_settings():
     return {
         "sourceCategory": "fresh_frontpage",

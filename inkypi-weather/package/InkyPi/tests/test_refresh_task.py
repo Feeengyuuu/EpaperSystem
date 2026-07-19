@@ -5631,6 +5631,101 @@ def test_live_refresh_does_not_preempt_a_different_displayed_instance(monkeypatc
     assert command is None
 
 
+def test_background_live_opt_in_includes_non_displayed_instance(monkeypatch):
+    task, _device_config, playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-background-live-opt-in",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at="2026-05-26T07:19:00+00:00",
+    )
+    plugin = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda instance, require_live_refresh=False: (
+            plugin if instance.instance_uuid == sports.instance_uuid else None
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda instance, _current_dt, plugin=None: (
+            {"active": True, "interval_seconds": 60}
+            if instance.instance_uuid == sports.instance_uuid
+            else None
+        ),
+    )
+
+    candidates = task._live_due_candidates(
+        playlist,
+        task.runtime_state.snapshot().instances,
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc),
+        refresh_task_module.ResourceTier.HEALTHY,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].instance.instance_uuid == sports.instance_uuid
+    assert candidates[0].lane is RefreshLane.LIVE
+
+
+def test_background_live_opt_in_command_resolves_when_another_instance_is_displayed(monkeypatch):
+    task, _device_config, _playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-background-live-command",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at="2026-05-26T07:19:00+00:00",
+    )
+    plugin = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda instance, require_live_refresh=False: (
+            plugin if instance.instance_uuid == sports.instance_uuid else None
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda instance, _current_dt, plugin=None: (
+            {"active": True, "interval_seconds": 60}
+            if instance.instance_uuid == sports.instance_uuid
+            else None
+        ),
+    )
+
+    command = task._select_independent_refresh_command(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == sports.instance_uuid
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.payload.get("expected_displayed_instance_uuid") is None
+    assert command.payload.get("background_live_refresh") is True
+    resolved = task._resolve_playlist_command(command)
+    assert resolved is not None
+    assert task._enqueue_live_display_followup(
+        command,
+        resolved,
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc),
+        "day",
+    ) is None
+
+
 def test_stale_display_uuid_never_falls_back_to_same_name_live_instance(monkeypatch):
     task, _device_config, _playlist, sports, _ordinary = (
         _make_scheduler_fairness_task(
@@ -5797,6 +5892,35 @@ def test_live_due_background_policy_remains_reachable(monkeypatch):
     assert len(ordinary_work) == 1
     assert ordinary_work[0].kind is CommandKind.CACHE_REFRESH
     assert ordinary_work[0].source is CommandSource.BACKGROUND
+
+
+def test_live_due_background_candidate_precedes_missing_ordinary_work(monkeypatch):
+    task, _device_config, _playlist, sports, ordinary = (
+        _make_scheduler_fairness_task(
+            "scheduler-live-background-priority",
+            refresh_time="2026-05-26T07:19:00+00:00",
+        )
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_due",
+        lambda instance, _current_dt, plugin=None: (
+            instance.instance_uuid == sports.instance_uuid
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_should_refresh",
+        lambda instance, _current_dt: instance.instance_uuid == ordinary.instance_uuid,
+    )
+
+    background = task._select_background_commands(
+        datetime(2026, 5, 26, 7, 20, tzinfo=timezone.utc)
+    )
+
+    assert len(background) == 1
+    assert background[0].instance_uuid == sports.instance_uuid
+    assert background[0].source is CommandSource.BACKGROUND
 
 
 def test_live_failures_never_delay_the_playlist_rotation_deadline(monkeypatch):
@@ -7540,7 +7664,7 @@ def test_rotation_never_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
     playlist = task.device_config.get_playlist_manager().playlists[0]
     assert fallback is None
     assert instance.instance_uuid in playlist.plugin_rotation_queue
-    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
 
 
 def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch):
@@ -8065,7 +8189,7 @@ def test_scheduler_enqueues_at_most_one_refresh_candidate_per_probe(monkeypatch)
     assert entries[0].command.intent is RefreshIntent.DATA_REFRESH
 
 
-def test_display_and_due_refresh_for_same_instance_are_serial_across_probes(
+def test_due_refresh_for_rotation_instance_runs_before_cached_display(
     monkeypatch,
 ):
     tmp_path = make_test_dir("independent-display-and-refresh")
@@ -8103,22 +8227,166 @@ def test_display_and_due_refresh_for_same_instance_are_serial_across_probes(
     )
 
     task._schedule_if_due()
-    display_entry = task.refresh_queue.take(timeout=0)
-    assert display_entry is not None
-    assert task.refresh_queue.take(timeout=0) is None
-    task._process_queue_entry(display_entry)
-
-    clock.advance(30)
-    task._schedule_if_due()
     refresh_entry = task.refresh_queue.take(timeout=0)
     assert refresh_entry is not None
     assert task.refresh_queue.take(timeout=0) is None
 
-    assert [display_entry.command.intent, refresh_entry.command.intent] == [
-        RefreshIntent.DISPLAY_CACHE,
+    assert refresh_entry.command.intent is RefreshIntent.DATA_REFRESH
+    assert refresh_entry.command.payload["automatic_rotation"] is True
+    task.runtime_state.record_success(
+        playlist.plugins[0].instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+
+    clock.advance(30)
+    task._schedule_if_due()
+    display_entry = task.refresh_queue.take(timeout=0)
+    assert display_entry is not None
+    assert task.refresh_queue.take(timeout=0) is None
+
+    assert [refresh_entry.command.intent, display_entry.command.intent] == [
         RefreshIntent.DATA_REFRESH,
+        RefreshIntent.DISPLAY_CACHE,
     ]
     assert display_entry.command.instance_uuid == refresh_entry.command.instance_uuid
+
+
+def test_failed_due_rotation_refresh_skips_stale_cache_during_backoff(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "stale",
+            "Stale",
+            latest_refresh_time=(current_dt - timedelta(hours=2)).isoformat(),
+            interval=60,
+        ),
+        _runtime_plugin_data(
+            "fresh",
+            "Fresh",
+            latest_refresh_time=current_dt.isoformat(),
+            interval=3600,
+        ),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("failed-due-rotation-refresh-skips-stale-cache"),
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    stale, fresh = [instance.snapshot() for instance in playlist.plugins]
+    playlist.plugin_rotation_pool = [stale.instance_uuid, fresh.instance_uuid]
+    playlist.plugin_rotation_queue = [stale.instance_uuid, fresh.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=2)
+    ).isoformat()
+    for instance in (stale, fresh):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        stale.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        fresh.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    refresh = task._select_cached_display_command(current_dt)
+    assert refresh is not None
+    assert refresh.intent is RefreshIntent.DATA_REFRESH
+    assert refresh.instance_uuid == stale.instance_uuid
+
+    task._record_command_failure(refresh, RuntimeError("provider unavailable"))
+    selected = task._select_cached_display_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert selected is not None
+    assert selected.intent is RefreshIntent.DISPLAY_CACHE
+    assert selected.instance_uuid == fresh.instance_uuid
+    assert playlist.is_rotation_reservation_current(stale.instance_uuid) is False
+
+
+def test_noncacheable_due_rotation_refresh_enters_backoff_without_stale_display(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "stale",
+            "Stale",
+            latest_refresh_time=(current_dt - timedelta(hours=2)).isoformat(),
+            interval=60,
+        ),
+        _runtime_plugin_data(
+            "fresh",
+            "Fresh",
+            latest_refresh_time=current_dt.isoformat(),
+            interval=3600,
+        ),
+    )
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("noncacheable-due-rotation-refresh-backoff"),
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    stale, fresh = [instance.snapshot() for instance in playlist.plugins]
+    playlist.plugin_rotation_pool = [stale.instance_uuid, fresh.instance_uuid]
+    playlist.plugin_rotation_queue = [stale.instance_uuid, fresh.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=2)
+    ).isoformat()
+    for instance in (stale, fresh):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        stale.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        fresh.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: NonCacheablePlugin([]),
+    )
+
+    refresh = task._select_cached_display_command(current_dt)
+    assert refresh is not None
+    assert refresh.intent is RefreshIntent.DATA_REFRESH
+    task._execute_command(refresh)
+
+    failed = task.runtime_state.snapshot().instances[stale.instance_uuid]
+    assert failed.data.next_retry_at is not None
+    selected = task._select_cached_display_command(
+        current_dt + timedelta(seconds=1)
+    )
+    assert selected is not None
+    assert selected.intent is RefreshIntent.DISPLAY_CACHE
+    assert selected.instance_uuid == fresh.instance_uuid
 
 
 def test_soft_pressure_makes_spaced_fair_progress_across_ordinary_instances(
@@ -10171,6 +10439,83 @@ def test_reserved_next_presentation_refreshes_matching_due_data_first(monkeypatc
     assert presentation.priority == 90
 
 
+def test_starved_ordinary_data_gets_one_bounded_turn_before_reserved_preflight(
+    monkeypatch,
+):
+    now = datetime(2026, 7, 18, 23, 0, tzinfo=timezone.utc)
+    presentation_data = _runtime_plugin_data(
+        "presentation_plugin",
+        "Presentation",
+        latest_refresh_time=None,
+        interval=3600,
+    )
+    presentation_data["plugin_settings"]["refreshOnDisplay"] = True
+    ordinary_data = _runtime_plugin_data(
+        "ordinary_plugin",
+        "Ordinary",
+        latest_refresh_time=(now - timedelta(hours=2)).isoformat(),
+        interval=3600,
+    )
+    playlist = _runtime_playlist(
+        presentation_data,
+        ordinary_data,
+        name="Bounded Starvation Playlist",
+    )
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("bounded-starvation-before-reserved-preflight"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    presentation, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    manifest = _presentation_manifest(presentation.plugin_id)
+    device_config.get_plugin = lambda plugin_id: (
+        {
+            "id": plugin_id,
+            "refresh_on_display": True,
+            "_manifest": manifest,
+        }
+        if plugin_id == presentation.plugin_id
+        else {"id": plugin_id}
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = now.isoformat()
+    for instance in (presentation, ordinary):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (now - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    selection = device_config.playlist_manager.reserve_next_active_instance(
+        now,
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={presentation.instance_uuid},
+    )
+    assert selection is not None
+    _seed_presentation_request(task, presentation, requested_at=now)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    concession = task._select_independent_refresh_command(now)
+
+    assert concession is not None
+    assert concession.intent is RefreshIntent.DATA_REFRESH
+    assert concession.instance_uuid == ordinary.instance_uuid
+
+    task._record_runtime_attempt(concession)
+    reserved = task._select_independent_refresh_command(now + timedelta(seconds=1))
+
+    assert reserved is not None
+    assert reserved.intent is RefreshIntent.DATA_REFRESH
+    assert reserved.instance_uuid == presentation.instance_uuid
+    assert reserved.priority == 95
+
+
 def test_rotation_guard_stops_new_background_work_before_due_display(monkeypatch):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
         "rotation-guard-background-work",
@@ -10488,6 +10833,152 @@ def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(
     ]
     assert playlist.plugin_rotation_recent_history == []
     assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+
+def test_rotation_preflight_timeout_keeps_last_member_reserved_for_preparation(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-timeout-last-member-stays-critical",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid]
+    playlist.plugin_rotation_recent_history = [second.instance_uuid]
+    playlist._plugin_rotation_reserved_key = None
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+
+    assert playlist.plugin_rotation_queue == [first.instance_uuid]
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is True
+    assert device_config.write_count == 0
+
+    task.runtime_state.record_attempt(
+        first.instance_uuid,
+        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    command = task._select_independent_refresh_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == first.instance_uuid
+    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert command.priority == 90
+
+
+def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-timeout-only-eligible-member-stays-critical",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+
+    assert playlist.plugin_rotation_queue == [
+        first.instance_uuid,
+        second.instance_uuid,
+    ]
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is True
+    assert device_config.write_count == 0
+
+    task.runtime_state.record_attempt(
+        first.instance_uuid,
+        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    command = task._select_independent_refresh_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == first.instance_uuid
+    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert command.priority == 90
+
+
+def test_failed_rotation_presentation_releases_member_during_retry_backoff(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "failed-rotation-presentation-yields-during-backoff",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_cached_display_command(now[0]) is None
+    task.runtime_state.record_attempt(
+        first.instance_uuid,
+        (now[0] + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    now[0] += timedelta(seconds=1)
+    presentation = task._select_independent_refresh_command(now[0])
+    assert presentation is not None
+    assert presentation.instance_uuid == first.instance_uuid
+    assert presentation.intent is RefreshIntent.PRESENTATION_REFRESH
+
+    task._record_command_failure(
+        presentation,
+        RuntimeError("presentation bank has no decoded media"),
+    )
+
+    failed_state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert failed_state.presentation.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+    now[0] += timedelta(seconds=1)
+    assert task._select_cached_display_command(now[0]) is None
+    recovery = task._select_independent_refresh_command(now[0])
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+    assert recovery.intent is RefreshIntent.DATA_REFRESH
 
 
 def test_rotation_preflight_no_change_displays_cached_member_without_request_loop(

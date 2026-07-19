@@ -401,7 +401,8 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 0, 0)
-    assert image.info["inkypi_skip_cache"] is True
+    assert "inkypi_skip_cache" not in image.info
+    assert image.info["inkypi_visual_fallback"] == "steam_charts_pillow"
 
 
 def test_steam_charts_css_prefers_embedded_yahei_font():

@@ -27,6 +27,7 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from plugins.pixiv_r18_ranking.presentation_bank import PixivPresentationBankCold  # noqa: E402
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "pixiv_r18_ranking_tests"
@@ -952,6 +953,33 @@ def test_warm_prepare_is_zero_provider_and_pending_is_not_seen(tmp_path, monkeyp
     assert not pending_ids.intersection(seen)
 
 
+def test_cold_prepare_is_safe_no_change_while_data_refresh_is_pending(monkeypatch):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+
+    class ColdBank:
+        @staticmethod
+        def load_warm():
+            raise PixivPresentationBankCold("Pixiv presentation bank is cold for this instance")
+
+    monkeypatch.setattr(
+        plugin,
+        "_presentation_bank_for_request",
+        lambda *_args, **_kwargs: ColdBank(),
+    )
+
+    prepared = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=presentation_request("f" * 32),
+        resolved_theme_context=presentation_theme("night"),
+    )
+
+    assert prepared.request_id == "f" * 32
+    assert prepared.changed is False
+    assert prepared.image is None
+
+
 def test_receipt_commits_exact_group_once_and_foreign_canceled_late_are_noops(tmp_path, monkeypatch):
     plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
     settings = bound_settings()
@@ -1242,6 +1270,54 @@ def test_data_refill_adds_at_most_twelve_per_run_and_continues_to_target(tmp_pat
     assert len(downloads) == 24
     assert len(second_profile["records"]) == 24
     assert second_profile["refill_in_progress"] is False
+
+
+def test_data_reserves_time_to_publish_a_cold_bank_after_slow_media(tmp_path, monkeypatch):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    clock = {"value": 0.0}
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(plugin, "_monotonic", lambda: clock["value"])
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(index) for index in range(1, 41)],
+    }
+    observed_deadlines = []
+
+    def resolve(*_args, deadline=None, **_kwargs):
+        observed_deadlines.append(deadline)
+        return dict(resolution)
+
+    def slow_download(*_args, **_kwargs):
+        clock["value"] += 9.0
+        return Image.new("RGB", (240, 420), "purple")
+
+    monkeypatch.setattr(plugin, "_resolve_ranking_with_provenance", resolve)
+    monkeypatch.setattr(plugin, "_fetch_ranking_page", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(plugin, "_download_ranking_item_source_image", slow_download)
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    state = json.loads((tmp_path / "presentation-state.json").read_text(encoding="utf-8"))
+    profile = profile_for_instance(state)
+    assert image.size == (800, 480)
+    assert 1 <= len(profile["records"]) < pixiv_mod.READY_TARGET
+    assert profile["current_selection"]["record_keys"]
+    assert clock["value"] < pixiv_mod.MAX_DATA_SECONDS
+    assert observed_deadlines == [
+        pixiv_mod.MAX_DATA_SECONDS - pixiv_mod.DATA_COMMIT_RESERVE_SECONDS
+    ]
 
 
 def test_full_same_day_bank_keeps_daily_source_pool_without_provider_or_selection_advance(

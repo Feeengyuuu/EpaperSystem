@@ -150,6 +150,47 @@ def test_interval_uses_data_success_not_live_or_theme_success():
     assert result.candidate.last_attempt_at == data_attempt
 
 
+def test_interval_order_ignores_attempt_that_belongs_to_previous_due_generation():
+    now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    runtime_state = InstanceRuntimeState(
+        data=_lane(
+            attempt=datetime(2026, 7, 11, 10, 30, tzinfo=UTC),
+            success=datetime(2026, 7, 11, 10, 0, tzinfo=UTC),
+        ),
+    )
+
+    result = evaluate_data_due(
+        _instance(refresh={"interval": 3600}),
+        runtime_state,
+        has_displayable_cache=True,
+        now=now,
+    )
+
+    assert result.candidate is not None
+    assert result.candidate.due_since == datetime(
+        2026, 7, 11, 11, 0, tzinfo=UTC
+    )
+    assert result.candidate.last_attempt_at == datetime(
+        2026, 7, 11, 10, 30, tzinfo=UTC
+    )
+    attempted_current_due = _candidate(
+        "already-attempted",
+        due_since=datetime(2026, 7, 11, 10, 30, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 11, 11, 30, tzinfo=UTC),
+    )
+
+    decision = choose_refresh_candidate(
+        [attempted_current_due, result.candidate],
+        [],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == result.candidate
+
+
 def test_scheduled_uses_most_recent_occurrence_and_data_success():
     local_tz = timezone(timedelta(hours=5, minutes=30))
     now = datetime(2026, 7, 11, 12, 30, tzinfo=local_tz)
@@ -1306,6 +1347,56 @@ def test_data_candidates_order_bootstrap_before_due_since():
 
     assert with_bootstrap.candidate == bootstrap
     assert cadence_only.candidate == old_interval
+
+
+def test_retrying_bootstrap_yields_to_an_older_cadence_candidate():
+    cadence = _candidate(
+        "steam-charts",
+        reason=DueReason.INTERVAL,
+        due_since=datetime(2026, 7, 18, 18, 37, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 18, 17, 36, tzinfo=UTC),
+    )
+    retrying_bootstrap = _candidate(
+        "missing-plugin",
+        reason=DueReason.BOOTSTRAP_MISSING,
+        due_since=datetime(2026, 7, 18, 22, 56, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 18, 22, 50, tzinfo=UTC),
+    )
+
+    decision = choose_refresh_candidate(
+        [retrying_bootstrap, cadence],
+        [],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == cadence
+
+
+def test_retrying_old_cadence_yields_to_less_recently_attempted_due_plugin():
+    repeatedly_failing = _candidate(
+        "repeatedly-failing",
+        due_since=datetime(2026, 7, 18, 20, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 18, 22, 59, tzinfo=UTC),
+    )
+    waiting_plugin = _candidate(
+        "waiting-plugin",
+        due_since=datetime(2026, 7, 18, 21, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 18, 22, 30, tzinfo=UTC),
+    )
+
+    decision = choose_refresh_candidate(
+        [repeatedly_failing, waiting_plugin],
+        [],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == waiting_plugin
 
 
 def test_candidate_order_uses_absolute_instants_across_fall_fold():

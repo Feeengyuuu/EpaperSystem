@@ -261,6 +261,10 @@ LOCAL_LPL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lpl.png")
 LOCAL_LCK_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "lck.png")
 LOCAL_EWC_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "ewc.png")
 LOCAL_EWC_GAME_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "ewc_games")
+LOCAL_EWC_GAME_PLACEHOLDER_DIR = os.path.join(
+    LOCAL_DECOR_DIR,
+    "ewc_game_placeholders",
+)
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
@@ -274,6 +278,10 @@ LOCAL_PGA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "pga.png")
 LOCAL_NFL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nfl.png")
 LOCAL_NCAA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "ncaa.png")
 LOCAL_WORLDCUP_PITCH_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_pitch_strip.png")
+LOCAL_WORLDCUP_FIVE_LEAGUES_UPCOMING_PATH = os.path.join(
+    LOCAL_DECOR_DIR,
+    "worldcup_five_leagues_upcoming.png",
+)
 LOCAL_WORLDCUP_HEADER_BANNER_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_header_banner.png")
 LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_title_wordmark.png")
 LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
@@ -2322,6 +2330,11 @@ class SportsDashboardCommonMixin:
                     logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
             esports_choice = self._select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=ewc_card)
 
+        primary_live_override = (
+            self._worldcup_release_one_shot_window_active(now)
+            and left_provenance is SourceProvenance.LIVE
+        )
+
         if esports_choice.get("kind") == "ewc":
             ewc_selected = esports_choice["selected"]
             ewc_source_state = esports_choice["source_state"]
@@ -2332,6 +2345,7 @@ class SportsDashboardCommonMixin:
                 self._sports_source_state_provenance(lower_source_state),
                 self._sports_source_state_provenance(ewc_source_state),
                 force_refresh=self._force_refresh_requested(settings),
+                primary_live_override=primary_live_override,
             )
 
         if esports_choice.get("kind") == "valve":
@@ -2345,6 +2359,7 @@ class SportsDashboardCommonMixin:
                 self._sports_source_state_provenance(lower_source_state),
                 self._sports_source_state_provenance(valve_source_state),
                 force_refresh=self._force_refresh_requested(settings),
+                primary_live_override=primary_live_override,
             )
 
         lol_choice = esports_choice["choice"]
@@ -2360,6 +2375,7 @@ class SportsDashboardCommonMixin:
             self._sports_source_state_provenance(lower_source_state),
             self._sports_source_state_provenance(lol_source_state),
             force_refresh=self._force_refresh_requested(settings),
+            primary_live_override=primary_live_override,
         )
 
     @staticmethod
@@ -2385,6 +2401,7 @@ class SportsDashboardCommonMixin:
         image,
         *panel_provenances,
         force_refresh=False,
+        primary_live_override=False,
     ):
         provenances = [
             provenance
@@ -2394,6 +2411,12 @@ class SportsDashboardCommonMixin:
         has_untrusted_provenance = len(provenances) != len(panel_provenances)
         if has_untrusted_provenance:
             provenance = SourceProvenance.LOCAL_FALLBACK
+        elif (
+            primary_live_override
+            and provenances
+            and provenances[0] is SourceProvenance.LIVE
+        ):
+            provenance = SourceProvenance.LIVE
         elif SourceProvenance.LOCAL_FALLBACK in provenances:
             provenance = SourceProvenance.LOCAL_FALLBACK
         elif SourceProvenance.STALE_CACHE in provenances:
@@ -2413,6 +2436,12 @@ class SportsDashboardCommonMixin:
             provenance = SourceProvenance.FRESH_CACHE
         else:
             provenance = SourceProvenance.LOCAL_FALLBACK
+        if primary_live_override:
+            logger.info(
+                "World Cup one-shot composite cache decision. | panels: %s | result: %s",
+                ",".join(item.value for item in provenances),
+                provenance.value,
+            )
         if provenance in {
             SourceProvenance.STALE_CACHE,
             SourceProvenance.LOCAL_FALLBACK,

@@ -40,6 +40,33 @@ class _CommunityPresenceResponse:
             raise self._error
 
 
+def test_missing_optional_game_icon_is_negatively_cached(tmp_path, monkeypatch):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    plugin._game_icon_url = lambda _data, _appid: "https://cdn.example.test/missing.jpg"
+    plugin._game_icon_cache_path = lambda _url: str(tmp_path / "missing.jpg")
+    calls = []
+
+    class Response:
+        status_code = 404
+
+    class Session:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setattr(steam_profile_module, "get_http_session", lambda: Session())
+    monkeypatch.setattr(
+        steam_profile_module,
+        "safe_open_image_response",
+        lambda _response: (_ for _ in ()).throw(RuntimeError("not found")),
+    )
+
+    assert plugin._game_square_icon({}, "7", 20) is None
+    assert plugin._game_square_icon({}, "7", 20) is None
+
+    assert len(calls) == 1
+
+
 def test_offline_web_api_state_is_corrected_by_live_community_presence(monkeypatch):
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     requests = []

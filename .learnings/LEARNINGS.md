@@ -6,6 +6,288 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260719-006] correction
+
+**Logged**: 2026-07-19T14:36:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+LiveRadar may legitimately spend several minutes refreshing because the device reaches mainland China platforms from the United States; freshness is preferred over a short generic timeout.
+
+### Details
+The production room list contains more than 30 entries. When the shared batch endpoint returned HTTP 500, the plugin's circuit breaker switched the remaining chunks to individual room requests and completed in about 149 seconds. A proposed eight-second large-batch cutoff would have reduced queue occupancy but replayed saved status instead of attempting fresh cross-border data, which the user explicitly rejected.
+
+### Suggested Action
+Keep LiveRadar's plugin-specific long latency budget and individual recovery path. Use the batch circuit breaker to avoid repeated failing batch calls, but do not apply generic short provider deadlines or prefer stale cache solely because this cross-border refresh takes minutes. Verify that the command eventually completes and the scheduler advances.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: live-radar, cross-border, latency-budget, freshness, circuit-breaker
+- Pattern-Key: live_radar.cross_border_long_refresh_budget
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T14:36:00-07:00
+- **Release**: deploy-20260719-plugin-reliability-v5-86f0458e4753
+- **Notes**: Reverted the unpublished short-timeout experiment. The deployed refresh ran from 14:32:42 to 14:35:11, then the queue advanced without a command failure.
+
+---
+
+## [LRN-20260719-005] best_practice
+
+**Logged**: 2026-07-19T14:32:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Windows release archives must disable checkout-style CRLF conversion and audit the bytes of Unix entry points before deployment.
+
+### Details
+An alternate Git index produced the intended source tree, but `git archive` under the local Windows configuration emitted CRLF bytes for eight `install/*.sh` and extensionless Unix launchers. Source tests and tree hashes did not expose the packaging defect. Re-archiving with `git -c core.autocrlf=false -c core.eol=lf archive` preserved LF bytes; the final archive audit also checked required plugins, excluded temporary/private files, and verified the exact artifact hash.
+
+### Suggested Action
+Build Linux release zips with checkout conversion disabled, then inspect archive bytes for carriage returns in every shell script and extensionless launcher. Run affected tests from a fresh extraction of the same hashed archive before upload.
+
+### Metadata
+- Source: production_release
+- Related Files: tools/epaperpod-deploy-zip.ps1, inkypi-weather/package/InkyPi/install
+- Tags: windows, git-archive, crlf, release-audit, exact-artifact
+- Pattern-Key: release_archive.windows_git_archive_crlf_conversion
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T14:29:54-07:00
+- **Release**: deploy-20260719-plugin-reliability-v5-86f0458e4753
+- **Notes**: Final archive `86f0458e47531687814528dadf90887bc7a6429f78a7936af1c501265fdbaf30` had zero Unix CR bytes and its extracted affected suite passed with 1757 tests.
+
+---
+
+## [LRN-20260719-004] best_practice
+
+**Logged**: 2026-07-19T14:14:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+A prepared-bank presentation request that arrives before the first data refresh must be a safe no-change, not an exception or a stale-cache fallback.
+
+### Details
+Pixiv's publication-time reserve fixed data jobs that ran close to their hard deadline, but it could not help when the presentation lane ran before the instance received any data slot. The live scheduler therefore logged repeated `Pixiv presentation bank is cold for this instance` errors. Treating only the typed cold-bank condition as `PresentationPreparation(image=None, changed=False)` leaves the current screen unchanged and lets the background data lane hydrate the bank; corruption and other unexpected bank errors still fail visibly.
+
+### Suggested Action
+For every prepared-bank plugin, test the ordering where presentation runs before initial data. Return no-change only for an explicit cold/uninitialized state, keep provider access out of presentation, and never substitute an old rendered page.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/pixiv_r18_ranking/pixiv_r18_ranking.py, inkypi-weather/package/InkyPi/src/plugins/pixiv_r18_ranking/presentation_bank.py, inkypi-weather/package/InkyPi/tests/test_pixiv_r18_ranking.py
+- Tags: pixiv, presentation-bank, cold-start, no-change, stale-cache
+- Pattern-Key: prepared_bank.presentation_before_initial_data
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T14:29:54-07:00
+- **Release**: deploy-20260719-plugin-reliability-v5-86f0458e4753
+- **Notes**: Added a typed cold-bank exception and red-green regression; Pixiv plus project-wide suites passed before transactional deployment. The deployed release returned `changed=False` and `image=None` for an injected cold-bank request instead of raising.
+
+---
+
+## [LRN-20260719-003] best_practice
+
+**Logged**: 2026-07-19T12:40:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Plugin reliability audits must combine command outcomes, latest-success staleness, and active-release plugin presence; failure-rate tables alone miss silent missing-plugin regressions.
+
+### Details
+The 24-hour refresh log correctly exposed concentrated DATA failures for Pixiv, Weather, and Orbital Signal, but the new-release failure table omitted AI Ecosystem Pulse because it had no post-switch attempt. The saved playlist instance was still visible and its last success was more than 21 hours old, while both AI Ecosystem Pulse and Orbital Signal were absent from the active release plugin tree. Earlier attempts failed with `Plugin config not found`. A command-only dashboard would therefore undercount a completely broken instance as healthy or inactive. The same audit also showed that zero command failures do not imply cadence health: Steam Charts used its fallback renderer successfully but remained many hours beyond its configured interval under sustained queue and resource pressure.
+
+### Suggested Action
+For every saved plugin instance, report four independent signals: active artifact presence, latest-success age versus configured cadence, DATA attempts/failures, and degraded fallback warnings. Flag missing-code instances and overdue instances even when attempt count is zero. Add this cross-check to any future runtime reliability report or monitoring endpoint.
+
+### Resolution
+Restored the missing AI Ecosystem Pulse and Orbital Signal source trees, bounded repeated provider/media/browser failures, added fresh-data Pillow fallbacks, and strengthened scheduler freshness handling. The full project suite passed and the restored plugins completed real DATA and Waveshare display cycles before the final follow-up release.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/plugins
+- Tags: plugin-reliability, active-release, missing-plugin, stale-data, silent-failure, monitoring
+- See Also: LRN-20260719-002
+- Pattern-Key: runtime_audit.cross_check_attempts_staleness_and_artifact_presence
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+---
+
+## [LRN-20260719-002] best_practice
+
+**Logged**: 2026-07-19T01:12:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Reserved rotation preflight can starve an overdue ordinary DATA refresh even after the generic candidate queue has fairness ordering.
+
+### Details
+Steam Charts had a saved 3600-second interval and its DATA lane last succeeded at 22:59, so it was due again around 23:59. At 01:10 the service was ready and Steam had received only `DISPLAY_CACHE` commands, while missing-cache or failing rotation members repeatedly received DATA or PRESENTATION work. The reserved-presentation fast path in `_select_independent_refresh_command` returns before `choose_refresh_candidate`, so the fairness policy added for attempted `BOOTSTRAP_MISSING` candidates cannot protect an ordinary interval candidate from repeated rotation-critical admissions. Soft memory pressure and the single renderer make the drift larger, but the priority bypass is the scheduler boundary that explains the starvation.
+
+### Suggested Action
+Treat the reserved-member fast path as part of the same global fairness contract. Bound consecutive or repeated reservation-driven provider attempts, honor retry backoff before re-reserving broken members, and guarantee an overdue ordinary DATA candidate a service slot without breaking the five-minute display deadline. Add a regression scenario with an hourly cache-only plugin plus several failing reserved members and prove both bounded Steam staleness and continued rotation progress.
+
+### Resolution
+Implemented a scheduler-wide freshness and fairness boundary: due cache-backed instances refresh before display, failed DATA/PRESENTATION work enters retry backoff and cannot immediately reuse stale cache, candidate ordering favors the least recently attempted current due generation, and reservation-driven work grants a bounded concession to ordinary DATA candidates that have been overdue for at least five minutes. The hard-memory-pressure path may still display a valid cache rather than start unsafe work. Focused refresh regressions passed (`402 passed`), and live release `deploy-20260719-refresh-fairness-edd55acfb39d` automatically refreshed Steam Charts from `2026-07-18T22:59:47-07:00` to `2026-07-19T01:59:34-07:00` while a failing `species_radar` presentation repeatedly entered backoff. The refreshed Steam cache was then written successfully to the Waveshare display; the service remained ready with zero restarts.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/runtime/refresh_policy.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py, inkypi-weather/package/InkyPi/tests/test_refresh_policy.py
+- Tags: steam-charts, stale-cache, interval-refresh, rotation-reservation, scheduler-fairness, soft-memory-pressure
+- See Also: LRN-20260718-005
+- Pattern-Key: refresh_scheduler.reserved_rotation_bypasses_data_fairness
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+---
+
+## [LRN-20260718-005] best_practice
+
+**Logged**: 2026-07-18T23:21:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Retrying bootstrap candidates must compete fairly with overdue cadence refreshes.
+
+### Details
+`BOOTSTRAP_MISSING` had unconditional priority over interval candidates. Several broken no-cache plugins therefore rotated through their retry backoffs and collectively starved Steam Charts for more than five hours, even though its saved interval remained one hour. Preserve first priority only for a bootstrap candidate that has never been attempted; after an attempt, order it by `last_attempt_at` against ordinary candidates' `due_since`.
+
+### Suggested Action
+When changing refresh admission, test a retrying missing-cache candidate against an older interval candidate. Use live per-plugin attempt counts and cache timestamps to distinguish scheduler starvation from provider or renderer failure.
+
+### Metadata
+- Source: production_debug
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/refresh_policy.py, inkypi-weather/package/InkyPi/tests/test_refresh_policy.py
+- Tags: refresh-scheduler, bootstrap, starvation, fairness, steam-charts
+- Pattern-Key: refresh_scheduler.retrying_bootstrap_fairness
+- Recurrence-Count: 1
+- First-Seen: 2026-07-18
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-18T23:21:00-07:00
+- **Release**: deploy-20260719-steam-fairness-4f0cacdbfbdf
+- **Notes**: Added a regression test, changed candidate ordering, deployed the fix, and verified the refreshed Steam cache was written to the physical display.
+
+---
+
+## [LRN-20260718-004] best_practice
+
+**Logged**: 2026-07-18T22:02:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Mixed dirty files require exact index patches and tests against the staged tree, not the broader working tree.
+
+### Details
+The LiveRadar fix touched `refresh_task.py` and `test_refresh_task.py`, but both files already contained unrelated uncommitted scheduler and SportsDashboard work. Staging whole files would have silently published those changes, while testing only the working tree could hide a dependency on them. Applying a narrow patch with `git apply --cached`, materializing the index with `git write-tree` plus `git archive`, and running the full target test file from that snapshot proved the commit independently while preserving the user's worktree.
+
+### Suggested Action
+When intended and unrelated changes share files, build and review an explicit cached patch, require `git diff --cached --check`, then run relevant tests from an archive of `git write-tree`. Commit only after the staged snapshot passes; finally verify the remote branch hash after push.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: git, partial-staging, dirty-worktree, staged-tree, verification, push
+- Pattern-Key: git.mixed_worktree_verify_staged_tree
+- Recurrence-Count: 1
+- First-Seen: 2026-07-18
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-18T22:02:00-07:00
+- **Commit/PR**: a1666093
+- **Notes**: The staged-tree snapshot passed 352 refresh-task tests, only two intended files were committed, and remote `main` matched the local commit hash after push.
+
+---
+
+## [LRN-20260718-003] best_practice
+
+**Logged**: 2026-07-18T21:45:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Reserved rotation presentations must give the same due instance one data attempt before a `NO_CHANGE` presentation can mark it ready.
+
+### Details
+LiveRadar displayed a 05:58 cache at 20:55 even though its two-minute data cadence was overdue. The reserved-member fast path bypassed the generic data-before-presentation policy and ran `PRESENTATION_REFRESH` first. Because LiveRadar intentionally uses `PresentationMode.NO_CHANGE` to hold one snapshot for the full five-minute dwell, that presentation completed without fetching data, and the scheduler later displayed the old cache. This was a scheduler contract bug, not a device crash or upstream API failure; a manual data refresh completed successfully and produced a current image.
+
+### Suggested Action
+For a reserved presentation candidate, look up a due DATA candidate for the exact instance. Outside hard resource pressure, admit one high-priority data attempt when no attempt occurred after the presentation request, then let presentation preempt ordinary background work. Test both halves so short data intervals cannot starve presentation and no-change presentations cannot bless stale caches.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/runtime/refresh_policy.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: liveradar, refresh-scheduler, presentation, no-change, stale-cache, rotation
+- See Also: LRN-20260716-003
+- Pattern-Key: refresh_scheduler.reserved_data_before_no_change_presentation
+- Recurrence-Count: 1
+- First-Seen: 2026-07-18
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-18T21:45:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Added a red-green regression, passed all 358 refresh-task tests, deployed release `deploy-20260719-liveradar-data-first-f930fd64c131`, refreshed LiveRadar, and matched the displayed image hash to the current cache.
+
+---
+
+## [LRN-20260718-001] insight
+
+**Logged**: 2026-07-18T17:54:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+A timed-out rotation preflight can become a tight scheduler loop when deferring the reserved item does not produce a different eligible member.
+
+### Details
+On the live device, the same `backtothedate` presentation request was timed out and immediately selected again roughly every three seconds for more than nine minutes. The service and HTTP endpoints stayed responsive, but one Python thread consumed about 35 percent CPU and no new display commit occurred. Two eligibility boundaries mattered: moving a reservation to the queue tail is not progress unless another currently displayable member exists, and a presentation that fails after admission must release its reservation and leave the display candidate set until its current request's retry deadline. Without both rules, the same broken plugin can regain the critical path while healthy plugins remain pending.
+
+### Suggested Action
+Base deferral on the current eligible cache set, retain the reservation when no alternative can make progress, and prioritize its presentation preparation. If that preparation fails, release the automatic-rotation reservation and exclude the failed request during its retry backoff so another cache or background data refresh can advance. Test a last-member queue, a multi-member queue with only one eligible cache, and failure-to-backoff recovery. On the live device, verify the release log, absence of repeated preflight warnings during backoff, a different plugin's hardware display commit, a changed current-image ETag, and restored readiness.
+
+### Metadata
+- Source: live_device
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/model.py
+- Tags: rotation, presentation-preflight, scheduler-loop, readiness, high-cpu, live-device
+- Pattern-Key: runtime.rotation_preflight_no_progress_loop
+- Recurrence-Count: 2
+- First-Seen: 2026-07-18
+- Last-Seen: 2026-07-18
+
+---
+
 ## [LRN-20260715-006] correction
 
 **Logged**: 2026-07-15T17:25:00-07:00
@@ -1002,5 +1284,102 @@ Keep pytest temp roots short for temporary worktrees. If cleanup still fails, ve
 - **Resolved**: 2026-07-16T18:37:56-07:00
 - **Commit/PR**: operational
 - **Notes**: Removed only the verified unregistered main-validation residual and confirmed the target no longer existed.
+
+---
+
+## [LRN-20260716-011] correction
+
+**Logged**: 2026-07-16T19:10:54-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+SportsDashboard visual reviews should default to a directly shared 800x480 PNG, not an interactive HTML companion.
+
+### Details
+The user rejected the browser HTML comparison flow and asked to see a PNG screenshot instead. For this project, the useful review artifact is the complete e-paper canvas with the proposed panel composited into its real slot, so unchanged neighboring panels and physical-scale text density remain visible.
+
+### Suggested Action
+For future SportsDashboard UI exploration, render or composite the candidate locally at 800x480, preserve unchanged dashboard regions, validate image dimensions and external logo loading, and attach the PNG directly in chat. Use HTML only as an internal rendering implementation detail when needed.
+
+### Metadata
+- Source: user_feedback
+- Related Files: output/playwright/club-football-b-preview.png
+- Tags: sports-dashboard, ui-review, png, 800x480, visual-preview
+- See Also: 2026-06-21-sports-dashboard-pc-render-direct-display-preview.md
+- Pattern-Key: sports_dashboard.ui_review_png_first
+- Recurrence-Count: 1
+- First-Seen: 2026-07-16
+- Last-Seen: 2026-07-16
+
+### Resolution
+- **Resolved**: 2026-07-16T19:10:54-07:00
+- **Commit/PR**: operational
+- **Notes**: Replaced the HTML review flow with a verified 800x480 PNG using the current SportsDashboard image as the unchanged base.
+
+---
+
+## [LRN-20260718-002] best_practice
+
+**Logged**: 2026-07-18T20:06:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+SportsDashboard empty schedule slots should use context-specific transparent artwork instead of generic empty-state text.
+
+### Details
+EWC has a manifest-defined game set, so one generic filler cannot preserve the identity of the currently selected game. The reliable implementation is one transparent RGBA placeholder per official game slug, rendered only into unoccupied UPCOMING or RECENT row slots. When the World Cup has no remaining UPCOMING event, the same visual gap should transition to a five-major-leagues preview rather than displaying `No more World Cup schedule`. Generated artwork must be normalized to the exact row dimensions, keep transparent corners, and be proven on the physical 800x480 display.
+
+### Suggested Action
+Keep placeholder coverage tied to the EWC game manifest, validate every asset's slug, dimensions, RGBA mode, and transparent corners, and retain a rendering test for both the missing EWC row and empty World Cup UPCOMING branch. After deployment, force a data refresh and hardware display, then require the plugin preview and `/api/current_image` hashes to match.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports_render.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/worldcup_render.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/ewc_game_placeholders
+- Tags: sports-dashboard, ewc, world-cup, transparent-placeholder, img-2, live-proof
+- Pattern-Key: sports_dashboard.context_specific_empty_slot_art
+- Recurrence-Count: 1
+- First-Seen: 2026-07-18
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-18T20:06:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Added 25 game-specific EWC assets plus the five-league World Cup preview, passed 539 SportsDashboard tests, deployed release `deploy-20260719-sports-placeholders-b3814c3f90b3`, and verified the live hardware image.
+
+---
+
+## [LRN-20260719-001] best_practice
+
+**Logged**: 2026-07-19T00:27:28-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+A current SportsDashboard release can still replay an old page when persisted per-source live switches are all false.
+
+### Details
+The device source hashes and active release matched the workspace, but the displayed SportsDashboard image was the exact 20:02 cache at 23:42. A manual data refresh produced current World Cup, PGA, and EWC content, proving providers, fallbacks, and rendering were healthy. The saved instance contained the retired `liveRefreshEnabled=false` master plus all seven per-source live switches explicitly false, so `get_live_refresh_state` produced no displayed-instance live candidate after the temporary World Cup window expired. The safe repair was a one-time startup migration that matches only this full legacy signature, enables the seven per-source switches, and persists a completion marker; individual opt-outs and later deliberate all-off settings remain respected.
+
+### Suggested Action
+When SportsDashboard appears old, compare current and plugin-cache hashes, check the cache timestamp, verify deployed source hashes, then inspect saved instance settings before changing renderer or scheduler code. Prove the repair with a fresh data cache, a cache-only hardware write, an automatic `source: live / intent: live_refresh` event, the exact follow-up display, and matching current/cache hashes after the physical panel sleeps.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/config.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/sports_dashboard.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_config_env_key_aliases.py
+- Tags: sports-dashboard, stale-cache, persisted-settings, live-refresh, one-time-migration, physical-display
+- Pattern-Key: sports_dashboard.legacy_all_live_switches_disabled
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T00:27:28-07:00
+- **Commit/PR**: operational
+- **Notes**: Deployed `deploy-20260719-sports-stale-repair-1e6e1d7133a2`; migration repaired one instance, seven live switches read true, automatic live refresh and follow-up display ran, and final current/cache hashes matched.
 
 ---

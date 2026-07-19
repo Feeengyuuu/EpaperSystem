@@ -1899,6 +1899,7 @@ def test_magazine_pending_survives_restart_theme_and_date_rollover(
     old_pending = magazine_profile(old_state)["pending_selection"]
 
     restarted = make_banked_plugin(tmp_path)
+    monkeypatch.setattr(restarted, "_now_utc", lambda: datetime(2026, 7, 12, 9, 31, tzinfo=timezone.utc))
     monkeypatch.setattr(restarted, "_presentation_date_key", lambda _device: "2026-07-12")
     monkeypatch.setattr(restarted, "_load_cover", lambda *_args, **_kwargs: pytest.fail("restart used provider"))
     second = restarted.prepare_presentation(

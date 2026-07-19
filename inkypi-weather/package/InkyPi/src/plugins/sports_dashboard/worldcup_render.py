@@ -460,6 +460,15 @@ class WorldCupRenderMixin:
     def _draw_worldcup_mini_rows(self, image, draw, x1, x2, y, bottom, title, events, show_time):
         self._draw_worldcup_mini_section_header(image, draw, x1, x2, y, title)
         if not events:
+            if title == "UPCOMING":
+                art_top = y + 20
+                art_height = max(1, min(52, bottom - art_top))
+                art = self._load_worldcup_five_leagues_upcoming((max(1, x2 - x1 - 8), art_height))
+                if art is not None:
+                    art_x = int(x1 + ((x2 - x1) - art.width) / 2)
+                    art_y = int(art_top + (art_height - art.height) / 2)
+                    image.paste(art, (art_x, art_y), art)
+                    return min(bottom, art_top + max(42, art.height) + 4)
             message = "No more World Cup schedule" if title == "UPCOMING" else "No recent results"
             message, message_font = self._fit_text(draw, message, x2 - x1 - 16, 10, bold=True, min_size=7)
             draw.text((x1 + 10, y + 23), message, font=message_font, fill=COLORS["muted"])
@@ -482,6 +491,14 @@ class WorldCupRenderMixin:
                 show_time=show_time,
             )
         return row_y + len(rows) * (row_h + 2) - 2
+
+    @staticmethod
+    def _load_worldcup_five_leagues_upcoming(size):
+        return SportsDashboard._load_local_logo(
+            LOCAL_WORLDCUP_FIVE_LEAGUES_UPCOMING_PATH,
+            (int(size[0]), int(size[1])),
+            alpha_threshold=8,
+        )
 
     def _draw_worldcup_mini_section_header(self, image, draw, x1, x2, y, title):
         draw.rectangle((x1, y + 2, x1 + 8, y + 17), fill=COLORS["worldcup_accent"], outline=COLORS["border"], width=1)

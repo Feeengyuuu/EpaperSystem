@@ -822,6 +822,79 @@ class EsportsMixin:
         return "UPCOMING"
 
     @staticmethod
+    def _ewc_resolve_progression_slot(slot, series_by_id):
+        slot = slot if isinstance(slot, Mapping) else {}
+        if isinstance(slot.get("competitor"), Mapping):
+            return slot
+        source = slot.get("source") if isinstance(slot.get("source"), Mapping) else {}
+        selector = source.get("selector") if isinstance(source.get("selector"), Mapping) else {}
+        selector_type = str(selector.get("type") or "").strip().upper()
+        if str(source.get("type") or "").strip().upper() != "SERIES" or selector_type not in {
+            "WINNER_OF",
+            "LOSER_OF",
+        }:
+            return slot
+        source_series = (series_by_id or {}).get(str(source.get("series_id") or "").strip())
+        if not isinstance(source_series, Mapping) or SportsDashboard._ewc_structured_status(source_series) != "COMPLETED":
+            return slot
+
+        source_slots = {
+            SportsDashboard._lpl_int_value(item.get("slot")): item
+            for item in (source_series.get("slots") or [])
+            if isinstance(item, Mapping) and SportsDashboard._lpl_int_value(item.get("slot")) is not None
+        }
+        result = source_series.get("result") if isinstance(source_series.get("result"), Mapping) else {}
+        result_slots = {
+            SportsDashboard._lpl_int_value(item.get("slot")): item
+            for item in (result.get("slots") or [])
+            if isinstance(item, Mapping) and SportsDashboard._lpl_int_value(item.get("slot")) is not None
+        }
+        winner_slots = {
+            value
+            for value in (
+                SportsDashboard._lpl_int_value(item)
+                for item in (result.get("winner_slots") or [])
+            )
+            if value is not None
+        }
+        for slot_number, result_slot in result_slots.items():
+            outcome = str(result_slot.get("outcome") or "").strip().upper()
+            if result_slot.get("is_winner") is True or outcome == "WIN":
+                winner_slots.add(slot_number)
+        for slot_number, source_slot in source_slots.items():
+            competitor = source_slot.get("competitor") if isinstance(source_slot.get("competitor"), Mapping) else {}
+            if str(competitor.get("outcome") or "").strip().upper() == "WIN":
+                winner_slots.add(slot_number)
+
+        selected_slot = None
+        if selector_type == "WINNER_OF" and len(winner_slots) == 1:
+            selected_slot = next(iter(winner_slots))
+        elif selector_type == "LOSER_OF":
+            loser_slots = set()
+            for slot_number, result_slot in result_slots.items():
+                outcome = str(result_slot.get("outcome") or "").strip().upper()
+                if outcome == "LOSS" or result_slot.get("is_winner") is False:
+                    loser_slots.add(slot_number)
+            for slot_number, source_slot in source_slots.items():
+                competitor = source_slot.get("competitor") if isinstance(source_slot.get("competitor"), Mapping) else {}
+                if str(competitor.get("outcome") or "").strip().upper() == "LOSS":
+                    loser_slots.add(slot_number)
+            if not loser_slots and len(source_slots) == 2 and len(winner_slots) == 1:
+                loser_slots = set(source_slots).difference(winner_slots)
+            if len(loser_slots) == 1:
+                selected_slot = next(iter(loser_slots))
+        source_slot = source_slots.get(selected_slot)
+        if not isinstance(source_slot, Mapping) or not isinstance(source_slot.get("competitor"), Mapping):
+            return slot
+
+        competitor = dict(source_slot["competitor"])
+        for key in ("score", "placement", "outcome", "is_winner", "state"):
+            competitor.pop(key, None)
+        resolved = dict(slot)
+        resolved["competitor"] = competitor
+        return resolved
+
+    @staticmethod
     def _ewc_club_logo_url(club_id):
         value = str(club_id or "").strip()
         if not value:
@@ -911,6 +984,13 @@ class EsportsMixin:
         structures = SportsDashboard._extract_ewc_initial_structures(html_text)
         if not structures:
             return []
+        series_by_id = {
+            str(series.get("id") or "").strip(): series
+            for structure_payload in structures
+            if isinstance(structure_payload, Mapping)
+            for series in (structure_payload.get("series") or [])
+            if isinstance(series, Mapping) and str(series.get("id") or "").strip()
+        }
         parsed = []
         parsed_indexes = {}
         for structure_payload in structures:
@@ -941,7 +1021,11 @@ class EsportsMixin:
                     if isinstance(item, Mapping) and SportsDashboard._lpl_int_value(item.get("slot")) is not None
                 }
                 slots = sorted(
-                    [item for item in (series.get("slots") or []) if isinstance(item, Mapping)],
+                    [
+                        SportsDashboard._ewc_resolve_progression_slot(item, series_by_id)
+                        for item in (series.get("slots") or [])
+                        if isinstance(item, Mapping)
+                    ],
                     key=lambda item: SportsDashboard._lpl_int_value(item.get("slot")) or 999,
                 )
                 participants = [
@@ -1404,6 +1488,21 @@ class EsportsMixin:
     def _load_ewc_game_logo(event, size):
         return SportsDashboard._load_local_logo(
             SportsDashboard._ewc_game_logo_path(event),
+            (int(size[0]), int(size[1])),
+            alpha_threshold=8,
+        )
+
+    @staticmethod
+    def _ewc_game_placeholder_path(event):
+        slug = SportsDashboard._ewc_game_logo_slug(event)
+        if not slug:
+            return ""
+        return os.path.join(LOCAL_EWC_GAME_PLACEHOLDER_DIR, f"{slug}.png")
+
+    @staticmethod
+    def _load_ewc_game_placeholder(event, size):
+        return SportsDashboard._load_local_logo(
+            SportsDashboard._ewc_game_placeholder_path(event),
             (int(size[0]), int(size[1])),
             alpha_threshold=8,
         )
@@ -4291,8 +4390,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
 
 
 

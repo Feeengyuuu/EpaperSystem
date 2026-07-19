@@ -149,6 +149,7 @@ def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
         binary="chromium",
         temp_root=tmp_path,
         popen=lambda command, **_kwargs: SuccessProcess(command),
+        run_as_root=False,
     )
 
     first = renderer.render_html("<p>one</p>", viewport=(800, 480), context=_context())
@@ -164,12 +165,96 @@ def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
     assert all("--no-sandbox" not in command for command in commands)
     assert all("--no-zygote" not in command for command in commands)
     assert all("--disk-cache-size=1" in command for command in commands)
+    assert all("--in-process-gpu" in command for command in commands)
+    assert all("--use-gl=swiftshader" in command for command in commands)
+    assert all("--js-flags=--jitless" in command for command in commands)
+    assert all("--disable-zero-copy" in command for command in commands)
+    assert all(
+        "--disable-gpu-memory-buffer-compositor-resources" in command
+        for command in commands
+    )
     assert all(
         any(argument.startswith("--proxy-server=http://127.0.0.1:") for argument in command)
         for command in commands
     )
     assert all("--proxy-bypass-list=<-loopback>" in command for command in commands)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_root_renderer_adds_required_no_sandbox_without_disabling_zygote(tmp_path):
+    commands = []
+
+    class FailedProcess:
+        returncode = 1
+        pid = 2444
+
+        def __init__(self, command):
+            commands.append(command)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda command, **_kwargs: FailedProcess(command),
+        run_as_root=True,
+    )
+
+    assert renderer.render_html("<p>root</p>", viewport=(80, 48), context=_context()) is None
+    assert "--no-sandbox" in commands[0]
+    assert "--no-zygote" not in commands[0]
+
+
+def test_html_timeout_opens_cross_document_circuit_until_cooldown(tmp_path):
+    now = {"value": 0.0}
+    launches = []
+
+    def popen(*_args, **_kwargs):
+        process = TimeoutProcess()
+        process.pid += len(launches)
+        launches.append(process)
+        return process
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        clock=lambda: now["value"],
+        html_circuit_ttl_seconds=60,
+    )
+
+    assert renderer.render_html(
+        "<p>first timestamp</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+    ) is None
+    assert renderer.render_html(
+        "<p>different timestamp</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+    ) is None
+    assert len(launches) == 1
+
+    now["value"] = 61.0
+    assert renderer.render_html(
+        "<p>after cooldown</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+    ) is None
+    assert len(launches) == 2
 
 
 def test_two_renderer_instances_never_overlap(tmp_path):
@@ -297,7 +382,8 @@ def test_repeated_failures_leave_no_processes_or_temp_growth(tmp_path):
         ) is None
 
     assert renderer.active_processes == ()
-    assert renderer.negative_cache_size == 100
+    assert next_pid == 5001
+    assert renderer.negative_cache_size == 1
     assert list(tmp_path.iterdir()) == []
 
 

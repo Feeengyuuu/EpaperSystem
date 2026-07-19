@@ -31,6 +31,7 @@ from plugins.pixiv_r18_ranking.presentation_bank import (
     READY_TARGET,
     REFILL_THRESHOLD,
     PixivPresentationBank,
+    PixivPresentationBankCold,
     atomic_write_bounded_json,
     instance_profile_fingerprint,
     read_bounded_json_object,
@@ -59,6 +60,7 @@ MAX_DATA_ATTEMPTS = 36
 # downsample the first media object.  Thirty seconds routinely expired between
 # those two provider operations on the live device.
 MAX_DATA_SECONDS = 90
+DATA_COMMIT_RESERVE_SECONDS = 10
 MAX_MEDIA_REDIRECTS = 4
 MAX_RANKING_JSON_BYTES = 4 * 1024 * 1024
 # Compatibility export consumed by reddit_rule34_hot and older plugin modules.
@@ -324,6 +326,7 @@ class PixivR18Ranking(BasePlugin):
 
     def _generate_banked_image(self, settings, device_config):
         deadline = self._monotonic() + MAX_DATA_SECONDS
+        acquisition_deadline = deadline - DATA_COMMIT_RESERVE_SECONDS
         dimensions = self._display_dimensions(device_config)
         date_key = self._day_key()
         ranking_mode = self._ranking_mode(settings)
@@ -347,7 +350,7 @@ class PixivR18Ranking(BasePlugin):
                 resolution = self._resolve_ranking_with_provenance(
                     ranking_mode,
                     cookie,
-                    deadline=deadline,
+                    deadline=acquisition_deadline,
                 )
             except Exception as exc:
                 raise RuntimeError("Pixiv ranking source is unavailable") from exc
@@ -372,7 +375,7 @@ class PixivR18Ranking(BasePlugin):
             document,
             profile,
             dimensions,
-            deadline=deadline,
+            deadline=acquisition_deadline,
         )
         ready = bank.ready_records(profile, prune=True)
         if len(ready) < REFILL_THRESHOLD:
@@ -387,7 +390,7 @@ class PixivR18Ranking(BasePlugin):
                     resolution = self._resolve_ranking_with_provenance(
                         ranking_mode,
                         cookie,
-                        deadline=deadline,
+                        deadline=acquisition_deadline,
                     )
                 except Exception as exc:
                     provider_error = exc
@@ -414,7 +417,7 @@ class PixivR18Ranking(BasePlugin):
                         document,
                         profile,
                         dimensions,
-                        deadline=deadline,
+                        deadline=acquisition_deadline,
                     )
                     ready = bank.ready_records(profile, prune=True)
                     if len(ready) < REFILL_THRESHOLD:
@@ -426,7 +429,7 @@ class PixivR18Ranking(BasePlugin):
                     profile,
                     resolution,
                     dimensions,
-                    deadline=deadline,
+                    deadline=acquisition_deadline,
                     force_refresh=force_refresh,
                 ))
                 ready = bank.ready_records(profile, prune=True)
@@ -621,14 +624,17 @@ class PixivR18Ranking(BasePlugin):
         if bank is None:
             provenance = self._saved_provenance_for_instance(instance_uuid)
             if provenance is None:
-                raise RuntimeError("Pixiv presentation bank is cold")
+                return self._cold_presentation_preparation(request)
             bank = self._presentation_bank(
                 settings,
                 dimensions,
                 self._day_key(),
                 provenance,
             )
-        document, profile = bank.load_warm()
+        try:
+            document, profile = bank.load_warm()
+        except PixivPresentationBankCold:
+            return self._cold_presentation_preparation(request)
         bank.apply_trusted_origin(document, profile, request)
         pending = bank.pending_for_request(profile, request.request_id)
         if pending is None:
@@ -658,6 +664,18 @@ class PixivR18Ranking(BasePlugin):
             request_id=request.request_id,
             image=image,
             changed=True,
+        )
+
+    @staticmethod
+    def _cold_presentation_preparation(request):
+        logger.info(
+            "Pixiv presentation bank is cold; leaving the display unchanged "
+            "while background data refresh warms it"
+        )
+        return PresentationPreparation(
+            request_id=request.request_id,
+            image=None,
+            changed=False,
         )
 
     def reconcile_presentation_receipt(self, settings, receipt):

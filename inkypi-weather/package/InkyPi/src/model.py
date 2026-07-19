@@ -400,6 +400,7 @@ class PlaylistManager:
         instance_uuid,
         *,
         expected_playlist_name,
+        eligible_instance_uuids=None,
     ) -> bool:
         """Move a failed reservation to the round tail without consuming it."""
         with self._lock:
@@ -409,7 +410,26 @@ class PlaylistManager:
             playlist = match[0]
             if playlist.name != expected_playlist_name:
                 return False
-            return playlist.defer_rotation_reservation(instance_uuid)
+            return playlist.defer_rotation_reservation(
+                instance_uuid,
+                eligible_instance_uuids=eligible_instance_uuids,
+            )
+
+    def release_rotation_reservation(
+        self,
+        instance_uuid,
+        *,
+        expected_playlist_name,
+    ) -> bool:
+        """Release a reservation without consuming its shuffle-round member."""
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return False
+            playlist = match[0]
+            if playlist.name != expected_playlist_name:
+                return False
+            return playlist.release_rotation_reservation(instance_uuid)
 
     def rollback_rotation_acknowledgement(
         self,
@@ -1026,6 +1046,7 @@ class Playlist:
         current_plugin_index (int): Index of the currently active plugin in the playlist.
     """
     RECENT_HISTORY_LIMIT = 8
+    AUTOMATIC_ROTATION_REPEAT_GAP = 3
 
     def __init__(
         self,
@@ -1246,14 +1267,8 @@ class Playlist:
             self._plugin_rotation_reserved_key = None
 
         if reserved_key is None:
-            reserved_key = next(
-                (
-                    key
-                    for key in self.plugin_rotation_queue
-                    if eligible_instance_uuids is None
-                    or key in eligible_instance_uuids
-                ),
-                None,
+            reserved_key = self._select_rotation_reservation_key(
+                eligible_instance_uuids,
             )
             if reserved_key is None:
                 if not allow_round_concession:
@@ -1266,14 +1281,8 @@ class Playlist:
                 self.plugin_rotation_queue = list(plugin_keys)
                 random.shuffle(self.plugin_rotation_queue)
                 self._avoid_automatic_round_boundary_repeat()
-                reserved_key = next(
-                    (
-                        key
-                        for key in self.plugin_rotation_queue
-                        if eligible_instance_uuids is None
-                        or key in eligible_instance_uuids
-                    ),
-                    None,
+                reserved_key = self._select_rotation_reservation_key(
+                    eligible_instance_uuids,
                 )
                 if reserved_key is None:
                     return None
@@ -1329,14 +1338,39 @@ class Playlist:
             after_state=after_state,
         )
 
-    def defer_rotation_reservation(self, instance_uuid):
-        """Retry a failed member after the other members in this shuffle round."""
+    def defer_rotation_reservation(
+        self,
+        instance_uuid,
+        *,
+        eligible_instance_uuids=None,
+    ):
+        """Retry a failed member after another member in this shuffle round."""
         plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
         self._reconcile_automatic_rotation_bag(plugin_keys)
         if not self.is_rotation_reservation_current(instance_uuid):
             return False
+        eligible = (
+            None
+            if eligible_instance_uuids is None
+            else frozenset(eligible_instance_uuids)
+        )
+        has_alternative = any(
+            key != instance_uuid and (eligible is None or key in eligible)
+            for key in self.plugin_rotation_queue
+        )
+        if not has_alternative:
+            return False
         self.plugin_rotation_queue.remove(instance_uuid)
         self.plugin_rotation_queue.append(instance_uuid)
+        self._plugin_rotation_reserved_key = None
+        return True
+
+    def release_rotation_reservation(self, instance_uuid):
+        """Drop only the reservation while retaining the pending round member."""
+        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        self._reconcile_automatic_rotation_bag(plugin_keys)
+        if not self.is_rotation_reservation_current(instance_uuid):
+            return False
         self._plugin_rotation_reserved_key = None
         return True
 
@@ -1408,6 +1442,42 @@ class Playlist:
                 self.plugin_rotation_queue[replacement_index],
                 self.plugin_rotation_queue[0],
             )
+
+    def _select_rotation_reservation_key(self, eligible_instance_uuids):
+        candidates = [
+            key
+            for key in self.plugin_rotation_queue
+            if eligible_instance_uuids is None
+            or key in eligible_instance_uuids
+        ]
+        if not candidates:
+            return None
+
+        plugin_keys = [self._plugin_rotation_key(plugin) for plugin in self.plugins]
+        configured = set(plugin_keys)
+        recent_history = self._dedupe_rotation_keys(
+            key
+            for key in self.plugin_rotation_recent_history
+            if key in configured
+        )
+        if (
+            isinstance(self.current_plugin_index, int)
+            and 0 <= self.current_plugin_index < len(self.plugins)
+        ):
+            current_key = self._plugin_rotation_key(
+                self.plugins[self.current_plugin_index]
+            )
+            if current_key not in recent_history:
+                recent_history.insert(0, current_key)
+        repeat_gap = min(
+            self.AUTOMATIC_ROTATION_REPEAT_GAP,
+            max(0, len(plugin_keys) - 1),
+        )
+        cooldown = frozenset(recent_history[:repeat_gap])
+        return next(
+            (key for key in candidates if key not in cooldown),
+            candidates[0],
+        )
 
     def _automatic_rotation_state(self):
         return (

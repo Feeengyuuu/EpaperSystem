@@ -16,6 +16,17 @@ _MODEL_CONFIG_FIELDS = ("playlist_config", "refresh_info")
 _MISSING_CONFIG_VALUE = object()
 _UNSET_MODEL_BASELINE = object()
 _SECRET_SCHEMA = SecretSchema.load()
+_RUNTIME_MIGRATIONS_KEY = "runtime_migrations"
+_SPORTS_LIVE_REFRESH_MIGRATION = "sports_live_refresh_all_disabled_v1"
+_SPORTS_LIVE_REFRESH_KEYS = (
+    "worldCupLiveRefreshEnabled",
+    "nbaLiveRefreshEnabled",
+    "offseasonHubLiveRefreshEnabled",
+    "lplLiveRefreshEnabled",
+    "ewcLiveRefreshEnabled",
+    "valveEsportsLiveRefreshEnabled",
+    "f1LiveRefreshEnabled",
+)
 
 
 class ConfigLoadError(ConfigStoreError):
@@ -65,6 +76,74 @@ class Config:
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
+        self._repair_legacy_sports_live_refresh_settings()
+
+    @staticmethod
+    def _is_explicit_false(value):
+        if value is False:
+            return True
+        if not isinstance(value, str):
+            return False
+        return value.strip().lower() in {"false", "0", "no", "off"}
+
+    def _repair_legacy_sports_live_refresh_settings(self):
+        """Repair the old blanket-disabled SportsDashboard bundle exactly once.
+
+        The affected live device persisted both the retired master switch and
+        every per-source switch as false.  That combination disables the live
+        refresh lane even while SportsDashboard is displayed.  Individual
+        source opt-outs remain valid and the migration marker prevents a later
+        deliberate all-off choice from being overwritten.
+        """
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_SPORTS_LIVE_REFRESH_MIGRATION) is True
+        ):
+            return
+
+        repaired_instances = 0
+        for snapshot in self.playlist_manager.snapshot_all_instances():
+            if snapshot.plugin_id != "sports_dashboard":
+                continue
+            settings = _detach_json(snapshot.settings)
+            if not self._is_explicit_false(settings.get("liveRefreshEnabled")):
+                continue
+            if not all(
+                key in settings and self._is_explicit_false(settings[key])
+                for key in _SPORTS_LIVE_REFRESH_KEYS
+            ):
+                continue
+
+            repaired = dict(settings)
+            repaired.update({key: "true" for key in _SPORTS_LIVE_REFRESH_KEYS})
+            updated = self.playlist_manager.update_plugin_instance(
+                snapshot.instance_uuid,
+                settings=repaired,
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+            )
+            if updated is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision + 1,
+                )
+            repaired_instances += 1
+
+        if not repaired_instances:
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_SPORTS_LIVE_REFRESH_MIGRATION] = True
+        self.update_config({_RUNTIME_MIGRATIONS_KEY: migration_state})
+        logger.warning(
+            "Repaired legacy all-disabled SportsDashboard live refresh settings. "
+            "| instances: %s",
+            repaired_instances,
+        )
 
     def read_config(self):
         """Reload and return a detached device config, or report invalid state."""

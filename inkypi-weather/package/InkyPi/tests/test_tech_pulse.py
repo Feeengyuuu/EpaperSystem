@@ -8,10 +8,16 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw
 import pytest
 
-sys.modules.setdefault(
-    "psutil",
-    SimpleNamespace(virtual_memory=lambda: SimpleNamespace(total=2 * 1024**3)),
-)
+try:
+    import psutil  # noqa: F401
+except ModuleNotFoundError:
+    sys.modules.setdefault(
+        "psutil",
+        SimpleNamespace(
+            virtual_memory=lambda: SimpleNamespace(total=2 * 1024**3),
+            swap_memory=lambda: SimpleNamespace(percent=0.0),
+        ),
+    )
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.tech_pulse import tech_pulse as tech_pulse_module  # noqa: E402

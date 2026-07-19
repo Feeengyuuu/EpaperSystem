@@ -268,6 +268,7 @@ class EsportsRenderMixin:
                 upcoming_matches[:2],
                 now,
                 "No more EWC matches",
+                placeholder_event=main_match,
             )
             self._draw_ewc_match_rows(
                 image,
@@ -280,6 +281,7 @@ class EsportsRenderMixin:
                 now,
                 "No recent EWC results",
                 compact=True,
+                placeholder_event=main_match,
             )
             return
 
@@ -431,9 +433,22 @@ class EsportsRenderMixin:
             align="right",
         )
 
-    def _draw_ewc_match_rows(self, image, draw, right_x, right_w, y, title, matches, now, empty_text, compact=False):
+    def _draw_ewc_match_rows(
+        self,
+        image,
+        draw,
+        right_x,
+        right_w,
+        y,
+        title,
+        matches,
+        now,
+        empty_text,
+        compact=False,
+        placeholder_event=None,
+    ):
         self._draw_section_header(draw, right_x, right_w, y, title, COLORS["ewc_accent"])
-        if not matches:
+        if not matches and not placeholder_event:
             empty_y = y + (34 if compact else 38)
             draw.text((right_x + 18, empty_y), empty_text, font=self._font(12 if compact else 14, True), fill=COLORS["muted"])
             return
@@ -441,10 +456,58 @@ class EsportsRenderMixin:
             row_y = y + 28
             for index, match in enumerate(matches[:2]):
                 self._draw_ewc_recent_match_row(image, draw, right_x, right_w, row_y + index * 40, match)
+            for index in range(min(2, len(matches)), 2):
+                self._draw_ewc_game_placeholder(
+                    image,
+                    draw,
+                    right_x,
+                    right_w,
+                    row_y + index * 40,
+                    placeholder_event,
+                )
             return
         row_y = y + 30
         for index, match in enumerate(matches[:2]):
             self._draw_ewc_match_row(image, draw, right_x, right_w, row_y + index * 45, match, now)
+        for index in range(min(2, len(matches)), 2):
+            self._draw_ewc_game_placeholder(
+                image,
+                draw,
+                right_x,
+                right_w,
+                row_y + index * 45,
+                placeholder_event,
+            )
+
+    def _draw_ewc_game_placeholder(self, image, draw, right_x, right_w, y, event):
+        row_x1 = right_x + 14
+        row_x2 = right_x + right_w - 14
+        row_h = 38
+        art = self._load_ewc_game_placeholder(
+            event,
+            (max(1, row_x2 - row_x1 - 8), row_h),
+        )
+        if not art:
+            label = str((event or {}).get("game") or "EWC").strip() or "EWC"
+            label, font = self._fit_text_ellipsis(
+                draw,
+                f"MORE {label} SOON",
+                row_x2 - row_x1 - 20,
+                10,
+                bold=True,
+                min_size=7,
+            )
+            self._draw_centered_in_box(
+                draw,
+                (row_x1 + 8, y, row_x2 - 8, y + row_h),
+                label,
+                font,
+                COLORS["muted"],
+            )
+            return
+        art_x = int(row_x1 + (row_x2 - row_x1 - art.width) / 2)
+        art_y = int(y + (row_h - art.height) / 2)
+        image.paste(art, (art_x, art_y), art)
 
     def _draw_ewc_match_row(self, image, draw, right_x, right_w, y, match, now):
         row_x1 = right_x + 14

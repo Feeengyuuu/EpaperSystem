@@ -6,6 +6,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flask import Flask
+import pytest
 
 import plugins  # noqa: E402
 from plugins import plugin_registry  # noqa: E402
@@ -13,6 +14,41 @@ from plugins.plugin_manifest import (  # noqa: E402
     PluginCapabilities,
     PluginManifest,
 )
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "module_name", "class_name", "required_assets"),
+    [
+        (
+            "ai_ecosystem_pulse",
+            "ai_ecosystem_pulse.py",
+            "AiEcosystemPulse",
+            ("plugin-info.json", "settings.html", "icon.png"),
+        ),
+        (
+            "orbital_signal",
+            "orbital_signal.py",
+            "OrbitalSignal",
+            ("plugin-info.json", "settings.html", "icon.png"),
+        ),
+    ],
+)
+def test_required_live_plugins_ship_complete_source_trees(
+    plugin_id,
+    module_name,
+    class_name,
+    required_assets,
+):
+    plugin_dir = Path(__file__).resolve().parents[1] / "src" / "plugins" / plugin_id
+    manifest_path = plugin_dir / "plugin-info.json"
+
+    assert (plugin_dir / module_name).is_file()
+    for asset in required_assets:
+        assert (plugin_dir / asset).is_file()
+
+    manifest = PluginManifest.from_path(manifest_path)
+    assert manifest.id == plugin_id
+    assert manifest.class_name == class_name
 
 
 def _activate_plugin_root(src_root, *plugin_ids):

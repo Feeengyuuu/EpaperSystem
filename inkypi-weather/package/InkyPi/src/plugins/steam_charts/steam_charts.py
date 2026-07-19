@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 SPARKLINE_INK = (6, 78, 59)
 LINE_SPARKLINE_AMPLIFICATION = 1.55
 LINE_SPARKLINE_EDGE_PADDING = 2.0
-SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 STEAM_CAPSULE_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
 BOLD_SAFE_MIDDLE_DOT = "\u2027"
 MIDDLE_DOT_DISPLAY_TRANSLATION = str.maketrans({
@@ -278,8 +277,7 @@ class SteamCharts(BasePlugin):
                 updated_at_text,
             )
 
-        if html_render_failed:
-            fallback_image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
+        fallback_image.info["inkypi_visual_fallback"] = "steam_charts_pillow"
         return fallback_image
 
     def _fetch_combined_chart_groups(self, items_count, show_images=True):

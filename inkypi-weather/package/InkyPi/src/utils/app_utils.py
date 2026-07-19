@@ -125,7 +125,6 @@ def base_ui_font_candidates(bold: bool = False) -> tuple[str, ...]:
     candidates = []
     if data_dir:
         candidates.extend(str(Path(data_dir) / "fonts" / name) for name in names)
-    candidates.extend(resolve_path(os.path.join("static", "fonts", name)) for name in names)
     candidates.extend(
         resolve_path(os.path.join("static", "fonts", name))
         for name in BASE_FALLBACK_FILES
@@ -235,6 +234,13 @@ def get_font(font_name, font_size=50, font_weight="normal"):
             if Path(font_file).name.casefold() in {
                 name.casefold() for name in YAHEI_REGULAR_FILES + YAHEI_BOLD_FILES
             }:
+                if not os.getenv("INKYPI_DATA_DIR"):
+                    local_path = resolve_font_path(font_file)
+                    if Path(local_path).is_file():
+                        try:
+                            return ImageFont.truetype(local_path, font_size)
+                        except OSError:
+                            pass
                 return get_base_ui_font(
                     font_size,
                     bold=Path(font_file).name.casefold()

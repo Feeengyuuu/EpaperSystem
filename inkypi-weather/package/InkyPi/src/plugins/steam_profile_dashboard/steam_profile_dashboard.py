@@ -53,6 +53,8 @@ STEAM_SECONDARY_GAME_LANGUAGE = "english"
 STEAM_RECENT_GAME_LIMIT = 6
 STEAM_LEFT_GAME_ITEM_TARGET = 4
 STEAM_BADGE_ICON_LIMIT = 48
+OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS = 6 * 60 * 60
+OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT = 256
 
 PERSONA_STATES = {
     0: "离线",
@@ -1606,8 +1608,16 @@ class SteamProfileDashboard(BasePlugin):
             if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 14 * 24 * 60 * 60:
                 icon = safe_open_image(icon_cache_path).convert("RGB")
             else:
+                if self._optional_media_negative_hit(url):
+                    return None
                 session = get_http_session()
                 response = session.get(url, timeout=25, stream=True)
+                if int(getattr(response, "status_code", 0) or 0) == 404:
+                    self._remember_optional_media_negative(url)
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
+                    return None
                 icon = safe_open_image_response(response).convert("RGB")
                 os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
                 icon.save(icon_cache_path)
@@ -1621,6 +1631,29 @@ class SteamProfileDashboard(BasePlugin):
         outline = ImageDraw.Draw(result)
         outline.rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255, 190), width=1)
         return result
+
+    def _optional_media_negative_hit(self, url):
+        now = float(getattr(self, "_optional_media_clock", time.monotonic)())
+        cache = getattr(self, "_optional_media_negative_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._optional_media_negative_cache = cache
+        expires_at = float(cache.get(str(url), 0.0) or 0.0)
+        if expires_at > now:
+            return True
+        cache.pop(str(url), None)
+        return False
+
+    def _remember_optional_media_negative(self, url):
+        now = float(getattr(self, "_optional_media_clock", time.monotonic)())
+        cache = getattr(self, "_optional_media_negative_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._optional_media_negative_cache = cache
+        if len(cache) >= OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT:
+            oldest = min(cache, key=cache.get)
+            cache.pop(oldest, None)
+        cache[str(url)] = now + OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS
 
     def _game_icon_url(self, data, appid):
         appid = self._normalize_appid(appid)

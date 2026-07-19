@@ -605,6 +605,100 @@ def _sample_ewc_next_flight_html():
     return "<html><body><script>self.__next_f.push([1," + json.dumps(flight) + "])\u003c/script></body></html>".replace("\u003c/script>", "</script>")
 
 
+def _sample_ewc_resolved_bracket_next_flight_html():
+    def competitor(club_id, name, short_name, outcome):
+        return {
+            "club": {"id": club_id, "name": name, "short_name": short_name},
+            "team": {"name": name, "short_name": short_name},
+            "outcome": outcome,
+        }
+
+    semifinal_1 = {
+        "id": "S5",
+        "state": "COMPLETED",
+        "scheduled_start": "2026-07-18T11:00:00Z",
+        "actual_end": "2026-07-18T13:06:00Z",
+        "result": {
+            "status": "FINAL",
+            "winner_slots": [1],
+            "slots": [
+                {"slot": 1, "score": 2, "is_winner": True, "outcome": "WIN"},
+                {"slot": 2, "score": 0, "is_winner": False, "outcome": "LOSS"},
+            ],
+        },
+        "slots": [
+            {"slot": 1, "competitor": competitor("club-bb", "BB Team", "BB", "WIN")},
+            {"slot": 2, "competitor": competitor("club-vg", "Vici Gaming", "VG", "LOSS")},
+        ],
+        "structure": {"round_name": "Semifinals", "label": "Playoffs - Semifinal #1"},
+    }
+    semifinal_2 = {
+        "id": "S6",
+        "state": "COMPLETED",
+        "scheduled_start": "2026-07-18T14:30:00Z",
+        "actual_end": "2026-07-18T17:26:00Z",
+        "result": {
+            "status": "FINAL",
+            "winner_slots": [2],
+            "slots": [
+                {"slot": 1, "score": 1, "is_winner": False, "outcome": "LOSS"},
+                {"slot": 2, "score": 2, "is_winner": True, "outcome": "WIN"},
+            ],
+        },
+        "slots": [
+            {"slot": 1, "competitor": competitor("club-yan", "Team Yandex", "YAN", "LOSS")},
+            {"slot": 2, "competitor": competitor("club-pari", "PVISION", "PARI", "WIN")},
+        ],
+        "structure": {"round_name": "Semifinals", "label": "Playoffs - Semifinal #2"},
+    }
+    third_place = {
+        "id": "S8",
+        "state": "SCHEDULED",
+        "scheduled_start": "2026-07-19T10:00:00Z",
+        "slots": [
+            {
+                "slot": 1,
+                "source": {"type": "SERIES", "series_id": "S5", "selector": {"type": "LOSER_OF"}, "label": "Loser of S5"},
+                "competitor": None,
+            },
+            {
+                "slot": 2,
+                "source": {"type": "SERIES", "series_id": "S6", "selector": {"type": "LOSER_OF"}, "label": "Loser of S6"},
+                "competitor": None,
+            },
+        ],
+        "structure": {"round_name": "Third Place", "label": "Playoffs - 3rd place #1"},
+    }
+    grand_final = {
+        "id": "S7",
+        "state": "SCHEDULED",
+        "scheduled_start": "2026-07-19T13:30:00Z",
+        "slots": [
+            {
+                "slot": 1,
+                "source": {"type": "SERIES", "series_id": "S5", "selector": {"type": "WINNER_OF"}, "label": "Winner of S5"},
+                "competitor": None,
+            },
+            {
+                "slot": 2,
+                "source": {"type": "SERIES", "series_id": "S6", "selector": {"type": "WINNER_OF"}, "label": "Winner of S6"},
+                "competitor": None,
+            },
+        ],
+        "structure": {"round_name": "Grand Final", "label": "Playoffs - Grand Final #1"},
+    }
+    structures = [
+        {
+            "phase": {"id": "playoffs", "name": "Playoffs"},
+            "groups": [],
+            # Future rounds deliberately arrive before the completed source series.
+            "series": [third_place, grand_final, semifinal_1, semifinal_2],
+        }
+    ]
+    flight = '9:["$","div",null,{"initialStructures":' + json.dumps(structures, separators=(",", ":")) + '}]'
+    return "<script>self.__next_f.push([1," + json.dumps(flight) + "])</script>"
+
+
 def _sample_ewc_multi_competitor_next_flight_html():
     structures = [
         {
@@ -1519,6 +1613,109 @@ def test_live_refresh_state_respects_disabled_source():
     assert state is None
 
 
+def test_worldcup_one_shot_live_refresh_overrides_disabled_setting_for_matching_event():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("worldcup_one_shot_live_refresh")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(
+        cache_dir / "worldcup_live_state.json",
+        "sports-dashboard-worldcup-live-v1",
+        event_id="760516",
+        live_until="2026-07-19T00:00:00+00:00",
+    )
+
+    state = plugin.get_live_refresh_state(
+        {
+            "id": "sports",
+            "worldCupLiveRefreshEnabled": "false",
+            "worldCupLiveRefreshOnceEventId": "760516",
+            "worldCupLiveRefreshOnceUntil": "2026-07-19T00:00:00+00:00",
+            "worldCupLiveRefreshIntervalSeconds": "60",
+        },
+        datetime(2026, 7, 18, 22, 0, tzinfo=timezone.utc),
+    )
+
+    assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_worldcup_one_shot_live_refresh_uses_current_release_event_without_saved_settings():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("worldcup_one_shot_release_event")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    _write_live_refresh_state(
+        cache_dir / "worldcup_live_state.json",
+        "sports-dashboard-worldcup-live-v1",
+        event_id="760516",
+        live_until="2026-07-19T00:00:00+00:00",
+    )
+
+    state = plugin.get_live_refresh_state(
+        {
+            "id": "sports",
+            "worldCupLiveRefreshEnabled": "false",
+        },
+        datetime(2026, 7, 18, 22, 0, tzinfo=timezone.utc),
+    )
+
+    assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_worldcup_one_shot_release_window_refreshes_when_live_state_is_missing():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("worldcup_one_shot_release_window")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    settings = {
+        "id": "sports",
+        "worldCupLiveRefreshEnabled": "false",
+    }
+
+    assert plugin.get_live_refresh_state(
+        settings,
+        datetime(2026, 7, 18, 22, 0, tzinfo=timezone.utc),
+    ) == {"active": True, "interval_seconds": 60}
+    assert plugin.get_live_refresh_state(
+        settings,
+        datetime(2026, 7, 19, 1, 0, 1, tzinfo=timezone.utc),
+    ) is None
+    assert plugin.wants_background_live_refresh(
+        settings,
+        datetime(2026, 7, 18, 22, 0, tzinfo=timezone.utc),
+    ) is True
+    assert plugin.wants_background_live_refresh(
+        settings,
+        datetime(2026, 7, 19, 1, 0, 1, tzinfo=timezone.utc),
+    ) is False
+
+
+def test_worldcup_one_shot_live_refresh_rejects_other_or_expired_events():
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("worldcup_one_shot_live_refresh_expiry")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    state_path = cache_dir / "worldcup_live_state.json"
+    _write_live_refresh_state(
+        state_path,
+        "sports-dashboard-worldcup-live-v1",
+        event_id="different-event",
+        live_until="2026-07-19T00:00:00+00:00",
+    )
+    settings = {
+        "id": "sports",
+        "worldCupLiveRefreshEnabled": "false",
+        "worldCupLiveRefreshOnceEventId": "760516",
+        "worldCupLiveRefreshOnceUntil": "2026-07-19T00:00:00+00:00",
+    }
+
+    assert plugin.get_live_refresh_state(settings, datetime(2026, 7, 18, 22, 0, tzinfo=timezone.utc)) is None
+
+    _write_live_refresh_state(
+        state_path,
+        "sports-dashboard-worldcup-live-v1",
+        event_id="760516",
+        live_until="2026-07-19T00:00:00+00:00",
+    )
+    assert plugin.get_live_refresh_state(settings, datetime(2026, 7, 19, 0, 0, 1, tzinfo=timezone.utc)) is None
+
+
 def test_live_refresh_state_ignores_missing_or_expired_state():
     plugin = _plugin()
     cache_dir = _sports_dashboard_tmp("live_refresh_hook_expired")
@@ -1757,6 +1954,29 @@ def test_ewc_detail_parser_reads_next_flight_series_before_legacy_html():
     assert upcoming["best_of"] == 3
     assert upcoming["score_a"] is None
     assert upcoming["score_b"] is None
+
+
+def test_ewc_detail_parser_resolves_completed_series_progression_slots():
+    matches = SportsDashboard._parse_ewc_detail_schedule_html(
+        _sample_ewc_resolved_bracket_next_flight_html(),
+        ZoneInfo("America/Los_Angeles"),
+        "dota2",
+        "Dota 2",
+        "https://esportsworldcup.com/en/competitions/2026/dota2",
+        year="2026",
+    )
+
+    by_id = {match["event_id"]: match for match in matches}
+    third_place = by_id["S8"]
+    grand_final = by_id["S7"]
+
+    assert (third_place["team_a"], third_place["team_b"]) == ("Vici Gaming", "Team Yandex")
+    assert (third_place["team_a_short"], third_place["team_b_short"]) == ("VG", "YAN")
+    assert third_place["team_a_logo"].endswith("/assets/clubs/club-vg/LOGO_LIGHT.png")
+    assert (third_place["score_a"], third_place["score_b"]) == (None, None)
+    assert (grand_final["team_a"], grand_final["team_b"]) == ("BB Team", "PVISION")
+    assert (grand_final["team_a_short"], grand_final["team_b_short"]) == ("BB", "PARI")
+    assert (grand_final["score_a"], grand_final["score_b"]) == (None, None)
 
 
 def test_ewc_detail_parser_keeps_multi_competitor_rounds_displayable():
@@ -2640,6 +2860,61 @@ def test_ewc_game_logo_slug_and_path_use_official_assets():
     path = Path(SportsDashboard._ewc_game_logo_path({"slug": "street-fighter6"}))
     assert path.parent == Path(LOCAL_EWC_GAME_LOGO_DIR)
     assert path.name == "street-fighter6.png"
+
+
+def test_ewc_game_placeholder_assets_cover_official_manifest():
+    manifest_path = Path(LOCAL_EWC_GAME_LOGO_DIR) / "manifest.json"
+    expected_slugs = set(json.loads(manifest_path.read_text(encoding="utf-8"))["games"])
+    placeholder_dir = Path(SportsDashboard._ewc_game_placeholder_path({"slug": "dota2"})).parent
+    placeholder_paths = sorted(placeholder_dir.glob("*.png"))
+
+    assert {path.stem for path in placeholder_paths} == expected_slugs
+    for path in placeholder_paths:
+        with Image.open(path) as placeholder:
+            assert placeholder.mode == "RGBA"
+            assert placeholder.size == (235, 42)
+            assert placeholder.getchannel("A").getbbox() is not None
+            assert all(
+                placeholder.getpixel(point)[3] == 0
+                for point in ((0, 0), (234, 0), (0, 41), (234, 41))
+            )
+
+
+def test_ewc_match_rows_fill_unoccupied_slot_with_game_placeholder(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 7, 18, 18, 0, tzinfo=timezone.utc)
+    match = {
+        "event_id": "ewc-2026-dota2-next",
+        "slug": "dota2",
+        "game": "Dota 2",
+        "start": now + timedelta(hours=2),
+    }
+    placeholder_calls = []
+    monkeypatch.setattr(plugin, "_draw_ewc_match_row", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_ewc_game_placeholder",
+        lambda _image, _draw, right_x, right_w, y, event: placeholder_calls.append(
+            (right_x, right_w, y, event.get("slug"))
+        ),
+        raising=False,
+    )
+
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    plugin._draw_ewc_match_rows(
+        image,
+        ImageDraw.Draw(image),
+        556,
+        244,
+        244,
+        "UPCOMING",
+        [match],
+        now,
+        "No more EWC matches",
+        placeholder_event=match,
+    )
+
+    assert placeholder_calls == [(556, 244, 319, "dota2")]
 
 
 def test_ewc_current_short_slugs_use_clean_titles():
@@ -12970,6 +13245,36 @@ def test_worldcup_compact_panel_places_pitch_strip_between_upcoming_and_recent(m
     assert (x2 - x1 + 1, y2 - y1 + 1) == (248, 13)
     assert upcoming_bottoms[0] < y1 <= y2 < recent_tops[0]
 
+
+def test_worldcup_empty_upcoming_uses_five_leagues_preview_art(monkeypatch):
+    plugin = _plugin()
+    placeholder = Image.new("RGBA", (120, 28), (224, 42, 42, 255))
+    monkeypatch.setattr(
+        plugin,
+        "_load_worldcup_five_leagues_upcoming",
+        lambda _size: placeholder,
+        raising=False,
+    )
+    image = Image.new("RGB", (556, 208), COLORS["paper"])
+
+    used_bottom = plugin._draw_worldcup_mini_rows(
+        image,
+        ImageDraw.Draw(image),
+        280,
+        540,
+        57,
+        200,
+        "UPCOMING",
+        [],
+        show_time=True,
+    )
+
+    assert used_bottom >= 120
+    colors = image.crop((280, 78, 541, 130)).getcolors(maxcolors=261 * 52)
+    assert colors is not None
+    assert any(color == (224, 42, 42) for _count, color in colors)
+
+
 def test_worldcup_api_parser_converts_fixture_to_local_match_row():
     la = ZoneInfo("America/Los_Angeles")
 
@@ -13527,6 +13832,47 @@ def test_worldcup_scoreboard_force_refresh_bypasses_exhausted_internal_budget(tm
     assert source_state == "ESPN LIVE"
 
 
+def test_worldcup_scoreboard_release_window_bypasses_fresh_cache_and_budget(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._worldcup_scoreboard_calls_left = lambda *_args: 0
+    plugin._worldcup_release_one_shot_window_active = lambda _current_dt: True
+    la = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime.now(timezone.utc)
+    cache_key = plugin._worldcup_scoreboard_cache_key({}, la, now_utc)
+    cached_scoreboard = _sample_worldcup_espn_scoreboard_payload()
+    fresh_scoreboard = json.loads(json.dumps(cached_scoreboard))
+    fresh_scoreboard["events"][0]["competitions"][0]["competitors"][0]["score"] = "4"
+    calls = []
+
+    SportsDashboard._write_json_file(
+        tmp_path / "worldcup_scoreboard.json",
+        {
+            "version": "sports-dashboard-worldcup-scoreboard-v1",
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "scoreboard": cached_scoreboard,
+        },
+    )
+
+    def fetch(_settings, _timezone_info, fetched_cache_key, fetched_at):
+        calls.append(fetched_cache_key)
+        return {
+            "version": "sports-dashboard-worldcup-scoreboard-v1",
+            "cache_key": fetched_cache_key,
+            "fetched_at": fetched_at.isoformat(),
+            "scoreboard": fresh_scoreboard,
+        }
+
+    plugin._fetch_worldcup_scoreboard_payload = fetch
+
+    payload, source_state, _fetched_at = plugin._load_worldcup_scoreboard({}, la)
+
+    assert calls == [cache_key]
+    assert payload == fresh_scoreboard
+    assert source_state == "ESPN LIVE"
+
+
 def test_nba_scoreboard_force_refresh_bypasses_exhausted_internal_budget(tmp_path):
     plugin = _plugin()
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
@@ -13873,9 +14219,10 @@ def _render_dashboard_with_source_states(
     nba_source_state,
     lol_source_state,
     force_refresh=False,
+    now=None,
 ):
     la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 7, 13, 9, 0, tzinfo=la)
+    now = now or datetime(2026, 7, 13, 9, 0, tzinfo=la)
     if left_provenance is None:
         left_panel = None
     else:
@@ -14047,6 +14394,21 @@ def test_forced_composite_refresh_fails_closed_for_stale_or_fallback_panels(
 
     assert read_source_provenance(image) is expected
     assert image.info["inkypi_skip_cache"] is True
+
+
+def test_worldcup_release_one_shot_promotes_live_primary_with_stale_secondary(monkeypatch):
+    la = ZoneInfo("America/Los_Angeles")
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.LIVE,
+        nba_source_state="ESPN STALE",
+        lol_source_state="LIVE DATA",
+        now=datetime(2026, 7, 18, 14, 30, tzinfo=la),
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert "inkypi_skip_cache" not in image.info
 
 
 def test_generate_image_prefers_espn_scoreboard_for_worldcup_panel():

@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from pathlib import Path
 from io import BytesIO
@@ -49,6 +50,8 @@ MAX_DATA_SECONDS = 45
 MAX_JSON_BYTES = 4 * 1024 * 1024
 MAX_MEDIA_BYTES = 12 * 1024 * 1024
 MAX_MEDIA_REDIRECTS = 4
+OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS = 6 * 60 * 60
+OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT = 256
 STEAM_MEDIA_HOST_SUFFIXES = (
     "steamstatic.com",
     "steamcontent.com",
@@ -876,13 +879,50 @@ class SteamDailyArt(BasePlugin):
         for url in self._logo_candidate_urls(item):
             if not url:
                 continue
+            if self._optional_media_negative_hit(url):
+                continue
             try:
                 return url, self._download_logo(url)
             except Exception as e:
+                if self._is_not_found_error(e):
+                    self._remember_optional_media_negative(url)
                 logger.warning(f"Steam logo candidate failed: {url} | {e}")
 
         logger.info("No Steam logo overlay found for selected item.")
         return None, None
+
+    @staticmethod
+    def _is_not_found_error(error):
+        status_code = getattr(error, "status_code", None)
+        if status_code is not None:
+            try:
+                return int(status_code) == 404
+            except (TypeError, ValueError):
+                pass
+        return bool(re.search(r"\bstatus\s+404\b", str(error), flags=re.IGNORECASE))
+
+    def _optional_media_negative_hit(self, url):
+        now = float(getattr(self, "_optional_media_clock", time.monotonic)())
+        cache = getattr(self, "_optional_media_negative_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._optional_media_negative_cache = cache
+        expires_at = float(cache.get(str(url), 0.0) or 0.0)
+        if expires_at > now:
+            return True
+        cache.pop(str(url), None)
+        return False
+
+    def _remember_optional_media_negative(self, url):
+        now = float(getattr(self, "_optional_media_clock", time.monotonic)())
+        cache = getattr(self, "_optional_media_negative_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._optional_media_negative_cache = cache
+        if len(cache) >= OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT:
+            oldest = min(cache, key=cache.get)
+            cache.pop(oldest, None)
+        cache[str(url)] = now + OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS
 
     def _download_image(self, url):
         payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=40)
