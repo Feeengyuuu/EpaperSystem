@@ -10124,7 +10124,7 @@ def test_non_presented_automatic_display_still_prefetches_next_presentation(
     assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
 
 
-def test_reserved_next_presentation_preempts_due_background_data(monkeypatch):
+def test_reserved_next_presentation_refreshes_matching_due_data_first(monkeypatch):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
         "reserved-presentation-preempts-data",
         latest_refresh_time=None,
@@ -10152,9 +10152,23 @@ def test_reserved_next_presentation_preempts_due_background_data(monkeypatch):
     command = task._select_independent_refresh_command(PRESENTATION_NOW)
 
     assert command is not None
-    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert command.intent is RefreshIntent.DATA_REFRESH
     assert command.instance_uuid == instance.instance_uuid
-    assert command.priority == 90
+    assert command.priority == 95
+
+    task.runtime_state.record_attempt(
+        instance.instance_uuid,
+        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    presentation = task._select_independent_refresh_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+
+    assert presentation is not None
+    assert presentation.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert presentation.instance_uuid == instance.instance_uuid
+    assert presentation.priority == 90
 
 
 def test_rotation_guard_stops_new_background_work_before_due_display(monkeypatch):

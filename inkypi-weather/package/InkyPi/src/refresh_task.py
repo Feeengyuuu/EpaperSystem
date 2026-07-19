@@ -1820,9 +1820,15 @@ class RefreshTask:
             self._oldest_data_overdue_seconds = None
 
         # A presentation request for the reserved next rotation member is part
-        # of the display critical path.  Prepare it before ordinary data work,
-        # even when that data is older, so the next cached image is ready as
-        # soon as the five-minute dwell expires.
+        # of the display critical path.  Give the exact same instance one due
+        # data attempt first so a NO_CHANGE presentation cannot bless an old
+        # cache as ready.  Once that attempt has started, presentation wins
+        # over all ordinary background work and cannot be starved by a short
+        # data interval.
+        data_by_instance_uuid = {
+            candidate.instance.instance_uuid: candidate
+            for candidate in data_candidates
+        }
         reserved_instance_uuids = {
             instance.instance_uuid
             for instance in active.plugins
@@ -1840,6 +1846,28 @@ class RefreshTask:
             ].presentation_request
             if request is None:
                 continue
+            data_candidate = data_by_instance_uuid.get(
+                presentation_instance.instance_uuid
+            )
+            if data_candidate is not None and tier is not ResourceTier.HARD:
+                data_attempt = data_candidate.last_attempt_at
+                presentation_due = presentation_candidate.due_since
+                if data_attempt is None or (
+                    self._align_datetime_tz(data_attempt, presentation_due)
+                    <= presentation_due
+                ):
+                    return self._playlist_command(
+                        active.name,
+                        presentation_instance,
+                        source=CommandSource.BACKGROUND,
+                        intent=RefreshIntent.DATA_REFRESH,
+                        force=False,
+                        display_cached_only=False,
+                        priority=95,
+                        kind=CommandKind.CACHE_REFRESH,
+                        current_dt=current_dt,
+                        automatic_rotation=True,
+                    )
             return self._playlist_command(
                 active.name,
                 presentation_instance,
