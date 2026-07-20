@@ -1479,3 +1479,35 @@ For live dashboards, test the exact TTL boundary rather than only fresh/stale ex
 - **Notes**: Added exact-boundary tests for status and screenshot TTLs plus a per-refresh network budget; full InkyPi suite passed with 4177 tests.
 
 ---
+
+## [LRN-20260720-001] correction
+
+**Logged**: 2026-07-20T01:12:56-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+A short cache TTL does not refresh a displayed plugin unless the scheduler can discover an active live-refresh contract.
+
+### Details
+LiveRadar correctly re-fetched a live screenshot once rendering was invoked after its 60-second TTL, but its manifest still declared `supports_live_refresh=false` and it inherited the inactive base scheduler hook. As a result, the TTL was only enforced on a later manual or playlist render and could not keep screenshots moving while LiveRadar remained displayed. The complete contract requires both `supports_live_refresh=true` and a side-effect-free `get_live_refresh_state` that reads the matching warm status cache, becomes active only while a successful room is live, and returns the shorter of the status and media TTLs.
+
+### Suggested Action
+For every plugin freshness fix, verify two separate layers: the cache decides whether a render should fetch, and the scheduler decides whether another render happens at all. Add manifest, hook, offline/error deactivation, and no-side-effect tests; then prove a real automatic live-lane success, changed media hashes, and a new physical display commit without submitting a manual refresh.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/src/plugins/live_radar/plugin-info.json, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: liveradar, live-refresh, scheduler, cache-ttl, manifest-capability, physical-display
+- Pattern-Key: live_dashboard.ttl_requires_scheduler_activation
+- Recurrence-Count: 1
+- First-Seen: 2026-07-20
+- Last-Seen: 2026-07-20
+
+### Resolution
+- **Resolved**: 2026-07-20T01:12:56-07:00
+- **Commit/PR**: 99652719
+- **Notes**: Enabled displayed-instance live refresh, passed 4179 tests, deployed `deploy-20260720-liveradar-live-6e7a4219716a`, and observed an automatic live-lane success with six changed screenshot hashes and a new hardware display commit.
+
+---
