@@ -82,6 +82,7 @@
 2. Change the default `snapshotCacheSeconds` to 60 independent of `cacheSeconds`, while preserving the allowed 30-1800 second override.
 3. Keep live screenshot retrieval active for every visible live snapshot path, including compact live cards. Preserve the cached image on refresh failure and keep live status unchanged.
 4. Retain the existing theme-only contract: a theme redraw can read warm media but performs zero network I/O.
+5. Add a virtual-clock status-cache test proving a successful status result is reused strictly before `cacheSeconds` and refetched at the exact expiry boundary. Bound one source-refresh attempt to finish before the configured interval (leaving a small scheduler margin), returning explicit per-room failures or the last-good status cache instead of allowing sequential provider fallbacks to overrun the next internal refresh window.
 
 ### Task 7: Targeted and full local verification
 
@@ -104,5 +105,6 @@
 1. Install the supplied Twitch values into the protected environment file using a no-echo transfer/update path; verify only key presence and file permissions.
 2. Build and inspect a clean LF-safe release archive, deploy transactionally, and verify the active symlink and `inkypi.service` readiness with zero restart loop.
 3. Trigger a real 65-room LiveRadar DATA render. Prove one Twitch Helix streams request, warm Bilibili mapping behavior, Douyu-only aggregator chunks, ordered 65 results, and credential-free source-health JSON/logs.
-4. While at least one streamer is live, render the same visible card twice more than 60 seconds apart and prove its cover cache mtime/content/request evidence advances while live status remains live. If no configured streamer is live, exercise the exact production media path with a temporary non-persisted live fixture and report that limitation explicitly.
-5. Inspect the physical 800x480 output and keep monitoring through at least one subsequent refresh window before declaring completion.
+4. Measure two consecutive status refreshes and prove their start/finish timestamps satisfy the saved instance `cacheSeconds` contract within a bounded scheduler margin; verify no source attempt remains running into the following interval.
+5. While at least one streamer is live, render the same visible card twice more than 60 seconds apart and prove its cover cache mtime/content/request evidence advances while live status remains live. If no configured streamer is live, exercise the exact production media path with a temporary non-persisted live fixture and report that limitation explicitly.
+6. Inspect the physical 800x480 output and keep monitoring through at least one subsequent refresh window before declaring completion.

@@ -57,6 +57,7 @@ class FakeDeviceConfig:
 def _plugin():
     plugin = LiveRadar({"id": "live_radar"})
     plugin._write_context = lambda *args, **kwargs: None
+    plugin._write_source_health = lambda *args, **kwargs: None
     return plugin
 
 
@@ -342,6 +343,65 @@ def test_error_only_refresh_preserves_last_good_cache(monkeypatch):
     assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
 
 
+def test_status_cache_refetches_at_exact_internal_expiry(monkeypatch):
+    plugin = _plugin()
+    _memory_cache(plugin)
+    now = [1000.0]
+    fetch_times = []
+    monkeypatch.setattr(live_radar_module.time, "time", lambda: now[0])
+    plugin._fetch_statuses = lambda *_args: fetch_times.append(now[0]) or [_status_result()]
+    monkeypatch.setattr(
+        plugin,
+        "_render_dashboard",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "cacheSeconds": "60",
+        "showSnapshots": False,
+    }
+
+    plugin.generate_image(settings, FakeDeviceConfig())
+    now[0] += 59
+    plugin.generate_image(settings, FakeDeviceConfig())
+    now[0] += 1
+    plugin.generate_image(settings, FakeDeviceConfig())
+
+    assert fetch_times == [1000.0, 1060.0]
+
+
+def test_status_refresh_budget_stops_individual_fallback_before_next_interval():
+    plugin = _plugin()
+    now = [0.0]
+    plugin._status_refresh_clock = lambda: now[0]
+    plugin._status_refresh_deadline = 15.0
+    calls = []
+
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            calls.append(([room["id"] for room in json["rooms"]], timeout))
+            now[0] = 16.0
+            raise RuntimeError("batch timeout")
+
+    rooms = [
+        {"platform": "douyu", "id": "1", "label": "One", "isFav": False},
+        {"platform": "douyu", "id": "2", "label": "Two", "isFav": False},
+    ]
+
+    results = plugin._fetch_aggregator_platform(
+        FakeSession(),
+        rooms,
+        "https://example.test/batch",
+        20,
+        False,
+        "douyu",
+    )
+
+    assert calls == [(["1", "2"], 15.0)]
+    assert [result["id"] for result in results] == ["1", "2"]
+    assert all(result["ok"] is False for result in results)
+
+
 def test_parse_rooms_text_accepts_card_lines():
     plugin = _plugin()
 
@@ -415,6 +475,10 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
     rooms = plugin._parse_rooms({"roomsText": DEFAULT_ROOMS_TEXT})
 
     assert len(rooms) == 65
+    assert {
+        platform: sum(room["platform"] == platform for room in rooms)
+        for platform in ("bilibili", "douyu", "twitch")
+    } == {"bilibili": 31, "douyu": 21, "twitch": 13}
     assert (rooms[0]["platform"], rooms[0]["id"]) == ("bilibili", "545318")
     assert (rooms[-1]["platform"], rooms[-1]["id"]) == ("twitch", "ludwig")
     assert ("bilibili", "173551") in [(room["platform"], room["id"]) for room in rooms]
@@ -487,6 +551,394 @@ def test_live_overflow_text_prefers_remaining_live_names_and_fits_width():
     tight = plugin._live_overflow_text(cards, draw, font, 130)
     assert "Zard1991" in tight
     assert draw.textlength(tight, font=font) <= 130
+
+
+def test_twitch_helix_batches_all_logins_and_reuses_cached_app_token():
+    plugin = _plugin()
+    rooms = [
+        {"platform": "twitch", "id": f"streamer{i}", "label": f"Streamer {i}", "isFav": i == 0}
+        for i in range(13)
+    ]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, params, timeout, headers):
+            calls.append(("post", url, params, timeout, headers))
+            return FakeResponse({"access_token": "short-lived-token", "expires_in": 3600})
+
+        def get(self, url, params, timeout, headers):
+            calls.append(("get", url, params, timeout, headers))
+            return FakeResponse(
+                {
+                    "data": [
+                        {
+                            "user_login": "streamer0",
+                            "user_name": "Streamer Zero",
+                            "title": "Still live",
+                            "viewer_count": 321,
+                            "started_at": "2026-07-19T12:00:00Z",
+                            "thumbnail_url": "https://static-cdn.jtvnw.net/previews-ttv/live_user_streamer0-{width}x{height}.jpg",
+                        }
+                    ]
+                }
+            )
+
+    session = FakeSession()
+
+    first = plugin._fetch_twitch_statuses_direct(
+        session,
+        rooms,
+        timeout=9,
+        fetch_avatars=True,
+        client_id="test-client-id",
+        client_secret="test-client-secret",
+    )
+    second = plugin._fetch_twitch_statuses_direct(
+        session,
+        rooms,
+        timeout=9,
+        fetch_avatars=True,
+        client_id="test-client-id",
+        client_secret="test-client-secret",
+    )
+
+    token_calls = [call for call in calls if call[0] == "post"]
+    stream_calls = [call for call in calls if call[0] == "get"]
+    assert len(token_calls) == 1
+    assert len(stream_calls) == 2
+    assert stream_calls[0][2] == [("user_login", f"streamer{i}") for i in range(13)]
+    assert [result["id"] for result in first] == [room["id"] for room in rooms]
+    assert first[0]["status"]["isLive"] is True
+    assert first[0]["status"]["owner"] == "Streamer Zero"
+    assert first[0]["status"]["cover"].endswith("-640x360.jpg")
+    assert first[0]["status"]["startTime"] == 1784462400000
+    assert all(result["status"]["isLive"] is False for result in first[1:])
+    assert second == first
+    serialized = json.dumps(first, sort_keys=True)
+    assert "test-client-id" not in serialized
+    assert "test-client-secret" not in serialized
+    assert "short-lived-token" not in serialized
+
+
+def test_twitch_credentials_are_loaded_from_device_config_without_logging_values(monkeypatch):
+    plugin = _plugin()
+    requested = []
+
+    class SecretDevice:
+        def load_env_key(self, key):
+            requested.append(key)
+            return {"TWITCH_CLIENT_ID": "device-id", "TWITCH_CLIENT_SECRET": "device-secret"}[key]
+
+    monkeypatch.setenv("TWITCH_CLIENT_ID", "process-id")
+    monkeypatch.setenv("TWITCH_CLIENT_SECRET", "process-secret")
+
+    assert plugin._load_twitch_credentials(SecretDevice()) == ("device-id", "device-secret")
+    assert requested == ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"]
+
+
+def test_fetch_statuses_routes_platforms_separately_and_preserves_room_order(monkeypatch):
+    plugin = _plugin()
+    plugin._twitch_credentials = ("configured-id", "configured-secret")
+    aggregator_calls = []
+
+    def source_results(source_name, rooms):
+        return [
+            {
+                "ok": True,
+                "platform": room["platform"],
+                "id": room["id"],
+                "status": {"isLive": False, "owner": room["label"]},
+                "cache": source_name,
+                "error": None,
+            }
+            for room in rooms
+        ]
+
+    plugin._fetch_twitch_statuses_direct = (
+        lambda session, rooms, timeout, fetch_avatars, client_id, client_secret: source_results(
+            "TWITCH_HELIX", rooms
+        )
+    )
+    plugin._fetch_bilibili_statuses_direct = (
+        lambda session, rooms, timeout, fetch_avatars: source_results("BILIBILI_DIRECT", rooms)
+    )
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            aggregator_calls.append(json["rooms"])
+            return FakeResponse(
+                {
+                    "results": [
+                        {
+                            "ok": True,
+                            "platform": room["platform"],
+                            "id": room["id"],
+                            "status": {"isLive": False, "owner": room["id"]},
+                        }
+                        for room in json["rooms"]
+                    ]
+                    + [
+                        {
+                            "ok": False,
+                            "platform": "bilibili",
+                            "id": "545318",
+                            "status": None,
+                            "error": "unexpected_cross_platform_result",
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: FakeSession())
+    rooms = [
+        {"platform": "twitch", "id": "xqc", "label": "xQc", "isFav": False},
+        {"platform": "douyu", "id": "60937", "label": "Zard", "isFav": True},
+        {"platform": "bilibili", "id": "545318", "label": "Mr.Quin", "isFav": True},
+        {"platform": "douyu", "id": "52", "label": "YYF", "isFav": False},
+    ]
+
+    results = plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert [[room["platform"] for room in call] for call in aggregator_calls] == [["douyu", "douyu"]]
+    assert [result["id"] for result in results] == [room["id"] for room in rooms]
+    assert [result.get("cache") for result in results] == [
+        "TWITCH_HELIX",
+        None,
+        "BILIBILI_DIRECT",
+        None,
+    ]
+
+
+def test_bilibili_room_uid_mapping_is_reused_for_warm_bulk_refresh(tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    calls = []
+    rooms = [
+        {"platform": "bilibili", "id": "101", "label": "One", "isFav": False},
+        {"platform": "bilibili", "id": "202", "label": "Two", "isFav": False},
+    ]
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params, timeout, headers):
+            calls.append((url, params))
+            if "get_info" in url:
+                room_id = params["room_id"]
+                return FakeResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "uid": int(room_id) + 1000,
+                            "room_id": int(room_id),
+                            "live_status": 0,
+                            "title": f"Room {room_id}",
+                        },
+                    }
+                )
+            uids = [uid for key, uid in params if key == "uids[]"]
+            return FakeResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        uid: {
+                            "uid": int(uid),
+                            "live_status": 1 if uid == "1101" else 0,
+                            "uname": f"UID {uid}",
+                            "title": "Bulk status",
+                        }
+                        for uid in uids
+                    },
+                }
+            )
+
+    session = FakeSession()
+    cold = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, True)
+    warm = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, True)
+
+    room_info_calls = [call for call in calls if "get_info" in call[0]]
+    uid_status_calls = [call for call in calls if "get_status_info_by_uids" in call[0]]
+    assert len(room_info_calls) == 2
+    assert len(uid_status_calls) == 2
+    assert [result["id"] for result in cold] == ["101", "202"]
+    assert [result["id"] for result in warm] == ["101", "202"]
+    assert cold[0]["status"]["isLive"] is True
+    assert warm == cold
+    mapping = json.loads((tmp_path / "bilibili_room_map.json").read_text(encoding="utf-8"))
+    assert set(mapping["rooms"]) == {"101", "202"}
+
+
+def test_bilibili_missing_room_is_negative_cached_for_six_hours(tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    now = [1000.0]
+    plugin._bilibili_room_map_clock = lambda: now[0]
+    room_info_calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params, timeout, headers):
+            if "get_info" in url:
+                room_info_calls.append(params["room_id"])
+                return FakeResponse({"code": 0, "data": None})
+            return FakeResponse({"code": 0, "data": {}})
+
+    room = {"platform": "bilibili", "id": "404", "label": "Missing", "isFav": False}
+    session = FakeSession()
+
+    first = plugin._fetch_bilibili_statuses_direct(session, [room], 9, False)
+    now[0] += 6 * 3600 - 1
+    second = plugin._fetch_bilibili_statuses_direct(session, [room], 9, False)
+
+    assert room_info_calls == ["404"]
+    assert first[0]["error"] == "bilibili_room_not_found"
+    assert second[0]["error"] == "bilibili_room_not_found"
+
+    now[0] += 1
+    plugin._fetch_bilibili_statuses_direct(session, [room], 9, False)
+    assert room_info_calls == ["404", "404"]
+
+
+def test_known_missing_bilibili_room_does_not_hit_aggregator(monkeypatch):
+    plugin = _plugin()
+    aggregator_calls = []
+    room = {"platform": "bilibili", "id": "404", "label": "Missing", "isFav": False}
+    plugin._fetch_bilibili_statuses_direct = lambda *_args: [
+        {
+            "ok": False,
+            "platform": "bilibili",
+            "id": "404",
+            "error": "bilibili_room_not_found",
+            "status": plugin._default_status(room, is_error=True),
+        }
+    ]
+
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            aggregator_calls.append(json)
+            raise AssertionError("known missing room reached aggregator")
+
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: FakeSession())
+
+    results = plugin._fetch_statuses([room], "https://example.test/batch", 9, False)
+
+    assert aggregator_calls == []
+    assert results[0]["error"] == "bilibili_room_not_found"
+
+
+def test_source_health_records_platform_counts_and_sanitized_fallback(tmp_path, monkeypatch):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    plugin._write_source_health = LiveRadar._write_source_health.__get__(plugin, LiveRadar)
+    plugin._twitch_credentials = ("private-client-id", "private-client-secret")
+    elapsed = iter([1.0, 1.2, 2.0, 2.3, 3.0, 3.4])
+    plugin._source_health_elapsed_clock = lambda: next(elapsed)
+    plugin._source_health_wall_clock = lambda: 1784476800.0
+    rooms = [
+        {"platform": "twitch", "id": "xqc", "label": "xQc", "isFav": False},
+        {"platform": "bilibili", "id": "545318", "label": "Mr.Quin", "isFav": True},
+        {"platform": "douyu", "id": "60937", "label": "Zard", "isFav": True},
+    ]
+
+    def result_for(room, source):
+        return {
+            "ok": True,
+            "platform": room["platform"],
+            "id": room["id"],
+            "status": {"isLive": False, "owner": room["label"]},
+            "cache": source,
+            "error": None,
+        }
+
+    plugin._fetch_twitch_statuses_direct = lambda *_args: (_ for _ in ()).throw(
+        RuntimeError("private-client-id private-client-secret")
+    )
+    plugin._fetch_bilibili_statuses_direct = lambda session, source_rooms, timeout, fetch_avatars: [
+        result_for(room, "BILIBILI_DIRECT") for room in source_rooms
+    ]
+    plugin._fetch_aggregator_platform = (
+        lambda session, source_rooms, api_url, timeout, fetch_avatars, platform: [
+            result_for(room, "AGGREGATOR") for room in source_rooms
+        ]
+    )
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: object())
+
+    plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    health = json.loads((tmp_path / "source_health.json").read_text(encoding="utf-8"))
+    assert health["updated_at"] == 1784476800.0
+    assert set(health["platforms"]) == {"twitch", "bilibili", "douyu"}
+    assert health["platforms"]["twitch"] == {
+        "source": "twitch_helix+aggregator_fallback",
+        "duration_ms": 200,
+        "requested": 1,
+        "success": 1,
+        "error": 0,
+        "last_error": "RuntimeError",
+    }
+    assert health["platforms"]["bilibili"]["source"] == "bilibili_direct"
+    assert health["platforms"]["douyu"]["source"] == "aggregator"
+    serialized = json.dumps(health, sort_keys=True)
+    assert "private-client-id" not in serialized
+    assert "private-client-secret" not in serialized
+
+
+def test_source_health_write_failure_does_not_fail_status_refresh(monkeypatch):
+    plugin = _plugin()
+    plugin._write_source_health = LiveRadar._write_source_health.__get__(plugin, LiveRadar)
+    plugin._cache_dir = lambda: (_ for _ in ()).throw(OSError("read-only cache"))
+    plugin._twitch_credentials = ("", "")
+    room = {"platform": "douyu", "id": "1", "label": "One", "isFav": False}
+    plugin._fetch_aggregator_platform = lambda *_args: [
+        {
+            "ok": True,
+            "platform": "douyu",
+            "id": "1",
+            "status": {"isLive": False, "owner": "One"},
+        }
+    ]
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: object())
+
+    results = plugin._fetch_statuses([room], "https://example.test/batch", 9, False)
+
+    assert results[0]["ok"] is True
 
 
 def test_fetch_statuses_posts_in_batches(monkeypatch):
@@ -630,8 +1082,9 @@ def test_fetch_statuses_cools_down_failed_multi_room_batches(monkeypatch):
     assert calls[-1] == ["0", "1"]
 
 
-def test_fetch_statuses_repairs_bilibili_batch_failures_with_direct_api(monkeypatch):
+def test_fetch_statuses_uses_direct_bilibili_before_douyu_aggregator(monkeypatch, tmp_path):
     plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
     calls = []
 
     class FakeResponse:
@@ -650,13 +1103,6 @@ def test_fetch_statuses_repairs_bilibili_batch_failures_with_direct_api(monkeypa
                 {
                     "ok": True,
                     "results": [
-                        {
-                            "ok": False,
-                            "platform": "bilibili",
-                            "id": "545318",
-                            "status": None,
-                            "error": "bilibili_batch_fetch_failed",
-                        },
                         {
                             "ok": True,
                             "platform": "douyu",
@@ -777,6 +1223,73 @@ def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tm
     assert response.closed is True
     assert calls[0]["headers"]["Referer"] == "https://live.bilibili.com/"
     assert list(tmp_path.glob("cover_*.png"))
+
+
+def test_live_cover_is_refetched_at_exact_snapshot_ttl(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    source = Image.new("RGB", (32, 18), (24, 180, 240))
+    buffer = BytesIO()
+    source.save(buffer, "JPEG")
+    now = [1000.0]
+    calls = []
+
+    class FakeResponse:
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield buffer.getvalue()
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        trust_env = False
+
+        def get(self, url, timeout, headers, stream=False):
+            calls.append(url)
+            return FakeResponse()
+
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: FakeSession())
+    monkeypatch.setattr(live_radar_module.time, "time", lambda: now[0])
+    url = "https://static-cdn.jtvnw.net/previews-ttv/live_user_xqc-640x360.jpg"
+
+    assert plugin._load_cover_source(url, 60) is not None
+    cache_path = plugin._cover_cache_path(url)
+    os.utime(cache_path, (now[0], now[0]))
+    now[0] += 59
+    assert plugin._load_cover_source(url, 60) is not None
+    now[0] += 1
+    assert plugin._load_cover_source(url, 60) is not None
+
+    assert calls == [url, url]
+
+
+def test_snapshot_default_is_sixty_seconds_independent_of_status_cache(monkeypatch):
+    plugin = _plugin()
+    _memory_cache(plugin)
+    captured = {}
+    plugin._fetch_statuses = lambda *_args: [_status_result()]
+
+    def capture_layout(cards, dimensions, theme, generated_at, from_cache, warning, layout):
+        captured.update(layout)
+        return Image.new("RGB", dimensions, "white")
+
+    monkeypatch.setattr(plugin, "_render_dashboard", capture_layout)
+
+    plugin.generate_image(
+        {
+            "roomsText": "twitch|xqc|xQc",
+            "cacheSeconds": "300",
+            "showSnapshots": True,
+        },
+        FakeDeviceConfig(),
+    )
+
+    assert captured["snapshot_cache_seconds"] == 60
 
 
 def test_generate_image_renders_card_wall_without_network():

@@ -145,6 +145,16 @@ def test_tmdb_bearer_and_api_key_remain_distinct_credential_types():
     assert "TMDB_API_KEY" not in schema.resolve_names("TMDB_BEARER_TOKEN")
 
 
+def test_liveradar_twitch_credentials_are_canonical_schema_entries():
+    schema = SecretSchema.load(DEFAULT_SCHEMA_PATH)
+    entries = {entry.canonical: entry for entry in schema.entries}
+
+    assert entries["TWITCH_CLIENT_ID"].features == ("LiveRadar",)
+    assert entries["TWITCH_CLIENT_SECRET"].features == ("LiveRadar",)
+    assert entries["TWITCH_CLIENT_ID"].value_type == "secret"
+    assert entries["TWITCH_CLIENT_SECRET"].value_type == "secret"
+
+
 def test_installer_can_read_schema_without_site_packages():
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)

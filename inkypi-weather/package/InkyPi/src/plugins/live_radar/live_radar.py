@@ -117,6 +117,10 @@ COVER_HEADERS = {
 BILIBILI_ROOM_INFO_URL = "https://api.live.bilibili.com/room/v1/Room/get_info"
 BILIBILI_UID_STATUS_URL = "https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids"
 BILIBILI_DIRECT_BATCH_LIMIT = 50
+BILIBILI_ROOM_MAP_TTL_SECONDS = 7 * 24 * 3600
+BILIBILI_ROOM_MAP_NEGATIVE_TTL_SECONDS = 6 * 3600
+TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
+TWITCH_STREAMS_URL = "https://api.twitch.tv/helix/streams"
 BILIBILI_API_HEADERS = {
     "User-Agent": COVER_HEADERS["User-Agent"],
     "Accept": "application/json",
@@ -211,10 +215,11 @@ class LiveRadar(BasePlugin):
         cache_seconds = self._int_setting(settings, "cacheSeconds", 60, 20, 3600)
         timeout = self._int_setting(settings, "timeoutSeconds", 20, 5, 45)
         fetch_avatars = self._bool_setting(settings.get("fetchAvatars"), True)
+        self._twitch_credentials = self._load_twitch_credentials(device_config)
         theme_render_only = self._bool_setting(settings.get("_theme_render_only"), False)
         force_refresh = self._bool_setting(settings.get("forceRefresh"), False) and not theme_render_only
         show_snapshots = self._bool_setting(settings.get("showSnapshots"), True)
-        snapshot_cache_seconds = self._int_setting(settings, "snapshotCacheSeconds", cache_seconds, 30, 1800)
+        snapshot_cache_seconds = self._int_setting(settings, "snapshotCacheSeconds", 60, 30, 1800)
         avatar_cache_seconds = self._int_setting(
             settings, "avatarCacheSeconds", AVATAR_CACHE_SECONDS, 300, 7 * 24 * 3600
         )
@@ -245,7 +250,14 @@ class LiveRadar(BasePlugin):
             raise RuntimeError("Theme-only redraw requires a warm LiveRadar status cache.")
         else:
             try:
-                fetched_results = self._fetch_statuses(rooms, api_url, timeout, fetch_avatars)
+                previous_deadline = getattr(self, "_status_refresh_deadline", None)
+                self._status_refresh_deadline = (
+                    self._status_refresh_now() + max(1.0, float(cache_seconds) - 5.0)
+                )
+                try:
+                    fetched_results = self._fetch_statuses(rooms, api_url, timeout, fetch_avatars)
+                finally:
+                    self._status_refresh_deadline = previous_deadline
                 if self._results_have_success(fetched_results):
                     results = fetched_results
                     self._write_cache(cache_key, {"fetched_at": now_ts, "results": results})
@@ -325,13 +337,220 @@ class LiveRadar(BasePlugin):
             for result in results
         )
 
+    @staticmethod
+    def _load_twitch_credentials(device_config):
+        values = []
+        for key in ("TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"):
+            value = ""
+            if device_config is not None and hasattr(device_config, "load_env_key"):
+                try:
+                    value = device_config.load_env_key(key) or ""
+                except Exception as exc:
+                    logger.warning("Could not load %s for LiveRadar: %s", key, exc.__class__.__name__)
+            values.append(str(value or os.getenv(key, "") or "").strip())
+        return tuple(values)
+
     def _fetch_statuses(self, rooms, api_url, timeout, fetch_avatars):
         session = get_http_session()
+        source_health = {}
+        rooms_by_platform = {}
+        for room in rooms:
+            platform = str(room.get("platform") or "").lower()
+            rooms_by_platform.setdefault(platform, []).append(room)
+
+        fetched_results = []
+        twitch_rooms = rooms_by_platform.pop("twitch", [])
+        if twitch_rooms:
+            started = self._source_health_elapsed_now()
+            source_name = "twitch_helix"
+            source_error = None
+            client_id, client_secret = getattr(self, "_twitch_credentials", ("", ""))
+            client_id = str(client_id or os.getenv("TWITCH_CLIENT_ID", "") or "").strip()
+            client_secret = str(client_secret or os.getenv("TWITCH_CLIENT_SECRET", "") or "").strip()
+            try:
+                fetched_results.extend(
+                    self._fetch_twitch_statuses_direct(
+                        session,
+                        twitch_rooms,
+                        timeout,
+                        fetch_avatars,
+                        client_id,
+                        client_secret,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("LiveRadar Twitch Helix unavailable; using platform fallback: %s", exc.__class__.__name__)
+                source_name = "twitch_helix+aggregator_fallback"
+                source_error = exc
+                twitch_results = self._fetch_aggregator_platform(
+                    session,
+                    twitch_rooms,
+                    api_url,
+                    timeout,
+                    fetch_avatars,
+                    "twitch",
+                )
+                fetched_results.extend(twitch_results)
+            else:
+                twitch_results = fetched_results[-len(twitch_rooms) :]
+            source_health["twitch"] = self._source_health_entry(
+                source_name,
+                started,
+                twitch_rooms,
+                twitch_results,
+                source_error,
+            )
+
+        bilibili_rooms = rooms_by_platform.pop("bilibili", [])
+        if bilibili_rooms:
+            started = self._source_health_elapsed_now()
+            source_name = "bilibili_direct"
+            source_error = None
+            try:
+                direct_results = self._fetch_bilibili_statuses_direct(
+                    session,
+                    bilibili_rooms,
+                    timeout,
+                    fetch_avatars,
+                )
+            except Exception as exc:
+                logger.warning("LiveRadar direct Bilibili source unavailable: %s", exc.__class__.__name__)
+                source_error = exc
+                direct_results = []
+            direct_by_key = self._results_by_key(direct_results)
+            fallback_rooms = [
+                room
+                for room in bilibili_rooms
+                if (
+                    direct_by_key.get(self._room_key(room), {}).get("error")
+                    != "bilibili_room_not_found"
+                    and self._needs_bilibili_direct_fallback(
+                        room,
+                        direct_by_key.get(self._room_key(room), {}),
+                    )
+                )
+            ]
+            if fallback_rooms:
+                source_name = "bilibili_direct+aggregator_fallback"
+                fallback_results = self._fetch_aggregator_platform(
+                    session,
+                    fallback_rooms,
+                    api_url,
+                    timeout,
+                    fetch_avatars,
+                    "bilibili",
+                )
+                direct_by_key.update(self._results_by_key(fallback_results))
+            bilibili_results = [
+                direct_by_key.get(self._room_key(room), self._missing_source_result(room))
+                for room in bilibili_rooms
+            ]
+            fetched_results.extend(bilibili_results)
+            source_health["bilibili"] = self._source_health_entry(
+                source_name,
+                started,
+                bilibili_rooms,
+                bilibili_results,
+                source_error,
+            )
+
+        for platform, platform_rooms in rooms_by_platform.items():
+            started = self._source_health_elapsed_now()
+            platform_results = self._fetch_aggregator_platform(
+                session,
+                platform_rooms,
+                api_url,
+                timeout,
+                fetch_avatars,
+                platform,
+            )
+            fetched_results.extend(platform_results)
+            source_health[platform] = self._source_health_entry(
+                "aggregator",
+                started,
+                platform_rooms,
+                platform_results,
+            )
+
+        results_by_key = self._results_by_key(fetched_results)
+        ordered_results = [
+            results_by_key.get(self._room_key(room), self._missing_source_result(room))
+            for room in rooms
+        ]
+        self._write_source_health(source_health)
+        return ordered_results
+
+    def _source_health_elapsed_now(self):
+        clock = getattr(self, "_source_health_elapsed_clock", time.monotonic)
+        return float(clock())
+
+    def _source_health_wall_now(self):
+        clock = getattr(self, "_source_health_wall_clock", time.time)
+        return float(clock())
+
+    def _source_health_entry(self, source, started, rooms, results, error=None):
+        success = sum(
+            1
+            for result in results or []
+            if isinstance(result, dict)
+            and result.get("ok", True) is not False
+            and isinstance(result.get("status"), dict)
+            and not result["status"].get("isError")
+        )
+        requested = len(rooms)
+        return {
+            "source": str(source or "unknown"),
+            "duration_ms": max(0, int(round((self._source_health_elapsed_now() - started) * 1000))),
+            "requested": requested,
+            "success": min(requested, success),
+            "error": max(0, requested - success),
+            "last_error": error.__class__.__name__ if error is not None else "",
+        }
+
+    def _write_source_health(self, platforms):
+        payload = {
+            "updated_at": self._source_health_wall_now(),
+            "platforms": platforms,
+        }
+        try:
+            path = self._cache_dir() / "source_health.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except Exception as exc:
+            logger.warning("Could not write LiveRadar source health: %s", exc.__class__.__name__)
+            return
+        for platform, entry in platforms.items():
+            logger.info(
+                "LiveRadar source health platform=%s source=%s duration_ms=%s success=%s error=%s",
+                platform,
+                entry.get("source"),
+                entry.get("duration_ms"),
+                entry.get("success"),
+                entry.get("error"),
+            )
+
+    def _fetch_aggregator_platform(
+        self,
+        session,
+        rooms,
+        api_url,
+        timeout,
+        fetch_avatars,
+        platform,
+    ):
         all_results = []
         for start in range(0, len(rooms), BATCH_LIMIT):
             chunk = rooms[start : start + BATCH_LIMIT]
-            if len(chunk) > 1 and self._batch_circuit_is_open():
-                logger.info("LiveRadar multi-room batch is cooling down; fetching rooms individually.")
+            if len(chunk) > 1 and self._batch_circuit_is_open(platform):
+                logger.info(
+                    "LiveRadar %s multi-room batch is cooling down; fetching rooms individually.",
+                    platform,
+                )
                 all_results.extend(
                     self._fetch_statuses_individually(session, chunk, api_url, timeout, fetch_avatars)
                 )
@@ -339,22 +558,68 @@ class LiveRadar(BasePlugin):
             try:
                 all_results.extend(self._post_status_chunk(session, chunk, api_url, timeout, fetch_avatars))
                 if len(chunk) > 1:
-                    self._batch_circuit_until = 0.0
+                    self._set_batch_circuit(platform, 0.0)
             except Exception as exc:
-                logger.warning("LiveRadar batch fetch failed; retrying individually: %s", exc)
+                logger.warning(
+                    "LiveRadar %s batch fetch failed; retrying individually: %s",
+                    platform,
+                    exc.__class__.__name__,
+                )
                 if len(chunk) > 1:
-                    self._batch_circuit_until = self._batch_clock_now() + BATCH_FAILURE_COOLDOWN_SECONDS
+                    self._set_batch_circuit(
+                        platform,
+                        self._batch_clock_now() + BATCH_FAILURE_COOLDOWN_SECONDS,
+                    )
                 all_results.extend(
                     self._fetch_statuses_individually(session, chunk, api_url, timeout, fetch_avatars)
                 )
-        return self._repair_bilibili_results(session, rooms, all_results, timeout, fetch_avatars)
+        results_by_key = self._results_by_key(all_results)
+        return [
+            results_by_key.get(self._room_key(room), self._missing_source_result(room))
+            for room in rooms
+        ]
 
     def _batch_clock_now(self):
         clock = getattr(self, "_batch_clock", time.monotonic)
         return float(clock())
 
-    def _batch_circuit_is_open(self):
-        return float(getattr(self, "_batch_circuit_until", 0.0) or 0.0) > self._batch_clock_now()
+    def _batch_circuit_is_open(self, platform="aggregator"):
+        circuits = getattr(self, "_batch_circuit_until_by_platform", {})
+        return float(circuits.get(str(platform or "aggregator"), 0.0) or 0.0) > self._batch_clock_now()
+
+    def _set_batch_circuit(self, platform, until):
+        circuits = dict(getattr(self, "_batch_circuit_until_by_platform", {}))
+        circuits[str(platform or "aggregator")] = float(until or 0.0)
+        self._batch_circuit_until_by_platform = circuits
+
+    @staticmethod
+    def _room_key(room):
+        return (
+            str(room.get("platform") or "").lower(),
+            str(room.get("id") or "").lower(),
+        )
+
+    def _results_by_key(self, results):
+        keyed = {}
+        for result in results or []:
+            if not isinstance(result, dict):
+                continue
+            status = result.get("status") if isinstance(result.get("status"), dict) else {}
+            platform = result.get("platform") or status.get("platform")
+            room_id = result.get("id") or status.get("id")
+            key = self._room_key({"platform": platform, "id": room_id})
+            if all(key):
+                keyed[key] = result
+        return keyed
+
+    def _missing_source_result(self, room):
+        return {
+            "ok": False,
+            "platform": room.get("platform"),
+            "id": str(room.get("id") or ""),
+            "error": "source_returned_no_result",
+            "status": self._default_status(room, is_error=True),
+        }
 
     def _fetch_statuses_individually(self, session, rooms, api_url, timeout, fetch_avatars):
         results = []
@@ -388,7 +653,7 @@ class LiveRadar(BasePlugin):
         response = session.post(
             api_url,
             json=payload,
-            timeout=timeout,
+            timeout=self._bounded_status_timeout(timeout),
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         response.raise_for_status()
@@ -399,34 +664,123 @@ class LiveRadar(BasePlugin):
             return [data]
         raise RuntimeError("LiveRadar API returned no status results.")
 
-    def _repair_bilibili_results(self, session, rooms, results, timeout, fetch_avatars):
-        fallback_rooms = []
-        for index, room in enumerate(rooms):
-            result = results[index] if index < len(results) and isinstance(results[index], dict) else {}
-            if self._needs_bilibili_direct_fallback(room, result):
-                fallback_rooms.append((index, room))
-        if not fallback_rooms:
-            return results
+    def _fetch_twitch_statuses_direct(
+        self,
+        session,
+        rooms,
+        timeout,
+        fetch_avatars,
+        client_id,
+        client_secret,
+    ):
+        del fetch_avatars
+        client_id = str(client_id or "").strip()
+        client_secret = str(client_secret or "").strip()
+        if not client_id or not client_secret:
+            raise RuntimeError("Twitch credentials are not configured.")
 
-        try:
-            direct_results = self._fetch_bilibili_statuses_direct(
-                session,
-                [room for _index, room in fallback_rooms],
-                timeout,
-                fetch_avatars,
+        token = self._twitch_app_access_token(
+            session,
+            timeout=timeout,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        params = [("user_login", str(room.get("id") or "")) for room in rooms]
+        response = session.get(
+            TWITCH_STREAMS_URL,
+            params=params,
+            timeout=self._bounded_status_timeout(timeout),
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
+                "Client-Id": client_id,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise RuntimeError("Twitch streams API returned invalid JSON.")
+        live_by_login = {
+            str(stream.get("user_login") or "").lower(): stream
+            for stream in payload["data"]
+            if isinstance(stream, dict) and stream.get("user_login")
+        }
+
+        results = []
+        for room in rooms:
+            room_id = str(room.get("id") or "")
+            stream = live_by_login.get(room_id.lower())
+            status = self._default_status(room)
+            if stream:
+                thumbnail = str(stream.get("thumbnail_url") or "")
+                status.update(
+                    {
+                        "isLive": True,
+                        "title": stream.get("title") or "",
+                        "owner": stream.get("user_name") or room.get("label") or room_id,
+                        "cover": thumbnail.replace("{width}", "640").replace("{height}", "360"),
+                        "heatValue": self._safe_int(stream.get("viewer_count"), 0),
+                        "startTime": self._iso_timestamp_ms(stream.get("started_at")),
+                    }
+                )
+            results.append(
+                {
+                    "ok": True,
+                    "platform": "twitch",
+                    "id": room_id,
+                    "status": status,
+                    "cache": "TWITCH_HELIX",
+                    "error": None,
+                }
             )
-        except Exception as exc:
-            logger.warning("LiveRadar direct Bilibili fallback failed: %s", exc)
-            return results
+        return results
 
-        repaired = list(results)
-        for (index, _room), direct_result in zip(fallback_rooms, direct_results):
-            if not isinstance(direct_result, dict) or not direct_result.get("ok"):
-                continue
-            while len(repaired) <= index:
-                repaired.append({})
-            repaired[index] = direct_result
-        return repaired
+    def _twitch_app_access_token(self, session, timeout, client_id, client_secret):
+        now = self._batch_clock_now()
+        cached = getattr(self, "_twitch_token_cache", None)
+        if (
+            isinstance(cached, dict)
+            and cached.get("client_id") == client_id
+            and cached.get("token")
+            and float(cached.get("expires_at") or 0) > now
+        ):
+            return cached["token"]
+
+        response = session.post(
+            TWITCH_TOKEN_URL,
+            params={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "client_credentials",
+            },
+            timeout=self._bounded_status_timeout(timeout),
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = str(payload.get("access_token") or "") if isinstance(payload, dict) else ""
+        if not token:
+            raise RuntimeError("Twitch token endpoint returned no access token.")
+        expires_in = self._safe_int(payload.get("expires_in"), 0)
+        self._twitch_token_cache = {
+            "client_id": client_id,
+            "token": token,
+            "expires_at": now + max(60, expires_in - 60),
+        }
+        return token
+
+    @staticmethod
+    def _iso_timestamp_ms(value):
+        value = str(value or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp() * 1000)
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     @staticmethod
     def _needs_bilibili_direct_fallback(room, result):
@@ -438,10 +792,25 @@ class LiveRadar(BasePlugin):
         return result.get("ok") is False or bool(status.get("isError")) or not status
 
     def _fetch_bilibili_statuses_direct(self, session, rooms, timeout, fetch_avatars):
+        mapping = self._read_bilibili_room_map()
+        mapping_rooms = mapping.setdefault("rooms", {})
+        mapping_now = self._bilibili_room_map_now()
+        mapping_changed = False
         room_info_by_id = {}
+        missing_room_ids = set()
         uids = []
         for room in rooms:
             room_id = str(room.get("id") or "")
+            cached_entry = mapping_rooms.get(room_id)
+            if self._bilibili_room_map_entry_is_fresh(cached_entry, mapping_now):
+                if cached_entry.get("missing"):
+                    missing_room_ids.add(room_id)
+                    continue
+                cached_info = cached_entry.get("room_info")
+                if isinstance(cached_info, dict) and cached_info.get("uid"):
+                    room_info_by_id[room_id] = cached_info
+                    uids.append(str(cached_info["uid"]))
+                    continue
             try:
                 payload = self._bilibili_get_json(
                     session,
@@ -451,17 +820,39 @@ class LiveRadar(BasePlugin):
                 )
                 data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
                 if not data:
-                    raise RuntimeError("Bilibili room info returned no data.")
-                room_info_by_id[room_id] = data
-                uid = str(data.get("uid") or "")
+                    missing_room_ids.add(room_id)
+                    mapping_rooms[room_id] = {
+                        "missing": True,
+                        "updated_at": mapping_now,
+                    }
+                    mapping_changed = True
+                    continue
+                cached_info = self._bilibili_room_info_for_cache(data)
+                room_info_by_id[room_id] = cached_info
+                mapping_rooms[room_id] = {
+                    "missing": False,
+                    "updated_at": mapping_now,
+                    "uid": str(cached_info.get("uid") or ""),
+                    "room_info": cached_info,
+                }
+                mapping_changed = True
+                uid = str(cached_info.get("uid") or "")
                 if uid:
                     uids.append(uid)
             except Exception as exc:
-                logger.warning("LiveRadar direct Bilibili room info failed for %s: %s", room_id, exc)
+                logger.warning(
+                    "LiveRadar direct Bilibili room info failed for %s: %s",
+                    room_id,
+                    exc.__class__.__name__,
+                )
+
+        if mapping_changed:
+            self._write_bilibili_room_map(mapping)
 
         status_by_uid = {}
-        for start in range(0, len(uids), BILIBILI_DIRECT_BATCH_LIMIT):
-            chunk = uids[start : start + BILIBILI_DIRECT_BATCH_LIMIT]
+        unique_uids = list(dict.fromkeys(uids))
+        for start in range(0, len(unique_uids), BILIBILI_DIRECT_BATCH_LIMIT):
+            chunk = unique_uids[start : start + BILIBILI_DIRECT_BATCH_LIMIT]
             try:
                 payload = self._bilibili_get_json(
                     session,
@@ -484,7 +875,11 @@ class LiveRadar(BasePlugin):
                         "ok": False,
                         "platform": "bilibili",
                         "id": room_id,
-                        "error": "bilibili_direct_room_info_failed",
+                        "error": (
+                            "bilibili_room_not_found"
+                            if room_id in missing_room_ids
+                            else "bilibili_direct_room_info_failed"
+                        ),
                         "status": self._default_status(room, is_error=True),
                     }
                 )
@@ -503,8 +898,73 @@ class LiveRadar(BasePlugin):
             )
         return results
 
+    def _bilibili_room_map_now(self):
+        clock = getattr(self, "_bilibili_room_map_clock", time.time)
+        return float(clock())
+
+    def _bilibili_room_map_path(self):
+        return self._cache_dir() / "bilibili_room_map.json"
+
+    def _read_bilibili_room_map(self):
+        try:
+            path = self._bilibili_room_map_path()
+            payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if isinstance(payload, dict) and isinstance(payload.get("rooms"), dict):
+                return payload
+        except Exception as exc:
+            logger.warning("Could not read LiveRadar Bilibili room map: %s", exc.__class__.__name__)
+        return {"version": 1, "rooms": {}}
+
+    def _write_bilibili_room_map(self, payload):
+        try:
+            path = self._bilibili_room_map_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except Exception as exc:
+            logger.warning("Could not write LiveRadar Bilibili room map: %s", exc.__class__.__name__)
+
+    @staticmethod
+    def _bilibili_room_map_entry_is_fresh(entry, now):
+        if not isinstance(entry, dict):
+            return False
+        try:
+            age = max(0.0, float(now) - float(entry.get("updated_at") or 0.0))
+        except (TypeError, ValueError):
+            return False
+        ttl = (
+            BILIBILI_ROOM_MAP_NEGATIVE_TTL_SECONDS
+            if entry.get("missing")
+            else BILIBILI_ROOM_MAP_TTL_SECONDS
+        )
+        return age < ttl
+
+    @staticmethod
+    def _bilibili_room_info_for_cache(data):
+        safe_keys = (
+            "uid",
+            "room_id",
+            "short_id",
+            "live_status",
+            "title",
+            "online",
+            "keyframe",
+            "user_cover",
+            "live_time",
+        )
+        return {key: data.get(key) for key in safe_keys if data.get(key) not in (None, "")}
+
     def _bilibili_get_json(self, session, url, timeout, params=None):
-        response = session.get(url, params=params, timeout=timeout, headers=BILIBILI_API_HEADERS)
+        response = session.get(
+            url,
+            params=params,
+            timeout=self._bounded_status_timeout(timeout),
+            headers=BILIBILI_API_HEADERS,
+        )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -512,6 +972,20 @@ class LiveRadar(BasePlugin):
         if payload.get("code") not in (0, "0"):
             raise RuntimeError(f"Bilibili API returned code {payload.get('code')}: {payload.get('message') or payload.get('msg')}")
         return payload
+
+    def _status_refresh_now(self):
+        clock = getattr(self, "_status_refresh_clock", time.monotonic)
+        return float(clock())
+
+    def _bounded_status_timeout(self, requested_timeout):
+        deadline = getattr(self, "_status_refresh_deadline", None)
+        requested = max(0.1, float(requested_timeout))
+        if deadline is None:
+            return requested_timeout
+        remaining = float(deadline) - self._status_refresh_now()
+        if remaining <= 0:
+            raise TimeoutError("LiveRadar status refresh budget exhausted.")
+        return min(requested, remaining)
 
     def _bilibili_status_from_payload(self, room, room_info, uid_status, fetch_avatars):
         uid_status = uid_status if isinstance(uid_status, dict) else {}

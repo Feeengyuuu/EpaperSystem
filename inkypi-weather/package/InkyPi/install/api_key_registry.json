@@ -626,6 +626,30 @@
       "signup_url": "https://github.com/reddit-archive/reddit/wiki/OAuth2",
       "notes": "",
       "value_type": "secret"
+    },
+    {
+      "key": "TWITCH_CLIENT_ID",
+      "service": "Twitch application client ID",
+      "features": [
+        "LiveRadar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://dev.twitch.tv/console/apps",
+      "notes": "",
+      "value_type": "secret"
+    },
+    {
+      "key": "TWITCH_CLIENT_SECRET",
+      "service": "Twitch application client secret",
+      "features": [
+        "LiveRadar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://dev.twitch.tv/console/apps",
+      "notes": "",
+      "value_type": "secret"
     }
   ]
 }

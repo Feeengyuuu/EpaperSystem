@@ -1447,3 +1447,35 @@ When SportsDashboard appears old, compare current and plugin-cache hashes, check
 - **Notes**: Deployed `deploy-20260719-sports-stale-repair-1e6e1d7133a2`; migration repaired one instance, seven live switches read true, automatic live refresh and follow-up display ran, and final current/cache hashes matched.
 
 ---
+
+## [LRN-20260719-002] correction
+
+**Logged**: 2026-07-19T23:56:24-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+LiveRadar status freshness and live screenshot freshness require separate clocks, and provider fallback work must fit inside the status interval.
+
+### Details
+The user requires both the plugin's internal status refresh time and continued screenshot updates while a streamer remains live. Reusing `cacheSeconds` as the default media TTL couples unrelated behavior, while sequential room fallbacks can take longer than the next status interval and make an otherwise correct cache policy look stale. The reliable contract is: status cache is fresh only while age is strictly less than `cacheSeconds`; visible live media has an independent 60-second default TTL; and one provider attempt has a deadline before the next status interval so it cannot keep issuing individual retries indefinitely.
+
+### Suggested Action
+For live dashboards, test the exact TTL boundary rather than only fresh/stale examples. Keep status and media caches independent, cap provider work at `cacheSeconds` minus a scheduler margin, preserve last-good data on failure, and prove both clocks separately on the deployed device.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: liveradar, status-cache, live-screenshot, ttl, refresh-deadline, stale-display
+- Pattern-Key: live_dashboard.independent_status_media_refresh_clocks
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T23:56:24-07:00
+- **Commit/PR**: operational
+- **Notes**: Added exact-boundary tests for status and screenshot TTLs plus a per-refresh network budget; full InkyPi suite passed with 4177 tests.
+
+---
