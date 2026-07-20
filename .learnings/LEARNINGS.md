@@ -6,6 +6,70 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260719-007] correction
+
+**Logged**: 2026-07-19T22:20:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+At the start of a new club season, SportsDashboard must default directly to the five-league panel instead of returning to the World Cup panel.
+
+### Details
+The five-league implementation had already been live-verified, but a later main-branch reliability recovery omitted its three source modules and title assets. The surviving renderer therefore had no club route and fell back to the historical World Cup page. The user explicitly changed the seasonal product policy: Premier League, La Liga, Bundesliga, Serie A, and Ligue 1 are now the default top-left module. `auto` and `worldcup` remain deliberate manual choices, but missing or invalid settings must resolve to `club`, and the default club route must not probe the World Cup schedule first.
+
+### Suggested Action
+When integrating or recovering SportsDashboard, verify that all club-football modules and five wordmark assets are present. Keep tests that assert missing and invalid `footballPanelMode` values select `club`, and that the default route calls only the club renderer. Before live proof, inspect the persisted instance mode as well as source defaults, then require a fresh data job, cache display with forced hardware write, and the actual `/api/current_image` PNG.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/settings.html, inkypi-weather/package/InkyPi/tests/test_sports_dashboard_new_season.py
+- Tags: sports-dashboard, club-football, new-season, default-route, world-cup, regression, physical-display
+- Pattern-Key: sports_dashboard.new_season_defaults_to_five_leagues
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T22:20:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Restored the five-league implementation, added direct-club routing tests, deployed `deploy-20260719-five-leagues-new-season-d1f8d4c900c7`, completed fresh data and physical display jobs, and verified the live 800x480 five-league image.
+
+---
+
+## [LRN-20260719-008] correction
+
+**Logged**: 2026-07-19T22:25:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The five-league SportsDashboard panel must not be anisotropically resized from its approved 536x240 design canvas.
+
+### Details
+The live instance retained `worldCupLeftWidth=552` and no explicit top height, so the shared World Cup slot resolved to 552x208. The club renderer always draws at 536x240 and then resizes to the requested slot, expanding width by about 3 percent while compressing height by 13.3 percent. The resulting relative aspect distortion is visually obvious on the physical display even though bounds and size tests pass.
+
+### Suggested Action
+Make the club route use an approved native geometry or render responsively at the actual slot without non-uniform image scaling. Add a composed-dashboard regression using missing persisted height and the production left-width override, and assert that club content is not resized to a different aspect ratio. Prove the correction on the physical 800x480 panel before marking this learning resolved.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/worldcup.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_render.py
+- Tags: sports-dashboard, club-football, aspect-ratio, persisted-settings, physical-display
+- Pattern-Key: sports_dashboard.club_panel_no_anisotropic_resize
+- Recurrence-Count: 1
+- First-Seen: 2026-07-19
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T22:44:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Replaced the fixed 536x240 render-then-resize path with native runtime layout, added production-slot no-resize and five-row-fit regressions, deployed `deploy-20260719-club-native-layout-332141235709`, and verified the 552x208 image through a completed Waveshare hardware write.
+
+---
+
 ## [LRN-20260719-006] correction
 
 **Logged**: 2026-07-19T14:36:00-07:00

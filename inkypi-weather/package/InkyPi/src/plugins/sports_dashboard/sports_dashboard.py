@@ -6,6 +6,8 @@ from .common import SportsDashboardCommonMixin, _ACTIVE_COLORS, _safe_exception_
 from . import common as _common_module
 from . import worldcup as _worldcup_module
 from . import worldcup_render as _worldcup_render_module
+from . import club_football as _club_football_module
+from . import club_football_render as _club_football_render_module
 from . import nba as _nba_module
 from . import esports as _esports_module
 from . import esports_render as _esports_render_module
@@ -14,6 +16,12 @@ from . import offseason_hub as _offseason_hub_module
 from . import offseason_render as _offseason_render_module
 from .worldcup import WorldCupMixin
 from .worldcup_render import WorldCupRenderMixin
+from .club_football import (
+    CLUB_FOOTBALL_LEAGUES,
+    CLUB_FOOTBALL_LIVE_STATE_VERSION,
+    ClubFootballMixin,
+)
+from .club_football_render import ClubFootballRenderMixin
 from .nba import NBAMixin
 from .esports import EsportsMixin
 from .esports_render import EsportsRenderMixin
@@ -36,6 +44,8 @@ class SportsDashboard(
     SportsDashboardCommonMixin,
     WorldCupMixin,
     WorldCupRenderMixin,
+    ClubFootballMixin,
+    ClubFootballRenderMixin,
     NBAMixin,
     EsportsMixin,
     EsportsRenderMixin,
@@ -100,6 +110,12 @@ class SportsDashboard(
             current_dt,
         ) or self._worldcup_release_one_shot_window_active(current_dt):
             sources.append("worldcup")
+        if self._live_state_active(
+            self._club_football_live_state_path(),
+            CLUB_FOOTBALL_LIVE_STATE_VERSION,
+            current_dt,
+        ):
+            sources.append("club_football")
         if self._live_state_active(self._lpl_live_state_path(), LPL_LIVE_STATE_VERSION, current_dt):
             sources.append("lpl")
         if self._live_state_active(self._msi_live_state_path(), MSI_LIVE_STATE_VERSION, current_dt):
@@ -140,6 +156,8 @@ class SportsDashboard(
                 "worldCupLiveRefreshEnabled",
                 True,
             ) or self._worldcup_one_shot_live_refresh_active(settings, current_dt)
+        if source == "club_football":
+            return self._bool_setting(settings, "clubFootballLiveRefreshEnabled", True)
         if source == "offseason_hub":
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
         if source in {"lpl", "lck", "msi"}:
@@ -190,6 +208,10 @@ class SportsDashboard(
             return self._int_setting(settings, "nbaLiveRefreshIntervalSeconds", 60, 60, 900)
         if source == "worldcup":
             return self._int_setting(settings, "worldCupLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "club_football":
+            return self._int_setting(
+                settings, "clubFootballLiveRefreshIntervalSeconds", 60, 60, 900
+            )
         if source == "offseason_hub":
             return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
         if source in {"lpl", "lck", "msi"}:
@@ -1817,6 +1839,8 @@ _SPLIT_MODULES = (
     _common_module,
     _worldcup_module,
     _worldcup_render_module,
+    _club_football_module,
+    _club_football_render_module,
     _nba_module,
     _esports_module,
     _esports_render_module,

@@ -9,6 +9,40 @@
 </div>
 
 <div class="form-group">
+    <label for="footballPanelMode" class="form-label">Top-left football panel:</label>
+    <select id="footballPanelMode" name="footballPanelMode" class="form-input">
+        <option value="club">Five club leagues</option>
+        <option value="auto">Auto: World Cup or club leagues</option>
+        <option value="worldcup">World Cup</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label class="form-label">Tracked club leagues:</label>
+    <input type="hidden" id="clubFootballEnabledLeagues" name="clubFootballEnabledLeagues" value="PL,PD,BL1,SA,FL1">
+    <div class="club-football-league-options">
+        <label><input type="checkbox" data-club-football-league="PL" checked> Premier League</label>
+        <label><input type="checkbox" data-club-football-league="PD" checked> La Liga</label>
+        <label><input type="checkbox" data-club-football-league="BL1" checked> Bundesliga</label>
+        <label><input type="checkbox" data-club-football-league="SA" checked> Serie A</label>
+        <label><input type="checkbox" data-club-football-league="FL1" checked> Ligue 1</label>
+    </div>
+</div>
+
+<div class="form-group">
+    <input type="hidden" name="clubFootballLiveRefreshEnabled" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="clubFootballLiveRefreshEnabled" name="clubFootballLiveRefreshEnabled" value="true" checked>
+        Quasi realtime club football refresh near live matches
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="clubFootballLiveRefreshIntervalSeconds" class="form-label">Club football live image refresh seconds:</label>
+    <input type="number" id="clubFootballLiveRefreshIntervalSeconds" name="clubFootballLiveRefreshIntervalSeconds" min="60" max="900" placeholder="60" class="form-input">
+</div>
+
+<div class="form-group">
     <label for="footballDataCompetition" class="form-label">football-data.org competition:</label>
     <input type="text" id="footballDataCompetition" name="footballDataCompetition" placeholder="WC" class="form-input">
 </div>
@@ -25,7 +59,7 @@
 
 <div class="form-group">
     <label for="footballDataDailyLimit" class="form-label">football-data.org daily request limit:</label>
-    <input type="number" id="footballDataDailyLimit" name="footballDataDailyLimit" min="1" max="60" placeholder="8" class="form-input">
+    <input type="number" id="footballDataDailyLimit" name="footballDataDailyLimit" min="1" max="60" placeholder="60" class="form-input">
 </div>
 
 <div class="form-group">
@@ -445,6 +479,17 @@
 </div>
 
 <script>
+    const clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1"];
+
+    const syncClubFootballLeagues = () => {
+        const hidden = document.getElementById('clubFootballEnabledLeagues');
+        const selected = clubFootballLeagueOrder.filter((code) => {
+            const checkbox = document.querySelector(`[data-club-football-league="${code}"]`);
+            return checkbox && checkbox.checked;
+        });
+        hidden.value = (selected.length ? selected : clubFootballLeagueOrder).join(',');
+    };
+
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
             document.getElementById('worldCupUrl').value = pluginSettings.worldCupUrl || '';
@@ -453,6 +498,10 @@
             document.getElementById('footballDataSeason').value = pluginSettings.footballDataSeason || '';
             document.getElementById('footballDataCacheHours').value = pluginSettings.footballDataCacheHours || '';
             document.getElementById('footballDataDailyLimit').value = pluginSettings.footballDataDailyLimit || '';
+            document.getElementById('footballPanelMode').value = pluginSettings.footballPanelMode || 'club';
+            document.getElementById('clubFootballEnabledLeagues').value = pluginSettings.clubFootballEnabledLeagues || 'PL,PD,BL1,SA,FL1';
+            document.getElementById('clubFootballLiveRefreshEnabled').checked = pluginSettings.clubFootballLiveRefreshEnabled !== 'false';
+            document.getElementById('clubFootballLiveRefreshIntervalSeconds').value = pluginSettings.clubFootballLiveRefreshIntervalSeconds || '';
             document.getElementById('worldCupScoreboardEnabled').checked = pluginSettings.worldCupScoreboardEnabled !== 'false';
             document.getElementById('worldCupScoreboardUrl').value = pluginSettings.worldCupScoreboardUrl || '';
             document.getElementById('worldCupScoreboardCacheHours').value = pluginSettings.worldCupScoreboardCacheHours || '';
@@ -531,5 +580,17 @@
             document.getElementById('lplOddsDailyLimit').value = pluginSettings.lplOddsDailyLimit || '';
             document.getElementById('overlayWorldCupLocalTimes').checked = pluginSettings.overlayWorldCupLocalTimes !== 'false';
         }
+        const configuredClubLeagues = new Set(
+            (document.getElementById('clubFootballEnabledLeagues').value || 'PL,PD,BL1,SA,FL1')
+                .split(',')
+                .map((code) => code.trim().toUpperCase())
+                .filter(Boolean)
+        );
+        clubFootballLeagueOrder.forEach((code) => {
+            const checkbox = document.querySelector(`[data-club-football-league="${code}"]`);
+            checkbox.checked = configuredClubLeagues.has(code);
+            checkbox.addEventListener('change', syncClubFootballLeagues);
+        });
+        syncClubFootballLeagues();
     });
 </script>

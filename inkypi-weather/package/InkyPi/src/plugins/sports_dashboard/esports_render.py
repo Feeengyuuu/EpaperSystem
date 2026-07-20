@@ -1730,8 +1730,8 @@ class EsportsRenderMixin:
         if not text:
             return "TBD"
         code = text.upper()
-        if code in LPL_TEAM_ZH_NAMES:
-            return LPL_TEAM_ZH_NAMES[code]
+        if code in LPL_ODDS_TEAM_ALIASES:
+            return code
         normalized = SportsDashboard._normalize_odds_team_name(text)
         for team_code, aliases in LPL_ODDS_TEAM_ALIASES.items():
             normalized_aliases = {
@@ -1740,7 +1740,7 @@ class EsportsRenderMixin:
                 if SportsDashboard._normalize_odds_team_name(alias)
             }
             if normalized in normalized_aliases:
-                return LPL_TEAM_ZH_NAMES.get(team_code, team_code)
+                return team_code
         return text
 
     @staticmethod

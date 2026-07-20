@@ -63,7 +63,7 @@ DEFAULT_WORLD_CUP_API_CACHE_HOURS = 6
 DEFAULT_WORLD_CUP_API_DAILY_LIMIT = 12
 DEFAULT_FOOTBALL_DATA_COMPETITION = "WC"
 DEFAULT_FOOTBALL_DATA_CACHE_HOURS = 6
-DEFAULT_FOOTBALL_DATA_DAILY_LIMIT = 8
+DEFAULT_FOOTBALL_DATA_DAILY_LIMIT = 60
 API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io"
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 SPORTS_DASHBOARD_STATE_VERSION = "sports-dashboard-api-v1"
@@ -287,6 +287,13 @@ LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_tit
 LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
 LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
 LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
+LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
+    "PL": os.path.join(LOCAL_DECOR_DIR, "club_pl_title_wordmark.png"),
+    "PD": os.path.join(LOCAL_DECOR_DIR, "club_pd_title_wordmark.png"),
+    "BL1": os.path.join(LOCAL_DECOR_DIR, "club_bl1_title_wordmark.png"),
+    "SA": os.path.join(LOCAL_DECOR_DIR, "club_sa_title_wordmark.png"),
+    "FL1": os.path.join(LOCAL_DECOR_DIR, "club_fl1_title_wordmark.png"),
+}
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")
 LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutout.png")
@@ -2185,6 +2192,232 @@ class SportsDashboardCommonMixin:
         finally:
             _ACTIVE_COLORS.reset(theme_token)
 
+    def _worldcup_schedule_summary(self, settings, device_config, timezone_info, now):
+        candidates = []
+        try:
+            scoreboard_cache = self._read_json_file(self._worldcup_scoreboard_cache_path())
+            scoreboard = scoreboard_cache.get("scoreboard") if isinstance(scoreboard_cache, Mapping) else None
+            scoreboard_compatible = scoreboard_cache.get("version") == WORLD_CUP_SCOREBOARD_STATE_VERSION
+            if scoreboard_compatible and isinstance(scoreboard, Mapping):
+                events = self._parse_worldcup_espn_events(scoreboard, timezone_info)
+                if events:
+                    fresh = self._worldcup_scoreboard_cache_is_fresh(
+                        scoreboard_cache,
+                        settings,
+                        timezone_info,
+                        now.astimezone(timezone.utc),
+                    )
+                    candidates.append((0 if fresh else 1, "ESPN CACHE" if fresh else "ESPN STALE", events))
+        except Exception as exc:
+            logger.debug("World Cup schedule summary skipped ESPN cache: %s", _safe_exception_text(exc))
+
+        try:
+            football_cache = self._read_json_file(self._football_data_cache_path())
+            matches = football_cache.get("matches") if isinstance(football_cache, Mapping) else None
+            cache_key_parts = str(football_cache.get("cache_key") or "").split("|")
+            football_compatible = (
+                len(cache_key_parts) >= 4
+                and cache_key_parts[0] == FOOTBALL_DATA_STATE_VERSION
+                and cache_key_parts[1] == self._football_data_competition(settings).lower()
+                and cache_key_parts[2] == self._football_data_season(settings)
+                and cache_key_parts[3] == getattr(timezone_info, "key", DEFAULT_TIMEZONE)
+            )
+            if football_compatible and isinstance(matches, list):
+                events = self._parse_football_data_events(matches, timezone_info)
+                if events:
+                    fresh = self._football_data_cache_is_fresh(
+                        football_cache,
+                        settings,
+                        timezone_info,
+                        now.astimezone(timezone.utc),
+                    )
+                    candidates.append(
+                        (0 if fresh else 1, "FOOTBALL CACHE" if fresh else "FOOTBALL STALE", events)
+                    )
+        except Exception as exc:
+            logger.debug("World Cup schedule summary skipped football-data cache: %s", _safe_exception_text(exc))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], -len(item[2])))
+        best_rank = candidates[0][0]
+        selected_sources = [item for item in candidates if item[0] == best_rank]
+        events = []
+        for _rank, _source, source_events in selected_sources:
+            events.extend(source_events)
+        dated_events = [event for event in events if isinstance((event or {}).get("start"), datetime)]
+        if not dated_events:
+            return None
+        dated_events.sort(key=lambda event: event["start"])
+        first_event = dated_events[0]
+        final_event = dated_events[-1]
+        final_start = final_event["start"]
+        final_state = str(final_event.get("state") or final_event.get("status") or "").upper()
+        return {
+            "first_start": first_event["start"],
+            "final_start": final_start,
+            "final_end": final_start + timedelta(hours=3),
+            "final_complete": final_state in {"FINAL", "FINISHED", "FT", "FULL TIME"},
+            "source_state": "+".join(item[1] for item in selected_sources),
+        }
+
+    def _render_worldcup_slot(
+        self,
+        settings,
+        device_config,
+        dimensions,
+        timezone_info,
+        visible_worldcup_matches,
+        now,
+    ):
+        left_source = "api"
+        left = self._try_worldcup_scoreboard_panel(
+            settings,
+            device_config,
+            dimensions,
+            timezone_info,
+            visible_worldcup_matches,
+            now,
+        )
+        if left is None:
+            left = self._try_worldcup_football_data_panel(
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                visible_worldcup_matches,
+                now,
+            )
+        if left is None:
+            left = self._try_worldcup_api_panel(
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                visible_worldcup_matches,
+                now,
+            )
+        if left is None and self._bool_setting(settings, "worldCupScreenshotFallback", False):
+            left_source = "screenshot"
+            left = self._take_worldcup_screenshot(
+                settings,
+                dimensions,
+                self._timezone_key(timezone_info),
+                visible_worldcup_matches,
+            )
+        if left is None:
+            left_source = "fallback"
+            left = self._render_worldcup_fallback(
+                dimensions,
+                visible_worldcup_matches,
+                self._worldcup_configured_season(settings),
+            )
+        left_provenance = read_source_provenance(left)
+        if left_provenance is None:
+            left_provenance = self._sports_source_state_provenance(left_source)
+        left, content_box = self._prepare_worldcup_panel(
+            left.convert("RGB"),
+            dimensions,
+            visible_worldcup_matches,
+        )
+        return left, left_provenance, left_source, content_box
+
+    def _render_club_football_slot(
+        self,
+        settings,
+        device_config,
+        dimensions,
+        timezone_info,
+        now,
+    ):
+        enabled_leagues = self._club_football_enabled_leagues(settings)
+        fetched_at = None
+        try:
+            by_league, _standings, source_state, fetched_at = self._load_club_football_data(
+                settings,
+                device_config,
+                timezone_info,
+                now,
+            )
+            rotation_seed = self._club_football_rotation_seed(now)
+            selected = self._select_club_football_events(
+                by_league,
+                enabled_leagues,
+                now,
+                rotation_seed,
+            )
+            selected = self._attach_club_api_football_odds(
+                selected,
+                settings,
+                device_config,
+                timezone_info,
+                now,
+            )
+        except Exception as exc:
+            logger.warning("Club football top-left panel failed: %s", _safe_exception_text(exc))
+            source_state = "CLUB UNAVAILABLE"
+            selected = self._select_club_football_events(
+                {},
+                enabled_leagues,
+                now,
+                0,
+            )
+        self._write_club_football_live_state(
+            selected,
+            now,
+            source_state,
+            fetched_at,
+        )
+        panel = self._render_club_football_panel(
+            dimensions,
+            selected,
+            source_state,
+            fetched_at,
+            now,
+        )
+        if source_state == "CLUB PARTIAL":
+            provenance = SourceProvenance.LIVE
+        else:
+            provenance = self._sports_source_state_provenance(source_state)
+        return panel.convert("RGB"), provenance, source_state
+
+    def _render_selected_football_panel(
+        self,
+        settings,
+        device_config,
+        dimensions,
+        timezone_info,
+        visible_worldcup_matches,
+        now,
+    ):
+        mode = self._football_panel_mode(settings)
+        worldcup_summary = None
+        if mode == "auto":
+            worldcup_summary = self._worldcup_schedule_summary(
+                settings,
+                device_config,
+                timezone_info,
+                now,
+            )
+        panel_kind = self._select_football_panel_kind(mode, now, worldcup_summary)
+        if panel_kind == "club":
+            panel, provenance, source = self._render_club_football_slot(
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                now,
+            )
+            return panel, provenance, source, None
+        return self._render_worldcup_slot(
+            settings,
+            device_config,
+            dimensions,
+            timezone_info,
+            visible_worldcup_matches,
+            now,
+        )
+
     def _generate_image_with_active_colors(self, settings, device_config, dimensions, timezone_info, now):
         left_width = self._left_width(settings, dimensions)
         visible_worldcup_matches = self._visible_worldcup_matches(settings)
@@ -2194,17 +2427,8 @@ class SportsDashboardCommonMixin:
         nba_height = max(1, dimensions[1] - nba_top)
 
         image = Image.new("RGB", dimensions, COLORS["paper"])
-        left_source = "api"
-        left = self._try_worldcup_scoreboard_panel(
-            settings,
-            device_config,
-            (left_width, worldcup_height),
-            timezone_info,
-            visible_worldcup_matches,
-            now,
-        )
-        if left is None:
-            left = self._try_worldcup_football_data_panel(
+        left, left_provenance, left_source, worldcup_content_box = (
+            self._render_selected_football_panel(
                 settings,
                 device_config,
                 (left_width, worldcup_height),
@@ -2212,38 +2436,6 @@ class SportsDashboardCommonMixin:
                 visible_worldcup_matches,
                 now,
             )
-        if left is None:
-            left = self._try_worldcup_api_panel(
-                settings,
-                device_config,
-                (left_width, worldcup_height),
-                timezone_info,
-                visible_worldcup_matches,
-                now,
-            )
-        if left is None:
-            if self._bool_setting(settings, "worldCupScreenshotFallback", False):
-                left_source = "screenshot"
-                left = self._take_worldcup_screenshot(
-                    settings,
-                    (left_width, worldcup_height),
-                    self._timezone_key(timezone_info),
-                    visible_worldcup_matches,
-                )
-        if left is None:
-            left_source = "fallback"
-            left = self._render_worldcup_fallback(
-                (left_width, worldcup_height),
-                visible_worldcup_matches,
-                self._worldcup_configured_season(settings),
-            )
-        left_provenance = read_source_provenance(left)
-        if left_provenance is None:
-            left_provenance = self._sports_source_state_provenance(left_source)
-        left, worldcup_content_box = self._prepare_worldcup_panel(
-            left.convert("RGB"),
-            (left_width, worldcup_height),
-            visible_worldcup_matches,
         )
         image.paste(left, (0, 0))
 
