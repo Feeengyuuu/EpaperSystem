@@ -113,14 +113,36 @@ def test_live_radar_declares_explicit_no_change_presentation_mode():
     assert plugin.presentation_mode({"forceRefresh": True}) is PresentationMode.NO_CHANGE
 
 
-def test_live_radar_holds_one_snapshot_for_the_full_display_window():
+def test_live_radar_requests_live_refresh_using_shortest_internal_ttl(
+    monkeypatch,
+    tmp_path,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
     plugin = _plugin()
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "apiUrl": "https://provider.invalid/status",
+        "fetchAvatars": False,
+        "cacheSeconds": 90,
+        "snapshotCacheSeconds": 60,
+    }
+    rooms = plugin._parse_rooms(settings)
+    cache_key = plugin._cache_key(rooms, settings["apiUrl"], False)
+    cache_path = plugin.cache_dir(leaf="cache") / f"{cache_key}.json"
+    cache_path.write_text(
+        json.dumps({"fetched_at": 1, "results": [_status_result()]}),
+        encoding="utf-8",
+    )
 
-    assert LiveRadar.get_live_refresh_state is BasePlugin.get_live_refresh_state
-    assert plugin.get_live_refresh_state({}, datetime.now(timezone.utc)) is None
+    assert LiveRadar.get_live_refresh_state is not BasePlugin.get_live_refresh_state
+    assert plugin.get_live_refresh_state(settings, datetime.now(timezone.utc)) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
 
 
-def test_live_refresh_state_stays_inactive_for_matching_cache_at_sixty_seconds(
+def test_live_refresh_state_stays_active_and_side_effect_free_at_status_cache_boundary(
     monkeypatch,
     tmp_path,
 ):
@@ -148,7 +170,10 @@ def test_live_refresh_state_stays_inactive_for_matching_cache_at_sixty_seconds(
     plugin._fetch_statuses = lambda *_args, **_kwargs: pytest.fail("live hook called provider")
     plugin._write_cache = lambda *_args, **_kwargs: pytest.fail("live hook wrote cache")
 
-    assert plugin.get_live_refresh_state(settings, current_dt) is None
+    assert plugin.get_live_refresh_state(settings, current_dt) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
 
     cache_path.write_text(
         json.dumps(
@@ -161,7 +186,10 @@ def test_live_refresh_state_stays_inactive_for_matching_cache_at_sixty_seconds(
     )
     before = _tree_snapshot(cache_root)
 
-    assert plugin.get_live_refresh_state(settings, current_dt) is None
+    assert plugin.get_live_refresh_state(settings, current_dt) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
     assert _tree_snapshot(cache_root) == before
 
 
@@ -244,7 +272,7 @@ def test_live_refresh_state_rejects_explicit_invalid_rooms_without_cache_access(
     ],
     ids=["valid-json", "empty-json-valid-text", "invalid-json-valid-text"],
 )
-def test_live_refresh_state_ignores_explicit_valid_json_and_text_sources(settings):
+def test_live_refresh_state_reads_explicit_valid_json_and_text_sources(settings):
     plugin = _plugin()
     current_dt = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
     reads = []
@@ -258,8 +286,43 @@ def test_live_refresh_state_ignores_explicit_valid_json_and_text_sources(setting
 
     plugin._read_cache_read_only = read_cache
 
-    assert plugin.get_live_refresh_state(settings, current_dt) is None
-    assert reads == []
+    assert plugin.get_live_refresh_state(settings, current_dt) == {
+        "active": True,
+        "interval_seconds": 60,
+    }
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        _status_result(is_live=False),
+        _status_result(ok=False, is_live=True),
+    ],
+    ids=["offline", "error"],
+)
+def test_live_refresh_state_is_inactive_without_a_successful_live_stream(
+    monkeypatch,
+    tmp_path,
+    result,
+):
+    cache_root = tmp_path / "runtime-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(cache_root))
+    plugin = _plugin()
+    settings = {
+        "roomsText": "twitch|xqc|xQc",
+        "apiUrl": "https://provider.invalid/status",
+        "fetchAvatars": False,
+    }
+    rooms = plugin._parse_rooms(settings)
+    cache_key = plugin._cache_key(rooms, settings["apiUrl"], False)
+    cache_path = plugin.cache_dir(leaf="cache") / f"{cache_key}.json"
+    cache_path.write_text(
+        json.dumps({"fetched_at": 1, "results": [result]}),
+        encoding="utf-8",
+    )
+
+    assert plugin.get_live_refresh_state(settings, datetime.now(timezone.utc)) is None
 
 
 @pytest.mark.parametrize(

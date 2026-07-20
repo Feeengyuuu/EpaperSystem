@@ -196,6 +196,41 @@ class LiveRadar(BasePlugin):
         del settings
         return PresentationMode.NO_CHANGE
 
+    def get_live_refresh_state(self, settings, current_dt):
+        del current_dt
+        settings = settings or {}
+        if not isinstance(settings, dict) or not (
+            {"roomsJson", "roomsText"} & settings.keys()
+        ):
+            return None
+
+        rooms = self._parse_rooms(settings, use_default_text=False)
+        if not rooms:
+            return None
+        api_url = str(settings.get("apiUrl") or DEFAULT_API_URL).strip() or DEFAULT_API_URL
+        fetch_avatars = self._bool_setting(settings.get("fetchAvatars"), True)
+        cache_key = self._cache_key(rooms, api_url, fetch_avatars)
+        cache_entry = self._read_cache_read_only(cache_key)
+        results = cache_entry.get("results") if isinstance(cache_entry, dict) else None
+        has_live = isinstance(results, list) and any(
+            isinstance(result, dict)
+            and result.get("ok", True) is not False
+            and not result.get("error")
+            and isinstance(result.get("status"), dict)
+            and result["status"].get("isLive") is True
+            and not result["status"].get("isError")
+            for result in results
+        )
+        if not has_live:
+            return None
+
+        status_seconds = self._int_setting(settings, "cacheSeconds", 60, 20, 3600)
+        snapshot_seconds = self._int_setting(settings, "snapshotCacheSeconds", 60, 30, 1800)
+        return {
+            "active": True,
+            "interval_seconds": min(status_seconds, snapshot_seconds),
+        }
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["style_settings"] = False
@@ -2485,9 +2520,14 @@ class LiveRadar(BasePlugin):
             "replay_fill": replay_fill,
         }
 
-    def _parse_rooms(self, settings):
+    def _parse_rooms(self, settings, use_default_text=True):
         json_rooms = self._parse_rooms_json(settings.get("roomsJson"))
-        text_rooms = self._parse_rooms_text(settings.get("roomsText"))
+        raw_text = settings.get("roomsText")
+        text_rooms = (
+            self._parse_rooms_text(raw_text)
+            if use_default_text or (raw_text is not None and str(raw_text).strip())
+            else []
+        )
         rooms = json_rooms or text_rooms
         seen = set()
         unique = []
@@ -2721,6 +2761,18 @@ class LiveRadar(BasePlugin):
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Could not read LiveRadar cache: %s", exc)
+        return {}
+
+    def _read_cache_read_only(self, cache_key):
+        try:
+            path = self.cache_dir(leaf="cache", create=False) / f"{cache_key}.json"
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(
+                "Could not inspect LiveRadar cache for live refresh: %s",
+                exc.__class__.__name__,
+            )
         return {}
 
     def _write_cache(self, cache_key, data):

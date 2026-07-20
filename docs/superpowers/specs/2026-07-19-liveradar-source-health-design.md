@@ -137,6 +137,11 @@ Status and media are separate phases with separate failure semantics.
 - At the current default of 60 seconds, a live screenshot older than 60 seconds
   is fetched again on the next eligible render, even when the streamer and
   stream title have not changed.
+- LiveRadar advertises live-refresh support. Its side-effect-free scheduler hook
+  reads only the matching warm status cache; while that cache contains at least
+  one successful live room, the displayed instance refreshes at the shorter of
+  `cacheSeconds` and `snapshotCacheSeconds`. The hook becomes inactive again
+  when the refreshed cache contains no successful live room.
 - Only screenshots needed by the current large-live and mini-live cards are
   refreshed. Offline-room images are not refreshed on the fast status path.
 - A failed screenshot request reuses the last valid screenshot or the existing
@@ -145,8 +150,9 @@ Status and media are separate phases with separate failure semantics.
 - Avatar refresh keeps its longer cache and cannot block live status success.
 - Theme-only redraws remain network-free and may use stale media.
 
-This contract preserves continuously updating live imagery while removing
-unnecessary media requests for rooms that are not currently visible.
+This contract makes the media TTL actionable while the dashboard is displayed,
+preserves continuously updating live imagery, and removes unnecessary media
+requests for rooms that are not currently visible or live.
 
 ## Cache and Provenance
 

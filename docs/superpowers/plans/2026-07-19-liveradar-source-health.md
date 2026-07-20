@@ -83,6 +83,8 @@
 3. Keep live screenshot retrieval active for every visible live snapshot path, including compact live cards. Preserve the cached image on refresh failure and keep live status unchanged.
 4. Retain the existing theme-only contract: a theme redraw can read warm media but performs zero network I/O.
 5. Add a virtual-clock status-cache test proving a successful status result is reused strictly before `cacheSeconds` and refetched at the exact expiry boundary. Bound one source-refresh attempt to finish before the configured interval (leaving a small scheduler margin), returning explicit per-room failures or the last-good status cache instead of allowing sequential provider fallbacks to overrun the next internal refresh window.
+6. Advertise `supports_live_refresh` and add a side-effect-free scheduler hook that reads only the matching warm status cache. While any successful room is live, request displayed-instance refresh at `min(cacheSeconds, snapshotCacheSeconds)`; return inactive for missing, offline, or error-only caches.
+7. Add red-green coverage for the live scheduler interval, exact status-cache boundary, offline/error deactivation, manifest capability, and zero provider/cache-write side effects.
 
 ### Task 7: Targeted and full local verification
 
