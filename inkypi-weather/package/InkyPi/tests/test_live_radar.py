@@ -1504,7 +1504,7 @@ def test_theme_only_render_reads_stale_cover_and_avatar_disk_cache_without_http(
     image = plugin.generate_image(settings, FakeDeviceConfig(mode="night"))
 
     assert http_calls == []
-    pixels = set(image.get_flattened_data())
+    pixels = set(image.getdata())
     assert cover_color in pixels
     assert avatar_color in pixels
 
