@@ -3,7 +3,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
-from PIL import Image, ImageDraw
+from PIL import Image
 import os
 import hashlib
 import requests
@@ -22,7 +22,7 @@ from utils.theme_utils import (
 )
 from utils.plugin_cache import read_json, write_json
 from utils.http_client import get_http_session
-from utils.app_utils import get_base_ui_font
+from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
         
@@ -244,6 +244,9 @@ class Weather(BasePlugin):
         )
 
         dimensions = self.get_dimensions(device_config)
+        # Weather's browser template is the product UI: its Chart.js graph,
+        # icon placement, metrics grid, and forecast cards must remain exact.
+        # A native redraw is not an acceptable substitute for this plugin.
         with pinned_theme_context(theme_context):
             image = self.render_image(
                 dimensions,
@@ -251,15 +254,17 @@ class Weather(BasePlugin):
                 "weather.css",
                 template_params,
             )
-
-        if not image:
-            logger.warning("Weather HTML render failed; using fresh-data Pillow fallback.")
-            image = self._render_fallback_image(
-                dimensions,
-                template_params,
-                theme_context,
-            )
-            image.info["inkypi_visual_fallback"] = "weather_pillow"
+        rendered_from_cache = False
+        if image:
+            self._write_original_render_cache(image, dimensions, theme_context)
+        else:
+            image = self._read_original_render_cache(dimensions, theme_context)
+            if image is None:
+                raise RuntimeError(
+                    "Could not render the original HTML weather layout and no original screenshot cache is available."
+                )
+            rendered_from_cache = True
+            image.info["inkypi_visual_fallback"] = "weather_html_cache"
         image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY] = theme_context
         if weather_provider != "OpenWeatherMap":
             provenance = SourceProvenance.LIVE
@@ -269,180 +274,54 @@ class Weather(BasePlugin):
             provenance = SourceProvenance.FRESH_CACHE
         else:
             provenance = SourceProvenance.LIVE
+        if rendered_from_cache:
+            provenance = SourceProvenance.STALE_CACHE
         if provenance is SourceProvenance.STALE_CACHE:
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
 
-    @staticmethod
-    def _fit_fallback_font(draw, text, preferred, minimum, max_width, *, bold=True):
-        value = str(text or "")
-        for size in range(max(int(preferred), int(minimum)), int(minimum) - 1, -1):
-            font = get_base_ui_font(size, bold=bold)
-            bounds = draw.textbbox((0, 0), value, font=font)
-            if bounds[2] - bounds[0] <= max_width:
-                return font
-        return get_base_ui_font(int(minimum), bold=bold)
-
-    def _render_fallback_image(self, dimensions, template_params, theme_context):
+    def _original_render_cache_path(self, dimensions, theme_context):
+        # Render screenshots belong in the configured persistent runtime cache,
+        # never beside plugin source files (the legacy source-data cache fallback).
+        if not (
+            os.getenv("OPENWEATHER_CACHE_DIR", "").strip()
+            or os.getenv("INKYPI_CACHE_DIR", "").strip()
+        ):
+            return None
         width, height = (int(dimensions[0]), int(dimensions[1]))
-        night = str((theme_context or {}).get("mode") or "day").lower() == "night"
-        palette = {
-            "background": (0, 0, 0) if night else (255, 255, 255),
-            "panel": (18, 18, 18) if night else (246, 244, 236),
-            "ink": (255, 255, 255) if night else (0, 0, 0),
-            "muted": (210, 210, 210) if night else (58, 58, 58),
-            "rule": (255, 190, 0) if night else (0, 0, 0),
-            "hot": (255, 92, 72) if night else (176, 36, 48),
-            "cool": (89, 172, 255) if night else (25, 88, 158),
-        }
-        image = Image.new("RGB", (width, height), palette["background"])
-        draw = ImageDraw.Draw(image)
-        temperature = str(template_params.get("current_temperature") or "--")
-        unit = str(template_params.get("temperature_unit") or "")
-        current_value = f"{temperature}{unit}"
-
-        if width < 240 or height < 120:
-            font = self._fit_fallback_font(
-                draw,
-                current_value,
-                max(10, int(height * 0.58)),
-                8,
-                max(8, width - 8),
-            )
-            bounds = draw.textbbox((0, 0), current_value, font=font)
-            draw.text(
-                (
-                    max(2, (width - (bounds[2] - bounds[0])) // 2),
-                    max(1, (height - (bounds[3] - bounds[1])) // 2 - bounds[1]),
-                ),
-                current_value,
-                font=font,
-                fill=palette["ink"],
-            )
-            draw.line((2, height - 2, width - 3, height - 2), fill=palette["rule"], width=1)
-            return image
-
-        scale = min(width / 800.0, height / 480.0)
-        margin = max(12, int(22 * scale))
-        gap = max(8, int(12 * scale))
-        title = str(template_params.get("title") or "Weather")
-        title_font = self._fit_fallback_font(
-            draw,
-            title,
-            int(30 * scale),
-            max(14, int(18 * scale)),
-            width - margin * 2 - int(190 * scale),
-        )
-        meta_font = get_base_ui_font(max(10, int(14 * scale)), bold=True)
-        draw.text((margin, margin), title, font=title_font, fill=palette["ink"])
-        refreshed = str(template_params.get("last_refresh_time") or "")
-        refreshed_box = draw.textbbox((0, 0), refreshed, font=meta_font)
-        draw.text(
-            (width - margin - (refreshed_box[2] - refreshed_box[0]), margin + 5),
-            refreshed,
-            font=meta_font,
-            fill=palette["muted"],
-        )
-        header_bottom = margin + max(int(42 * scale), refreshed_box[3] - refreshed_box[1])
-        draw.line(
-            (margin, header_bottom, width - margin, header_bottom),
-            fill=palette["rule"],
-            width=max(2, int(3 * scale)),
+        mode = str((theme_context or {}).get("mode") or "day").lower()
+        if mode not in {"day", "night"}:
+            mode = "day"
+        return os.path.join(
+            self._openweather_cache_dir(),
+            f"original-html-{width}x{height}-{mode}.png",
         )
 
-        current_top = header_bottom + gap
-        current_bottom = current_top + int(150 * scale)
-        left_width = int(width * 0.43)
-        current_box = (margin, current_top, left_width, current_bottom)
-        draw.rounded_rectangle(
-            current_box,
-            radius=max(6, int(10 * scale)),
-            fill=palette["panel"],
-            outline=palette["rule"],
-            width=max(1, int(2 * scale)),
-        )
-        temperature_font = self._fit_fallback_font(
-            draw,
-            current_value,
-            int(68 * scale),
-            max(28, int(42 * scale)),
-            current_box[2] - current_box[0] - margin,
-        )
-        draw.text(
-            (current_box[0] + int(16 * scale), current_box[1] + int(12 * scale)),
-            current_value,
-            font=temperature_font,
-            fill=palette["hot"],
-        )
-        feels = str(template_params.get("feels_like") or "--")
-        forecast = list(template_params.get("forecast") or [])
-        today = forecast[0] if forecast else {}
-        detail = f"Feels {feels}{unit}"
-        if today:
-            detail += f"  High {today.get('high', '--')}  Low {today.get('low', '--')}"
-        draw.text(
-            (current_box[0] + int(18 * scale), current_box[3] - int(35 * scale)),
-            detail,
-            font=meta_font,
-            fill=palette["ink"],
-        )
+    def _write_original_render_cache(self, image, dimensions, theme_context):
+        path = self._original_render_cache_path(dimensions, theme_context)
+        if not path:
+            return
+        temporary = f"{path}.tmp-{os.getpid()}"
+        try:
+            image.convert("RGB").save(temporary, format="PNG")
+            os.replace(temporary, path)
+        except OSError:
+            logger.warning("Could not save original weather screenshot cache.", exc_info=True)
+        finally:
+            try:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            except OSError:
+                pass
 
-        metrics = list(template_params.get("data_points") or [])[:6]
-        metrics_left = current_box[2] + gap
-        metrics_right = width - margin
-        metric_width = max(1, (metrics_right - metrics_left - gap) // 2)
-        metric_height = max(1, (current_bottom - current_top - gap * 2) // 3)
-        metric_label_font = get_base_ui_font(max(9, int(12 * scale)), bold=True)
-        metric_value_font = get_base_ui_font(max(11, int(18 * scale)), bold=True)
-        for index, point in enumerate(metrics):
-            column = index % 2
-            row = index // 2
-            x0 = metrics_left + column * (metric_width + gap)
-            y0 = current_top + row * (metric_height + gap)
-            x1 = x0 + metric_width
-            y1 = y0 + metric_height
-            draw.rounded_rectangle(
-                (x0, y0, x1, y1),
-                radius=max(4, int(7 * scale)),
-                fill=palette["panel"],
-                outline=palette["rule"],
-                width=1,
-            )
-            label = str(point.get("label") or "Metric")
-            value = f"{point.get('measurement', '--')}{point.get('unit') or ''}"
-            draw.text((x0 + 9, y0 + 6), label, font=metric_label_font, fill=palette["muted"])
-            draw.text((x0 + 9, y0 + int(24 * scale)), value, font=metric_value_font, fill=palette["ink"])
-
-        forecast_top = current_bottom + gap
-        visible_forecast = forecast[:4]
-        if visible_forecast:
-            card_gap = gap
-            card_width = (width - margin * 2 - card_gap * (len(visible_forecast) - 1)) // len(visible_forecast)
-            day_font = get_base_ui_font(max(10, int(14 * scale)), bold=True)
-            temp_font = get_base_ui_font(max(12, int(20 * scale)), bold=True)
-            for index, day in enumerate(visible_forecast):
-                x0 = margin + index * (card_width + card_gap)
-                x1 = x0 + card_width
-                y1 = height - margin - int(24 * scale)
-                draw.rounded_rectangle(
-                    (x0, forecast_top, x1, y1),
-                    radius=max(5, int(8 * scale)),
-                    fill=palette["panel"],
-                    outline=palette["rule"],
-                    width=1,
-                )
-                label = str(day.get("day") or ("TODAY" if index == 0 else f"DAY {index + 1}"))
-                values = f"{day.get('high', '--')} / {day.get('low', '--')}"
-                draw.text((x0 + 10, forecast_top + 10), label, font=day_font, fill=palette["muted"])
-                draw.text((x0 + 10, forecast_top + int(42 * scale)), values, font=temp_font, fill=palette["cool"])
-
-        draw.text(
-            (margin, height - margin - int(15 * scale)),
-            "PIL SAFE MODE - LIVE WEATHER DATA",
-            font=get_base_ui_font(max(8, int(10 * scale)), bold=True),
-            fill=palette["muted"],
-        )
-        return image
+    def _read_original_render_cache(self, dimensions, theme_context):
+        path = self._original_render_cache_path(dimensions, theme_context)
+        if not path:
+            return None
+        try:
+            return safe_open_image(path).convert("RGB")
+        except (OSError, ValueError):
+            return None
 
     @staticmethod
     def _now(tz):

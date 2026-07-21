@@ -1464,6 +1464,16 @@ class LiveRadar(BasePlugin):
 
         draw.text((text_x, meta_y), meta, fill=ink, font=meta_font)
 
+    def _prepare_snapshot_image(self, snapshot, size, status):
+        fitted = ImageOps.fit(
+            snapshot.convert("RGB"),
+            size,
+            method=self._resampling_filter(),
+        )
+        if status == "replay":
+            return ImageOps.grayscale(fitted).convert("RGB")
+        return fitted
+
     def _draw_snapshot_header(self, image, draw, area, card, theme, large, cache_seconds):
         x, y, w, h = area
         if w <= 8 or h <= 36:
@@ -1489,7 +1499,7 @@ class LiveRadar(BasePlugin):
         if snapshot:
             try:
                 draw.rectangle((left, top, right, bottom), fill=fill)
-                snapshot = ImageOps.fit(snapshot.convert("RGB"), size, method=self._resampling_filter())
+                snapshot = self._prepare_snapshot_image(snapshot, size, card["status"])
                 image.paste(snapshot, (left, top))
             except Exception as exc:
                 logger.warning("LiveRadar cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
@@ -1673,6 +1683,11 @@ class LiveRadar(BasePlugin):
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
+        if any(
+            card.get("status") == "replay"
+            for card in list(cards or [])[: max(1, int(max_items))]
+        ):
+            title = "REPLAY"
         self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         if cards and caption:
             self._draw_text_right(draw, caption, x + w, y, self._font(9, "bold"), theme["muted"])
@@ -1814,7 +1829,7 @@ class LiveRadar(BasePlugin):
         if snapshot:
             try:
                 size = (max(1, thumb_box[2] - thumb_box[0]), max(1, thumb_box[3] - thumb_box[1]))
-                fitted = ImageOps.fit(snapshot.convert("RGB"), size, method=self._resampling_filter())
+                fitted = self._prepare_snapshot_image(snapshot, size, card["status"])
                 image.paste(fitted, (thumb_box[0], thumb_box[1]))
             except Exception as exc:
                 logger.warning("LiveRadar mini cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
@@ -1828,13 +1843,22 @@ class LiveRadar(BasePlugin):
         text_w = max(20, x + w - pad - text_x)
         avatar_size = max(12, min(16, h - 24, int(h * 0.36)))
         owner_text = self._card_display_name(card)
+        room_title = str(card.get("title") or "").strip()
         name_x = text_x + avatar_size + 6
         name_w = max(12, text_w - avatar_size - 6)
         name_font = self._fit_font(draw, owner_text, name_w, 11, 8, "bold")
         name_h = self._line_height(name_font)
         icon_h = max(9, min(11, h - avatar_size - 8))
+        room_title_font = (
+            self._fit_font(draw, room_title, text_w, 9, 7, "bold")
+            if room_title
+            else None
+        )
+        room_title_h = self._line_height(room_title_font) if room_title_font else 0
         first_row_h = max(avatar_size, name_h)
         block_h = first_row_h + 3 + icon_h
+        if room_title_font:
+            block_h += 2 + room_title_h
         block_y = y + max(4, int((h - block_h) / 2))
         avatar_y = block_y + max(0, int((first_row_h - avatar_size) / 2))
         self._draw_avatar(
@@ -1873,6 +1897,15 @@ class LiveRadar(BasePlugin):
                         fill=LIVE_STATUS_DOT,
                         font=uptime_font,
                     )
+        if room_title_font:
+            room_title_y = meta_y + icon_h + 2
+            if room_title_y + room_title_h <= y + h - 2:
+                draw.text(
+                    (text_x, room_title_y),
+                    self._fit_text(draw, room_title, room_title_font, text_w),
+                    fill=ink,
+                    font=room_title_font,
+                )
 
     def _live_queue_visible_count(self, box, card_count, max_items):
         return self._live_queue_layout(box, card_count, max_items)["visible_count"]

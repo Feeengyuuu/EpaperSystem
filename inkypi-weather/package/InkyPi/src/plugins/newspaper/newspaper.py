@@ -661,9 +661,23 @@ class Newspaper(BasePlugin):
         pending = bank.pending_for_request(profile, request.request_id)
         fresh_keys = {item["record_key"] for item in fresh_ready}
         if pending is not None and pending.get("record_key") not in fresh_keys:
-            raise RuntimeError("Newspaper pending presentation is not fresh")
+            logger.info(
+                "Newspaper presentation kept the current display while pending media refreshes."
+            )
+            return PresentationPreparation(
+                request_id=request.request_id,
+                image=None,
+                changed=False,
+            )
         if pending is None and not fresh_ready:
-            raise RuntimeError("Newspaper presentation bank has no fresh media")
+            logger.info(
+                "Newspaper presentation kept the current display while the fresh-media bank warms."
+            )
+            return PresentationPreparation(
+                request_id=request.request_id,
+                image=None,
+                changed=False,
+            )
         selection = pending or bank.choose_selection(profile, fresh_ready)
         image = self._render_bank_selection(bank, profile, selection, dimensions)
         if resolved_theme_context is not None:

@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 RENDERER_VERSION = "browser-renderer-v2-ssrf-proxy"
 DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_VIRTUAL_TIME_BUDGET_MS = 2_000
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
 HTML_CIRCUIT_TTL_SECONDS = 300.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
@@ -636,6 +637,13 @@ class BrowserRenderer:
         proxy_url,
     ):
         timeout_ms = int(self._timeout(timeout_seconds) * 1000)
+        # Chromium does not take a screenshot until its virtual-time budget is
+        # exhausted. Coupling this value to the outer process timeout made a
+        # nominal 60-second render wait the full 60 seconds and then lose the
+        # race against process.wait(). Two virtual seconds is sufficient for
+        # local fonts, images, and Chart.js while leaving ample real time for
+        # startup on low-memory display hardware.
+        virtual_time_budget_ms = min(timeout_ms, DEFAULT_VIRTUAL_TIME_BUDGET_MS)
         command = [
             str(self.binary),
             "--headless",
@@ -667,7 +675,7 @@ class BrowserRenderer:
             f"--proxy-server={proxy_url}",
             "--proxy-bypass-list=<-loopback>",
             f"--timeout={timeout_ms}",
-            f"--virtual-time-budget={timeout_ms}",
+            f"--virtual-time-budget={virtual_time_budget_ms}",
         ]
         if self.run_as_root:
             command.append("--no-sandbox")

@@ -169,6 +169,8 @@ def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
     assert all("--use-gl=swiftshader" in command for command in commands)
     assert all("--js-flags=--jitless" in command for command in commands)
     assert all("--disable-zero-copy" in command for command in commands)
+    assert all("--virtual-time-budget=2000" in command for command in commands)
+    assert all("--virtual-time-budget=60000" not in command for command in commands)
     assert all(
         "--disable-gpu-memory-buffer-compositor-resources" in command
         for command in commands

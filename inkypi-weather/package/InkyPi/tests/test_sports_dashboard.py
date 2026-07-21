@@ -14255,6 +14255,11 @@ def _render_dashboard_with_source_states(
 ):
     la = ZoneInfo("America/Los_Angeles")
     now = now or datetime(2026, 7, 13, 9, 0, tzinfo=la)
+    monkeypatch.setattr(
+        plugin,
+        "_apply_sports_region_cache",
+        lambda _image, _region_name, _box, provenance: provenance,
+    )
     if left_provenance is None:
         left_panel = None
     else:
@@ -14404,29 +14409,60 @@ def test_generate_image_attests_stale_remote_panels_and_skips_promotion(monkeypa
     assert image.info["inkypi_skip_cache"] is True
 
 
-@pytest.mark.parametrize(
-    ("mixed_source_state", "expected"),
-    [
-        ("NBA FALLBACK", SourceProvenance.LOCAL_FALLBACK),
-        ("ESPN STALE", SourceProvenance.STALE_CACHE),
-    ],
-)
-def test_forced_composite_refresh_fails_closed_for_stale_or_fallback_panels(
-    monkeypatch,
-    mixed_source_state,
-    expected,
-):
+def test_forced_composite_refresh_fails_closed_for_fallback_panels(monkeypatch):
     image = _render_dashboard_with_source_states(
         _plugin(),
         monkeypatch,
         left_provenance=SourceProvenance.LIVE,
-        nba_source_state=mixed_source_state,
+        nba_source_state="NBA FALLBACK",
         lol_source_state="LIVE DATA",
         force_refresh=True,
     )
 
-    assert read_source_provenance(image) is expected
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
     assert image.info["inkypi_skip_cache"] is True
+
+
+def test_forced_composite_refresh_promotes_new_live_panels_alongside_labeled_stale_cache(monkeypatch):
+    image = _render_dashboard_with_source_states(
+        _plugin(),
+        monkeypatch,
+        left_provenance=SourceProvenance.LIVE,
+        nba_source_state="ESPN STALE",
+        lol_source_state="LIVE DATA",
+        force_refresh=True,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert "inkypi_skip_cache" not in image.info
+
+
+def test_sports_regions_restore_only_the_failed_region_from_its_last_success(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    plugin = _plugin()
+    box = (0, 0, 120, 80)
+
+    first = Image.new("RGB", (240, 80), "white")
+    first.paste(Image.new("RGB", (120, 80), (18, 140, 70)), (0, 0))
+    assert plugin._apply_sports_region_cache(
+        first,
+        "football",
+        box,
+        SourceProvenance.LIVE,
+    ) is SourceProvenance.LIVE
+
+    second = Image.new("RGB", (240, 80), "white")
+    second.paste(Image.new("RGB", (120, 80), (180, 30, 30)), (0, 0))
+    effective = plugin._apply_sports_region_cache(
+        second,
+        "football",
+        box,
+        SourceProvenance.LOCAL_FALLBACK,
+    )
+
+    assert effective is SourceProvenance.STALE_CACHE
+    assert second.getpixel((20, 20)) == (18, 140, 70)
+    assert second.getpixel((180, 20)) == (255, 255, 255)
 
 
 def test_worldcup_release_one_shot_promotes_live_primary_with_stale_secondary(monkeypatch):

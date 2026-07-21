@@ -34,6 +34,14 @@ def test_weather_background_uses_native_solid_epaper_colors():
     assert "background-image: none" in css
 
 
+def test_weather_forecast_card_borders_follow_visible_theme_ink():
+    html = (WEATHER_PLUGIN_ROOT / "render" / "weather.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--theme-rule: {{ theme.css.ink|default('#000000') }}" in html
+
+
 class FakeDeviceConfig:
     def __init__(self, config=None):
         self.config = {
@@ -258,8 +266,9 @@ def test_weather_success_publishes_astronomy_before_resolve_and_render(
     assert image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY]["mode"] == "day"
 
 
-def test_weather_fresh_facts_use_cacheable_pillow_fallback_when_browser_is_down(
+def test_weather_does_not_replace_original_ui_when_browser_is_down(
     monkeypatch,
+    tmp_path,
 ):
     plugin = _plugin()
     _install_openweather(plugin)
@@ -267,6 +276,7 @@ def test_weather_fresh_facts_use_cacheable_pillow_fallback_when_browser_is_down(
         plugin,
         datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
     )
+    monkeypatch.setenv("OPENWEATHER_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
     plugin.resolve_theme = lambda *_a, **_k: {
         "requested_mode": "auto",
@@ -278,13 +288,71 @@ def test_weather_fresh_facts_use_cacheable_pillow_fallback_when_browser_is_down(
     }
     plugin.render_image = lambda *_a, **_k: None
 
+    with pytest.raises(RuntimeError, match="original HTML weather layout"):
+        plugin.generate_image(_settings(), FakeDeviceConfig())
+
+
+def test_weather_keeps_original_html_renderer_on_constrained_runtime(monkeypatch):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    monkeypatch.setenv("INKYPI_NATIVE_RENDER_FIRST", "1")
+    monkeypatch.setenv("INKYPI_WEATHER_PIL_FIRST", "1")
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+    calls = []
+    plugin.render_image = lambda *_a, **_k: calls.append("html") or Image.new(
+        "RGB", (64, 32), "white"
+    )
+
     image = plugin.generate_image(_settings(), FakeDeviceConfig())
 
+    assert calls == ["html"]
     assert image.size == (64, 32)
-    assert image.info["inkypi_visual_fallback"] == "weather_pillow"
     assert read_source_provenance(image) is SourceProvenance.LIVE
-    assert "inkypi_skip_cache" not in image.info
-    assert len(image.getcolors(maxcolors=image.width * image.height)) > 1
+
+
+def test_weather_reuses_only_a_cached_original_html_screenshot_on_render_failure(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setenv("OPENWEATHER_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+    renders = [Image.new("RGB", (64, 32), (17, 34, 51)), None]
+    plugin.render_image = lambda *_a, **_k: renders.pop(0)
+
+    live = plugin.generate_image(_settings(), FakeDeviceConfig())
+    cached = plugin.generate_image(_settings(), FakeDeviceConfig())
+
+    assert live.getpixel((0, 0)) == (17, 34, 51)
+    assert cached.getpixel((0, 0)) == (17, 34, 51)
+    assert cached.info["inkypi_visual_fallback"] == "weather_html_cache"
+    assert read_source_provenance(cached) is SourceProvenance.STALE_CACHE
+    assert cached.info["inkypi_skip_cache"] is True
 
 
 def test_weather_context_write_failure_aborts_before_render(monkeypatch):

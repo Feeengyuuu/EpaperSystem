@@ -5,7 +5,7 @@
 
 
 <div class="weather-dashboard theme-{{ theme.mode|default('day') }}"
-     style="--theme-background: {{ theme.css.background|default('#ffffff') }}; --theme-panel: {{ theme.css.panel|default('#ffffff') }}; --theme-ink: {{ theme.css.ink|default('#000000') }}; --theme-muted: {{ theme.css.muted|default('#42464a') }}; --theme-rule: {{ theme.css.border|default('#000000') }}; --theme-red: {{ theme.css.red|default('#b02a34') }}; --theme-blue: {{ theme.css.blue|default('#2368a6') }};">
+     style="--theme-background: {{ theme.css.background|default('#ffffff') }}; --theme-panel: {{ theme.css.panel|default('#ffffff') }}; --theme-ink: {{ theme.css.ink|default('#000000') }}; --theme-muted: {{ theme.css.muted|default('#42464a') }}; --theme-rule: {{ theme.css.ink|default('#000000') }}; --theme-red: {{ theme.css.red|default('#b02a34') }}; --theme-blue: {{ theme.css.blue|default('#2368a6') }};">
   {% if plugin_settings.displayRefreshTime == "true" %}
   <div class="last-refresh">Last refresh: {{ last_refresh_time }}</div>
   {% endif %}

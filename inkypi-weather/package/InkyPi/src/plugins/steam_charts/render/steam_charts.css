@@ -479,7 +479,8 @@ body {
 .compact-copy {
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    justify-content: flex-start;
+    align-self: stretch;
     gap: 0.12dvh;
     min-width: 0;
     overflow: hidden;
@@ -498,8 +499,8 @@ body {
     font-size: var(--compact-title-size);
     font-weight: 800;
     max-height: 2.26em;
-    overflow-wrap: normal;
-    word-break: keep-all;
+    overflow-wrap: anywhere;
+    word-break: normal;
     text-overflow: clip;
     white-space: normal;
 }

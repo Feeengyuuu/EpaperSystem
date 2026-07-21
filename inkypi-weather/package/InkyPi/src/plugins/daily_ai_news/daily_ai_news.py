@@ -5,6 +5,7 @@ import html
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
@@ -127,6 +128,7 @@ MASSIVE_INDEX_TICKERS = {
     "^IXIC": {"I:COMP", "I:NDX"},
     "^DJI": {"I:DJI"},
 }
+NEWS_FIT_TITLE_SIZES = (26, 24, 22, 18, 16, 14, 12, 10, 8, 6)
 
 SECTION_LABELS = {
     "top": "大陆新闻",
@@ -924,9 +926,10 @@ class DailyAINews(BasePlugin):
             )
         payload = self._get_brief_unclassified(settings, device_config, now)
         if payload.get("from_cache"):
+            policy_fresh = bool(payload.pop("_policy_fresh_cache", False))
             provenance = (
                 SourceProvenance.FRESH_CACHE
-                if cache_matches and not force_refresh
+                if policy_fresh or (cache_matches and not force_refresh)
                 else SourceProvenance.STALE_CACHE
             )
         else:
@@ -959,6 +962,17 @@ class DailyAINews(BasePlugin):
             return cached
         if theme_render_only:
             raise RuntimeError("Theme-only redraw requires a warm Daily AI News cache.")
+
+        if (
+            force_refresh
+            and cache_matches_current_settings
+            and cached.get("date") == date_key
+            and not self._allow_api_call(settings, date_key)
+        ):
+            cached["from_cache"] = True
+            cached["_policy_fresh_cache"] = True
+            cached["warning"] = "已按今日 API 限额复用计划内最新缓存。"
+            return cached
 
         recent_titles = self._load_recent_news_titles(now)
         items = self._drop_stale_items(self._fetch_items(feeds_text, max_items), now)
@@ -1412,24 +1426,69 @@ class DailyAINews(BasePlugin):
         massive_key = load_massive_api_key(device_config)
         if massive_key:
             massive_client = MassiveMarketData(massive_key)
-            snapshot["macro"] = self._fetch_massive_macro(massive_client)
-        for group, symbols in MARKET_GROUPS.items():
-            rows = []
-            for symbol, name in symbols:
-                row = self._fetch_massive_quote(massive_client, symbol, name)
-                if self._is_massive_index_proxy_quote(symbol, row):
-                    logger.warning(
-                        "Discarding Massive ETF proxy %s for index %s; using Yahoo fallback",
-                        row.get("massive_symbol"),
+
+        quote_tasks = [
+            (group, symbol, name)
+            for group, symbols in MARKET_GROUPS.items()
+            for symbol, name in symbols
+        ]
+        rows_by_group: dict[str, list[dict[str, Any]]] = {
+            group: [] for group in MARKET_GROUPS
+        }
+        worker_count = max(1, min(6, len(quote_tasks) + int(massive_client is not None)))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            macro_future = (
+                executor.submit(self._fetch_massive_macro, massive_client)
+                if massive_client is not None
+                else None
+            )
+            quote_futures = [
+                (
+                    group,
+                    symbol,
+                    executor.submit(
+                        self._fetch_market_quote,
+                        massive_client,
                         symbol,
+                        name,
+                    ),
+                )
+                for group, symbol, name in quote_tasks
+            ]
+            for group, symbol, future in quote_futures:
+                try:
+                    row = future.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Market quote worker failed for %s: %s",
+                        symbol,
+                        type(exc).__name__,
                     )
                     row = None
-                if not row:
-                    row = self._fetch_yahoo_quote(symbol, name)
                 if row:
-                    rows.append(row)
-            snapshot["groups"][group] = rows
+                    rows_by_group[group].append(row)
+            if macro_future is not None:
+                try:
+                    snapshot["macro"] = macro_future.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Market macro worker failed: %s",
+                        type(exc).__name__,
+                    )
+
+        snapshot["groups"].update(rows_by_group)
         return snapshot
+
+    def _fetch_market_quote(self, massive_client, symbol: str, name: str):
+        row = self._fetch_massive_quote(massive_client, symbol, name)
+        if self._is_massive_index_proxy_quote(symbol, row):
+            logger.warning(
+                "Discarding Massive ETF proxy %s for index %s; using Yahoo fallback",
+                row.get("massive_symbol"),
+                symbol,
+            )
+            row = None
+        return row or self._fetch_yahoo_quote(symbol, name)
 
     def _fetch_massive_quote(self, massive_client, symbol: str, name: str) -> dict[str, Any] | None:
         if massive_client is None:
@@ -2244,8 +2303,8 @@ class DailyAINews(BasePlugin):
         red = canonical["accent"]
         muted = canonical["muted"]
         return {
-            "background": canonical["background"],
-            "header": canonical["panel"],
+            "background": (0, 0, 0),
+            "header": (0, 0, 0),
             "ink": canonical["ink"],
             "muted": muted,
             "dim": muted,
@@ -2382,6 +2441,7 @@ class DailyAINews(BasePlugin):
             logger.warning("Could not load Daily AI News title background %s: %s", path, exc)
             return None
 
+    @lru_cache(maxsize=128)
     def _font(self, family: str, size: int, weight: str = "normal"):
         if str(family or "").strip().lower() == DEFAULT_FONT.lower():
             font = self._microsoft_yahei_font(size, weight)
@@ -2770,30 +2830,44 @@ class DailyAINews(BasePlugin):
     ) -> int:
         item_list = list(items or [])
         news_count = self._renderable_news_count(item_list)
-        styles = []
-        for title_size in range(26, 5, -1):
-            style = self._news_fit_style(title_size, news_count)
-            styles.append(style)
-            if drop_why_if_needed:
-                for why_line_limit in (2, 1, 0):
-                    limited = dict(style)
-                    limited["why_line_limit"] = why_line_limit
-                    styles.append(limited)
-
         prepared = []
         available = max_y - y
         allowed_available = available + 4
         best_score: tuple[int, int, int] | None = None
-        for style in styles:
-            candidate_rows, needed_total = self._prepare_news_rows_for_style(draw, item_list, width, font_family, style)
-            if needed_total <= allowed_available:
-                why_penalty = self._why_limit_penalty(style.get("why_line_limit"))
-                score = (abs(allowed_available - needed_total) + why_penalty, -style["title"], why_penalty)
-                if best_score is None or score < best_score:
+        for title_size in NEWS_FIT_TITLE_SIZES:
+            style = self._news_fit_style(title_size, news_count)
+            base_rows, base_needed = self._prepare_news_rows_for_style(
+                draw,
+                item_list,
+                width,
+                font_family,
+                style,
+            )
+            candidates = [(style, base_rows, base_needed)]
+            if drop_why_if_needed:
+                for why_line_limit in (2, 1, 0):
+                    limited_rows, limited_needed, limited_style = self._limit_prepared_why_rows(
+                        base_rows,
+                        style,
+                        why_line_limit,
+                    )
+                    candidates.append((limited_style, limited_rows, limited_needed))
+
+            for candidate_style, candidate_rows, needed_total in candidates:
+                if needed_total <= allowed_available:
+                    why_penalty = self._why_limit_penalty(
+                        candidate_style.get("why_line_limit")
+                    )
+                    score = (
+                        abs(allowed_available - needed_total) + why_penalty,
+                        -candidate_style["title"],
+                        why_penalty,
+                    )
+                    if best_score is None or score < best_score:
+                        prepared = candidate_rows
+                        best_score = score
+                elif best_score is None:
                     prepared = candidate_rows
-                    best_score = score
-            elif best_score is None:
-                prepared = candidate_rows
 
         # Distribute any leftover height as extra leading and inter-item spacing
         # so the column ends near max_y instead of leaving a void above it.
@@ -2825,6 +2899,32 @@ class DailyAINews(BasePlugin):
             if offset < len(prepared) - 1:
                 y += gap_bump
         return y
+
+    @staticmethod
+    def _limit_prepared_why_rows(rows, style, why_line_limit):
+        limited_style = dict(style)
+        limited_style["why_line_limit"] = int(why_line_limit)
+        limited_rows = []
+        needed_total = 0
+        for title_lines, why_lines, needed, headline_font, why_font, _row_style in rows:
+            visible_why = list(why_lines)[: max(0, int(why_line_limit))]
+            removed_lines = max(0, len(why_lines) - len(visible_why))
+            limited_needed = max(
+                0,
+                int(needed) - removed_lines * int(style["why_h"]),
+            )
+            limited_rows.append(
+                (
+                    title_lines,
+                    visible_why,
+                    limited_needed,
+                    headline_font,
+                    why_font,
+                    limited_style,
+                )
+            )
+            needed_total += limited_needed
+        return limited_rows, needed_total, limited_style
 
     @staticmethod
     def _why_limit_penalty(why_line_limit) -> int:

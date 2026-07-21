@@ -1470,7 +1470,7 @@ def test_newspaper_refills_six_stale_records_using_fresh_ready_count(monkeypatch
     ]
 
 
-def test_newspaper_prepare_rejects_stale_only_bank_without_staging(monkeypatch):
+def test_newspaper_prepare_keeps_current_display_when_bank_has_no_fresh_media(monkeypatch):
     plugin = make_plugin("stale-prepare")
     base = datetime(2026, 7, 10, 12, tzinfo=timezone.utc)
     settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
@@ -1484,14 +1484,15 @@ def test_newspaper_prepare_rejects_stale_only_bank_without_staging(monkeypatch):
     monkeypatch.setattr(plugin, "_now_utc", lambda: base + timedelta(hours=49))
     before = plugin._presentation_state_path().read_bytes()
 
-    with pytest.raises(RuntimeError, match="fresh"):
-        plugin.prepare_presentation(
-            settings,
-            DeviceConfig(),
-            request=request(),
-            resolved_theme_context=None,
-        )
+    prepared = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request(),
+        resolved_theme_context=None,
+    )
 
+    assert prepared.changed is False
+    assert prepared.image is None
     assert plugin._presentation_state_path().read_bytes() == before
 
 

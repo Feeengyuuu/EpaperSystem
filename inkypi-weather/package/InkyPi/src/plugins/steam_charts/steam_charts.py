@@ -33,6 +33,8 @@ LINE_SPARKLINE_AMPLIFICATION = 1.55
 LINE_SPARKLINE_EDGE_PADDING = 2.0
 STEAM_CAPSULE_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
 BOLD_SAFE_MIDDLE_DOT = "\u2027"
+TRUE_SETTING_VALUES = {"1", "true", "yes", "on"}
+FALSE_SETTING_VALUES = {"0", "false", "no", "off"}
 MIDDLE_DOT_DISPLAY_TRANSLATION = str.maketrans({
     "\u00b7": BOLD_SAFE_MIDDLE_DOT,
     "\u2219": BOLD_SAFE_MIDDLE_DOT,
@@ -769,24 +771,28 @@ class SteamCharts(BasePlugin):
             rows_top = top + panel_header_height
             row_height = max(38, int((bottom - rows_top) / max(1, len(games))))
             rank_x = left
-            cover_width = max(104, int(col_width * 0.31))
+            # The native renderer is the production path on constrained Pi
+            # displays.  Keep artwork useful, but reserve enough horizontal
+            # space for complete game titles instead of forcing ellipses.
+            cover_width = max(88, int(col_width * 0.255))
             cover_height = max(29, int(cover_width * 3 / 8))
             cover_gap = max(6, int(width * 0.007))
             metric_x = right
             title_x = left + max(22, int(col_width * 0.06))
             if any(game.get("image") for game in games):
                 title_x += cover_width + cover_gap
-            metric_max_width = max(108, int(col_width * 0.30))
-            name_max_width = max(70, metric_x - title_x - metric_max_width - int(col_width * 0.025))
+            metric_max_width = max(94, int(col_width * 0.27))
+            name_max_width = max(92, metric_x - title_x - metric_max_width - int(col_width * 0.025))
 
             for row_index, game in enumerate(games):
                 y = rows_top + row_index * row_height
+                content_top = self._compact_row_content_top(y, row_height)
                 draw.text((rank_x, y + int(row_height * 0.2)), str(game.get("rank") or row_index + 1), fill=ink, font=rank_font)
 
                 cover = self._decode_data_image(game.get("image"))
                 if cover:
                     cover_x = left + max(24, int(col_width * 0.075))
-                    cover_y = y + max(4, int((row_height - cover_height) / 2))
+                    cover_y = content_top
                     cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
                     image.paste(cover, (cover_x, cover_y))
 
@@ -794,28 +800,45 @@ class SteamCharts(BasePlugin):
                 metric_scale = self._coerce_font_scale(game.get("metric_font_scale", 1))
 
                 name_text = str(game.get("name") or "Unknown")
-                row_name_font = self._font_to_fit(
+                row_name_font, name_lines = self._fit_complete_lines(
                     draw,
                     name_text,
-                    name_max_width,
-                    self._scaled_font_size(name_font_size, name_scale, 14),
-                    14,
-                    "bold",
+                    max_width=name_max_width,
+                    start_size=self._scaled_font_size(name_font_size, name_scale, 14),
+                    min_size=11,
+                    max_lines=2,
+                    weight="bold",
                 )
-                name = self._fit_text(draw, name_text, row_name_font, name_max_width)
-                draw.text((title_x, y + int(row_height * 0.05)), name, fill=ink, font=row_name_font)
+                name_top = content_top
+                name_bbox = draw.textbbox((0, 0), "Ag国", font=row_name_font)
+                name_line_height = max(1, name_bbox[3] - name_bbox[1])
+                for line_index, name_line in enumerate(name_lines):
+                    draw.text(
+                        (title_x, name_top + line_index * (name_line_height + 1)),
+                        name_line,
+                        fill=ink,
+                        font=row_name_font,
+                    )
                 secondary_text = str(game.get("secondary_name") or "")
-                row_secondary_font = self._font_to_fit(
+                row_secondary_font, secondary_lines = self._fit_complete_lines(
                     draw,
                     secondary_text,
-                    name_max_width,
-                    self._scaled_font_size(secondary_font_size, name_scale, 9),
-                    9,
-                    "normal",
+                    max_width=name_max_width,
+                    start_size=self._scaled_font_size(secondary_font_size, name_scale, 9),
+                    min_size=7,
+                    max_lines=1,
+                    weight="normal",
                 )
-                secondary = self._fit_text(draw, secondary_text, row_secondary_font, name_max_width)
-                if secondary:
-                    draw.text((title_x, y + int(row_height * 0.54)), secondary, fill=ink, font=row_secondary_font)
+                # Two primary lines already use the available title block; in
+                # that case the complete primary title takes precedence over a
+                # duplicate translated/English alias.
+                if len(name_lines) == 1 and secondary_lines:
+                    draw.text(
+                        (title_x, y + int(row_height * 0.48)),
+                        secondary_lines[0],
+                        fill=ink,
+                        font=row_secondary_font,
+                    )
 
                 metric = str(game.get("primary_metric") or "--")
                 row_metric_font = self._font_to_fit(
@@ -960,16 +983,23 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _prefer_pil_fallback_first(settings):
-        setting = str((settings or {}).get("preferPilFallback", "")).strip().lower()
-        if setting in {"1", "true", "yes", "on"}:
+        settings = settings or {}
+        for key in ("preferPilFallback", "preferNativeRenderer"):
+            value = str(settings.get(key) or "").strip().lower()
+            if value in TRUE_SETTING_VALUES:
+                return True
+            if value in FALSE_SETTING_VALUES:
+                return False
+
+        value = str(os.environ.get("INKYPI_STEAM_CHARTS_PIL_FIRST") or "").strip().lower()
+        if value in TRUE_SETTING_VALUES:
             return True
-        if setting in {"0", "false", "no", "off"}:
+        if value in FALSE_SETTING_VALUES:
             return False
-        env_value = os.environ.get("INKYPI_STEAM_CHARTS_PIL_FIRST", "").strip().lower()
-        if env_value in {"1", "true", "yes", "on"}:
-            return True
-        if env_value in {"0", "false", "no", "off"}:
-            return False
+
+        # The original HTML/CSS presentation is the primary Steam Charts UI.
+        # Low memory alone must not silently replace that approved layout; the
+        # Pillow renderer remains the fallback after a real HTML render failure.
         return False
 
     @staticmethod
@@ -1326,6 +1356,71 @@ class SteamCharts(BasePlugin):
         return SteamCharts._font(min_size, weight)
 
     @staticmethod
+    def _fit_complete_lines(
+        draw,
+        text,
+        *,
+        max_width,
+        start_size,
+        min_size,
+        max_lines=2,
+        weight="normal",
+    ):
+        """Fit all title text into measured lines without adding ellipses."""
+        normalized = " ".join(str(text or "").split())
+        start_size = max(1, int(start_size))
+        min_size = max(1, min(start_size, int(min_size)))
+        max_lines = max(1, int(max_lines))
+        max_width = max(1, int(max_width))
+
+        if not normalized:
+            return SteamCharts._font(start_size, weight), []
+
+        last_font = SteamCharts._font(min_size, weight)
+        last_lines = [normalized]
+        for size in range(start_size, min_size - 1, -1):
+            font = SteamCharts._font(size, weight)
+            lines = SteamCharts._wrap_complete_text(draw, normalized, font, max_width)
+            last_font, last_lines = font, lines
+            if len(lines) <= max_lines:
+                return font, lines
+        return last_font, last_lines
+
+    @staticmethod
+    def _wrap_complete_text(draw, text, font, max_width):
+        remaining = str(text or "").strip()
+        if not remaining:
+            return []
+
+        lines = []
+        while remaining:
+            if draw.textlength(remaining, font=font) <= max_width:
+                lines.append(remaining)
+                break
+
+            fit_end = 1
+            for end in range(2, len(remaining) + 1):
+                if draw.textlength(remaining[:end], font=font) > max_width:
+                    break
+                fit_end = end
+
+            candidate = remaining[:fit_end]
+            preferred_break = 0
+            for index, character in enumerate(candidate, start=1):
+                if character.isspace() or character in "/-:|·":
+                    preferred_break = index
+            if preferred_break >= max(2, fit_end // 2):
+                fit_end = preferred_break
+
+            line = remaining[:fit_end].rstrip()
+            if not line:
+                line = remaining[:1]
+                fit_end = 1
+            lines.append(line)
+            remaining = remaining[fit_end:].lstrip()
+        return lines
+
+    @staticmethod
     def _fit_text(draw, text, font, max_width):
         return fit_text_to_width(draw, text, font, max_width)
 
@@ -1373,6 +1468,10 @@ class SteamCharts(BasePlugin):
             return False
         draw.line(points, fill=ink, width=max(1, int(line_width)))
         return True
+
+    @staticmethod
+    def _compact_row_content_top(row_y, row_height):
+        return int(row_y) + max(3, int(row_height * 0.04))
 
     @staticmethod
     def _compact_sparkline_width_ratio(table_variant, sparkline_svg=""):

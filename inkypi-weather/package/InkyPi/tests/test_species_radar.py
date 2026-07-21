@@ -1193,6 +1193,30 @@ def test_palette_supports_injected_night_theme_over_legacy_alias(tmp_path):
     assert palette["accent"] == theme["palette"]["accent"]
 
 
+def test_palette_normalizes_thawed_night_theme_colors_for_pillow(tmp_path):
+    plugin = make_plugin(tmp_path)
+    theme = _canonical_theme(
+        "night",
+        background=(9, 11, 14),
+        panel=(25, 29, 35),
+        ink=(244, 246, 248),
+        muted=(179, 183, 191),
+        rule=(61, 67, 75),
+        accent=(72, 186, 234),
+    )
+    theme["palette"] = {
+        role: list(color) for role, color in theme["palette"].items()
+    }
+
+    palette = plugin._palette({"_inkypi_theme": theme})
+
+    assert all(
+        isinstance(palette[role], tuple)
+        for role in ("paper", "panel", "ink", "dim", "muted", "accent", "rule")
+    )
+    assert Image.new("RGB", (2, 1), palette["paper"]).getpixel((0, 0)) == (9, 11, 14)
+
+
 def test_palette_switches_from_resolved_canonical_context_without_playlist_duplication(tmp_path):
     plugin = make_plugin(tmp_path)
     day_theme = plugin.resolve_theme({"themeMode": "day"}, {"timezone": "UTC"}, now=datetime(2026, 6, 27, 12, tzinfo=timezone.utc))

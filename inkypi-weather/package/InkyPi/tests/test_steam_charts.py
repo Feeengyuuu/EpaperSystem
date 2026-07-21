@@ -454,7 +454,7 @@ def test_steam_charts_cover_images_are_scaled_up():
     assert "--image-width: 18.85vw;" in css
     assert "grid-template-columns: minmax(104px, 14.4vw) minmax(0, 1fr);" in css
     assert "cover_width = int(width * 0.1885)" in source
-    assert "cover_width = max(104, int(col_width * 0.31))" in source
+    assert "cover_width = max(88, int(col_width * 0.255))" in source
 
 
 def test_steam_charts_compact_metric_divider_favors_title_space():
@@ -475,7 +475,7 @@ def test_steam_charts_compact_metric_divider_favors_title_space():
     ).read_text(encoding="utf-8")
 
     assert "minmax(6.75rem, 7.65rem)" in css
-    assert "metric_max_width = max(108, int(col_width * 0.30))" in source
+    assert "metric_max_width = max(94, int(col_width * 0.27))" in source
 
 
 def test_steam_charts_primary_game_title_minimum_is_scaled_up():
@@ -547,8 +547,8 @@ def test_steam_charts_combined_template_draws_compact_sparklines():
     assert "width: var(--compact-sparkline-width, 64%);" in css
     assert "margin-left: auto;" in css
     assert "overflow: visible;" in css
-    assert "overflow-wrap: normal;" in css
-    assert "word-break: keep-all;" in css
+    assert "overflow-wrap: anywhere;" in css
+    assert "word-break: normal;" in css
     assert ".compact-sparkline--top-games" in css
     assert "transform: translateY(5px);" in css
     assert "--compact-sparkline-width: 96%;" not in css
@@ -720,6 +720,57 @@ def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
     assert abs((logo_y + logo_size / 2) - (wordmark_y + wordmark_height / 2)) <= 1
 
 
+def test_steam_charts_native_title_fitting_preserves_full_name_without_ellipsis():
+    draw = ImageDraw.Draw(Image.new("RGB", (240, 80), "white"))
+    title = "Counter-Strike 2 / 反恐精英：全球攻势"
+
+    font, lines = SteamCharts._fit_complete_lines(
+        draw,
+        title,
+        max_width=172,
+        start_size=17,
+        min_size=9,
+        max_lines=2,
+        weight="bold",
+    )
+
+    assert "".join(lines).replace(" ", "") == title.replace(" ", "")
+    assert all("..." not in line and "…" not in line for line in lines)
+    assert len(lines) <= 2
+    assert all(draw.textlength(line, font=font) <= 172 for line in lines)
+
+
+def test_steam_charts_native_cover_and_title_share_the_same_top_alignment():
+    assert SteamCharts._compact_row_content_top(100, 66) == 103
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "steam_charts.py"
+    ).read_text(encoding="utf-8")
+    assert "cover_y = content_top" in source
+    assert "name_top = content_top" in source
+
+
+def test_steam_charts_html_cover_and_title_share_top_and_long_titles_wrap():
+    css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.css"
+    ).read_text(encoding="utf-8")
+
+    compact_copy = css.split(".compact-copy {", 1)[1].split("}", 1)[0]
+    compact_title = css.split(".compact-title {", 1)[1].split("}", 1)[0]
+    assert "justify-content: flex-start" in compact_copy
+    assert "overflow-wrap: anywhere" in compact_title
+    assert "word-break: normal" in compact_title
+
+
 def test_steam_charts_single_fallback_aligns_logo_with_title_wordmark(monkeypatch):
     logo_calls = []
     wordmark_calls = []
@@ -794,6 +845,19 @@ def test_prefer_pil_fallback_first_honors_setting_and_env(monkeypatch):
 
     monkeypatch.setenv("INKYPI_STEAM_CHARTS_PIL_FIRST", "0")
     assert SteamCharts._prefer_pil_fallback_first({}) is False
+
+
+def test_prefer_pil_fallback_first_keeps_original_html_on_constrained_runtime(monkeypatch):
+    monkeypatch.delenv("INKYPI_STEAM_CHARTS_PIL_FIRST", raising=False)
+    monkeypatch.setattr(
+        steam_charts_module,
+        "prefer_native_renderer",
+        lambda *_a, **_k: True,
+        raising=False,
+    )
+
+    assert SteamCharts._prefer_pil_fallback_first({}) is False
+
 
 def test_steam_charts_pixel_kaiju_asset_is_transparent_header_cutout():
     kaiju = Image.open(STEAM_PIXEL_KAIJU_PATH).convert("RGBA")

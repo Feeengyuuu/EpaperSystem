@@ -2289,6 +2289,73 @@ def test_snapshot_mini_candidates_prefer_cover_cards_and_skip_visible_live():
     assert [card["id"] for card in picked] == ["replay-cover", "offline-cover"]
 
 
+def test_snapshot_mini_section_labels_replay_when_replay_card_is_visible(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 120), "white")
+    draw = ImageDraw.Draw(image)
+    theme = plugin._theme({"themeMode": "day"}, FakeDeviceConfig())
+    labels = []
+    monkeypatch.setattr(
+        plugin,
+        "_draw_section_title",
+        lambda _image, _draw, _x, _y, title, _count, _theme, _font: labels.append(title),
+    )
+    monkeypatch.setattr(plugin, "_draw_snapshot_mini_card", lambda *_args, **_kwargs: None)
+
+    plugin._draw_snapshot_mini_section(
+        image,
+        draw,
+        (10, 10, 220, 100),
+        "SNAPSHOT MINI",
+        [{"platform": "bilibili", "id": "1", "status": "replay", "title": "昨夜回放"}],
+        theme,
+    )
+
+    assert labels == ["REPLAY"]
+
+
+def test_replay_snapshot_is_grayscale_while_live_snapshot_stays_colored():
+    plugin = _plugin()
+    source = Image.new("RGB", (32, 18), (210, 40, 10))
+
+    replay = plugin._prepare_snapshot_image(source, (16, 9), "replay")
+    live = plugin._prepare_snapshot_image(source, (16, 9), "live")
+
+    replay_pixel = replay.getpixel((4, 4))
+    assert replay_pixel[0] == replay_pixel[1] == replay_pixel[2]
+    assert live.getpixel((4, 4)) == (210, 40, 10)
+
+
+def test_replay_snapshot_mini_card_draws_room_title(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (260, 110), "white")
+    draw = ImageDraw.Draw(image)
+    theme = plugin._theme({"themeMode": "day"}, FakeDeviceConfig())
+    fitted_text = []
+    original_fit_text = plugin._fit_text
+
+    def capture_fit_text(draw_obj, text, font, max_width):
+        fitted_text.append(str(text))
+        return original_fit_text(draw_obj, text, font, max_width)
+
+    monkeypatch.setattr(plugin, "_fit_text", capture_fit_text)
+    monkeypatch.setattr(plugin, "_load_cover_source", lambda *_args: Image.new("RGB", (160, 90), "red"))
+    monkeypatch.setattr(plugin, "_draw_avatar", lambda *_args, **_kwargs: None)
+    card = {
+        "platform": "bilibili",
+        "id": "545318",
+        "owner": "主播名",
+        "label": "主播名",
+        "title": "这是房间标题",
+        "status": "replay",
+        "start_time": None,
+    }
+
+    plugin._draw_snapshot_mini_card(image, draw, (10, 20, 240, 76), card, theme)
+
+    assert "这是房间标题" in fitted_text
+
+
 def test_snapshot_mini_section_draws_cover_thumbnails():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())

@@ -2448,12 +2448,87 @@ class SportsDashboardCommonMixin:
                 worldcup_content_box,
             )
 
+        football_provenance = self._apply_sports_region_cache(
+            image,
+            "football",
+            (0, 0, left_width, worldcup_height),
+            left_provenance,
+        )
+
         draw = ImageDraw.Draw(image)
         separator_y = worldcup_height
         draw.rectangle((0, separator_y, left_width - 1, separator_y + separator_height - 1), fill=COLORS["border"])
         if separator_height > 2:
             draw.line((0, separator_y + 2, left_width - 1, separator_y + 2), fill=COLORS["line"], width=1)
 
+        try:
+            lower_provenance = self._draw_lower_sports_region(
+                image,
+                draw,
+                settings,
+                device_config,
+                timezone_info,
+                now,
+                (0, nba_top, left_width - 1, nba_top + nba_height - 1),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Lower Sports Dashboard region failed independently: %s",
+                _safe_exception_text(exc),
+            )
+            lower_provenance = SourceProvenance.LOCAL_FALLBACK
+        lower_provenance = self._apply_sports_region_cache(
+            image,
+            "lower",
+            (0, nba_top, left_width, dimensions[1]),
+            lower_provenance,
+        )
+
+        try:
+            esports_provenance = self._draw_right_esports_region(
+                image,
+                settings,
+                device_config,
+                timezone_info,
+                now,
+                left_width,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Right Sports Dashboard region failed independently: %s",
+                _safe_exception_text(exc),
+            )
+            esports_provenance = SourceProvenance.LOCAL_FALLBACK
+        esports_provenance = self._apply_sports_region_cache(
+            image,
+            "esports",
+            (left_width, 0, dimensions[0], dimensions[1]),
+            esports_provenance,
+        )
+
+        primary_live_override = (
+            self._worldcup_release_one_shot_window_active(now)
+            and football_provenance is SourceProvenance.LIVE
+        )
+        return self._attest_sports_dashboard_image(
+            image,
+            football_provenance,
+            lower_provenance,
+            esports_provenance,
+            force_refresh=self._force_refresh_requested(settings),
+            primary_live_override=primary_live_override,
+        )
+
+    def _draw_lower_sports_region(
+        self,
+        image,
+        draw,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+        box,
+    ):
         nba_events, nba_source_state = self._load_nba_events(settings, timezone_info)
         nba_events = self._attach_nba_odds(nba_events, settings, device_config, timezone_info)
         nba_selected = self._select_nba_events(nba_events, now)
@@ -2461,44 +2536,50 @@ class SportsDashboardCommonMixin:
         if self._should_show_offseason_hub_panel(settings, nba_selected):
             try:
                 hub_selected, hub_source_state = self._load_offseason_hub(settings, timezone_info, now)
-                lower_source_state = hub_source_state
                 self._write_offseason_hub_state(hub_selected, now, hub_source_state)
                 self._draw_offseason_hub_compact_panel(
                     image,
                     draw,
-                    (0, nba_top, left_width - 1, nba_top + nba_height - 1),
+                    box,
                     hub_selected,
                     hub_source_state,
                     now,
                 )
+                return self._sports_source_state_provenance(hub_source_state)
             except Exception as exc:
-                logger.warning("Offseason hub panel failed, falling back to NBA panel: %s", exc)
-                lower_source_state = nba_source_state
-                self._draw_nba_compact_panel(
-                    image,
-                    draw,
-                    (0, nba_top, left_width - 1, nba_top + nba_height - 1),
-                    nba_selected,
-                    nba_source_state,
-                    now,
+                logger.warning(
+                    "Offseason hub panel failed, falling back to NBA panel: %s",
+                    _safe_exception_text(exc),
                 )
-        else:
-            lower_source_state = nba_source_state
-            self._draw_nba_compact_panel(
-                image,
-                draw,
-                (0, nba_top, left_width - 1, nba_top + nba_height - 1),
-                nba_selected,
-                nba_source_state,
-                now,
-            )
+        self._draw_nba_compact_panel(
+            image,
+            draw,
+            box,
+            nba_selected,
+            nba_source_state,
+            now,
+        )
+        return self._sports_source_state_provenance(nba_source_state)
 
+    def _draw_right_esports_region(
+        self,
+        image,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+        left_width,
+    ):
         lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
         lol_sidebar_override = self._lol_esports_sidebar_override(settings)
         if lol_sidebar_override:
             esports_choice = {
                 "kind": "lol",
-                "choice": self._select_lol_esports_sidebar(lol_cards, now, league_override=lol_sidebar_override),
+                "choice": self._select_lol_esports_sidebar(
+                    lol_cards,
+                    now,
+                    league_override=lol_sidebar_override,
+                ),
             }
         else:
             ewc_card = None
@@ -2512,47 +2593,44 @@ class SportsDashboardCommonMixin:
                             ewc_card.get("source_state") or "EWC DATA",
                         )
                 except Exception as exc:
-                    logger.warning("EWC sidebar failed, falling back to other esports panels: %s", _safe_exception_text(exc))
+                    logger.warning(
+                        "EWC sidebar failed, falling back to other esports panels: %s",
+                        _safe_exception_text(exc),
+                    )
             valve_selected = None
             valve_source_state = ""
             if self._bool_setting(settings, "valveEsportsEnabled", True):
                 try:
-                    valve_selected, valve_source_state = self._load_valve_esports(settings, timezone_info, now)
+                    valve_selected, valve_source_state = self._load_valve_esports(
+                        settings,
+                        timezone_info,
+                        now,
+                    )
                 except Exception as exc:
-                    logger.warning("Valve esports sidebar failed, falling back to LPL: %s", _safe_exception_text(exc))
-            esports_choice = self._select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=ewc_card)
-
-        primary_live_override = (
-            self._worldcup_release_one_shot_window_active(now)
-            and left_provenance is SourceProvenance.LIVE
-        )
+                    logger.warning(
+                        "Valve esports sidebar failed, falling back to LPL: %s",
+                        _safe_exception_text(exc),
+                    )
+            esports_choice = self._select_right_esports_sidebar(
+                lol_cards,
+                valve_selected,
+                valve_source_state,
+                now,
+                ewc_card=ewc_card,
+            )
 
         if esports_choice.get("kind") == "ewc":
             ewc_selected = esports_choice["selected"]
             ewc_source_state = esports_choice["source_state"]
             self._draw_ewc_sidebar(image, left_width, ewc_selected, ewc_source_state, now)
-            return self._attest_sports_dashboard_image(
-                image,
-                left_provenance,
-                self._sports_source_state_provenance(lower_source_state),
-                self._sports_source_state_provenance(ewc_source_state),
-                force_refresh=self._force_refresh_requested(settings),
-                primary_live_override=primary_live_override,
-            )
+            return self._sports_source_state_provenance(ewc_source_state)
 
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
             valve_source_state = esports_choice["source_state"]
             self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
             self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
-            return self._attest_sports_dashboard_image(
-                image,
-                left_provenance,
-                self._sports_source_state_provenance(lower_source_state),
-                self._sports_source_state_provenance(valve_source_state),
-                force_refresh=self._force_refresh_requested(settings),
-                primary_live_override=primary_live_override,
-            )
+            return self._sports_source_state_provenance(valve_source_state)
 
         lol_choice = esports_choice["choice"]
         lol_selected = lol_choice["selected"]
@@ -2560,15 +2638,15 @@ class SportsDashboardCommonMixin:
         lol_league_key = lol_choice["league_key"]
         self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
         self._write_lol_live_state(lol_selected, now, lol_source_state, league_key=lol_league_key)
-        self._draw_lpl_sidebar(image, left_width, lol_selected, lol_source_state, now, league_key=lol_league_key)
-        return self._attest_sports_dashboard_image(
+        self._draw_lpl_sidebar(
             image,
-            left_provenance,
-            self._sports_source_state_provenance(lower_source_state),
-            self._sports_source_state_provenance(lol_source_state),
-            force_refresh=self._force_refresh_requested(settings),
-            primary_live_override=primary_live_override,
+            left_width,
+            lol_selected,
+            lol_source_state,
+            now,
+            league_key=lol_league_key,
         )
+        return self._sports_source_state_provenance(lol_source_state)
 
     @staticmethod
     def _sports_source_state_provenance(source_state):
@@ -2611,6 +2689,17 @@ class SportsDashboardCommonMixin:
             provenance = SourceProvenance.LIVE
         elif SourceProvenance.LOCAL_FALLBACK in provenances:
             provenance = SourceProvenance.LOCAL_FALLBACK
+        elif SourceProvenance.LIVE in provenances:
+            # A composite should advance when at least one real remote panel
+            # advanced.  Other panels may honestly retain their last successful
+            # cache (and render that source state/timestamp) without holding all
+            # new scores hostage.  Local placeholders still fail closed above.
+            provenance = SourceProvenance.LIVE
+            if SourceProvenance.STALE_CACHE in provenances:
+                logger.info(
+                    "Sports Dashboard promoting live panel updates alongside labeled stale cache. | panels: %s",
+                    ",".join(item.value for item in provenances),
+                )
         elif SourceProvenance.STALE_CACHE in provenances:
             provenance = SourceProvenance.STALE_CACHE
         elif force_refresh and any(
@@ -2622,8 +2711,6 @@ class SportsDashboardCommonMixin:
             for panel_provenance in provenances
         ):
             provenance = SourceProvenance.STALE_CACHE
-        elif SourceProvenance.LIVE in provenances:
-            provenance = SourceProvenance.LIVE
         elif SourceProvenance.FRESH_CACHE in provenances:
             provenance = SourceProvenance.FRESH_CACHE
         else:
@@ -2640,6 +2727,70 @@ class SportsDashboardCommonMixin:
         }:
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
+
+    def _apply_sports_region_cache(self, image, region_name, box, provenance):
+        """Advance or restore one independently refreshed dashboard region."""
+        if not isinstance(provenance, SourceProvenance):
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        cache_path = self._sports_region_cache_path(region_name, box)
+        if provenance in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}:
+            try:
+                region = image.crop(box).convert("RGB")
+                temporary = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+                region.save(temporary, format="PNG", optimize=True)
+                os.replace(temporary, cache_path)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to save Sports Dashboard %s region cache: %s",
+                    region_name,
+                    _safe_exception_text(exc),
+                )
+            return provenance
+
+        try:
+            cached = safe_open_image(
+                cache_path,
+                limits=ImageLimits(max_bytes=4 * 1024 * 1024),
+            ).convert("RGB")
+            expected_size = (max(1, box[2] - box[0]), max(1, box[3] - box[1]))
+            if cached.size != expected_size:
+                raise ValueError(
+                    f"cached region size {cached.size!r} does not match {expected_size!r}"
+                )
+            image.paste(cached, (box[0], box[1]))
+            logger.info(
+                "Sports Dashboard restored %s region from its last successful render. | source: %s",
+                region_name,
+                provenance.value,
+            )
+            return SourceProvenance.STALE_CACHE
+        except (OSError, ValueError) as exc:
+            logger.info(
+                "Sports Dashboard %s region has no compatible successful render cache: %s",
+                region_name,
+                _safe_exception_text(exc),
+            )
+            return provenance
+
+    def _sports_region_cache_path(self, region_name, box):
+        width = max(1, int(box[2]) - int(box[0]))
+        height = max(1, int(box[3]) - int(box[1]))
+        palette = {
+            key: list(COLORS[key])
+            for key in ("paper", "panel", "panel2", "text", "border", "line")
+            if key in COLORS
+        }
+        signature = hashlib.sha256(
+            json.dumps(
+                {"version": 1, "size": [width, height], "palette": palette},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:12]
+        safe_name = re.sub(r"[^a-z0-9_-]+", "-", str(region_name or "region").lower()).strip("-")
+        cache_dir = self._sports_dashboard_cache_dir() / "render_regions"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f"{safe_name or 'region'}-{width}x{height}-{signature}.png"
 
     def _sports_dashboard_theme_context(self, settings, device_config, now):
         settings = settings or {}

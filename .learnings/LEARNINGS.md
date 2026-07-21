@@ -1511,3 +1511,132 @@ For every plugin freshness fix, verify two separate layers: the cache decides wh
 - **Notes**: Enabled displayed-instance live refresh, passed 4179 tests, deployed `deploy-20260720-liveradar-live-6e7a4219716a`, and observed an automatic live-lane success with six changed screenshot hashes and a new hardware display commit.
 
 ---
+
+## [LRN-20260720-002] best_practice
+
+**Logged**: 2026-07-20T19:06:53-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Weather latest-success timestamps can represent a fresh-data Pillow fallback rather than a successful normal HTML render.
+
+### Details
+On `ColoredEpaperFrame`, Weather continued to fetch valid OpenWeather data and update its instance timestamp, but Chromium 150 repeatedly timed out while converting the Weather HTML page to PNG. The active release then deliberately cached the fresh-data `PIL SAFE MODE` fallback, so `/playlist` reported a recent successful refresh even though the user-visible layout was degraded. On 2026-07-20 there were 29 matching Chromium timeouts and 29 Weather fallback renders; the latest attempt spent the full 60-second browser timeout before falling back. The 416 MB device also had substantial swap use, and Chromium itself warned that devices below 1 GB are unsupported for this workload.
+
+### Suggested Action
+When Weather looks abnormal, check the instance PNG and pair latest-success age with `Chromium render timed out` plus `Weather HTML render failed` warnings. Treat provider freshness and visual-render health as separate signals. Preserve the approved HTML/CSS/Chart.js UI: first repair the browser lifecycle and prove the original screenshot live, then cache only successful original screenshots as the failure fallback. Do not silently replace the product UI with a hand-drawn approximation or merely increase the timeout.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/weather/weather.py, inkypi-weather/package/InkyPi/src/plugins/weather/render/weather.html, inkypi-weather/package/InkyPi/src/utils/browser_renderer.py
+- Tags: weather, chromium-150, pillow-fallback, latest-success, visual-degradation, raspberry-pi, swap-pressure
+- See Also: LRN-20260710-009, LRN-20260719-003
+- Pattern-Key: weather.refresh_success_can_be_visual_fallback
+- Recurrence-Count: 1
+- First-Seen: 2026-07-20
+- Last-Seen: 2026-07-20
+
+### Resolution
+- **Resolved**: 2026-07-20T21:55:53-07:00
+- **Commit/PR**: operational
+- **Notes**: Reduced Chromium virtual-time budget from the outer 60-second deadline to 2 seconds, restored the original Weather template as the only primary renderer, added last-good original screenshot fallback, deployed `deploy-20260721-final-fresh-ui-3f98caa77a38`, and proved the original 800x480 live layout with visible forecast borders.
+
+---
+
+## [LRN-20260720-003] correction
+
+**Logged**: 2026-07-20T21:58:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+An approved plugin screenshot is a UI contract, and visual acceptance must use current live media rather than fixtures or fallback layouts.
+
+### Details
+Weather's native redraw and Steam Charts' low-memory Pillow-first path were technically functional but changed layouts the user had already approved. A Steam fixture preview also hid real covers and an old instance image still showed a 04:41 refresh time. The correct acceptance chain is original renderer first, current provider data, real covers/screenshots, in-image timestamp verification, and live-device proof. Fallback renderers may preserve availability but must not silently become the normal layout solely because memory is constrained.
+
+### Suggested Action
+Before changing a renderer, compare against the last approved live screenshot and preserve its hierarchy. For image-forward plugins, reject placeholder-only mocks as final evidence. Verify the visible timestamp, real media, full text, and alignment together; a successful refresh task does not prove the displayed content is current.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/weather/weather.py, inkypi-weather/package/InkyPi/src/plugins/weather/render/weather.html, inkypi-weather/package/InkyPi/src/plugins/steam_charts/steam_charts.py, inkypi-weather/package/InkyPi/src/plugins/steam_charts/render/steam_charts.css
+- Tags: approved-ui, live-proof, real-media, visible-timestamp, weather, steam-charts
+- Pattern-Key: plugin_ui.approved_renderer_and_live_media_are_acceptance_contract
+- Recurrence-Count: 1
+- First-Seen: 2026-07-20
+- Last-Seen: 2026-07-20
+
+### Resolution
+- **Resolved**: 2026-07-20T21:55:53-07:00
+- **Commit/PR**: operational
+- **Notes**: Restored both original HTML renderers, proved current Steam covers and timestamps, aligned cover/title tops, wrapped complete titles, and retained native renderers only as explicit or failure fallbacks.
+
+---
+
+## [LRN-20260720-004] best_practice
+
+**Logged**: 2026-07-20T21:58:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Plugin refresh deadlines cover provider I/O and rendering together, so independent fetches and repeated layout measurements must both be bounded.
+
+### Details
+Daily AI News initially spent about 46 seconds on sequential market fallbacks and then evaluated 21 complete font layouts per news column. The task hit its 120-second deadline even though each phase worked in isolation. Fetching the six independent quotes concurrently while preserving output order, and using ten representative font sizes with content-preservation tests, reduced the live refresh to 97.11 seconds. Sports composite regions follow the same independence rule: football, lower sports, and esports must fetch, cache, and fail closed separately rather than promoting or blocking the whole image together.
+
+### Suggested Action
+Budget the complete refresh path, parallelize only independent I/O, preserve deterministic presentation order, and cap expensive fit searches with representative candidates plus no-truncation tests. For composite dashboards, keep per-region provenance, cache keys, and exception boundaries independent.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/daily_ai_news/daily_ai_news.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py
+- Tags: refresh-deadline, bounded-layout, concurrent-fetch, deterministic-order, independent-regions
+- Pattern-Key: plugin_refresh.total_deadline_requires_bounded_independent_phases
+- Recurrence-Count: 1
+- First-Seen: 2026-07-20
+- Last-Seen: 2026-07-20
+
+### Resolution
+- **Resolved**: 2026-07-20T21:55:53-07:00
+- **Commit/PR**: operational
+- **Notes**: Daily AI News completed live in 97.11 seconds; SportsDashboard rendered independently sourced football, main-sports, and esports regions on the deployed device.
+
+---
+
+## [LRN-20260720-005] best_practice
+
+**Logged**: 2026-07-20T21:58:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: release
+
+### Summary
+Windows release staging must normalize CRLF bytes without invoking a mismatched GNU `sed`, and live log evidence must redact query-string secrets.
+
+### Details
+A direct Windows call to GNU `sed -i 's/\r$//'` corrupted final `r` characters in Python identifiers, such as changing `URLError`; that archive was correctly rejected before deployment. The safe workflow is byte-wise CRLF-to-LF normalization, normalized-content comparison against the source tree, archive-entry byte comparison, then transactional deployment. When collecting failure evidence, redact key, appid, token, api_key, access_token, and bearer values before logs leave the device.
+
+### Suggested Action
+Use the repository release builder on a clean staging tree, normalize only line endings with encoding-safe byte or .NET operations, require zero normalized-content mismatches, and inspect key archive entries before upload. Never use cross-platform `sed -i` for release normalization on this Windows workspace; always apply the standard secret-redaction filter to diagnostic logs.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/install/lib/release_archive.py, tools/epaperpod-deploy-zip.ps1
+- Tags: windows, crlf, release-archive, byte-verification, secret-redaction
+- Pattern-Key: release.windows_lf_normalization_requires_byte_verification
+- Recurrence-Count: 1
+- First-Seen: 2026-07-20
+- Last-Seen: 2026-07-20
+
+### Resolution
+- **Resolved**: 2026-07-20T21:55:53-07:00
+- **Commit/PR**: operational
+- **Notes**: Deployed the verified LF-only archive with SHA-256 `3f98caa77a38393fca5faac7f0176ebb6084249365bb76221bf6ea9a90daace8`; service remained active with zero restarts.
+
+---

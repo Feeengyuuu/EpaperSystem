@@ -1,5 +1,6 @@
 import hashlib
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -520,6 +521,57 @@ def test_get_brief_keeps_stale_chinese_cache_instead_of_showing_english_rss(monk
     assert "中文缓存" in brief["warning"]
 
 
+def test_forced_refresh_treats_today_policy_limited_cache_as_fresh(monkeypatch, tmp_path):
+    plugin = _plugin()
+    now = datetime(2026, 6, 17, 8, 0)
+    settings = {
+        "model": "gpt-5-nano",
+        "feed_urls": daily_ai_news_module.DEFAULT_FEEDS,
+        "max_items": "6",
+        "force_refresh": "true",
+    }
+    cache_key = plugin._cache_key(
+        "2026-06-17",
+        "gpt-5-nano",
+        plugin._effective_feeds_text(settings["feed_urls"]),
+        6,
+        None,
+    )
+    (tmp_path / "brief.json").write_text(
+        daily_ai_news_module.json.dumps(
+            {
+                "cache_key": cache_key,
+                "date": "2026-06-17",
+                "generated_at": "2026-06-17T07:41:00",
+                "brief": {"top": [{"title": "今日新闻", "why": "今日摘要"}]},
+                "items": [{"source": "BBC", "title": "今日新闻"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeDeviceConfig:
+        def load_env_key(self, _key):
+            return "configured"
+
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_items",
+        lambda *_args: [
+            {"source": "BBC", "title": "Fresh English", "summary": "Details", "published": "", "link": ""}
+        ],
+    )
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda *_args: {})
+    monkeypatch.setattr(plugin, "_allow_api_call", lambda *_args: False)
+
+    brief = plugin._get_brief(settings, FakeDeviceConfig(), now)
+
+    assert brief["from_cache"] is True
+    assert brief["_source_provenance"] == "fresh_cache"
+    assert brief["brief"]["top"][0]["title"] == "今日新闻"
+
+
 def test_base_background_uses_plain_theme_color_in_night_mode():
     plugin = _plugin()
     bg = (7, 11, 13)
@@ -528,6 +580,23 @@ def test_base_background_uses_plain_theme_color_in_night_mode():
 
     assert img.getpixel((0, 0)) == bg
     assert img.getpixel((7, 5)) == bg
+
+
+def test_night_palette_forces_pure_black_canvas_and_header():
+    palette = DailyAINews._render_palette(
+        _canonical_theme(
+            "night",
+            background=(5, 20, 18),
+            panel=(8, 26, 23),
+            ink=(236, 242, 241),
+            muted=(160, 188, 181),
+            rule=(38, 79, 70),
+            accent=(91, 218, 190),
+        )
+    )
+
+    assert palette["background"] == (0, 0, 0)
+    assert palette["header"] == (0, 0, 0)
 
 
 def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monkeypatch, tmp_path):
@@ -582,7 +651,8 @@ def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monk
     original_day = daily_ai_news_module.get_theme_palette("day")
     assert day_image.getpixel((0, 479)) == original_day["background"]
     assert day_image.getpixel((0, 0)) == original_day["header"]
-    assert night_image.getpixel((0, 479)) == night["palette"]["background"]
+    assert night_image.getpixel((0, 479)) == (0, 0, 0)
+    assert night_image.getpixel((0, 0)) == (0, 0, 0)
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
 
@@ -752,6 +822,33 @@ def test_market_snapshot_rejects_massive_etf_proxy_for_index(monkeypatch):
     assert rows[2]["symbol"] == "^DJI"
     assert rows[2]["source"] == "yahoo"
     assert rows[2]["price"] == 43000.0
+
+
+def test_market_snapshot_fetches_independent_quotes_concurrently(monkeypatch):
+    plugin = _plugin()
+    barrier = threading.Barrier(2)
+
+    monkeypatch.setattr(
+        "plugins.daily_ai_news.daily_ai_news.load_massive_api_key",
+        lambda _device_config: "",
+    )
+
+    def paired_yahoo(symbol, name):
+        barrier.wait(timeout=1.0)
+        return {
+            "symbol": symbol,
+            "name": name,
+            "price": 100.0,
+            "change_pct": 1.0,
+            "as_of": "2026-07-20",
+            "source": "yahoo",
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_yahoo_quote", paired_yahoo)
+
+    snapshot = plugin._fetch_market_snapshot(datetime(2026, 7, 20), object())
+
+    assert sum(len(rows) for rows in snapshot["groups"].values()) == 6
 
 
 def test_parse_brief_json_repairs_model_trailing_commas():
@@ -1040,6 +1137,51 @@ def test_draw_news_items_fit_prefers_style_that_uses_available_height(monkeypatc
     )
 
     assert selected_sizes == [22]
+
+
+def test_draw_news_items_fit_uses_bounded_representative_font_sizes(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 360), "white")
+    draw = ImageDraw.Draw(image)
+    prepared_styles = []
+
+    def fake_prepare(_draw, _items, _width, font_family, style):
+        prepared_styles.append(dict(style))
+        headline_font = plugin._font(font_family, style["title"], "bold")
+        why_font = plugin._font(font_family, style["why"])
+        rows = [(["headline"], ["detail one", "detail two"], 120, headline_font, why_font, style)]
+        return rows, 120
+
+    monkeypatch.setattr(plugin, "_prepare_news_rows_for_style", fake_prepare)
+
+    plugin._draw_news_items_fit(
+        draw,
+        [{"title": "headline", "why": "detail"}],
+        0,
+        0,
+        360,
+        (180, 120, 20),
+        (0, 0, 0),
+        (70, 70, 70),
+        300,
+        1,
+        "Microsoft YaHei",
+        drop_why_if_needed=True,
+    )
+
+    assert [style["title"] for style in prepared_styles] == [
+        26,
+        24,
+        22,
+        18,
+        16,
+        14,
+        12,
+        10,
+        8,
+        6,
+    ]
+    assert all("why_line_limit" not in style for style in prepared_styles)
 
 
 def test_draw_news_items_fit_uses_larger_type_for_sparse_news(monkeypatch):

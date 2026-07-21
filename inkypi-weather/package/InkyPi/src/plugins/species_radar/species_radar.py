@@ -53,6 +53,7 @@ from utils.app_utils import (
 from utils.cache_manager import CacheBudget
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.image_utils import text_width
+from utils.theme_utils import normalize_palette_colors
 
 logger = logging.getLogger(__name__)
 
@@ -3084,6 +3085,7 @@ LIMIT 8
     def _palette(self, settings, now=None, device_config=None):
         settings = settings or {}
         context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config or settings, now=now)
+        context = normalize_palette_colors(deepcopy(context))
         if context.get("mode") != "night":
             return {
                 "paper": COMIC_PAPER,
