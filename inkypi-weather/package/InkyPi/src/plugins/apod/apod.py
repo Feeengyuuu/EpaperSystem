@@ -13,9 +13,10 @@ from PIL import Image
 from io import BytesIO
 from utils.http_client import get_http_session
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import hashlib
 import json
 import logging
@@ -23,7 +24,6 @@ import os
 import random
 import re
 from random import randint
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ class ApodSelection:
     resolved_record_date: str | None = None
     record_cache_key: str | None = None
     provisional: bool = False
+    candidate_dates: tuple[str, ...] = ()
 
 
 _SELECTION_FILENAME = "selection.json"
@@ -117,6 +118,39 @@ def _selection_fingerprint(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _device_day(device_config) -> date:
+    """Resolve the display's local calendar day without trusting the host zone."""
+
+    configured = device_config.get_config("timezone", default="UTC")
+    try:
+        timezone_info = ZoneInfo(str(configured or "UTC"))
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        timezone_info = timezone.utc
+    return datetime.now(timezone_info).date()
+
+
+def _random_candidate_dates(device_day: date, rng: random.Random) -> tuple[str, ...]:
+    """Choose a unique bounded compatibility sequence for one device day."""
+
+    latest = max(_RANDOM_APOD_START, device_day)
+    day_count = (latest - _RANDOM_APOD_START).days + 1
+    attempts = min(RANDOM_APOD_MAX_ATTEMPTS, day_count)
+    used_offsets: set[int] = set()
+    candidates: list[str] = []
+    for _ in range(attempts):
+        random_offset = rng.randint(0, day_count - 1)
+        for step in range(day_count):
+            offset = (random_offset + step) % day_count
+            if offset in used_offsets:
+                continue
+            used_offsets.add(offset)
+            candidates.append(
+                (_RANDOM_APOD_START + timedelta(days=offset)).isoformat()
+            )
+            break
+    return tuple(candidates)
+
+
 def _resolve_selection(
     *,
     settings: Mapping[str, Any],
@@ -157,15 +191,14 @@ def _resolve_selection(
         return persisted
 
     if mode == "random":
-        latest = max(_RANDOM_APOD_START, device_day)
-        selected_date = _RANDOM_APOD_START + timedelta(
-            days=rng.randint(0, (latest - _RANDOM_APOD_START).days)
-        )
+        candidate_dates = _random_candidate_dates(device_day, rng)
+        selected_date = date.fromisoformat(candidate_dates[0])
         requested_date = selected_date.isoformat()
         provisional = True
     else:
         selected_date = date.fromisoformat(requested_date)
         provisional = False
+        candidate_dates = ()
 
     record_cache_key = hashlib.sha256(
         f"{paths.identity_key}:{selected_date.isoformat()}".encode("utf-8")
@@ -178,6 +211,7 @@ def _resolve_selection(
         resolved_record_date=selected_date.isoformat(),
         record_cache_key=record_cache_key,
         provisional=provisional,
+        candidate_dates=candidate_dates,
     )
     _persist_selection(paths, selection)
     return selection
@@ -193,10 +227,17 @@ def _read_selection(path: Path) -> ApodSelection | None:
             return None
         selected = raw.get("selected_apod_date")
         record_key = raw.get("record_cache_key")
+        candidate_dates = raw.get("candidate_dates", [])
         if selected is not None and not isinstance(selected, str):
             return None
         if record_key is not None and not isinstance(record_key, str):
             return None
+        if not isinstance(candidate_dates, list) or not all(
+            isinstance(candidate, str) for candidate in candidate_dates
+        ):
+            return None
+        for candidate in candidate_dates:
+            date.fromisoformat(candidate)
         return ApodSelection(
             device_day=str(raw["device_day"]),
             mode=mode,
@@ -205,6 +246,7 @@ def _read_selection(path: Path) -> ApodSelection | None:
             resolved_record_date=selected,
             record_cache_key=record_key,
             provisional=bool(raw["provisional"]),
+            candidate_dates=tuple(candidate_dates),
         )
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -222,6 +264,24 @@ def _selection_matches(
         and selection.fingerprint == fingerprint
         and selection.resolved_record_date is not None
         and selection.record_cache_key is not None
+        and (
+            mode != "random"
+            or (
+                bool(selection.candidate_dates)
+                and (
+                    not selection.provisional
+                    or selection.candidate_dates[0] == selection.resolved_record_date
+                )
+                and len(selection.candidate_dates) <= RANDOM_APOD_MAX_ATTEMPTS
+                and len(set(selection.candidate_dates)) == len(selection.candidate_dates)
+                and all(
+                    _RANDOM_APOD_START
+                    <= date.fromisoformat(candidate)
+                    <= device_day
+                    for candidate in selection.candidate_dates
+                )
+            )
+        )
     )
 
 
@@ -236,6 +296,7 @@ def _persist_selection(paths: InstancePaths, selection: ApodSelection) -> None:
             "selection_fingerprint": selection.fingerprint,
             "provisional": selection.provisional,
             "record_cache_key": selection.record_cache_key,
+            "candidate_dates": list(selection.candidate_dates),
         },
     )
 
@@ -253,6 +314,7 @@ def _resolved_selection(
             f"{paths.identity_key}:{record_date}".encode("utf-8")
         ).hexdigest(),
         provisional=False,
+        candidate_dates=selection.candidate_dates,
     )
     _persist_selection(paths, resolved)
     return resolved
@@ -284,7 +346,7 @@ class Apod(BasePlugin):
         paths = _instance_paths(self)
         selection = _resolve_selection(
             settings=settings,
-            device_day=datetime.now().date(),
+            device_day=_device_day(device_config),
             paths=paths,
             rng=random.Random(),
         )
@@ -294,13 +356,11 @@ class Apod(BasePlugin):
 
         if selection.mode == "random":
             data = None
-            random_dates = [selection.resolved_record_date]
-            if selection.provisional:
-                random_dates.extend(
-                    candidate
-                    for candidate in self._random_apod_dates()
-                    if candidate != selection.resolved_record_date
-                )
+            random_dates = (
+                selection.candidate_dates
+                if selection.provisional
+                else (selection.resolved_record_date,)
+            )
             for random_date in random_dates[:RANDOM_APOD_MAX_ATTEMPTS]:
                 params["date"] = random_date
                 logger.info(f"Fetching random APOD from date: {random_date}")
@@ -340,11 +400,11 @@ class Apod(BasePlugin):
                     f"{RANDOM_APOD_MAX_ATTEMPTS} random dates."
                 )
         else:
+            params["date"] = selection.requested_date
             if selection.mode == "custom":
-                params["date"] = selection.requested_date
                 logger.info(f"Fetching APOD from custom date: {params['date']}")
             else:
-                logger.info("Fetching today's APOD")
+                logger.info("Fetching today's APOD for %s", params["date"])
 
             data = self._fetch_apod(session, params)
             if data.get("media_type") != "image":
@@ -392,24 +452,6 @@ class Apod(BasePlugin):
             f"APOD API response received: {data.get('title', 'No title')}"
         )
         return data
-
-    @staticmethod
-    def _random_apod_dates():
-        start = datetime(2015, 1, 1)
-        end = datetime.today()
-        day_count = (end - start).days + 1
-        attempt_count = min(RANDOM_APOD_MAX_ATTEMPTS, day_count)
-        used_offsets = set()
-
-        for _ in range(attempt_count):
-            random_offset = randint(0, day_count - 1)
-            for step in range(day_count):
-                offset = (random_offset + step) % day_count
-                if offset in used_offsets:
-                    continue
-                used_offsets.add(offset)
-                yield (start + timedelta(days=offset)).strftime("%Y-%m-%d")
-                break
 
     def _write_apod_context(self, data, image_url):
         title = str(data.get("title") or "Astronomy Picture of the Day").strip()

@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -117,7 +118,10 @@ def test_apod_http_500_fails_fast_without_logging_api_key(monkeypatch, caplog):
 
     assert calls == [{
         "url": "https://api.nasa.gov/planetary/apod",
-        "params": {"api_key": api_key},
+        "params": {
+            "api_key": api_key,
+            "date": datetime.now(timezone.utc).date().isoformat(),
+        },
         "timeout": 10,
     }]
     assert api_key not in caplog.text
@@ -296,6 +300,86 @@ def test_apod_random_mode_reuses_the_resolved_same_day_selection(monkeypatch):
     ]
 
 
+def test_apod_today_uses_configured_device_timezone_and_explicit_date(monkeypatch):
+    calls = []
+
+    class Session:
+        def get(self, _url, params=None, timeout=None):
+            calls.append(dict(params or {}))
+            return FakeResponse(json_data={
+                "date": "2026-07-22",
+                "hdurl": "https://images.example/apod.jpg",
+                "media_type": "image",
+            })
+
+    class TimezoneDeviceConfig(FakeDeviceConfig):
+        def __init__(self, env, configured_timezone):
+            super().__init__(env)
+            self.configured_timezone = configured_timezone
+
+        def get_config(self, key=None, default=None):
+            if key == "timezone":
+                return self.configured_timezone
+            return super().get_config(key, default)
+
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 7, 23, 0, 30, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(apod_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+    plugin = Apod({"id": "apod"})
+    plugin.image_loader.from_url = lambda *_args, **_kwargs: object()
+    monkeypatch.setattr(plugin, "_overlay_nasa_logo", lambda image: image)
+    monkeypatch.setattr(plugin, "_write_apod_context", lambda *_args: None)
+
+    plugin.generate_image(
+        {},
+        TimezoneDeviceConfig({"NASA_SECRET": "nasa-key"}, "America/Los_Angeles"),
+    )
+    plugin.generate_image(
+        {},
+        TimezoneDeviceConfig({"NASA_SECRET": "nasa-key"}, "not/a-timezone"),
+    )
+
+    assert calls == [
+        {"api_key": "nasa-key", "date": "2026-07-22"},
+        {"api_key": "nasa-key", "date": "2026-07-23"},
+    ]
+
+
+def test_apod_provisional_random_force_repeat_reuses_persisted_candidates(monkeypatch):
+    calls = []
+
+    class Session:
+        def get(self, _url, params=None, timeout=None):
+            calls.append(params["date"])
+            return FakeResponse(json_data={"media_type": "video"})
+
+    class FixedRng:
+        def randint(self, _start, end):
+            return end
+
+    monkeypatch.setattr(apod_module.random, "Random", lambda: FixedRng())
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: Session())
+
+    plugin = Apod({"id": "apod"})
+
+    with pytest.raises(RuntimeError, match="No usable APOD image"):
+        plugin.generate_image({"randomizeApod": "true"}, FakeDeviceConfig({"NASA_SECRET": "nasa-key"}))
+    first_attempt = calls[:]
+
+    with pytest.raises(RuntimeError, match="No usable APOD image"):
+        plugin.generate_image(
+            {"randomizeApod": "true", "forceRefresh": "true"},
+            FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+        )
+
+    assert len(first_attempt) == 5
+    assert calls[5:] == first_attempt
+
+
 def test_apod_random_mode_stops_after_five_unique_non_image_dates(monkeypatch):
     api_calls = []
 
@@ -333,7 +417,7 @@ def test_apod_random_mode_stops_after_five_unique_non_image_dates(monkeypatch):
 @pytest.mark.parametrize(
     ("settings", "expected_params"),
     [
-        ({}, {"api_key": "nasa-key"}),
+        ({}, {"api_key": "nasa-key", "date": datetime.now(timezone.utc).date().isoformat()}),
         (
             {"customDate": "2024-05-07"},
             {"api_key": "nasa-key", "date": "2024-05-07"},

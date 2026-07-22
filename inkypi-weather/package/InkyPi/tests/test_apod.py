@@ -153,6 +153,26 @@ def test_selection_compatibility_random_mode_is_stable_for_the_day(selection_pat
     assert first.provisional is True
 
 
+def test_selection_persists_a_device_day_bounded_random_candidate_sequence(
+    selection_paths,
+):
+    selection = apod_module._resolve_selection(
+        settings={"randomizeApod": "true"},
+        device_day=date(2026, 7, 22),
+        paths=selection_paths,
+        rng=random.Random(17),
+    )
+
+    assert selection.candidate_dates
+    assert len(selection.candidate_dates) == 5
+    assert len(set(selection.candidate_dates)) == 5
+    assert all(
+        date(2015, 1, 1) <= date.fromisoformat(candidate) <= date(2026, 7, 22)
+        for candidate in selection.candidate_dates
+    )
+    assert selection.candidate_dates[0] == selection.resolved_record_date
+
+
 def test_selection_manual_force_repeat_reuses_existing_selection(selection_paths):
     first = apod_module._resolve_selection(
         settings={"randomizeApod": "true"},
@@ -223,6 +243,7 @@ def test_selection_json_is_atomic_and_contains_selection_contract(selection_path
         "selection_fingerprint": selection.fingerprint,
         "provisional": True,
         "record_cache_key": selection.record_cache_key,
+        "candidate_dates": list(selection.candidate_dates),
     }
     assert not list(selection_paths.data.glob("selection.json.*.tmp"))
 
