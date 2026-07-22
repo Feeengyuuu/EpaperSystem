@@ -14,6 +14,7 @@ from plugins.image_album import image_album as image_album_module  # noqa: E402
 from plugins.image_album.image_album import IMMICH_REQUEST_TIMEOUT_SECONDS, ImageAlbum, ImmichProvider  # noqa: E402
 from plugins.unsplash import unsplash as unsplash_module  # noqa: E402
 from plugins.unsplash.unsplash import Unsplash  # noqa: E402
+from runtime.long_task_executor import InstanceIdentity  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -51,6 +52,17 @@ class FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.exceptions.HTTPError(f"HTTP {self.status_code}")
+
+
+@pytest.fixture(autouse=True)
+def apod_runtime_identity(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        apod_module,
+        "current_instance_identity",
+        lambda: InstanceIdentity("4f83c7ef-0e5a-4df8-bbe1-62d14f9ef531", 1, 1),
+    )
 
 
 
@@ -235,6 +247,52 @@ def test_apod_random_mode_retries_when_first_image_cannot_be_loaded(monkeypatch)
     assert plugin.image_loader.calls == [
         ("https://images.example/oversized.jpg", (800, 480), 40000),
         ("https://images.example/usable.jpg", (800, 480), 40000),
+    ]
+
+
+def test_apod_random_mode_reuses_the_resolved_same_day_selection(monkeypatch):
+    calls = []
+
+    class Session:
+        def __init__(self, responses):
+            self.responses = list(responses)
+
+        def get(self, _url, params=None, timeout=None):
+            calls.append(dict(params or {}))
+            return self.responses.pop(0)
+
+    sessions = iter([
+        Session([
+            FakeResponse(json_data={"date": "2024-05-07", "media_type": "video"}),
+            FakeResponse(json_data={
+                "date": "2024-05-08",
+                "hdurl": "https://images.example/apod.jpg",
+                "media_type": "image",
+            }),
+        ]),
+        Session([
+            FakeResponse(json_data={
+                "date": "2024-05-08",
+                "hdurl": "https://images.example/apod.jpg",
+                "media_type": "image",
+            }),
+        ]),
+    ])
+    monkeypatch.setattr(apod_module, "get_http_session", lambda: next(sessions))
+    monkeypatch.setattr(apod_module, "randint", lambda _start, _end: 0)
+
+    plugin = Apod({"id": "apod"})
+    plugin.image_loader.from_url = lambda *_args, **_kwargs: object()
+    monkeypatch.setattr(plugin, "_overlay_nasa_logo", lambda image: image)
+    monkeypatch.setattr(plugin, "_write_apod_context", lambda *_args: None)
+
+    plugin.generate_image({"randomizeApod": "true"}, FakeDeviceConfig({"NASA_SECRET": "nasa-key"}))
+    plugin.generate_image({"randomizeApod": "true", "forceRefresh": "true"}, FakeDeviceConfig({"NASA_SECRET": "nasa-key"}))
+
+    assert [call["date"] for call in calls] == [
+        calls[0]["date"],
+        calls[1]["date"],
+        "2024-05-08",
     ]
 
 
