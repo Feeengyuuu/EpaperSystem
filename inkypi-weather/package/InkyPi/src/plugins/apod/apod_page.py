@@ -53,10 +53,24 @@ class ApodPageLayoutError(ValueError):
 @dataclass(frozen=True)
 class CaptionLayout:
     caption_top: int
+    caption_height: int
+    show_kicker: bool
     title_en_lines: tuple[str, ...]
     title_zh_lines: tuple[str, ...]
     title_en_font: ImageFont.FreeTypeFont
     title_zh_font: ImageFont.FreeTypeFont | None
+    kicker_font: ImageFont.FreeTypeFont
+    meta_font: ImageFont.FreeTypeFont
+    kicker_y: int | None
+    title_zh_y: int | None
+    title_en_y: int
+    title_bottom: int
+    credit_lines: tuple[str, ...]
+    credit_y: int
+    credit_bottom: int
+    date_copy: str
+    date_y: int
+    date_bottom: int
 
 
 def fit_photo(source: Image.Image, photo_size: tuple[int, int]) -> Image.Image:
@@ -80,14 +94,21 @@ def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
 
 def _load_fonts() -> Mapping[str, ImageFont.FreeTypeFont]:
     return {
-        "brand": _font(17, bold=True),
-        "header_meta": _font(9, bold=True),
-        "label": _font(8, bold=True),
-        "tiny": _font(7, bold=True),
-        "small": _font(9, bold=True),
-        "body": _font(11, bold=True),
-        "metric": _font(14, bold=True),
-        "kp": _font(39, bold=True),
+        "brand": _font(27, bold=True),
+        "header_meta": _font(10, bold=True),
+        "kp_label": _font(10, bold=True),
+        "kp_number": _font(40, bold=True),
+        "kp_state": _font(16, bold=True),
+        "kp_peak": _font(10, bold=True),
+        "grs_value": _font(14, bold=True),
+        "metric_label": _font(12, bold=True),
+        "metric_value": _font(17, bold=True),
+        "probability_label": _font(12, bold=True),
+        "probability_value": _font(14, bold=True),
+        "alert": _font(12, bold=True),
+        "source": _font(10, bold=True),
+        "caption_kicker": _font(10, bold=True),
+        "caption_meta": _font(10, bold=True),
     }
 
 
@@ -103,6 +124,18 @@ def _text_width(draw, text, font) -> int:
 def _line_height(draw, font) -> int:
     bbox = _text_bbox(draw, (0, 0), "Ag国", font)
     return max(1, bbox[3] - bbox[1] + 2)
+
+
+def _lines_extent(draw, lines, font) -> int:
+    """Return the measured bottom of a line block drawn from y=0."""
+
+    if not lines:
+        return 0
+    advance = _line_height(draw, font)
+    return max(
+        index * advance + _text_bbox(draw, (0, 0), line or " ", font)[3]
+        for index, line in enumerate(lines)
+    )
 
 
 def _draw_text(draw, xy, text, *, font, fill=INK_COLOR) -> None:
@@ -175,6 +208,8 @@ def _layout_caption(
     title_en: str,
     title_zh: str | None,
     translation_unavailable: bool,
+    copyright: str | None = None,
+    apod_date: str = "",
 ) -> CaptionLayout:
     """Measure complete title strings and choose a bounded caption layout."""
 
@@ -182,9 +217,9 @@ def _layout_caption(
     en_lines, en_font = _fit_complete_lines(
         draw=draw,
         text=english,
-        sizes=(13, 12, 11, 10, 9, 8, 7),
+        sizes=(14, 13, 12, 11),
         max_width=RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0],
-        max_lines=3,
+        max_lines=6,
         bold=True,
     )
 
@@ -195,26 +230,111 @@ def _layout_caption(
         zh_lines, zh_font = _fit_complete_lines(
             draw=draw,
             text=chinese,
-            sizes=(17, 16, 15, 14, 13, 12, 11, 10, 9),
+            sizes=(20, 19, 18, 17, 16),
             max_width=RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0],
-            max_lines=6,
+            max_lines=3,
             bold=True,
         )
     else:
         zh_lines = ()
         zh_font = None
 
-    title_line_count = len(en_lines) + len(zh_lines)
-    caption_height = min(180, max(116, 116 + 22 * (title_line_count - 2)))
+    kicker_font = _font(10, bold=True)
+    meta_font = _font(10, bold=True)
+    credit_copy = f"CREDIT · {str(copyright or 'NASA / APOD')}"
+    credit_lines = _wrap_complete(
+        draw,
+        credit_copy,
+        meta_font,
+        RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0],
+    )
+    if len(credit_lines) > 2:
+        raise ApodPageLayoutError("complete APOD credit exceeds two metadata lines")
+    date_copy = f"NASA APOD · {str(apod_date or 'date unavailable')}"
+    if _text_width(draw, date_copy, meta_font) > RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]:
+        raise ApodPageLayoutError("complete APOD date does not fit the caption")
+
+    def measure(show_kicker: bool):
+        cursor = 3 + 8
+        kicker_y = None
+        if show_kicker:
+            kicker_y = cursor
+            cursor += _lines_extent(
+                draw, ("TODAY'S ASTRONOMY PICTURE",), kicker_font
+            )
+            cursor += 4
+        else:
+            # Preserve the approved breathing space where the kicker was removed.
+            cursor += 10
+
+        zh_y = cursor if zh_lines else None
+        if zh_lines and zh_font is not None:
+            cursor += _lines_extent(draw, zh_lines, zh_font)
+        if zh_lines and en_lines:
+            cursor += 4
+        en_y = cursor
+        cursor += _lines_extent(draw, en_lines, en_font)
+        title_bottom = cursor
+        cursor += 8
+        credit_y = cursor
+        cursor += _lines_extent(draw, credit_lines, meta_font)
+        credit_bottom = cursor
+        cursor += 3
+        date_y = cursor
+        cursor += _lines_extent(draw, (date_copy,), meta_font)
+        date_bottom = cursor
+        cursor += 9
+        return {
+            "required_height": cursor,
+            "kicker_y": kicker_y,
+            "zh_y": zh_y,
+            "en_y": en_y,
+            "title_bottom": title_bottom,
+            "credit_y": credit_y,
+            "credit_bottom": credit_bottom,
+            "date_y": date_y,
+            "date_bottom": date_bottom,
+        }
+
+    maximum_height = PAGE_SIZE[1] - CAPTION_MIN_TOP
+    minimum_height = PAGE_SIZE[1] - CAPTION_MAX_TOP
+    show_kicker = True
+    measured = measure(show_kicker=True)
+    if measured["required_height"] > maximum_height:
+        show_kicker = False
+        measured = measure(show_kicker=False)
+    if measured["required_height"] > maximum_height:
+        raise ApodPageLayoutError(
+            "complete bilingual metadata exceeds the 180px caption limit"
+        )
+
+    caption_height = max(minimum_height, measured["required_height"])
     caption_top = PAGE_SIZE[1] - caption_height
-    if caption_top < CAPTION_MIN_TOP:
-        raise ApodPageLayoutError("complete bilingual title exceeds caption height")
+
+    def absolute(name):
+        value = measured[name]
+        return None if value is None else caption_top + value
+
     return CaptionLayout(
         caption_top=caption_top,
+        caption_height=caption_height,
+        show_kicker=show_kicker,
         title_en_lines=en_lines,
         title_zh_lines=zh_lines,
         title_en_font=en_font,
         title_zh_font=zh_font,
+        kicker_font=kicker_font,
+        meta_font=meta_font,
+        kicker_y=absolute("kicker_y"),
+        title_zh_y=absolute("zh_y"),
+        title_en_y=absolute("en_y"),
+        title_bottom=absolute("title_bottom"),
+        credit_lines=credit_lines,
+        credit_y=absolute("credit_y"),
+        credit_bottom=absolute("credit_bottom"),
+        date_copy=date_copy,
+        date_y=absolute("date_y"),
+        date_bottom=absolute("date_bottom"),
     )
 
 
@@ -271,31 +391,33 @@ def _draw_kp_panel(draw, rect, snapshot, fonts) -> None:
     draw.rectangle((x1, y1, x2 - 1, y2 - 1), outline=RULE_COLOR, width=1)
     _draw_centered(
         draw,
-        (x1 + 3, y1 + 6, x2 - 3, y1 + 18),
+        (x1 + 3, y1 + 2, x2 - 3, y1 + 18),
         "当前地磁指数 · CURRENT KP",
-        font=fonts["tiny"],
+        font=fonts["kp_label"],
         fill=BLUE_COLOR,
     )
     _draw_centered(
         draw,
-        (x1 + 48, y1 + 20, x2 - 48, y1 + 61),
+        (x1 + 48, y1 + 12, x2 - 48, y1 + 58),
         kp_value,
-        font=fonts["kp"],
+        font=fonts["kp_number"],
         fill=color,
     )
-    _draw_text(draw, (x1 + 216, y1 + 43), "Kp", font=fonts["small"], fill=color)
+    _draw_text(
+        draw, (x1 + 216, y1 + 42), "Kp", font=fonts["metric_label"], fill=color
+    )
     _draw_centered(
         draw,
-        (x1 + 4, y1 + 64, x2 - 4, y1 + 79),
+        (x1 + 4, y1 + 61, x2 - 4, y1 + 79),
         f"CURRENT {current_g} · MODE {mode}",
-        font=fonts["small"],
+        font=fonts["kp_state"],
         fill=color,
     )
     _draw_centered(
         draw,
-        (x1 + 4, y1 + 84, x2 - 4, y2 - 3),
+        (x1 + 4, y1 + 81, x2 - 4, y2 - 3),
         f"48H PEAK · Kp {peak_kp} / {peak_g}",
-        font=fonts["tiny"],
+        font=fonts["kp_peak"],
         fill=INK_COLOR,
     )
 
@@ -316,7 +438,7 @@ def _draw_grs_panel(draw, snapshot, fonts) -> None:
             draw,
             (left + 2, y1 + 7, right - 2, y2 - 2),
             _scale_value(scales, letter),
-            font=fonts["small"],
+            font=fonts["grs_value"],
             fill=INK_COLOR,
         )
 
@@ -324,8 +446,20 @@ def _draw_grs_panel(draw, snapshot, fonts) -> None:
 def _draw_metric_cell(draw, rect, label, value, fonts) -> None:
     x1, y1, x2, y2 = rect
     draw.rectangle((x1, y1, x2 - 1, y2 - 1), outline=RULE_COLOR, width=1)
-    _draw_text(draw, (x1 + 6, y1 + 5), label, font=fonts["tiny"], fill=MUTED_COLOR)
-    _draw_text(draw, (x1 + 6, y1 + 20), value, font=fonts["body"], fill=INK_COLOR)
+    _draw_text(
+        draw,
+        (x1 + 6, y1 + 2),
+        label,
+        font=fonts["metric_label"],
+        fill=MUTED_COLOR,
+    )
+    _draw_text(
+        draw,
+        (x1 + 6, y1 + 18),
+        value,
+        font=fonts["metric_value"],
+        fill=INK_COLOR,
+    )
 
 
 def _draw_metrics_panel(draw, snapshot, fonts) -> None:
@@ -388,7 +522,7 @@ def _draw_probabilities_panel(draw, snapshot, fonts) -> None:
             draw,
             (left + 2, y1 + 4, right - 2, y1 + 14),
             label,
-            font=fonts["tiny"],
+            font=fonts["probability_label"],
             fill=MUTED_COLOR,
         )
         probability = "—" if value is None else f"{value}%"
@@ -396,7 +530,7 @@ def _draw_probabilities_panel(draw, snapshot, fonts) -> None:
             draw,
             (left + 2, y1 + 17, right - 2, y2 - 2),
             probability,
-            font=fonts["small"],
+            font=fonts["probability_value"],
             fill=INK_COLOR,
         )
 
@@ -429,15 +563,14 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
     return "NOAA ALERTS · temporarily unavailable", MUTED_COLOR
 
 
-def _fit_box_copy(draw, text, *, max_width, max_lines=2):
-    for size in (9, 8, 7, 6):
-        font = _font(size, bold=True)
-        lines = _wrap_complete(draw, text, font, max_width)
-        if len(lines) <= max_lines:
-            return lines, font
-    compact = text.split(" · ", 1)[0]
-    font = _font(7, bold=True)
-    return (compact,), font
+def _fit_box_copy(draw, text, *, font, max_width, required_active=False):
+    lines = _wrap_complete(draw, text, font, max_width)
+    if len(lines) <= 2:
+        return lines
+    label = "active alert" if required_active else "alert copy"
+    raise ApodPageLayoutError(
+        f"complete {label} does not fit the fixed cell at 12px"
+    )
 
 
 def _draw_alert_panel(draw, snapshot, fonts) -> None:
@@ -445,7 +578,14 @@ def _draw_alert_panel(draw, snapshot, fonts) -> None:
     text, color = _alert_copy(snapshot)
     draw.rectangle((x1, y1, x2 - 1, y2 - 1), fill=CAPTION_COLOR)
     draw.rectangle((x1, y1, x1 + 2, y2 - 1), fill=color)
-    lines, font = _fit_box_copy(draw, text, max_width=x2 - x1 - 16)
+    font = fonts["alert"]
+    lines = _fit_box_copy(
+        draw,
+        text,
+        font=font,
+        max_width=x2 - x1 - 16,
+        required_active=isinstance(snapshot.alert, Mapping),
+    )
     line_height = _line_height(draw, font)
     y = y1 + max(3, ((y2 - y1) - line_height * len(lines)) // 2)
     for line in lines:
@@ -472,12 +612,12 @@ def _draw_source_panel(draw, snapshot, fonts) -> None:
     observed = _utc_stamp(snapshot.oldest_core_observed_at_utc)
     cached = _utc_stamp(snapshot.fetched_at_utc)
     text = f"NOAA SWPC · OBS {observed} · CACHE {cached}"
-    font = fonts["tiny"]
+    font = fonts["source"]
     if _text_width(draw, text, font) > SOURCE_RECT[2] - SOURCE_RECT[0]:
-        font = _font(6, bold=True)
+        raise ApodPageLayoutError("complete NOAA source timestamps do not fit")
     _draw_text(
         draw,
-        (SOURCE_RECT[0], SOURCE_RECT[1] + 5),
+        (SOURCE_RECT[0], SOURCE_RECT[1] + 3),
         text,
         font=font,
         fill=MUTED_COLOR,
@@ -487,7 +627,7 @@ def _draw_source_panel(draw, snapshot, fonts) -> None:
 def _draw_header(draw, rendered_at_utc, fonts) -> None:
     _draw_text(
         draw,
-        (20, 19),
+        (20, 10),
         "NASAPics × SPACE WEATHER",
         font=fonts["brand"],
         fill=INK_COLOR,
@@ -495,7 +635,7 @@ def _draw_header(draw, rendered_at_utc, fonts) -> None:
     _draw_right(
         draw,
         780,
-        25,
+        24,
         _utc_stamp(rendered_at_utc, include_date=True),
         font=fonts["header_meta"],
         fill=INK_COLOR,
@@ -503,47 +643,54 @@ def _draw_header(draw, rendered_at_utc, fonts) -> None:
     draw.line((0, HEADER_RECT[3] - 1, 799, HEADER_RECT[3] - 1), fill=DIVIDER_COLOR)
 
 
-def _draw_caption(draw, layout, apod, fonts) -> None:
+def _draw_caption(draw, layout) -> None:
     x1 = RIGHT_TEXT_RECT[0]
     x2 = RIGHT_TEXT_RECT[2]
     draw.rectangle((RIGHT_X, layout.caption_top, 799, 479), fill=CAPTION_COLOR)
     draw.rectangle((RIGHT_X, layout.caption_top, 799, layout.caption_top + 2), fill=ORANGE_COLOR)
-    _draw_text(
-        draw,
-        (x1, layout.caption_top + 12),
-        "TODAY'S ASTRONOMY PICTURE",
-        font=fonts["tiny"],
-        fill=ORANGE_COLOR,
-    )
+    if layout.show_kicker and layout.kicker_y is not None:
+        _draw_text(
+            draw,
+            (x1, layout.kicker_y),
+            "TODAY'S ASTRONOMY PICTURE",
+            font=layout.kicker_font,
+            fill=ORANGE_COLOR,
+        )
 
-    y = layout.caption_top + 27
-    if layout.title_zh_lines and layout.title_zh_font is not None:
-        zh_height = _line_height(draw, layout.title_zh_font)
+    if (
+        layout.title_zh_lines
+        and layout.title_zh_font is not None
+        and layout.title_zh_y is not None
+    ):
+        y = layout.title_zh_y
+        zh_advance = _line_height(draw, layout.title_zh_font)
         for line in layout.title_zh_lines:
             _draw_text(draw, (x1, y), line, font=layout.title_zh_font, fill=INK_COLOR)
-            y += zh_height
-        y += 2
-    en_height = _line_height(draw, layout.title_en_font)
+            y += zh_advance
+    y = layout.title_en_y
+    en_advance = _line_height(draw, layout.title_en_font)
     for line in layout.title_en_lines:
         _draw_text(draw, (x1, y), line, font=layout.title_en_font, fill=MUTED_COLOR)
-        y += en_height
+        y += en_advance
 
-    date_text = f"NASA APOD · {apod.date}"
-    credit = str(apod.copyright or "NASA / APOD")
-    credit_font = fonts["tiny"]
-    credit_copy = f"CREDIT · {credit}"
-    if _text_width(draw, credit_copy, credit_font) > x2 - x1:
-        credit_font = _font(6, bold=True)
-    if _text_width(draw, credit_copy, credit_font) > x2 - x1:
-        raise ApodPageLayoutError("complete APOD credit does not fit the caption")
-    _draw_text(draw, (x1, 448), credit_copy, font=credit_font, fill=MUTED_COLOR)
-    _draw_text(draw, (x1, 464), date_text, font=fonts["tiny"], fill=MUTED_COLOR)
+    y = layout.credit_y
+    meta_advance = _line_height(draw, layout.meta_font)
+    for line in layout.credit_lines:
+        _draw_text(draw, (x1, y), line, font=layout.meta_font, fill=MUTED_COLOR)
+        y += meta_advance
+    _draw_text(
+        draw,
+        (x1, layout.date_y),
+        layout.date_copy,
+        font=layout.meta_font,
+        fill=MUTED_COLOR,
+    )
     _draw_right(
         draw,
         x2,
-        464,
+        layout.date_y,
         "FULL-BLEED DAILY",
-        font=fonts["tiny"],
+        font=layout.meta_font,
         fill=MUTED_COLOR,
     )
 
@@ -571,6 +718,8 @@ def render_apod_page(
         title_en=apod.title_en,
         title_zh=title_zh,
         translation_unavailable=translation_unavailable,
+        copyright=apod.copyright,
+        apod_date=apod.date,
     )
 
     draw.rectangle((0, 0, 799, HEADER_RECT[3] - 1), fill=HEADER_COLOR)
@@ -585,6 +734,8 @@ def render_apod_page(
     _draw_probabilities_panel(draw, weather, fonts)
     _draw_alert_panel(draw, weather, fonts)
     _draw_source_panel(draw, weather, fonts)
-    _draw_caption(draw, layout, apod, fonts)
-    draw.line((RIGHT_X - 1, PHOTO_TOP, RIGHT_X - 1, 479), fill=DIVIDER_COLOR)
+    _draw_caption(draw, layout)
+    draw.rectangle(
+        (RIGHT_X - 2, PHOTO_TOP, RIGHT_X - 1, 479), fill=DIVIDER_COLOR
+    )
     return canvas.convert("RGB")

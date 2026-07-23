@@ -1863,9 +1863,65 @@ def test_apod_page_short_caption_has_fixed_photo_and_divider_boundaries():
     assert rendered.mode == "RGB"
     assert rendered.size == (800, 480)
     assert rendered.getpixel((500, 363)) == PHOTO_BLUE
-    assert rendered.getpixel((500, 364)) != PHOTO_BLUE
+    assert rendered.getpixel((500, 364)) == page.ORANGE_COLOR
+    assert rendered.getpixel((500, 367)) == page.CAPTION_COLOR
+    assert rendered.getpixel((366, 200)) == page.DIVIDER_COLOR
     assert rendered.getpixel((367, 200)) == page.DIVIDER_COLOR
     assert rendered.getpixel((368, 200)) == PHOTO_BLUE
+
+
+def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
+    page = _apod_page_module()
+
+    assert page.HEADER_RECT == (0, 0, 800, 65)
+    assert page.LEFT_RECT == (0, 65, 368, 480)
+    assert page.KP_RECT == (20, 77, 354, 180)
+    assert page.GRS_RECT == (20, 190, 354, 218)
+    assert page.METRICS_RECT == (20, 228, 354, 318)
+    assert page.PROBABILITIES_RECT == (20, 326, 354, 364)
+    assert page.ALERT_RECT == (20, 374, 354, 414)
+    assert page.SOURCE_RECT == (20, 456, 354, 476)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _quadrant_image((1200, 400)),
+        _quadrant_image((400, 1200)),
+        _quadrant_image((240, 480), orientation=6),
+    ],
+    ids=["wide", "tall", "exif-rotated"],
+)
+def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
+    page = _apod_page_module()
+    expected = page.fit_photo(source, (432, 299))
+
+    rendered = page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=source,
+        rendered_at_utc=NOW_UTC,
+    )
+
+    edge_points = {
+        (0, 0),
+        (216, 0),
+        (431, 0),
+        (0, 149),
+        (431, 149),
+        (0, 298),
+        (216, 298),
+        (431, 298),
+    }
+    for x, y in edge_points:
+        assert rendered.getpixel((368 + x, 65 + y)) == expected.getpixel((x, y))
+    assert rendered.getpixel((366, 65)) == page.DIVIDER_COLOR
+    assert rendered.getpixel((367, 479)) == page.DIVIDER_COLOR
+    assert rendered.getpixel((368, 364)) == page.ORANGE_COLOR
+    assert rendered.getpixel((799, 364)) == page.ORANGE_COLOR
+    assert rendered.getpixel((500, 367)) == page.CAPTION_COLOR
 
 
 def test_apod_page_maximum_caption_has_fixed_photo_boundary():
@@ -1915,14 +1971,86 @@ def test_apod_caption_layout_uses_true_fonts_and_preserves_complete_text_or_reje
 
     assert isinstance(layout.title_en_font, ImageFont.FreeTypeFont)
     assert "".join(layout.title_en_lines) == title_en
-    assert len(layout.title_en_lines) <= 3
+    assert 11 <= layout.title_en_font.size <= 14
+    assert len(layout.title_en_lines) <= 6
     assert not any("..." in line or "…" in line for line in layout.title_en_lines)
     if title_zh:
         assert isinstance(layout.title_zh_font, ImageFont.FreeTypeFont)
+        assert 16 <= layout.title_zh_font.size <= 20
         assert "".join(layout.title_zh_lines) == title_zh
-        assert len(layout.title_zh_lines) <= 6
+        assert len(layout.title_zh_lines) <= 3
         assert not any("..." in line or "…" in line for line in layout.title_zh_lines)
     assert 300 <= layout.caption_top <= 364
+
+
+def test_apod_caption_allows_complete_english_through_six_lines():
+    page = _apod_page_module()
+    title_en = "i" * 600
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    layout = page._layout_caption(
+        draw=draw,
+        title_en=title_en,
+        title_zh=None,
+        translation_unavailable=False,
+        copyright="NASA / APOD",
+        apod_date="2026-07-22",
+    )
+
+    assert "".join(layout.title_en_lines) == title_en
+    assert 4 <= len(layout.title_en_lines) <= 6
+    assert 11 <= layout.title_en_font.size <= 14
+
+
+def test_apod_caption_rejects_chinese_that_needs_more_than_three_lines():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    with pytest.raises(page.ApodPageLayoutError, match="3-line"):
+        page._layout_caption(
+            draw=draw,
+            title_en="Aurora",
+            title_zh="星" * 100,
+            translation_unavailable=False,
+            copyright="NASA / APOD",
+            apod_date="2026-07-22",
+        )
+
+
+def test_apod_caption_rejects_previous_clamped_title_overflow():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    with pytest.raises(page.ApodPageLayoutError, match="180"):
+        page._layout_caption(
+            draw=draw,
+            title_en="i" * 600,
+            title_zh="星" * 60,
+            translation_unavailable=False,
+            copyright="NASA / APOD",
+            apod_date="2026-07-22",
+        )
+
+
+def test_apod_caption_legal_measured_180px_case_hides_kicker_and_stays_separate():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    layout = page._layout_caption(
+        draw=draw,
+        title_en="i" * 300,
+        title_zh="星" * 60,
+        translation_unavailable=False,
+        copyright="NASA / APOD",
+        apod_date="2026-07-22",
+    )
+
+    assert layout.caption_top == 300
+    assert layout.caption_height == 180
+    assert layout.show_kicker is False
+    assert layout.title_bottom <= layout.credit_y
+    assert layout.credit_bottom <= layout.date_y
+    assert layout.date_bottom <= 480
 
 
 @pytest.mark.parametrize(
@@ -2040,6 +2168,127 @@ def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
         "NOAA SWPC · OBS 12:00Z · CACHE 12:20Z",
     ):
         assert required_copy in all_copy
+
+
+def test_apod_page_draws_every_required_role_at_approved_true_font_size(
+    monkeypatch,
+):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        calls.append((str(text), kwargs.get("font")))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    weather = replace(
+        _page_weather(),
+        magnetic_field={
+            "bt_nt": 5.2,
+            "bz_gsm_nt": -0.04,
+            "bz_direction": "south",
+        },
+        alert_state="active",
+        alert={
+            "kind": "WATCH",
+            "severity": "G2",
+            "headline": "Geomagnetic storm watch",
+        },
+        donki_event={"kind": "FLR", "class_type": "M7.2"},
+    )
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=weather,
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    by_text = {text: font for text, font in calls}
+    assert all(isinstance(font, ImageFont.FreeTypeFont) for _text, font in calls)
+    assert all(font.size >= 10 for _text, font in calls)
+    assert 26 <= by_text["NASAPics × SPACE WEATHER"].size <= 29
+    assert by_text["2026-07-22 12:20Z"].size >= 10
+    assert 36 <= by_text["4.7"].size <= 44
+    assert 16 <= by_text["CURRENT G2 · MODE estimated"].size <= 20
+    assert by_text["太阳风 · WIND"].size >= 12
+    assert 17 <= by_text["455 km/s"].size <= 19
+    assert by_text["NOAA WATCH · G2 · Geomagnetic storm watch"].size >= 12
+    assert by_text["NOAA SWPC · OBS 12:00Z · CACHE 12:20Z"].size >= 10
+    assert by_text["CREDIT · NASA / APOD"].size >= 10
+    assert by_text["NASA APOD · 2026-07-22"].size >= 10
+    assert 16 <= by_text["极光"].size <= 20
+    assert 11 <= by_text["Aurora"].size <= 14
+
+
+def test_apod_page_active_noaa_alert_wins_over_donki_and_preserves_full_copy(
+    monkeypatch,
+):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        calls.append((xy, str(text), kwargs.get("font")))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    weather = replace(
+        _page_weather(),
+        alert_state="active",
+        alert={
+            "kind": "WATCH",
+            "severity": "G2",
+            "headline": "Geomagnetic storm watch",
+        },
+        donki_event={"kind": "FLR", "class_type": "M7.2"},
+    )
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=weather,
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    alert_calls = [
+        (text, font)
+        for (x, y), text, font in calls
+        if page.ALERT_RECT[0] <= x < page.ALERT_RECT[2]
+        and page.ALERT_RECT[1] <= y < page.ALERT_RECT[3]
+    ]
+    assert "".join(text for text, _font in alert_calls) == (
+        "NOAA WATCH · G2 · Geomagnetic storm watch"
+    )
+    assert alert_calls
+    assert all(font.size >= 12 for _text, font in alert_calls)
+    assert not any("DONKI" in text for text, _font in alert_calls)
+
+
+def test_apod_page_rejects_required_active_alert_that_cannot_fit_at_12px():
+    page = _apod_page_module()
+    weather = replace(
+        _page_weather(),
+        alert_state="active",
+        alert={
+            "kind": "WARNING",
+            "severity": "G4",
+            "headline": "W" * 120,
+        },
+    )
+
+    with pytest.raises(page.ApodPageLayoutError, match="active alert"):
+        page.render_apod_page(
+            apod=_page_record(title_en="Aurora", title_zh="极光"),
+            title_zh="极光",
+            translation_unavailable=False,
+            weather=weather,
+            source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+            rendered_at_utc=NOW_UTC,
+        )
 
 
 def test_apod_page_rejects_non_approved_dimensions():
