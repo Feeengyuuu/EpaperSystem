@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 from collections.abc import Mapping
+from pathlib import Path
 
 from dotenv import load_dotenv
 from config_store import ConfigConflictError, ConfigStore, ConfigStoreError
@@ -27,6 +28,14 @@ _SPORTS_LIVE_REFRESH_KEYS = (
     "valveEsportsLiveRefreshEnabled",
     "f1LiveRefreshEnabled",
 )
+
+
+def _nasapics_expectation_path():
+    return (
+        Path(__file__).resolve().parent.parent
+        / "install"
+        / ".nasapics-space-weather-v1.expectation.json"
+    )
 
 
 class ConfigLoadError(ConfigStoreError):
@@ -76,6 +85,7 @@ class Config:
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
+        self._apply_release_bound_nasapics_migration()
         self._repair_legacy_sports_live_refresh_settings()
 
     @staticmethod
@@ -85,6 +95,16 @@ class Config:
         if not isinstance(value, str):
             return False
         return value.strip().lower() in {"false", "0", "no", "off"}
+
+    def _apply_release_bound_nasapics_migration(self):
+        from nasapics_migration import apply_release_bound_nasapics_migration
+
+        release_id = getattr(self.runtime_paths, "release_id", "unknown")
+        apply_release_bound_nasapics_migration(
+            self,
+            expectation_path=_nasapics_expectation_path(),
+            release_id=release_id,
+        )
 
     def _repair_legacy_sports_live_refresh_settings(self):
         """Repair the old blanket-disabled SportsDashboard bundle exactly once.
@@ -330,6 +350,81 @@ class Config:
             "playlist_config": playlist_config,
             "refresh_info": self.refresh_info.to_dict(),
         }
+
+    def commit_detached_playlist_transaction(
+        self,
+        *,
+        expected_config_version,
+        expected_playlist_config,
+        playlist_manager,
+        config_updates,
+    ):
+        """Persist a detached playlist and config updates in one fail-closed CAS."""
+
+        updates = _detach_json(dict(config_updates))
+        if any(field in updates for field in _MODEL_CONFIG_FIELDS):
+            raise ValueError("model fields must be supplied through the detached model")
+        with self._get_write_lock():
+            state = self._config_store.current()
+            self._require_readable_state(state)
+            snapshot = state.snapshot
+            actual_version = snapshot.version if snapshot is not None else 0
+            if actual_version != expected_config_version:
+                self._reload_authoritative_models()
+                raise ConfigConflictError(expected_config_version, actual_version)
+            snapshot_data = {} if snapshot is None else snapshot.data
+            current_playlist = _detach_json(
+                snapshot_data.get(
+                    "playlist_config",
+                    {"playlists": [], "active_playlist": None},
+                )
+            )
+            if current_playlist != _detach_json(expected_playlist_config):
+                self._reload_authoritative_models()
+                raise ConfigConflictError(
+                    expected_config_version,
+                    actual_version,
+                )
+            candidate = _detach_json(snapshot_data)
+            candidate.update(updates)
+            candidate["playlist_config"] = playlist_manager.to_dict()
+            try:
+                self._config_store.commit(expected_config_version, candidate)
+            except ConfigConflictError:
+                self._reload_authoritative_models()
+                raise
+            authoritative = self.get_config(
+                "playlist_config",
+                default={"playlists": [], "active_playlist": None},
+            )
+            self.playlist_manager = PlaylistManager.from_dict(authoritative)
+            self.refresh_info = self.load_refresh_info()
+
+    def capture_detached_playlist_transaction(self):
+        """Capture one authoritative config version and detached playlist model."""
+
+        with self._get_write_lock():
+            state = self._config_store.current()
+            self._require_readable_state(state)
+            snapshot = state.snapshot
+            version = snapshot.version if snapshot is not None else 0
+            snapshot_data = {} if snapshot is None else snapshot.data
+            playlist_config = _detach_json(
+                snapshot_data.get(
+                    "playlist_config",
+                    {"playlists": [], "active_playlist": None},
+                )
+            )
+            detached_payload = _detach_json(playlist_config)
+            self._rename_duplicate_legacy_instances(detached_payload)
+            detached_manager = PlaylistManager.from_dict(detached_payload)
+            return version, playlist_config, detached_manager
+
+    def _reload_authoritative_models(self):
+        state = self._config_store.load()
+        self._require_readable_state(state)
+        self.playlist_manager = self.load_playlist_manager()
+        self.refresh_info = self.load_refresh_info()
 
     def _commit_updates(self, updates, *, model_values=None, replace=False):
         last_conflict = None

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -40,11 +41,15 @@ from update_engine import (  # noqa: E402
 )
 import update_engine as update_engine_module  # noqa: E402
 from preflight import (  # noqa: E402
+    NASAPICS_EXPECTATION_NAME,
+    NASAPICS_MIGRATION_ID,
     PreflightError,
     REQUIRED_RELEASE_PATHS,
+    capture_release_migration_expectations,
     prepare_config_copy,
     validate_release_tree,
 )
+import preflight as preflight_module  # noqa: E402
 
 
 class FakeLinks:
@@ -662,6 +667,37 @@ def test_activation_failure_restores_old_release_unit_and_service(tmp_path, stag
     assert service.enabled is False
 
 
+def test_migration_startup_readiness_failure_rolls_back_candidate_release(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    old = _release(layout, "old", "old-unit")
+    new = _release(layout, "new", "new-unit")
+    expectation = new / "install" / NASAPICS_EXPECTATION_NAME
+    expectation.write_text('{"release_id":"new"}\n', encoding="utf-8")
+    unit_target = tmp_path / "etc" / "inkypi.service"
+    unit_target.parent.mkdir(parents=True)
+    unit_target.write_text("old-unit", encoding="utf-8")
+    links = FakeLinks(old)
+    links.new_target = new
+    service = FakeService("ready")
+    journal = _prepared_journal(layout, "new")
+    coordinator = UpdateCoordinator(
+        layout,
+        service,
+        links=links,
+        managed_files=(ManagedFile("install/inkypi.service", unit_target, 0o644),),
+    )
+
+    with pytest.raises(UpdateFailed, match="rolled back"):
+        coordinator.activate(journal, new)
+
+    assert links.read(layout.current_link) == old
+    assert links.read(layout.previous_link) == old
+    assert journal.phase is UpdatePhase.ROLLED_BACK
+    assert service.active
+    assert expectation.is_file()
+
+
 def test_artifact_hash_and_zip_paths_fail_before_release_switch(tmp_path):
     artifact = tmp_path / "release.zip"
     with zipfile.ZipFile(artifact, "w") as archive:
@@ -757,6 +793,275 @@ def test_preflight_config_migration_uses_copy_and_forces_mock_display(tmp_path):
     assert migrated["name"] == "frame"
 
 
+def _migration_candidate(tmp_path, *, release_id="candidate"):
+    release = tmp_path / "release"
+    install = release / "install"
+    install.mkdir(parents=True)
+    (release / ".release-id").write_text(f"{release_id}\n", encoding="utf-8")
+    (install / ".release-migrations.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "migrations": [NASAPICS_MIGRATION_ID],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return release
+
+
+def _nasapics_config(*, duplicate=False, identity_overrides=None):
+    identity = {
+        "instance_uuid": "11111111-1111-4111-8111-111111111111",
+        "structural_generation": 7,
+        "settings_revision": 11,
+    }
+    identity.update(identity_overrides or {})
+    target = {
+        "plugin_id": "apod",
+        "name": "NASAPics",
+        "plugin_settings": {
+            "randomizeApod": True,
+            "customDate": "2026-07-20",
+            "refreshOnDisplay": True,
+            "unknownSecret": "must-not-enter-expectation",
+        },
+        "refresh": {"interval": 300},
+        "latest_refresh_time": "2026-07-22T01:02:03+00:00",
+        **identity,
+    }
+    plugins = [target]
+    if duplicate:
+        plugins.append(
+            {
+                **target,
+                "instance_uuid": "22222222-2222-4222-8222-222222222222",
+            }
+        )
+    return {
+        "schema_version": 1,
+        "config_revision": 19,
+        "playlist_config": {
+            "active_playlist": "DailyDoseOfDay",
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": plugins,
+                }
+            ],
+        },
+        "refresh_info": {},
+    }
+
+
+def test_preflight_captures_strict_release_bound_nasapics_expectation(
+    tmp_path,
+    monkeypatch,
+):
+    release = _migration_candidate(tmp_path)
+    config = tmp_path / "device.json"
+    original = (
+        json.dumps(_nasapics_config(), ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    config.write_bytes(original)
+    fsynced_files = []
+    fsynced_directories = []
+    monkeypatch.setattr(
+        preflight_module.os,
+        "fsync",
+        lambda descriptor: fsynced_files.append(descriptor),
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "_fsync_directory",
+        lambda path: fsynced_directories.append(Path(path)),
+    )
+
+    captured = capture_release_migration_expectations(
+        release,
+        config,
+        "candidate",
+    )
+
+    expectation_path = release / "install" / NASAPICS_EXPECTATION_NAME
+    assert captured == (expectation_path,)
+    assert config.read_bytes() == original
+    assert stat.S_IMODE(expectation_path.stat().st_mode) == 0o444
+    assert json.loads(expectation_path.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "migration": NASAPICS_MIGRATION_ID,
+        "release_id": "candidate",
+        "target": {
+            "playlist_name": "DailyDoseOfDay",
+            "plugin_id": "apod",
+            "instance_name": "NASAPics",
+            "instance_uuid": "11111111-1111-4111-8111-111111111111",
+            "structural_generation": 7,
+            "settings_revision": 11,
+        },
+    }
+    assert len(fsynced_files) == 1
+    assert fsynced_directories == [release / "install"]
+
+
+@pytest.mark.parametrize(
+    ("request_document", "release_id", "message"),
+    (
+        ({"schema_version": 2, "migrations": [NASAPICS_MIGRATION_ID]}, "candidate", "request"),
+        (
+            {
+                "schema_version": 1,
+                "migrations": [NASAPICS_MIGRATION_ID],
+                "device": "forbidden",
+            },
+            "candidate",
+            "request",
+        ),
+        ({"schema_version": 1, "migrations": ["unknown"]}, "candidate", "migration"),
+        (
+            {"schema_version": 1, "migrations": [NASAPICS_MIGRATION_ID]},
+            "different-release",
+            "release",
+        ),
+    ),
+)
+def test_preflight_rejects_malformed_or_release_mismatched_migration_request(
+    tmp_path,
+    request_document,
+    release_id,
+    message,
+):
+    release = _migration_candidate(tmp_path)
+    (release / "install" / ".release-migrations.json").write_text(
+        json.dumps(request_document) + "\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "device.json"
+    config.write_text(json.dumps(_nasapics_config()), encoding="utf-8")
+
+    with pytest.raises(PreflightError, match=message):
+        capture_release_migration_expectations(release, config, release_id)
+
+    assert not (release / "install" / NASAPICS_EXPECTATION_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("config_document", "message"),
+    (
+        (_nasapics_config(duplicate=True), "exactly one"),
+        (
+            {
+                **_nasapics_config(),
+                "playlist_config": {
+                    "active_playlist": None,
+                    "playlists": [],
+                },
+            },
+            "exactly one",
+        ),
+        (
+            _nasapics_config(
+                identity_overrides={"structural_generation": True}
+            ),
+            "structural_generation",
+        ),
+        (
+            _nasapics_config(identity_overrides={"instance_uuid": "not-a-uuid"}),
+            "instance_uuid",
+        ),
+    ),
+)
+def test_preflight_rejects_non_unique_or_malformed_nasapics_identity(
+    tmp_path,
+    config_document,
+    message,
+):
+    release = _migration_candidate(tmp_path)
+    config = tmp_path / "device.json"
+    config.write_text(json.dumps(config_document), encoding="utf-8")
+
+    with pytest.raises(PreflightError, match=message):
+        capture_release_migration_expectations(release, config, "candidate")
+
+    assert not (release / "install" / NASAPICS_EXPECTATION_NAME).exists()
+
+
+def test_preflight_rejects_preseeded_expectation_before_reading_live_config(tmp_path):
+    release = _migration_candidate(tmp_path)
+    expectation = release / "install" / NASAPICS_EXPECTATION_NAME
+    expectation.write_text('{"preseeded": true}\n', encoding="utf-8")
+
+    with pytest.raises(PreflightError, match="preseeded"):
+        capture_release_migration_expectations(
+            release,
+            tmp_path / "missing-live-config.json",
+            "candidate",
+        )
+
+
+def test_preflight_without_migration_request_captures_nothing(tmp_path):
+    release = tmp_path / "release"
+    (release / "install").mkdir(parents=True)
+    (release / ".release-id").write_text("candidate\n", encoding="utf-8")
+
+    assert capture_release_migration_expectations(
+        release,
+        tmp_path / "missing-live-config.json",
+        "candidate",
+    ) == ()
+
+
+def test_preflight_rejects_release_identity_outside_launcher_grammar(tmp_path):
+    release = _migration_candidate(tmp_path, release_id="bad/release")
+    config = tmp_path / "device.json"
+    config.write_text(json.dumps(_nasapics_config()), encoding="utf-8")
+
+    with pytest.raises(PreflightError, match="release identity"):
+        capture_release_migration_expectations(
+            release,
+            config,
+            "bad/release",
+        )
+
+
+def test_preflight_rejects_release_identity_with_surrounding_whitespace(tmp_path):
+    release = _migration_candidate(tmp_path)
+    (release / ".release-id").write_text(" candidate \n", encoding="utf-8")
+    config = tmp_path / "device.json"
+    config.write_text(json.dumps(_nasapics_config()), encoding="utf-8")
+
+    with pytest.raises(PreflightError, match="release identity"):
+        capture_release_migration_expectations(
+            release,
+            config,
+            "candidate",
+        )
+
+
+def test_preflight_wraps_directory_fsync_failure_as_preflight_error(
+    tmp_path,
+    monkeypatch,
+):
+    release = _migration_candidate(tmp_path)
+    config = tmp_path / "device.json"
+    config.write_text(json.dumps(_nasapics_config()), encoding="utf-8")
+    monkeypatch.setattr(
+        preflight_module,
+        "_fsync_directory",
+        lambda _path: (_ for _ in ()).throw(OSError("injected fsync failure")),
+    )
+
+    with pytest.raises(PreflightError, match="persisted"):
+        capture_release_migration_expectations(
+            release,
+            config,
+            "candidate",
+        )
+
+
 @pytest.mark.parametrize(
     "missing_asset",
     (
@@ -797,6 +1102,16 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
         archive.writestr("install/inkypi-update", "# candidate-updater")
         archive.writestr("install/cli/inkypi-plugin", "# candidate-cli")
         archive.writestr("install/requirements.txt", "example==1.0\n")
+        archive.writestr(
+            "install/.release-migrations.json",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "migrations": [NASAPICS_MIGRATION_ID],
+                }
+            )
+            + "\n",
+        )
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     inspection = inspect_artifact(artifact, digest)
     journal = UpdateJournal.create(layout.journal_path, release_id="candidate")
@@ -805,6 +1120,27 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
 
     def run_command(command, **kwargs):
         calls.append((command, kwargs))
+        if any("preflight.py" in str(item) for item in command):
+            release_root = Path(command[command.index("--release-root") + 1])
+            (release_root / "install" / NASAPICS_EXPECTATION_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "migration": NASAPICS_MIGRATION_ID,
+                        "release_id": "candidate",
+                        "target": {
+                            "playlist_name": "DailyDoseOfDay",
+                            "plugin_id": "apod",
+                            "instance_name": "NASAPics",
+                            "instance_uuid": "11111111-1111-4111-8111-111111111111",
+                            "structural_generation": 7,
+                            "settings_revision": 11,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         if command[1:3] != ["-m", "venv"]:
             return
         staging_venv = Path(command[-1])
@@ -831,6 +1167,7 @@ def test_preparer_publishes_only_after_all_candidate_checks_pass(tmp_path):
     assert release == layout.release_path("candidate")
     assert (release / ".release-id").read_text(encoding="utf-8") == "candidate\n"
     assert (release / "cli" / "inkypi-plugin").is_file()
+    assert (release / "install" / NASAPICS_EXPECTATION_NAME).is_file()
     assert not layout.staging_path("candidate").exists()
     commands = [command for command, _kwargs in calls]
     assert len(commands) == 7
