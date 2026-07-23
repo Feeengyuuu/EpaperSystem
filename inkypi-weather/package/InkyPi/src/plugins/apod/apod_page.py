@@ -212,7 +212,7 @@ def _wrap_complete(draw, text: str, font, max_width: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _fit_complete_lines(
+def _complete_line_candidates(
     *,
     draw,
     text: str,
@@ -220,15 +220,18 @@ def _fit_complete_lines(
     max_width: int,
     max_lines: int,
     bold: bool,
-) -> tuple[tuple[str, ...], ImageFont.FreeTypeFont]:
+) -> tuple[tuple[tuple[str, ...], ImageFont.FreeTypeFont], ...]:
+    candidates = []
     for size in sizes:
         font = _font(size, bold=bold)
         lines = _wrap_complete(draw, text, font, max_width)
         if len(lines) <= max_lines:
-            return lines, font
-    raise ApodPageLayoutError(
-        f"complete title does not fit the {max_lines}-line caption limit"
-    )
+            candidates.append((lines, font))
+    if not candidates:
+        raise ApodPageLayoutError(
+            f"complete title does not fit the {max_lines}-line caption limit"
+        )
+    return tuple(candidates)
 
 
 def _layout_caption(
@@ -244,7 +247,7 @@ def _layout_caption(
     """Measure complete title strings and choose a bounded caption layout."""
 
     english = str(title_en or "Astronomy Picture of the Day")
-    en_lines, en_font = _fit_complete_lines(
+    en_candidates = _complete_line_candidates(
         draw=draw,
         text=english,
         sizes=(14, 13, 12, 11),
@@ -257,7 +260,7 @@ def _layout_caption(
     if not chinese and translation_unavailable:
         chinese = "中文翻译暂不可用"
     if chinese:
-        zh_lines, zh_font = _fit_complete_lines(
+        zh_candidates = _complete_line_candidates(
             draw=draw,
             text=chinese,
             sizes=(20, 19, 18, 17, 16),
@@ -266,8 +269,7 @@ def _layout_caption(
             bold=True,
         )
     else:
-        zh_lines = ()
-        zh_font = None
+        zh_candidates = (((), None),)
 
     kicker_font = _font(10, bold=True)
     meta_font = _font(10, bold=True)
@@ -282,7 +284,14 @@ def _layout_caption(
     if _text_width(draw, date_copy, meta_font) > RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]:
         raise ApodPageLayoutError("complete APOD date does not fit the caption")
 
-    def measure(show_kicker: bool):
+    def measure(
+        *,
+        en_lines,
+        en_font,
+        zh_lines,
+        zh_font,
+        show_kicker: bool,
+    ):
         cursor = 3 + 8
         kicker_y = None
         if show_kicker:
@@ -333,19 +342,40 @@ def _layout_caption(
     ):
         raise ApodPageLayoutError("complete APOD warning exceeds the caption width")
 
-    show_kicker = True
-    measured = measure(show_kicker=True)
-    if measured["required_height"] > maximum_height:
+    selected = None
+    for zh_lines, zh_font in zh_candidates:
+        for en_lines, en_font in en_candidates:
+            for show_kicker in ((True,) if warning_copy else (True, False)):
+                measured = measure(
+                    en_lines=en_lines,
+                    en_font=en_font,
+                    zh_lines=zh_lines,
+                    zh_font=zh_font,
+                    show_kicker=show_kicker,
+                )
+                if measured["required_height"] <= maximum_height:
+                    selected = (
+                        en_lines,
+                        en_font,
+                        zh_lines,
+                        zh_font,
+                        show_kicker,
+                        measured,
+                    )
+                    break
+            if selected is not None:
+                break
+        if selected is not None:
+            break
+    if selected is None:
         if warning_copy:
             raise ApodPageLayoutError(
                 "complete fallback metadata exceeds the 180px caption limit"
             )
-        show_kicker = False
-        measured = measure(show_kicker=False)
-    if measured["required_height"] > maximum_height:
         raise ApodPageLayoutError(
             "complete bilingual metadata exceeds the 180px caption limit"
         )
+    en_lines, en_font, zh_lines, zh_font, show_kicker, measured = selected
 
     caption_height = max(minimum_height, measured["required_height"])
     caption_top = PAGE_SIZE[1] - caption_height

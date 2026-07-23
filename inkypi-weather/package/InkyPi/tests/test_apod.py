@@ -2398,6 +2398,58 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert rendered.getpixel((500, layout.caption_top)) == page.ORANGE_COLOR
 
 
+def test_apod_caption_jointly_fits_complete_titles_and_official_three_part_credit():
+    page = _apod_page_module()
+    title_en = "The Corona Australis Molecular Cloud and the Chandelier Cluster"
+    title_zh = (
+        "南冕座分子云的壮丽广域影像：尘埃、气体与年轻恒星共同勾勒出"
+        "银河系附近恒星诞生区域的复杂结构和绚丽宇宙风景"
+    )
+    copyright_text = (
+        "DES/DOE/FNAL/DECam/CTIO/NOIRLab/NSF/AURA\n"
+        "Image Processing: T.A. Rector (UAA/NOIRLab), "
+        "R. Colombari & M. Zamani (NOIRLab)\n"
+        "Text: Keighley Rockcliffe (NASA GSFC, UMBC CSST, CRESST II)"
+    )
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    layout = page._layout_caption(
+        draw=draw,
+        title_en=title_en,
+        title_zh=title_zh,
+        translation_unavailable=False,
+        copyright=copyright_text,
+        apod_date="2026-07-22",
+    )
+
+    assert "".join(layout.title_en_lines) == title_en
+    assert "".join(layout.title_zh_lines) == title_zh
+    assert "".join(layout.credit_lines) == (
+        f"CREDIT · {copyright_text.replace(chr(10), '')}"
+    )
+    assert 11 <= layout.title_en_font.size <= 14
+    assert layout.title_zh_font is not None
+    assert 16 <= layout.title_zh_font.size <= 20
+    assert (
+        layout.title_en_font.size < 14 or layout.title_zh_font.size < 20
+    )
+    assert layout.show_kicker is False
+    assert layout.meta_font.size >= 10
+    assert 120 <= layout.caption_height <= 180
+    assert layout.caption_top >= 300
+    assert layout.title_bottom <= layout.credit_y
+    assert layout.credit_bottom <= layout.date_y
+    assert layout.date_bottom <= 480
+    assert not any(
+        "..." in line or "…" in line
+        for line in (
+            *layout.title_en_lines,
+            *layout.title_zh_lines,
+            *layout.credit_lines,
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
