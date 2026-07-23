@@ -55,6 +55,7 @@ class CaptionLayout:
     caption_top: int
     caption_height: int
     show_kicker: bool
+    kicker_copy: str
     title_en_lines: tuple[str, ...]
     title_zh_lines: tuple[str, ...]
     title_en_font: ImageFont.FreeTypeFont
@@ -71,6 +72,34 @@ class CaptionLayout:
     date_copy: str
     date_y: int
     date_bottom: int
+
+
+@dataclass(frozen=True)
+class ApodPageMeasurement:
+    """Pure measured geometry shared by media admission and final rendering."""
+
+    caption: CaptionLayout
+    photo_rect: tuple[int, int, int, int]
+    photo_size: tuple[int, int]
+    content_signature: tuple[str, ...]
+
+
+def _measurement_signature(
+    *,
+    apod: "ApodRecord",
+    title_zh: str | None,
+    translation_unavailable: bool,
+    dimensions: tuple[int, int],
+) -> tuple[str, ...]:
+    return (
+        str(apod.title_en),
+        str(title_zh or ""),
+        "1" if translation_unavailable else "0",
+        str(apod.copyright or ""),
+        str(apod.date),
+        str(apod.warning or ""),
+        f"{int(dimensions[0])}x{int(dimensions[1])}",
+    )
 
 
 def fit_photo(source: Image.Image, photo_size: tuple[int, int]) -> Image.Image:
@@ -210,6 +239,7 @@ def _layout_caption(
     translation_unavailable: bool,
     copyright: str | None = None,
     apod_date: str = "",
+    warning: str | None = None,
 ) -> CaptionLayout:
     """Measure complete title strings and choose a bounded caption layout."""
 
@@ -298,9 +328,20 @@ def _layout_caption(
 
     maximum_height = PAGE_SIZE[1] - CAPTION_MIN_TOP
     minimum_height = PAGE_SIZE[1] - CAPTION_MAX_TOP
+    warning_copy = str(warning or "").strip()
+    kicker_copy = warning_copy or "TODAY'S ASTRONOMY PICTURE"
+    if _text_width(draw, kicker_copy, kicker_font) > (
+        RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]
+    ):
+        raise ApodPageLayoutError("complete APOD warning exceeds the caption width")
+
     show_kicker = True
     measured = measure(show_kicker=True)
     if measured["required_height"] > maximum_height:
+        if warning_copy:
+            raise ApodPageLayoutError(
+                "complete fallback metadata exceeds the 180px caption limit"
+            )
         show_kicker = False
         measured = measure(show_kicker=False)
     if measured["required_height"] > maximum_height:
@@ -319,6 +360,7 @@ def _layout_caption(
         caption_top=caption_top,
         caption_height=caption_height,
         show_kicker=show_kicker,
+        kicker_copy=kicker_copy,
         title_en_lines=en_lines,
         title_zh_lines=zh_lines,
         title_en_font=en_font,
@@ -335,6 +377,46 @@ def _layout_caption(
         date_copy=date_copy,
         date_y=absolute("date_y"),
         date_bottom=absolute("date_bottom"),
+    )
+
+
+def measure_apod_page(
+    *,
+    apod: "ApodRecord",
+    title_zh: str | None,
+    translation_unavailable: bool,
+    dimensions: tuple[int, int] = PAGE_SIZE,
+) -> ApodPageMeasurement:
+    """Measure the exact caption and final photo rectangle without decoding media."""
+
+    if tuple(dimensions) != PAGE_SIZE:
+        raise ValueError("APOD page requires the approved 800x480 dimensions")
+    probe = Image.new("RGB", (1, 1), PAGE_COLOR)
+    draw = ImageDraw.Draw(probe)
+    caption = _layout_caption(
+        draw=draw,
+        title_en=apod.title_en,
+        title_zh=title_zh,
+        translation_unavailable=translation_unavailable,
+        copyright=apod.copyright,
+        apod_date=apod.date,
+        warning=apod.warning,
+    )
+    photo_rect = (RIGHT_X, PHOTO_TOP, PAGE_SIZE[0], caption.caption_top)
+    photo_size = (
+        photo_rect[2] - photo_rect[0],
+        photo_rect[3] - photo_rect[1],
+    )
+    return ApodPageMeasurement(
+        caption=caption,
+        photo_rect=photo_rect,
+        photo_size=photo_size,
+        content_signature=_measurement_signature(
+            apod=apod,
+            title_zh=title_zh,
+            translation_unavailable=translation_unavailable,
+            dimensions=dimensions,
+        ),
     )
 
 
@@ -652,7 +734,7 @@ def _draw_caption(draw, layout) -> None:
         _draw_text(
             draw,
             (x1, layout.kicker_y),
-            "TODAY'S ASTRONOMY PICTURE",
+            layout.kicker_copy,
             font=layout.kicker_font,
             fill=ORANGE_COLOR,
         )
@@ -704,28 +786,38 @@ def render_apod_page(
     source_image: Image.Image,
     rendered_at_utc: datetime,
     dimensions: tuple[int, int] = PAGE_SIZE,
+    measurement: ApodPageMeasurement | None = None,
 ) -> Image.Image:
     """Render the approved fixed mirrored page with one full-bleed cover crop."""
 
     if tuple(dimensions) != PAGE_SIZE:
         raise ValueError("APOD page requires the approved 800x480 dimensions")
 
+    measured = measurement or measure_apod_page(
+        apod=apod,
+        title_zh=title_zh,
+        translation_unavailable=translation_unavailable,
+        dimensions=dimensions,
+    )
+    if measured.content_signature != _measurement_signature(
+        apod=apod,
+        title_zh=title_zh,
+        translation_unavailable=translation_unavailable,
+        dimensions=dimensions,
+    ):
+        raise ValueError("APOD page measurement does not match caption content")
+    layout = measured.caption
+    expected_rect = (RIGHT_X, PHOTO_TOP, PAGE_SIZE[0], layout.caption_top)
+    if measured.photo_rect != expected_rect:
+        raise ValueError("APOD page measurement does not match the caption boundary")
+
     canvas = Image.new("RGB", PAGE_SIZE, PAGE_COLOR)
     draw = ImageDraw.Draw(canvas)
     fonts = _load_fonts()
-    layout = _layout_caption(
-        draw=draw,
-        title_en=apod.title_en,
-        title_zh=title_zh,
-        translation_unavailable=translation_unavailable,
-        copyright=apod.copyright,
-        apod_date=apod.date,
-    )
 
     draw.rectangle((0, 0, 799, HEADER_RECT[3] - 1), fill=HEADER_COLOR)
     draw.rectangle((0, LEFT_RECT[1], LEFT_RECT[2] - 1, 479), fill=LEFT_COLOR)
-    photo_size = (PAGE_SIZE[0] - RIGHT_X, layout.caption_top - PHOTO_TOP)
-    canvas.paste(fit_photo(source_image, photo_size), (RIGHT_X, PHOTO_TOP))
+    canvas.paste(fit_photo(source_image, measured.photo_size), (RIGHT_X, PHOTO_TOP))
 
     _draw_header(draw, rendered_at_utc, fonts)
     _draw_kp_panel(draw, KP_RECT, weather, fonts)

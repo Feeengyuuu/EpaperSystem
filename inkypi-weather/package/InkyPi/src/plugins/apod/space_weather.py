@@ -35,6 +35,7 @@ DONKI_CME_ENDPOINT = "https://api.nasa.gov/DONKI/CME"
 _DONKI_CACHE_ENDPOINT = f"{DONKI_FLR_ENDPOINT}|{DONKI_CME_ENDPOINT}"
 
 SOURCE_CACHE_SCHEMA = 1
+AGGREGATE_CACHE_SCHEMA = 1
 NOAA_TIMEOUT_SECONDS = 20
 MAX_PROVIDER_JSON_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_CACHE_BYTES = 2 * 1024 * 1024
@@ -1107,7 +1108,7 @@ def refresh_space_weather(
         for result in (scales, kp)
         if result.envelope is not None and result.envelope.observed_at_utc is not None
     ]
-    return SpaceWeatherSnapshot(
+    snapshot = SpaceWeatherSnapshot(
         fetched_at_utc=now,
         oldest_core_observed_at_utc=min(core_times) if core_times else None,
         current_scales=_freeze(current_scales),
@@ -1129,6 +1130,36 @@ def refresh_space_weather(
         errors=tuple(errors),
         aggregate_state=aggregate_state,
     )
+    cache_dir = getattr(repository, "cache_dir", None)
+    core_admitted = all(
+        result.state == "live" and result.error is None for result in (scales, kp)
+    )
+    if cache_dir is not None and core_admitted:
+        _persist_aggregate_cache(Path(cache_dir) / "aggregate.json", snapshot)
+    return snapshot
+
+
+def _persist_aggregate_cache(path: Path, snapshot: SpaceWeatherSnapshot) -> None:
+    """Persist a bounded diagnostic index without duplicating provider payloads."""
+
+    document = {
+        "schema": AGGREGATE_CACHE_SCHEMA,
+        "fetched_at_utc": _format_utc(snapshot.fetched_at_utc),
+        "oldest_core_observed_at_utc": _optional_utc(
+            snapshot.oldest_core_observed_at_utc
+        ),
+        "aggregate_state": snapshot.aggregate_state.value,
+        "alert_state": snapshot.alert_state,
+        "sources": {
+            name: result.state for name, result in snapshot.sources.items()
+        },
+    }
+    _validate_cache_json_size(
+        document,
+        max_bytes=MAX_SOURCE_CACHE_BYTES,
+        label="space-weather aggregate",
+    )
+    atomic_write_json(path, document)
 
 
 def _result_payload(result: SourceResult) -> Mapping[str, Any]:

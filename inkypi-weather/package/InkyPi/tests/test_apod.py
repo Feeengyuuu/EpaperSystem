@@ -5,6 +5,7 @@ import random
 import sys
 from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,7 +37,11 @@ from plugins.apod.space_weather import (  # noqa: E402
     refresh_space_weather,
     select_donki_event,
 )
-from plugins.base_plugin.render_provenance import SourceProvenance  # noqa: E402
+from plugins.base_plugin.render_provenance import (  # noqa: E402
+    SourceProvenance,
+    attach_source_provenance,
+    read_source_provenance,
+)
 from runtime.long_task_executor import InstanceIdentity  # noqa: E402
 
 
@@ -2304,3 +2309,971 @@ def test_apod_page_rejects_non_approved_dimensions():
             rendered_at_utc=NOW_UTC,
             dimensions=(600, 448),
         )
+
+
+# Task 5: APOD media, fallback, translation, orchestration, and admission.
+
+
+def _image_bytes(size=(960, 640), *, color=PHOTO_BLUE, image_format="JPEG"):
+    buffer = BytesIO()
+    Image.new("RGB", size, color).save(buffer, format=image_format)
+    return buffer.getvalue()
+
+
+def _task5_record(
+    *,
+    apod_date="2026-07-22",
+    media_type="image",
+    title="A Coronal Aurora",
+    url="https://media.example.test/standard.jpg",
+    hdurl="https://media.example.test/hd.jpg",
+    copyright="NASA Test Team",
+):
+    return ApodRecord(
+        selection_key=f"selection-{apod_date}",
+        requested_device_date="2026-07-22",
+        date=apod_date,
+        media_type=media_type,
+        title_en=title,
+        title_zh=None,
+        translation_state="pending",
+        explanation="One exact APOD response.",
+        copyright=copyright,
+        url=url,
+        hdurl=hdurl,
+        image_url=None,
+        image_cache_key=None,
+        fetched_at_utc=NOW_UTC,
+        source_state="live",
+        warning=None,
+    )
+
+
+class _MediaHttp:
+    def __init__(self, payloads):
+        self.payloads = dict(payloads)
+        self.downloads = []
+
+    def stream_to_file(self, method, url, path, **kwargs):
+        self.downloads.append(
+            {
+                "method": method,
+                "url": url,
+                "path": Path(path),
+                "kwargs": kwargs,
+            }
+        )
+        payload = self.payloads[url]
+        if isinstance(payload, Exception):
+            raise payload
+        Path(path).write_bytes(payload)
+        return SimpleNamespace(status=200, data=Path(path), headers={}, url=url)
+
+
+def test_apod_media_prefers_valid_standard_url_without_touching_hd(
+    monkeypatch, apod_storage
+):
+    standard = "https://media.example.test/standard.jpg"
+    hd = "https://media.example.test/hd.jpg"
+    http = _MediaHttp({standard: _image_bytes(), hd: _image_bytes((1600, 1200))})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(apod_storage, preview_namespace="media-standard")
+
+    blob, selected_url = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=standard, hdurl=hd),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    digest = hashlib.sha256(standard.encode("utf-8")).hexdigest()
+    assert selected_url == standard
+    assert digest in blob.name
+    assert blob.is_file()
+    assert [item["url"] for item in http.downloads] == [standard]
+
+
+@pytest.mark.parametrize(
+    "standard_payload",
+    [b"not-an-image", _image_bytes((200, 120))],
+    ids=["corrupt", "undersized"],
+)
+def test_apod_media_uses_hd_only_after_standard_is_invalid_or_undersized(
+    monkeypatch, apod_storage, standard_payload
+):
+    standard = "https://media.example.test/standard.jpg"
+    hd = "https://media.example.test/hd.jpg"
+    http = _MediaHttp(
+        {standard: standard_payload, hd: _image_bytes((1600, 1200))}
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(apod_storage, preview_namespace="media-hd")
+
+    blob, selected_url = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=standard, hdurl=hd),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert selected_url == hd
+    assert blob.is_file()
+    assert [item["url"] for item in http.downloads] == [standard, hd]
+
+
+def test_apod_media_reuses_persisted_hd_without_retrying_invalid_standard(
+    monkeypatch, apod_storage
+):
+    standard = "https://media.example.test/persisted-standard.jpg"
+    hd = "https://media.example.test/persisted-hd.jpg"
+    http = _MediaHttp(
+        {standard: b"not-an-image", hd: _image_bytes((1600, 1200))}
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-persisted-hd",
+    )
+    record = _task5_record(url=standard, hdurl=hd)
+
+    first_blob, first_url = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=record,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    persisted = replace(
+        record,
+        image_url=first_url,
+        image_cache_key=hashlib.sha256(first_url.encode("utf-8")).hexdigest(),
+    )
+    http.downloads.clear()
+
+    second_blob, second_url = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=persisted,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert first_url == second_url == hd
+    assert first_blob == second_blob
+    assert http.downloads == []
+
+
+def test_apod_media_publication_is_accounted_and_evicts_the_oldest_blob(
+    monkeypatch, apod_storage
+):
+    from utils.cache_manager import CacheBudget, cache_namespace_for_directory
+
+    first_url = "https://media.example.test/accounted-first.jpg"
+    second_url = "https://media.example.test/accounted-second.jpg"
+    http = _MediaHttp(
+        {
+            first_url: _image_bytes(color=(25, 80, 140)),
+            second_url: _image_bytes(color=(150, 80, 25)),
+        }
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-accounting",
+    )
+    namespace = cache_namespace_for_directory(
+        paths.media,
+        CacheBudget(
+            max_age_seconds=24 * 60 * 60,
+            max_files=1,
+            max_bytes=apod_module.MAX_MEDIA_BYTES,
+        ),
+    )
+    monkeypatch.setattr(
+        apod_storage,
+        "managed_cache_namespace",
+        lambda _directory: namespace,
+    )
+
+    first_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=first_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    first_status = namespace.status()
+    second_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=second_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    final_status = namespace.status()
+
+    assert first_status.files == 1
+    assert first_status.bytes == len(http.payloads[first_url])
+    assert not first_blob.exists()
+    assert second_blob.is_file()
+    assert final_status.files == 1
+    assert final_status.bytes == len(http.payloads[second_url])
+    assert final_status.evicted_total >= 1
+    assert not [
+        path for path in paths.media.iterdir() if path.name.endswith(".tmp")
+    ]
+
+
+def test_apod_media_cache_hit_refreshes_managed_lru_before_next_eviction(
+    monkeypatch, apod_storage
+):
+    from utils.cache_manager import CacheBudget, cache_namespace_for_directory
+
+    first_url = "https://media.example.test/lru-first.jpg"
+    second_url = "https://media.example.test/lru-second.jpg"
+    third_url = "https://media.example.test/lru-third.jpg"
+    http = _MediaHttp(
+        {
+            first_url: _image_bytes(color=(20, 60, 120)),
+            second_url: _image_bytes(color=(120, 60, 20)),
+            third_url: _image_bytes(color=(60, 120, 20)),
+        }
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-lru-touch",
+    )
+    namespace = cache_namespace_for_directory(
+        paths.media,
+        CacheBudget(
+            max_age_seconds=24 * 60 * 60,
+            max_files=2,
+            max_bytes=apod_module.MAX_MEDIA_BYTES,
+        ),
+    )
+    monkeypatch.setattr(
+        apod_storage,
+        "managed_cache_namespace",
+        lambda _directory: namespace,
+    )
+
+    first_record = _task5_record(url=first_url, hdurl=None)
+    first_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=first_record,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    second_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=second_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    persisted_first = replace(
+        first_record,
+        image_url=first_url,
+        image_cache_key=hashlib.sha256(first_url.encode("utf-8")).hexdigest(),
+    )
+    apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=persisted_first,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    third_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=third_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert first_blob.is_file()
+    assert not second_blob.exists()
+    assert third_blob.is_file()
+    assert namespace.status().files == 2
+
+
+def test_apod_media_full_sha_namespace_is_global_across_trusted_instances(
+    monkeypatch, apod_storage
+):
+    media_url = "https://media.example.test/shared.jpg"
+    http = _MediaHttp({media_url: _image_bytes()})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+
+    monkeypatch.setattr(
+        apod_module,
+        "current_instance_identity",
+        lambda: _identity("4f83c7ef-0e5a-4df8-bbe1-62d14f9ef531", 7),
+    )
+    first_paths = apod_module._instance_paths(apod_storage)
+    monkeypatch.setattr(
+        apod_module,
+        "current_instance_identity",
+        lambda: _identity("a2e3b8e3-6eb0-4d31-a7bc-0d0b9beb4737", 3),
+    )
+    second_paths = apod_module._instance_paths(apod_storage)
+
+    first_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=media_url, hdurl=None),
+        paths=first_paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    second_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=media_url, hdurl=None),
+        paths=second_paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
+    assert first_paths.cache != second_paths.cache
+    assert first_paths.data != second_paths.data
+    assert first_paths.media == second_paths.media
+    assert first_blob == second_blob
+    assert digest in first_blob.name
+    assert len(digest) == 64
+    assert len(http.downloads) == 1
+
+
+def test_apod_media_decode_drafts_to_measured_photo_geometry_without_fullscreen_crop(
+    monkeypatch, tmp_path
+):
+    from PIL import JpegImagePlugin
+
+    blob = tmp_path / "large.jpg"
+    blob.write_bytes(_image_bytes((1600, 1200)))
+    draft_calls = []
+    original_draft = JpegImagePlugin.JpegImageFile.draft
+
+    def recording_draft(self, mode, size):
+        draft_calls.append((mode, size))
+        return original_draft(self, mode, size)
+
+    monkeypatch.setattr(JpegImagePlugin.JpegImageFile, "draft", recording_draft)
+
+    decoded = apod_module._decode_media_blob(
+        blob_path=blob,
+        photo_size=(432, 299),
+    )
+
+    assert draft_calls == [("RGB", (432, 299))]
+    assert decoded.mode in {"RGB", "RGBA", "L"}
+    assert decoded.size != (800, 480)
+
+
+def test_apod_media_decode_rejects_large_non_draft_format_before_pixel_load(
+    monkeypatch, tmp_path
+):
+    from PIL import PngImagePlugin
+
+    blob = tmp_path / "large-solid.png"
+    blob.write_bytes(_image_bytes((5000, 4000), image_format="PNG"))
+    load_calls = []
+    original_load = PngImagePlugin.PngImageFile.load
+
+    def recording_load(self, *args, **kwargs):
+        load_calls.append(self.size)
+        return original_load(self, *args, **kwargs)
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", recording_load)
+
+    with pytest.raises(
+        apod_module.ApodMediaUnavailable,
+        match="decoded memory",
+    ):
+        apod_module._decode_media_blob(
+            blob_path=blob,
+            photo_size=(432, 299),
+        )
+
+    assert load_calls == []
+
+
+def test_apod_page_measurement_drives_one_final_photo_cover_crop(monkeypatch):
+    page = _apod_page_module()
+    record = _task5_record(title="Aurora")
+    measurement = page.measure_apod_page(
+        apod=record,
+        title_zh="极光",
+        translation_unavailable=False,
+    )
+    fit_calls = []
+    original_fit = page.ImageOps.fit
+
+    def recording_fit(image, size, **kwargs):
+        fit_calls.append(tuple(size))
+        return original_fit(image, size, **kwargs)
+
+    monkeypatch.setattr(page.ImageOps, "fit", recording_fit)
+
+    rendered = page.render_apod_page(
+        apod=record,
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=Image.new("RGB", (1600, 1200), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+        measurement=measurement,
+    )
+
+    assert rendered.size == (800, 480)
+    assert measurement.photo_size == (
+        measurement.photo_rect[2] - measurement.photo_rect[0],
+        measurement.photo_rect[3] - measurement.photo_rect[1],
+    )
+    assert fit_calls == [measurement.photo_size]
+    assert (800, 480) not in fit_calls
+
+
+def test_apod_page_rejects_stale_measurement_for_different_caption_content():
+    page = _apod_page_module()
+    measured_record = _task5_record(title="Aurora")
+    rendered_record = _task5_record(title="A Different Short Title")
+    measurement = page.measure_apod_page(
+        apod=measured_record,
+        title_zh="极光",
+        translation_unavailable=False,
+    )
+
+    with pytest.raises(ValueError, match="measurement|caption"):
+        page.render_apod_page(
+            apod=rendered_record,
+            title_zh="不同标题",
+            translation_unavailable=False,
+            weather=_page_weather(),
+            source_image=Image.new("RGB", (1600, 1200), PHOTO_BLUE),
+            rendered_at_utc=NOW_UTC,
+            measurement=measurement,
+        )
+
+
+def test_apod_video_fallback_searches_at_most_seven_days_and_keeps_one_response_metadata():
+    records = {
+        "2026-07-22": _task5_record(
+            media_type="video",
+            title="Video Today",
+            url="https://media.example.test/video",
+            hdurl=None,
+        ),
+        "2026-07-21": _task5_record(
+            apod_date="2026-07-21",
+            media_type="video",
+            title="Another Video",
+            url="https://media.example.test/video-2",
+            hdurl=None,
+        ),
+        "2026-07-20": _task5_record(
+            apod_date="2026-07-20",
+            title="Fallback Image Title",
+            url="https://media.example.test/fallback.jpg",
+            hdurl=None,
+            copyright="Fallback Photographer",
+        ),
+    }
+    calls = []
+
+    def fetch_for_date(value):
+        calls.append(value)
+        return records[value]
+
+    resolved, used_fallback = apod_module._resolve_image_record(
+        requested=records["2026-07-22"],
+        fetch_for_date=fetch_for_date,
+        max_prior_days=7,
+    )
+
+    assert used_fallback is True
+    assert calls == ["2026-07-21", "2026-07-20"]
+    assert (
+        resolved.date,
+        resolved.title_en,
+        resolved.copyright,
+        resolved.url,
+    ) == (
+        "2026-07-20",
+        "Fallback Image Title",
+        "Fallback Photographer",
+        "https://media.example.test/fallback.jpg",
+    )
+
+
+def test_apod_video_fallback_stops_after_exactly_seven_prior_days():
+    requested = _task5_record(media_type="video", url=None, hdurl=None)
+    calls = []
+
+    def video_for_date(value):
+        calls.append(value)
+        return _task5_record(apod_date=value, media_type="video", url=None, hdurl=None)
+
+    with pytest.raises(RuntimeError, match="seven|7|image"):
+        apod_module._resolve_image_record(
+            requested=requested,
+            fetch_for_date=video_for_date,
+            max_prior_days=7,
+        )
+
+    assert calls == [f"2026-07-{day:02d}" for day in range(21, 14, -1)]
+
+
+class _TranslationConfig:
+    def __init__(self, values):
+        self.values = dict(values)
+
+    def load_env_key(self, name):
+        return self.values.get(name, "")
+
+
+class _TranslationHttp:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def request_json(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, **kwargs})
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(
+            status=200,
+            data={"choices": [{"message": {"content": outcome}}]},
+            headers={},
+            url=url,
+        )
+
+
+@pytest.mark.parametrize(
+    ("env", "expected_key"),
+    [
+        (
+            {
+                "OPEN_AI_SECRET": "primary-secret",
+                "OPENAI_API_KEY": "alias-secret",
+                "GROQ_API_KEY": "groq-secret",
+            },
+            "primary-secret",
+        ),
+        ({"OPENAI_API_KEY": "alias-secret"}, "alias-secret"),
+    ],
+    ids=["primary-before-alias-and-groq", "openai-alias"],
+)
+def test_apod_translation_openai_key_priority_and_title_only_request(
+    monkeypatch, apod_storage, env, expected_key
+):
+    http = _TranslationHttp(["日冕极光"])
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(apod_storage, preview_namespace=expected_key)
+    title = "A Coronal Aurora"
+
+    translated, unavailable = apod_module._translate_title(
+        title=title,
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=_TranslationConfig(env),
+        context=None,
+    )
+
+    assert (translated, unavailable) == ("日冕极光", False)
+    assert len(http.calls) == 1
+    call = http.calls[0]
+    assert call["url"] == "https://api.openai.com/v1/chat/completions"
+    assert call["headers"]["Authorization"] == f"Bearer {expected_key}"
+    assert call["json"]["messages"][-1]["content"] == title
+    assert "One exact APOD response" not in json.dumps(call["json"])
+
+
+def test_apod_translation_falls_back_to_groq_without_secret_in_errors_or_logs(
+    monkeypatch, apod_storage, caplog
+):
+    openai_secret = "openai-echo-secret"
+    groq_secret = "groq-echo-secret"
+    http = _TranslationHttp(
+        [RuntimeError(f"provider echoed {openai_secret}"), "银河拱门"]
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(apod_storage, preview_namespace="translation-groq")
+
+    translated, unavailable = apod_module._translate_title(
+        title="The Galactic Arch",
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=_TranslationConfig(
+            {"OPEN_AI_SECRET": openai_secret, "GROQ_API_KEY": groq_secret}
+        ),
+        context=None,
+    )
+
+    assert (translated, unavailable) == ("银河拱门", False)
+    assert [call["url"] for call in http.calls] == [
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.groq.com/openai/v1/chat/completions",
+    ]
+    assert http.calls[1]["headers"]["Authorization"] == f"Bearer {groq_secret}"
+    assert openai_secret not in caplog.text
+    assert groq_secret not in caplog.text
+
+
+def test_apod_translation_cache_is_exact_date_plus_title_hash_and_never_cross_reuses(
+    monkeypatch, apod_storage
+):
+    title = "The Galactic Arch"
+    title_hash = hashlib.sha256(title.encode("utf-8")).hexdigest()
+    http = _TranslationHttp(["银河拱门"])
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(apod_storage, preview_namespace="translation-cache")
+    config = _TranslationConfig({"OPEN_AI_SECRET": "translation-secret"})
+
+    first = apod_module._translate_title(
+        title=title,
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=config,
+        context=None,
+    )
+    http.outcomes.append(RuntimeError("offline"))
+    matching_last_good = apod_module._translate_title(
+        title=title,
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=config,
+        context=None,
+    )
+    different_title = apod_module._translate_title(
+        title="A Different Galactic Arch",
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=config,
+        context=None,
+    )
+
+    assert first == ("银河拱门", False)
+    assert matching_last_good == ("银河拱门", False)
+    assert different_title == (None, True)
+    assert len(http.calls) == 2
+    cache_files = list(paths.cache.glob("translation-*.json"))
+    assert len(cache_files) == 1
+    assert title_hash in cache_files[0].name
+    cached = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    assert cached["apod_date"] == "2026-07-22"
+    assert cached["title_sha256"] == title_hash
+    assert cached["title_en"] == title
+    assert cached["title_zh"] == "银河拱门"
+    assert not list(paths.cache.glob("translation-*.json.*.tmp"))
+
+
+def test_apod_translation_unavailable_is_explicit_and_does_not_invent_copy(
+    monkeypatch, apod_storage
+):
+    http = _TranslationHttp([])
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    paths = apod_module._instance_paths(
+        apod_storage, preview_namespace="translation-unavailable"
+    )
+
+    assert apod_module._translate_title(
+        title="English Only",
+        apod_date="2026-07-22",
+        paths=paths,
+        device_config=_TranslationConfig({}),
+        context=None,
+    ) == (None, True)
+    assert http.calls == []
+
+
+class _Task5DeviceConfig(_TranslationConfig):
+    def get_config(self, key=None, default=None):
+        values = {
+            "timezone": "UTC",
+            "orientation": "horizontal",
+            "resolution": "800x480",
+            "width": 800,
+            "height": 480,
+        }
+        if key is None:
+            return values
+        return values.get(key, default)
+
+    def get_resolution(self):
+        return (800, 480)
+
+
+class _OrchestrationHttp(_MediaHttp):
+    def __init__(self, apod_payload, media_payload=None):
+        media_url = apod_payload.get("url")
+        super().__init__(
+            {media_url: media_payload or _image_bytes()} if media_url else {}
+        )
+        self.apod_payload = dict(apod_payload)
+        self.json_calls = []
+
+    def request_json(self, method, url, **kwargs):
+        self.json_calls.append({"method": method, "url": url, **kwargs})
+        return SimpleNamespace(
+            status=200,
+            data=dict(self.apod_payload),
+            headers={},
+            url=url,
+        )
+
+
+def _task5_apod_payload():
+    return {
+        "date": "2026-07-22",
+        "media_type": "image",
+        "title": "A Coronal Aurora",
+        "explanation": "Provider explanation must not enter translation.",
+        "copyright": "NASA Test Team",
+        "url": "https://media.example.test/today.jpg",
+        "hdurl": "https://media.example.test/today-hd.jpg",
+    }
+
+
+def _patch_task5_orchestration(
+    monkeypatch,
+    *,
+    weather,
+    http=None,
+    events=None,
+):
+    events = [] if events is None else events
+    http = _OrchestrationHttp(_task5_apod_payload()) if http is None else http
+    weather_calls = []
+    monkeypatch.setattr(
+        apod_module,
+        "current_instance_identity",
+        lambda: _identity("4f83c7ef-0e5a-4df8-bbe1-62d14f9ef531", 7),
+    )
+    monkeypatch.setattr(
+        apod_module, "_device_day", lambda _config: date(2026, 7, 22)
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    monkeypatch.setattr(
+        apod_module, "current_task_context", lambda: None, raising=False
+    )
+
+    def refresh(repository, **kwargs):
+        weather_calls.append((repository, kwargs))
+        return weather
+
+    def render(**kwargs):
+        events.append("render")
+        assert kwargs["source_image"].size != (800, 480)
+        return Image.new("RGB", (800, 480), PHOTO_BLUE)
+
+    monkeypatch.setattr(apod_module, "refresh_space_weather", refresh, raising=False)
+    monkeypatch.setattr(apod_module, "render_apod_page", render, raising=False)
+    return http, weather_calls, events
+
+
+def test_apod_orchestration_same_day_refreshes_weather_without_apod_or_media_network(
+    monkeypatch, apod_storage
+):
+    weather = _page_weather()
+    events = []
+    http, weather_calls, events = _patch_task5_orchestration(
+        monkeypatch, weather=weather, events=events
+    )
+    context_payloads = []
+    monkeypatch.setattr(
+        apod_module,
+        "write_context",
+        lambda *args, **kwargs: (events.append("context"), context_payloads.append((args, kwargs))),
+    )
+    real_attach = attach_source_provenance
+
+    def recording_attach(image, provenance, **kwargs):
+        events.append("provenance")
+        return real_attach(image, provenance, **kwargs)
+
+    monkeypatch.setattr(
+        apod_module, "attach_source_provenance", recording_attach, raising=False
+    )
+    plugin = apod_storage
+    monkeypatch.setattr(
+        plugin,
+        "_overlay_nasa_logo",
+        lambda _image: pytest.fail("NASA logo overlay must not be called"),
+        raising=False,
+    )
+    config = _Task5DeviceConfig({"NASA_SECRET": "nasa-super-secret"})
+
+    first = plugin.generate_image({}, config)
+    second = plugin.generate_image({"forceRefresh": "true"}, config)
+
+    assert len(http.json_calls) == 1
+    assert http.json_calls[0]["url"] == "https://api.nasa.gov/planetary/apod"
+    assert len(http.downloads) == 1
+    assert len(weather_calls) == 2
+    assert read_source_provenance(first) is SourceProvenance.LIVE
+    assert read_source_provenance(second) is SourceProvenance.LIVE
+    assert events == [
+        "render",
+        "provenance",
+        "context",
+        "render",
+        "provenance",
+        "context",
+    ]
+    serialized_context = json.dumps(context_payloads, default=str)
+    assert "nasa-super-secret" not in serialized_context
+    assert "api_key" not in serialized_context
+    assert "image_url" not in serialized_context
+
+
+def test_apod_orchestration_current_cycle_core_failure_precedes_media_render_and_context(
+    monkeypatch, apod_storage
+):
+    healthy = _page_weather()
+    failed_scales = replace(healthy.scales, state="fresh_cache", error="offline")
+    weather = replace(
+        healthy,
+        scales=failed_scales,
+        aggregate_state=SourceProvenance.FRESH_CACHE,
+    )
+    events = []
+    http, weather_calls, events = _patch_task5_orchestration(
+        monkeypatch, weather=weather, events=events
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "write_context",
+        lambda *_args, **_kwargs: events.append("context"),
+    )
+
+    with pytest.raises(RuntimeError, match="current-cycle|scales|core"):
+        apod_storage.generate_image(
+            {}, _Task5DeviceConfig({"NASA_SECRET": "nasa-key"})
+        )
+
+    assert len(http.json_calls) == 1
+    assert len(weather_calls) == 1
+    assert http.downloads == []
+    assert events == []
+
+
+def test_apod_orchestration_rejects_live_core_result_that_still_has_an_error(
+    monkeypatch, apod_storage
+):
+    healthy = _page_weather()
+    malformed_live = replace(
+        healthy,
+        scales=replace(healthy.scales, state="live", error="semantic failure"),
+    )
+    events = []
+    http, weather_calls, events = _patch_task5_orchestration(
+        monkeypatch, weather=malformed_live, events=events
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "write_context",
+        lambda *_args, **_kwargs: events.append("context"),
+    )
+
+    with pytest.raises(RuntimeError, match="current-cycle|scales|core"):
+        apod_storage.generate_image(
+            {}, _Task5DeviceConfig({"NASA_SECRET": "nasa-key"})
+        )
+
+    assert len(http.json_calls) == 1
+    assert len(weather_calls) == 1
+    assert http.downloads == []
+    assert events == []
+
+
+def test_apod_orchestration_optional_failures_render_fixed_unavailable_snapshot(
+    monkeypatch, apod_storage
+):
+    weather = _page_weather()
+    captured = []
+    http, _weather_calls, _events = _patch_task5_orchestration(
+        monkeypatch, weather=weather
+    )
+
+    def capture_render(**kwargs):
+        captured.append(kwargs["weather"])
+        return Image.new("RGB", (800, 480), PHOTO_BLUE)
+
+    monkeypatch.setattr(apod_module, "render_apod_page", capture_render, raising=False)
+
+    result = apod_storage.generate_image(
+        {}, _Task5DeviceConfig({"NASA_SECRET": "nasa-key"})
+    )
+
+    assert result.size == (800, 480)
+    assert len(captured) == 1
+    assert captured[0].scales.state == "live"
+    assert captured[0].kp.state == "live"
+    assert captured[0].wind_magnetic.state == "unavailable"
+    assert captured[0].alerts.state == "unavailable"
+    assert captured[0].donki.state == "unavailable"
+    assert len(http.downloads) == 1
+
+
+@pytest.mark.parametrize(
+    "aggregate_state",
+    [SourceProvenance.STALE_CACHE, SourceProvenance.LOCAL_FALLBACK],
+)
+def test_apod_provenance_stale_or_local_is_trusted_but_explicitly_skip_cache(
+    monkeypatch, apod_storage, aggregate_state
+):
+    weather = replace(_page_weather(), aggregate_state=aggregate_state)
+    _patch_task5_orchestration(monkeypatch, weather=weather)
+
+    result = apod_storage.generate_image(
+        {}, _Task5DeviceConfig({"NASA_SECRET": "nasa-key"})
+    )
+
+    assert read_source_provenance(result) is aggregate_state
+    assert result.info["inkypi_skip_cache"] is True
+
+
+def test_space_weather_aggregate_cache_is_atomic_and_contains_provenance(tmp_path):
+    repository = _aggregate_repository()
+    repository.cache_dir = tmp_path
+
+    snapshot = refresh_space_weather(
+        repository,
+        nasa_api_key="nasa-key",
+        now_utc=NOW_UTC,
+        context=None,
+    )
+
+    aggregate_path = tmp_path / "aggregate.json"
+    cached = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    assert cached["schema"] == 1
+    assert cached["fetched_at_utc"] == "2026-07-22T12:20:00Z"
+    assert cached["aggregate_state"] == snapshot.aggregate_state.value
+    assert cached["sources"]["scales"] == "live"
+    assert cached["sources"]["kp"] == "live"
+    assert not list(tmp_path.glob("aggregate.json.*.tmp"))
+
+
+def test_space_weather_core_failure_preserves_prior_aggregate_bytes_and_mtime(tmp_path):
+    aggregate_path = tmp_path / "aggregate.json"
+    aggregate_path.write_bytes(b'{"schema":1,"sentinel":"last-good"}')
+    before_bytes = aggregate_path.read_bytes()
+    before_mtime = aggregate_path.stat().st_mtime_ns
+    repository = _aggregate_repository(core_state="fresh_cache")
+    repository.cache_dir = tmp_path
+
+    snapshot = refresh_space_weather(
+        repository,
+        nasa_api_key="nasa-key",
+        now_utc=NOW_UTC,
+        context=None,
+    )
+
+    assert snapshot.scales.state == "fresh_cache"
+    assert snapshot.kp.state == "fresh_cache"
+    assert aggregate_path.read_bytes() == before_bytes
+    assert aggregate_path.stat().st_mtime_ns == before_mtime
