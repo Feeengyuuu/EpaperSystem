@@ -44,6 +44,7 @@ GREEN_COLOR = (28, 158, 72)
 ORANGE_COLOR = (224, 92, 36)
 RED_COLOR = (197, 49, 41)
 BLUE_COLOR = (20, 96, 156)
+TEXT_SEPARATOR = " | "
 
 
 class ApodPageLayoutError(ValueError):
@@ -212,6 +213,12 @@ def _wrap_complete(draw, text: str, font, max_width: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _normalize_inline_metadata(text: str) -> str:
+    """Collapse provider formatting whitespace for one compact display field."""
+
+    return " ".join(str(text).split())
+
+
 def _complete_line_candidates(
     *,
     draw,
@@ -273,14 +280,15 @@ def _layout_caption(
 
     kicker_font = _font(10, bold=True)
     meta_font = _font(10, bold=True)
-    credit_copy = f"CREDIT · {str(copyright or 'NASA / APOD')}"
+    credit_source = _normalize_inline_metadata(copyright or "NASA / APOD")
+    credit_copy = f"CREDIT{TEXT_SEPARATOR}{credit_source}"
     credit_lines = _wrap_complete(
         draw,
         credit_copy,
         meta_font,
         RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0],
     )
-    date_copy = f"NASA APOD · {str(apod_date or 'date unavailable')}"
+    date_copy = f"NASA APOD{TEXT_SEPARATOR}{str(apod_date or 'date unavailable')}"
     if _text_width(draw, date_copy, meta_font) > RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]:
         raise ApodPageLayoutError("complete APOD date does not fit the caption")
 
@@ -335,7 +343,12 @@ def _layout_caption(
 
     maximum_height = PAGE_SIZE[1] - CAPTION_MIN_TOP
     minimum_height = PAGE_SIZE[1] - CAPTION_MAX_TOP
-    warning_copy = str(warning or "").strip()
+    warning_copy = (
+        str(warning or "")
+        .strip()
+        .replace("\N{MIDDLE DOT}", "|")
+        .replace("\N{BULLET}", "|")
+    )
     kicker_copy = warning_copy or "TODAY'S ASTRONOMY PICTURE"
     if _text_width(draw, kicker_copy, kicker_font) > (
         RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]
@@ -502,7 +515,7 @@ def _draw_kp_panel(draw, rect, snapshot, fonts) -> None:
     _draw_centered(
         draw,
         (x1 + 3, y1 + 2, x2 - 3, y1 + 18),
-        "当前地磁指数 · CURRENT KP",
+        f"当前地磁指数{TEXT_SEPARATOR}CURRENT KP",
         font=fonts["kp_label"],
         fill=BLUE_COLOR,
     )
@@ -519,14 +532,14 @@ def _draw_kp_panel(draw, rect, snapshot, fonts) -> None:
     _draw_centered(
         draw,
         (x1 + 4, y1 + 61, x2 - 4, y1 + 79),
-        f"CURRENT {current_g} · MODE {mode}",
+        f"CURRENT {current_g}{TEXT_SEPARATOR}MODE {mode}",
         font=fonts["kp_state"],
         fill=color,
     )
     _draw_centered(
         draw,
         (x1 + 4, y1 + 81, x2 - 4, y2 - 3),
-        f"48H PEAK · Kp {peak_kp} / {peak_g}",
+        f"48H PEAK{TEXT_SEPARATOR}Kp {peak_kp} / {peak_g}",
         font=fonts["kp_peak"],
         fill=INK_COLOR,
     )
@@ -594,7 +607,7 @@ def _draw_metrics_panel(draw, snapshot, fonts) -> None:
     if bt_value != "—":
         bt_value += " nT"
     forecast_value = (
-        f"{str(forecast.get('noaa_scale') or 'G—')} · Kp "
+        f"{str(forecast.get('noaa_scale') or 'G—')}{TEXT_SEPARATOR}Kp "
         f"{_format_number(forecast.get('max_kp'))}"
     )
 
@@ -602,7 +615,11 @@ def _draw_metrics_panel(draw, snapshot, fonts) -> None:
     mid_x = (x1 + x2) // 2
     mid_y = (y1 + y2) // 2
     _draw_metric_cell(
-        draw, (x1, y1, mid_x, mid_y), "太阳风 · WIND", wind_value, fonts
+        draw,
+        (x1, y1, mid_x, mid_y),
+        f"太阳风{TEXT_SEPARATOR}WIND",
+        wind_value,
+        fonts,
     )
     _draw_metric_cell(draw, (mid_x, y1, x2, mid_y), "磁场 Bz", bz_value, fonts)
     _draw_metric_cell(draw, (x1, mid_y, mid_x, y2), "磁场强度 Bt", bt_value, fonts)
@@ -656,7 +673,7 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
             parts.append(severity)
         if headline:
             parts.append(headline)
-        return " · ".join(parts), ORANGE_COLOR
+        return TEXT_SEPARATOR.join(parts), ORANGE_COLOR
 
     event = snapshot.donki_event if isinstance(snapshot.donki_event, Mapping) else None
     if event:
@@ -667,10 +684,10 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
             or event.get("event_id")
             or "active"
         )
-        return f"NASA DONKI · {kind} {detail}", BLUE_COLOR
+        return f"NASA DONKI{TEXT_SEPARATOR}{kind} {detail}", BLUE_COLOR
     if snapshot.alert_state == "confirmed_empty":
-        return "NOAA ALERTS · no active items", GREEN_COLOR
-    return "NOAA ALERTS · temporarily unavailable", MUTED_COLOR
+        return f"NOAA ALERTS{TEXT_SEPARATOR}no active items", GREEN_COLOR
+    return f"NOAA ALERTS{TEXT_SEPARATOR}temporarily unavailable", MUTED_COLOR
 
 
 def _fit_box_copy(draw, text, *, font, max_width, required_active=False):
@@ -721,7 +738,10 @@ def _utc_stamp(value, *, include_date=False) -> str:
 def _draw_source_panel(draw, snapshot, fonts) -> None:
     observed = _utc_stamp(snapshot.oldest_core_observed_at_utc)
     cached = _utc_stamp(snapshot.fetched_at_utc)
-    text = f"NOAA SWPC · OBS {observed} · CACHE {cached}"
+    text = (
+        f"NOAA SWPC{TEXT_SEPARATOR}OBS {observed}"
+        f"{TEXT_SEPARATOR}CACHE {cached}"
+    )
     font = fonts["source"]
     if _text_width(draw, text, font) > SOURCE_RECT[2] - SOURCE_RECT[0]:
         raise ApodPageLayoutError("complete NOAA source timestamps do not fit")

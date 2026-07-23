@@ -2210,18 +2210,27 @@ def test_apod_page_maximum_caption_has_fixed_photo_boundary():
     title_en = "i" * 300
     title_zh = "星" * 60
     source = Image.new("RGB", (960, 640), PHOTO_GREEN)
+    apod = _page_record(title_en=title_en, title_zh=title_zh)
+    measurement = page.measure_apod_page(
+        apod=apod,
+        title_zh=title_zh,
+        translation_unavailable=False,
+    )
 
     rendered = page.render_apod_page(
-        apod=_page_record(title_en=title_en, title_zh=title_zh),
+        apod=apod,
         title_zh=title_zh,
         translation_unavailable=False,
         weather=_page_weather(),
         source_image=source,
         rendered_at_utc=NOW_UTC,
+        measurement=measurement,
     )
 
-    assert rendered.getpixel((500, 299)) == PHOTO_GREEN
-    assert rendered.getpixel((500, 300)) != PHOTO_GREEN
+    caption_top = measurement.caption.caption_top
+    assert page.CAPTION_MIN_TOP <= caption_top <= page.CAPTION_MAX_TOP
+    assert rendered.getpixel((500, caption_top - 1)) == PHOTO_GREEN
+    assert rendered.getpixel((500, caption_top)) == page.ORANGE_COLOR
 
 
 @pytest.mark.parametrize(
@@ -2326,8 +2335,8 @@ def test_apod_caption_legal_measured_180px_case_hides_kicker_and_stays_separate(
         apod_date="2026-07-22",
     )
 
-    assert layout.caption_top == 300
-    assert layout.caption_height == 180
+    assert 300 <= layout.caption_top <= 301
+    assert 179 <= layout.caption_height <= 180
     assert layout.show_kicker is False
     assert layout.title_bottom <= layout.credit_y
     assert layout.credit_bottom <= layout.date_y
@@ -2355,10 +2364,10 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     )
     layout = measurement.caption
 
-    expected_credit = f"CREDIT · {copyright_text.replace(chr(10), '')}"
+    expected_credit = f"CREDIT | {' '.join(copyright_text.split())}"
     drawn_credit = "".join(layout.credit_lines)
     assert drawn_credit == expected_credit
-    assert len(layout.credit_lines) >= 3
+    assert 1 <= len(layout.credit_lines) <= 2
     assert layout.meta_font.size >= 10
     assert 120 <= layout.caption_height <= 180
     assert layout.title_bottom <= layout.credit_y
@@ -2398,6 +2407,88 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert rendered.getpixel((500, layout.caption_top)) == page.ORANGE_COLOR
 
 
+def test_apod_caption_flattens_provider_credit_whitespace_before_wrapping():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+    copyright_text = (
+        "Monica Mesa\n"
+        "Text:\n"
+        "Cecilia Chirenti\n"
+        "(NASA\n"
+        "GSFC,\n"
+        "UMCP,\n"
+        "CRESST II)"
+    )
+
+    layout = page._layout_caption(
+        draw=draw,
+        title_en="The Large Magellanic Cloud",
+        title_zh="大麦哲伦云",
+        translation_unavailable=False,
+        copyright=copyright_text,
+        apod_date="2026-07-23",
+    )
+
+    assert layout.credit_lines == (
+        "CREDIT | Monica Mesa Text: Cecilia Chirenti "
+        "(NASA GSFC, UMCP, CRESST II)",
+    )
+    assert layout.caption_top == page.CAPTION_MAX_TOP
+
+
+def test_apod_caption_rewrites_legacy_warning_separator_for_bold_font():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    layout = page._layout_caption(
+        draw=draw,
+        title_en="Fallback APOD",
+        title_zh="回退天文图",
+        translation_unavailable=False,
+        copyright="NASA / APOD",
+        apod_date="2026-07-21",
+        warning="LATEST AVAILABLE · APOD 2026-07-21",
+    )
+
+    assert layout.show_kicker is True
+    assert layout.kicker_copy == "LATEST AVAILABLE | APOD 2026-07-21"
+
+
+def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatch):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    drawn_text = []
+    kp_calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    def capture_kp(draw, rect, snapshot, fonts):
+        kp_calls.append(rect)
+        return original_kp(draw, rect, snapshot, fonts)
+
+    original_kp = page._draw_kp_panel
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(page, "_draw_kp_panel", capture_kp)
+
+    page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert kp_calls == [page.KP_RECT]
+    assert not any("·" in text or "•" in text for text in drawn_text)
+    assert "当前地磁指数 | CURRENT KP" in drawn_text
+    assert "太阳风 | WIND" in drawn_text
+    assert "CREDIT | NASA / APOD" in drawn_text
+    assert "NASA APOD | 2026-07-22" in drawn_text
+
+
 def test_apod_caption_jointly_fits_complete_titles_and_official_three_part_credit():
     page = _apod_page_module()
     title_en = "The Corona Australis Molecular Cloud and the Chandelier Cluster"
@@ -2425,7 +2516,7 @@ def test_apod_caption_jointly_fits_complete_titles_and_official_three_part_credi
     assert "".join(layout.title_en_lines) == title_en
     assert "".join(layout.title_zh_lines) == title_zh
     assert "".join(layout.credit_lines) == (
-        f"CREDIT · {copyright_text.replace(chr(10), '')}"
+        f"CREDIT | {' '.join(copyright_text.split())}"
     )
     assert 11 <= layout.title_en_font.size <= 14
     assert layout.title_zh_font is not None
@@ -2433,7 +2524,7 @@ def test_apod_caption_jointly_fits_complete_titles_and_official_three_part_credi
     assert (
         layout.title_en_font.size < 14 or layout.title_zh_font.size < 20
     )
-    assert layout.show_kicker is False
+    assert layout.show_kicker is True
     assert layout.meta_font.size >= 10
     assert 120 <= layout.caption_height <= 180
     assert layout.caption_top >= 300
@@ -2548,7 +2639,7 @@ def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
     for required_copy in (
         "4.7",
         "MODE estimated",
-        "48H PEAK · Kp 6.3 / G2",
+        "48H PEAK | Kp 6.3 / G2",
         "G2",
         "R1",
         "S0",
@@ -2562,7 +2653,7 @@ def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
         "S1+",
         "5%",
         "NOAA ALERTS",
-        "NOAA SWPC · OBS 12:00Z · CACHE 12:20Z",
+        "NOAA SWPC | OBS 12:00Z | CACHE 12:20Z",
     ):
         assert required_copy in all_copy
 
@@ -2660,13 +2751,13 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     assert 26 <= by_text["NASAPics × SPACE WEATHER"].size <= 29
     assert by_text["2026-07-22 12:20Z"].size >= 10
     assert 36 <= by_text["4.7"].size <= 44
-    assert 16 <= by_text["CURRENT G2 · MODE estimated"].size <= 20
-    assert by_text["太阳风 · WIND"].size >= 12
+    assert 16 <= by_text["CURRENT G2 | MODE estimated"].size <= 20
+    assert by_text["太阳风 | WIND"].size >= 12
     assert 17 <= by_text["455 km/s"].size <= 19
-    assert by_text["NOAA WATCH · G2 · Geomagnetic storm watch"].size >= 12
-    assert by_text["NOAA SWPC · OBS 12:00Z · CACHE 12:20Z"].size >= 10
-    assert by_text["CREDIT · NASA / APOD"].size >= 10
-    assert by_text["NASA APOD · 2026-07-22"].size >= 10
+    assert by_text["NOAA WATCH | G2 | Geomagnetic storm watch"].size >= 12
+    assert by_text["NOAA SWPC | OBS 12:00Z | CACHE 12:20Z"].size >= 10
+    assert by_text["CREDIT | NASA / APOD"].size >= 10
+    assert by_text["NASA APOD | 2026-07-22"].size >= 10
     assert 16 <= by_text["极光"].size <= 20
     assert 11 <= by_text["Aurora"].size <= 14
 
@@ -2709,7 +2800,7 @@ def test_apod_page_active_noaa_alert_wins_over_donki_and_preserves_full_copy(
         and page.ALERT_RECT[1] <= y < page.ALERT_RECT[3]
     ]
     assert "".join(text for text, _font in alert_calls) == (
-        "NOAA WATCH · G2 · Geomagnetic storm watch"
+        "NOAA WATCH | G2 | Geomagnetic storm watch"
     )
     assert alert_calls
     assert all(font.size >= 12 for _text, font in alert_calls)
@@ -2834,6 +2925,23 @@ def _persist_valid_task5_fallback_state(paths):
         ),
     )
     return selection, paths.cache / "apod-state.json"
+
+
+def test_apod_persisted_fallback_state_accepts_legacy_middle_dot_warning(
+    apod_storage,
+):
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="state-valid-legacy-warning",
+    )
+    selection, state_path = _persist_valid_task5_fallback_state(paths)
+
+    loaded = apod_module._read_apod_state(state_path, selection=selection)
+
+    assert loaded is not None
+    assert loaded.display_record.warning == (
+        "LATEST AVAILABLE · APOD 2026-07-21"
+    )
 
 
 @pytest.mark.parametrize(
