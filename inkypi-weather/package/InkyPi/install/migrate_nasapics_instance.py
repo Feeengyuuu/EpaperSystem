@@ -9,7 +9,6 @@ tests; it must not be used as the live deployment mutation path.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
 import json
 from pathlib import Path
 import sys
@@ -53,31 +52,16 @@ def _runtime_paths(config_file: Path) -> RuntimePaths:
     )
 
 
-def _thaw_mapping(value) -> dict:
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        str(key): (
-            _thaw_mapping(item)
-            if isinstance(item, Mapping)
-            else list(item)
-            if isinstance(item, tuple)
-            else item
-        )
-        for key, item in value.items()
-    }
-
-
 def _snapshot_summary(snapshot, *, include_approved_settings: bool) -> dict:
     summary = {
         "instance_uuid": snapshot.instance_uuid,
         "structural_generation": snapshot.structural_generation,
         "settings_revision": snapshot.settings_revision,
         "settings_keys": sorted(str(key) for key in snapshot.settings),
-        "refresh": _thaw_mapping(snapshot.refresh),
     }
     if include_approved_settings:
         summary["approved_settings"] = dict(TARGET_SETTINGS)
+        summary["refresh"] = {"interval": 1800}
     return summary
 
 

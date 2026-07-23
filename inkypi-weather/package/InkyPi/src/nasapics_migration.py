@@ -230,6 +230,104 @@ def _prepare_detached_migration(
     )
 
 
+def _expected_playlist_after(
+    playlist_config,
+    *,
+    expected: ExpectedNasapicsIdentity,
+    playlist_name: str,
+    plugin_id: str,
+    instance_name: str,
+) -> dict:
+    expected_after = _thaw_json(playlist_config)
+    matches = [
+        instance
+        for playlist in expected_after.get("playlists", [])
+        if playlist.get("name") == playlist_name
+        for instance in playlist.get("plugins", [])
+        if instance.get("plugin_id") == plugin_id
+        and instance.get("name") == instance_name
+    ]
+    if len(matches) != 1:
+        raise NasapicsMigrationError(
+            f"expected exactly one {playlist_name}/{plugin_id}/{instance_name} target"
+        )
+    target = matches[0]
+    if (
+        target.get("instance_uuid") != expected.instance_uuid
+        or target.get("structural_generation") != expected.structural_generation
+        or target.get("settings_revision") != expected.settings_revision
+    ):
+        raise NasapicsMigrationError(
+            "authoritative NASAPics identity changed during exact-diff validation"
+        )
+    settings = target.get("plugin_settings")
+    if not isinstance(settings, Mapping):
+        raise NasapicsMigrationError("NASAPics settings are malformed")
+    updated_settings = _thaw_json(settings)
+    updated_settings.update(TARGET_SETTINGS)
+    target["plugin_settings"] = updated_settings
+    target["refresh"] = dict(TARGET_REFRESH)
+    target["settings_revision"] = expected.settings_revision + 1
+    return expected_after
+
+
+def _assert_exact_playlist_transition(
+    before,
+    after,
+    *,
+    expected: ExpectedNasapicsIdentity,
+    playlist_name: str,
+    plugin_id: str,
+    instance_name: str,
+) -> dict:
+    expected_after = _expected_playlist_after(
+        before,
+        expected=expected,
+        playlist_name=playlist_name,
+        plugin_id=plugin_id,
+        instance_name=instance_name,
+    )
+    if _thaw_json(after) != expected_after:
+        raise NasapicsMigrationError(
+            "NASAPics migration would modify fields outside the approved exact diff"
+        )
+    return expected_after
+
+
+def _assert_exact_config_transition(
+    before,
+    after,
+    *,
+    expected_playlist_after,
+    config_updates,
+) -> None:
+    expected_after = _thaw_json(before)
+    expected_after.update(_thaw_json(config_updates))
+    expected_after["playlist_config"] = _thaw_json(expected_playlist_after)
+    actual = _thaw_json(after)
+
+    actual_revision = actual.get("config_revision")
+    before_revision = expected_after.get("config_revision")
+    if (
+        type(actual_revision) is not int
+        or actual_revision < 1
+        or (
+            type(before_revision) is int
+            and actual_revision <= before_revision
+        )
+    ):
+        raise NasapicsMigrationError(
+            "persisted config revision did not advance after NASAPics migration"
+        )
+    expected_after["config_revision"] = actual_revision
+    if "schema_version" not in expected_after:
+        expected_after["schema_version"] = 1
+    if actual != expected_after:
+        raise NasapicsMigrationError(
+            "persisted config differs outside the approved NASAPics exact diff"
+        )
+
+
 def _expected_marker(expectation, result):
     return {
         "release_id": expectation.release_id,
@@ -287,11 +385,29 @@ def apply_release_bound_nasapics_migration(
 
     (
         expected_config_version,
+        authoritative_config,
         authoritative_baseline,
         authoritative_manager,
     ) = config.capture_detached_playlist_transaction()
+    migrations = authoritative_config.get("runtime_migrations", {})
+    if not isinstance(migrations, Mapping):
+        raise NasapicsMigrationError("runtime migration state is malformed")
+    if NASAPICS_MIGRATION_ID in migrations:
+        _validate_existing_marker(
+            migrations[NASAPICS_MIGRATION_ID],
+            expectation,
+        )
+        return None
     _baseline, detached, result = _prepare_detached_migration(
         authoritative_manager,
+        expected=expectation.expected,
+        playlist_name=expectation.playlist_name,
+        plugin_id=expectation.plugin_id,
+        instance_name=expectation.instance_name,
+    )
+    expected_playlist_after = _assert_exact_playlist_transition(
+        authoritative_baseline,
+        detached.to_dict(),
         expected=expectation.expected,
         playlist_name=expectation.playlist_name,
         plugin_id=expectation.plugin_id,
@@ -302,6 +418,7 @@ def apply_release_bound_nasapics_migration(
     migration_state[NASAPICS_MIGRATION_ID] = marker
     config.commit_detached_playlist_transaction(
         expected_config_version=expected_config_version,
+        expected_config_data=authoritative_config,
         expected_playlist_config=authoritative_baseline,
         playlist_manager=detached,
         config_updates={"runtime_migrations": migration_state},
@@ -314,6 +431,24 @@ def apply_release_bound_nasapics_migration(
         expectation.playlist_name,
         expectation.plugin_id,
         expectation.instance_name,
+    )
+    persisted_playlist = config.get_config(
+        "playlist_config",
+        default={"playlists": [], "active_playlist": None},
+    )
+    _assert_exact_playlist_transition(
+        authoritative_baseline,
+        persisted_playlist,
+        expected=expectation.expected,
+        playlist_name=expectation.playlist_name,
+        plugin_id=expectation.plugin_id,
+        instance_name=expectation.instance_name,
+    )
+    _assert_exact_config_transition(
+        authoritative_config,
+        config.get_config(),
+        expected_playlist_after=expected_playlist_after,
+        config_updates={"runtime_migrations": migration_state},
     )
     if persisted is None or persisted.instance != result.after:
         raise NasapicsMigrationError("persisted NASAPics migration verification failed")
@@ -334,6 +469,7 @@ def migrate_nasapics_instance(
 
     (
         expected_config_version,
+        authoritative_config,
         authoritative_baseline,
         authoritative_manager,
     ) = config.capture_detached_playlist_transaction()
@@ -344,8 +480,17 @@ def migrate_nasapics_instance(
         plugin_id=plugin_id,
         instance_name=instance_name,
     )
+    expected_playlist_after = _assert_exact_playlist_transition(
+        authoritative_baseline,
+        detached.to_dict(),
+        expected=expected,
+        playlist_name=playlist_name,
+        plugin_id=plugin_id,
+        instance_name=instance_name,
+    )
     config.commit_detached_playlist_transaction(
         expected_config_version=expected_config_version,
+        expected_config_data=authoritative_config,
         expected_playlist_config=authoritative_baseline,
         playlist_manager=detached,
         config_updates={},
@@ -354,6 +499,24 @@ def migrate_nasapics_instance(
         playlist_name,
         plugin_id,
         instance_name,
+    )
+    persisted_playlist = config.get_config(
+        "playlist_config",
+        default={"playlists": [], "active_playlist": None},
+    )
+    _assert_exact_playlist_transition(
+        authoritative_baseline,
+        persisted_playlist,
+        expected=expected,
+        playlist_name=playlist_name,
+        plugin_id=plugin_id,
+        instance_name=instance_name,
+    )
+    _assert_exact_config_transition(
+        authoritative_config,
+        config.get_config(),
+        expected_playlist_after=expected_playlist_after,
+        config_updates={},
     )
     if persisted is None or persisted.instance != result.after:
         raise NasapicsMigrationError("persisted NASAPics migration verification failed")

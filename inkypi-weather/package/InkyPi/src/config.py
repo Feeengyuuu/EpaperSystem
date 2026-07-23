@@ -355,6 +355,7 @@ class Config:
         self,
         *,
         expected_config_version,
+        expected_config_data,
         expected_playlist_config,
         playlist_manager,
         config_updates,
@@ -373,6 +374,12 @@ class Config:
                 self._reload_authoritative_models()
                 raise ConfigConflictError(expected_config_version, actual_version)
             snapshot_data = {} if snapshot is None else snapshot.data
+            if _detach_json(snapshot_data) != _detach_json(expected_config_data):
+                self._reload_authoritative_models()
+                raise ConfigConflictError(
+                    expected_config_version,
+                    actual_version,
+                )
             current_playlist = _detach_json(
                 snapshot_data.get(
                     "playlist_config",
@@ -415,10 +422,10 @@ class Config:
                     {"playlists": [], "active_playlist": None},
                 )
             )
+            config_data = _detach_json(snapshot_data)
             detached_payload = _detach_json(playlist_config)
-            self._rename_duplicate_legacy_instances(detached_payload)
             detached_manager = PlaylistManager.from_dict(detached_payload)
-            return version, playlist_config, detached_manager
+            return version, config_data, playlist_config, detached_manager
 
     def _reload_authoritative_models(self):
         state = self._config_store.load()

@@ -16,6 +16,7 @@ from config_store import (  # noqa: E402
     ConfigCommitUncertainError,
     ConfigConflictError,
     ConfigStore,
+    ConfigValidationError,
 )
 from model import PlaylistManager  # noqa: E402
 from nasapics_migration import (  # noqa: E402
@@ -30,6 +31,7 @@ TARGET_UUID = "11111111-1111-4111-8111-111111111111"
 OTHER_APOD_UUID = "22222222-2222-4222-8222-222222222222"
 OTHER_PLUGIN_UUID = "33333333-3333-4333-8333-333333333333"
 SECOND_PLAYLIST_UUID = "44444444-4444-4444-8444-444444444444"
+LEGACY_DUPLICATE_UUID = "66666666-6666-4666-8666-666666666666"
 MIGRATION_ID = "nasapics_space_weather_v1"
 MIGRATION_CLI = PROJECT_ROOT / "install" / "migrate_nasapics_instance.py"
 
@@ -49,7 +51,16 @@ def _target_instance(*, migrated=False):
         "plugin_id": "apod",
         "name": "NASAPics",
         "plugin_settings": settings,
-        "refresh": {"interval": 1800} if migrated else {"interval": 300, "at": "04:00"},
+        "refresh": (
+            {"interval": 1800}
+            if migrated
+            else {
+                "interval": 300,
+                "at": "04:00",
+                "url": "https://refresh.invalid/private?token=refresh-do-not-log",
+                "api_key": "refresh-do-not-log",
+            }
+        ),
         "latest_refresh_time": "2026-07-22T01:02:03+00:00",
         "instance_uuid": TARGET_UUID,
         "structural_generation": 7,
@@ -322,6 +333,87 @@ def test_exact_migration_preserves_unknowns_other_instances_and_order(tmp_path):
     assert config.playlist_manager.snapshot_instance(TARGET_UUID) == result.after
 
 
+def test_migration_does_not_persist_unrelated_legacy_duplicate_renames(tmp_path):
+    original = _device_document()
+    original.pop("schema_version")
+    original.pop("config_revision")
+    duplicate = json.loads(
+        json.dumps(original["playlist_config"]["playlists"][0]["plugins"][-1])
+    )
+    duplicate["instance_uuid"] = LEGACY_DUPLICATE_UUID
+    duplicate["plugin_settings"] = {"location": "San Jose", "opaque": "keep"}
+    original["playlist_config"]["playlists"][0]["plugins"].append(duplicate)
+    config, paths = _loaded_config(tmp_path, original)
+
+    (
+        _version,
+        _config_baseline,
+        baseline,
+        detached,
+    ) = config.capture_detached_playlist_transaction()
+    baseline_names = [
+        instance["name"]
+        for instance in baseline["playlists"][0]["plugins"]
+        if instance["plugin_id"] == "weather"
+    ]
+    detached_names = [
+        instance["name"]
+        for instance in detached.to_dict()["playlists"][0]["plugins"]
+        if instance["plugin_id"] == "weather"
+    ]
+
+    assert baseline_names == ["Weather", "Weather"]
+    assert detached_names == baseline_names
+    with pytest.raises(ConfigValidationError):
+        migrate_nasapics_instance(config, expected=_expected())
+    assert json.loads(paths.config_file.read_text(encoding="utf-8")) == original
+
+
+def test_exact_diff_guard_rejects_unrelated_model_mutation_before_commit(
+    tmp_path,
+    monkeypatch,
+):
+    original = _device_document()
+    config, paths = _loaded_config(tmp_path, original)
+    real_update = PlaylistManager.update_plugin_instance_atomic
+    commits = []
+    real_commit = config._config_store.commit
+
+    def update_target_and_unrelated_instance(manager, instance_uuid, **kwargs):
+        result = real_update(manager, instance_uuid, **kwargs)
+        if instance_uuid == TARGET_UUID:
+            other = manager.snapshot_instance(OTHER_APOD_UUID)
+            other_settings = dict(other.settings)
+            other_settings["counterfactual"] = "must-not-persist"
+            unrelated = real_update(
+                manager,
+                OTHER_APOD_UUID,
+                settings=other_settings,
+                refresh=dict(other.refresh),
+                expected_generation=other.structural_generation,
+                expected_settings_revision=other.settings_revision,
+            )
+            assert unrelated is not None
+        return result
+
+    def recording_commit(expected_version, candidate):
+        commits.append(candidate)
+        return real_commit(expected_version, candidate)
+
+    monkeypatch.setattr(
+        PlaylistManager,
+        "update_plugin_instance_atomic",
+        update_target_and_unrelated_instance,
+    )
+    monkeypatch.setattr(config._config_store, "commit", recording_commit)
+
+    with pytest.raises(NasapicsMigrationError, match="approved exact diff"):
+        migrate_nasapics_instance(config, expected=_expected())
+
+    assert commits == []
+    assert json.loads(paths.config_file.read_text(encoding="utf-8")) == original
+
+
 def test_migration_rejects_zero_detached_targets(tmp_path):
     config, paths = _loaded_config(
         tmp_path,
@@ -347,6 +439,7 @@ def test_migration_counts_detached_targets_before_first_match_resolution():
         def capture_detached_playlist_transaction():
             return (
                 1,
+                _device_document(target_count=2),
                 manager.to_dict(),
                 PlaylistManager.from_dict(manager.to_dict()),
             )
@@ -759,6 +852,7 @@ def test_debug_cli_uses_explicit_runtime_paths_and_prints_sanitized_json(
     assert body["playlist_name"] == "DailyDoseOfDay"
     assert body["before"]["instance_uuid"] == TARGET_UUID
     assert body["before"]["settings_revision"] == 11
+    assert "refresh" not in body["before"]
     assert body["after"]["settings_revision"] == 12
     assert body["after"]["approved_settings"] == {
         "randomizeApod": False,
