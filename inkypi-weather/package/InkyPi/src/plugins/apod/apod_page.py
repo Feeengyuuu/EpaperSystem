@@ -559,9 +559,9 @@ def _draw_metrics_panel(draw, snapshot, fonts) -> None:
     wind_value = _format_number(speed.get("speed_km_s"), decimals=0)
     if wind_value != "—":
         wind_value += " km/s"
-    bz_value = _format_number(magnetic.get("bz_gsm_nt"), decimals=2)
+    bz_value = _format_number(magnetic.get("bz_nt"), decimals=2)
     if bz_value != "—":
-        bz_value = f"{str(magnetic.get('bz_direction') or 'unknown')} {bz_value} nT"
+        bz_value = f"{str(magnetic.get('direction') or 'unknown')} {bz_value} nT"
     bt_value = _format_number(magnetic.get("bt_nt"), decimals=1)
     if bt_value != "—":
         bt_value += " nT"

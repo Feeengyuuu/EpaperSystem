@@ -2451,6 +2451,57 @@ def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
         assert required_copy in all_copy
 
 
+def test_apod_page_renders_magnetic_field_from_aggregate_projection(monkeypatch):
+    page = _apod_page_module()
+    repository = _aggregate_repository(wind_state="live")
+    repository.wind = (
+        repository.wind[0],
+        _source_result(
+            "wind_mag",
+            "live",
+            {
+                "observed_at_utc": "2026-07-22T12:11:00Z",
+                "bt_nt": 5.2,
+                "bz_gsm_nt": -0.04,
+                "bz_direction": "south",
+            },
+            observed_at=datetime(2026, 7, 22, 12, 11, tzinfo=timezone.utc),
+        ),
+    )
+    weather = refresh_space_weather(
+        repository,
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC,
+        context=None,
+    )
+    assert dict(weather.magnetic_field) == {
+        "bt_nt": 5.2,
+        "bz_nt": -0.04,
+        "direction": "south",
+        "time_tag": "2026-07-22T12:11:00Z",
+    }
+
+    original_text = ImageDraw.ImageDraw.text
+    calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        calls.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    page.render_apod_page(
+        apod=_page_record(),
+        title_zh="南冕座分子云与变色龙星团",
+        translation_unavailable=False,
+        weather=weather,
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert "south -0.04 nT" in calls
+    assert "5.2 nT" in calls
+
+
 def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     monkeypatch,
 ):
@@ -2466,8 +2517,8 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
         _page_weather(),
         magnetic_field={
             "bt_nt": 5.2,
-            "bz_gsm_nt": -0.04,
-            "bz_direction": "south",
+            "bz_nt": -0.04,
+            "direction": "south",
         },
         alert_state="active",
         alert={
