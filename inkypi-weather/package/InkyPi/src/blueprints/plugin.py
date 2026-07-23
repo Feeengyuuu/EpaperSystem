@@ -473,7 +473,7 @@ def display_plugin_instance():
     playlist_name = data.get("playlist_name")
     plugin_id = data.get("plugin_id")
     plugin_instance_name = data.get("plugin_instance")
-    request_presentation = data.get("request_presentation", True)
+    request_presentation = data.get("request_presentation", False)
 
     if not isinstance(request_presentation, bool):
         return _error_response(

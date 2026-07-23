@@ -142,6 +142,7 @@ DEFAULT_THEME_REFRESH_RETRY_COOLDOWN_SECONDS = 10 * 60
 DEFAULT_THEME_CATCHUP_RETRY_COOLDOWN_SECONDS = 10 * 60
 DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
+DEFAULT_DISPLAY_TRIGGERED_REFRESH_ENABLED = False
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
@@ -183,6 +184,18 @@ class _PreparedDisplaySelection:
 
 def _setting_enabled(value):
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
+
+
+def _display_triggered_refresh_enabled(device_config):
+    """Return whether display state may trigger provider work or a follow-up write."""
+    try:
+        configured = device_config.get_config(
+            "display_triggered_refresh_enabled",
+            default=DEFAULT_DISPLAY_TRIGGERED_REFRESH_ENABLED,
+        )
+    except Exception:
+        configured = DEFAULT_DISPLAY_TRIGGERED_REFRESH_ENABLED
+    return _setting_enabled(configured)
 
 
 def _settings_with_force_refresh(settings, force=False, display_render=False):
@@ -1032,7 +1045,9 @@ class RefreshTask:
             restart_requested = self._memory_watchdog_should_restart()
             disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
-            command = self._select_prepared_display_retry_command(current_dt)
+            command = None
+            if _display_triggered_refresh_enabled(self.device_config):
+                command = self._select_prepared_display_retry_command(current_dt)
             if command is None:
                 command = self._select_cached_display_command(current_dt)
             if command is not None:
@@ -1125,11 +1140,15 @@ class RefreshTask:
         manager = self.device_config.get_playlist_manager()
         latest_refresh = self.device_config.get_refresh_info()
         theme_context = get_theme_context(self.device_config, now=current_dt)
+        allow_display_triggered = _display_triggered_refresh_enabled(
+            self.device_config
+        )
         theme_info_changed = self._update_active_theme_info(
             theme_context,
             current_dt,
         )
-        if self._has_theme_changed(theme_context, current_dt):
+        theme_changed = self._has_theme_changed(theme_context, current_dt)
+        if theme_changed and allow_display_triggered:
             active = manager.snapshot_active_playlist(current_dt)
             eligible_instance_uuids = set()
             if active is not None:
@@ -1178,6 +1197,9 @@ class RefreshTask:
                 )
             self._persist_active_theme(theme_context, current_dt)
             self._write_device_config()
+        elif theme_changed:
+            self._persist_active_theme(theme_context, current_dt)
+            self._write_device_config()
         elif theme_info_changed:
             self._write_device_config()
 
@@ -1207,6 +1229,9 @@ class RefreshTask:
                 priority=50,
                 automatic_rotation=True,
             )
+
+        if not allow_display_triggered:
+            return None
 
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
@@ -1440,10 +1465,14 @@ class RefreshTask:
             theme_context,
             exact_theme_only=True,
         )
-        candidates = self._rotation_cache_candidates_outside_refresh_backoff(
-            candidates,
-            current_dt,
+        allow_display_triggered = _display_triggered_refresh_enabled(
+            self.device_config
         )
+        if allow_display_triggered:
+            candidates = self._rotation_cache_candidates_outside_refresh_backoff(
+                candidates,
+                current_dt,
+            )
         recovery_elapsed = None
         if rotation_due and (theme_changed or not candidates):
             if self._rotation_cache_starved_since is None:
@@ -1459,12 +1488,13 @@ class RefreshTask:
                 theme_context,
                 exact_theme_only=False,
             )
-            fallback_candidates = (
-                self._rotation_cache_candidates_outside_refresh_backoff(
-                    fallback_candidates,
-                    current_dt,
+            if allow_display_triggered:
+                fallback_candidates = (
+                    self._rotation_cache_candidates_outside_refresh_backoff(
+                        fallback_candidates,
+                        current_dt,
+                    )
                 )
-            )
             if fallback_candidates:
                 candidates = fallback_candidates
             elif not candidates:
@@ -1502,7 +1532,8 @@ class RefreshTask:
             return None
 
         if (
-            not self._snapshot_background_cache_disabled(selection.instance)
+            allow_display_triggered
+            and not self._snapshot_background_cache_disabled(selection.instance)
             and self._snapshot_should_refresh(selection.instance, current_dt)
             and not self._snapshot_retry_delayed(selection.instance, current_dt)
             and self._restart_request is None
@@ -1527,7 +1558,10 @@ class RefreshTask:
         presentation_request_id = None
         allow_prepared_presentation = False
         plugin_config = self.device_config.get_plugin(selection.instance.plugin_id)
-        if plugin_supports_presentation_refresh(plugin_config):
+        if (
+            allow_display_triggered
+            and plugin_supports_presentation_refresh(plugin_config)
+        ):
             try:
                 refresh_before_display = resolve_refresh_on_display_for_config(
                     thaw_payload(selection.instance.settings),
@@ -1693,6 +1727,8 @@ class RefreshTask:
         current_dt,
     ) -> RefreshCommand | None:
         """Retry a failed exact prepared display after presentation backoff."""
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return None
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
@@ -1853,7 +1889,10 @@ class RefreshTask:
             if evaluation.candidate is not None:
                 data_candidates.append(evaluation.candidate)
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
-            if not plugin_supports_presentation_refresh(plugin_config):
+            if (
+                not _display_triggered_refresh_enabled(self.device_config)
+                or not plugin_supports_presentation_refresh(plugin_config)
+            ):
                 continue
             resolved_theme_context = _resolved_theme_context_for_instance(
                 instance,
@@ -2213,16 +2252,23 @@ class RefreshTask:
         if tier is ResourceTier.HARD:
             return []
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
+        allow_display_triggered = _display_triggered_refresh_enabled(
+            self.device_config
+        )
         candidates = []
         for instance in active.plugins:
             is_displayed = instance.instance_uuid == displayed_uuid
-            if is_displayed and self._snapshot_background_cache_disabled(instance):
+            requires_displayed_instance = is_displayed and allow_display_triggered
+            if (
+                requires_displayed_instance
+                and self._snapshot_background_cache_disabled(instance)
+            ):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             if not plugin_supports_live_refresh(plugin_config):
                 continue
             plugin = None
-            if not is_displayed:
+            if not requires_displayed_instance:
                 if instance.plugin_id != "sports_dashboard":
                     continue
                 plugin = self._get_plugin_for_snapshot(
@@ -2284,7 +2330,7 @@ class RefreshTask:
                     due_since=due_since,
                     reason=DueReason.LIVE,
                     last_attempt_at=last_attempt,
-                    requires_displayed_instance=is_displayed,
+                    requires_displayed_instance=requires_displayed_instance,
                 )
             )
         return candidates
@@ -2953,10 +2999,22 @@ class RefreshTask:
                         raise
                     raise _PreparedDisplayFailure(error) from error
             if command.intent is RefreshIntent.PRESENTATION_REFRESH:
+                if not _display_triggered_refresh_enabled(self.device_config):
+                    raise _StaleSelection(
+                        "display-triggered presentation refresh is disabled"
+                    )
                 return self._render_presentation_command(
                     command,
                     resolved,
                     context,
+                )
+            if (
+                command.intent is RefreshIntent.LIVE_REFRESH
+                and command.payload.get("background_live_refresh") is not True
+                and not _display_triggered_refresh_enabled(self.device_config)
+            ):
+                raise _StaleSelection(
+                    "display-triggered live refresh is disabled"
                 )
             image = self._render_playlist_command(command, resolved, context)
             # Cache promotion is plugin-owned work too. Reacquiring the same
@@ -2996,7 +3054,11 @@ class RefreshTask:
     def _load_catalog_display_image(self, command, resolved):
         """Load prepared or authoritative bytes without plugin execution."""
         instance = None if resolved is None else resolved.instance
-        if command.allow_prepared_presentation and instance is not None:
+        if (
+            command.allow_prepared_presentation
+            and instance is not None
+            and _display_triggered_refresh_enabled(self.device_config)
+        ):
             plugin_config, _theme_context, resolved_theme_mode = self._latest_presentation_theme(instance)
             expected_request_id = command.payload.get("presentation_request_id")
             if not plugin_supports_presentation_refresh(plugin_config):
@@ -3301,6 +3363,8 @@ class RefreshTask:
         request,
         theme_mode,
     ):
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return None
         snapshot = self.runtime_state.snapshot()
         instance = resolved_snapshot.instance
         if snapshot.displayed_instance_uuid != instance.instance_uuid:
@@ -3991,14 +4055,20 @@ class RefreshTask:
                 if thawed_theme_context:
                     self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_playlist_display_commit(command)
-                if command.payload.get("automatic_rotation") is True:
+                if (
+                    command.payload.get("automatic_rotation") is True
+                    and _display_triggered_refresh_enabled(self.device_config)
+                ):
                     self._request_next_presentation_after_display(
                         current_dt,
                         commit_id,
                         committed_at,
                         displayed_instance_uuid=instance.instance_uuid,
                     )
-                elif command.allow_prepared_presentation:
+                elif (
+                    command.allow_prepared_presentation
+                    and _display_triggered_refresh_enabled(self.device_config)
+                ):
                     self._request_presentation_after_display(
                         instance,
                         commit_id,
@@ -4266,6 +4336,8 @@ class RefreshTask:
         committed_at,
     ):
         """Record one coalesced request using metadata-only trigger resolution."""
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return False
         plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(instance)
         if not plugin_supports_presentation_refresh(plugin_config):
             return False
@@ -4311,6 +4383,8 @@ class RefreshTask:
         displayed_instance_uuid=None,
     ):
         """Reserve and start preparing the next rotation member immediately."""
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return False
         manager = self.device_config.get_playlist_manager()
         eligible_instance_uuids = None
         if displayed_instance_uuid is not None:
@@ -4355,6 +4429,8 @@ class RefreshTask:
         theme_mode,
     ):
         """Queue an exact cache-only display after a successful visible live refresh."""
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return None
         if command.payload.get("background_live_refresh") is True:
             return None
         if not self._live_display_target_is_current(command):
@@ -4386,6 +4462,8 @@ class RefreshTask:
         theme_mode,
     ):
         """Queue the cache-only display half of an exact theme transition."""
+        if not _display_triggered_refresh_enabled(self.device_config):
+            return None
         if not self._live_display_target_is_current(command):
             return None
         instance = resolved_snapshot.instance
@@ -4745,6 +4823,8 @@ class RefreshTask:
                 and coalescing_scope is None
                 and expected_displayed_instance_uuid is None
             )
+        if not _display_triggered_refresh_enabled(self.device_config):
+            allow_prepared_presentation = False
         return RefreshCommand.create(
             kind=kind,
             source=source,
@@ -4849,7 +4929,7 @@ class RefreshTask:
         expected_settings_revision=None,
         require_active=True,
         force_hardware_write=False,
-        request_presentation_after_display=True,
+        request_presentation_after_display=False,
     ):
         """Queue an immutable, cache-only playlist display command by UUID."""
         if not self.running and self.refresh_queue.snapshot().accepting:
@@ -5722,7 +5802,8 @@ class RefreshTask:
             )
             image_missing = not os.path.exists(plugin_image_path)
             refresh_on_display = (
-                self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
+                _display_triggered_refresh_enabled(self.device_config)
+                and self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
                 and self._plugin_wants_refresh_on_display(plugin_instance)
             )
             live_refresh_due = self._plugin_live_refresh_due(plugin_instance, current_dt)
@@ -5864,7 +5945,8 @@ class RefreshTask:
         if plugin_instance.should_refresh(current_dt):
             return True
         if (
-            self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
+            _display_triggered_refresh_enabled(self.device_config)
+            and self._is_same_plugin_instance(plugin_instance, displayed_plugin_instance)
             and self._plugin_wants_refresh_on_display(plugin_instance)
         ):
             return True
@@ -6150,21 +6232,21 @@ class PlaylistRefresh(RefreshAction):
         # Determine the file path for the plugin's image
         plugin_image_path = os.path.join(device_config.plugin_image_dir, self.plugin_instance.get_image_path())
         image_missing = not os.path.exists(plugin_image_path)
-        if self.display_cached_only and not self.force and _display_refresh_under_resource_pressure(device_config):
+        if self.display_cached_only and not self.force:
             if not image_missing:
                 logger.info(
-                    "Using cached plugin instance image for scheduled display under resource pressure. | "
+                    "Using cached plugin instance image for scheduled display. | "
                     f"plugin_instance: {self.plugin_instance.name}."
                 )
                 try:
                     return _load_image_copy(plugin_image_path)
                 except Exception:
                     logger.exception(
-                        "Cached plugin image could not be loaded under resource pressure; using placeholder. | "
+                        "Cached plugin image could not be loaded for scheduled display; using placeholder. | "
                         f"plugin_instance: {self.plugin_instance.name}."
                     )
             logger.warning(
-                "Plugin instance image unavailable for scheduled display under resource pressure; using placeholder. | "
+                "Plugin instance image unavailable for scheduled display; using placeholder. | "
                 f"plugin_instance: '{self.plugin_instance.name}'"
             )
             return self._placeholder_image(device_config)

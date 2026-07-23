@@ -1015,7 +1015,7 @@ def test_display_submits_only_the_resolved_immutable_uuid(plugin_env):
             "expected_settings_revision": 1,
             "require_active": False,
             "force_hardware_write": True,
-            "request_presentation_after_display": True,
+            "request_presentation_after_display": False,
         },
     )
     assert not any(event[0] == "submit_manual" for event in plugin_env.events)
@@ -1035,6 +1035,40 @@ def test_display_can_suppress_redundant_post_display_refresh(plugin_env):
     assert response.status_code == 202
     submit = next(event for event in plugin_env.events if event[0] == "submit_display")
     assert submit[2]["request_presentation_after_display"] is False
+
+
+def test_display_accepts_explicit_presentation_opt_in_for_runtime_policy(
+    plugin_env,
+):
+    response = plugin_env.client.post(
+        "/display_plugin_instance",
+        json={
+            "playlist_name": "Default",
+            "plugin_id": "weather",
+            "plugin_instance": "Home",
+            "request_presentation": True,
+        },
+    )
+
+    assert response.status_code == 202
+    submit = next(event for event in plugin_env.events if event[0] == "submit_display")
+    assert submit[2]["request_presentation_after_display"] is True
+
+
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_display_rejects_non_boolean_presentation_flag(plugin_env, value):
+    response = plugin_env.client.post(
+        "/display_plugin_instance",
+        json={
+            "playlist_name": "Default",
+            "plugin_id": "weather",
+            "plugin_instance": "Home",
+            "request_presentation": value,
+        },
+    )
+
+    assert response.status_code == 400
+    assert not any(event[0] == "submit_display" for event in plugin_env.events)
 
 
 def test_data_refresh_submits_the_resolved_exact_cas_without_display(plugin_env):
