@@ -13,7 +13,11 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
 from plugins.base_plugin.render_provenance import SourceProvenance
-from runtime.refresh_contracts import TaskContext
+from runtime.refresh_contracts import (
+    TaskCancelled,
+    TaskContext,
+    TaskDeadlineExceeded,
+)
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpClient
 
@@ -46,6 +50,13 @@ _FRESH_FETCH_AGE = timedelta(minutes=30)
 SourceState = Literal["live", "fresh_cache", "stale_cache", "unavailable"]
 AlertState = Literal["active", "confirmed_empty", "unavailable"]
 FreshnessKind = Literal["scales", "kp", "wind", "alerts", "donki"]
+_ABORT_EXCEPTIONS = (TaskDeadlineExceeded, TaskCancelled)
+
+
+def _task_checkpoint(context: TaskContext | None) -> None:
+    checkpoint = getattr(context, "raise_if_cancelled", None)
+    if callable(checkpoint):
+        checkpoint()
 
 
 @dataclass(frozen=True)
@@ -764,6 +775,7 @@ class SpaceWeatherRepository:
     def refresh_core(
         self, *, now_utc: datetime, context: TaskContext | None
     ) -> tuple[SourceResult, SourceResult]:
+        _task_checkpoint(context)
         now = _as_utc(now_utc)
         scales = self._refresh_one(
             name="scales",
@@ -774,6 +786,7 @@ class SpaceWeatherRepository:
             now_utc=now,
             context=context,
         )
+        _task_checkpoint(context)
         kp = self._refresh_one(
             name="kp",
             endpoint=KP_ENDPOINT,
@@ -783,11 +796,13 @@ class SpaceWeatherRepository:
             now_utc=now,
             context=context,
         )
+        _task_checkpoint(context)
         return scales, kp
 
     def refresh_wind(
         self, *, now_utc: datetime, context: TaskContext | None
     ) -> tuple[SourceResult, SourceResult]:
+        _task_checkpoint(context)
         now = _as_utc(now_utc)
         speed = self._refresh_one(
             name="wind_speed",
@@ -798,6 +813,7 @@ class SpaceWeatherRepository:
             now_utc=now,
             context=context,
         )
+        _task_checkpoint(context)
         magnetic = self._refresh_one(
             name="wind_mag",
             endpoint=WIND_MAG_ENDPOINT,
@@ -807,11 +823,13 @@ class SpaceWeatherRepository:
             now_utc=now,
             context=context,
         )
+        _task_checkpoint(context)
         return speed, magnetic
 
     def refresh_alerts(
         self, *, now_utc: datetime, context: TaskContext | None
     ) -> tuple[SourceResult, AlertState, Mapping[str, Any] | None]:
+        _task_checkpoint(context)
         now = _as_utc(now_utc)
         path = self.cache_dir / "alerts.json"
         try:
@@ -822,11 +840,13 @@ class SpaceWeatherRepository:
                 timeout=NOAA_TIMEOUT_SECONDS,
                 max_bytes=MAX_PROVIDER_JSON_BYTES,
             )
+            _task_checkpoint(context)
             raw_bytes = response.data
             if not isinstance(raw_bytes, bytes):
                 raise ValueError("HTTP client returned a non-bytes response")
             raw = json.loads(raw_bytes)
             candidates = _fold_alert_candidates(raw)
+            _task_checkpoint(context)
             payload = _freeze({"candidates": candidates})
             envelope = _build_optional_envelope(
                 endpoint=ALERTS_ENDPOINT,
@@ -834,16 +854,22 @@ class SpaceWeatherRepository:
                 payload=payload,
                 raw_digest=hashlib.sha256(raw_bytes).hexdigest(),
             )
+            _task_checkpoint(context)
             atomic_write_json(path, _serialize_envelope(envelope))
+            _task_checkpoint(context)
             result = SourceResult(name="alerts", state="live", envelope=envelope)
             selected = _select_alert_candidate(candidates, now_utc=now)
             if selected is None:
                 return result, "confirmed_empty", None
             return result, "active", selected
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception as error:
+            _task_checkpoint(context)
             cached = _read_envelope(
                 path, expected_endpoint=ALERTS_ENDPOINT, freshness_kind="alerts"
             )
+            _task_checkpoint(context)
             result = self._cached_optional_result(
                 name="alerts",
                 cached=cached,
@@ -865,6 +891,7 @@ class SpaceWeatherRepository:
         now_utc: datetime,
         context: TaskContext | None,
     ) -> tuple[SourceResult, Mapping[str, Any] | None]:
+        _task_checkpoint(context)
         now = _as_utc(now_utc)
         path = self.cache_dir / "donki.json"
         today = now.date()
@@ -881,6 +908,7 @@ class SpaceWeatherRepository:
                 timeout=NOAA_TIMEOUT_SECONDS,
                 max_bytes=MAX_PROVIDER_JSON_BYTES,
             )
+            _task_checkpoint(context)
             cme_response = self.http.request_bytes(
                 "GET",
                 DONKI_CME_ENDPOINT,
@@ -893,6 +921,7 @@ class SpaceWeatherRepository:
                 timeout=NOAA_TIMEOUT_SECONDS,
                 max_bytes=MAX_PROVIDER_JSON_BYTES,
             )
+            _task_checkpoint(context)
             flr_bytes = flr_response.data
             cme_bytes = cme_response.data
             if not isinstance(flr_bytes, bytes) or not isinstance(cme_bytes, bytes):
@@ -900,6 +929,7 @@ class SpaceWeatherRepository:
             flr = json.loads(flr_bytes)
             cme = json.loads(cme_bytes)
             selected = select_donki_event(flr=flr, cme=cme, now_utc=now)
+            _task_checkpoint(context)
             payload = _freeze({"flr": flr, "cme": cme})
             envelope = _build_optional_envelope(
                 endpoint=_DONKI_CACHE_ENDPOINT,
@@ -913,14 +943,20 @@ class SpaceWeatherRepository:
                 max_bytes=MAX_DONKI_CACHE_BYTES,
                 label="DONKI",
             )
+            _task_checkpoint(context)
             atomic_write_json(path, serialized)
+            _task_checkpoint(context)
             return SourceResult(name="donki", state="live", envelope=envelope), selected
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception as error:
+            _task_checkpoint(context)
             cached = _read_envelope(
                 path,
                 expected_endpoint=_DONKI_CACHE_ENDPOINT,
                 freshness_kind="donki",
             )
+            _task_checkpoint(context)
             result = self._cached_optional_result(
                 name="donki",
                 cached=cached,
@@ -971,6 +1007,7 @@ class SpaceWeatherRepository:
         now_utc: datetime,
         context: TaskContext | None,
     ) -> SourceResult:
+        _task_checkpoint(context)
         path = self.cache_dir / filename
         try:
             response = self.http.request_bytes(
@@ -980,11 +1017,13 @@ class SpaceWeatherRepository:
                 timeout=NOAA_TIMEOUT_SECONDS,
                 max_bytes=MAX_PROVIDER_JSON_BYTES,
             )
+            _task_checkpoint(context)
             raw_bytes = response.data
             if not isinstance(raw_bytes, bytes):
                 raise ValueError("HTTP client returned a non-bytes response")
             raw = json.loads(raw_bytes)
             payload = normalizer(raw, now_utc=now_utc)
+            _task_checkpoint(context)
             envelope = _build_envelope(
                 endpoint=endpoint,
                 fetched_at_utc=now_utc,
@@ -1002,13 +1041,19 @@ class SpaceWeatherRepository:
                 raise ValueError(
                     f"{name} provider data is outside its diagnostic age window"
                 )
+            _task_checkpoint(context)
             atomic_write_json(path, _serialize_envelope(envelope))
+            _task_checkpoint(context)
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception as error:
+            _task_checkpoint(context)
             cached = _read_envelope(
                 path,
                 expected_endpoint=endpoint,
                 freshness_kind=freshness_kind,
             )
+            _task_checkpoint(context)
             if cached is None:
                 return SourceResult(
                     name=name,
@@ -1050,17 +1095,22 @@ def refresh_space_weather(
 ) -> SpaceWeatherSnapshot:
     """Refresh independent sources and project them into one display snapshot."""
 
+    _task_checkpoint(context)
     now = _as_utc(now_utc)
     scales, kp = repository.refresh_core(now_utc=now, context=context)
+    _task_checkpoint(context)
     wind_speed, wind_magnetic = repository.refresh_wind(
         now_utc=now, context=context
     )
+    _task_checkpoint(context)
     alerts, alert_state, alert = repository.refresh_alerts(
         now_utc=now, context=context
     )
+    _task_checkpoint(context)
     donki, donki_event = repository.refresh_donki(
         nasa_api_key=nasa_api_key, now_utc=now, context=context
     )
+    _task_checkpoint(context)
     sources = {
         result.name: result
         for result in (scales, kp, wind_speed, wind_magnetic, alerts, donki)
@@ -1135,11 +1185,22 @@ def refresh_space_weather(
         result.state == "live" and result.error is None for result in (scales, kp)
     )
     if cache_dir is not None and core_admitted:
-        _persist_aggregate_cache(Path(cache_dir) / "aggregate.json", snapshot)
+        _task_checkpoint(context)
+        _persist_aggregate_cache(
+            Path(cache_dir) / "aggregate.json",
+            snapshot,
+            context=context,
+        )
+    _task_checkpoint(context)
     return snapshot
 
 
-def _persist_aggregate_cache(path: Path, snapshot: SpaceWeatherSnapshot) -> None:
+def _persist_aggregate_cache(
+    path: Path,
+    snapshot: SpaceWeatherSnapshot,
+    *,
+    context: TaskContext | None = None,
+) -> None:
     """Persist a bounded diagnostic index without duplicating provider payloads."""
 
     document = {
@@ -1159,6 +1220,7 @@ def _persist_aggregate_cache(path: Path, snapshot: SpaceWeatherSnapshot) -> None
         max_bytes=MAX_SOURCE_CACHE_BYTES,
         label="space-weather aggregate",
     )
+    _task_checkpoint(context)
     atomic_write_json(path, document)
 
 

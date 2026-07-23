@@ -43,6 +43,10 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.long_task_executor import InstanceIdentity  # noqa: E402
+from runtime.refresh_contracts import (  # noqa: E402
+    TaskCancelled,
+    TaskDeadlineExceeded,
+)
 
 
 @pytest.fixture
@@ -267,6 +271,7 @@ def test_selection_json_is_atomic_and_contains_selection_contract(selection_path
 
     persisted = json.loads((selection_paths.data / "selection.json").read_text("utf-8"))
     assert persisted == {
+        "schema": 1,
         "device_day": "2026-07-22",
         "mode": "random",
         "requested_date": selection.requested_date,
@@ -277,6 +282,114 @@ def test_selection_json_is_atomic_and_contains_selection_contract(selection_path
         "candidate_dates": list(selection.candidate_dates),
     }
     assert not list(selection_paths.data.glob("selection.json.*.tmp"))
+
+
+def test_selection_json_read_is_bounded_before_decode(selection_paths):
+    path = selection_paths.data / "selection.json"
+    path.write_bytes(b"{" + b"x" * apod_module.MAX_SELECTION_JSON_BYTES + b"}")
+
+    assert apod_module._read_selection(path) is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda doc: doc.__setitem__("schema", 99),
+        lambda doc: doc.__setitem__("provisional", "false"),
+        lambda doc: doc.__setitem__("candidate_dates", ["2026-07-20"] * 2),
+        lambda doc: doc.__setitem__(
+            "candidate_dates",
+            [f"2026-07-{day:02d}" for day in range(14, 20)],
+        ),
+        lambda doc: doc.__setitem__("selected_apod_date", "not-a-date"),
+        lambda doc: doc.__setitem__(
+            "selected_apod_date",
+            doc["selected_apod_date"].replace("-", ""),
+        ),
+    ],
+    ids=[
+        "schema",
+        "strict-bool",
+        "unique-candidates",
+        "candidate-count",
+        "strict-date",
+        "canonical-date",
+    ],
+)
+def test_selection_json_rejects_invalid_schema_types_dates_and_candidates(
+    selection_paths,
+    mutate,
+):
+    apod_module._resolve_selection(
+        settings={"randomizeApod": "true"},
+        device_day=date(2026, 7, 22),
+        paths=selection_paths,
+        rng=random.Random(17),
+    )
+    path = selection_paths.data / "selection.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    mutate(document)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert apod_module._read_selection(path) is None
+
+
+def test_selection_cancellation_during_candidate_generation_precedes_state_write(
+    selection_paths,
+):
+    signal = TaskCancelled("stop selection")
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+    class CancellingRng:
+        def randint(self, _start, _end):
+            context.cancelled = True
+            return 0
+
+    context = Context()
+
+    with pytest.raises(TaskCancelled) as caught:
+        apod_module._resolve_selection(
+            settings={"randomizeApod": "true"},
+            device_day=date(2026, 7, 22),
+            paths=selection_paths,
+            rng=CancellingRng(),
+            context=context,
+        )
+
+    assert caught.value is signal
+    assert not (selection_paths.data / "selection.json").exists()
+
+
+def test_selection_today_rejects_semantically_retargeted_persisted_date(
+    selection_paths,
+):
+    apod_module._resolve_selection(
+        settings={},
+        device_day=date(2026, 7, 22),
+        paths=selection_paths,
+        rng=random.Random(1),
+    )
+    path = selection_paths.data / "selection.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["requested_date"] = "2026-07-01"
+    document["selected_apod_date"] = "2026-07-01"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    resolved = apod_module._resolve_selection(
+        settings={},
+        device_day=date(2026, 7, 22),
+        paths=selection_paths,
+        rng=random.Random(2),
+    )
+
+    assert resolved.requested_date == "2026-07-22"
+    assert resolved.resolved_record_date == "2026-07-22"
 
 
 def test_selection_settings_revision_changes_do_not_change_namespace_or_reroll(
@@ -433,6 +546,78 @@ class FakeHttp:
 
 def _core_http(scales, kp):
     return FakeHttp({SCALES_ENDPOINT: [scales], KP_ENDPOINT: [kp]})
+
+
+@pytest.mark.parametrize("abort_type", [TaskCancelled, TaskDeadlineExceeded])
+@pytest.mark.parametrize("operation", ["core", "alerts", "donki"])
+def test_space_weather_provider_abort_is_never_converted_to_cache_fallback(
+    tmp_path,
+    abort_type,
+    operation,
+):
+    signal = abort_type(f"stop {operation}")
+
+    class AbortHttp:
+        def __init__(self):
+            self.calls = []
+
+        def request_bytes(self, _method, endpoint, **_kwargs):
+            self.calls.append(endpoint)
+            raise signal
+
+    http = AbortHttp()
+    repository = SpaceWeatherRepository(cache_dir=tmp_path, http=http)
+    calls = {
+        "core": lambda: repository.refresh_core(
+            now_utc=NOW_UTC,
+            context=None,
+        ),
+        "alerts": lambda: repository.refresh_alerts(
+            now_utc=NOW_UTC,
+            context=None,
+        ),
+        "donki": lambda: repository.refresh_donki(
+            nasa_api_key="nasa-key",
+            now_utc=NOW_UTC,
+            context=None,
+        ),
+    }
+
+    with pytest.raises(abort_type) as caught:
+        calls[operation]()
+
+    assert caught.value is signal
+    assert len(http.calls) == 1
+    assert not list(tmp_path.glob("*.json"))
+
+
+@pytest.mark.parametrize("abort_type", [TaskCancelled, TaskDeadlineExceeded])
+def test_space_weather_cancellation_after_provider_response_precedes_cache_write(
+    tmp_path,
+    abort_type,
+):
+    signal = abort_type("stop before cache write")
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+    class Http:
+        def request_bytes(self, *_args, **_kwargs):
+            context.cancelled = True
+            return SimpleNamespace(data=b"[]")
+
+    context = Context()
+    repository = SpaceWeatherRepository(cache_dir=tmp_path, http=Http())
+
+    with pytest.raises(abort_type) as caught:
+        repository.refresh_alerts(now_utc=NOW_UTC, context=context)
+
+    assert caught.value is signal
+    assert not (tmp_path / "alerts.json").exists()
 
 
 def test_source_envelope_is_immutable_and_persists_raw_digest(tmp_path):
@@ -2349,6 +2534,279 @@ def _task5_record(
     )
 
 
+def _persist_valid_task5_fallback_state(paths):
+    selection = apod_module._resolve_selection(
+        settings={},
+        device_day=date(2026, 7, 22),
+        paths=paths,
+        rng=random.Random(1),
+    )
+    requested = replace(
+        _task5_record(
+            media_type="video",
+            url="https://media.example.test/video",
+            hdurl=None,
+        ),
+        selection_key=selection.fingerprint,
+        requested_device_date=selection.device_day,
+    )
+    fallback_url = "https://media.example.test/fallback-state.jpg"
+    displayed = replace(
+        _task5_record(
+            apod_date="2026-07-21",
+            url=fallback_url,
+            hdurl=None,
+        ),
+        selection_key=selection.fingerprint,
+        requested_device_date=selection.device_day,
+        warning="LATEST AVAILABLE · APOD 2026-07-21",
+        image_url=fallback_url,
+        image_cache_key=hashlib.sha256(fallback_url.encode("utf-8")).hexdigest(),
+    )
+    apod_module._persist_apod_state(
+        paths,
+        apod_module.ApodDisplayState(
+            selection_fingerprint=selection.fingerprint,
+            device_day=selection.device_day,
+            requested_date=requested.date,
+            requested_record=requested,
+            display_record=displayed,
+            fallback_reason="video",
+            provisional_media=False,
+        ),
+    )
+    return selection, paths.cache / "apod-state.json"
+
+
+@pytest.mark.parametrize(
+    ("field_path", "value"),
+    [
+        (("display_record", "date"), "2026-07-22"),
+        (("display_record", "date"), "2026-07-23"),
+        (("display_record", "date"), "2026-07-14"),
+        (("display_record", "warning"), "LATEST AVAILABLE · APOD 2026-07-20"),
+        (("display_record", "requested_device_date"), "2026-07-21"),
+        (("requested_record", "requested_device_date"), "2026-07-21"),
+        (("requested_record", "warning"), "LATEST AVAILABLE · APOD 2026-07-21"),
+        (("display_record", "selection_key"), "0" * 64),
+        (("requested_record", "selection_key"), "0" * 64),
+        (("display_record", "image_cache_key"), "0" * 64),
+        (("requested_record", "media_type"), "other"),
+    ],
+    ids=[
+        "same-day",
+        "future",
+        "older-than-seven-days",
+        "warning-mismatch",
+        "display-device-day",
+        "requested-device-day",
+        "requested-warning",
+        "display-fingerprint",
+        "requested-fingerprint",
+        "display-image-key",
+        "fallback-reason-media-type",
+    ],
+)
+def test_apod_persisted_fallback_state_rejects_semantic_corruption(
+    apod_storage,
+    field_path,
+    value,
+):
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace=f"state-semantic-{field_path[0]}-{value}",
+    )
+    selection, state_path = _persist_valid_task5_fallback_state(paths)
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    document[field_path[0]][field_path[1]] = value
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert apod_module._read_apod_state(state_path, selection=selection) is None
+
+
+def test_apod_persisted_same_day_state_requires_admitted_requested_media(
+    apod_storage,
+):
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="state-same-day-admission",
+    )
+    selection = apod_module._resolve_selection(
+        settings={},
+        device_day=date(2026, 7, 22),
+        paths=paths,
+        rng=random.Random(1),
+    )
+    media_url = "https://media.example.test/same-day-state.jpg"
+    admitted = replace(
+        _task5_record(url=media_url, hdurl=None),
+        selection_key=selection.fingerprint,
+        requested_device_date=selection.device_day,
+        image_url=media_url,
+        image_cache_key=hashlib.sha256(media_url.encode("utf-8")).hexdigest(),
+    )
+    apod_module._persist_apod_state(
+        paths,
+        apod_module.ApodDisplayState(
+            selection_fingerprint=selection.fingerprint,
+            device_day=selection.device_day,
+            requested_date=admitted.date,
+            requested_record=admitted,
+            display_record=admitted,
+            fallback_reason=None,
+            provisional_media=False,
+        ),
+    )
+    state_path = paths.cache / "apod-state.json"
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    document["requested_record"]["image_url"] = None
+    document["requested_record"]["image_cache_key"] = None
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert apod_module._read_apod_state(state_path, selection=selection) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://media.example.test/a.jpg?X-Amz-Credential=secret",
+        "https://media.example.test/a.jpg?Policy=secret",
+        "https://media.example.test/a.jpg?Signature=secret",
+        "https://media.example.test/a.jpg?Key-Pair-Id=secret",
+        "https://media.example.test/a.jpg?X-Goog-Signature=secret",
+        "https://media.example.test/a.jpg?skoid=secret",
+        "https://media.example.test/a.jpg?sig=secret",
+        "https://media.example.test/a.jpg?client_secret=secret",
+        "https://media.example.test/a.jpg?credential=secret",
+        "https://media.example.test/a.jpg?auth=secret",
+        "https://media.example.test/a.jpg?X-Amz-Signature=",
+        "https://media.example.test/a.jpg?authToken=secret",
+        "https://media.example.test/a.jpg?secretKey=secret",
+        "https://media.example.test/a.jpg?accessKeyId=secret",
+    ],
+)
+def test_apod_media_url_rejects_signed_and_credential_query_forms(url):
+    with pytest.raises(ValueError, match="credential|sensitive|query"):
+        apod_module._public_http_url(url)
+
+
+def test_apod_media_url_does_not_treat_unrelated_monkey_query_as_a_key_secret():
+    url = "https://media.example.test/a.jpg?monkey=capuchin"
+
+    assert apod_module._public_http_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/image.jpg",
+        "http://[::1]/image.jpg",
+        "http://10.0.0.7/image.jpg",
+        "http://192.168.1.9/image.jpg",
+        "http://169.254.169.254/latest/meta-data",
+        "http://224.0.0.1/image.jpg",
+        "http://0.0.0.0/image.jpg",
+        "http://localhost/image.jpg",
+        "http://nas.local/image.jpg",
+        "http://printer/image.jpg",
+        "http://127.0.0.1.nip.io/image.jpg",
+        "http://localtest.me/image.jpg",
+    ],
+)
+def test_apod_media_url_rejects_local_private_and_non_global_targets(url):
+    with pytest.raises(ValueError, match="public|host|address|local"):
+        apod_module._public_http_url(url)
+
+
+def test_apod_media_url_rejects_hostname_resolving_to_private_address(monkeypatch):
+    monkeypatch.setattr(
+        apod_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("10.0.0.8", 443),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="public|address|host"):
+        apod_module._public_http_url(
+            "https://private-resolution.example.com/image.jpg"
+        )
+
+
+@pytest.mark.parametrize(
+    ("standard", "hd", "expected_standard", "expected_hd"),
+    [
+        (
+            "http://127.0.0.1/private.jpg",
+            "https://media.example.test/safe-hd.jpg",
+            None,
+            "https://media.example.test/safe-hd.jpg",
+        ),
+        (
+            "https://media.example.test/safe-standard.jpg",
+            "https://media.example.test/hd.jpg?X-Amz-Signature=secret",
+            "https://media.example.test/safe-standard.jpg",
+            None,
+        ),
+    ],
+)
+def test_apod_fetch_validates_standard_and_hd_candidates_independently(
+    standard,
+    hd,
+    expected_standard,
+    expected_hd,
+):
+    class Http:
+        def request_json(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                data={
+                    "date": "2026-07-22",
+                    "media_type": "image",
+                    "title": "Safe independent candidate",
+                    "url": standard,
+                    "hdurl": hd,
+                }
+            )
+
+    record = apod_module._fetch_apod_record(
+        http=Http(),
+        api_key="nasa-key",
+        requested_date="2026-07-22",
+        context=None,
+    )
+
+    assert record.url == expected_standard
+    assert record.hdurl == expected_hd
+
+
+def test_apod_fetch_rejects_image_when_both_media_candidates_are_unsafe():
+    class Http:
+        def request_json(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                data={
+                    "date": "2026-07-22",
+                    "media_type": "image",
+                    "title": "Unsafe candidates",
+                    "url": "http://localhost/standard.jpg",
+                    "hdurl": "https://media.example.test/hd.jpg?Signature=secret",
+                }
+            )
+
+    with pytest.raises(RuntimeError, match="NASA APOD"):
+        apod_module._fetch_apod_record(
+            http=Http(),
+            api_key="nasa-key",
+            requested_date="2026-07-22",
+            context=None,
+        )
+
+
 class _MediaHttp:
     def __init__(self, payloads):
         self.payloads = dict(payloads)
@@ -2392,6 +2850,69 @@ def test_apod_media_prefers_valid_standard_url_without_touching_hd(
     assert digest in blob.name
     assert blob.is_file()
     assert [item["url"] for item in http.downloads] == [standard]
+
+
+def test_apod_media_download_disables_redirect_following(
+    monkeypatch, apod_storage
+):
+    media_url = "https://media.example.test/no-redirect.jpg"
+    http = _MediaHttp({media_url: _image_bytes()})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-no-redirect",
+    )
+
+    apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=media_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert http.downloads[0]["kwargs"]["allow_redirects"] is False
+
+
+def test_apod_invalid_cached_blob_is_removed_before_managed_lru_read(
+    monkeypatch, apod_storage
+):
+    media_url = "https://media.example.test/corrupt-cache.jpg"
+    http = _MediaHttp({media_url: RuntimeError("offline")})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-corrupt-hit",
+    )
+    namespace = apod_storage.managed_cache_namespace(paths.media)
+    monkeypatch.setattr(
+        apod_storage,
+        "managed_cache_namespace",
+        lambda _directory: namespace,
+    )
+    digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
+    target = namespace.path(digest, suffix=".img")
+    target.write_bytes(b"corrupt-image")
+    managed_reads = []
+    real_get = namespace.get_bytes
+
+    def recording_get(key, *, suffix=""):
+        managed_reads.append((key, suffix))
+        return real_get(key, suffix=suffix)
+
+    monkeypatch.setattr(namespace, "get_bytes", recording_get)
+
+    with pytest.raises(apod_module.ApodMediaUnavailable):
+        apod_module._resolve_media_blob(
+            plugin=apod_storage,
+            record=_task5_record(url=media_url, hdurl=None),
+            paths=paths,
+            minimum_size=(432, 299),
+            context=None,
+        )
+
+    assert managed_reads == []
+    assert not target.exists()
 
 
 @pytest.mark.parametrize(
@@ -2463,6 +2984,45 @@ def test_apod_media_reuses_persisted_hd_without_retrying_invalid_standard(
     assert first_url == second_url == hd
     assert first_blob == second_blob
     assert http.downloads == []
+
+
+def test_apod_record_media_continues_to_hd_after_standard_load_failure(
+    monkeypatch, apod_storage
+):
+    standard = "https://media.example.test/load-fails-standard.jpg"
+    hd = "https://media.example.test/load-succeeds-hd.jpg"
+    http = _MediaHttp(
+        {
+            standard: _image_bytes((960, 640)),
+            hd: _image_bytes((1600, 1200)),
+        }
+    )
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-load-fallback",
+    )
+    standard_digest = hashlib.sha256(standard.encode("utf-8")).hexdigest()
+    real_decode = apod_module._decode_media_blob
+
+    def decode(*, blob_path, photo_size):
+        if standard_digest in Path(blob_path).name:
+            raise apod_module.ApodMediaUnavailable("standard pixel load failed")
+        return real_decode(blob_path=blob_path, photo_size=photo_size)
+
+    monkeypatch.setattr(apod_module, "_decode_media_blob", decode)
+
+    admitted, source_image = apod_storage._resolve_record_media(
+        _task5_record(url=standard, hdurl=hd),
+        paths=paths,
+        photo_size=(432, 299),
+        context=None,
+    )
+
+    assert admitted.image_url == hd
+    assert source_image.size != (800, 480)
+    assert [item["url"] for item in http.downloads] == [standard, hd]
+    assert not (paths.media / f"{standard_digest}.img").exists()
 
 
 def test_apod_media_publication_is_accounted_and_evicts_the_oldest_blob(
@@ -2990,6 +3550,51 @@ def test_apod_translation_unavailable_is_explicit_and_does_not_invent_copy(
     assert http.calls == []
 
 
+@pytest.mark.parametrize("preseed_cache", [False, True], ids=["provider", "cache"])
+def test_apod_unfittable_translation_falls_back_and_removes_poisoned_cache(
+    monkeypatch,
+    apod_storage,
+    preseed_cache,
+):
+    title = "Aurora"
+    verbose_translation = "鏄" * 1000
+    http = _TranslationHttp([verbose_translation])
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace=f"translation-poison-{preseed_cache}",
+    )
+    config = _TranslationConfig({"OPEN_AI_SECRET": "translation-secret"})
+    if preseed_cache:
+        assert apod_module._translate_title(
+            title=title,
+            apod_date="2026-07-22",
+            paths=paths,
+            device_config=config,
+            context=None,
+        ) == (verbose_translation, False)
+        http.calls.clear()
+
+    prepared, unavailable, measurement = apod_storage._prepare_record(
+        _task5_record(title=title),
+        paths=paths,
+        device_config=config,
+        context=None,
+    )
+
+    assert prepared.title_en == title
+    assert prepared.title_zh is None
+    assert prepared.translation_state == "unavailable"
+    assert unavailable is True
+    assert measurement.photo_size[0] > 0
+    assert not apod_module._translation_cache_path(
+        paths,
+        "2026-07-22",
+        title,
+    ).exists()
+    assert len(http.calls) == (0 if preseed_cache else 1)
+
+
 class _Task5DeviceConfig(_TranslationConfig):
     def get_config(self, key=None, default=None):
         values = {
@@ -3256,6 +3861,56 @@ def test_space_weather_aggregate_cache_is_atomic_and_contains_provenance(tmp_pat
     assert cached["sources"]["scales"] == "live"
     assert cached["sources"]["kp"] == "live"
     assert not list(tmp_path.glob("aggregate.json.*.tmp"))
+
+
+@pytest.mark.parametrize("cancel_after", ["core", "wind", "alerts", "donki"])
+def test_space_weather_phase_cancellation_stops_before_later_sources_and_aggregate(
+    tmp_path,
+    cancel_after,
+):
+    signal = TaskCancelled(f"stop after {cancel_after}")
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+    context = Context()
+    repository = _aggregate_repository()
+    repository.cache_dir = tmp_path
+    calls = []
+    phase_methods = {
+        "core": "refresh_core",
+        "wind": "refresh_wind",
+        "alerts": "refresh_alerts",
+        "donki": "refresh_donki",
+    }
+    for phase, method_name in phase_methods.items():
+        original = getattr(repository, method_name)
+
+        def wrapped(*args, _phase=phase, _original=original, **kwargs):
+            calls.append(_phase)
+            result = _original(*args, **kwargs)
+            if _phase == cancel_after:
+                context.cancelled = True
+            return result
+
+        setattr(repository, method_name, wrapped)
+
+    with pytest.raises(TaskCancelled) as caught:
+        refresh_space_weather(
+            repository,
+            nasa_api_key="nasa-key",
+            now_utc=NOW_UTC,
+            context=context,
+        )
+
+    expected = list(phase_methods)
+    assert caught.value is signal
+    assert calls == expected[: expected.index(cancel_after) + 1]
+    assert not (tmp_path / "aggregate.json").exists()
 
 
 def test_space_weather_core_failure_preserves_prior_aggregate_bytes_and_mtime(tmp_path):

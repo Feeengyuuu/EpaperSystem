@@ -11,9 +11,14 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.apod.apod_page import measure_apod_page, render_apod_page
+from plugins.apod.apod_page import (
+    ApodPageLayoutError,
+    measure_apod_page,
+    render_apod_page,
+)
 from plugins.apod.space_weather import SpaceWeatherRepository, refresh_space_weather
 from runtime.long_task_executor import current_instance_identity, current_task_context
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from PIL import Image
 from utils.http_client import HttpClient, get_http_client
@@ -25,9 +30,12 @@ from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import hashlib
+import ipaddress
 import json
 import logging
 import random
+import re
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +43,10 @@ RANDOM_APOD_MAX_ATTEMPTS = 5
 APOD_ENDPOINT = "https://api.nasa.gov/planetary/apod"
 OPENAI_TRANSLATION_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 GROQ_TRANSLATION_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+SELECTION_CACHE_SCHEMA = 1
 APOD_STATE_SCHEMA = 1
 TRANSLATION_CACHE_SCHEMA = 1
+MAX_SELECTION_JSON_BYTES = 16 * 1024
 MAX_APOD_JSON_BYTES = 512 * 1024
 MAX_APOD_STATE_BYTES = 768 * 1024
 MAX_TRANSLATION_JSON_BYTES = 256 * 1024
@@ -49,13 +59,66 @@ MEDIA_TIMEOUT_SECONDS = 40
 _SENSITIVE_QUERY_KEYS = {
     "api_key",
     "apikey",
+    "auth",
+    "authorization",
+    "client_secret",
+    "credential",
     "key",
+    "key-pair-id",
+    "policy",
+    "secret",
     "token",
     "access_token",
     "signature",
     "sig",
 }
+_AZURE_SAS_QUERY_KEYS = {
+    "se",
+    "sig",
+    "sip",
+    "si",
+    "skoid",
+    "sks",
+    "skt",
+    "sktid",
+    "skv",
+    "sp",
+    "spr",
+    "sr",
+    "srt",
+    "ss",
+    "st",
+    "sv",
+}
+_SENSITIVE_QUERY_FRAGMENTS = {
+    "auth",
+    "credential",
+    "key",
+    "secret",
+    "signature",
+    "token",
+}
+_SENSITIVE_COMPACT_QUERY_KEYS = {
+    "accesskey",
+    "accesskeyid",
+    "accesstoken",
+    "apikey",
+    "authkey",
+    "authtoken",
+    "bearertoken",
+    "clientsecret",
+    "credentialkey",
+    "idtoken",
+    "keypairid",
+    "privatekey",
+    "refreshtoken",
+    "secretkey",
+    "signingkey",
+}
+_LOCAL_ALIAS_HOSTS = {"localtest.me", "lvh.me", "vcap.me"}
+_LOCAL_ALIAS_SUFFIXES = (".localtest.me", ".lvh.me", ".nip.io", ".sslip.io")
 _DRAFT_SAFE_MEDIA_FORMATS = {"JPEG", "MPO"}
+_ABORT_EXCEPTIONS = (TaskDeadlineExceeded, TaskCancelled)
 
 
 @dataclass(frozen=True)
@@ -111,6 +174,12 @@ class ApodDisplayState:
 
 class ApodMediaUnavailable(RuntimeError):
     """No validated image media can be admitted for the selected record."""
+
+
+def _task_checkpoint(context) -> None:
+    checkpoint = getattr(context, "raise_if_cancelled", None)
+    if callable(checkpoint):
+        checkpoint()
 
 
 _SELECTION_FILENAME = "selection.json"
@@ -201,9 +270,11 @@ def _resolve_selection(
     device_day: date,
     paths: InstancePaths,
     rng: random.Random,
+    context=None,
 ) -> ApodSelection:
     """Reuse one valid daily selection, or atomically persist a new one."""
 
+    _task_checkpoint(context)
     custom_date = str(settings.get("customDate") or "").strip()
     if settings.get("randomizeApod") == "true":
         mode: Literal["today", "random", "custom"] = "random"
@@ -231,11 +302,19 @@ def _resolve_selection(
         )
 
     persisted = _read_selection(paths.data / _SELECTION_FILENAME)
-    if persisted is not None and _selection_matches(persisted, device_day, mode, fingerprint):
+    _task_checkpoint(context)
+    if persisted is not None and _selection_matches(
+        persisted,
+        device_day,
+        mode,
+        fingerprint,
+        requested_date,
+    ):
         return persisted
 
     if mode == "random":
         candidate_dates = _random_candidate_dates(device_day, rng)
+        _task_checkpoint(context)
         selected_date = date.fromisoformat(candidate_dates[0])
         requested_date = selected_date.isoformat()
         provisional = True
@@ -257,39 +336,105 @@ def _resolve_selection(
         provisional=provisional,
         candidate_dates=candidate_dates,
     )
-    _persist_selection(paths, selection)
+    _persist_selection(paths, selection, context=context)
     return selection
 
 
 def _read_selection(path: Path) -> ApodSelection | None:
+    raw = _read_bounded_json(path, max_bytes=MAX_SELECTION_JSON_BYTES)
+    if raw is None:
+        return None
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
+        if type(raw.get("schema")) is not int:
+            return None
+        if raw.get("schema") != SELECTION_CACHE_SCHEMA:
             return None
         mode = raw["mode"]
         if mode not in {"today", "random", "custom"}:
             return None
-        selected = raw.get("selected_apod_date")
-        record_key = raw.get("record_cache_key")
+        device_day_text = raw["device_day"]
+        requested_text = raw["requested_date"]
+        selected = raw["selected_apod_date"]
+        fingerprint = raw["selection_fingerprint"]
+        record_key = raw["record_cache_key"]
+        provisional = raw["provisional"]
         candidate_dates = raw.get("candidate_dates", [])
-        if selected is not None and not isinstance(selected, str):
-            return None
-        if record_key is not None and not isinstance(record_key, str):
-            return None
-        if not isinstance(candidate_dates, list) or not all(
-            isinstance(candidate, str) for candidate in candidate_dates
+        if not all(
+            type(value) is str
+            for value in (
+                mode,
+                device_day_text,
+                requested_text,
+                selected,
+                fingerprint,
+                record_key,
+            )
         ):
             return None
-        for candidate in candidate_dates:
-            date.fromisoformat(candidate)
+        if type(provisional) is not bool:
+            return None
+        if (
+            len(fingerprint) != 64
+            or len(record_key) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint)
+            or any(character not in "0123456789abcdef" for character in record_key)
+        ):
+            return None
+        if not isinstance(candidate_dates, list) or not all(
+            type(candidate) is str for candidate in candidate_dates
+        ):
+            return None
+        if (
+            len(candidate_dates) > RANDOM_APOD_MAX_ATTEMPTS
+            or len(set(candidate_dates)) != len(candidate_dates)
+        ):
+            return None
+        device_day = date.fromisoformat(device_day_text)
+        requested_day = date.fromisoformat(requested_text)
+        selected_day = date.fromisoformat(selected)
+        parsed_candidates = tuple(date.fromisoformat(value) for value in candidate_dates)
+        if (
+            device_day_text != device_day.isoformat()
+            or requested_text != requested_day.isoformat()
+            or selected != selected_day.isoformat()
+            or any(
+                raw_value != parsed_value.isoformat()
+                for raw_value, parsed_value in zip(
+                    candidate_dates,
+                    parsed_candidates,
+                )
+            )
+        ):
+            return None
+        if mode == "random":
+            if (
+                not parsed_candidates
+                or requested_day != parsed_candidates[0]
+                or selected_day not in parsed_candidates
+                or (
+                    provisional
+                    and selected_day != parsed_candidates[0]
+                )
+                or any(
+                    candidate < _RANDOM_APOD_START or candidate > device_day
+                    for candidate in parsed_candidates
+                )
+            ):
+                return None
+        elif (
+            provisional
+            or parsed_candidates
+            or selected_day != requested_day
+        ):
+            return None
         return ApodSelection(
-            device_day=str(raw["device_day"]),
+            device_day=device_day.isoformat(),
             mode=mode,
-            requested_date=str(raw["requested_date"]),
-            fingerprint=str(raw["selection_fingerprint"]),
-            resolved_record_date=selected,
+            requested_date=requested_day.isoformat(),
+            fingerprint=fingerprint,
+            resolved_record_date=selected_day.isoformat(),
             record_cache_key=record_key,
-            provisional=bool(raw["provisional"]),
+            provisional=provisional,
             candidate_dates=tuple(candidate_dates),
         )
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
@@ -301,6 +446,7 @@ def _selection_matches(
     device_day: date,
     mode: Literal["today", "random", "custom"],
     fingerprint: str,
+    requested_date: str,
 ) -> bool:
     return (
         selection.device_day == device_day.isoformat()
@@ -308,6 +454,13 @@ def _selection_matches(
         and selection.fingerprint == fingerprint
         and selection.resolved_record_date is not None
         and selection.record_cache_key is not None
+        and (
+            mode == "random"
+            or (
+                selection.requested_date == requested_date
+                and selection.resolved_record_date == requested_date
+            )
+        )
         and (
             mode != "random"
             or (
@@ -329,24 +482,38 @@ def _selection_matches(
     )
 
 
-def _persist_selection(paths: InstancePaths, selection: ApodSelection) -> None:
-    atomic_write_json(
-        paths.data / _SELECTION_FILENAME,
-        {
-            "device_day": selection.device_day,
-            "mode": selection.mode,
-            "requested_date": selection.requested_date,
-            "selected_apod_date": selection.resolved_record_date,
-            "selection_fingerprint": selection.fingerprint,
-            "provisional": selection.provisional,
-            "record_cache_key": selection.record_cache_key,
-            "candidate_dates": list(selection.candidate_dates),
-        },
-    )
+def _persist_selection(
+    paths: InstancePaths,
+    selection: ApodSelection,
+    *,
+    context=None,
+) -> None:
+    document = {
+        "schema": SELECTION_CACHE_SCHEMA,
+        "device_day": selection.device_day,
+        "mode": selection.mode,
+        "requested_date": selection.requested_date,
+        "selected_apod_date": selection.resolved_record_date,
+        "selection_fingerprint": selection.fingerprint,
+        "provisional": selection.provisional,
+        "record_cache_key": selection.record_cache_key,
+        "candidate_dates": list(selection.candidate_dates),
+    }
+    encoded = json.dumps(
+        document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded) > MAX_SELECTION_JSON_BYTES:
+        raise ValueError("APOD selection exceeds its bounded cache size")
+    _task_checkpoint(context)
+    atomic_write_json(paths.data / _SELECTION_FILENAME, document)
 
 
 def _resolved_selection(
-    paths: InstancePaths, selection: ApodSelection, record_date: str
+    paths: InstancePaths,
+    selection: ApodSelection,
+    record_date: str,
+    *,
+    context=None,
 ) -> ApodSelection:
     resolved = ApodSelection(
         device_day=selection.device_day,
@@ -360,7 +527,7 @@ def _resolved_selection(
         provisional=False,
         candidate_dates=selection.candidate_dates,
     )
-    _persist_selection(paths, resolved)
+    _persist_selection(paths, resolved, context=context)
     return resolved
 
 
@@ -370,6 +537,10 @@ def _utc_now() -> datetime:
 
 def _format_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _fallback_warning(apod_date: str) -> str:
+    return f"LATEST AVAILABLE \N{MIDDLE DOT} APOD {apod_date}"
 
 
 def _parse_utc(value: Any) -> datetime:
@@ -400,6 +571,66 @@ def _optional_text(value: Any, *, maximum: int = 4000) -> str | None:
     return text
 
 
+def _query_key_is_sensitive(key: str) -> bool:
+    raw = str(key).strip()
+    folded = raw.casefold()
+    if not folded:
+        return False
+    compact = re.sub(r"[^a-z0-9]+", "", folded)
+    if folded.startswith(("x-amz-", "x-goog-")) or compact.startswith(
+        ("xamz", "xgoog")
+    ):
+        return True
+    if (
+        folded in _SENSITIVE_QUERY_KEYS
+        or folded in _AZURE_SAS_QUERY_KEYS
+        or compact in _SENSITIVE_COMPACT_QUERY_KEYS
+    ):
+        return True
+    camel_separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", raw)
+    words = {
+        part
+        for part in re.split(r"[^a-z0-9]+", camel_separated.casefold())
+        if part
+    }
+    return bool(words.intersection(_SENSITIVE_QUERY_FRAGMENTS))
+
+
+def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        address.is_global
+        and not address.is_multicast
+        and not address.is_reserved
+        and not address.is_unspecified
+    )
+
+
+def _require_public_hostname_resolution(host: str, port: int) -> None:
+    # RFC 6761 .test names are deterministic fixtures and never public DNS targets.
+    if host.endswith(".test"):
+        return
+    try:
+        resolved = socket.getaddrinfo(
+            host,
+            port,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except OSError:
+        raise ValueError("APOD media URL host did not resolve publicly") from None
+    if not resolved:
+        raise ValueError("APOD media URL host did not resolve publicly")
+    for item in resolved:
+        try:
+            address_text = str(item[4][0]).split("%", 1)[0]
+            address = ipaddress.ip_address(address_text)
+        except (IndexError, TypeError, ValueError):
+            raise ValueError("APOD media URL resolved to an invalid address") from None
+        if not _is_public_address(address):
+            raise ValueError("APOD media URL resolved to a non-public address")
+
+
 def _public_http_url(value: Any) -> str | None:
     text = _optional_text(value, maximum=4096)
     if text is None:
@@ -409,10 +640,46 @@ def _public_http_url(value: Any) -> str | None:
         raise ValueError("APOD media URL is invalid")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("APOD media URL contains credentials")
-    query_keys = {key.casefold() for key, _value in parse_qsl(parsed.query)}
-    if query_keys.intersection(_SENSITIVE_QUERY_KEYS):
+    try:
+        host = str(parsed.hostname or "").rstrip(".").casefold()
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError:
+        raise ValueError("APOD media URL host or port is invalid") from None
+    if not host:
+        raise ValueError("APOD media URL requires a public host")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        if not _is_public_address(address):
+            raise ValueError("APOD media URL requires a public address")
+    elif (
+        host == "localhost"
+        or host.endswith((".localhost", ".local", ".internal", ".lan", ".home"))
+        or host in _LOCAL_ALIAS_HOSTS
+        or host.endswith(_LOCAL_ALIAS_SUFFIXES)
+        or "." not in host
+        or all(part.isdigit() for part in host.split("."))
+    ):
+        raise ValueError("APOD media URL requires a public host")
+    else:
+        _require_public_hostname_resolution(host, port)
+    if any(
+        _query_key_is_sensitive(key)
+        for key, _value in parse_qsl(parsed.query, keep_blank_values=True)
+    ):
         raise ValueError("APOD media URL contains sensitive query credentials")
     return text
+
+
+def _safe_media_candidate(value: Any) -> str | None:
+    try:
+        return _public_http_url(value)
+    except _ABORT_EXCEPTIONS:
+        raise
+    except (TypeError, ValueError):
+        return None
 
 
 def _fetch_apod_record(
@@ -425,6 +692,7 @@ def _fetch_apod_record(
     """Fetch one bounded, validated APOD response without exposing credentials."""
 
     try:
+        _task_checkpoint(context)
         requested = date.fromisoformat(str(requested_date)).isoformat()
         response = http.request_json(
             "GET",
@@ -434,6 +702,7 @@ def _fetch_apod_record(
             timeout=APOD_TIMEOUT_SECONDS,
             max_bytes=MAX_APOD_JSON_BYTES,
         )
+        _task_checkpoint(context)
         raw = response.data
         if not isinstance(raw, Mapping):
             raise ValueError("APOD response is not an object")
@@ -447,8 +716,13 @@ def _fetch_apod_record(
         explanation = str(raw.get("explanation") or "").strip()
         if len(explanation) > 20_000:
             raise ValueError("APOD explanation is too long")
-        url = _public_http_url(raw.get("url"))
-        hdurl = _public_http_url(raw.get("hdurl"))
+        url = _safe_media_candidate(raw.get("url"))
+        hdurl = _safe_media_candidate(raw.get("hdurl"))
+        if media_type == "image" and url is None and hdurl is None:
+            raise ValueError("APOD image response has no safe media URL")
+        copyright_text = _optional_text(raw.get("copyright"), maximum=500)
+    except _ABORT_EXCEPTIONS:
+        raise
     except Exception:
         raise RuntimeError(
             f"NASA APOD request failed for {str(requested_date)}"
@@ -463,7 +737,7 @@ def _fetch_apod_record(
         title_zh=None,
         translation_state="pending",
         explanation=explanation,
-        copyright=_optional_text(raw.get("copyright"), maximum=500),
+        copyright=copyright_text,
         url=url,
         hdurl=hdurl,
         image_url=None,
@@ -491,6 +765,8 @@ def _resolve_image_record(
         candidate_date = (requested_day - timedelta(days=offset)).isoformat()
         try:
             candidate = fetch_for_date(candidate_date)
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception:
             continue
         if candidate.media_type != "image":
@@ -500,7 +776,7 @@ def _resolve_image_record(
                 candidate,
                 selection_key=requested.selection_key,
                 requested_device_date=requested.requested_device_date,
-                warning=f"LATEST AVAILABLE · APOD {candidate.date}",
+                warning=_fallback_warning(candidate.date),
             ),
             True,
         )
@@ -524,6 +800,8 @@ def _safe_media_dimensions(image: Image.Image) -> tuple[int, int]:
         )
     try:
         orientation = int(image.getexif().get(274, 1))
+    except _ABORT_EXCEPTIONS:
+        raise
     except Exception:
         orientation = 1
     if orientation in {5, 6, 7, 8}:
@@ -543,8 +821,112 @@ def _probe_media_blob(path: Path, minimum_size: tuple[int, int]) -> None:
             image.verify()
     except ApodMediaUnavailable:
         raise
+    except _ABORT_EXCEPTIONS:
+        raise
     except Exception:
         raise ApodMediaUnavailable("APOD media validation failed") from None
+
+
+def _media_url_candidates(record: ApodRecord) -> tuple[str, ...]:
+    safe_standard = _safe_media_candidate(record.url)
+    safe_hd = _safe_media_candidate(record.hdurl)
+    safe_urls = tuple(
+        candidate
+        for candidate in (safe_standard, safe_hd)
+        if candidate is not None
+    )
+    candidates: list[str] = []
+    admitted = _safe_media_candidate(record.image_url)
+    if (
+        admitted in safe_urls
+        and record.image_cache_key
+        == hashlib.sha256(str(admitted).encode("utf-8")).hexdigest()
+    ):
+        candidates.append(str(admitted))
+    for candidate in safe_urls:
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _remove_media_blob(namespace, digest: str) -> None:
+    try:
+        namespace.remove(digest, suffix=".img")
+    except _ABORT_EXCEPTIONS:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+
+def _resolve_media_url_blob(
+    *,
+    plugin: "Apod",
+    media_url: str,
+    paths: InstancePaths,
+    minimum_size: tuple[int, int],
+    context,
+) -> Path:
+    """Resolve one URL only, validating a cache hit before its managed LRU read."""
+
+    digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
+    namespace = plugin.managed_cache_namespace(paths.media)
+    target = namespace.path(digest, suffix=".img")
+    _task_checkpoint(context)
+    if target.is_file() and not target.is_symlink():
+        try:
+            _probe_media_blob(target, minimum_size)
+            _task_checkpoint(context)
+            cached_payload = namespace.get_bytes(digest, suffix=".img")
+            if cached_payload is None:
+                raise ApodMediaUnavailable("APOD media cache miss")
+            del cached_payload
+            _probe_media_blob(target, minimum_size)
+            _task_checkpoint(context)
+            return target
+        except _ABORT_EXCEPTIONS:
+            raise
+        except Exception:
+            _remove_media_blob(namespace, digest)
+    elif target.exists():
+        _remove_media_blob(namespace, digest)
+
+    http = get_http_client()
+    candidate = paths.media / f".{digest}.{uuid4().hex}.tmp"
+    try:
+        _task_checkpoint(context)
+        http.stream_to_file(
+            "GET",
+            media_url,
+            candidate,
+            context=context,
+            timeout=MEDIA_TIMEOUT_SECONDS,
+            max_bytes=MAX_MEDIA_BYTES,
+            mode=0o600,
+            allow_redirects=False,
+        )
+        _task_checkpoint(context)
+        _probe_media_blob(candidate, minimum_size)
+        _task_checkpoint(context)
+        target = namespace.put_bytes(
+            digest,
+            candidate.read_bytes(),
+            suffix=".img",
+        )
+        _probe_media_blob(target, minimum_size)
+        _task_checkpoint(context)
+        return target
+    except _ABORT_EXCEPTIONS:
+        raise
+    except Exception:
+        _remove_media_blob(namespace, digest)
+        raise ApodMediaUnavailable(
+            "APOD media candidate could not be validated"
+        ) from None
+    finally:
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _resolve_media_blob(
@@ -557,61 +939,26 @@ def _resolve_media_blob(
 ) -> tuple[Path, str]:
     """Reuse or atomically publish one full-SHA plugin-global media blob."""
 
-    urls: list[str] = []
-    admitted_url = record.image_url
-    if (
-        admitted_url in {record.url, record.hdurl}
-        and record.image_cache_key
-        == hashlib.sha256(str(admitted_url).encode("utf-8")).hexdigest()
-    ):
-        urls.append(str(admitted_url))
-    for candidate in (record.url, record.hdurl):
-        if candidate and candidate not in urls:
-            urls.append(candidate)
+    urls = _media_url_candidates(record)
     if not urls:
         raise ApodMediaUnavailable("APOD record does not provide image media")
 
-    http = get_http_client()
-    namespace = plugin.managed_cache_namespace(paths.media)
     for media_url in urls:
-        digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
-        target = namespace.path(digest, suffix=".img")
         try:
-            cached_payload = namespace.get_bytes(digest, suffix=".img")
-            if cached_payload is None:
-                raise ApodMediaUnavailable("APOD media cache miss")
-            del cached_payload
-            _probe_media_blob(target, minimum_size)
-            return target, media_url
-        except Exception:
-            pass
-
-        candidate = paths.media / f".{digest}.{uuid4().hex}.tmp"
-        try:
-            http.stream_to_file(
-                "GET",
+            return (
+                _resolve_media_url_blob(
+                    plugin=plugin,
+                    media_url=media_url,
+                    paths=paths,
+                    minimum_size=minimum_size,
+                    context=context,
+                ),
                 media_url,
-                candidate,
-                context=context,
-                timeout=MEDIA_TIMEOUT_SECONDS,
-                max_bytes=MAX_MEDIA_BYTES,
-                mode=0o600,
             )
-            _probe_media_blob(candidate, minimum_size)
-            target = namespace.put_bytes(
-                digest,
-                candidate.read_bytes(),
-                suffix=".img",
-            )
-            _probe_media_blob(target, minimum_size)
-            return target, media_url
-        except Exception:
+        except _ABORT_EXCEPTIONS:
+            raise
+        except ApodMediaUnavailable:
             continue
-        finally:
-            try:
-                candidate.unlink(missing_ok=True)
-            except OSError:
-                pass
     raise ApodMediaUnavailable("No validated APOD image media is available")
 
 
@@ -648,6 +995,8 @@ def _decode_media_blob(*, blob_path: Path, photo_size: tuple[int, int]) -> Image
                 decoded.info["exif"] = exif.tobytes()
         return decoded
     except ApodMediaUnavailable:
+        raise
+    except _ABORT_EXCEPTIONS:
         raise
     except Exception:
         raise ApodMediaUnavailable("APOD media decode failed") from None
@@ -721,17 +1070,22 @@ def _translate_title(
 ) -> tuple[str | None, bool]:
     """Translate only the exact title, using an exact date+title cache key."""
 
+    _task_checkpoint(context)
     english = _required_text(title, label="title", maximum=600)
     normalized_date = date.fromisoformat(apod_date).isoformat()
     cached = _read_translation_cache(
         paths=paths, apod_date=normalized_date, title=english
     )
     if cached is not None:
+        _task_checkpoint(context)
         return cached, False
 
     def load_key(name: str) -> str:
         try:
+            _task_checkpoint(context)
             return str(device_config.load_env_key(name) or "").strip()
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception:
             return ""
 
@@ -760,6 +1114,7 @@ def _translate_title(
     http = get_http_client()
     for provider_name, endpoint, api_key, model in providers:
         try:
+            _task_checkpoint(context)
             response = http.request_json(
                 "POST",
                 endpoint,
@@ -785,8 +1140,10 @@ def _translate_title(
                 timeout=TRANSLATION_TIMEOUT_SECONDS,
                 max_bytes=MAX_TRANSLATION_JSON_BYTES,
             )
+            _task_checkpoint(context)
             translated = _translation_content(response)
             digest = hashlib.sha256(english.encode("utf-8")).hexdigest()
+            _task_checkpoint(context)
             atomic_write_json(
                 _translation_cache_path(paths, normalized_date, english),
                 {
@@ -799,7 +1156,10 @@ def _translate_title(
                     "fetched_at_utc": _format_utc(_utc_now()),
                 },
             )
+            _task_checkpoint(context)
             return translated, False
+        except _ABORT_EXCEPTIONS:
+            raise
         except Exception:
             logger.warning(
                 "APOD title translation provider unavailable: %s", provider_name
@@ -849,11 +1209,17 @@ def _record_from_document(raw: Any) -> ApodRecord:
     source_state = str(raw.get("source_state") or "")
     if source_state not in {"live", "fresh_cache", "stale_cache", "unavailable"}:
         raise ValueError("APOD source state is invalid")
-    image_url = _public_http_url(raw.get("image_url"))
+    standard_url = _safe_media_candidate(raw.get("url"))
+    hd_url = _safe_media_candidate(raw.get("hdurl"))
+    image_url = _safe_media_candidate(raw.get("image_url"))
     image_cache_key = _optional_text(raw.get("image_cache_key"), maximum=128)
+    if media_type == "image" and standard_url is None and hd_url is None:
+        raise ValueError("APOD cached image record has no safe media URL")
     if image_url is None and image_cache_key is not None:
         raise ValueError("APOD cached image key has no URL")
     if image_url is not None:
+        if image_url not in {standard_url, hd_url}:
+            raise ValueError("APOD cached image URL is not a record candidate")
         expected_key = hashlib.sha256(image_url.encode("utf-8")).hexdigest()
         if image_cache_key != expected_key:
             raise ValueError("APOD cached image key does not match its URL")
@@ -867,8 +1233,8 @@ def _record_from_document(raw: Any) -> ApodRecord:
         translation_state=translation_state,
         explanation=str(raw.get("explanation") or "")[:20_000],
         copyright=_optional_text(raw.get("copyright"), maximum=500),
-        url=_public_http_url(raw.get("url")),
-        hdurl=_public_http_url(raw.get("hdurl")),
+        url=standard_url,
+        hdurl=hd_url,
         image_url=image_url,
         image_cache_key=image_cache_key,
         fetched_at_utc=_parse_utc(raw.get("fetched_at_utc")),
@@ -908,9 +1274,15 @@ def _read_apod_state(
         displayed = _record_from_document(raw.get("display_record"))
         if requested.date != requested_date or displayed.media_type != "image":
             return None
-        if requested.selection_key != selection.fingerprint:
-            return None
-        if displayed.selection_key != selection.fingerprint:
+        if (
+            requested.selection_key != selection.fingerprint
+            or displayed.selection_key != selection.fingerprint
+            or requested.requested_device_date != selection.device_day
+            or displayed.requested_device_date != selection.device_day
+            or requested.warning is not None
+            or displayed.image_url is None
+            or displayed.image_cache_key is None
+        ):
             return None
         fallback_reason = raw.get("fallback_reason")
         if fallback_reason not in {None, "video", "current_media_unavailable"}:
@@ -920,9 +1292,26 @@ def _read_apod_state(
             return None
         if provisional_media != (fallback_reason == "current_media_unavailable"):
             return None
-        if fallback_reason is None and displayed.date != requested.date:
-            return None
-        if fallback_reason == "video" and requested.media_type == "image":
+        if fallback_reason is None:
+            if (
+                displayed.date != requested.date
+                or displayed.warning is not None
+                or requested.media_type != "image"
+                or requested.image_url != displayed.image_url
+                or requested.image_cache_key != displayed.image_cache_key
+            ):
+                return None
+        else:
+            requested_day = date.fromisoformat(requested.date)
+            displayed_day = date.fromisoformat(displayed.date)
+            fallback_age = (requested_day - displayed_day).days
+            if (
+                fallback_age < 1
+                or fallback_age > 7
+                or displayed.warning != _fallback_warning(displayed.date)
+            ):
+                return None
+        if fallback_reason == "video" and requested.media_type != "video":
             return None
         if fallback_reason == "current_media_unavailable" and requested.media_type != "image":
             return None
@@ -939,7 +1328,12 @@ def _read_apod_state(
         return None
 
 
-def _persist_apod_state(paths: InstancePaths, state: ApodDisplayState) -> None:
+def _persist_apod_state(
+    paths: InstancePaths,
+    state: ApodDisplayState,
+    *,
+    context=None,
+) -> None:
     document = {
         "schema": APOD_STATE_SCHEMA,
         "selection_fingerprint": state.selection_fingerprint,
@@ -955,6 +1349,7 @@ def _persist_apod_state(paths: InstancePaths, state: ApodDisplayState) -> None:
     ).encode("utf-8")
     if len(encoded) > MAX_APOD_STATE_BYTES:
         raise ValueError("APOD state exceeds its bounded cache size")
+    _task_checkpoint(context)
     atomic_write_json(paths.cache / "apod-state.json", document)
 
 
@@ -978,11 +1373,13 @@ def _load_or_fetch_apod_state(
 ) -> tuple[ApodDisplayState, ApodSelection]:
     cached = _read_apod_state(paths.cache / "apod-state.json", selection=selection)
     if cached is not None:
+        _task_checkpoint(context)
         return cached, selection
 
     if selection.mode == "random" and selection.provisional:
         requested = None
         for candidate_date in selection.candidate_dates[:RANDOM_APOD_MAX_ATTEMPTS]:
+            _task_checkpoint(context)
             try:
                 candidate = _fetch_apod_record(
                     http=http,
@@ -990,6 +1387,8 @@ def _load_or_fetch_apod_state(
                     requested_date=candidate_date,
                     context=context,
                 )
+            except _ABORT_EXCEPTIONS:
+                raise
             except RuntimeError:
                 continue
             if candidate.media_type == "image":
@@ -1007,34 +1406,17 @@ def _load_or_fetch_apod_state(
             context=context,
         )
 
+    _task_checkpoint(context)
     requested = _bind_record_to_selection(requested, selection=selection)
-
-    def fetch_fallback(value: str) -> ApodRecord:
-        fetched = _fetch_apod_record(
-            http=http,
-            api_key=api_key,
-            requested_date=value,
-            context=context,
-        )
-        return _bind_record_to_selection(fetched, selection=selection)
-
-    displayed, used_fallback = _resolve_image_record(
-        requested=requested,
-        fetch_for_date=fetch_fallback,
-        max_prior_days=7,
-    )
     state = ApodDisplayState(
         selection_fingerprint=selection.fingerprint,
         device_day=selection.device_day,
         requested_date=requested.date,
         requested_record=requested,
-        display_record=displayed,
-        fallback_reason="video" if used_fallback else None,
+        display_record=requested,
+        fallback_reason=None,
         provisional_media=False,
     )
-    if selection.mode == "random" and selection.provisional:
-        return state, selection
-    _persist_apod_state(paths, state)
     return state, selection
 
 
@@ -1061,6 +1443,7 @@ class Apod(BasePlugin):
         if dimensions != (800, 480):
             raise ValueError("APOD page requires the approved 800x480 dimensions")
         context = current_task_context()
+        _task_checkpoint(context)
         http = get_http_client()
         paths = _instance_paths(self)
         selection = _resolve_selection(
@@ -1068,7 +1451,9 @@ class Apod(BasePlugin):
             device_day=_device_day(device_config),
             paths=paths,
             rng=random.Random(),
+            context=context,
         )
+        _task_checkpoint(context)
         state, selection = _load_or_fetch_apod_state(
             http=http,
             api_key=api_key,
@@ -1076,6 +1461,7 @@ class Apod(BasePlugin):
             paths=paths,
             context=context,
         )
+        _task_checkpoint(context)
 
         rendered_at = _utc_now()
         repository = SpaceWeatherRepository(
@@ -1088,6 +1474,7 @@ class Apod(BasePlugin):
             now_utc=rendered_at,
             context=context,
         )
+        _task_checkpoint(context)
         failed_core = [
             name
             for name, result in (("scales", weather.scales), ("kp", weather.kp))
@@ -1117,41 +1504,10 @@ class Apod(BasePlugin):
                 context=context,
             )
         else:
-            candidate = (
-                state.requested_record
-                if state.provisional_media
-                else state.display_record
-            )
-            try:
-                prepared, unavailable, measurement = self._prepare_record(
-                    candidate,
-                    paths=paths,
-                    device_config=device_config,
-                    context=context,
-                )
-                displayed, source_image = self._resolve_record_media(
-                    prepared,
-                    paths=paths,
-                    photo_size=measurement.photo_size,
-                    context=context,
-                )
-                if state.provisional_media:
-                    state = replace(
-                        state,
-                        requested_record=displayed,
-                        display_record=displayed,
-                        fallback_reason=None,
-                        provisional_media=False,
-                    )
-                elif displayed.date == state.requested_record.date:
-                    state = replace(
-                        state,
-                        requested_record=displayed,
-                        display_record=displayed,
-                    )
-                else:
-                    state = replace(state, display_record=displayed)
-            except ApodMediaUnavailable:
+            if (
+                state.requested_record.media_type != "image"
+                and state.display_record.date == state.requested_record.date
+            ):
                 displayed, source_image, unavailable, measurement, state = (
                     self._resolve_media_fallback(
                         state=state,
@@ -1163,8 +1519,63 @@ class Apod(BasePlugin):
                         context=context,
                     )
                 )
+            else:
+                candidate = (
+                    state.requested_record
+                    if state.provisional_media
+                    else state.display_record
+                )
+                try:
+                    prepared, unavailable, measurement = self._prepare_record(
+                        candidate,
+                        paths=paths,
+                        device_config=device_config,
+                        context=context,
+                    )
+                    displayed, source_image = self._resolve_record_media(
+                        prepared,
+                        paths=paths,
+                        photo_size=measurement.photo_size,
+                        context=context,
+                    )
+                    if state.provisional_media:
+                        state = replace(
+                            state,
+                            requested_record=displayed,
+                            display_record=displayed,
+                            fallback_reason=None,
+                            provisional_media=False,
+                        )
+                    elif displayed.date == state.requested_record.date:
+                        state = replace(
+                            state,
+                            requested_record=displayed,
+                            display_record=displayed,
+                        )
+                    else:
+                        state = replace(state, display_record=displayed)
+                except _ABORT_EXCEPTIONS:
+                    raise
+                except ApodMediaUnavailable:
+                    (
+                        displayed,
+                        source_image,
+                        unavailable,
+                        measurement,
+                        state,
+                    ) = self._resolve_media_fallback(
+                        state=state,
+                        http=http,
+                        api_key=api_key,
+                        selection=selection,
+                        paths=paths,
+                        device_config=device_config,
+                        context=context,
+                    )
 
-        _persist_apod_state(paths, state)
+        _task_checkpoint(context)
+        _persist_apod_state(paths, state, context=context)
+        _task_checkpoint(context)
         image = render_apod_page(
             apod=displayed,
             title_zh=displayed.title_zh,
@@ -1175,6 +1586,7 @@ class Apod(BasePlugin):
             dimensions=dimensions,
             measurement=measurement,
         )
+        _task_checkpoint(context)
         provenance = weather.aggregate_state
         if provenance in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}:
             provenance = SourceProvenance.LIVE
@@ -1184,11 +1596,19 @@ class Apod(BasePlugin):
             SourceProvenance.LOCAL_FALLBACK,
         }:
             image.info["inkypi_skip_cache"] = True
-        self._write_apod_context(displayed, weather, provenance, rendered_at)
+        _task_checkpoint(context)
+        self._write_apod_context(
+            displayed,
+            weather,
+            provenance,
+            rendered_at,
+            context=context,
+        )
         logger.info("APOD data refresh completed")
         return image
 
     def _prepare_record(self, record, *, paths, device_config, context):
+        _task_checkpoint(context)
         had_cached_translation = _read_translation_cache(
             paths=paths,
             apod_date=record.date,
@@ -1211,37 +1631,74 @@ class Apod(BasePlugin):
             title_zh=title_zh,
             translation_state=translation_state,
         )
-        measurement = measure_apod_page(
-            apod=prepared,
-            title_zh=title_zh,
-            translation_unavailable=unavailable,
-        )
+        _task_checkpoint(context)
+        try:
+            measurement = measure_apod_page(
+                apod=prepared,
+                title_zh=title_zh,
+                translation_unavailable=unavailable,
+            )
+        except ApodPageLayoutError:
+            if title_zh is None:
+                raise
+            _task_checkpoint(context)
+            try:
+                _translation_cache_path(
+                    paths, record.date, record.title_en
+                ).unlink(missing_ok=True)
+            except OSError:
+                pass
+            unavailable = True
+            prepared = replace(
+                record,
+                title_zh=None,
+                translation_state="unavailable",
+            )
+            measurement = measure_apod_page(
+                apod=prepared,
+                title_zh=None,
+                translation_unavailable=True,
+            )
+        _task_checkpoint(context)
         return prepared, unavailable, measurement
 
     def _resolve_record_media(
         self, record, *, paths, photo_size, context
     ) -> tuple[ApodRecord, Image.Image]:
-        blob_path, media_url = _resolve_media_blob(
-            plugin=self,
-            record=record,
-            paths=paths,
-            minimum_size=photo_size,
-            context=context,
-        )
-        source_image = _decode_media_blob(
-            blob_path=blob_path,
-            photo_size=photo_size,
-        )
-        return (
-            replace(
-                record,
-                image_url=media_url,
-                image_cache_key=hashlib.sha256(
-                    media_url.encode("utf-8")
-                ).hexdigest(),
-            ),
-            source_image,
-        )
+        urls = _media_url_candidates(record)
+        if not urls:
+            raise ApodMediaUnavailable("APOD record does not provide image media")
+        namespace = self.managed_cache_namespace(paths.media)
+        for media_url in urls:
+            digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
+            try:
+                _task_checkpoint(context)
+                blob_path = _resolve_media_url_blob(
+                    plugin=self,
+                    media_url=media_url,
+                    paths=paths,
+                    minimum_size=photo_size,
+                    context=context,
+                )
+                source_image = _decode_media_blob(
+                    blob_path=blob_path,
+                    photo_size=photo_size,
+                )
+                _task_checkpoint(context)
+                return (
+                    replace(
+                        record,
+                        image_url=media_url,
+                        image_cache_key=digest,
+                    ),
+                    source_image,
+                )
+            except _ABORT_EXCEPTIONS:
+                raise
+            except ApodMediaUnavailable:
+                _remove_media_blob(namespace, digest)
+                continue
+        raise ApodMediaUnavailable("No decodable APOD image media is available")
 
     def _resolve_provisional_random(
         self,
@@ -1259,6 +1716,7 @@ class Apod(BasePlugin):
         for candidate_date in selection.candidate_dates[
             :RANDOM_APOD_MAX_ATTEMPTS
         ]:
+            _task_checkpoint(context)
             if not reached_initial:
                 if candidate_date != initial_record.date:
                     continue
@@ -1272,6 +1730,8 @@ class Apod(BasePlugin):
                         requested_date=candidate_date,
                         context=context,
                     )
+                except _ABORT_EXCEPTIONS:
+                    raise
                 except RuntimeError:
                     continue
                 if candidate.media_type != "image":
@@ -1294,14 +1754,19 @@ class Apod(BasePlugin):
                     photo_size=measurement.photo_size,
                     context=context,
                 )
+            except _ABORT_EXCEPTIONS:
+                raise
             except ApodMediaUnavailable:
                 continue
 
+            _task_checkpoint(context)
             selection = _resolved_selection(
                 paths,
                 selection,
                 displayed.date,
+                context=context,
             )
+            _task_checkpoint(context)
             state = ApodDisplayState(
                 selection_fingerprint=selection.fingerprint,
                 device_day=selection.device_day,
@@ -1334,59 +1799,86 @@ class Apod(BasePlugin):
         context,
     ):
         requested = state.requested_record
-        if state.provisional_media:
-            fallback = state.display_record
-            fallback_reason = "current_media_unavailable"
-        else:
-            base = state.display_record
-
-            def fetch_for_date(value):
-                fetched = _fetch_apod_record(
-                    http=http,
-                    api_key=api_key,
-                    requested_date=value,
+        requested_day = date.fromisoformat(requested.date)
+        fallback_reason = (
+            "current_media_unavailable"
+            if requested.media_type == "image"
+            else "video"
+        )
+        for offset in range(1, 8):
+            _task_checkpoint(context)
+            candidate_date = (requested_day - timedelta(days=offset)).isoformat()
+            if (
+                state.display_record.date == candidate_date
+                and state.display_record.media_type == "image"
+            ):
+                candidate = state.display_record
+            else:
+                try:
+                    candidate = _fetch_apod_record(
+                        http=http,
+                        api_key=api_key,
+                        requested_date=candidate_date,
+                        context=context,
+                    )
+                except _ABORT_EXCEPTIONS:
+                    raise
+                except RuntimeError:
+                    continue
+                candidate = _bind_record_to_selection(
+                    candidate,
+                    selection=selection,
+                )
+            if candidate.media_type != "image":
+                continue
+            candidate = replace(
+                candidate,
+                selection_key=selection.fingerprint,
+                requested_device_date=selection.device_day,
+                warning=_fallback_warning(candidate_date),
+            )
+            try:
+                prepared, unavailable, measurement = self._prepare_record(
+                    candidate,
+                    paths=paths,
+                    device_config=device_config,
                     context=context,
                 )
-                return _bind_record_to_selection(fetched, selection=selection)
-
-            fallback, _used = _resolve_image_record(
-                requested=replace(base, media_type="unavailable"),
-                fetch_for_date=fetch_for_date,
-                max_prior_days=7,
+                displayed, source_image = self._resolve_record_media(
+                    prepared,
+                    paths=paths,
+                    photo_size=measurement.photo_size,
+                    context=context,
+                )
+            except _ABORT_EXCEPTIONS:
+                raise
+            except (ApodMediaUnavailable, ApodPageLayoutError):
+                continue
+            new_state = replace(
+                state,
+                requested_record=requested,
+                display_record=displayed,
+                fallback_reason=fallback_reason,
+                provisional_media=(
+                    fallback_reason == "current_media_unavailable"
+                ),
             )
-            fallback_reason = (
-                "current_media_unavailable"
-                if requested.media_type == "image"
-                else "video"
-            )
+            _task_checkpoint(context)
+            return displayed, source_image, unavailable, measurement, new_state
 
-        prepared, unavailable, measurement = self._prepare_record(
-            fallback,
-            paths=paths,
-            device_config=device_config,
-            context=context,
+        raise ApodMediaUnavailable(
+            "No usable APOD image was available within seven prior days"
         )
-        displayed, source_image = self._resolve_record_media(
-            prepared,
-            paths=paths,
-            photo_size=measurement.photo_size,
-            context=context,
-        )
-        requested_for_state = requested
-        if state.provisional_media:
-            # Keep the requested record's newest translation/media retry metadata.
-            requested_for_state = state.requested_record
-        new_state = replace(
-            state,
-            requested_record=requested_for_state,
-            display_record=displayed,
-            fallback_reason=fallback_reason,
-            provisional_media=fallback_reason == "current_media_unavailable",
-        )
-        _persist_apod_state(paths, new_state)
-        return displayed, source_image, unavailable, measurement, new_state
 
-    def _write_apod_context(self, record, weather, provenance, generated_at):
+    def _write_apod_context(
+        self,
+        record,
+        weather,
+        provenance,
+        generated_at,
+        *,
+        context=None,
+    ):
         summary = f"NASA APOD: {record.title_en} ({record.date})"
         facts = [
             {"label": "date", "value": record.date},
@@ -1404,6 +1896,7 @@ class Apod(BasePlugin):
             facts.append(
                 {"label": "kp", "value": str(current_kp.get("value"))}
             )
+        _task_checkpoint(context)
         write_context(
             "apod",
             {
