@@ -3,6 +3,7 @@ import importlib
 import json
 import random
 import sys
+import threading
 from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
@@ -3096,6 +3097,353 @@ def test_apod_pinned_download_propagates_abort_after_dns_without_connecting(
     assert not target.exists()
 
 
+def test_apod_pinned_download_uses_one_total_deadline_across_all_addresses(
+    monkeypatch,
+    tmp_path,
+):
+    now = [100.0]
+    connect_calls = []
+    socket_timeouts = []
+    payload = _image_bytes()
+
+    monkeypatch.setattr(
+        apod_module,
+        "_media_monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+
+    def resolve(*_args, **_kwargs):
+        now[0] += 1.0
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            ),
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("1.1.1.1", 443),
+            ),
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", resolve)
+
+    class Connection:
+        def settimeout(self, timeout):
+            socket_timeouts.append(timeout)
+
+        def sendall(self, _payload):
+            now[0] += 1.0
+
+        def close(self):
+            return None
+
+    connection = Connection()
+
+    def connect(endpoint, *, timeout):
+        connect_calls.append((endpoint, timeout))
+        if endpoint[0] == "8.8.8.8":
+            now[0] += 2.0
+            raise OSError("first approved address unavailable")
+        now[0] += 1.0
+        return connection
+
+    monkeypatch.setattr(apod_module.socket, "create_connection", connect)
+
+    class TlsContext:
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            assert raw_socket is connection
+            assert server_hostname == "apod.nasa.gov"
+            now[0] += 1.0
+            return raw_socket
+
+    monkeypatch.setattr(
+        apod_module.ssl,
+        "create_default_context",
+        lambda: TlsContext(),
+    )
+
+    class Response:
+        status = 200
+        headers = {"Content-Length": str(len(payload))}
+
+        def __init__(self):
+            self.remaining = payload
+
+        def begin(self):
+            now[0] += 1.0
+
+        def read(self, _chunk_size):
+            chunk, self.remaining = self.remaining, b""
+            if chunk:
+                now[0] += 1.0
+            return chunk
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        apod_module.http.client,
+        "HTTPResponse",
+        lambda _connection: Response(),
+    )
+
+    apod_module._download_apod_media_to_file(
+        "https://apod.nasa.gov/apod/image/deadline.jpg",
+        tmp_path / "deadline.img",
+        context=None,
+        timeout=10.0,
+        max_bytes=len(payload) + 1,
+    )
+
+    assert [call[0] for call in connect_calls] == [
+        ("8.8.8.8", 443),
+        ("1.1.1.1", 443),
+    ]
+    assert [call[1] for call in connect_calls] == pytest.approx([9.0, 7.0])
+    assert socket_timeouts == pytest.approx([6.0, 5.0, 4.0, 3.0, 2.0])
+
+
+def test_apod_blocking_dns_is_bounded_by_default_media_deadline(
+    monkeypatch,
+    tmp_path,
+):
+    now = [50.0]
+    resolver_started = threading.Event()
+    release_resolver = threading.Event()
+    wait_slices = []
+
+    monkeypatch.setattr(
+        apod_module,
+        "_media_monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+
+    def blocking_resolver(*_args, **_kwargs):
+        if threading.current_thread() is threading.main_thread():
+            raise AssertionError("DNS resolution must not block the task thread")
+        resolver_started.set()
+        release_resolver.wait()
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", blocking_resolver)
+
+    def fake_wait(done, timeout):
+        assert resolver_started.wait(timeout=1.0)
+        wait_slices.append(timeout)
+        now[0] += timeout
+        return done.is_set()
+
+    monkeypatch.setattr(
+        apod_module,
+        "_wait_for_dns_completion",
+        fake_wait,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        apod_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "expired DNS must not enter connect"
+        ),
+    )
+
+    try:
+        with pytest.raises(TaskDeadlineExceeded):
+            apod_module._download_apod_media_to_file(
+                "https://apod.nasa.gov/apod/image/dns-timeout.jpg",
+                tmp_path / "dns-timeout.img",
+                context=None,
+                timeout=0.12,
+                max_bytes=1024,
+            )
+    finally:
+        release_resolver.set()
+
+    assert sum(wait_slices) == pytest.approx(0.12)
+    assert not (tmp_path / "dns-timeout.img").exists()
+
+
+def test_apod_blocking_dns_propagates_external_cancellation_before_connect(
+    monkeypatch,
+    tmp_path,
+):
+    signal = TaskCancelled("cancel blocked DNS")
+    now = [75.0]
+    resolver_started = threading.Event()
+    release_resolver = threading.Event()
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+        def remaining_seconds(self):
+            return 60.0
+
+    context = Context()
+    monkeypatch.setattr(
+        apod_module,
+        "_media_monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+
+    def blocking_resolver(*_args, **_kwargs):
+        if threading.current_thread() is threading.main_thread():
+            raise AssertionError("DNS resolution must not block the task thread")
+        resolver_started.set()
+        release_resolver.wait()
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", blocking_resolver)
+
+    def cancel_while_waiting(_done, _timeout):
+        assert resolver_started.wait(timeout=1.0)
+        context.cancelled = True
+        return False
+
+    monkeypatch.setattr(
+        apod_module,
+        "_wait_for_dns_completion",
+        cancel_while_waiting,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        apod_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cancelled DNS must not enter connect"
+        ),
+    )
+
+    try:
+        with pytest.raises(TaskCancelled) as caught:
+            apod_module._download_apod_media_to_file(
+                "https://apod.nasa.gov/apod/image/dns-cancel.jpg",
+                tmp_path / "dns-cancel.img",
+                context=context,
+                timeout=10.0,
+                max_bytes=1024,
+            )
+    finally:
+        release_resolver.set()
+
+    assert caught.value is signal
+    assert not (tmp_path / "dns-cancel.img").exists()
+
+
+def test_apod_repeated_blocking_dns_timeouts_use_one_bounded_worker(
+    monkeypatch,
+    tmp_path,
+):
+    now = [125.0]
+    active_attempt = [0]
+    resolver_started = [threading.Event(), threading.Event()]
+    release_resolvers = threading.Event()
+    workers = []
+
+    monkeypatch.setattr(
+        apod_module,
+        "_media_monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+
+    def blocking_resolver(*_args, **_kwargs):
+        worker_index = len(workers)
+        workers.append(threading.current_thread())
+        if worker_index < len(resolver_started):
+            resolver_started[worker_index].set()
+        release_resolvers.wait()
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", blocking_resolver)
+
+    def fake_dns_wait(done, timeout):
+        assert resolver_started[active_attempt[0]].wait(timeout=1.0)
+        now[0] += timeout
+        return done.is_set()
+
+    def fake_worker_slot_wait(timeout):
+        slot = getattr(apod_module, "_DNS_WORKER_SLOT", None)
+        if slot is None or slot.acquire(blocking=False):
+            return True
+        now[0] += timeout
+        return False
+
+    monkeypatch.setattr(
+        apod_module,
+        "_wait_for_dns_completion",
+        fake_dns_wait,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "_wait_for_dns_worker_slot",
+        fake_worker_slot_wait,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        apod_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "expired DNS must not enter connect"
+        ),
+    )
+
+    try:
+        for attempt in range(2):
+            active_attempt[0] = attempt
+            with pytest.raises(TaskDeadlineExceeded):
+                apod_module._download_apod_media_to_file(
+                    "https://apod.nasa.gov/apod/image/bounded-dns.jpg",
+                    tmp_path / f"bounded-dns-{attempt}.img",
+                    context=None,
+                    timeout=0.12,
+                    max_bytes=1024,
+                )
+        assert len(workers) == 1
+        assert workers[0].daemon is True
+    finally:
+        release_resolvers.set()
+        for worker in tuple(workers):
+            worker.join(timeout=1.0)
+
+
 @pytest.mark.parametrize(
     ("standard", "hd", "expected_standard", "expected_hd"),
     [
@@ -3380,6 +3728,56 @@ def test_apod_record_media_continues_to_hd_after_standard_load_failure(
     assert source_image.size != (800, 480)
     assert [item["url"] for item in http.downloads] == [standard, hd]
     assert not (paths.media / f"{standard_digest}.img").exists()
+
+
+@pytest.mark.parametrize("abort_type", [TaskCancelled, TaskDeadlineExceeded])
+def test_apod_abort_after_candidate_read_never_publishes_managed_blob(
+    monkeypatch,
+    apod_storage,
+    abort_type,
+):
+    media_url = "https://media.example.test/cancel-after-read.jpg"
+    http = _MediaHttp({media_url: _image_bytes()})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace=f"media-read-abort-{abort_type.__name__}",
+    )
+    digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
+    signal = abort_type("abort after candidate read")
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+    context = Context()
+    original_read_bytes = Path.read_bytes
+
+    def cancelling_read_bytes(path):
+        payload = original_read_bytes(path)
+        if path.parent == paths.media and path.name.startswith(f".{digest}."):
+            context.cancelled = True
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", cancelling_read_bytes)
+
+    with pytest.raises(abort_type) as caught:
+        apod_module._resolve_media_blob(
+            plugin=apod_storage,
+            record=_task5_record(url=media_url, hdurl=None),
+            paths=paths,
+            minimum_size=(432, 299),
+            context=context,
+        )
+
+    assert caught.value is signal
+    assert not (paths.media / f"{digest}.img").exists()
+    assert not [
+        path for path in paths.media.iterdir() if path.name.startswith(f".{digest}.")
+    ]
 
 
 def test_apod_media_publication_is_accounted_and_evicts_the_oldest_blob(

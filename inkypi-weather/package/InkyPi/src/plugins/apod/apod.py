@@ -38,6 +38,8 @@ import random
 import re
 import socket
 import ssl
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ MAX_DECODED_MEDIA_BYTES = 32 * 1024 * 1024
 APOD_TIMEOUT_SECONDS = 20
 TRANSLATION_TIMEOUT_SECONDS = 20
 MEDIA_TIMEOUT_SECONDS = 40
+DNS_WAIT_SLICE_SECONDS = 0.05
 _SENSITIVE_QUERY_KEYS = {
     "api_key",
     "apikey",
@@ -128,6 +131,16 @@ _SENSITIVE_COMPACT_QUERY_KEYS = {
 }
 _DRAFT_SAFE_MEDIA_FORMATS = {"JPEG", "MPO"}
 _ABORT_EXCEPTIONS = (TaskDeadlineExceeded, TaskCancelled)
+_media_monotonic = time.monotonic
+_DNS_WORKER_SLOT = threading.BoundedSemaphore(value=1)
+
+
+def _wait_for_dns_completion(done: threading.Event, timeout: float) -> bool:
+    return done.wait(timeout)
+
+
+def _wait_for_dns_worker_slot(timeout: float) -> bool:
+    return _DNS_WORKER_SLOT.acquire(timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -203,10 +216,48 @@ class _ApprovedMediaTarget:
         )
 
 
+class _MediaDeadline:
+    """One monotonic media budget shared by DNS and every transport phase."""
+
+    def __init__(self, context, timeout: float):
+        seconds = float(timeout)
+        if seconds <= 0:
+            raise ValueError("APOD media timeout must be positive")
+        self._context = context
+        self._clock = _media_monotonic
+        self._deadline = float(self._clock()) + seconds
+
+    def raise_if_cancelled(self) -> None:
+        _task_checkpoint(self._context)
+        if float(self._clock()) >= self._deadline:
+            raise TaskDeadlineExceeded("APOD media deadline expired")
+        remaining = getattr(self._context, "remaining_seconds", None)
+        if callable(remaining) and float(remaining()) <= 0:
+            _task_checkpoint(self._context)
+            raise TaskDeadlineExceeded("task deadline expired")
+
+    def remaining_seconds(self) -> float:
+        self.raise_if_cancelled()
+        remaining = self._deadline - float(self._clock())
+        external_remaining = getattr(self._context, "remaining_seconds", None)
+        if callable(external_remaining):
+            remaining = min(remaining, float(external_remaining()))
+        if remaining <= 0:
+            self.raise_if_cancelled()
+            raise TaskDeadlineExceeded("APOD media deadline expired")
+        return remaining
+
+
 def _task_checkpoint(context) -> None:
     checkpoint = getattr(context, "raise_if_cancelled", None)
     if callable(checkpoint):
         checkpoint()
+
+
+def _media_deadline(context, timeout: float) -> _MediaDeadline:
+    if isinstance(context, _MediaDeadline):
+        return context
+    return _MediaDeadline(context, timeout)
 
 
 _SELECTION_FILENAME = "selection.json"
@@ -657,23 +708,82 @@ def _require_public_hostname_resolution(
 ) -> tuple[str, ...]:
     """Validate a trusted host's current transport addresses immediately before I/O."""
 
-    _task_checkpoint(context)
-    try:
-        resolved = socket.getaddrinfo(
-            host,
-            port,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP,
+    budget = _media_deadline(context, MEDIA_TIMEOUT_SECONDS)
+    _task_checkpoint(budget)
+    while True:
+        wait_seconds = min(
+            DNS_WAIT_SLICE_SECONDS,
+            budget.remaining_seconds(),
         )
-    except OSError:
-        raise ValueError("APOD media URL host did not resolve publicly") from None
-    _task_checkpoint(context)
+        if _wait_for_dns_worker_slot(wait_seconds):
+            break
+        _task_checkpoint(budget)
+    try:
+        _task_checkpoint(budget)
+    except BaseException:
+        _DNS_WORKER_SLOT.release()
+        raise
+
+    outcome: dict[str, Any] = {}
+    done = threading.Event()
+
+    def resolve() -> None:
+        try:
+            outcome["resolved"] = socket.getaddrinfo(
+                host,
+                port,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP,
+            )
+        except Exception as error:
+            outcome["error"] = error
+        finally:
+            try:
+                _DNS_WORKER_SLOT.release()
+            finally:
+                done.set()
+
+    try:
+        worker = threading.Thread(
+            target=resolve,
+            name="apod-media-dns",
+            daemon=True,
+        )
+        worker.start()
+    except RuntimeError:
+        _DNS_WORKER_SLOT.release()
+        raise ValueError("APOD media DNS worker could not start") from None
+    except BaseException:
+        _DNS_WORKER_SLOT.release()
+        raise
+    while True:
+        _task_checkpoint(budget)
+        wait_seconds = min(
+            DNS_WAIT_SLICE_SECONDS,
+            budget.remaining_seconds(),
+        )
+        if _wait_for_dns_completion(done, wait_seconds):
+            break
+        _task_checkpoint(budget)
+    _task_checkpoint(budget)
+
+    error = outcome.get("error")
+    if error is not None:
+        if isinstance(error, _ABORT_EXCEPTIONS):
+            raise error
+        if isinstance(error, (OSError, TypeError, ValueError)):
+            raise ValueError(
+                "APOD media URL host did not resolve publicly"
+            ) from None
+        raise error
+    resolved = outcome.get("resolved")
+    _task_checkpoint(budget)
     if not resolved:
         raise ValueError("APOD media URL host did not resolve publicly")
     addresses: list[str] = []
     for item in resolved:
-        _task_checkpoint(context)
+        _task_checkpoint(budget)
         try:
             address_text = str(item[4][0]).split("%", 1)[0]
             address = ipaddress.ip_address(address_text)
@@ -736,17 +846,10 @@ def _safe_media_candidate(value: Any) -> str | None:
         return None
 
 
-def _media_socket_timeout(context, configured: float) -> float:
-    _task_checkpoint(context)
-    timeout = max(0.001, float(configured))
-    remaining = getattr(context, "remaining_seconds", None)
-    if callable(remaining):
-        seconds = float(remaining())
-        if seconds <= 0:
-            _task_checkpoint(context)
-            raise TaskDeadlineExceeded("task deadline expired")
-        timeout = min(timeout, seconds)
-    return max(0.001, timeout)
+def _media_socket_timeout(context) -> float:
+    budget = _media_deadline(context, MEDIA_TIMEOUT_SECONDS)
+    _task_checkpoint(budget)
+    return max(0.001, budget.remaining_seconds())
 
 
 def _resolve_apod_media_target(
@@ -787,7 +890,8 @@ def _download_apod_media_to_file(
 ) -> None:
     """Download through one DNS-approved numeric peer while preserving TLS identity."""
 
-    approved = _resolve_apod_media_target(media_url, context=context)
+    budget = _media_deadline(context, timeout)
+    approved = _resolve_apod_media_target(media_url, context=budget)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     limit = int(max_bytes)
@@ -813,30 +917,30 @@ def _download_apod_media_to_file(
         connection = None
         response = None
         try:
-            _task_checkpoint(context)
+            _task_checkpoint(budget)
             raw_socket = socket.create_connection(
                 (address, approved.port),
-                timeout=_media_socket_timeout(context, timeout),
+                timeout=_media_socket_timeout(budget),
             )
-            _task_checkpoint(context)
-            raw_socket.settimeout(_media_socket_timeout(context, timeout))
+            _task_checkpoint(budget)
+            raw_socket.settimeout(_media_socket_timeout(budget))
             if approved.scheme == "https":
                 connection = ssl.create_default_context().wrap_socket(
                     raw_socket,
                     server_hostname=approved.hostname,
                 )
                 raw_socket = None
-                _task_checkpoint(context)
+                _task_checkpoint(budget)
             else:
                 connection = raw_socket
                 raw_socket = None
-            connection.settimeout(_media_socket_timeout(context, timeout))
+            connection.settimeout(_media_socket_timeout(budget))
             connection.sendall(request_bytes)
-            _task_checkpoint(context)
-            connection.settimeout(_media_socket_timeout(context, timeout))
+            _task_checkpoint(budget)
+            connection.settimeout(_media_socket_timeout(budget))
             response = http.client.HTTPResponse(connection)
             response.begin()
-            _task_checkpoint(context)
+            _task_checkpoint(budget)
 
             status = int(response.status)
             if not 200 <= status < 300:
@@ -856,10 +960,10 @@ def _download_apod_media_to_file(
             written = 0
             with destination.open("wb") as handle:
                 while True:
-                    _task_checkpoint(context)
-                    connection.settimeout(_media_socket_timeout(context, timeout))
+                    _task_checkpoint(budget)
+                    connection.settimeout(_media_socket_timeout(budget))
                     chunk = response.read(64 * 1024)
-                    _task_checkpoint(context)
+                    _task_checkpoint(budget)
                     if not chunk:
                         break
                     written += len(chunk)
@@ -871,7 +975,7 @@ def _download_apod_media_to_file(
             if written <= 0:
                 raise ApodMediaUnavailable("APOD media response is empty")
             destination.chmod(int(mode))
-            _task_checkpoint(context)
+            _task_checkpoint(budget)
             return
         except _ABORT_EXCEPTIONS:
             raise
@@ -883,7 +987,7 @@ def _download_apod_media_to_file(
             TypeError,
             ValueError,
         ) as error:
-            _task_checkpoint(context)
+            _task_checkpoint(budget)
             last_error = error
         finally:
             if response is not None:
@@ -901,7 +1005,10 @@ def _download_apod_media_to_file(
                     raw_socket.close()
                 except OSError:
                     pass
-    raise ApodMediaUnavailable("APOD approved media target could not be reached") from last_error
+    _task_checkpoint(budget)
+    raise ApodMediaUnavailable(
+        "APOD approved media target could not be reached"
+    ) from last_error
 
 
 def _fetch_apod_record(
@@ -1131,9 +1238,11 @@ def _resolve_media_url_blob(
         _task_checkpoint(context)
         _probe_media_blob(candidate, minimum_size)
         _task_checkpoint(context)
+        payload = candidate.read_bytes()
+        _task_checkpoint(context)
         target = namespace.put_bytes(
             digest,
-            candidate.read_bytes(),
+            payload,
             suffix=".img",
         )
         _probe_media_blob(target, minimum_size)
