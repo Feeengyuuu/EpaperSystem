@@ -12930,6 +12930,15 @@ class _NASAPicsRuntimePlugin(DelegatingThemeWrapper):
         return image
 
 
+class _NASAPicsAuxiliaryTriggerPlugin:
+    def __init__(self):
+        self.live_calls = 0
+
+    def get_live_refresh_state(self, settings, current_dt):
+        self.live_calls += 1
+        return {"active": True, "interval_seconds": 60}
+
+
 def _nasapics_data_command(task, playlist, instance, current_dt):
     return task._playlist_command(
         playlist.name,
@@ -13102,12 +13111,37 @@ def test_nasapics_sunrise_transition_schedules_no_theme_live_or_presentation(
         current_dt=current,
         latest_refresh_time=current.isoformat(),
     )
+    playlist.plugins[0].settings["themeMode"] = "auto"
     instance = playlist.plugins[0].snapshot()
-    _write_runtime_cache(task, instance)
+    _write_runtime_theme_cache(task, instance, "day")
     task.runtime_state.record_success(
         instance.instance_uuid,
         current.isoformat(),
         lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="day",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=current.isoformat(),
+        ),
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        "nasapics-current-display",
+        instance_uuid=instance.instance_uuid,
+        changed_at=current.isoformat(),
+    )
+    request = PresentationRequestState(
+        request_id="a" * 32,
+        requested_at=(current - timedelta(minutes=1)).isoformat(),
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        origin_theme_mode="day",
+        origin_display_commit_id="nasapics-current-display",
+    )
+    assert task.runtime_state.request_presentation(
+        instance.instance_uuid,
+        request,
     )
     monkeypatch.setattr(
         refresh_task_module,
@@ -13118,21 +13152,140 @@ def test_nasapics_sunrise_transition_schedules_no_theme_live_or_presentation(
             "reason": "sunset",
         },
     )
+    trigger_plugin = _NASAPicsAuxiliaryTriggerPlugin()
     monkeypatch.setattr(
         refresh_task_module,
-        "_plugin_live_refresh_state",
-        lambda *_args, **_kwargs: pytest.fail(
-            "NASAPics reached a live-refresh hook"
-        ),
+        "get_plugin_instance",
+        lambda _config: trigger_plugin,
     )
 
     task._schedule_if_due()
 
     assert task.refresh_queue.take(timeout=0) is None
+    assert trigger_plugin.live_calls == 0
+    assert task.refresh_health_snapshot()["due_counts"] == {
+        "data": 0,
+        "presentation": 0,
+        "live": 0,
+        "theme": 0,
+    }
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
-    assert state.presentation_request is None
+    assert state.presentation_request == request
+    assert state.presentation.last_attempt_at is None
     assert state.live.last_attempt_at is None
     assert state.theme.last_attempt_at is None
+
+
+@pytest.mark.parametrize(
+    ("enabled_lane", "expected_intent"),
+    [
+        ("presentation", RefreshIntent.PRESENTATION_REFRESH),
+        ("live", RefreshIntent.LIVE_REFRESH),
+        ("theme", RefreshIntent.THEME_REDRAW),
+    ],
+)
+def test_nasapics_auxiliary_lane_fixture_is_triggerable_when_capability_enabled(
+    monkeypatch,
+    enabled_lane,
+    expected_intent,
+):
+    current = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    task, device_config, _clock, playlist, _display = _nasapics_runtime(
+        f"nasapics-counterfactual-{enabled_lane}",
+        current_dt=current,
+        latest_refresh_time=current.isoformat(),
+    )
+    playlist.plugins[0].settings["themeMode"] = "auto"
+    instance = playlist.plugins[0].snapshot()
+    if enabled_lane == "theme":
+        _write_runtime_theme_cache(task, instance, "day")
+        last_good = LastGoodCacheState(
+            theme_mode="day",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=current.isoformat(),
+        )
+    else:
+        _write_runtime_cache(task, instance)
+        last_good = LastGoodCacheState(
+            theme_mode=None,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=current.isoformat(),
+        )
+    data_success = (
+        current - timedelta(minutes=10)
+        if enabled_lane == "live"
+        else current
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        data_success.isoformat(),
+        lane=RefreshLane.DATA,
+        last_good_cache=last_good,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        f"nasapics-{enabled_lane}-display",
+        instance_uuid=instance.instance_uuid,
+        changed_at=current.isoformat(),
+    )
+    if enabled_lane == "presentation":
+        assert task.runtime_state.request_presentation(
+            instance.instance_uuid,
+            PresentationRequestState(
+                request_id="b" * 32,
+                requested_at=(current - timedelta(minutes=1)).isoformat(),
+                structural_generation=instance.structural_generation,
+                settings_revision=instance.settings_revision,
+                origin_theme_mode=None,
+                origin_display_commit_id="nasapics-presentation-display",
+            ),
+        )
+
+    if enabled_lane == "theme":
+        manifest = _theme_manifest("apod")
+    else:
+        manifest = PluginManifest(
+            schema_version=2,
+            id="apod",
+            class_name="Apod",
+            display_name="NASA Astronomy Picture Of the Day",
+            refresh_on_display=False,
+            capabilities=PluginCapabilities(
+                supports_presentation_refresh=enabled_lane == "presentation",
+                supports_live_refresh=enabled_lane == "live",
+                supports_day_night_theme=False,
+            ),
+            raw={},
+        )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": manifest.refresh_on_display,
+        "_manifest": manifest,
+    }
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_theme_context",
+        lambda _config, now: {
+            "mode": "night",
+            "source": "weather",
+            "reason": "sunset",
+        },
+    )
+    trigger_plugin = _NASAPicsAuxiliaryTriggerPlugin()
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: trigger_plugin,
+    )
+
+    command = task._select_independent_refresh_command(current)
+
+    assert command is not None
+    assert command.instance_uuid == instance.instance_uuid
+    assert command.intent is expected_intent
+    assert trigger_plugin.live_calls == int(enabled_lane == "live")
 
 
 def test_nasapics_display_now_is_provider_free_and_forces_one_hardware_write(

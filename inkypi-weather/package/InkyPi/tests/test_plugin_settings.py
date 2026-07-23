@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -89,36 +90,62 @@ APOD_SETTINGS_PATH = (
 )
 
 
-def _run_nasapics_settings_roundtrip(plugin_settings):
-    html = APOD_SETTINGS_PATH.read_text(encoding="utf-8")
-    refresh_fields = [
-        tag
-        for tag in re.findall(r"<input\b[^>]*>", html, flags=re.IGNORECASE)
-        if re.search(
-            r"\bname=[\"']refreshOnDisplay[\"']",
-            tag,
-            flags=re.IGNORECASE,
+class _NASAPicsSettingsInputParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.fields = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "input":
+            return
+        attributes = dict(attrs)
+        self.fields.append(
+            {
+                "id": attributes.get("id"),
+                "name": attributes.get("name"),
+                "type": str(attributes.get("type") or "text").lower(),
+                "value": str(attributes.get("value") or ""),
+                "checked": "checked" in attributes,
+                "disabled": "disabled" in attributes,
+            }
         )
-    ]
-    assert len(refresh_fields) == 1
-    refresh_tag = refresh_fields[0]
-    assert re.search(
-        r"\bid=[\"']refreshOnDisplay[\"']",
-        refresh_tag,
-        flags=re.IGNORECASE,
-    )
-    assert re.search(
-        r"\btype=[\"']hidden[\"']",
-        refresh_tag,
-        flags=re.IGNORECASE,
-    )
-    refresh_value = re.search(
-        r"\bvalue=[\"']([^\"']*)[\"']",
-        refresh_tag,
-        flags=re.IGNORECASE,
-    )
-    assert refresh_value is not None
-    assert refresh_value.group(1).lower() == "false"
+
+
+def _nasapics_settings_form_fields(html):
+    parser = _NASAPicsSettingsInputParser()
+    parser.feed(html)
+    fields = parser.fields
+    assert fields
+    assert all(field["id"] for field in fields)
+    assert len({field["id"] for field in fields}) == len(fields)
+    by_id = {field["id"]: field for field in fields}
+
+    assert "customDate" in by_id, "customDate input is missing"
+    assert by_id["customDate"] == {
+        "id": "customDate",
+        "name": "customDate",
+        "type": "date",
+        "value": "",
+        "checked": False,
+        "disabled": False,
+    }
+    assert by_id["refreshOnDisplay"] == {
+        "id": "refreshOnDisplay",
+        "name": "refreshOnDisplay",
+        "type": "hidden",
+        "value": "false",
+        "checked": False,
+        "disabled": False,
+    }
+    assert by_id["randomizeApod"]["name"] == "randomizeApod"
+    assert by_id["randomizeApod"]["type"] == "checkbox"
+    return fields
+
+
+def _run_nasapics_settings_roundtrip(plugin_settings, *, html=None):
+    if html is None:
+        html = APOD_SETTINGS_PATH.read_text(encoding="utf-8")
+    fields = _nasapics_settings_form_fields(html)
     scripts = re.findall(
         r"<script(?:\s[^>]*)?>(.*?)</script>",
         html,
@@ -129,7 +156,7 @@ def _run_nasapics_settings_roundtrip(plugin_settings):
         {
             "scripts": scripts,
             "pluginSettings": plugin_settings,
-            "refreshOnDisplay": refresh_value.group(1),
+            "fields": fields,
         }
     )
     harness = r"""
@@ -137,21 +164,11 @@ const vm = require('node:vm');
 const payload = JSON.parse(process.argv[1]);
 const listeners = new Map();
 
-function element(id, name, type, value = '') {
-  return {id, name, type, value, checked: false, disabled: false};
-}
-
-const elements = {
-  customDate: element('customDate', 'customDate', 'date'),
-  randomizeApod: element('randomizeApod', 'randomizeApod', 'checkbox', 'false'),
-  refreshOnDisplay: element(
-    'refreshOnDisplay',
-    'refreshOnDisplay',
-    'hidden',
-    payload.refreshOnDisplay
-  ),
-};
-const form = {elements: Object.values(elements)};
+const formFields = payload.fields.map((field) => ({...field}));
+const elements = Object.fromEntries(
+  formFields.map((field) => [field.id, field])
+);
+const form = {elements: formFields};
 const document = {
   addEventListener(type, callback) {
     const callbacks = listeners.get(type) || [];
@@ -208,8 +225,35 @@ def test_nasapics_settings_roundtrip_keeps_absent_or_empty_date_empty(
 
     assert result["dateValue"] == ""
     assert ["customDate", ""] in result["fields"]
-    assert ["refreshOnDisplay", "false"] in result["fields"]
-    assert ["refreshOnDisplay", "true"] not in result["fields"]
+    assert [
+        value
+        for name, value in result["fields"]
+        if name == "refreshOnDisplay"
+    ] == ["false"]
+
+
+@pytest.mark.parametrize(
+    ("attribute", "replacement"),
+    [
+        ("id", "renamedDate"),
+        ("name", "renamedDate"),
+    ],
+    ids=["renamed-id", "renamed-name"],
+)
+def test_nasapics_settings_roundtrip_rejects_missing_or_renamed_date_field(
+    attribute,
+    replacement,
+):
+    html = APOD_SETTINGS_PATH.read_text(encoding="utf-8")
+    mutated_html = html.replace(
+        f'{attribute}="customDate"',
+        f'{attribute}="{replacement}"',
+        1,
+    )
+    assert mutated_html != html
+
+    with pytest.raises(AssertionError):
+        _run_nasapics_settings_roundtrip({}, html=mutated_html)
 
 
 def test_nasapics_instance_false_wins_even_if_a_stale_manifest_was_true():
