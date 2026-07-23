@@ -1057,8 +1057,12 @@ Test helpers against the public status vocabulary, authenticate through the HTTP
 
 ### Metadata
 - Source: error
-- Related Files: inkypi-weather/package/InkyPi/src/blueprints/plugin.py, inkypi-weather/package/InkyPi/src/security
+- Related Files: inkypi-weather/package/InkyPi/src/blueprints/plugin.py, inkypi-weather/package/InkyPi/src/security, tools/live_all_instances_acceptance.py, inkypi-weather/package/InkyPi/tests/test_live_all_instances_acceptance.py
 - Tags: acceptance, public-api, csrf, credentials, ownership, redaction
+- Pattern-Key: acceptance.public_api_status_vocabulary
+- Recurrence-Count: 2
+- First-Seen: 2026-07-12
+- Last-Seen: 2026-07-22
 
 ---
 
