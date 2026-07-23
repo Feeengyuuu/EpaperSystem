@@ -1,0 +1,47 @@
+[
+  {
+    "product_id": "UNKN99",
+    "issue_datetime": "2026-07-22T07:00:00Z",
+    "message": "Conditions may become a severe G5 warning with Earth impacts."
+  },
+  {
+    "product_id": "WARK05",
+    "issue_datetime": "2026-07-22T10:00:00Z",
+    "message": "Space Weather Message Code: WARK05\nSerial Number: 101\nWARNING: Radio Blackout\nNOAA Scale: R2\nValid To: 2026-07-22 13:00 UTC"
+  },
+  {
+    "product_id": "WARK05",
+    "issue_datetime": "2026-07-22T11:00:00Z",
+    "message": "Space Weather Message Code: WARK05\nSerial Number: 102\nEXTENDED WARNING: Radio Blackout\nExtension to Serial Number: 101\nNOAA Scale: R3\nNow Valid Until: 2026-07-22 16:00 UTC"
+  },
+  {
+    "product_id": "CWARK05",
+    "issue_datetime": "2026-07-22T11:30:00Z",
+    "message": "Space Weather Message Code: CWARK05\nSerial Number: 103\nCANCEL WARNING\nCancel Serial Number: 102"
+  },
+  {
+    "product_id": "WATA20",
+    "issue_datetime": "2026-07-21T15:00:00Z",
+    "message": "Space Weather Message Code: WATA20\nSerial Number: 200\nWATCH: Geomagnetic Storm\nNOAA Scale: G2\nNOAA Kp index forecast\nDay 1: 2026-07-22\nDay 2: 2026-07-23"
+  },
+  {
+    "product_id": "WATA10",
+    "issue_datetime": "2026-07-22T09:00:00Z",
+    "message": "Space Weather Message Code: WATA10\nSerial Number: 201\nWATCH: Geomagnetic Storm\nTHIS SUPERSEDES ALL PRIOR WATCHES\nNOAA Scale: G1\nNOAA Kp index forecast\nDay 1: 2026-07-22\nDay 2: 2026-07-23\nDay 3: 2026-07-24"
+  },
+  {
+    "product_id": "ALTK20",
+    "issue_datetime": "2026-07-22T12:05:00Z",
+    "message": "Space Weather Message Code: ALTK20\nSerial Number: 300\nALERT: Geomagnetic K-index of 6\nNOAA Scale: G2\nSynoptic Period: 2026-07-22 09:00-12:00 UTC"
+  },
+  {
+    "product_id": "SUMX01",
+    "issue_datetime": "2026-07-22T11:00:00Z",
+    "message": "Space Weather Message Code: SUMX01\nSerial Number: 400\nSUMMARY: Solar X-ray event\nNOAA Scale: R1"
+  },
+  {
+    "product_id": "WARK50",
+    "issue_datetime": "2026-07-22T12:10:00Z",
+    "message": "Space Weather Message Code: WARK50\nSerial Number: 500\nWARNING: Radio Blackout\nNOAA Scale: R5"
+  }
+]

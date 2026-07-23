@@ -1,0 +1,105 @@
+[
+  {
+    "activityID": "2026-07-22T07:00:00-CME-001",
+    "startTime": "2026-07-22T07:00Z",
+    "note": "Earth-directed language is not evidence.",
+    "cmeAnalyses": [
+      {
+        "isMostAccurate": true,
+        "submissionTime": "2026-07-22T08:00Z",
+        "speed": 1200,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-22T12:30Z",
+            "isEarthGB": false,
+            "isEarthMinorImpact": false,
+            "impactList": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "activityID": "2026-07-22T08:00:00-CME-002",
+    "startTime": "2026-07-22T08:00Z",
+    "cmeAnalyses": [
+      {
+        "isMostAccurate": false,
+        "submissionTime": "2026-07-22T11:50Z",
+        "speed": 1800,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-22T12:25Z",
+            "isEarthGB": true,
+            "impactList": [{"location": "Earth"}]
+          }
+        ]
+      },
+      {
+        "isMostAccurate": true,
+        "submissionTime": "2026-07-22T09:00Z",
+        "speed": 1100,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-22T14:00Z",
+            "isEarthGB": true,
+            "impactList": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "activityID": "2026-07-22T08:00:00-CME-002",
+    "startTime": "2026-07-22T08:00Z",
+    "cmeAnalyses": [
+      {
+        "isMostAccurate": true,
+        "submissionTime": "2026-07-22T11:00Z",
+        "speed": 1300,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-22T13:00Z",
+            "isEarthMinorImpact": true,
+            "impactList": []
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "activityID": "2026-07-22T09:00:00-CME-003",
+    "startTime": "2026-07-22T09:00Z",
+    "cmeAnalyses": [
+      {
+        "isMostAccurate": true,
+        "submissionTime": "2026-07-22T11:30Z",
+        "speed": 900,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-22T12:50Z",
+            "impactList": [{"location": "Earth", "isGlancingBlow": true}]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "activityID": "2026-07-20T09:00:00-CME-004",
+    "startTime": "2026-07-20T09:00Z",
+    "cmeAnalyses": [
+      {
+        "isMostAccurate": true,
+        "submissionTime": "2026-07-22T11:30Z",
+        "speed": 1500,
+        "enlilList": [
+          {
+            "estimatedShockArrivalTime": "2026-07-25T12:20:01Z",
+            "isEarthGB": true,
+            "impactList": []
+          }
+        ]
+      }
+    ]
+  }
+]
