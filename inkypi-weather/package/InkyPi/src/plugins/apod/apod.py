@@ -30,12 +30,14 @@ from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import hashlib
+import http.client
 import ipaddress
 import json
 import logging
 import random
 import re
 import socket
+import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,9 @@ _SENSITIVE_QUERY_KEYS = {
     "key",
     "key-pair-id",
     "policy",
+    "password",
+    "passwd",
+    "pwd",
     "secret",
     "token",
     "access_token",
@@ -94,6 +99,9 @@ _SENSITIVE_QUERY_FRAGMENTS = {
     "auth",
     "credential",
     "key",
+    "password",
+    "passwd",
+    "pwd",
     "secret",
     "signature",
     "token",
@@ -110,13 +118,14 @@ _SENSITIVE_COMPACT_QUERY_KEYS = {
     "credentialkey",
     "idtoken",
     "keypairid",
+    "password",
+    "passwd",
+    "pwd",
     "privatekey",
     "refreshtoken",
     "secretkey",
     "signingkey",
 }
-_LOCAL_ALIAS_HOSTS = {"localtest.me", "lvh.me", "vcap.me"}
-_LOCAL_ALIAS_SUFFIXES = (".localtest.me", ".lvh.me", ".nip.io", ".sslip.io")
 _DRAFT_SAFE_MEDIA_FORMATS = {"JPEG", "MPO"}
 _ABORT_EXCEPTIONS = (TaskDeadlineExceeded, TaskCancelled)
 
@@ -174,6 +183,24 @@ class ApodDisplayState:
 
 class ApodMediaUnavailable(RuntimeError):
     """No validated image media can be admitted for the selected record."""
+
+
+@dataclass(frozen=True)
+class _ApprovedMediaTarget:
+    url: str
+    scheme: str
+    hostname: str
+    port: int
+    addresses: tuple[str, ...]
+
+    @property
+    def authority(self) -> str:
+        default_port = 443 if self.scheme == "https" else 80
+        return (
+            self.hostname
+            if self.port == default_port
+            else f"{self.hostname}:{self.port}"
+        )
 
 
 def _task_checkpoint(context) -> None:
@@ -247,7 +274,9 @@ def _random_candidate_dates(device_day: date, rng: random.Random) -> tuple[str, 
 
     latest = max(_RANDOM_APOD_START, device_day)
     day_count = (latest - _RANDOM_APOD_START).days + 1
-    attempts = min(RANDOM_APOD_MAX_ATTEMPTS, day_count)
+    if day_count < RANDOM_APOD_MAX_ATTEMPTS:
+        raise ValueError("random APOD requires five unique eligible dates")
+    attempts = RANDOM_APOD_MAX_ATTEMPTS
     used_offsets: set[int] = set()
     candidates: list[str] = []
     for _ in range(attempts):
@@ -408,7 +437,7 @@ def _read_selection(path: Path) -> ApodSelection | None:
             return None
         if mode == "random":
             if (
-                not parsed_candidates
+                len(parsed_candidates) != RANDOM_APOD_MAX_ATTEMPTS
                 or requested_day != parsed_candidates[0]
                 or selected_day not in parsed_candidates
                 or (
@@ -469,7 +498,7 @@ def _selection_matches(
                     not selection.provisional
                     or selection.candidate_dates[0] == selection.resolved_record_date
                 )
-                and len(selection.candidate_dates) <= RANDOM_APOD_MAX_ATTEMPTS
+                and len(selection.candidate_dates) == RANDOM_APOD_MAX_ATTEMPTS
                 and len(set(selection.candidate_dates)) == len(selection.candidate_dates)
                 and all(
                     _RANDOM_APOD_START
@@ -543,6 +572,16 @@ def _fallback_warning(apod_date: str) -> str:
     return f"LATEST AVAILABLE \N{MIDDLE DOT} APOD {apod_date}"
 
 
+def _canonical_date_text(value: Any, *, label: str) -> str:
+    if type(value) is not str:
+        raise ValueError(f"APOD {label} must be canonical date text")
+    parsed = date.fromisoformat(value)
+    canonical = parsed.isoformat()
+    if value != canonical:
+        raise ValueError(f"APOD {label} must be a canonical date")
+    return canonical
+
+
 def _parse_utc(value: Any) -> datetime:
     text = str(value or "").strip()
     if text.endswith("Z"):
@@ -605,10 +644,20 @@ def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
     )
 
 
-def _require_public_hostname_resolution(host: str, port: int) -> None:
-    # RFC 6761 .test names are deterministic fixtures and never public DNS targets.
-    if host.endswith(".test"):
-        return
+def _trusted_apod_media_host(host: str) -> bool:
+    normalized = str(host or "").rstrip(".").casefold()
+    return normalized == "nasa.gov" or normalized.endswith(".nasa.gov")
+
+
+def _require_public_hostname_resolution(
+    host: str,
+    port: int,
+    *,
+    context=None,
+) -> tuple[str, ...]:
+    """Validate a trusted host's current transport addresses immediately before I/O."""
+
+    _task_checkpoint(context)
     try:
         resolved = socket.getaddrinfo(
             host,
@@ -619,9 +668,12 @@ def _require_public_hostname_resolution(host: str, port: int) -> None:
         )
     except OSError:
         raise ValueError("APOD media URL host did not resolve publicly") from None
+    _task_checkpoint(context)
     if not resolved:
         raise ValueError("APOD media URL host did not resolve publicly")
+    addresses: list[str] = []
     for item in resolved:
+        _task_checkpoint(context)
         try:
             address_text = str(item[4][0]).split("%", 1)[0]
             address = ipaddress.ip_address(address_text)
@@ -629,42 +681,44 @@ def _require_public_hostname_resolution(host: str, port: int) -> None:
             raise ValueError("APOD media URL resolved to an invalid address") from None
         if not _is_public_address(address):
             raise ValueError("APOD media URL resolved to a non-public address")
+        normalized = address.compressed.casefold()
+        if normalized not in addresses:
+            addresses.append(normalized)
+    if not addresses:
+        raise ValueError("APOD media URL host did not resolve publicly")
+    return tuple(addresses)
 
 
 def _public_http_url(value: Any) -> str | None:
     text = _optional_text(value, maximum=4096)
     if text is None:
         return None
+    if (
+        not text.isascii()
+        or "\\" in text
+        or any(character.isspace() or ord(character) < 32 for character in text)
+    ):
+        raise ValueError("APOD media URL contains invalid characters")
     parsed = urlsplit(text)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+    scheme = parsed.scheme.lower()
+    if (
+        scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.fragment
+    ):
         raise ValueError("APOD media URL is invalid")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("APOD media URL contains credentials")
     try:
         host = str(parsed.hostname or "").rstrip(".").casefold()
-        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        port = parsed.port
     except ValueError:
         raise ValueError("APOD media URL host or port is invalid") from None
-    if not host:
-        raise ValueError("APOD media URL requires a public host")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        address = None
-    if address is not None:
-        if not _is_public_address(address):
-            raise ValueError("APOD media URL requires a public address")
-    elif (
-        host == "localhost"
-        or host.endswith((".localhost", ".local", ".internal", ".lan", ".home"))
-        or host in _LOCAL_ALIAS_HOSTS
-        or host.endswith(_LOCAL_ALIAS_SUFFIXES)
-        or "." not in host
-        or all(part.isdigit() for part in host.split("."))
-    ):
-        raise ValueError("APOD media URL requires a public host")
-    else:
-        _require_public_hostname_resolution(host, port)
+    if not host or not _trusted_apod_media_host(host):
+        raise ValueError("APOD media URL requires a trusted NASA host")
+    expected_port = 443 if scheme == "https" else 80
+    if port is not None and port != expected_port:
+        raise ValueError("APOD media URL port is outside the NASA allowlist")
     if any(
         _query_key_is_sensitive(key)
         for key, _value in parse_qsl(parsed.query, keep_blank_values=True)
@@ -680,6 +734,174 @@ def _safe_media_candidate(value: Any) -> str | None:
         raise
     except (TypeError, ValueError):
         return None
+
+
+def _media_socket_timeout(context, configured: float) -> float:
+    _task_checkpoint(context)
+    timeout = max(0.001, float(configured))
+    remaining = getattr(context, "remaining_seconds", None)
+    if callable(remaining):
+        seconds = float(remaining())
+        if seconds <= 0:
+            _task_checkpoint(context)
+            raise TaskDeadlineExceeded("task deadline expired")
+        timeout = min(timeout, seconds)
+    return max(0.001, timeout)
+
+
+def _resolve_apod_media_target(
+    media_url: str,
+    *,
+    context,
+) -> _ApprovedMediaTarget:
+    trusted_url = _public_http_url(media_url)
+    if trusted_url is None:
+        raise ValueError("APOD media URL is missing")
+    parsed = urlsplit(trusted_url)
+    scheme = parsed.scheme.lower()
+    hostname = str(parsed.hostname or "").rstrip(".").casefold()
+    port = parsed.port or (443 if scheme == "https" else 80)
+    addresses = _require_public_hostname_resolution(
+        hostname,
+        port,
+        context=context,
+    )
+    _task_checkpoint(context)
+    return _ApprovedMediaTarget(
+        url=trusted_url,
+        scheme=scheme,
+        hostname=hostname,
+        port=port,
+        addresses=addresses,
+    )
+
+
+def _download_apod_media_to_file(
+    media_url: str,
+    path: Path,
+    *,
+    context,
+    timeout: float,
+    max_bytes: int,
+    mode: int = 0o600,
+) -> None:
+    """Download through one DNS-approved numeric peer while preserving TLS identity."""
+
+    approved = _resolve_apod_media_target(media_url, context=context)
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    limit = int(max_bytes)
+    if limit <= 0:
+        raise ValueError("APOD media byte limit must be positive")
+    parsed = urlsplit(approved.url)
+    request_target = parsed.path or "/"
+    if parsed.query:
+        request_target = f"{request_target}?{parsed.query}"
+    request_bytes = (
+        f"GET {request_target} HTTP/1.1\r\n"
+        f"Host: {approved.authority}\r\n"
+        "Accept: image/*\r\n"
+        "Accept-Encoding: identity\r\n"
+        "Connection: close\r\n"
+        "User-Agent: InkyPi-APOD/1\r\n"
+        "\r\n"
+    ).encode("ascii")
+
+    last_error: Exception | None = None
+    for address in approved.addresses:
+        raw_socket = None
+        connection = None
+        response = None
+        try:
+            _task_checkpoint(context)
+            raw_socket = socket.create_connection(
+                (address, approved.port),
+                timeout=_media_socket_timeout(context, timeout),
+            )
+            _task_checkpoint(context)
+            raw_socket.settimeout(_media_socket_timeout(context, timeout))
+            if approved.scheme == "https":
+                connection = ssl.create_default_context().wrap_socket(
+                    raw_socket,
+                    server_hostname=approved.hostname,
+                )
+                raw_socket = None
+                _task_checkpoint(context)
+            else:
+                connection = raw_socket
+                raw_socket = None
+            connection.settimeout(_media_socket_timeout(context, timeout))
+            connection.sendall(request_bytes)
+            _task_checkpoint(context)
+            connection.settimeout(_media_socket_timeout(context, timeout))
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            _task_checkpoint(context)
+
+            status = int(response.status)
+            if not 200 <= status < 300:
+                raise ApodMediaUnavailable(
+                    f"APOD media returned disallowed HTTP status {status}"
+                )
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > limit:
+                        raise ApodMediaUnavailable(
+                            "APOD media exceeds the byte limit"
+                        )
+                except ValueError:
+                    pass
+
+            written = 0
+            with destination.open("wb") as handle:
+                while True:
+                    _task_checkpoint(context)
+                    connection.settimeout(_media_socket_timeout(context, timeout))
+                    chunk = response.read(64 * 1024)
+                    _task_checkpoint(context)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > limit:
+                        raise ApodMediaUnavailable(
+                            "APOD media exceeds the byte limit"
+                        )
+                    handle.write(chunk)
+            if written <= 0:
+                raise ApodMediaUnavailable("APOD media response is empty")
+            destination.chmod(int(mode))
+            _task_checkpoint(context)
+            return
+        except _ABORT_EXCEPTIONS:
+            raise
+        except (
+            ApodMediaUnavailable,
+            OSError,
+            ssl.SSLError,
+            http.client.HTTPException,
+            TypeError,
+            ValueError,
+        ) as error:
+            _task_checkpoint(context)
+            last_error = error
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except OSError:
+                    pass
+            if connection is not None:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+            elif raw_socket is not None:
+                try:
+                    raw_socket.close()
+                except OSError:
+                    pass
+    raise ApodMediaUnavailable("APOD approved media target could not be reached") from last_error
 
 
 def _fetch_apod_record(
@@ -724,6 +946,7 @@ def _fetch_apod_record(
     except _ABORT_EXCEPTIONS:
         raise
     except Exception:
+        _task_checkpoint(context)
         raise RuntimeError(
             f"NASA APOD request failed for {str(requested_date)}"
         ) from None
@@ -868,6 +1091,10 @@ def _resolve_media_url_blob(
 ) -> Path:
     """Resolve one URL only, validating a cache hit before its managed LRU read."""
 
+    trusted_media_url = _public_http_url(media_url)
+    if trusted_media_url is None:
+        raise ApodMediaUnavailable("APOD media URL is missing")
+    media_url = trusted_media_url
     digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
     namespace = plugin.managed_cache_namespace(paths.media)
     target = namespace.path(digest, suffix=".img")
@@ -890,19 +1117,16 @@ def _resolve_media_url_blob(
     elif target.exists():
         _remove_media_blob(namespace, digest)
 
-    http = get_http_client()
     candidate = paths.media / f".{digest}.{uuid4().hex}.tmp"
     try:
         _task_checkpoint(context)
-        http.stream_to_file(
-            "GET",
+        _download_apod_media_to_file(
             media_url,
             candidate,
             context=context,
             timeout=MEDIA_TIMEOUT_SECONDS,
             max_bytes=MAX_MEDIA_BYTES,
             mode=0o600,
-            allow_redirects=False,
         )
         _task_checkpoint(context)
         _probe_media_blob(candidate, minimum_size)
@@ -1010,7 +1234,14 @@ def _read_bounded_json(path: Path, *, max_bytes: int) -> Mapping[str, Any] | Non
             return None
         decoded = json.loads(payload)
         return decoded if isinstance(decoded, Mapping) else None
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
@@ -1194,10 +1425,11 @@ def _record_from_document(raw: Any) -> ApodRecord:
     selection_key = _required_text(
         raw.get("selection_key"), label="selection key", maximum=128
     )
-    requested_device_date = date.fromisoformat(
-        str(raw.get("requested_device_date"))
-    ).isoformat()
-    record_date = date.fromisoformat(str(raw.get("date"))).isoformat()
+    requested_device_date = _canonical_date_text(
+        raw.get("requested_device_date"),
+        label="requested device date",
+    )
+    record_date = _canonical_date_text(raw.get("date"), label="record date")
     media_type = _required_text(
         raw.get("media_type"), label="media type", maximum=32
     ).casefold()
@@ -1261,13 +1493,18 @@ def _read_apod_state(
     if raw is None:
         return None
     try:
-        if int(raw.get("schema")) != APOD_STATE_SCHEMA:
+        if type(raw.get("schema")) is not int:
+            return None
+        if raw.get("schema") != APOD_STATE_SCHEMA:
             return None
         if raw.get("selection_fingerprint") != selection.fingerprint:
             return None
         if raw.get("device_day") != selection.device_day:
             return None
-        requested_date = date.fromisoformat(str(raw.get("requested_date"))).isoformat()
+        requested_date = _canonical_date_text(
+            raw.get("requested_date"),
+            label="state requested date",
+        )
         if requested_date != selection.resolved_record_date:
             return None
         requested = _record_from_document(raw.get("requested_record"))
@@ -1574,8 +1811,6 @@ class Apod(BasePlugin):
                     )
 
         _task_checkpoint(context)
-        _persist_apod_state(paths, state, context=context)
-        _task_checkpoint(context)
         image = render_apod_page(
             apod=displayed,
             title_zh=displayed.title_zh,
@@ -1596,6 +1831,8 @@ class Apod(BasePlugin):
             SourceProvenance.LOCAL_FALLBACK,
         }:
             image.info["inkypi_skip_cache"] = True
+        _task_checkpoint(context)
+        _persist_apod_state(paths, state, context=context)
         _task_checkpoint(context)
         self._write_apod_context(
             displayed,
@@ -1756,7 +1993,7 @@ class Apod(BasePlugin):
                 )
             except _ABORT_EXCEPTIONS:
                 raise
-            except ApodMediaUnavailable:
+            except (ApodMediaUnavailable, ApodPageLayoutError):
                 continue
 
             _task_checkpoint(context)

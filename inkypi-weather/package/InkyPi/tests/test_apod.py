@@ -49,6 +49,81 @@ from runtime.refresh_contracts import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def apod_test_media_policy(monkeypatch):
+    """Inject deterministic fixture hosts without weakening production trust."""
+
+    production_policy = getattr(apod_module, "_trusted_apod_media_host", None)
+    production_transport = getattr(
+        apod_module,
+        "_require_public_hostname_resolution",
+        None,
+    )
+    production_downloader = getattr(
+        apod_module,
+        "_download_apod_media_to_file",
+        None,
+    )
+    if production_policy is not None:
+        monkeypatch.setattr(
+            apod_module,
+            "_trusted_apod_media_host",
+            lambda host: production_policy(host) or host == "media.example.test",
+        )
+    if production_policy is not None and production_transport is not None:
+        def test_transport(host, port, *, context=None):
+            if host == "media.example.test":
+                apod_module._task_checkpoint(context)
+                return
+            return production_transport(host, port, context=context)
+
+        monkeypatch.setattr(
+            apod_module,
+            "_require_public_hostname_resolution",
+            test_transport,
+        )
+    if production_policy is not None and production_downloader is not None:
+        def test_downloader(
+            media_url,
+            path,
+            *,
+            context,
+            timeout,
+            max_bytes,
+            mode=0o600,
+        ):
+            if str(media_url).startswith("https://media.example.test/"):
+                return apod_module.get_http_client().stream_to_file(
+                    "GET",
+                    media_url,
+                    path,
+                    context=context,
+                    timeout=timeout,
+                    max_bytes=max_bytes,
+                    mode=mode,
+                    allow_redirects=False,
+                )
+            return production_downloader(
+                media_url,
+                path,
+                context=context,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                mode=mode,
+            )
+
+        monkeypatch.setattr(
+            apod_module,
+            "_download_apod_media_to_file",
+            test_downloader,
+        )
+    return SimpleNamespace(
+        production_policy=production_policy,
+        production_transport=production_transport,
+        production_downloader=production_downloader,
+    )
+
+
 @pytest.fixture
 def apod_storage(monkeypatch, tmp_path):
     monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
@@ -291,12 +366,26 @@ def test_selection_json_read_is_bounded_before_decode(selection_paths):
     assert apod_module._read_selection(path) is None
 
 
+def test_bounded_json_treats_deep_recursion_as_a_cache_miss(tmp_path):
+    path = tmp_path / "deep.json"
+    path.write_bytes(
+        b'{"nested":'
+        + (b"[" * 1100)
+        + b"0"
+        + (b"]" * 1100)
+        + b"}"
+    )
+
+    assert apod_module._read_bounded_json(path, max_bytes=16 * 1024) is None
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
         lambda doc: doc.__setitem__("schema", 99),
         lambda doc: doc.__setitem__("provisional", "false"),
         lambda doc: doc.__setitem__("candidate_dates", ["2026-07-20"] * 2),
+        lambda doc: doc.__setitem__("candidate_dates", doc["candidate_dates"][:4]),
         lambda doc: doc.__setitem__(
             "candidate_dates",
             [f"2026-07-{day:02d}" for day in range(14, 20)],
@@ -311,6 +400,7 @@ def test_selection_json_read_is_bounded_before_decode(selection_paths):
         "schema",
         "strict-bool",
         "unique-candidates",
+        "exact-candidate-count",
         "candidate-count",
         "strict-date",
         "canonical-date",
@@ -2667,6 +2757,55 @@ def test_apod_persisted_same_day_state_requires_admitted_requested_media(
 
 
 @pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda document: document.__setitem__("schema", "1"),
+        lambda document: document.__setitem__("schema", True),
+        lambda document: document.__setitem__("requested_date", "20260722"),
+        lambda document: document["requested_record"].__setitem__(
+            "requested_device_date",
+            "20260722",
+        ),
+        lambda document: document["requested_record"].__setitem__(
+            "date",
+            "20260722",
+        ),
+        lambda document: document["display_record"].__setitem__(
+            "requested_device_date",
+            "20260722",
+        ),
+        lambda document: document["display_record"].__setitem__(
+            "date",
+            "20260721",
+        ),
+    ],
+    ids=[
+        "string-schema",
+        "boolean-schema",
+        "compact-requested-date",
+        "compact-requested-device-date",
+        "compact-requested-record-date",
+        "compact-display-device-date",
+        "compact-display-record-date",
+    ],
+)
+def test_apod_state_rejects_non_strict_schema_and_noncanonical_dates(
+    apod_storage,
+    mutate,
+):
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="state-strict-schema-date",
+    )
+    selection, state_path = _persist_valid_task5_fallback_state(paths)
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    mutate(document)
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert apod_module._read_apod_state(state_path, selection=selection) is None
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://media.example.test/a.jpg?X-Amz-Credential=secret",
@@ -2683,6 +2822,9 @@ def test_apod_persisted_same_day_state_requires_admitted_requested_media(
         "https://media.example.test/a.jpg?authToken=secret",
         "https://media.example.test/a.jpg?secretKey=secret",
         "https://media.example.test/a.jpg?accessKeyId=secret",
+        "https://media.example.test/a.jpg?password=secret",
+        "https://media.example.test/a.jpg?passwd=secret",
+        "https://media.example.test/a.jpg?pwd=secret",
     ],
 )
 def test_apod_media_url_rejects_signed_and_credential_query_forms(url):
@@ -2694,6 +2836,17 @@ def test_apod_media_url_does_not_treat_unrelated_monkey_query_as_a_key_secret():
     url = "https://media.example.test/a.jpg?monkey=capuchin"
 
     assert apod_module._public_http_url(url) == url
+
+
+def test_apod_production_media_host_policy_is_nasa_only(apod_test_media_policy):
+    policy = apod_test_media_policy.production_policy
+
+    assert policy is not None
+    assert policy("nasa.gov") is True
+    assert policy("apod.nasa.gov") is True
+    assert policy("media.example.test") is False
+    assert policy("nasa.gov.example.test") is False
+    assert policy("127.0.0.1.nip.io") is False
 
 
 @pytest.mark.parametrize(
@@ -2718,7 +2871,12 @@ def test_apod_media_url_rejects_local_private_and_non_global_targets(url):
         apod_module._public_http_url(url)
 
 
-def test_apod_media_url_rejects_hostname_resolving_to_private_address(monkeypatch):
+def test_apod_download_transport_rejects_nasa_hostname_resolving_private(
+    monkeypatch,
+    apod_test_media_policy,
+):
+    transport = apod_test_media_policy.production_transport
+    assert transport is not None
     monkeypatch.setattr(
         apod_module.socket,
         "getaddrinfo",
@@ -2734,9 +2892,208 @@ def test_apod_media_url_rejects_hostname_resolving_to_private_address(monkeypatc
     )
 
     with pytest.raises(ValueError, match="public|address|host"):
-        apod_module._public_http_url(
-            "https://private-resolution.example.com/image.jpg"
+        transport("apod.nasa.gov", 443, context=None)
+
+
+def test_apod_media_download_pins_numeric_peer_and_preserves_tls_host(
+    monkeypatch,
+    tmp_path,
+):
+    payload = _image_bytes()
+    connections = []
+    tls_hosts = []
+
+    class Connection:
+        def __init__(self):
+            self.sent = b""
+            self.closed = False
+
+        def settimeout(self, _timeout):
+            return None
+
+        def sendall(self, payload_bytes):
+            self.sent += payload_bytes
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+
+    monkeypatch.setattr(
+        apod_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ],
+    )
+
+    def connect(endpoint, *, timeout):
+        connections.append((endpoint, timeout))
+        return connection
+
+    monkeypatch.setattr(apod_module.socket, "create_connection", connect)
+
+    class TlsContext:
+        def wrap_socket(self, raw_socket, *, server_hostname):
+            assert raw_socket is connection
+            tls_hosts.append(server_hostname)
+            return raw_socket
+
+    monkeypatch.setattr(
+        apod_module.ssl,
+        "create_default_context",
+        lambda: TlsContext(),
+    )
+
+    class Response:
+        status = 200
+        headers = {"Content-Length": str(len(payload))}
+
+        def __init__(self):
+            self.remaining = payload
+
+        def begin(self):
+            return None
+
+        def read(self, _chunk_size):
+            chunk, self.remaining = self.remaining, b""
+            return chunk
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        apod_module.http.client,
+        "HTTPResponse",
+        lambda active_connection: Response(),
+    )
+    target = tmp_path / "pinned.img"
+
+    apod_module._download_apod_media_to_file(
+        "https://apod.nasa.gov/apod/image/example.jpg?size=full",
+        target,
+        context=None,
+        timeout=10,
+        max_bytes=len(payload) + 1,
+    )
+
+    assert connections[0][0] == ("8.8.8.8", 443)
+    assert tls_hosts == ["apod.nasa.gov"]
+    assert b"GET /apod/image/example.jpg?size=full HTTP/1.1" in connection.sent
+    assert b"Host: apod.nasa.gov" in connection.sent
+    assert target.read_bytes() == payload
+
+    Response.status = 302
+    redirect_target = tmp_path / "redirect.img"
+    with pytest.raises(apod_module.ApodMediaUnavailable, match="could not be reached"):
+        apod_module._download_apod_media_to_file(
+            "https://apod.nasa.gov/apod/image/redirect.jpg",
+            redirect_target,
+            context=None,
+            timeout=10,
+            max_bytes=len(payload) + 1,
         )
+    assert not redirect_target.exists()
+
+
+def test_apod_media_download_rejects_mixed_public_private_dns_before_connect(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        apod_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            ),
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("10.0.0.8", 443),
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        apod_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "mixed DNS answers must fail before connect"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="public|address|host"):
+        apod_module._download_apod_media_to_file(
+            "https://apod.nasa.gov/apod/image/example.jpg",
+            tmp_path / "mixed.img",
+            context=None,
+            timeout=10,
+            max_bytes=1024,
+        )
+
+
+@pytest.mark.parametrize("abort_type", [TaskCancelled, TaskDeadlineExceeded])
+def test_apod_pinned_download_propagates_abort_after_dns_without_connecting(
+    monkeypatch,
+    tmp_path,
+    abort_type,
+):
+    signal = abort_type("abort after DNS")
+
+    class Context:
+        cancelled = False
+
+        def raise_if_cancelled(self):
+            if self.cancelled:
+                raise signal
+
+    context = Context()
+
+    def resolve(*_args, **_kwargs):
+        context.cancelled = True
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        apod_module.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: pytest.fail(
+            "abort after DNS must precede connection"
+        ),
+    )
+    target = tmp_path / "abort.img"
+
+    with pytest.raises(abort_type) as caught:
+        apod_module._download_apod_media_to_file(
+            "https://apod.nasa.gov/apod/image/example.jpg",
+            target,
+            context=context,
+            timeout=10,
+            max_bytes=1024,
+        )
+
+    assert caught.value is signal
+    assert not target.exists()
 
 
 @pytest.mark.parametrize(

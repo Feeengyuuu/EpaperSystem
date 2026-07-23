@@ -73,6 +73,70 @@ def apod_runtime_identity(monkeypatch, tmp_path):
         "current_instance_identity",
         lambda: InstanceIdentity("4f83c7ef-0e5a-4df8-bbe1-62d14f9ef531", 1, 1),
     )
+    production_policy = getattr(apod_module, "_trusted_apod_media_host", None)
+    production_transport = getattr(
+        apod_module,
+        "_require_public_hostname_resolution",
+        None,
+    )
+    production_downloader = getattr(
+        apod_module,
+        "_download_apod_media_to_file",
+        None,
+    )
+    if production_policy is not None:
+        monkeypatch.setattr(
+            apod_module,
+            "_trusted_apod_media_host",
+            lambda host: production_policy(host) or host == "media.example.test",
+        )
+    if production_policy is not None and production_transport is not None:
+        def test_transport(host, port, *, context=None):
+            if host == "media.example.test":
+                apod_module._task_checkpoint(context)
+                return
+            return production_transport(host, port, context=context)
+
+        monkeypatch.setattr(
+            apod_module,
+            "_require_public_hostname_resolution",
+            test_transport,
+        )
+    if production_policy is not None and production_downloader is not None:
+        def test_downloader(
+            media_url,
+            path,
+            *,
+            context,
+            timeout,
+            max_bytes,
+            mode=0o600,
+        ):
+            if str(media_url).startswith("https://media.example.test/"):
+                return apod_module.get_http_client().stream_to_file(
+                    "GET",
+                    media_url,
+                    path,
+                    context=context,
+                    timeout=timeout,
+                    max_bytes=max_bytes,
+                    mode=mode,
+                    allow_redirects=False,
+                )
+            return production_downloader(
+                media_url,
+                path,
+                context=context,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                mode=mode,
+            )
+
+        monkeypatch.setattr(
+            apod_module,
+            "_download_apod_media_to_file",
+            test_downloader,
+        )
 
 
 def _network_image_bytes(size=(960, 640)):
@@ -128,6 +192,34 @@ def test_apod_metadata_abort_is_never_wrapped_as_provider_failure(abort_type):
             api_key="nasa-key",
             requested_date="2026-07-22",
             context=None,
+        )
+
+    assert caught.value is signal
+
+
+def test_apod_metadata_failure_rechecks_deadline_before_wrapping():
+    signal = TaskDeadlineExceeded("deadline expired after transport failure")
+
+    class Context:
+        expired = False
+
+        def raise_if_cancelled(self):
+            if self.expired:
+                raise signal
+
+    context = Context()
+
+    class Http:
+        def request_json(self, *_args, **_kwargs):
+            context.expired = True
+            raise RuntimeError("ordinary transport failure")
+
+    with pytest.raises(TaskDeadlineExceeded) as caught:
+        apod_module._fetch_apod_record(
+            http=Http(),
+            api_key="nasa-key",
+            requested_date="2026-07-22",
+            context=context,
         )
 
     assert caught.value is signal
@@ -351,6 +443,203 @@ def test_apod_cancellation_after_decode_precedes_state_render_and_context(
 
     paths = apod_module._instance_paths(plugin)
     assert not (paths.cache / "apod-state.json").exists()
+
+
+@pytest.mark.parametrize("failure_layer", ["render", "provenance"])
+def test_apod_render_transaction_failure_does_not_publish_state_or_context(
+    monkeypatch,
+    failure_layer,
+):
+    media_url = "https://media.example.test/transaction-failure.jpg"
+
+    class Http:
+        def request_json(self, _method, url, **kwargs):
+            requested = kwargs["params"]["date"]
+            return SimpleNamespace(
+                data={
+                    "date": requested,
+                    "media_type": "image",
+                    "title": "Transactional APOD",
+                    "url": media_url,
+                },
+                url=url,
+            )
+
+        def stream_to_file(self, _method, url, path, **_kwargs):
+            assert url == media_url
+            Path(path).write_bytes(_network_image_bytes())
+            return SimpleNamespace(data=Path(path), url=url)
+
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: Http())
+    monkeypatch.setattr(
+        apod_module,
+        "_device_day",
+        lambda _config: datetime(2026, 7, 22, tzinfo=timezone.utc).date(),
+    )
+    monkeypatch.setattr(apod_module, "current_task_context", lambda: None)
+    monkeypatch.setattr(
+        apod_module,
+        "refresh_space_weather",
+        lambda *_args, **_kwargs: _network_weather(),
+    )
+    if failure_layer == "render":
+        monkeypatch.setattr(
+            apod_module,
+            "render_apod_page",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("render failed")),
+        )
+    else:
+        monkeypatch.setattr(
+            apod_module,
+            "render_apod_page",
+            lambda **_kwargs: Image.new("RGB", (800, 480), (250, 250, 246)),
+        )
+        monkeypatch.setattr(
+            apod_module,
+            "attach_source_provenance",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("provenance failed")
+            ),
+        )
+    monkeypatch.setattr(
+        apod_module,
+        "write_context",
+        lambda *_args, **_kwargs: pytest.fail("context must not run"),
+    )
+    plugin = Apod({"id": "apod"})
+
+    with pytest.raises(RuntimeError, match=f"{failure_layer} failed"):
+        plugin.generate_image({}, FakeDeviceConfig({"NASA_SECRET": "nasa-key"}))
+
+    paths = apod_module._instance_paths(plugin)
+    assert not (paths.cache / "apod-state.json").exists()
+
+
+def test_apod_same_day_state_and_complete_blob_reuse_has_zero_network_or_dns(
+    monkeypatch,
+):
+    media_url = "https://apod.nasa.gov/apod/image/2607/local-reuse.jpg"
+    dns_calls = []
+
+    def public_dns(*args, **_kwargs):
+        dns_calls.append(args)
+        return [
+            (
+                apod_module.socket.AF_INET,
+                apod_module.socket.SOCK_STREAM,
+                apod_module.socket.IPPROTO_TCP,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ]
+
+    monkeypatch.setattr(apod_module.socket, "getaddrinfo", public_dns)
+
+    class Http:
+        def __init__(self):
+            self.apod_dates = []
+            self.media_urls = []
+
+        def request_json(self, _method, url, **kwargs):
+            requested = kwargs["params"]["date"]
+            self.apod_dates.append(requested)
+            return SimpleNamespace(
+                data={
+                    "date": requested,
+                    "media_type": "image",
+                    "title": "Local Reuse",
+                    "url": media_url,
+                },
+                url=url,
+            )
+
+        def stream_to_file(self, _method, url, path, **_kwargs):
+            self.media_urls.append(url)
+            Path(path).write_bytes(_network_image_bytes())
+            return SimpleNamespace(data=Path(path), url=url)
+
+    http = Http()
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+
+    def fake_pinned_download(
+        url,
+        path,
+        *,
+        context,
+        timeout,
+        max_bytes,
+        mode=0o600,
+    ):
+        parsed = apod_module.urlsplit(url)
+        apod_module._require_public_hostname_resolution(
+            str(parsed.hostname),
+            parsed.port or 443,
+            context=context,
+        )
+        return http.stream_to_file(
+            "GET",
+            url,
+            path,
+            context=context,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            mode=mode,
+            allow_redirects=False,
+        )
+
+    monkeypatch.setattr(
+        apod_module,
+        "_download_apod_media_to_file",
+        fake_pinned_download,
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "_device_day",
+        lambda _config: datetime(2026, 7, 22, tzinfo=timezone.utc).date(),
+    )
+    monkeypatch.setattr(apod_module, "current_task_context", lambda: None)
+    monkeypatch.setattr(
+        apod_module,
+        "refresh_space_weather",
+        lambda *_args, **_kwargs: _network_weather(),
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "render_apod_page",
+        lambda **_kwargs: Image.new("RGB", (800, 480), (250, 250, 246)),
+    )
+    context_writes = []
+
+    def write_context_after_state(*_args, **_kwargs):
+        paths = apod_module._instance_paths(plugin)
+        assert (paths.cache / "apod-state.json").is_file()
+        context_writes.append("written")
+
+    monkeypatch.setattr(apod_module, "write_context", write_context_after_state)
+    plugin = Apod({"id": "apod"})
+    config = FakeDeviceConfig({"NASA_SECRET": "nasa-key"})
+
+    plugin.generate_image({}, config)
+    first_apod_dates = list(http.apod_dates)
+    first_media_urls = list(http.media_urls)
+    first_dns_count = len(dns_calls)
+    assert first_apod_dates == ["2026-07-22"]
+    assert first_media_urls == [media_url]
+    assert first_dns_count >= 1
+
+    monkeypatch.setattr(
+        apod_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: pytest.fail(
+            "same-day state/blob reuse must not resolve DNS"
+        ),
+    )
+    plugin.generate_image({"forceRefresh": "true"}, config)
+
+    assert http.apod_dates == first_apod_dates
+    assert http.media_urls == first_media_urls
+    assert len(dns_calls) == first_dns_count
+    assert context_writes == ["written", "written"]
 
 
 @pytest.mark.parametrize("failure_layer", ["download", "decode"])
@@ -707,6 +996,92 @@ def test_apod_video_fallback_continues_past_decode_failure_to_newest_usable_day(
     ]
     assert not (paths.media / f"{decode_digest}.img").exists()
 
+
+
+def test_apod_random_mode_skips_layout_failure_and_uses_next_candidate(
+    monkeypatch,
+):
+    candidates = (
+        "2026-07-18",
+        "2026-07-19",
+        "2026-07-20",
+        "2026-07-21",
+        "2026-07-22",
+    )
+    urls = {
+        candidate: f"https://media.example.test/layout-{candidate}.jpg"
+        for candidate in candidates
+    }
+
+    class Http:
+        def __init__(self):
+            self.apod_dates = []
+            self.download_urls = []
+
+        def request_json(self, _method, url, **kwargs):
+            requested = kwargs["params"]["date"]
+            self.apod_dates.append(requested)
+            return SimpleNamespace(
+                data={
+                    "date": requested,
+                    "media_type": "image",
+                    "title": f"Random layout {requested}",
+                    "url": urls[requested],
+                },
+                url=url,
+            )
+
+        def stream_to_file(self, _method, url, path, **_kwargs):
+            self.download_urls.append(url)
+            Path(path).write_bytes(_network_image_bytes())
+            return SimpleNamespace(data=Path(path), url=url)
+
+    http = Http()
+    real_measure = apod_module.measure_apod_page
+
+    def measure(**kwargs):
+        if kwargs["apod"].date == candidates[0]:
+            raise apod_module.ApodPageLayoutError("candidate does not fit")
+        return real_measure(**kwargs)
+
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    monkeypatch.setattr(
+        apod_module,
+        "_device_day",
+        lambda _config: datetime(2026, 7, 22, tzinfo=timezone.utc).date(),
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "_random_candidate_dates",
+        lambda _device_day, _rng: candidates,
+    )
+    monkeypatch.setattr(apod_module, "current_task_context", lambda: None)
+    monkeypatch.setattr(apod_module, "measure_apod_page", measure)
+    monkeypatch.setattr(
+        apod_module,
+        "refresh_space_weather",
+        lambda *_args, **_kwargs: _network_weather(),
+    )
+    monkeypatch.setattr(
+        apod_module,
+        "render_apod_page",
+        lambda **_kwargs: Image.new("RGB", (800, 480), (250, 250, 246)),
+    )
+    monkeypatch.setattr(apod_module, "write_context", lambda *_args, **_kwargs: None)
+    plugin = Apod({"id": "apod"})
+
+    plugin.generate_image(
+        {"randomizeApod": "true"},
+        FakeDeviceConfig({"NASA_SECRET": "nasa-key"}),
+    )
+
+    assert http.apod_dates == [candidates[0], candidates[1]]
+    assert http.download_urls == [urls[candidates[1]]]
+    paths = apod_module._instance_paths(plugin)
+    state = json.loads(
+        (paths.cache / "apod-state.json").read_text(encoding="utf-8")
+    )
+    assert state["display_record"]["date"] == candidates[1]
 
 
 def test_apod_random_mode_advances_persisted_candidates_until_media_decodes(
