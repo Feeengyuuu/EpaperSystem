@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.apod import apod as apod_module  # noqa: E402
+from plugins.apod import space_weather as space_weather_module  # noqa: E402
 from plugins.apod.apod import Apod  # noqa: E402
 from plugins.apod.space_weather import (  # noqa: E402
     ALERTS_ENDPOINT,
@@ -982,6 +983,73 @@ def test_alert_warning_watch_or_alert_precedes_summary_even_at_lower_scale():
     assert alert["kind"] == "ALERT"
 
 
+def test_alert_unknown_prose_with_cancel_reference_cannot_cancel_active_product():
+    active = _alerts("ALTK20")[0]
+    false_cancel = {
+        "product_id": "UNKN99",
+        "issue_datetime": "2026-07-22T12:10:00Z",
+        "message": "Operator note only\nCancel Serial Number: 300",
+    }
+
+    state, alert = fold_alerts([active, false_cancel], now_utc=NOW_UTC)
+
+    assert state == "active"
+    assert alert["serial"] == "300"
+
+
+def _same_serial_cross_product_alerts():
+    return [
+        {
+            "product_id": "ALTK20",
+            "issue_datetime": "2026-07-22T11:00:00Z",
+            "message": (
+                "Serial Number: 42\nALERT: Geomagnetic event\nNOAA Scale: G2"
+            ),
+        },
+        {
+            "product_id": "ALTX10",
+            "issue_datetime": "2026-07-22T11:05:00Z",
+            "message": "Serial Number: 42\nALERT: X-ray event\nNOAA Scale: R3",
+        },
+    ]
+
+
+def test_alert_cancel_is_scoped_to_product_identity_when_serials_collide():
+    cancel_xray = {
+        "product_id": "CALTX10",
+        "issue_datetime": "2026-07-22T11:10:00Z",
+        "message": "CANCEL ALERT\nCancel Serial Number: 42",
+    }
+
+    state, alert = fold_alerts(
+        [*_same_serial_cross_product_alerts(), cancel_xray], now_utc=NOW_UTC
+    )
+
+    assert state == "active"
+    assert alert["product_id"] == "ALTK20"
+    assert alert["serial"] == "42"
+
+
+def test_alert_extension_replaces_only_its_product_when_serials_collide():
+    extend_geomagnetic = {
+        "product_id": "ALTK20",
+        "issue_datetime": "2026-07-22T11:10:00Z",
+        "message": (
+            "Serial Number: 43\nEXTENDED ALERT: Geomagnetic event\n"
+            "Extension to Serial Number: 42\nNOAA Scale: G1"
+        ),
+    }
+
+    state, alert = fold_alerts(
+        [*_same_serial_cross_product_alerts(), extend_geomagnetic], now_utc=NOW_UTC
+    )
+
+    assert state == "active"
+    assert alert["product_id"] == "ALTX10"
+    assert alert["serial"] == "42"
+    assert alert["severity"] == "R3"
+
+
 def test_alert_repository_distinguishes_live_fresh_empty_and_unavailable(tmp_path):
     repository = SpaceWeatherRepository(
         cache_dir=tmp_path,
@@ -1055,6 +1123,106 @@ def test_successful_empty_alert_response_clears_old_selection_but_not_on_failure
     ]["candidates"] == []
     assert failed.state == "fresh_cache"
     assert (failed_state, failed_alert) == ("unavailable", None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("product_id", ""),
+        ("product_key", "wrong-family"),
+        ("serial", ""),
+        ("serial", "bad serial"),
+        ("kind", "NOTICE"),
+        ("severity", "R9"),
+        ("severity", "R"),
+        ("issue_datetime", "not-a-time"),
+        ("valid_until", "not-a-time"),
+        ("event_period_end", None),
+        ("display_until", "2026-07-22T14:00:00Z"),
+        ("headline", ""),
+        ("display_until_source", "guessed"),
+    ],
+)
+def test_alert_corrupt_cache_rejects_every_consumer_critical_field(
+    tmp_path, field, value
+):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=FakeHttp({ALERTS_ENDPOINT: [_alerts("ALTK20")]}),
+    )
+    repository.refresh_alerts(now_utc=NOW_UTC, context=None)
+    path = tmp_path / "alerts.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["payload"]["candidates"][0][field] = value
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    repository.http = FakeHttp({ALERTS_ENDPOINT: [RuntimeError("alerts offline")]})
+
+    result, alert_state, alert = repository.refresh_alerts(
+        now_utc=NOW_UTC + timedelta(minutes=1), context=None
+    )
+
+    assert result.state == "unavailable"
+    assert result.envelope is None
+    assert (alert_state, alert) == ("unavailable", None)
+
+
+@pytest.mark.parametrize("severity", ["R9", "R"])
+def test_alert_malformed_cached_severity_is_unavailable_without_crashing_aggregate(
+    tmp_path, severity
+):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=FakeHttp({ALERTS_ENDPOINT: [_alerts("ALTK20")]}),
+    )
+    repository.refresh_alerts(now_utc=NOW_UTC, context=None)
+    path = tmp_path / "alerts.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["payload"]["candidates"][0]["severity"] = severity
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    repository.http = FakeHttp(
+        {
+            SCALES_ENDPOINT: [_fixture("noaa_scales.json")],
+            KP_ENDPOINT: [_fixture("noaa_kp_objects.json")],
+            WIND_SPEED_ENDPOINT: [RuntimeError("wind offline")],
+            WIND_MAG_ENDPOINT: [RuntimeError("mag offline")],
+            ALERTS_ENDPOINT: [RuntimeError("alerts offline")],
+            DONKI_FLR_ENDPOINT: [RuntimeError("DONKI offline")],
+        }
+    )
+
+    snapshot = refresh_space_weather(
+        repository,
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC + timedelta(minutes=1),
+        context=None,
+    )
+
+    assert snapshot.alerts.state == "unavailable"
+    assert snapshot.alert_state == "unavailable"
+    assert snapshot.alert is None
+    assert snapshot.aggregate_state is SourceProvenance.LIVE
+
+
+def test_alert_watch_cache_rejects_non_day_end_local_display_semantics(tmp_path):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=FakeHttp({ALERTS_ENDPOINT: [_alerts("WATA10")]}),
+    )
+    repository.refresh_alerts(now_utc=NOW_UTC, context=None)
+    path = tmp_path / "alerts.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["payload"]["candidates"][0]["display_until"] = (
+        "2026-07-23T12:00:00Z"
+    )
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    repository.http = FakeHttp({ALERTS_ENDPOINT: [RuntimeError("alerts offline")]})
+
+    result, alert_state, alert = repository.refresh_alerts(
+        now_utc=NOW_UTC + timedelta(minutes=1), context=None
+    )
+
+    assert result.state == "unavailable"
+    assert (alert_state, alert) == ("unavailable", None)
 
 
 def test_donki_selection_prefers_explicit_earth_impact_cme_then_best_flare():
@@ -1149,6 +1317,56 @@ def test_donki_latest_most_accurate_analysis_replaces_older_earth_prediction():
     assert select_donki_event(flr=[], cme=duplicate, now_utc=NOW_UTC) is None
 
 
+def test_donki_equal_submission_revisions_are_independent_of_input_order():
+    def revision(arrival, speed):
+        return {
+            "activityID": "CME-EQUAL-TIME",
+            "cmeAnalyses": [
+                {
+                    "isMostAccurate": True,
+                    "submissionTime": "2026-07-22T11:00:00Z",
+                    "speed": speed,
+                    "enlilList": [
+                        {
+                            "estimatedShockArrivalTime": arrival,
+                            "isEarthGB": True,
+                        }
+                    ],
+                }
+            ],
+        }
+
+    first = revision("2026-07-22T13:00:00Z", 1000)
+    second = revision("2026-07-22T14:00:00Z", 1200)
+
+    forward = select_donki_event(flr=[], cme=[first, second], now_utc=NOW_UTC)
+    reversed_result = select_donki_event(
+        flr=[], cme=[second, first], now_utc=NOW_UTC
+    )
+
+    assert forward == reversed_result
+
+
+def test_donki_flare_equal_class_and_peak_uses_stable_event_id_tiebreaker():
+    def flare(event_id):
+        return {
+            "flrID": event_id,
+            "peakTime": "2026-07-22T11:00:00Z",
+            "classType": "X1.0",
+            "sourceLocation": "N00E00",
+        }
+
+    forward = select_donki_event(
+        flr=[flare("FLR-A"), flare("FLR-B")], cme=[], now_utc=NOW_UTC
+    )
+    reversed_result = select_donki_event(
+        flr=[flare("FLR-B"), flare("FLR-A")], cme=[], now_utc=NOW_UTC
+    )
+
+    assert forward == reversed_result
+    assert forward["event_id"] == "FLR-B"
+
+
 def test_donki_cme_arrival_window_is_inclusive_and_rejects_one_second_outside():
     def event(event_id, arrival):
         return {
@@ -1240,6 +1458,96 @@ def test_donki_repository_uses_exact_query_windows_and_hides_diagnostic_stale(
     assert stale.envelope is not None
     assert stale_event is None
     assert (tmp_path / "donki.json").is_file()
+
+
+def test_donki_combined_cache_above_generic_limit_remains_readable_on_failure(
+    monkeypatch, tmp_path
+):
+    padding = "x" * 1_100_000
+    flr = [{"flrID": "ignored-flare", "padding": padding}]
+    cme = [
+        {
+            "activityID": "ignored-cme",
+            "cmeAnalyses": [],
+            "padding": padding,
+        }
+    ]
+    probe = SpaceWeatherRepository(
+        cache_dir=tmp_path / "probe",
+        http=FakeHttp({DONKI_FLR_ENDPOINT: [flr], DONKI_CME_ENDPOINT: [cme]}),
+    )
+    probe.refresh_donki(
+        nasa_api_key="test-secret", now_utc=NOW_UTC, context=None
+    )
+    cache_limit = (tmp_path / "probe" / "donki.json").stat().st_size
+    monkeypatch.setattr(space_weather_module, "MAX_DONKI_CACHE_BYTES", cache_limit)
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path / "bounded",
+        http=FakeHttp({DONKI_FLR_ENDPOINT: [flr], DONKI_CME_ENDPOINT: [cme]}),
+    )
+    live, event = repository.refresh_donki(
+        nasa_api_key="test-secret", now_utc=NOW_UTC, context=None
+    )
+    path = tmp_path / "bounded" / "donki.json"
+    repository.http = FakeHttp(
+        {
+            DONKI_FLR_ENDPOINT: [RuntimeError("DONKI offline")],
+            DONKI_CME_ENDPOINT: [RuntimeError("DONKI offline")],
+        }
+    )
+
+    cached, cached_event = repository.refresh_donki(
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC + timedelta(minutes=1),
+        context=None,
+    )
+
+    assert live.state == "live"
+    assert event is None
+    assert path.stat().st_size == cache_limit
+    assert cache_limit > MAX_SOURCE_CACHE_BYTES
+    assert cached.state == "fresh_cache"
+    assert cached.envelope is not None
+    assert cached_event is None
+
+
+def test_donki_cache_is_diagnostic_at_exactly_twenty_four_hours_then_unavailable(
+    tmp_path,
+):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=FakeHttp(
+            {
+                DONKI_FLR_ENDPOINT: [
+                    _fixture("donki_flr.json"),
+                    RuntimeError("DONKI offline"),
+                    RuntimeError("DONKI offline"),
+                ],
+                DONKI_CME_ENDPOINT: [_fixture("donki_cme.json")],
+            }
+        ),
+    )
+    repository.refresh_donki(
+        nasa_api_key="test-secret", now_utc=NOW_UTC, context=None
+    )
+
+    boundary, boundary_event = repository.refresh_donki(
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC + timedelta(hours=24),
+        context=None,
+    )
+    expired, expired_event = repository.refresh_donki(
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC + timedelta(hours=24, seconds=1),
+        context=None,
+    )
+
+    assert boundary.state == "stale_cache"
+    assert boundary.envelope is not None
+    assert boundary_event is None
+    assert expired.state == "unavailable"
+    assert expired.envelope is None
+    assert expired_event is None
 
 
 def _source_result(name, state, payload=None, error=None, observed_at=NOW_UTC):
@@ -1393,8 +1701,22 @@ def test_aggregate_reports_current_cycle_core_failure_with_readable_diagnostic_c
 
 
 def test_aggregate_provenance_uses_only_values_that_are_actually_displayed():
+    stale_repository = _aggregate_repository(wind_state="stale_cache")
+    stale_repository.wind = (
+        stale_repository.wind[0],
+        _source_result(
+            "wind_mag",
+            "stale_cache",
+            {
+                "observed_at_utc": "2026-07-22T11:30:00Z",
+                "bt_nt": 5.0,
+                "bz_gsm_nt": -1.0,
+                "bz_direction": "south",
+            },
+        ),
+    )
     stale_snapshot = refresh_space_weather(
-        _aggregate_repository(wind_state="stale_cache"),
+        stale_repository,
         nasa_api_key="test-secret",
         now_utc=NOW_UTC,
         context=None,
@@ -1413,8 +1735,11 @@ def test_aggregate_provenance_uses_only_values_that_are_actually_displayed():
         context=None,
     )
 
-    assert stale_snapshot.solar_wind
-    assert stale_snapshot.aggregate_state is SourceProvenance.STALE_CACHE
+    assert not stale_snapshot.solar_wind
+    assert not stale_snapshot.magnetic_field
+    assert stale_snapshot.sources["wind_speed"].envelope is not None
+    assert stale_snapshot.sources["wind_mag"].envelope is not None
+    assert stale_snapshot.aggregate_state is SourceProvenance.LIVE
     assert empty_snapshot.aggregate_state is SourceProvenance.LOCAL_FALLBACK
     assert not empty_snapshot.current_scales
     assert not empty_snapshot.current_kp

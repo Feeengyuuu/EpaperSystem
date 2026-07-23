@@ -38,6 +38,7 @@ SOURCE_CACHE_SCHEMA = 1
 NOAA_TIMEOUT_SECONDS = 20
 MAX_PROVIDER_JSON_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_CACHE_BYTES = 2 * 1024 * 1024
+MAX_DONKI_CACHE_BYTES = 3 * MAX_PROVIDER_JSON_BYTES + 64 * 1024
 _FUTURE_CLOCK_SKEW = timedelta(minutes=5)
 _FRESH_FETCH_AGE = timedelta(minutes=30)
 
@@ -336,29 +337,29 @@ def _fold_alert_candidates(
         ordered.append((issued_at, row))
     ordered.sort(key=lambda item: item[0])
 
-    active: dict[str, Mapping[str, Any]] = {}
+    active: dict[tuple[str, str], Mapping[str, Any]] = {}
     for issued_at, row in ordered:
         parsed = _parse_alert_message(row, issued_at=issued_at)
         if parsed is None:
             continue
         cancel_serial = parsed.pop("_cancel_serial", None)
         if cancel_serial is not None:
-            active.pop(cancel_serial, None)
+            active.pop((parsed["_product_key"], cancel_serial), None)
             continue
         replaced_serial = parsed.pop("_replaced_serial", None)
         if replaced_serial is not None:
-            previous = active.pop(replaced_serial, None)
+            previous = active.pop((parsed["product_key"], replaced_serial), None)
             if previous is not None:
                 parsed = _inherit_alert_extension(parsed, previous)
         if parsed.pop("_supersedes_watches", False):
             active = {
-                serial: candidate
-                for serial, candidate in active.items()
+                identity: candidate
+                for identity, candidate in active.items()
                 if candidate.get("kind") != "WATCH"
             }
         serial = parsed.get("serial")
         if isinstance(serial, str):
-            active[serial] = _freeze(parsed)
+            active[(parsed["product_key"], serial)] = _freeze(parsed)
     return tuple(active.values())
 
 
@@ -369,13 +370,23 @@ def _parse_alert_message(
     product_id = row.get("product_id")
     if not isinstance(message, str) or not isinstance(product_id, str):
         return None
+    try:
+        product_key = _alert_product_key(product_id)
+    except ValueError:
+        return None
 
     serial_match = re.search(r"(?im)^Serial Number:\s*([A-Za-z0-9-]+)\s*$", message)
     cancel_match = re.search(
         r"(?im)^Cancel Serial Number:\s*([A-Za-z0-9-]+)\s*$", message
     )
-    if cancel_match is not None:
-        return {"_cancel_serial": cancel_match.group(1)}
+    cancel_kind = re.search(
+        r"(?im)^CANCEL(?:LED)?\s+(ALERT|WARNING|WATCH)\b", message
+    )
+    if cancel_match is not None and cancel_kind is not None:
+        return {
+            "_cancel_serial": cancel_match.group(1),
+            "_product_key": product_key,
+        }
     if serial_match is None:
         return None
 
@@ -436,6 +447,7 @@ def _parse_alert_message(
     )
     return {
         "product_id": product_id,
+        "product_key": product_key,
         "serial": serial_match.group(1),
         "kind": kind,
         "severity": severity,
@@ -449,6 +461,17 @@ def _parse_alert_message(
         "_replaced_serial": replaced_match.group(1) if replaced_match else None,
         "_supersedes_watches": supersedes_watches,
     }
+
+
+def _alert_product_key(product_id: str) -> str:
+    normalized = product_id.strip().upper()
+    if not normalized or re.fullmatch(r"[A-Z0-9-]+", normalized) is None:
+        raise ValueError("NOAA alert product identity is invalid")
+    if normalized.startswith("C") and normalized[1:].startswith(
+        ("ALT", "WAR", "WAT", "SUM")
+    ):
+        return normalized[1:]
+    return normalized
 
 
 def _inherit_alert_extension(
@@ -639,7 +662,7 @@ def _donki_cme_candidates(
 ) -> list[dict[str, Any]]:
     if isinstance(raw, (str, bytes, bytearray)) or not isinstance(raw, Sequence):
         raise ValueError("DONKI CME payload must be an array")
-    latest_analysis: dict[str, tuple[datetime, Mapping[str, Any]]] = {}
+    latest_analysis: dict[str, tuple[datetime, str, Mapping[str, Any]]] = {}
     for row in raw:
         if not isinstance(row, Mapping):
             continue
@@ -659,12 +682,18 @@ def _donki_cme_candidates(
                 submitted = _parse_utc(analysis.get("submissionTime"))
             except ValueError:
                 continue
+            tie_key = json.dumps(
+                _json_value(analysis),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             previous = latest_analysis.get(event_id)
-            if previous is None or submitted > previous[0]:
-                latest_analysis[event_id] = submitted, analysis
+            if previous is None or (submitted, tie_key) > previous[:2]:
+                latest_analysis[event_id] = submitted, tie_key, analysis
 
     candidates = []
-    for event_id, (submitted, analysis) in latest_analysis.items():
+    for event_id, (submitted, _tie_key, analysis) in latest_analysis.items():
         enlil_list = analysis.get("enlilList")
         if isinstance(enlil_list, (str, bytes, bytearray)) or not isinstance(
             enlil_list, Sequence
@@ -877,7 +906,13 @@ class SpaceWeatherRepository:
                 payload=payload,
                 raw_digest=hashlib.sha256(flr_bytes + b"\0" + cme_bytes).hexdigest(),
             )
-            atomic_write_json(path, _serialize_envelope(envelope))
+            serialized = _serialize_envelope(envelope)
+            _validate_cache_json_size(
+                serialized,
+                max_bytes=MAX_DONKI_CACHE_BYTES,
+                label="DONKI",
+            )
+            atomic_write_json(path, serialized)
             return SourceResult(name="donki", state="live", envelope=envelope), selected
         except Exception as error:
             cached = _read_envelope(
@@ -1030,60 +1065,18 @@ def refresh_space_weather(
         for result in (scales, kp, wind_speed, wind_magnetic, alerts, donki)
     }
 
-    scales_payload = _result_payload(scales)
-    kp_payload = _result_payload(kp)
-    speed_payload = _result_payload(wind_speed)
-    magnetic_payload = _result_payload(wind_magnetic)
-    current_scales = _mapping_copy(scales_payload.get("current"))
-    kp_current = _mapping_copy(kp_payload.get("current"))
-    current_kp = (
-        {
-            "value": kp_current.get("kp"),
-            "mode": kp_current.get("observed"),
-            "time_tag": kp_current.get("time_tag"),
-            "noaa_scale": kp_current.get("noaa_scale"),
-        }
-        if kp_current
-        else {}
-    )
-    peak = _mapping_copy(kp_payload.get("predicted_peak"))
-    forecast_48h = (
-        {
-            "max_kp": peak.get("kp"),
-            "noaa_scale": peak.get("noaa_scale"),
-            "time_tag": peak.get("time_tag"),
-        }
-        if peak
-        else {}
-    )
-    solar_wind = (
-        {
-            "speed_km_s": speed_payload.get("speed_km_s"),
-            "time_tag": speed_payload.get("observed_at_utc"),
-        }
-        if speed_payload
-        else {}
-    )
-    magnetic_field = (
-        {
-            "bt_nt": magnetic_payload.get("bt_nt"),
-            "bz_nt": magnetic_payload.get("bz_gsm_nt"),
-            "direction": magnetic_payload.get("bz_direction"),
-            "time_tag": magnetic_payload.get("observed_at_utc"),
-        }
-        if magnetic_payload
-        else {}
-    )
-    scale_probabilities = _mapping_copy(scales_payload.get("probabilities"))
-    probabilities = (
-        {
-            "r1_r2": scale_probabilities.get("r_minor"),
-            "r3_r5": scale_probabilities.get("r_major"),
-            "s1_plus": scale_probabilities.get("s"),
-            "forecast_date": scale_probabilities.get("valid_at_utc"),
-        }
-        if scale_probabilities
-        else {}
+    (
+        current_scales,
+        current_kp,
+        forecast_48h,
+        solar_wind,
+        magnetic_field,
+        probabilities,
+    ) = _project_weather_fields(
+        scales=scales,
+        kp=kp,
+        wind_speed=wind_speed,
+        wind_magnetic=wind_magnetic,
     )
 
     displayed = []
@@ -1140,6 +1133,84 @@ def refresh_space_weather(
 
 def _result_payload(result: SourceResult) -> Mapping[str, Any]:
     return result.envelope.payload if result.envelope is not None else {}
+
+
+def _renderable_optional_payload(result: SourceResult) -> Mapping[str, Any]:
+    if result.state not in {"live", "fresh_cache"}:
+        return {}
+    return _result_payload(result)
+
+
+def _project_weather_fields(
+    *,
+    scales: SourceResult,
+    kp: SourceResult,
+    wind_speed: SourceResult,
+    wind_magnetic: SourceResult,
+) -> tuple[dict[str, Any], ...]:
+    scales_payload = _result_payload(scales)
+    kp_payload = _result_payload(kp)
+    speed_payload = _renderable_optional_payload(wind_speed)
+    magnetic_payload = _renderable_optional_payload(wind_magnetic)
+    current_scales = _mapping_copy(scales_payload.get("current"))
+    kp_current = _mapping_copy(kp_payload.get("current"))
+    current_kp = (
+        {
+            "value": kp_current.get("kp"),
+            "mode": kp_current.get("observed"),
+            "time_tag": kp_current.get("time_tag"),
+            "noaa_scale": kp_current.get("noaa_scale"),
+        }
+        if kp_current
+        else {}
+    )
+    peak = _mapping_copy(kp_payload.get("predicted_peak"))
+    forecast_48h = (
+        {
+            "max_kp": peak.get("kp"),
+            "noaa_scale": peak.get("noaa_scale"),
+            "time_tag": peak.get("time_tag"),
+        }
+        if peak
+        else {}
+    )
+    solar_wind = (
+        {
+            "speed_km_s": speed_payload.get("speed_km_s"),
+            "time_tag": speed_payload.get("observed_at_utc"),
+        }
+        if speed_payload
+        else {}
+    )
+    magnetic_field = (
+        {
+            "bt_nt": magnetic_payload.get("bt_nt"),
+            "bz_nt": magnetic_payload.get("bz_gsm_nt"),
+            "direction": magnetic_payload.get("bz_direction"),
+            "time_tag": magnetic_payload.get("observed_at_utc"),
+        }
+        if magnetic_payload
+        else {}
+    )
+    raw_probabilities = _mapping_copy(scales_payload.get("probabilities"))
+    probabilities = (
+        {
+            "r1_r2": raw_probabilities.get("r_minor"),
+            "r3_r5": raw_probabilities.get("r_major"),
+            "s1_plus": raw_probabilities.get("s"),
+            "forecast_date": raw_probabilities.get("valid_at_utc"),
+        }
+        if raw_probabilities
+        else {}
+    )
+    return (
+        current_scales,
+        current_kp,
+        forecast_48h,
+        solar_wind,
+        magnetic_field,
+        probabilities,
+    )
 
 
 def _mapping_copy(value: Any) -> dict[str, Any]:
@@ -1274,6 +1345,16 @@ def _serialize_envelope(envelope: SourceEnvelope) -> dict[str, Any]:
     }
 
 
+def _validate_cache_json_size(
+    payload: Mapping[str, Any], *, max_bytes: int, label: str
+) -> None:
+    encoded = (
+        json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    if len(encoded) > max_bytes:
+        raise ValueError(f"{label} normalized cache exceeds {max_bytes} bytes")
+
+
 def _read_envelope(
     path: Path,
     *,
@@ -1281,9 +1362,14 @@ def _read_envelope(
     freshness_kind: FreshnessKind,
 ) -> SourceEnvelope | None:
     try:
+        max_bytes = (
+            MAX_DONKI_CACHE_BYTES
+            if freshness_kind == "donki"
+            else MAX_SOURCE_CACHE_BYTES
+        )
         with path.open("rb") as stream:
-            encoded = stream.read(MAX_SOURCE_CACHE_BYTES + 1)
-        if len(encoded) > MAX_SOURCE_CACHE_BYTES:
+            encoded = stream.read(max_bytes + 1)
+        if len(encoded) > max_bytes:
             return None
         raw = json.loads(encoded)
         if not isinstance(raw, Mapping):
@@ -1330,10 +1416,7 @@ def _validate_cached_payload(
         for candidate in candidates:
             if not isinstance(candidate, Mapping):
                 raise ValueError("cached alert candidate must be an object")
-            if candidate.get("kind") not in {"ALERT", "WARNING", "WATCH", "SUMMARY"}:
-                raise ValueError("cached alert kind is invalid")
-            _parse_utc(candidate.get("issue_datetime"))
-            _parse_utc(candidate.get("display_until"))
+            _validate_cached_alert(candidate)
         return
     if freshness_kind == "donki":
         flr = _required_sequence(payload, "flr")
@@ -1366,6 +1449,76 @@ def _validate_cached_payload(
             raise ValueError("cached Bz direction does not match its sign")
         return
     raise ValueError("cached wind source endpoint is unknown")
+
+
+def _validate_cached_alert(candidate: Mapping[str, Any]) -> None:
+    product_id = _required_text(candidate, "product_id")
+    product_key = _required_text(candidate, "product_key")
+    if product_key != _alert_product_key(product_id):
+        raise ValueError("cached alert product key does not match its identity")
+    serial = _required_text(candidate, "serial")
+    if re.fullmatch(r"[A-Za-z0-9-]+", serial) is None:
+        raise ValueError("cached alert serial is invalid")
+    _required_text(candidate, "headline")
+
+    kind = candidate.get("kind")
+    if kind not in {"ALERT", "WARNING", "WATCH", "SUMMARY"}:
+        raise ValueError("cached alert kind is invalid")
+    severity = candidate.get("severity")
+    if severity is not None and (
+        not isinstance(severity, str)
+        or re.fullmatch(r"[GRS][1-5]", severity) is None
+    ):
+        raise ValueError("cached alert severity is invalid")
+    if kind == "SUMMARY" and severity is None:
+        raise ValueError("cached alert summary severity is missing")
+
+    issued_at = _parse_utc(candidate.get("issue_datetime"))
+    display_until = _parse_utc(candidate.get("display_until"))
+    if display_until < issued_at:
+        raise ValueError("cached alert display limit predates its issue time")
+    valid_until = _parse_optional_utc(candidate.get("valid_until"))
+    event_start = _parse_optional_utc(candidate.get("event_period_start"))
+    event_end = _parse_optional_utc(candidate.get("event_period_end"))
+    if (event_start is None) != (event_end is None):
+        raise ValueError("cached alert event period is incomplete")
+    if event_start is not None and event_end < event_start:
+        raise ValueError("cached alert event period is reversed")
+
+    display_source = candidate.get("display_until_source")
+    expected_local = {
+        "ALERT": ("local_alert", issued_at + timedelta(hours=3)),
+        "SUMMARY": ("local_summary", issued_at + timedelta(hours=24)),
+    }
+    if display_source == "provider":
+        if valid_until is None or display_until != valid_until:
+            raise ValueError("cached provider alert validity is inconsistent")
+    elif kind in expected_local and valid_until is None:
+        expected_source, expected_until = expected_local[kind]
+        if display_source != expected_source or display_until != expected_until:
+            raise ValueError("cached local alert validity is inconsistent")
+    elif kind == "WATCH" and valid_until is None:
+        local_cap = issued_at + timedelta(hours=96)
+        is_utc_day_end = display_until.time() == datetime.max.time().replace(
+            microsecond=0
+        )
+        if (
+            display_source != "local_watch_forecast"
+            or display_until > local_cap
+            or not (display_until == local_cap or is_utc_day_end)
+        ):
+            raise ValueError("cached watch display validity is inconsistent")
+    else:
+        raise ValueError("cached alert display validity source is invalid")
+    if kind == "WARNING" and valid_until is None:
+        raise ValueError("cached warning provider validity is missing")
+
+
+def _required_text(payload: Mapping[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"cached {key} must be a non-empty string")
+    return value
 
 
 def _validate_cached_scales(payload: Mapping[str, Any]) -> None:
