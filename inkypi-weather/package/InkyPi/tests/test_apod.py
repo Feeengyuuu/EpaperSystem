@@ -2334,6 +2334,70 @@ def test_apod_caption_legal_measured_180px_case_hides_kicker_and_stays_separate(
     assert layout.date_bottom <= 480
 
 
+def test_apod_page_real_multiline_credit_preserves_every_character_within_budget(
+    monkeypatch,
+):
+    page = _apod_page_module()
+    copyright_text = (
+        "DES/DOE/FNAL/DECam/CTIO/NOIRLab/NSF/AURA\n"
+        "Image Processing: T.A. Rector (UAA/NOIRLab), "
+        "R. Colombari & M. Zamani (NOIRLab)"
+    )
+    apod = _page_record(
+        title_en="The Corona Australis Molecular Cloud",
+        title_zh="南冕座分子云",
+        copyright=copyright_text,
+    )
+    measurement = page.measure_apod_page(
+        apod=apod,
+        title_zh=apod.title_zh,
+        translation_unavailable=False,
+    )
+    layout = measurement.caption
+
+    expected_credit = f"CREDIT · {copyright_text.replace(chr(10), '')}"
+    drawn_credit = "".join(layout.credit_lines)
+    assert drawn_credit == expected_credit
+    assert len(layout.credit_lines) >= 3
+    assert layout.meta_font.size >= 10
+    assert 120 <= layout.caption_height <= 180
+    assert layout.title_bottom <= layout.credit_y
+    assert layout.credit_bottom <= layout.date_y
+    assert layout.date_bottom <= 480
+    assert measurement.photo_rect == (368, 65, 800, layout.caption_top)
+    assert measurement.photo_size == (432, layout.caption_top - 65)
+
+    original_text = ImageDraw.ImageDraw.text
+    drawn_text = []
+    kp_calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    def capture_kp(draw, rect, snapshot, fonts):
+        kp_calls.append(rect)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(page, "_draw_kp_panel", capture_kp)
+    source = Image.new("RGB", (960, 640), PHOTO_BLUE)
+    rendered = page.render_apod_page(
+        apod=apod,
+        title_zh=apod.title_zh,
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=source,
+        rendered_at_utc=NOW_UTC,
+        measurement=measurement,
+    )
+
+    assert kp_calls == [page.KP_RECT]
+    assert all(line in drawn_text for line in layout.credit_lines)
+    assert not any("..." in line or "…" in line for line in layout.credit_lines)
+    assert rendered.getpixel((500, layout.caption_top - 1)) == PHOTO_BLUE
+    assert rendered.getpixel((500, layout.caption_top)) == page.ORANGE_COLOR
+
+
 @pytest.mark.parametrize(
     "scenario",
     [

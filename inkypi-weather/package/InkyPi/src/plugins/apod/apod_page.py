@@ -278,8 +278,6 @@ def _layout_caption(
         meta_font,
         RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0],
     )
-    if len(credit_lines) > 2:
-        raise ApodPageLayoutError("complete APOD credit exceeds two metadata lines")
     date_copy = f"NASA APOD · {str(apod_date or 'date unavailable')}"
     if _text_width(draw, date_copy, meta_font) > RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]:
         raise ApodPageLayoutError("complete APOD date does not fit the caption")
