@@ -1,19 +1,21 @@
 import hashlib
+import importlib
 import json
 import random
 import sys
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.apod import apod as apod_module  # noqa: E402
 from plugins.apod import space_weather as space_weather_module  # noqa: E402
-from plugins.apod.apod import Apod  # noqa: E402
+from plugins.apod.apod import Apod, ApodRecord  # noqa: E402
 from plugins.apod.space_weather import (  # noqa: E402
     ALERTS_ENDPOINT,
     DONKI_CME_ENDPOINT,
@@ -1743,3 +1745,313 @@ def test_aggregate_provenance_uses_only_values_that_are_actually_displayed():
     assert empty_snapshot.aggregate_state is SourceProvenance.LOCAL_FALLBACK
     assert not empty_snapshot.current_scales
     assert not empty_snapshot.current_kp
+
+
+def _apod_page_module():
+    return importlib.import_module("plugins.apod.apod_page")
+
+
+def _page_record(
+    *,
+    title_en="The Corona Australis Molecular Cloud and the Chamaeleon Cluster",
+    title_zh="南冕座分子云与变色龙星团",
+    copyright="NASA / APOD",
+):
+    return ApodRecord(
+        selection_key="fixture-2026-07-22",
+        requested_device_date="2026-07-22",
+        date="2026-07-22",
+        media_type="image",
+        title_en=title_en,
+        title_zh=title_zh,
+        translation_state="live" if title_zh else "unavailable",
+        explanation="Deterministic renderer fixture.",
+        copyright=copyright,
+        url="https://example.test/apod.jpg",
+        hdurl=None,
+        image_url="https://example.test/apod.jpg",
+        image_cache_key="fixture-image",
+        fetched_at_utc=NOW_UTC,
+        source_state="live",
+        warning=None,
+    )
+
+
+def _page_weather():
+    return refresh_space_weather(
+        _aggregate_repository(),
+        nasa_api_key="test-secret",
+        now_utc=NOW_UTC,
+        context=None,
+    )
+
+
+PHOTO_RED = (219, 48, 45)
+PHOTO_GREEN = (40, 180, 99)
+PHOTO_BLUE = (42, 96, 209)
+PHOTO_YELLOW = (244, 194, 13)
+PHOTO_COLORS = {PHOTO_RED, PHOTO_GREEN, PHOTO_BLUE, PHOTO_YELLOW}
+
+
+def _quadrant_image(size, *, orientation=None):
+    width, height = size
+    image = Image.new("RGB", size)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, width // 2 - 1, height // 2 - 1), fill=PHOTO_RED)
+    draw.rectangle((width // 2, 0, width - 1, height // 2 - 1), fill=PHOTO_GREEN)
+    draw.rectangle((0, height // 2, width // 2 - 1, height - 1), fill=PHOTO_BLUE)
+    draw.rectangle((width // 2, height // 2, width - 1, height - 1), fill=PHOTO_YELLOW)
+    if orientation is not None:
+        image.getexif()[274] = orientation
+    return image
+
+
+def _photo_edge_pixels(image):
+    width, height = image.size
+    return (
+        [image.getpixel((x, 0)) for x in range(width)]
+        + [image.getpixel((x, height - 1)) for x in range(width)]
+        + [image.getpixel((0, y)) for y in range(height)]
+        + [image.getpixel((width - 1, y)) for y in range(height)]
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "photo_size"),
+    [
+        (_quadrant_image((1200, 400)), (432, 299)),
+        (_quadrant_image((400, 1200)), (432, 299)),
+        (_quadrant_image((240, 480), orientation=6), (432, 299)),
+    ],
+    ids=["wide", "tall", "exif-rotated"],
+)
+def test_apod_page_cover_crop_is_centered_and_every_photo_edge_is_content(
+    source, photo_size
+):
+    page = _apod_page_module()
+
+    fitted = page.fit_photo(source, photo_size)
+    expected = ImageOps.fit(
+        ImageOps.exif_transpose(source).convert("RGB"),
+        photo_size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+
+    assert fitted.mode == "RGB"
+    assert fitted.size == photo_size
+    assert fitted.tobytes() == expected.tobytes()
+    assert all(
+        pixel not in {(0, 0, 0), (255, 255, 255)}
+        for pixel in _photo_edge_pixels(fitted)
+    )
+
+
+def test_apod_page_short_caption_has_fixed_photo_and_divider_boundaries():
+    page = _apod_page_module()
+    source = Image.new("RGB", (960, 640), PHOTO_BLUE)
+
+    rendered = page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=source,
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert rendered.mode == "RGB"
+    assert rendered.size == (800, 480)
+    assert rendered.getpixel((500, 363)) == PHOTO_BLUE
+    assert rendered.getpixel((500, 364)) != PHOTO_BLUE
+    assert rendered.getpixel((367, 200)) == page.DIVIDER_COLOR
+    assert rendered.getpixel((368, 200)) == PHOTO_BLUE
+
+
+def test_apod_page_maximum_caption_has_fixed_photo_boundary():
+    page = _apod_page_module()
+    title_en = "i" * 300
+    title_zh = "星" * 60
+    source = Image.new("RGB", (960, 640), PHOTO_GREEN)
+
+    rendered = page.render_apod_page(
+        apod=_page_record(title_en=title_en, title_zh=title_zh),
+        title_zh=title_zh,
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=source,
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert rendered.getpixel((500, 299)) == PHOTO_GREEN
+    assert rendered.getpixel((500, 300)) != PHOTO_GREEN
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "english",
+        "chinese",
+        "combined",
+    ],
+)
+def test_apod_caption_layout_uses_true_fonts_and_preserves_complete_text_or_rejects(
+    candidate
+):
+    page = _apod_page_module()
+    title_en = "i" * 300 if candidate in {"english", "combined"} else "Aurora"
+    title_zh = "星" * 60 if candidate in {"chinese", "combined"} else None
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
+
+    try:
+        layout = page._layout_caption(
+            draw=draw,
+            title_en=title_en,
+            title_zh=title_zh,
+            translation_unavailable=False,
+        )
+    except page.ApodPageLayoutError:
+        return
+
+    assert isinstance(layout.title_en_font, ImageFont.FreeTypeFont)
+    assert "".join(layout.title_en_lines) == title_en
+    assert len(layout.title_en_lines) <= 3
+    assert not any("..." in line or "…" in line for line in layout.title_en_lines)
+    if title_zh:
+        assert isinstance(layout.title_zh_font, ImageFont.FreeTypeFont)
+        assert "".join(layout.title_zh_lines) == title_zh
+        assert len(layout.title_zh_lines) <= 6
+        assert not any("..." in line or "…" in line for line in layout.title_zh_lines)
+    assert 300 <= layout.caption_top <= 364
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "short-english",
+        "long-english",
+        "long-chinese",
+        "translation-unavailable",
+        "missing-copyright",
+        "missing-weather",
+        "maximum-caption",
+    ],
+)
+def test_apod_page_kp_rect_is_direct_and_invariant(monkeypatch, scenario):
+    page = _apod_page_module()
+    title_en = "Aurora"
+    title_zh = "极光"
+    translation_unavailable = False
+    copyright_text = "NASA / APOD"
+    weather = _page_weather()
+    if scenario == "long-english":
+        title_en = "i" * 300
+    elif scenario == "long-chinese":
+        title_zh = "星" * 60
+    elif scenario == "translation-unavailable":
+        title_zh = None
+        translation_unavailable = True
+    elif scenario == "missing-copyright":
+        copyright_text = None
+    elif scenario == "missing-weather":
+        weather = replace(
+            weather,
+            current_scales={},
+            current_kp={},
+            forecast_48h={},
+            solar_wind={},
+            magnetic_field={},
+            probabilities={},
+        )
+    elif scenario == "maximum-caption":
+        title_en = "i" * 300
+        title_zh = "星" * 60
+
+    calls = []
+
+    def capture(draw, rect, snapshot, fonts):
+        calls.append((rect, snapshot, fonts))
+
+    monkeypatch.setattr(page, "_draw_kp_panel", capture)
+    page.render_apod_page(
+        apod=_page_record(
+            title_en=title_en,
+            title_zh=title_zh,
+            copyright=copyright_text,
+        ),
+        title_zh=title_zh,
+        translation_unavailable=translation_unavailable,
+        weather=weather,
+        source_image=Image.new("RGB", (960, 640), PHOTO_RED),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == (20, 77, 354, 180)
+    assert calls[0][0] == page.KP_RECT
+    assert calls[0][1] is weather
+
+
+def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
+    monkeypatch,
+):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        font = kwargs.get("font")
+        bbox = draw.textbbox(xy, str(text), font=font)
+        calls.append((xy, str(text), bbox))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    page.render_apod_page(
+        apod=_page_record(),
+        title_zh="南冕座分子云与变色龙星团",
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=Image.new("RGB", (960, 640), PHOTO_YELLOW),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    left_calls = [call for call in calls if call[0][0] < 368 and call[0][1] >= 65]
+    assert left_calls
+    assert all(bbox[2] <= 354 for _xy, _text, bbox in left_calls)
+    assert not any("..." in text or "…" in text for _xy, text, _bbox in calls)
+    all_copy = " | ".join(text for _xy, text, _bbox in calls)
+    for required_copy in (
+        "4.7",
+        "MODE estimated",
+        "48H PEAK · Kp 6.3 / G2",
+        "G2",
+        "R1",
+        "S0",
+        "455 km/s",
+        "磁场 Bz",
+        "磁场强度 Bt",
+        "R1–R2",
+        "55%",
+        "R3–R5",
+        "10%",
+        "S1+",
+        "5%",
+        "NOAA ALERTS",
+        "NOAA SWPC · OBS 12:00Z · CACHE 12:20Z",
+    ):
+        assert required_copy in all_copy
+
+
+def test_apod_page_rejects_non_approved_dimensions():
+    page = _apod_page_module()
+
+    with pytest.raises(ValueError, match="800x480"):
+        page.render_apod_page(
+            apod=_page_record(),
+            title_zh="极光",
+            translation_unavailable=False,
+            weather=_page_weather(),
+            source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+            rendered_at_utc=NOW_UTC,
+            dimensions=(600, 448),
+        )
