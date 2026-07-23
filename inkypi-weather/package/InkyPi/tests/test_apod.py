@@ -2097,6 +2097,101 @@ def _photo_edge_pixels(image):
     )
 
 
+def test_apod_header_wordmark_asset_is_transparent_and_nonempty():
+    page = _apod_page_module()
+
+    with Image.open(page.WORDMARK_PATH) as source:
+        assert source.mode == "RGBA"
+        wordmark = source.convert("RGBA")
+
+    alpha = wordmark.getchannel("A")
+    assert alpha.getextrema() == (0, 255)
+    assert alpha.getbbox() is not None
+    assert all(
+        wordmark.getpixel(point)[3] == 0
+        for point in (
+            (0, 0),
+            (wordmark.width - 1, 0),
+            (0, wordmark.height - 1),
+            (wordmark.width - 1, wordmark.height - 1),
+        )
+    )
+    visible_pixels = (
+        pixel
+        for y in range(wordmark.height)
+        for x in range(wordmark.width)
+        if (pixel := wordmark.getpixel((x, y)))[3] > 16
+    )
+    assert all(
+        not (green > red + 16 and green > blue + 16)
+        for red, green, blue, _alpha in visible_pixels
+    )
+
+
+def test_apod_header_uses_wordmark_instead_of_plain_title_text(monkeypatch):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    drawn_text = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    rendered = page.render_apod_page(
+        apod=_page_record(),
+        title_zh=_page_record().title_zh,
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    assert page.WORDMARK_FALLBACK_TEXT not in drawn_text
+    assert "2026-07-22 12:20Z" in drawn_text
+    assert page.WORDMARK_RECT == (20, 8, 452, 54)
+    assert any(
+        rendered.getpixel((x, y)) != page.HEADER_COLOR
+        for y in range(page.WORDMARK_RECT[1], page.WORDMARK_RECT[3])
+        for x in range(page.WORDMARK_RECT[0], page.WORDMARK_RECT[2])
+    )
+    assert all(
+        rendered.getpixel((x, y)) == page.HEADER_COLOR
+        for y in range(0, page.HEADER_RECT[3] - 1)
+        for x in range(page.WORDMARK_RECT[2] + 8, 675)
+    )
+    assert all(
+        rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == page.DIVIDER_COLOR
+        for x in range(page.PAGE_SIZE[0])
+    )
+
+
+def test_apod_header_falls_back_to_plain_title_when_wordmark_is_missing(
+    monkeypatch,
+):
+    page = _apod_page_module()
+    original_text = ImageDraw.ImageDraw.text
+    drawn_text = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn_text.append((str(text), kwargs.get("font")))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(page, "WORDMARK_PATH", Path("missing-wordmark.png"))
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    page.render_apod_page(
+        apod=_page_record(),
+        title_zh=_page_record().title_zh,
+        translation_unavailable=False,
+        weather=_page_weather(),
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+    )
+
+    by_text = {text: font for text, font in drawn_text}
+    assert 26 <= by_text[page.WORDMARK_FALLBACK_TEXT].size <= 29
+
+
 @pytest.mark.parametrize(
     ("source", "photo_size"),
     [
@@ -2748,7 +2843,7 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     by_text = {text: font for text, font in calls}
     assert all(isinstance(font, ImageFont.FreeTypeFont) for _text, font in calls)
     assert all(font.size >= 10 for _text, font in calls)
-    assert 26 <= by_text["NASAPics × SPACE WEATHER"].size <= 29
+    assert "NASAPics × SPACE WEATHER" not in by_text
     assert by_text["2026-07-22 12:20Z"].size >= 10
     assert 36 <= by_text["4.7"].size <= 44
     assert 16 <= by_text["CURRENT G2 | MODE estimated"].size <= 20

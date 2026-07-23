@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -16,6 +17,13 @@ if TYPE_CHECKING:
 
 
 HEADER_RECT = (0, 0, 800, 65)
+WORDMARK_RECT = (20, 8, 452, 54)
+WORDMARK_PATH = (
+    Path(__file__).resolve().parent
+    / "assets"
+    / "nasapics_space_weather_wordmark.png"
+)
+WORDMARK_FALLBACK_TEXT = "NASAPics × SPACE WEATHER"
 LEFT_RECT = (0, 65, 368, 480)
 KP_RECT = (20, 77, 354, 180)
 GRS_RECT = (20, 190, 354, 218)
@@ -754,14 +762,43 @@ def _draw_source_panel(draw, snapshot, fonts) -> None:
     )
 
 
-def _draw_header(draw, rendered_at_utc, fonts) -> None:
-    _draw_text(
-        draw,
-        (20, 10),
-        "NASAPics × SPACE WEATHER",
-        font=fonts["brand"],
-        fill=INK_COLOR,
+def _load_wordmark() -> Image.Image | None:
+    try:
+        with Image.open(WORDMARK_PATH) as source:
+            wordmark = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+    bbox = wordmark.getchannel("A").getbbox()
+    return wordmark.crop(bbox) if bbox else None
+
+
+def _draw_wordmark(canvas: Image.Image) -> bool:
+    source = _load_wordmark()
+    if source is None:
+        return False
+
+    left, top, right, bottom = WORDMARK_RECT
+    art = ImageOps.contain(
+        source,
+        (right - left, bottom - top),
+        method=Image.Resampling.LANCZOS,
     )
+    x = left
+    y = top + ((bottom - top - art.height) // 2)
+    canvas.paste(art.convert("RGB"), (x, y), art.getchannel("A"))
+    return True
+
+
+def _draw_header(canvas, draw, rendered_at_utc, fonts) -> None:
+    if not _draw_wordmark(canvas):
+        _draw_text(
+            draw,
+            (20, 10),
+            WORDMARK_FALLBACK_TEXT,
+            font=fonts["brand"],
+            fill=INK_COLOR,
+        )
     _draw_right(
         draw,
         780,
@@ -867,7 +904,7 @@ def render_apod_page(
     draw.rectangle((0, LEFT_RECT[1], LEFT_RECT[2] - 1, 479), fill=LEFT_COLOR)
     canvas.paste(fit_photo(source_image, measured.photo_size), (RIGHT_X, PHOTO_TOP))
 
-    _draw_header(draw, rendered_at_utc, fonts)
+    _draw_header(canvas, draw, rendered_at_utc, fonts)
     _draw_kp_panel(draw, KP_RECT, weather, fonts)
     _draw_grs_panel(draw, weather, fonts)
     _draw_metrics_panel(draw, weather, fonts)
