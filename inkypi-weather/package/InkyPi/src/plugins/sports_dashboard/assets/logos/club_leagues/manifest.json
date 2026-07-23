@@ -1,0 +1,40 @@
+{
+  "version": "2026-07-22-current-brand-v1",
+  "icons": {
+    "PL": {
+      "filename": "pl.png",
+      "brand_version": "Premier League current lion-head mark",
+      "source_url": "https://a.espncdn.com/i/leaguelogos/soccer/500/23.png",
+      "source_sha256": "42e2fdced44ff542fa734409667c733841a7bcb903b526c85d12aac78aff2464",
+      "output_sha256": "31f22b8850a2a1f6e38b04ca0183d6f7bb24dbc099af2be61c6a553f0debb092"
+    },
+    "PD": {
+      "filename": "pd.png",
+      "brand_version": "LALIGA current LL symbol",
+      "source_url": "https://assets.laliga.com/assets/logos/LL_RGB_h_color/LL_RGB_h_color.png",
+      "source_sha256": "08826931042ecda5773c0b713bfa46e6854b87e1d5f3e7a62ef3ffa33eb9464d",
+      "output_sha256": "2b677738f02fe3931dff5980f5deaf83db892765c4c5801298cd0cb428b0985e"
+    },
+    "BL1": {
+      "filename": "bl1.png",
+      "brand_version": "Bundesliga current kicker mark",
+      "source_url": "https://a.espncdn.com/i/leaguelogos/soccer/500/10.png",
+      "source_sha256": "463b74682c9030631d8fc19a1535875496009a8f296775323127e2a2365094d0",
+      "output_sha256": "ad87800e30de96316b322838446cb6dba4d667a9c6b6423db3876c4df4579294"
+    },
+    "SA": {
+      "filename": "sa.png",
+      "brand_version": "Serie A Enilive current A mark",
+      "source_url": "https://images.legaseriea.it/image/private/t_q_good/v1766422496/prd/assets/icons/nav-serieaeni-v2_qoj76t.png",
+      "source_sha256": "4d32132805970749ffdd390a0cff6706ca43a418e11d0c8b8946cd26617866da",
+      "output_sha256": "a0fd2456f15338f6d827aedd031b6a92e38548df345d11982840dc8365a95ade"
+    },
+    "FL1": {
+      "filename": "fl1.png",
+      "brand_version": "Ligue 1 McDonald's 2024+ monogram",
+      "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Logo_Ligue_1_McDonald%27s_2024.svg/330px-Logo_Ligue_1_McDonald%27s_2024.svg.png",
+      "source_sha256": "c4777c0653c5a6481127c02b782d18065e2f11da89c1a18fdc641ffdb60d85bc",
+      "output_sha256": "73fe623c17ee3f7d6e355733ffc15ba2024aa3f50e56aea91e8d5450f07f03be"
+    }
+  }
+}

@@ -31,6 +31,16 @@ DEFAULT_CLUB_FOOTBALL_API_ODDS_CACHE_HOURS = 3
 DEFAULT_CLUB_FOOTBALL_API_ODDS_DAILY_LIMIT = 40
 CLUB_FOOTBALL_API_ODDS_LOOKBACK = timedelta(days=7)
 CLUB_FOOTBALL_API_ODDS_LOOKAHEAD = timedelta(days=14)
+CLUB_FOOTBALL_PENDING_TEAM_KEYS = {
+    "",
+    "tba",
+    "tbc",
+    "tbd",
+    "tobeannounced",
+    "tobedecided",
+    "tobedetermined",
+    "unknown",
+}
 CLUB_FOOTBALL_LEAGUES = {
     "PL": {"name": "英超", "short_name": "英超", "espn_slug": "eng.1", "api_football_id": 39},
     "PD": {"name": "西甲", "short_name": "西甲", "espn_slug": "esp.1", "api_football_id": 140},
@@ -154,7 +164,9 @@ class ClubFootballMixin:
         for _entry_id, english_name, chinese_name in entries:
             if SportsDashboard._club_team_match_key(english_name) == requested_key:
                 return chinese_name
-        return "待定球队"
+        if requested_key in CLUB_FOOTBALL_PENDING_TEAM_KEYS:
+            return "待定球队"
+        return display_name
 
     @staticmethod
     def _club_event_key(league_code, start_utc, home_name, away_name):

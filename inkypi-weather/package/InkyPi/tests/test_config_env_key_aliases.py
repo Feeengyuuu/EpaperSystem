@@ -779,3 +779,72 @@ def test_completed_sports_live_repair_never_reapplies(
         "SportsDashboard",
     ).settings
     assert all(saved_settings[key] == "false" for key in _SPORTS_LIVE_REFRESH_KEYS)
+
+
+def _newspaper_config(*, refresh, migrations=None, mode="rotate"):
+    payload = {
+        "resolution": [800, 480],
+        "playlist_config": {
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": [
+                        {
+                            "plugin_id": "newspaper",
+                            "name": "ChinaDaily",
+                            "plugin_settings": {
+                                "mediaRotationMode": mode,
+                                "mediaSources": "A|newspaper|A\nB|newspaper|B",
+                            },
+                            "refresh": dict(refresh),
+                        }
+                    ],
+                }
+            ],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+    if migrations is not None:
+        payload["runtime_migrations"] = dict(migrations)
+    return payload
+
+
+def test_startup_migrates_rotating_newspaper_to_hourly_background_refill(
+    monkeypatch,
+    tmp_path,
+):
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _newspaper_config(refresh={"scheduled": "15:00"}),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["refresh"] == {"interval": 3600}
+    assert saved["runtime_migrations"]["newspaper_hourly_refill_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "newspaper",
+        "ChinaDaily",
+    ).refresh == {"interval": 3600}
+
+
+def test_completed_newspaper_refill_migration_preserves_later_user_schedule(
+    monkeypatch,
+    tmp_path,
+):
+    config, _ = _device_config(
+        monkeypatch,
+        tmp_path,
+        _newspaper_config(
+            refresh={"scheduled": "15:00"},
+            migrations={"newspaper_hourly_refill_v1": True},
+        ),
+    )
+
+    assert config.get_playlist_manager().find_plugin(
+        "newspaper",
+        "ChinaDaily",
+    ).refresh == {"scheduled": "15:00"}

@@ -86,6 +86,7 @@ EWC_LIVE_STATE_VERSION = "sports-dashboard-ewc-live-v1"
 EWC_CLUB_LOGO_FALLBACKS = {
     "2068035472055078912": "https://prosettings.net/wp-content/uploads/full-sense.png",
     "2068035483304202240": "https://nigmagalaxy.com/wp-content/uploads/2025/03/Logo_mark.png",
+    "2068035497854242816": "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497854242816/LOGO_LIGHT.thumb.webp",
     "2069127996567982080": "https://teamapexgaming.com/assets/tag-logo.webp",
 }
 NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
@@ -287,6 +288,14 @@ LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_tit
 LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
 LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
 LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
+LOCAL_CLUB_LEAGUE_ICON_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_leagues")
+LOCAL_CLUB_LEAGUE_ICON_PATHS = {
+    "PL": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pl.png"),
+    "PD": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pd.png"),
+    "BL1": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "bl1.png"),
+    "SA": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "sa.png"),
+    "FL1": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "fl1.png"),
+}
 LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
     "PL": os.path.join(LOCAL_DECOR_DIR, "club_pl_title_wordmark.png"),
     "PD": os.path.join(LOCAL_DECOR_DIR, "club_pd_title_wordmark.png"),

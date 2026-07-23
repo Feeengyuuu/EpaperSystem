@@ -123,6 +123,39 @@ def _payload_team_name_coverage(payload, league_code):
     }
 
 
+def _football_data_team_name_coverage(matches, league_code):
+    checked = set()
+    missing = set()
+    for match in matches or []:
+        for side in ("homeTeam", "awayTeam"):
+            team = (match or {}).get(side) or {}
+            english_name = str(
+                team.get("name") or team.get("shortName") or ""
+            ).strip()
+            if not english_name:
+                continue
+            checked.add(english_name)
+            localized = SportsDashboard._club_team_zh_name(
+                league_code, english_name
+            )
+            if localized == "待定球队" or not any(
+                "\u3400" <= character <= "\u9fff" for character in localized
+            ):
+                missing.add(english_name)
+
+    if missing:
+        return {
+            "name": f"football-data.org {league_code} Chinese team names",
+            "status": "FAIL",
+            "detail": "unmapped: " + ", ".join(sorted(missing)),
+        }
+    return {
+        "name": f"football-data.org {league_code} Chinese team names",
+        "status": "PASS",
+        "detail": f"{len(checked)} unique teams localized",
+    }
+
+
 def _payload_league_logo(payload, expected_slug):
     leagues = payload.get("leagues") or []
     league = next(
@@ -234,6 +267,9 @@ def run_football_data_checks(now=None):
                     "status": "PASS",
                     "detail": f"{len(matches)} matches",
                 }
+            )
+            results.append(
+                _football_data_team_name_coverage(matches, league_code)
             )
         except Exception as exc:
             results.append(

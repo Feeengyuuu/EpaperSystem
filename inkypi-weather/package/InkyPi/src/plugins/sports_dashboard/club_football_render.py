@@ -3,7 +3,11 @@ from datetime import datetime, timezone
 
 from PIL import Image, ImageDraw, ImageOps
 
-from .common import COLORS, LOCAL_CLUB_LEAGUE_WORDMARK_PATHS
+from .common import (
+    COLORS,
+    LOCAL_CLUB_LEAGUE_ICON_PATHS,
+    LOCAL_CLUB_LEAGUE_WORDMARK_PATHS,
+)
 
 
 SportsDashboard = None
@@ -20,6 +24,7 @@ CLUB_LEAGUE_ACCENT_KEYS = {
     "SA": "blue",
     "FL1": "cyan",
 }
+CLUB_LEAGUE_MONOCHROME_ICON_CODES = {"PL", "FL1"}
 
 
 class ClubFootballRenderMixin:
@@ -183,6 +188,96 @@ class ClubFootballRenderMixin:
         )
         return (0, 0)
 
+    def _draw_club_league_icon_contained(
+        self,
+        image,
+        league_code,
+        logo_url,
+        box,
+        cache_dir,
+    ):
+        left, top, right, bottom = [int(value) for value in box]
+        box_width = max(1, right - left)
+        box_height = max(1, bottom - top)
+        normalized_league_code = str(league_code or "").upper()
+        local_path = LOCAL_CLUB_LEAGUE_ICON_PATHS.get(normalized_league_code)
+        local_icon = None
+        if local_path:
+            try:
+                local_icon = self._load_local_logo(
+                    local_path,
+                    (box_width, box_height),
+                    alpha_threshold=8,
+                )
+            except Exception:
+                local_icon = None
+        if local_icon is not None:
+            if (
+                normalized_league_code in CLUB_LEAGUE_MONOCHROME_ICON_CODES
+                and self._club_icon_contrast_ratio(
+                    local_icon,
+                    COLORS["panel"],
+                )
+                < 3.0
+            ):
+                alpha = local_icon.getchannel("A")
+                local_icon = Image.new(
+                    "RGBA",
+                    local_icon.size,
+                    (*COLORS["text"], 255),
+                )
+                local_icon.putalpha(alpha)
+            paste_x = left + (box_width - local_icon.width) // 2
+            paste_y = top + (box_height - local_icon.height) // 2
+            image.paste(local_icon, (paste_x, paste_y), local_icon)
+            return local_icon.size
+        return self._draw_club_logo_contained(
+            image,
+            logo_url,
+            box,
+            league_code,
+            cache_dir,
+        )
+
+    @staticmethod
+    def _club_icon_contrast_ratio(icon, background):
+        pixels = icon.load()
+        opaque = [
+            pixels[x, y][:3]
+            for y in range(icon.height)
+            for x in range(icon.width)
+            if pixels[x, y][3] >= 240
+        ]
+        if not opaque:
+            return 1.0
+        foreground = tuple(
+            sum(pixel[channel] for pixel in opaque) / len(opaque)
+            for channel in range(3)
+        )
+
+        def relative_luminance(rgb):
+            normalized = []
+            for channel in rgb:
+                value = channel / 255
+                normalized.append(
+                    value / 12.92
+                    if value <= 0.04045
+                    else ((value + 0.055) / 1.055) ** 2.4
+                )
+            return (
+                0.2126 * normalized[0]
+                + 0.7152 * normalized[1]
+                + 0.0722 * normalized[2]
+            )
+
+        foreground_luminance = relative_luminance(foreground)
+        background_luminance = relative_luminance(background)
+        return (
+            max(foreground_luminance, background_luminance) + 0.05
+        ) / (
+            min(foreground_luminance, background_luminance) + 0.05
+        )
+
     def _draw_club_league_wordmark(self, image, league_code, box):
         path = LOCAL_CLUB_LEAGUE_WORDMARK_PATHS.get(
             str(league_code or "").upper()
@@ -316,11 +411,11 @@ class ClubFootballRenderMixin:
         draw.rectangle((left + 5, y(8), left + 7, y(31)), fill=accent)
 
         league_logo_box = (left + 10, y(7), left + 36, y(33))
-        self._draw_club_logo_contained(
+        self._draw_club_league_icon_contained(
             panel,
+            league_code,
             (focus or {}).get("league_logo_url"),
             league_logo_box,
-            league_code,
             cache_dir,
         )
         title_box = (left + 42, y(7), left + 146, y(33))
@@ -588,11 +683,11 @@ class ClubFootballRenderMixin:
             }
             anchors = self._club_rail_text_anchors((left + 2, row_top + 1, right, row_bottom - 1))
             league_code = str(event.get("league_code") or "").upper()
-            self._draw_club_logo_contained(
+            self._draw_club_league_icon_contained(
                 panel,
+                league_code,
                 event.get("league_logo_url"),
                 anchors["league_logo_box"],
-                league_code,
                 cache_dir,
             )
             if event.get("no_schedule"):

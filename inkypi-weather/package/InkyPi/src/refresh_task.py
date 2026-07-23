@@ -2216,7 +2216,7 @@ class RefreshTask:
         candidates = []
         for instance in active.plugins:
             is_displayed = instance.instance_uuid == displayed_uuid
-            if self._snapshot_background_cache_disabled(instance):
+            if is_displayed and self._snapshot_background_cache_disabled(instance):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             if not plugin_supports_live_refresh(plugin_config):
@@ -2444,8 +2444,6 @@ class RefreshTask:
         if str(instance.plugin_id).strip() != "sports_dashboard":
             return False
         settings = instance.settings or {}
-        if "backgroundCacheRefreshEnabled" not in settings:
-            return False
         return not _setting_enabled(settings.get("backgroundCacheRefreshEnabled"))
 
     def _get_plugin_for_snapshot(self, instance, *, require_live_refresh=False):
@@ -2688,15 +2686,30 @@ class RefreshTask:
                         error=abort_message,
                     )
                 else:
-                    finished = self.refresh_queue.finish(entry.job.id, JobStatus.SUCCEEDED)
+                    degraded_data_result = bool(
+                        getattr(
+                            self._execution_local,
+                            "degraded_data_result",
+                            False,
+                        )
+                    )
+                    if degraded_data_result:
+                        finished = self.refresh_queue.finish(
+                            entry.job.id,
+                            JobStatus.FAILED,
+                            error_code="degraded_result",
+                            error=(
+                                "Refresh produced a display-safe result that was "
+                                "not promoted."
+                            ),
+                        )
+                    else:
+                        finished = self.refresh_queue.finish(
+                            entry.job.id,
+                            JobStatus.SUCCEEDED,
+                        )
                     try:
-                        if not bool(
-                            getattr(
-                                self._execution_local,
-                                "degraded_data_result",
-                                False,
-                            )
-                        ):
+                        if not degraded_data_result:
                             lane = self._lane_for_intent(command.intent)
                             retry_key = (
                                 self._lane_retry_key(command.instance_uuid, lane)

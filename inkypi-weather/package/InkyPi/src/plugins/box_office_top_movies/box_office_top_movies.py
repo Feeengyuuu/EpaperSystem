@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHART_URL = "https://www.the-numbers.com/weekend-box-office-chart"
 MAOYAN_DASHBOARD_URL = "https://piaofang.maoyan.com/dashboard-ajax"
+MAOYAN_MOVIE_DETAIL_URL = "https://m.maoyan.com/ajax/detailmovie"
 MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
 CHINA_SOURCE_MODES = {"maoyan", "maoyan_china", "china", "china_mainland", "mainland_china"}
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
@@ -56,7 +57,12 @@ MAOYAN_HEADERS = {
     "Accept": "application/json,text/plain,*/*",
     "Referer": "https://piaofang.maoyan.com/dashboard",
 }
-STATE_VERSION = "box-office-top-movies-v5"
+MAOYAN_MOVIE_HEADERS = {
+    "User-Agent": MAOYAN_HEADERS["User-Agent"],
+    "Accept": "application/json,text/plain,*/*",
+    "Referer": "https://m.maoyan.com/",
+}
+STATE_VERSION = "box-office-top-movies-v7"
 MAX_ITEMS = 5
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_FONT_DIR = PLUGIN_DIR / "fonts"
@@ -187,7 +193,9 @@ class BoxOfficeTopMovies(BasePlugin):
         theme_render_only = bool(settings.get("_theme_render_only"))
         force_refresh = self._force_refresh_requested(settings)
         source_cache_ready = (
-            cache.get("cache_key") == cache_key and bool(cache.get("movies"))
+            cache.get("version") == self._cache_state_version()
+            and cache.get("cache_key") == cache_key
+            and bool(cache.get("movies"))
         )
         cache_is_fresh = self._cache_is_fresh(cache, cache_key, cache_hours)
         provenance = SourceProvenance.LOCAL_FALLBACK
@@ -228,15 +236,16 @@ class BoxOfficeTopMovies(BasePlugin):
                     })
             except Exception as exc:
                 logger.warning("Box office refresh failed: %s", exc)
-                movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
-                source_label = cache.get("source_label") or source_label
-                generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
-                stale = True
-                provenance = (
-                    SourceProvenance.LOCAL_FALLBACK
-                    if source_label == "Demo Fallback"
-                    else SourceProvenance.STALE_CACHE
-                )
+                if source_cache_ready:
+                    movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
+                    source_label = cache.get("source_label") or source_label
+                    generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
+                    stale = True
+                    provenance = (
+                        SourceProvenance.LOCAL_FALLBACK
+                        if source_label == "Demo Fallback"
+                        else SourceProvenance.STALE_CACHE
+                    )
 
         if not movies:
             image = self._fallback_image(dimensions, "Box Office", "No chart data")
@@ -337,6 +346,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 localized_language="zh-CN",
                 extra={
                     "source": "maoyan",
+                    "maoyan_movie_id": str(info.get("movieId") or "").strip(),
                     "official_chinese_title": title,
                     "release_info": release_info,
                     "box_rate": box_rate,
@@ -452,9 +462,18 @@ class BoxOfficeTopMovies(BasePlugin):
         return last
 
     def _enrich_with_tmdb(self, movies, settings, device_config=None):
+        session = get_http_session()
+        for movie in movies:
+            if not self._is_maoyan_movie(movie):
+                continue
+            try:
+                self._enrich_with_maoyan_detail(movie, session)
+            except Exception as exc:
+                logger.warning("Maoyan detail lookup failed for %s: %s", movie.title, exc)
+
         auth = self._tmdb_auth(settings, device_config)
         if not auth:
-            logger.info("TMDb credentials not configured; rendering poster placeholders.")
+            logger.info("TMDb credentials not configured; using Maoyan posters or placeholders.")
             return
 
         has_china_movies = any(self._is_maoyan_movie(movie) for movie in movies)
@@ -464,8 +483,14 @@ class BoxOfficeTopMovies(BasePlugin):
         localized_language = (settings.get("localizedLanguage") or "zh-CN").strip() or "zh-CN"
         show_localized = self._truthy(settings.get("showLocalizedTitles"), True)
         region = (settings.get("tmdbRegion") or default_region).strip().upper()[:2] or default_region
-        session = get_http_session()
         for movie in movies:
+            if (
+                self._is_maoyan_movie(movie)
+                and movie.poster_url
+                and movie.extra.get("poster_source") == "maoyan"
+                and movie.extra.get("english_title")
+            ):
+                continue
             try:
                 params = {
                     "query": movie.title,
@@ -474,28 +499,109 @@ class BoxOfficeTopMovies(BasePlugin):
                     "region": region,
                 }
                 results = self._tmdb_get_json(session, TMDB_SEARCH_URL, auth, params).get("results") or []
-                if not results:
+                item = self._select_tmdb_search_result(movie, results)
+                if not item:
                     continue
-                item = results[0]
                 movie.tmdb_id = item.get("id")
                 poster_path, poster_language = self._best_tmdb_poster(item, session, auth, language)
-                movie.poster_path = poster_path
-                movie.release_year = str(item.get("release_date") or "")[:4]
-                movie.overview = item.get("overview") or ""
-                if movie.poster_path:
-                    movie.poster_url = TMDB_IMAGE_BASE + movie.poster_path
+                if poster_path and not movie.poster_url:
+                    movie.poster_path = poster_path
+                    movie.poster_url = TMDB_IMAGE_BASE + poster_path
+                    movie.extra["poster_source"] = "tmdb"
                     if poster_language:
                         movie.extra["poster_language"] = poster_language
                     movie.extra["poster_market"] = region
+                if not movie.release_year:
+                    movie.release_year = str(item.get("release_date") or "")[:4]
+                if not movie.overview:
+                    movie.overview = item.get("overview") or ""
                 if self._is_maoyan_movie(movie):
-                    english_title = self._tmdb_english_title(movie, item, session, auth)
-                    if english_title:
-                        movie.extra["english_title"] = english_title
+                    if not movie.extra.get("english_title"):
+                        english_title = self._tmdb_english_title(movie, item, session, auth)
+                        if english_title:
+                            movie.extra["english_title"] = english_title
                     movie.localized_title = ""
                 elif show_localized and movie.tmdb_id:
                     self._enrich_localized_title(movie, session, auth, localized_language)
             except Exception as exc:
                 logger.warning("TMDb lookup failed for %s: %s", movie.title, exc)
+
+    def _enrich_with_maoyan_detail(self, movie, session):
+        movie_id = str((movie.extra or {}).get("maoyan_movie_id") or "").strip()
+        if not movie_id:
+            return False
+
+        response = session.get(
+            MAOYAN_MOVIE_DETAIL_URL,
+            params={"movieId": movie_id},
+            headers=MAOYAN_MOVIE_HEADERS,
+            timeout=12,
+        )
+        response.raise_for_status()
+        detail = (response.json() or {}).get("detailMovie") or {}
+        official_title = str(
+            (movie.extra or {}).get("official_chinese_title") or movie.title or ""
+        ).strip()
+        if (
+            str(detail.get("id") or "").strip() != movie_id
+            or _normalize_title(detail.get("nm")) != _normalize_title(official_title)
+        ):
+            return False
+
+        poster_url = self._maoyan_poster_url(detail.get("img"))
+        if poster_url:
+            movie.poster_url = poster_url
+            movie.poster_path = ""
+            movie.extra["poster_source"] = "maoyan"
+
+        english_title = self._usable_english_title(detail.get("enm"), movie.title)
+        if english_title:
+            movie.extra["english_title"] = english_title
+
+        release_date = _clean_text(detail.get("rt") or detail.get("pubDate"))
+        if release_date:
+            movie.release_year = release_date[:4]
+            movie.extra["release_date"] = release_date
+
+        overview = _clean_text(detail.get("dra"))
+        if overview:
+            movie.overview = overview
+        return bool(poster_url or english_title)
+
+    def _maoyan_poster_url(self, value):
+        poster_url = _clean_text(value)
+        if not poster_url or not re.match(r"^https?://[^/]*\.pipi\.cn/", poster_url):
+            return poster_url
+        base_url = poster_url.split("?", 1)[0]
+        return f"{base_url}?imageView2/2/w/684/q/80"
+
+    def _select_tmdb_search_result(self, movie, results):
+        if not results:
+            return None
+        if not self._is_maoyan_movie(movie):
+            return results[0]
+
+        official_title = str(
+            (movie.extra or {}).get("official_chinese_title") or movie.title or ""
+        ).strip()
+        normalized_official = _normalize_title(official_title)
+        expected_year = str(movie.release_year or "")[:4]
+        for item in results:
+            candidate_titles = (
+                item.get("title"),
+                item.get("original_title"),
+                item.get("name"),
+                item.get("original_name"),
+            )
+            if normalized_official not in {
+                _normalize_title(candidate) for candidate in candidate_titles if candidate
+            }:
+                continue
+            candidate_year = str(item.get("release_date") or "")[:4]
+            if expected_year and candidate_year and candidate_year != expected_year:
+                continue
+            return item
+        return None
 
     def _best_tmdb_poster(self, item, session, auth, language):
         fallback_path = item.get("poster_path") or ""
@@ -859,7 +965,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 total_w = draw.textlength(total, font=small_font)
                 draw.text((width - margin - total_w, detail_y), total, fill=colors["muted"], font=small_font)
 
-        footer = copy["footer_tmdb"] if any(movie.poster_url for movie in movies) else copy["footer_placeholder"]
+        footer = self._poster_footer(copy, movies)
         draw.text((margin, height - margin - footer_h + 8), footer, fill=colors["muted"], font=small_font)
         return image
 
@@ -1029,6 +1135,8 @@ class BoxOfficeTopMovies(BasePlugin):
                 "subtitle": f"\u5b9e\u65f6\u699c TOP {count}",
                 "primary_metric_label": "\u4eca\u65e5\u5360\u6bd4",
                 "total_prefix": "\u7d2f\u8ba1",
+                "footer_maoyan": "\u6d77\u62a5: \u732b\u773c\u7535\u5f71",
+                "footer_mixed": "\u6d77\u62a5: \u732b\u773c\u7535\u5f71 / TMDb",
                 "footer_tmdb": "\u6d77\u62a5: TMDb",
                 "footer_placeholder": "\u6d77\u62a5: \u672c\u5730\u5360\u4f4d\u56fe / TMDb \u672a\u914d\u7f6e",
             }
@@ -1040,6 +1148,24 @@ class BoxOfficeTopMovies(BasePlugin):
             "footer_tmdb": "Posters: TMDb",
             "footer_placeholder": "Posters: local placeholders until TMDb is configured",
         }
+
+    def _poster_footer(self, copy, movies):
+        sources = set()
+        for movie in movies:
+            if not movie.poster_url:
+                continue
+            source = str((movie.extra or {}).get("poster_source") or "").strip().lower()
+            if not source:
+                source = "maoyan" if "pipi.cn" in movie.poster_url else "tmdb"
+            sources.add(source)
+
+        if not sources:
+            return copy["footer_placeholder"]
+        if "maoyan" in sources and "tmdb" in sources:
+            return copy.get("footer_mixed", copy["footer_tmdb"])
+        if "maoyan" in sources:
+            return copy.get("footer_maoyan", copy["footer_tmdb"])
+        return copy["footer_tmdb"]
 
     def _is_china_chart(self, settings, source_label):
         source_mode = str((settings or {}).get("sourceMode") or "").strip().lower()
@@ -1106,6 +1232,9 @@ class BoxOfficeTopMovies(BasePlugin):
             "tmdb-configured" if self._tmdb_auth(settings, device_config) else "tmdb-missing",
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _cache_state_version(self):
+        return STATE_VERSION
 
     def _read_cache(self):
         path = self._cache_path()

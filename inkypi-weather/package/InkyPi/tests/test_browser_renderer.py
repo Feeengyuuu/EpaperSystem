@@ -217,7 +217,7 @@ def test_root_renderer_adds_required_no_sandbox_without_disabling_zygote(tmp_pat
     assert "--no-zygote" not in commands[0]
 
 
-def test_html_timeout_opens_cross_document_circuit_until_cooldown(tmp_path):
+def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(tmp_path):
     now = {"value": 0.0}
     launches = []
 
@@ -240,14 +240,25 @@ def test_html_timeout_opens_cross_document_circuit_until_cooldown(tmp_path):
         viewport=(80, 48),
         context=_context(),
         timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
     ) is None
     assert renderer.render_html(
         "<p>different timestamp</p>",
         viewport=(80, 48),
         context=_context(),
         timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
     ) is None
     assert len(launches) == 1
+
+    assert renderer.render_html(
+        "<p>first timestamp</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+        failure_domain="steam_charts:steam_charts.html",
+    ) is None
+    assert len(launches) == 2
 
     now["value"] = 61.0
     assert renderer.render_html(
@@ -255,8 +266,27 @@ def test_html_timeout_opens_cross_document_circuit_until_cooldown(tmp_path):
         viewport=(80, 48),
         context=_context(),
         timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
     ) is None
-    assert len(launches) == 2
+    assert len(launches) == 3
+
+
+def test_html_failure_domain_table_is_bounded_and_prunes_expired_entries(tmp_path):
+    now = {"value": 0.0}
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        clock=lambda: now["value"],
+        html_circuit_ttl_seconds=60,
+    )
+
+    for index in range(browser_renderer_module.MAX_HTML_CIRCUIT_DOMAINS + 10):
+        renderer._remember_html_failure(f"plugin-{index}:template.html")
+
+    assert renderer.html_circuit_size == browser_renderer_module.MAX_HTML_CIRCUIT_DOMAINS
+
+    now["value"] = 61.0
+    assert renderer.html_circuit_size == 0
 
 
 def test_two_renderer_instances_never_overlap(tmp_path):

@@ -8,7 +8,9 @@ import zipfile
 
 
 EXCLUDED_NAMES = {
+    ".env",
     ".git",
+    ".pc-packages",
     ".pytest_cache",
     ".tmp",
     ".venv",

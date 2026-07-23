@@ -6,6 +6,198 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260722-003] correction
+
+**Logged**: 2026-07-22T21:54:58-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Cross-provider club names need league-scoped exact aliases and provider-specific coverage checks at the display boundary.
+
+### Details
+ESPN events can localize through ESPN team IDs, but football-data.org uses a different ID domain and returns formal names such as `Como 1907` and `Deportivo Alavés`. Reusing IDs would map the wrong domain, while broad removal of prefixes, founding years, or club suffixes could merge unrelated teams and weaken event reconciliation. A current 96-team five-league comparison found 45 missing formal-name aliases; two additional recent-team aliases were kept for rotation compatibility.
+
+### Suggested Action
+Enumerate current provider names per league, add explicit display-only aliases, and validate every provider payload rather than only ESPN. Keep the original provider name and normalized event key for merging, preserve unknown named teams verbatim, and reserve `待定球队` for genuine placeholders.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_localization.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py, tools/check_club_football_sources.py
+- Tags: sports-dashboard, football-data, localization, aliases, provider-id, event-key
+- Pattern-Key: sports_dashboard.club_localization_requires_provider_exact_aliases
+- Recurrence-Count: 1
+- First-Seen: 2026-07-22
+- Last-Seen: 2026-07-22
+
+### Resolution
+- **Resolved**: 2026-07-22T21:54:58-07:00
+- **Commit/PR**: operational
+- **Notes**: Added 47 exact aliases, expanded football-data name coverage checks, passed 672 source-tree tests and 668 packaged tests with 4 expected repo-tool skips, deployed `deploy-20260723T043754Z-00fa7fee1086`, and verified `阿拉维斯` plus `科莫` on the exact current display image.
+
+---
+
+## [LRN-20260722-002] best_practice
+
+**Logged**: 2026-07-22T21:54:58-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: release
+
+### Summary
+Release line-ending normalization must preserve the exact raw bytes of dependency lock inputs used by the safe-clone decision.
+
+### Details
+Normalizing `install/requirements.txt` from CRLF to LF changed its raw SHA-256 even though the dependency text was logically identical. The updater therefore rejected the safe virtual-environment clone, performed a full Raspberry Pi dependency installation, and reached its timeout. Unix entrypoints still require LF, but the dependency lock must remain byte-identical to the active release.
+
+### Suggested Action
+Build from a clean known-good archive, normalize only Unix entrypoints and explicitly selected source files, preserve the requirements file raw hash, and audit the final ZIP against the deployed baseline before transfer.
+
+### Metadata
+- Source: task_observation
+- Related Files: inkypi-weather/package/InkyPi/install/requirements.txt, inkypi-weather/package/InkyPi/install/lib/update_engine.py, inkypi-weather/package/InkyPi/install/lib/release_archive.py
+- Tags: release, requirements, crlf, sha256, safe-clone, updater
+- Pattern-Key: release.preserve_dependency_lock_raw_bytes_for_safe_clone
+- Recurrence-Count: 1
+- First-Seen: 2026-07-22
+- Last-Seen: 2026-07-22
+
+### Resolution
+- **Resolved**: 2026-07-22T21:54:58-07:00
+- **Commit/PR**: operational
+- **Notes**: Preserved requirements SHA-256 `5da8fbf520d8c7c95d312c8bc8fad7dc30cae9bf916f29511a7e744670db8f00`; both the icon and localization releases used the safe-clone path and committed successfully.
+
+---
+
+## [LRN-20260722-001] best_practice
+
+**Logged**: 2026-07-22T21:54:58-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Remote league-logo availability does not guarantee current branding or legibility at e-paper rail size.
+
+### Details
+Provider events may omit league logos, cross-provider event merges may fail on team-name variants, and otherwise valid remote logo URLs can expose stale branding. At the 17x15 rail size, an asset can also decode successfully yet lose its recognizable silhouette.
+
+### Suggested Action
+Bundle audited local league assets as the primary render source, keep remote logos only as fallback, and test alpha bounds, distinct hashes, theme contrast, and tiny-size opaque-pixel coverage.
+
+### Metadata
+- Source: task_observation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_render.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/club_leagues, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py
+- Tags: sports-dashboard, league-logo, local-asset, e-paper, tiny-size, contrast
+- Pattern-Key: sports_dashboard.pin_league_icons_and_test_physical_scale
+- Recurrence-Count: 1
+- First-Seen: 2026-07-22
+- Last-Seen: 2026-07-22
+
+### Resolution
+- **Resolved**: 2026-07-22T21:54:58-07:00
+- **Commit/PR**: operational
+- **Notes**: Bundled five distinct 128x128 league icons, added local-first and physical-size regressions, deployed the assets, and reverified all five icons on the final localization display.
+
+---
+
+## [LRN-20260721-006] correction
+
+**Logged**: 2026-07-22T00:20:30-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Stable provider movie IDs must survive chart parsing and drive same-provider media enrichment; fuzzy cross-provider search must never overwrite authoritative metadata.
+
+### Details
+The Maoyan chart identified the 2026 film `八仙！` as movie `1525868`, but the parser discarded that ID and accepted TMDb `results[0]`, which was the 1993 film `笑八仙`. Preserving the ID enabled exact Maoyan detail lookup with ID and normalized-title validation. A second live-proof pass exposed that some authoritative Pipi originals exceeded the safe decoder pixel limit, so same-provider media URLs also need a bounded source-side rendition before download.
+
+### Suggested Action
+Carry stable source IDs into cached models, prefer exact same-source detail endpoints, validate returned ID and normalized title, and treat fuzzy cross-source search as a strict fallback with title/year checks. Never overwrite an existing authoritative poster. Normalize trusted image-CDN URLs to a bounded rendition, bump cache state when matching or media semantics change, and reject old-version caches even on refresh-failure fallback.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/box_office_top_movies/box_office_top_movies.py, inkypi-weather/package/InkyPi/src/plugins/china_box_office_top_movies/china_box_office_top_movies.py, inkypi-weather/package/InkyPi/tests/test_box_office_top_movies.py
+- Tags: box-office, maoyan, provider-id, tmdb, poster, cache-version, safe-image
+- Pattern-Key: provider_enrichment.authoritative_id_and_bounded_media_before_fuzzy_fallback
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-22
+
+### Resolution
+- **Resolved**: 2026-07-22T00:20:30-07:00
+- **Commit/PR**: operational
+- **Notes**: Passed 663 tests, deployed `deploy-20260722T070613-f790ce612434`, displayed the exact corrected instance on the physical panel, restored all five poster thumbnails, and observed no post-refresh poster warning or application error.
+
+---
+
+## [LRN-20260721-005] correction
+
+**Logged**: 2026-07-21T22:56:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+SportsDashboard must reserve “待定球队” for genuine provider placeholders, not for named clubs that miss localization.
+
+### Details
+football-data.org supplied resolved club names and crests, but an incomplete Chinese alias table made `_club_team_zh_name` replace `FC Bayern München` and later `Como 1907` with “待定球队”. That label falsely implied the matchup itself was undecided even though the provider had already identified the teams.
+
+### Suggested Action
+Translate known aliases when available. For an unmapped but non-placeholder provider name, preserve the provider name; only empty names and explicit TBD/TBA/TBC/unknown values should render as “待定球队”. Keep regression coverage for a known alias, an unmapped named team, and real placeholder values.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_localization.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py
+- Tags: sports-dashboard, club-football, localization, placeholder, provider-name
+- Pattern-Key: sports_dashboard.pending_team_requires_provider_placeholder
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T22:56:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Added the Bayern provider alias plus safe named-team fallback, passed all 610 SportsDashboard tests, deployed `deploy-20260722T053851-54901f8b994d`, and verified the refreshed instance exactly matched the physical display image.
+
+---
+
+## [LRN-20260721-004] correction
+
+**Logged**: 2026-07-21T22:08:01-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Steam Charts should center only English-only title blocks on the cover's horizontal midline.
+
+### Details
+The requested alignment is vertical placement relative to the screenshot, not centered text. In combined Steam Charts rows, an English-only title stays left-aligned to the right of the cover while its one-line or wrapped two-line block is vertically centered against the cover. Chinese-only and Chinese-plus-English bilingual titles remain top-aligned so their hierarchy and readability do not regress. The rule applies only when a real cover image is present and must match in both HTML and PIL fallback rendering.
+
+### Suggested Action
+Keep the English-only classification explicit in prepared game data, gate the HTML modifier by that flag and `.has-image`, and reuse the same flag in PIL title geometry. Preserve tests for English one-line/two-line centering plus Chinese and bilingual top alignment.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/steam_charts/steam_charts.py, inkypi-weather/package/InkyPi/src/plugins/steam_charts/render/steam_charts.html, inkypi-weather/package/InkyPi/src/plugins/steam_charts/render/steam_charts.css, inkypi-weather/package/InkyPi/tests/test_steam_charts.py
+- Tags: steam-charts, title, cover, alignment, bilingual
+- Pattern-Key: steam_charts.english_only_title_cover_midline
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T22:08:01-07:00
+- **Commit/PR**: operational
+- **Notes**: Implemented matching HTML and PIL behavior, passed all 47 Steam Charts tests, deployed `deploy-20260722T044653-c1ed6359ac7c`, and verified the refreshed instance image exactly matched the physical display image.
+
+---
+
 ## [LRN-20260719-007] correction
 
 **Logged**: 2026-07-19T22:20:00-07:00
@@ -1638,5 +1830,103 @@ Use the repository release builder on a clean staging tree, normalize only line 
 - **Resolved**: 2026-07-20T21:55:53-07:00
 - **Commit/PR**: operational
 - **Notes**: Deployed the verified LF-only archive with SHA-256 `3f98caa77a38393fca5faac7f0176ebb6084249365bb76221bf6ea9a90daace8`; service remained active with zero restarts.
+
+---
+
+## [LRN-20260721-001] best_practice
+
+**Logged**: 2026-07-21T17:21:28-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+HTML renderer circuit breakers must be scoped to a stable failure domain instead of one process-wide switch.
+
+### Details
+A Weather Chromium timeout opened a single global HTML circuit for five minutes, so unrelated plugins such as Steam Charts immediately received a render failure without getting their own Chromium attempt. This made one expensive or malformed document look like a system-wide renderer outage and caused several plugins to fall back together.
+
+### Suggested Action
+Pass a stable `plugin_id:template` failure domain through the shared renderer. Cool down repeated failures for the same domain, but allow unrelated templates to attempt rendering. Keep a regression test proving same-domain suppression and cross-domain isolation.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/utils/browser_renderer.py, inkypi-weather/package/InkyPi/src/plugins/base_plugin/base_plugin.py, inkypi-weather/package/InkyPi/tests/test_browser_renderer.py
+- Tags: chromium, circuit-breaker, failure-domain, plugin-isolation
+- Pattern-Key: plugin_renderer.circuit_breakers_are_failure_domain_scoped
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T17:54:24-07:00
+- **Commit/PR**: operational
+- **Notes**: Scoped circuits and negative-cache keys by stable renderer domain, bounded the domain table, passed all 4203 tests in four isolated shards, deployed `deploy-20260722T003652-45cf72e5ce7c`, and observed no post-deploy Steam/Weather timeout or fallback; one unrelated Tech Pulse URL screenshot timeout remained isolated.
+
+---
+
+## [LRN-20260721-002] best_practice
+
+**Logged**: 2026-07-21T17:21:28-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Retry fairness must compare service age across due generations; current-generation precedence can starve a failed plugin indefinitely.
+
+### Details
+Weather's backoff had expired after five minutes, but its due generation was marked already attempted. Continuously arriving fresh-due candidates therefore always sorted ahead of it, leaving Weather without another data attempt for roughly seventeen hours. Backoff correctness alone did not guarantee eventual service.
+
+### Suggested Action
+Keep true bootstrap first attempts at highest priority, then sort ordinary due candidates by the older of their current due time or last attempt as appropriate. Test an old failed retry against a newer first attempt from another plugin and prove that a successful choice updates fairness for the next pass.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/refresh_policy.py, inkypi-weather/package/InkyPi/tests/test_refresh_policy.py
+- Tags: scheduler, fairness, starvation, retry, backoff
+- See Also: LRN-20260629-005, LRN-20260629-006
+- Pattern-Key: refresh_scheduler.retry_fairness_across_due_generations
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T17:54:24-07:00
+- **Commit/PR**: operational
+- **Notes**: Removed current-generation precedence from ordinary due ordering while preserving bootstrap priority; the regression suite passed and the deployed scheduler automatically selected the previously starved Weather instance for a background data refresh at 17:48.
+
+---
+
+## [LRN-20260721-003] correction
+
+**Logged**: 2026-07-21T17:21:28-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+An unversioned plugin-internal screenshot cache must not masquerade as a successful current render.
+
+### Details
+Weather reused `original-html-{size}-{theme}.png` after a fresh data fetch and HTML failure. The filename did not encode instance, location, settings, data, template version, or age, so an old safe-mode image could be returned indefinitely with a fresh visible refresh time. The worker then exposed a completed job even when the generated result was deliberately not promoted.
+
+### Suggested Action
+Keep last-good screenshots only in the outer instance/version/theme-scoped cache. If the product renderer fails, raise or mark the result non-cacheable, preserve the previous approved image, record failure/backoff, and finish the job as failed rather than completed. Test both cache preservation and the externally visible job status.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/weather/weather.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_weather_theme_context.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: weather, screenshot-cache, stale-image, provenance, job-status
+- See Also: LRN-20260720-002, LRN-20260630-003
+- Pattern-Key: plugin_cache.last_good_must_be_outer_scoped_and_fail_honestly
+- Recurrence-Count: 1
+- First-Seen: 2026-07-21
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T17:54:24-07:00
+- **Commit/PR**: operational
+- **Notes**: Removed Weather's internal screenshot cache, made degraded DATA jobs fail honestly, protected Steam HTML caches from emergency fallback replacement, and proved current 17:49 Steam and 17:51 Weather HTML images on the physical display with matching instance/current hashes.
 
 ---

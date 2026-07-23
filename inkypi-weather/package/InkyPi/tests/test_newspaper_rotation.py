@@ -29,12 +29,17 @@ TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "newspaper_rota
 
 
 class DeviceConfig:
+    def __init__(self, timezone_name="UTC"):
+        self.timezone_name = timezone_name
+
     def get_resolution(self):
         return (800, 480)
 
     def get_config(self, key, default=None):
         if key == "orientation":
             return "horizontal"
+        if key == "timezone":
+            return self.timezone_name
         return default
 
 
@@ -150,6 +155,99 @@ def test_parse_media_sources_accepts_urls_and_newspaper_slugs():
             "value": "NY_NYT",
         },
     ]
+
+
+def test_parse_media_sources_caps_the_daily_pool_at_bank_capacity(caplog):
+    plugin = make_plugin("parse-capacity")
+    configured = "\n".join(
+        f"Paper {index}|newspaper|paper_{index}" for index in range(33)
+    )
+
+    sources = plugin._parse_media_sources(configured)
+
+    assert len(sources) == newspaper_module.MAX_ROTATING_SOURCES
+    assert sources[-1]["value"] == (
+        f"PAPER_{newspaper_module.MAX_ROTATING_SOURCES - 1}"
+    )
+    assert (
+        f"supports at most {newspaper_module.MAX_ROTATING_SOURCES} sources"
+        in caplog.text
+    )
+
+
+def test_newspaper_full_daily_pool_can_refresh_every_source_across_days(monkeypatch):
+    plugin = make_plugin("full-daily-pool-cross-day")
+    day_one = datetime(2026, 7, 22, 19, tzinfo=timezone.utc)
+    current_now = {"value": day_one}
+    monkeypatch.setattr(plugin, "_now_utc", lambda: current_now["value"])
+    source_count = newspaper_module.MAX_ROTATING_SOURCES
+    settings = bound_settings(
+        mediaSources="\n".join(
+            f"Paper {index}|newspaper|paper_{index}"
+            for index in range(source_count)
+        )
+    )
+
+    def fetched(source, *_args, **_kwargs):
+        index = int(source["value"].rsplit("_", 1)[1])
+        day_marker = current_now["value"].day
+        image = Image.new(
+            "RGB",
+            (800, 480),
+            (day_marker, index, (day_marker + index) % 256),
+        )
+        image.info["inkypi_newspaper_edition_date"] = (
+            current_now["value"].date().isoformat()
+        )
+        return image
+
+    monkeypatch.setattr(plugin, "_fetch_source_image", fetched)
+    passes = (source_count + newspaper_module.MAX_HTTP_SOURCES - 1) // newspaper_module.MAX_HTTP_SOURCES
+    for _ in range(passes):
+        plugin.generate_image(settings, DeviceConfig())
+
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = state["instance_profiles"]["newspaper-instance"]
+    profile = state["profiles"][fingerprint]
+    current_key = profile["current_selection"]["record_key"]
+    pending_record = next(
+        record for record in profile["records"] if record["record_key"] != current_key
+    )
+    profile["pending_selection"] = {
+        "request_id": "5" * 32,
+        "origin_display_commit_id": "old-display",
+        "requested_at": day_one.isoformat(),
+        "record_key": pending_record["record_key"],
+        "reset_seen": False,
+        "profile_fingerprint": fingerprint,
+        "instance_uuid": "newspaper-instance",
+    }
+    newspaper_bank.write_state(plugin._presentation_state_path(), state)
+
+    current_now["value"] = day_one + timedelta(days=1)
+    for _ in range(passes + 1):
+        plugin.generate_image(settings, DeviceConfig())
+
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    profile = state["profiles"][fingerprint]
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(
+        settings,
+        sources,
+        (800, 480),
+        device_config=DeviceConfig(),
+    )
+    _document, loaded_profile = bank.load_warm()
+    fresh_source_ids = {
+        record["source"]["id"]
+        for record in bank.ready_records(loaded_profile, prune=False)
+        if record["provenance"] == "fresh_cache"
+    }
+
+    assert len(fresh_source_ids) == source_count
+    assert profile["refill_in_progress"] is False
+    assert len(profile["records"]) <= newspaper_bank.MAX_RECORDS_PER_PROFILE
+    assert len(list(plugin._presentation_media_dir().iterdir())) <= newspaper_bank.MEDIA_MAX_FILES
 
 
 def test_parse_media_sources_accepts_luoyang_evening_news_source():
@@ -670,6 +768,272 @@ def test_newspaper_refill_in_progress_reaches_six_ready_records(monkeypatch):
     profile = state["profiles"][fingerprint]
     assert len(profile["records"]) == newspaper_bank.READY_TARGET == 6
     assert profile["refill_in_progress"] is False
+
+
+def test_newspaper_refill_targets_every_configured_source(monkeypatch):
+    plugin = make_plugin("ready-target-all-sources")
+    settings = bound_settings(
+        mediaSources="\n".join(
+            f"Paper {index}|newspaper|paper_{index}" for index in range(7)
+        )
+    )
+    calls = []
+
+    def fetch(source, *_args, **_kwargs):
+        calls.append(source["id"])
+        return Image.new("RGB", (800, 480), (len(calls) * 20, 30, 70))
+
+    monkeypatch.setattr(plugin, "_fetch_source_image", fetch)
+
+    for _ in range(3):
+        plugin.generate_image(settings, DeviceConfig())
+
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = state["instance_profiles"]["newspaper-instance"]
+    profile = state["profiles"][fingerprint]
+    ready_source_ids = {record["source"]["id"] for record in profile["records"]}
+
+    assert ready_source_ids == {
+        f"newspaper:PAPER_{index}" for index in range(7)
+    }
+    assert profile["refill_in_progress"] is False
+
+
+def test_newspaper_bank_rejects_old_edition_downloaded_today(monkeypatch):
+    plugin = make_plugin("edition-date-freshness")
+    now = datetime(2026, 7, 22, 19, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(settings, sources, (800, 480))
+    document, profile = bank.load_for_data()
+    transaction = bank.transaction()
+    image = Image.new("RGB", (800, 480), "white")
+    image.info["inkypi_newspaper_edition_date"] = "2026-07-20"
+
+    record = bank.ingest(
+        profile,
+        sources[0],
+        image,
+        transaction=transaction,
+        downloaded_at=now.isoformat(),
+    )
+    bank.save(document, transaction=transaction)
+    ready = bank.ready_records(profile, prune=False)
+
+    assert record["edition_date"] == "2026-07-20"
+    assert ready[0]["provenance"] == "stale_cache"
+
+
+def test_newspaper_daily_pool_requires_a_download_from_the_same_day(monkeypatch):
+    plugin = make_plugin("daily-pool-download-day")
+    now = datetime(2026, 7, 23, 19, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(settings, sources, (800, 480))
+    document, profile = bank.load_for_data()
+    transaction = bank.transaction()
+    image = Image.new("RGB", (800, 480), "white")
+    image.info["inkypi_newspaper_edition_date"] = "2026-07-23"
+
+    bank.ingest(
+        profile,
+        sources[0],
+        image,
+        transaction=transaction,
+        downloaded_at=(now - timedelta(days=1)).isoformat(),
+    )
+    bank.save(document, transaction=transaction)
+
+    assert bank.ready_records(profile, prune=False)[0]["provenance"] == "stale_cache"
+
+
+def test_newspaper_daily_pool_uses_the_configured_device_timezone(monkeypatch):
+    plugin = make_plugin("daily-pool-device-timezone")
+    now = datetime(2026, 7, 23, 0, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(
+        settings,
+        sources,
+        (800, 480),
+        device_config=DeviceConfig("America/Los_Angeles"),
+    )
+    document, profile = bank.load_for_data()
+    transaction = bank.transaction()
+    image = Image.new("RGB", (800, 480), "white")
+    image.info["inkypi_newspaper_edition_date"] = "2026-07-22"
+    bank.ingest(
+        profile,
+        sources[0],
+        image,
+        transaction=transaction,
+        downloaded_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    bank.save(document, transaction=transaction)
+
+    assert bank.ready_records(profile, prune=False)[0]["provenance"] == "fresh_cache"
+
+
+def test_newspaper_cross_day_refill_returns_new_daily_media_not_protected_stale_current(
+    monkeypatch,
+):
+    plugin = make_plugin("cross-day-current")
+    day_one = datetime(2026, 7, 22, 19, tzinfo=timezone.utc)
+    current_now = {"value": day_one}
+    current_color = {"value": "red"}
+    monkeypatch.setattr(plugin, "_now_utc", lambda: current_now["value"])
+
+    def fetched(*_args, **_kwargs):
+        image = Image.new("RGB", (800, 480), current_color["value"])
+        image.info["inkypi_newspaper_edition_date"] = current_now["value"].date().isoformat()
+        return image
+
+    monkeypatch.setattr(plugin, "_fetch_source_image", fetched)
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    plugin.generate_image(settings, DeviceConfig())
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = state["instance_profiles"]["newspaper-instance"]
+    old_current_key = state["profiles"][fingerprint]["current_selection"]["record_key"]
+
+    current_now["value"] = day_one + timedelta(days=1)
+    current_color["value"] = "blue"
+    image = plugin.generate_image(settings, DeviceConfig())
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    profile = state["profiles"][fingerprint]
+
+    assert image.getpixel((0, 0)) == (0, 0, 255)
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert profile["current_selection"]["record_key"] == old_current_key
+
+
+def test_newspaper_cross_day_pending_request_is_replaced_from_the_new_daily_pool(
+    monkeypatch,
+):
+    plugin = make_plugin("cross-day-pending")
+    day_one = datetime(2026, 7, 22, 19, tzinfo=timezone.utc)
+    current_now = {"value": day_one}
+    current_color = {"value": "red"}
+    monkeypatch.setattr(plugin, "_now_utc", lambda: current_now["value"])
+
+    def fetched(*_args, **_kwargs):
+        image = Image.new("RGB", (800, 480), current_color["value"])
+        image.info["inkypi_newspaper_edition_date"] = current_now["value"].date().isoformat()
+        return image
+
+    monkeypatch.setattr(plugin, "_fetch_source_image", fetched)
+    settings = bound_settings(mediaSources="Paper A|newspaper|paper_a")
+    plugin.generate_image(settings, DeviceConfig())
+    presentation_request = request("4" * 32)
+    first = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=presentation_request,
+        resolved_theme_context=None,
+    )
+    assert first.changed is True
+
+    current_now["value"] = day_one + timedelta(days=1)
+    current_color["value"] = "blue"
+    plugin.generate_image(settings, DeviceConfig())
+    second = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=presentation_request,
+        resolved_theme_context=None,
+    )
+
+    assert second.changed is True
+    assert second.image.getpixel((0, 0)) == (0, 0, 255)
+
+
+def test_newspaper_cover_never_falls_back_to_an_older_edition(monkeypatch):
+    plugin = make_plugin("frontpage-current-day-only")
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 22, 19, tzinfo=timezone.utc),
+    )
+
+    payload_buffer = BytesIO()
+    Image.new("RGB", (100, 160), "white").save(payload_buffer, format="JPEG")
+    payload = payload_buffer.getvalue()
+    attempted = []
+
+    def download(url, **_kwargs):
+        attempted.append(url)
+        if "/jpg20/" in url:
+            return payload, url, {"content-type": "image/jpeg"}
+        raise RuntimeError("edition unavailable")
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    image = plugin._fetch_newspaper_cover("ny_nyt", DeviceConfig())
+
+    assert image is None
+    assert all("/jpg20/" not in url and "/jpg21/" not in url for url in attempted)
+
+
+def test_newspaper_cover_records_the_provider_edition_date(monkeypatch):
+    plugin = make_plugin("frontpage-edition-date")
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 22, 19, tzinfo=timezone.utc),
+    )
+
+    payload_buffer = BytesIO()
+    Image.new("RGB", (100, 160), "white").save(payload_buffer, format="JPEG")
+    payload = payload_buffer.getvalue()
+
+    def download(url, **_kwargs):
+        if "/jpg22/" in url:
+            return payload, url, {"content-type": "image/jpeg"}
+        raise RuntimeError("edition unavailable")
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    image = plugin._fetch_newspaper_cover("ny_nyt", DeviceConfig())
+
+    assert image.info["inkypi_newspaper_edition_date"] == "2026-07-22"
+
+
+def test_newspaper_cover_candidates_follow_device_timezone_not_host_day(monkeypatch):
+    plugin = make_plugin("frontpage-device-day")
+    now = datetime(2026, 7, 23, 0, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+
+    class HostUtcDatetime(datetime):
+        @classmethod
+        def today(cls):
+            return cls(2026, 7, 23, 0, 30, 0)
+
+    payload_buffer = BytesIO()
+    Image.new("RGB", (100, 160), "white").save(payload_buffer, format="JPEG")
+    payload = payload_buffer.getvalue()
+    attempted = []
+
+    def download(url, **_kwargs):
+        attempted.append(url)
+        if "/jpg22/" in url:
+            return payload, url, {"content-type": "image/jpeg"}
+        raise RuntimeError("edition unavailable")
+
+    monkeypatch.setattr(newspaper_module, "datetime", HostUtcDatetime)
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    image = plugin._fetch_newspaper_cover(
+        "ny_nyt",
+        DeviceConfig("America/Los_Angeles"),
+    )
+
+    assert image.info["inkypi_newspaper_edition_date"] == "2026-07-22"
+    assert [url.split("/lg/")[0].rsplit("/", 1)[-1] for url in attempted] == [
+        "jpg23",
+        "jpg22",
+    ]
 
 
 @pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
@@ -1832,6 +2196,45 @@ def test_newspaper_dom_sanitizer_removes_all_active_navigation_vectors():
     ):
         assert forbidden not in sanitized
     assert "front page" in sanitized
+
+
+def test_newspaper_browser_render_uses_plugin_failure_domain(monkeypatch):
+    plugin = make_plugin("browser-failure-domain")
+    url = "https://www.bbc.com/news"
+    captured = {}
+
+    monkeypatch.setattr(plugin, "_allowed_hosts_for_url", lambda _url: ("www.bbc.com",))
+    monkeypatch.setattr(
+        plugin,
+        "_download_provider_bytes",
+        lambda *_args, **_kwargs: (
+            b"<html><h1>Front page</h1></html>",
+            url,
+            {"content-type": "text/html; charset=utf-8"},
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_sanitize_browser_html",
+        lambda html_text, _url: html_text,
+    )
+    monkeypatch.setattr(plugin, "_assert_browser_html_network_closed", lambda _html: None)
+
+    class Renderer:
+        def render_html(self, _html, **kwargs):
+            captured.update(kwargs)
+            return Image.new("RGB", (800, 480), "white")
+
+    monkeypatch.setattr(newspaper_module, "get_browser_renderer", lambda: Renderer())
+
+    image = plugin._fetch_url_screenshot(
+        url,
+        DeviceConfig(),
+        deadline=plugin._monotonic() + 10,
+    )
+
+    assert image.size == (800, 480)
+    assert captured["failure_domain"] == "newspaper:front-page"
 
 
 def test_newspaper_browser_refuses_unsafe_html_before_chromium(monkeypatch):

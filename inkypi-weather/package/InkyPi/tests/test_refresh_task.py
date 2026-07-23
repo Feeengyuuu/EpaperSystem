@@ -5901,6 +5901,7 @@ def test_live_due_background_candidate_precedes_missing_ordinary_work(monkeypatc
             refresh_time="2026-05-26T07:19:00+00:00",
         )
     )
+    sports.settings["backgroundCacheRefreshEnabled"] = True
     monkeypatch.setattr(
         task,
         "_snapshot_live_refresh_due",
@@ -8707,6 +8708,26 @@ def test_sports_normal_interval_is_selected_when_background_flag_is_false(
     monkeypatch,
 ):
     _assert_sports_normal_selected(monkeypatch, False)
+
+
+def test_sports_live_redisplay_is_off_when_master_setting_is_missing(monkeypatch):
+    task, _device_config, _playlist, _instance, current_dt, _anchor = (
+        _sports_live_runtime("sports-live-master-missing")
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
 
 
 @pytest.mark.parametrize(
@@ -12785,7 +12806,7 @@ def test_non_data_lanes_ignore_degraded_source_provenance(intent, lane):
     assert getattr(state, lane.value).last_failure_at is None
 
 
-def test_degraded_data_worker_keeps_failure_backoff_after_promoting_safe_image(
+def test_degraded_data_worker_reports_failure_and_keeps_backoff_after_safe_image(
     monkeypatch,
 ):
     SourceProvenance, attach, _read = _task6_provenance_api()
@@ -12840,7 +12861,8 @@ def test_degraded_data_worker_keeps_failure_backoff_after_promoting_safe_image(
 
         state = task.runtime_state.snapshot().instances[instance.instance_uuid]
         retry_entries = task.retry_registry.snapshot()
-        assert result["status"] == "completed"
+        assert result["status"] == "failed"
+        assert result["error_code"] == "degraded_result"
         assert Path(task._snapshot_cache_path(instance)).is_file()
         assert state.data.last_success_at == legacy_success
         assert state.data.last_failure_at == current.isoformat()

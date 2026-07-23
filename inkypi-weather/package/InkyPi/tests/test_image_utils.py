@@ -40,6 +40,7 @@ def test_take_screenshot_html_delegates_to_bounded_renderer(monkeypatch):
     assert html == "<p>hello</p>"
     assert kwargs["viewport"] == (800, 480)
     assert kwargs["timezone_name"] == "UTC"
+    assert kwargs["failure_domain"] == "image_utils:inline-html"
 
 
 def test_take_screenshot_remote_url_fails_closed_without_validator(monkeypatch):
@@ -65,3 +66,6 @@ def test_take_screenshot_local_file_uses_html_entrypoint(tmp_path, monkeypatch):
 
     assert result.size == (8, 8)
     assert renderer.calls[0][0:2] == ("html", "<p>local</p>")
+    assert renderer.calls[0][2]["failure_domain"] == (
+        f"image_utils:file:{html_path.resolve()}"
+    )

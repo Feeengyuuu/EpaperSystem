@@ -280,6 +280,8 @@ class SteamCharts(BasePlugin):
             )
 
         fallback_image.info["inkypi_visual_fallback"] = "steam_charts_pillow"
+        if html_render_failed:
+            fallback_image.info["inkypi_skip_cache"] = True
         return fallback_image
 
     def _fetch_combined_chart_groups(self, items_count, show_images=True):
@@ -344,11 +346,32 @@ class SteamCharts(BasePlugin):
     def _apply_display_names(game):
         game["display_name"] = SteamCharts._display_safe_name(game.get("name", ""))
         game["display_secondary_name"] = SteamCharts._display_safe_name(game.get("secondary_name", ""))
+        game["english_only_name"] = SteamCharts._is_english_only_name(
+            game.get("name", ""),
+            game.get("secondary_name", ""),
+        )
         return game
 
     @staticmethod
     def _display_safe_name(value):
         return str(value or "").translate(MIDDLE_DOT_DISPLAY_TRANSLATION)
+
+    @staticmethod
+    def _is_english_only_name(name, secondary_name=""):
+        name = str(name or "").strip()
+        if not name or str(secondary_name or "").strip():
+            return False
+
+        has_ascii_letter = any(char.isascii() and char.isalpha() for char in name)
+        has_cjk = any(
+            "\u3040" <= char <= "\u30ff"
+            or "\u3400" <= char <= "\u4dbf"
+            or "\u4e00" <= char <= "\u9fff"
+            or "\uac00" <= char <= "\ud7af"
+            or "\uf900" <= char <= "\ufaff"
+            for char in name
+        )
+        return has_ascii_letter and not has_cjk
 
     @staticmethod
     def _apply_layout_font_scales(game):
@@ -809,9 +832,18 @@ class SteamCharts(BasePlugin):
                     max_lines=2,
                     weight="bold",
                 )
-                name_top = content_top
                 name_bbox = draw.textbbox((0, 0), "Ag国", font=row_name_font)
                 name_line_height = max(1, name_bbox[3] - name_bbox[1])
+                secondary_text = str(game.get("secondary_name") or "")
+                name_top = content_top
+                if cover:
+                    name_top = self._compact_title_block_top(
+                        content_top,
+                        cover_height,
+                        name_line_height,
+                        len(name_lines),
+                        game.get("english_only_name", False),
+                    )
                 for line_index, name_line in enumerate(name_lines):
                     draw.text(
                         (title_x, name_top + line_index * (name_line_height + 1)),
@@ -819,7 +851,6 @@ class SteamCharts(BasePlugin):
                         fill=ink,
                         font=row_name_font,
                     )
-                secondary_text = str(game.get("secondary_name") or "")
                 row_secondary_font, secondary_lines = self._fit_complete_lines(
                     draw,
                     secondary_text,
@@ -1472,6 +1503,16 @@ class SteamCharts(BasePlugin):
     @staticmethod
     def _compact_row_content_top(row_y, row_height):
         return int(row_y) + max(3, int(row_height * 0.04))
+
+    @staticmethod
+    def _compact_title_block_top(content_top, cover_height, line_height, line_count, english_only_name=False):
+        if not english_only_name:
+            return int(content_top)
+
+        line_count = max(1, int(line_count or 1))
+        line_height = max(1, int(line_height))
+        block_height = line_count * line_height + max(0, line_count - 1)
+        return int(content_top) + max(0, (int(cover_height) - block_height) // 2)
 
     @staticmethod
     def _compact_sparkline_width_ratio(table_variant, sparkline_svg=""):

@@ -486,6 +486,10 @@ body {
     overflow: hidden;
 }
 
+.compact-name.has-image .compact-copy.single-name {
+    justify-content: center;
+}
+
 .compact-title,
 .compact-secondary,
 .compact-primary,

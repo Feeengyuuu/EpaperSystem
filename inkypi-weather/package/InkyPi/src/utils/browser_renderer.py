@@ -46,6 +46,7 @@ DEFAULT_VIRTUAL_TIME_BUDGET_MS = 2_000
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
 HTML_CIRCUIT_TTL_SECONDS = 300.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
+MAX_HTML_CIRCUIT_DOMAINS = 256
 MAX_HTML_BYTES = 5 * 1024 * 1024
 _GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
 _GLOBAL_RENDERER = None
@@ -188,7 +189,7 @@ class BrowserRenderer:
         self.run_as_root = bool(run_as_root)
         self._negative_cache = {}
         self._negative_lock = threading.Lock()
-        self._html_circuit_until = 0.0
+        self._html_circuit_until_by_domain = {}
         self._html_circuit_lock = threading.Lock()
         self._processes = {}
         self._process_lock = threading.Lock()
@@ -212,6 +213,12 @@ class BrowserRenderer:
             self._prune_negative_locked(self._clock())
             return len(self._negative_cache)
 
+    @property
+    def html_circuit_size(self):
+        with self._html_circuit_lock:
+            self._prune_html_circuits_locked(self._clock())
+            return len(self._html_circuit_until_by_domain)
+
     def render_html(
         self,
         html,
@@ -220,6 +227,7 @@ class BrowserRenderer:
         context=None,
         timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         timezone_name=None,
+        failure_domain=None,
     ):
         if not isinstance(html, str):
             raise TypeError("html must be a string")
@@ -227,9 +235,15 @@ class BrowserRenderer:
         if len(encoded) > MAX_HTML_BYTES:
             logger.warning("Browser HTML input exceeded %s bytes", MAX_HTML_BYTES)
             return None
-        if self._html_circuit_open():
+        failure_domain = self._normalized_html_failure_domain(failure_domain)
+        if self._html_circuit_open(failure_domain):
             return None
-        key = self._cache_key("html", hashlib.sha256(encoded).hexdigest(), viewport)
+        html_digest = hashlib.sha256(encoded).hexdigest()
+        key = self._cache_key(
+            "html",
+            f"{failure_domain}|{html_digest}",
+            viewport,
+        )
         if self._negative_hit(key):
             return None
         context = self._context(context, timeout_seconds)
@@ -247,6 +261,7 @@ class BrowserRenderer:
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
             failure_scope="html",
+            failure_domain=failure_domain,
         )
 
     def render_url(
@@ -300,6 +315,7 @@ class BrowserRenderer:
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
             failure_scope="url",
+            failure_domain=None,
         )
 
     def close(self):
@@ -520,6 +536,7 @@ class BrowserRenderer:
         timeout_seconds,
         timezone_name,
         failure_scope,
+        failure_domain,
     ):
         if self._closed or not self.binary:
             self._remember_negative(key)
@@ -577,7 +594,7 @@ class BrowserRenderer:
                     self._stop_process(process)
                     self._remember_negative(key)
                     if failure_scope == "html":
-                        self._remember_html_failure()
+                        self._remember_html_failure(failure_domain)
                     return None
                 finally:
                     self._unregister_process(process)
@@ -585,12 +602,12 @@ class BrowserRenderer:
                 if process.returncode != 0 or not output_path.is_file():
                     self._remember_negative(key)
                     if failure_scope == "html":
-                        self._remember_html_failure()
+                        self._remember_html_failure(failure_domain)
                     return None
                 image = safe_open_image(output_path)
                 self._forget_negative(key)
                 if failure_scope == "html":
-                    self._forget_html_failure()
+                    self._forget_html_failure(failure_domain)
                 return image
         except TaskCancelled:
             if process is not None and process.poll() is None:
@@ -603,7 +620,7 @@ class BrowserRenderer:
             logger.exception("Chromium render failed")
             self._remember_negative(key)
             if failure_scope == "html":
-                self._remember_html_failure()
+                self._remember_html_failure(failure_domain)
             return None
         finally:
             if process is not None:
@@ -733,17 +750,41 @@ class BrowserRenderer:
         with self._negative_lock:
             self._negative_cache.pop(key, None)
 
-    def _html_circuit_open(self):
-        with self._html_circuit_lock:
-            return self._html_circuit_until > self._clock()
+    @staticmethod
+    def _normalized_html_failure_domain(failure_domain):
+        domain = str(failure_domain or "").strip()
+        return domain or "shared-html"
 
-    def _remember_html_failure(self):
+    def _html_circuit_open(self, failure_domain):
+        now = self._clock()
         with self._html_circuit_lock:
-            self._html_circuit_until = self._clock() + self.html_circuit_ttl_seconds
+            self._prune_html_circuits_locked(now)
+            return failure_domain in self._html_circuit_until_by_domain
 
-    def _forget_html_failure(self):
+    def _remember_html_failure(self, failure_domain):
+        now = self._clock()
         with self._html_circuit_lock:
-            self._html_circuit_until = 0.0
+            self._prune_html_circuits_locked(now)
+            self._html_circuit_until_by_domain[failure_domain] = (
+                now + self.html_circuit_ttl_seconds
+            )
+            while len(self._html_circuit_until_by_domain) > MAX_HTML_CIRCUIT_DOMAINS:
+                oldest = min(
+                    self._html_circuit_until_by_domain,
+                    key=self._html_circuit_until_by_domain.get,
+                )
+                self._html_circuit_until_by_domain.pop(oldest, None)
+
+    def _forget_html_failure(self, failure_domain):
+        with self._html_circuit_lock:
+            self._html_circuit_until_by_domain.pop(failure_domain, None)
+
+    def _prune_html_circuits_locked(self, now):
+        self._html_circuit_until_by_domain = {
+            domain: expires
+            for domain, expires in self._html_circuit_until_by_domain.items()
+            if expires > now
+        }
 
     def _prune_negative_locked(self, now):
         self._negative_cache = {

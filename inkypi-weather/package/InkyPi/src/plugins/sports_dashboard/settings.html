@@ -1,4 +1,12 @@
 <div class="form-group">
+    <input type="hidden" name="backgroundCacheRefreshEnabled" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="backgroundCacheRefreshEnabled" name="backgroundCacheRefreshEnabled" value="true">
+        Re-display this dashboard automatically while live scores are changing
+    </label>
+</div>
+
+<div class="form-group">
     <label for="worldCupUrl" class="form-label">World Cup widget URL:</label>
     <input type="text" id="worldCupUrl" name="worldCupUrl" placeholder="https://www.sportbusy.com/embed/world-cup" class="form-input">
 </div>
@@ -492,6 +500,9 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
+            document.getElementById('backgroundCacheRefreshEnabled').checked =
+                pluginSettings.backgroundCacheRefreshEnabled === true
+                || String(pluginSettings.backgroundCacheRefreshEnabled).toLowerCase() === 'true';
             document.getElementById('worldCupUrl').value = pluginSettings.worldCupUrl || '';
             document.getElementById('footballDataKey').value = pluginSettings.footballDataKey || '';
             document.getElementById('footballDataCompetition').value = pluginSettings.footballDataCompetition || '';

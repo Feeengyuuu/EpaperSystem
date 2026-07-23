@@ -735,6 +735,9 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    def _cache_state_version(self):
+        return STATE_VERSION
+
     def _read_cache(self):
         path = self._cache_path()
         try:

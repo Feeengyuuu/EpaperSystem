@@ -191,6 +191,237 @@ def test_parse_maoyan_dashboard_uses_simplified_chinese_titles():
     assert movies[0].localized_title == ""
     assert movies[0].localized_language == "zh-CN"
     assert movies[0].extra["source"] == "maoyan"
+    assert movies[0].extra["maoyan_movie_id"] == "1490532"
+
+
+def test_maoyan_detail_id_supplies_authoritative_poster_and_english_title(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "detailMovie": {
+                    "id": 1525868,
+                    "nm": "八仙！",
+                    "enm": "All Wishes Come True！",
+                    "rt": "2026-07-18",
+                    "img": "https://p0.pipi.cn/correct-baxian.jpg?imageMogr2/quality/80",
+                    "dra": "八位凡人瞒天过海。",
+                }
+            }
+
+    class FakeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            assert url == "https://m.maoyan.com/ajax/detailmovie"
+            assert params == {"movieId": "1525868"}
+            assert headers["Referer"] == "https://m.maoyan.com/"
+            assert timeout == 12
+            return FakeResponse()
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="八仙！",
+        extra={
+            "source": "maoyan",
+            "maoyan_movie_id": "1525868",
+            "official_chinese_title": "八仙！",
+        },
+    )
+
+    plugin._enrich_with_tmdb(
+        [movie],
+        {"sourceMode": "maoyan_china"},
+        DummyDeviceConfig(),
+    )
+
+    assert movie.tmdb_id is None
+    assert movie.poster_url == "https://p0.pipi.cn/correct-baxian.jpg?imageView2/2/w/684/q/80"
+    assert movie.release_year == "2026"
+    assert movie.overview == "八位凡人瞒天过海。"
+    assert movie.extra["english_title"] == "All Wishes Come True！"
+    assert movie.extra["poster_source"] == "maoyan"
+
+
+def test_maoyan_poster_url_is_limited_for_safe_epaper_downloads():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+
+    assert plugin._maoyan_poster_url(
+        "https://p0.pipi.cn/poster.jpg?imageMogr2/quality/80"
+    ) == "https://p0.pipi.cn/poster.jpg?imageView2/2/w/684/q/80"
+
+
+def test_maoyan_authoritative_poster_is_not_overwritten_by_tmdb(monkeypatch):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            if url == box_office_module.MAOYAN_MOVIE_DETAIL_URL:
+                return FakeResponse({
+                    "detailMovie": {
+                        "id": 1525868,
+                        "nm": "\u516b\u4ed9\uff01",
+                        "enm": "",
+                        "rt": "2026-07-18",
+                        "img": "https://p0.pipi.cn/correct-baxian.jpg",
+                    }
+                })
+            if url.endswith("/search/movie"):
+                return FakeResponse({
+                    "results": [{
+                        "id": 406889,
+                        "title": "\u7b11\u516b\u4ed9",
+                        "original_title": "\u7b11\u516b\u4ed9",
+                        "release_date": "1993-11-18",
+                        "poster_path": "/wrong-old-baxian.jpg",
+                    }]
+                })
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="\u516b\u4ed9\uff01",
+        extra={
+            "source": "maoyan",
+            "maoyan_movie_id": "1525868",
+            "official_chinese_title": "\u516b\u4ed9\uff01",
+        },
+    )
+
+    plugin._enrich_with_tmdb(
+        [movie],
+        {"sourceMode": "maoyan_china"},
+        EnvDeviceConfig({"TMDB_API_KEY": "device-key"}),
+    )
+
+    assert movie.tmdb_id is None
+    assert movie.poster_url == "https://p0.pipi.cn/correct-baxian.jpg?imageView2/2/w/684/q/80"
+    assert movie.poster_path == ""
+    assert movie.release_year == "2026"
+    assert movie.extra["poster_source"] == "maoyan"
+
+
+def test_exact_tmdb_match_can_fill_missing_english_without_replacing_maoyan_poster(monkeypatch):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            if url == box_office_module.MAOYAN_MOVIE_DETAIL_URL:
+                return FakeResponse({
+                    "detailMovie": {
+                        "id": 1525868,
+                        "nm": "\u516b\u4ed9\uff01",
+                        "enm": "",
+                        "rt": "2026-07-18",
+                        "img": "https://p0.pipi.cn/correct-baxian.jpg",
+                    }
+                })
+            if url.endswith("/search/movie"):
+                return FakeResponse({
+                    "results": [{
+                        "id": 999,
+                        "title": "\u516b\u4ed9\uff01",
+                        "original_title": "\u516b\u4ed9\uff01",
+                        "release_date": "2026-07-18",
+                        "poster_path": "/tmdb-poster.jpg",
+                    }]
+                })
+            if url.endswith("/movie/999/images"):
+                return FakeResponse({"posters": []})
+            if url.endswith("/movie/999"):
+                return FakeResponse({
+                    "title": "All Wishes Come True!",
+                    "original_title": "\u516b\u4ed9\uff01",
+                })
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="\u516b\u4ed9\uff01",
+        extra={
+            "source": "maoyan",
+            "maoyan_movie_id": "1525868",
+            "official_chinese_title": "\u516b\u4ed9\uff01",
+        },
+    )
+
+    plugin._enrich_with_tmdb(
+        [movie],
+        {"sourceMode": "maoyan_china"},
+        EnvDeviceConfig({"TMDB_API_KEY": "device-key"}),
+    )
+
+    assert movie.poster_url == "https://p0.pipi.cn/correct-baxian.jpg?imageView2/2/w/684/q/80"
+    assert movie.poster_path == ""
+    assert movie.extra["poster_source"] == "maoyan"
+    assert movie.extra["english_title"] == "All Wishes Come True!"
+
+
+def test_maoyan_tmdb_fallback_rejects_inexact_old_movie(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "results": [{
+                    "id": 406889,
+                    "title": "\u7b11\u516b\u4ed9",
+                    "original_title": "\u7b11\u516b\u4ed9",
+                    "release_date": "1993-11-18",
+                    "poster_path": "/wrong-old-baxian.jpg",
+                }]
+            }
+
+    class FakeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            assert url.endswith("/search/movie")
+            return FakeResponse()
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="\u516b\u4ed9\uff01",
+        release_year="2026",
+        extra={
+            "source": "maoyan",
+            "official_chinese_title": "\u516b\u4ed9\uff01",
+        },
+    )
+
+    plugin._enrich_with_tmdb(
+        [movie],
+        {"sourceMode": "maoyan_china"},
+        EnvDeviceConfig({"TMDB_API_KEY": "device-key"}),
+    )
+
+    assert movie.tmdb_id is None
+    assert movie.poster_url == ""
+    assert movie.poster_path == ""
+    assert "english_title" not in movie.extra
 
 
 def test_maoyan_china_source_fetches_mainland_chart(monkeypatch):
@@ -228,6 +459,100 @@ def test_china_chart_copy_uses_simplified_chinese_labels():
     assert copy["subtitle"] == "\u5b9e\u65f6\u699c TOP 5"
     assert copy["primary_metric_label"] == "\u4eca\u65e5\u5360\u6bd4"
     assert copy["total_prefix"] == "\u7d2f\u8ba1"
+
+
+def test_china_chart_footer_credits_actual_poster_sources():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    copy = plugin._chart_copy(
+        {"sourceMode": "maoyan_china"},
+        box_office_module.MAOYAN_SOURCE_LABEL,
+        2,
+    )
+
+    maoyan_movie = BoxOfficeMovie(
+        rank=1,
+        title="\u516b\u4ed9\uff01",
+        poster_url="https://p0.pipi.cn/correct.jpg",
+        extra={"poster_source": "maoyan"},
+    )
+    tmdb_movie = BoxOfficeMovie(
+        rank=2,
+        title="Fallback",
+        poster_url="https://image.tmdb.org/t/p/w342/fallback.jpg",
+        extra={"poster_source": "tmdb"},
+    )
+
+    assert plugin._poster_footer(copy, [maoyan_movie]) == "\u6d77\u62a5: \u732b\u773c\u7535\u5f71"
+    assert plugin._poster_footer(copy, [maoyan_movie, tmdb_movie]) == "\u6d77\u62a5: \u732b\u773c\u7535\u5f71 / TMDb"
+
+
+def test_v5_box_office_cache_is_invalidated_after_poster_matching_fix():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    settings = {"sourceMode": "maoyan_china"}
+    cache = {
+        "version": "box-office-top-movies-v5",
+        "cache_key": plugin._cache_key(settings, (800, 480), 5),
+        "generated_at": "2999-01-01T00:00:00+00:00",
+        "movies": [{"rank": 1, "title": "\u516b\u4ed9\uff01"}],
+    }
+
+    assert plugin._cache_is_fresh(cache, cache["cache_key"], 3) is False
+
+
+def test_v6_box_office_cache_is_invalidated_after_poster_size_fix():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    settings = {"sourceMode": "maoyan_china"}
+    cache = {
+        "version": "box-office-top-movies-v6",
+        "cache_key": plugin._cache_key(settings, (800, 480), 5),
+        "generated_at": "2999-01-01T00:00:00+00:00",
+        "movies": [{"rank": 1, "title": "\u516b\u4ed9\uff01"}],
+    }
+
+    assert plugin._cache_is_fresh(cache, cache["cache_key"], 3) is False
+
+
+def test_failed_refresh_does_not_restore_v5_wrong_poster_cache(monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    settings = {"sourceMode": "maoyan_china", "forceRefresh": True}
+    old_cache = {
+        "version": "box-office-top-movies-v5",
+        "cache_key": plugin._cache_key(settings, (800, 480), 5),
+        "generated_at": "2026-07-21T00:00:00+00:00",
+        "source_label": box_office_module.MAOYAN_SOURCE_LABEL,
+        "movies": [{
+            "rank": 1,
+            "title": "\u516b\u4ed9\uff01",
+            "poster_url": "https://image.tmdb.org/t/p/w342/wrong-old-baxian.jpg",
+        }],
+    }
+    rendered_movies = []
+
+    monkeypatch.setattr(plugin, "_read_cache", lambda: old_cache)
+    monkeypatch.setattr(
+        plugin,
+        "_load_movies",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin,
+        "_render_chart",
+        lambda _dimensions, movies, *_args: rendered_movies.extend(movies)
+        or Image.new("RGB", (800, 480), "white"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fallback_image",
+        lambda dimensions, *_args: Image.new("RGB", dimensions, "white"),
+    )
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert rendered_movies == []
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+
 
 def test_maoyan_display_uses_official_chinese_primary_and_english_secondary():
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})

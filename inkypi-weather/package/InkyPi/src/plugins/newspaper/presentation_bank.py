@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -189,6 +189,7 @@ class NewspaperPresentationBank:
         profile_settings_key,
         instance_uuid,
         now,
+        local_timezone=timezone.utc,
     ):
         self.state_path = Path(state_path)
         self.media_dir = Path(media_dir)
@@ -197,6 +198,7 @@ class NewspaperPresentationBank:
         self.profile_settings_key = str(profile_settings_key)
         self.instance_uuid = str(instance_uuid)
         self.now = now
+        self.local_timezone = local_timezone
         self._loaded_document = None
 
     def load_for_data(self):
@@ -285,11 +287,11 @@ class NewspaperPresentationBank:
                 if record.get("record_key") in protected:
                     survivors.append(record)
                 continue
-            downloaded = _parse_datetime(record.get("downloaded_at"))
-            age = None if downloaded is None else (now - downloaded).total_seconds()
             render_record = dict(record)
             render_record["provenance"] = (
-                "fresh_cache" if age is not None and 0 <= age <= FRESH_SECONDS else "stale_cache"
+                "fresh_cache"
+                if record_is_fresh(record, now, self.local_timezone)
+                else "stale_cache"
             )
             ready.append(render_record)
             survivors.append(record)
@@ -315,6 +317,13 @@ class NewspaperPresentationBank:
         content_key = sha256(payload).hexdigest()
         record_key = sha256(f"{normalized['id']}\0{content_key}".encode("utf-8")).hexdigest()
         target = self.media_dir / f"{content_key}.png"
+        protected = self._protected_keys(profile)
+        profile["records"] = [
+            item
+            for item in profile.get("records") or []
+            if item.get("source", {}).get("id") != normalized["id"]
+            or item.get("record_key") in protected
+        ]
         self._admit(
             target,
             len(payload),
@@ -333,7 +342,11 @@ class NewspaperPresentationBank:
             "height": size[1],
             "downloaded_at": downloaded_at or self.now().isoformat(),
         }
-        protected = self._protected_keys(profile)
+        edition_date = _parse_edition_date(
+            image.info.get("inkypi_newspaper_edition_date")
+        )
+        if edition_date is not None:
+            record["edition_date"] = edition_date.isoformat()
         records = []
         replaced_identical = False
         for item in profile.get("records") or []:
@@ -652,10 +665,12 @@ class NewspaperPresentationBank:
             _validate_dimensions((record.get("width"), record.get("height")))
         except (RuntimeError, TypeError, ValueError):
             return False
+        edition_date = record.get("edition_date")
         return (
             _valid_hash(record.get("record_key"))
             and _valid_hash(record.get("media_key"))
             and _parse_datetime(record.get("downloaded_at")) is not None
+            and (edition_date is None or _parse_edition_date(edition_date) is not None)
         )
 
     def _make_profile_room(self, document, required):
@@ -955,6 +970,36 @@ def _parse_datetime(value):
     if result.tzinfo is None:
         result = result.replace(tzinfo=timezone.utc)
     return result.astimezone(timezone.utc)
+
+
+def _parse_edition_date(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def record_is_fresh(record, now, local_timezone=timezone.utc):
+    downloaded = _parse_datetime((record or {}).get("downloaded_at"))
+    if downloaded is None:
+        return False
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
+    age = (now - downloaded).total_seconds()
+    if not 0 <= age <= FRESH_SECONDS:
+        return False
+
+    local_timezone = local_timezone or timezone.utc
+    local_today = now.astimezone(local_timezone).date()
+    if downloaded.astimezone(local_timezone).date() != local_today:
+        return False
+    edition_date = _parse_edition_date((record or {}).get("edition_date"))
+    if edition_date is not None:
+        return local_today <= edition_date <= local_today + timedelta(days=1)
+    return True
 
 
 def _valid_hash(value):

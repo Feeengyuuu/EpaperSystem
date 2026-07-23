@@ -322,7 +322,7 @@ def test_weather_keeps_original_html_renderer_on_constrained_runtime(monkeypatch
     assert read_source_provenance(image) is SourceProvenance.LIVE
 
 
-def test_weather_reuses_only_a_cached_original_html_screenshot_on_render_failure(
+def test_weather_html_failure_ignores_legacy_internal_screenshot_cache(
     monkeypatch,
     tmp_path,
 ):
@@ -342,17 +342,41 @@ def test_weather_reuses_only_a_cached_original_html_screenshot_on_render_failure
         "palette": {},
         "css": {},
     }
-    renders = [Image.new("RGB", (64, 32), (17, 34, 51)), None]
-    plugin.render_image = lambda *_a, **_k: renders.pop(0)
+    legacy_cache = tmp_path / "original-html-64x32-day.png"
+    Image.new("RGB", (64, 32), (17, 34, 51)).save(legacy_cache)
+    plugin.render_image = lambda *_a, **_k: None
 
-    live = plugin.generate_image(_settings(), FakeDeviceConfig())
-    cached = plugin.generate_image(_settings(), FakeDeviceConfig())
+    with pytest.raises(RuntimeError, match="original HTML weather layout"):
+        plugin.generate_image(_settings(), FakeDeviceConfig())
 
-    assert live.getpixel((0, 0)) == (17, 34, 51)
-    assert cached.getpixel((0, 0)) == (17, 34, 51)
-    assert cached.info["inkypi_visual_fallback"] == "weather_html_cache"
-    assert read_source_provenance(cached) is SourceProvenance.STALE_CACHE
-    assert cached.info["inkypi_skip_cache"] is True
+    assert legacy_cache.is_file()
+
+
+def test_weather_success_does_not_write_an_internal_screenshot_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setenv("OPENWEATHER_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+    plugin.render_image = lambda *_a, **_k: Image.new("RGB", (64, 32), "white")
+
+    plugin.generate_image(_settings(), FakeDeviceConfig())
+
+    assert list(tmp_path.glob("original-html-*.png")) == []
 
 
 def test_weather_context_write_failure_aborts_before_render(monkeypatch):

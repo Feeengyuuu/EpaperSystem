@@ -18,6 +18,8 @@ _UNSET_MODEL_BASELINE = object()
 _SECRET_SCHEMA = SecretSchema.load()
 _RUNTIME_MIGRATIONS_KEY = "runtime_migrations"
 _SPORTS_LIVE_REFRESH_MIGRATION = "sports_live_refresh_all_disabled_v1"
+_NEWSPAPER_HOURLY_REFILL_MIGRATION = "newspaper_hourly_refill_v1"
+_NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _SPORTS_LIVE_REFRESH_KEYS = (
     "worldCupLiveRefreshEnabled",
     "nbaLiveRefreshEnabled",
@@ -77,6 +79,7 @@ class Config:
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
         self._repair_legacy_sports_live_refresh_settings()
+        self._migrate_rotating_newspapers_to_hourly_refill()
 
     @staticmethod
     def _is_explicit_false(value):
@@ -144,6 +147,61 @@ class Config:
             "| instances: %s",
             repaired_instances,
         )
+
+    def _migrate_rotating_newspapers_to_hourly_refill(self):
+        """Give rotating newspaper banks enough passes to refresh every source."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_NEWSPAPER_HOURLY_REFILL_MIGRATION) is True
+        ):
+            return
+
+        eligible_instances = 0
+        migrated_instances = 0
+        for snapshot in self.playlist_manager.snapshot_all_instances():
+            if snapshot.plugin_id != "newspaper":
+                continue
+            settings = _detach_json(snapshot.settings)
+            if str(settings.get("mediaRotationMode") or "rotate").strip().lower() == "single":
+                continue
+            eligible_instances += 1
+            refresh = _detach_json(snapshot.refresh)
+            try:
+                interval = int(refresh.get("interval"))
+            except (TypeError, ValueError):
+                interval = None
+            if interval is not None and 0 < interval <= _NEWSPAPER_REFILL_INTERVAL_SECONDS:
+                continue
+
+            updated = self.playlist_manager.update_plugin_instance(
+                snapshot.instance_uuid,
+                refresh={"interval": _NEWSPAPER_REFILL_INTERVAL_SECONDS},
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+            )
+            if updated is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision + 1,
+                )
+            migrated_instances += 1
+
+        if not eligible_instances:
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_NEWSPAPER_HOURLY_REFILL_MIGRATION] = True
+        self.update_config({_RUNTIME_MIGRATIONS_KEY: migration_state})
+        if migrated_instances:
+            logger.warning(
+                "Migrated rotating Newspaper instances to hourly background refill. "
+                "| instances: %s",
+                migrated_instances,
+            )
 
     def read_config(self):
         """Reload and return a detached device config, or report invalid state."""

@@ -1399,6 +1399,30 @@ def test_retrying_old_cadence_yields_to_less_recently_attempted_due_plugin():
     assert decision.candidate == waiting_plugin
 
 
+def test_retrying_interval_beats_later_fresh_due_candidate_across_generations():
+    weather_retry = _candidate(
+        "weather",
+        due_since=datetime(2026, 7, 20, 17, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 20, 17, 5, tzinfo=UTC),
+    )
+    newly_due = _candidate(
+        "steam-charts",
+        due_since=datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 7, 21, 9, 55, tzinfo=UTC),
+    )
+
+    decision = choose_refresh_candidate(
+        [newly_due, weather_retry],
+        [],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == weather_retry
+
+
 def test_candidate_order_uses_absolute_instants_across_fall_fold():
     los_angeles = ZoneInfo("America/Los_Angeles")
     first_instant = _candidate(

@@ -89,7 +89,13 @@ def text_width(draw, text, font):
     bbox = draw.textbbox((0, 0), str(text), font=font)
     return bbox[2] - bbox[0]
 
-def take_screenshot_html(html_str, dimensions, timeout_ms=None, timezone_name=None):
+def take_screenshot_html(
+    html_str,
+    dimensions,
+    timeout_ms=None,
+    timezone_name=None,
+    failure_domain=None,
+):
     try:
         timeout_seconds = ((timeout_ms or 45000) / 1000) + 15
         return get_browser_renderer().render_html(
@@ -97,6 +103,7 @@ def take_screenshot_html(html_str, dimensions, timeout_ms=None, timezone_name=No
             viewport=dimensions,
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
+            failure_domain=failure_domain or "image_utils:inline-html",
         )
     except Exception as e:
         logger.error(f"Failed to take screenshot: {str(e)}")
@@ -116,6 +123,7 @@ def take_screenshot(
     *,
     validator=None,
     task_context=None,
+    failure_domain=None,
 ):
     try:
         renderer = get_browser_renderer()
@@ -143,6 +151,9 @@ def take_screenshot(
             context=task_context,
             timeout_seconds=timeout_seconds,
             timezone_name=timezone_name,
+            failure_domain=(
+                failure_domain or f"image_utils:file:{local_path.resolve()}"
+            ),
         )
     except Exception as e:
         logger.error(f"Failed to take screenshot: {str(e)}")

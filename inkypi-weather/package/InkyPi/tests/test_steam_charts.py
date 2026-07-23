@@ -337,6 +337,21 @@ def test_compact_font_scales_expand_short_text_and_shrink_long_text():
     assert float(long_game["name_font_scale"]) < 1
 
 
+def test_compact_games_mark_only_english_only_names_for_midline_alignment():
+    english_only, chinese_only, bilingual = SteamCharts._prepare_compact_games(
+        "top_games",
+        [
+            {"name": "Dota 2", "secondary_name": ""},
+            {"name": "刀塔2", "secondary_name": ""},
+            {"name": "刀塔2", "secondary_name": "Dota 2"},
+        ],
+    )
+
+    assert english_only["english_only_name"] is True
+    assert chinese_only["english_only_name"] is False
+    assert bilingual["english_only_name"] is False
+
+
 def test_prepared_games_use_bold_safe_cjk_middle_dot_without_control_chars():
     name = "TBH: \u5854\u65af\u514b\u5df4\u00b7\u82f1\u96c4"
     expected_display = "TBH: \u5854\u65af\u514b\u5df4\u2027\u82f1\u96c4"
@@ -401,7 +416,7 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert image.getpixel((0, 0)) == (0, 0, 0)
-    assert "inkypi_skip_cache" not in image.info
+    assert image.info["inkypi_skip_cache"] is True
     assert image.info["inkypi_visual_fallback"] == "steam_charts_pillow"
 
 
@@ -740,8 +755,12 @@ def test_steam_charts_native_title_fitting_preserves_full_name_without_ellipsis(
     assert all(draw.textlength(line, font=font) <= 172 for line in lines)
 
 
-def test_steam_charts_native_cover_and_title_share_the_same_top_alignment():
+def test_steam_charts_native_centers_only_single_name_titles_on_cover_midline():
     assert SteamCharts._compact_row_content_top(100, 66) == 103
+
+    assert SteamCharts._compact_title_block_top(103, 39, 15, 1, True) == 115
+    assert SteamCharts._compact_title_block_top(103, 39, 15, 2, True) == 107
+    assert SteamCharts._compact_title_block_top(103, 39, 15, 1, False) == 103
 
     source = (
         Path(__file__).resolve().parents[1]
@@ -752,9 +771,10 @@ def test_steam_charts_native_cover_and_title_share_the_same_top_alignment():
     ).read_text(encoding="utf-8")
     assert "cover_y = content_top" in source
     assert "name_top = content_top" in source
+    assert "name_top = self._compact_title_block_top(" in source
 
 
-def test_steam_charts_html_cover_and_title_share_top_and_long_titles_wrap():
+def test_steam_charts_html_centers_only_single_name_titles_on_cover_midline():
     css = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -763,10 +783,23 @@ def test_steam_charts_html_cover_and_title_share_top_and_long_titles_wrap():
         / "render"
         / "steam_charts.css"
     ).read_text(encoding="utf-8")
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "steam_charts"
+        / "render"
+        / "steam_charts.html"
+    ).read_text(encoding="utf-8")
 
     compact_copy = css.split(".compact-copy {", 1)[1].split("}", 1)[0]
+    single_name_copy = css.split(
+        ".compact-name.has-image .compact-copy.single-name {", 1
+    )[1].split("}", 1)[0]
     compact_title = css.split(".compact-title {", 1)[1].split("}", 1)[0]
     assert "justify-content: flex-start" in compact_copy
+    assert "justify-content: center" in single_name_copy
+    assert 'class="compact-copy{% if game.english_only_name %} single-name{% endif %}"' in template
     assert "overflow-wrap: anywhere" in compact_title
     assert "word-break: normal" in compact_title
 

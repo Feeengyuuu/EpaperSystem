@@ -455,8 +455,12 @@ class EsportsMixin:
         selected = self._select_ewc_events([*events, *detail_matches], now, window_days, rotation_seed=now)
         if not self._ewc_selected_has_displayable_event(selected):
             return None
-        if selected.get("main_match") and detail_source_state:
-            source_state = detail_source_state
+        main_match = selected.get("main_match") or {}
+        if main_match and detail_source_state:
+            source_state = (
+                main_match.get("_ewc_detail_source_state")
+                or detail_source_state
+            )
         return {
             "selected": selected,
             "source_state": source_state,
@@ -541,21 +545,31 @@ class EsportsMixin:
             for key, page in cached_pages.items()
             if key in candidate_keys and isinstance(page, Mapping)
         }
+        page_source_states = {}
         events_to_fetch = []
         for event in candidates:
             page_key = self._ewc_detail_page_key(event)
             page = pages.get(page_key) if page_key else None
             page_matches = self._decode_ewc_events((page or {}).get("matches") or [], timezone_info)
             page_cache_seconds = self._ewc_detail_effective_cache_seconds(page_matches, now, cache_seconds)
-            if (
+            needs_refresh = (
                 force_refresh
                 or not isinstance(page, Mapping)
                 or not self._cache_is_fresh_seconds(page, page_cache_seconds, now_utc)
-            ):
+            )
+            if needs_refresh:
                 events_to_fetch.append(event)
+                if page_key and page_matches:
+                    page_source_states[page_key] = "EWC DETAIL STALE"
+            elif page_key and page_matches:
+                page_source_states[page_key] = "EWC DETAIL CACHE"
         if not events_to_fetch:
             cached_matches = self._decode_ewc_events(
-                self._ewc_detail_cached_matches({"pages": pages}, candidates),
+                self._ewc_detail_cached_matches(
+                    {"pages": pages},
+                    candidates,
+                    page_source_states=page_source_states,
+                ),
                 timezone_info,
             )
             return cached_matches, "EWC DETAIL CACHE" if cached_matches else ""
@@ -589,6 +603,7 @@ class EsportsMixin:
                 )
                 continue
             pages[page["page_key"]] = page
+            page_source_states[page["page_key"]] = "EWC DETAIL LIVE"
             fetched_any = True
 
         if fetched_any:
@@ -604,10 +619,24 @@ class EsportsMixin:
                 logger.warning("Failed to write EWC detail cache: %s", exc)
             cache = payload
         elif has_compatible_cache:
-            matches = self._decode_ewc_events(self._ewc_detail_cached_matches({"pages": pages}, candidates), timezone_info)
+            matches = self._decode_ewc_events(
+                self._ewc_detail_cached_matches(
+                    {"pages": pages},
+                    candidates,
+                    page_source_states=page_source_states,
+                ),
+                timezone_info,
+            )
             return matches, "EWC DETAIL STALE" if matches else ""
 
-        matches = self._decode_ewc_events(self._ewc_detail_cached_matches(cache, candidates), timezone_info)
+        matches = self._decode_ewc_events(
+            self._ewc_detail_cached_matches(
+                cache,
+                candidates,
+                page_source_states=page_source_states,
+            ),
+            timezone_info,
+        )
         if stale_any and matches:
             return matches, "EWC DETAIL STALE"
         return matches, "EWC DETAIL LIVE" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
@@ -698,10 +727,11 @@ class EsportsMixin:
         return f"{year or 'unknown'}:{slug}" if slug else ""
 
     @staticmethod
-    def _ewc_detail_cached_matches(cache, candidates):
+    def _ewc_detail_cached_matches(cache, candidates, *, page_source_states=None):
         pages = cache.get("pages") if isinstance(cache, Mapping) else {}
         if not isinstance(pages, Mapping):
             return []
+        page_source_states = page_source_states or {}
         candidate_keys = set()
         for event in candidates or []:
             if not isinstance(event, Mapping):
@@ -715,7 +745,12 @@ class EsportsMixin:
             if candidate_keys and key not in candidate_keys:
                 continue
             if isinstance(page, Mapping) and isinstance(page.get("matches"), list):
-                matches.extend(page.get("matches") or [])
+                source_state = page_source_states.get(key)
+                for match in page.get("matches") or []:
+                    item = dict(match) if isinstance(match, Mapping) else match
+                    if source_state and isinstance(item, dict):
+                        item["_ewc_detail_source_state"] = source_state
+                    matches.append(item)
         return matches
 
     def _ewc_detail_cache_path(self):
@@ -2082,16 +2117,33 @@ class EsportsMixin:
                 ewc_selected = SportsDashboard._ewc_sidebar_focus_selected(ewc_selected, earliest_ewc_event)
             focused_ewc_card = dict(ewc_card or {})
             focused_ewc_card["selected"] = ewc_selected
-            candidates.append(
-                {
-                    "kind": "ewc",
-                    "selected": ewc_selected,
-                    "source_state": (ewc_card or {}).get("source_state") or "EWC DATA",
-                    "phase": ewc_phase,
-                    "priority": SportsDashboard._right_sidebar_ewc_priority(),
-                    "tie": SportsDashboard._ewc_sidebar_main_timestamp(focused_ewc_card, float("inf")),
-                }
+            ewc_phase = SportsDashboard._ewc_sidebar_candidate_phase(focused_ewc_card)
+            final_match = ewc_selected.get("main_match") or ewc_selected.get("main") or {}
+            ewc_source_state = (
+                final_match.get("_ewc_detail_source_state")
+                or (ewc_card or {}).get("source_state")
+                or "EWC DATA"
             )
+            ewc_provenance = SportsDashboard._sports_source_state_provenance(
+                ewc_source_state
+            )
+            if ewc_phase is not None and ewc_provenance in {
+                SourceProvenance.LIVE,
+                SourceProvenance.FRESH_CACHE,
+            }:
+                candidates.append(
+                    {
+                        "kind": "ewc",
+                        "selected": ewc_selected,
+                        "source_state": ewc_source_state,
+                        "phase": ewc_phase,
+                        "priority": SportsDashboard._right_sidebar_ewc_priority(),
+                        "tie": SportsDashboard._ewc_sidebar_main_timestamp(
+                            focused_ewc_card,
+                            float("inf"),
+                        ),
+                    }
+                )
 
         for card in SportsDashboard._valve_esports_active_cards(valve_selected):
             candidates.append(
@@ -4390,11 +4442,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
 
 
 

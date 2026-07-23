@@ -5,6 +5,7 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 from PIL import Image
 
+import plugins.base_plugin.base_plugin as base_plugin_module
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.plugin_manifest import PluginTheme
 from utils import theme_utils
@@ -41,6 +42,32 @@ def _plugin(config=None):
     plugin = BasePlugin.__new__(BasePlugin)
     plugin.config = config or _plugin_config()
     return plugin
+
+
+def test_render_image_scopes_browser_failures_by_plugin_and_template(monkeypatch):
+    captured = {}
+
+    class Renderer:
+        def render_html(self, html, **kwargs):
+            captured["html"] = html
+            captured.update(kwargs)
+            return Image.new("RGB", kwargs["viewport"], "white")
+
+    plugin = BasePlugin.__new__(BasePlugin)
+    plugin.config = {"id": "weather"}
+    plugin.render_dir = "unused"
+    plugin.env = SimpleNamespace(
+        get_template=lambda _name: SimpleNamespace(
+            render=lambda _params: "<p>weather</p>"
+        )
+    )
+    monkeypatch.setattr(base_plugin_module, "get_browser_renderer", lambda: Renderer())
+    monkeypatch.setattr(base_plugin_module, "get_fonts", lambda: [])
+
+    image = plugin.render_image((80, 48), "weather.html")
+
+    assert image.size == (80, 48)
+    assert captured["failure_domain"] == "weather:weather.html"
 
 
 class RecordingPlugin(BasePlugin):

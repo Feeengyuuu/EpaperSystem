@@ -3,7 +3,7 @@ import sys
 import types
 import json
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -160,6 +160,32 @@ def test_sports_dashboard_manifest_disables_internal_panel_refresh_on_display():
 
     assert manifest["capabilities"]["supports_presentation_refresh"] is False
     assert manifest["refresh_on_display"] is False
+
+
+def test_sports_dashboard_settings_exposes_live_redisplay_master():
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+
+    assert (
+        'type="hidden" name="backgroundCacheRefreshEnabled" value="false"'
+        in html
+    )
+    assert (
+        'id="backgroundCacheRefreshEnabled" '
+        'name="backgroundCacheRefreshEnabled" value="true"'
+        in html
+    )
+    assert "pluginSettings.backgroundCacheRefreshEnabled === true" in html
+    assert (
+        "String(pluginSettings.backgroundCacheRefreshEnabled).toLowerCase() === 'true'"
+        in html
+    )
 
 
 def test_sports_dashboard_presentation_rerenders_from_cache_without_forcing_providers(monkeypatch):
@@ -2047,6 +2073,18 @@ def test_ewc_missing_official_club_logos_use_team_specific_fallbacks():
         assert SportsDashboard._ewc_team_logo_url(match, "a") == logo_url
 
 
+def test_ewc_team_vision_uses_existing_official_webp_logo_variant():
+    logo_url = SportsDashboard._ewc_club_logo_url("2068035497854242816")
+    assert logo_url == (
+        "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497854242816/"
+        "LOGO_LIGHT.thumb.webp"
+    )
+    render_url = SportsDashboard._ewc_team_logo_url(
+        {"team_a_logo": logo_url}, "a"
+    )
+    assert parse_qs(urlparse(render_url).query)["url"] == [logo_url]
+
+
 def test_ewc_geng_broken_official_logo_can_use_bundled_short_name_logo():
     match = {
         "team_a": "Gen.G Esports",
@@ -3088,6 +3126,241 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
     assert choice["selected"]["main"]["game"] == "League of Legends"
 
 
+def test_stale_live_ewc_does_not_replace_fresh_upcoming_lpl_with_old_region():
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    lpl_event = {
+        "start": now + timedelta(hours=18),
+        "state": "unstarted",
+        "team_a": "AL",
+        "team_b": "JDG",
+        "team_a_logo": "",
+        "team_b_logo": "",
+        "wins_a": None,
+        "wins_b": None,
+        "best_of": 3,
+        "block": "Split 3",
+    }
+    lpl_card = {
+        "league_key": "LPL",
+        "selected": SportsDashboard._select_lpl_events([lpl_event], now),
+        "source_state": "LIVE DATA",
+        "priority": 0,
+    }
+    stale_ewc_match = {
+        "event_id": "ewc-overwatch-stale",
+        "game": "Overwatch 2",
+        "start": now - timedelta(hours=1),
+        "end": now + timedelta(hours=2),
+        "status": "LIVE",
+    }
+    stale_ewc_card = {
+        "selected": {
+            "display_window_active": True,
+            "live": [stale_ewc_match],
+            "upcoming": [],
+            "recent": [],
+            "main": stale_ewc_match,
+            "main_match": stale_ewc_match,
+        },
+        "source_state": "EWC DETAIL STALE",
+        "priority": 2,
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [lpl_card],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card=stale_ewc_card,
+    )
+
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
+
+
+def test_unrelated_failed_ewc_detail_page_does_not_hide_live_selected_match(
+    monkeypatch,
+):
+    plugin = _plugin()
+    cache_dir = _sports_dashboard_tmp("ewc_mixed_detail_provenance")
+    plugin._sports_dashboard_cache_dir = lambda: cache_dir
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=la)
+    settings = {"ewcDetailCacheSeconds": 600, "forceRefresh": True}
+    events = [
+        {
+            "slug": "league-of-legends",
+            "game": "League of Legends",
+            "year": "2026",
+            "source_url": (
+                "https://esportsworldcup.com/en/competitions/2026/"
+                "league-of-legends"
+            ),
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        },
+        {
+            "slug": "overwatch-2",
+            "game": "Overwatch 2",
+            "year": "2026",
+            "source_url": (
+                "https://esportsworldcup.com/en/competitions/2026/overwatch-2"
+            ),
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        },
+    ]
+    live_match = {
+        "kind": "match",
+        "event_id": "ewc-lol-live",
+        "match_id": "ewc-lol-live",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "year": "2026",
+        "source_url": events[0]["source_url"],
+        "start": now - timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "LIVE",
+        "team_a": "AL",
+        "team_b": "JDG",
+    }
+
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_events",
+        lambda *_args: (events, "EWC LIVE"),
+    )
+    attempted = []
+
+    def fetch_detail(event, _timezone_info, now_utc):
+        attempted.append(event["slug"])
+        if event["slug"] == "overwatch-2":
+            raise RuntimeError("unrelated detail page is unavailable")
+        return {
+            "page_key": "2026:league-of-legends",
+            "slug": "league-of-legends",
+            "game": "League of Legends",
+            "year": "2026",
+            "source_url": event["source_url"],
+            "fetched_at": now_utc.isoformat(),
+            "matches": SportsDashboard._encode_ewc_events([live_match]),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch_detail)
+
+    ewc_card = plugin._load_ewc_sidebar_card(settings, la, now)
+    assert attempted == ["league-of-legends", "overwatch-2"]
+    assert ewc_card["selected"]["main_match"]["event_id"] == "ewc-lol-live"
+    assert ewc_card["source_state"] == "EWC DETAIL LIVE"
+
+    lpl_selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(hours=18),
+                "state": "unstarted",
+                "team_a": "BLG",
+                "team_b": "TES",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "wins_a": None,
+                "wins_b": None,
+                "best_of": 3,
+                "block": "Split 3",
+            }
+        ],
+        now,
+    )
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": lpl_selected,
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card=ewc_card,
+    )
+
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main_match"]["event_id"] == "ewc-lol-live"
+
+
+def test_failed_ewc_detail_page_keeps_its_own_cached_matches_stale(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=la)
+    settings = {"ewcDetailCacheSeconds": 600, "forceRefresh": True}
+
+    def event(slug, game):
+        return {
+            "slug": slug,
+            "game": game,
+            "year": "2026",
+            "source_url": f"https://esportsworldcup.com/en/competitions/2026/{slug}",
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        }
+
+    events = [event("league-of-legends", "League of Legends"), event("overwatch-2", "Overwatch 2")]
+    stale_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-stale",
+        "match_id": "ewc-overwatch-stale",
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "year": "2026",
+        "start": now - timedelta(minutes=10),
+        "end": now + timedelta(hours=1),
+        "status": "LIVE",
+        "team_a": "Old A",
+        "team_b": "Old B",
+    }
+    cache = {
+        "version": sports_dashboard_module.EWC_DETAIL_STATE_VERSION,
+        "cache_key": plugin._ewc_detail_cache_key(settings, la),
+        "fetched_at": (now - timedelta(hours=2)).astimezone(timezone.utc).isoformat(),
+        "pages": {
+            "2026:overwatch-2": {
+                "page_key": "2026:overwatch-2",
+                "fetched_at": (now - timedelta(hours=2)).astimezone(timezone.utc).isoformat(),
+                "matches": SportsDashboard._encode_ewc_events([stale_match]),
+            }
+        },
+    }
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: cache)
+    monkeypatch.setattr(plugin, "_write_json_file", lambda *_args: None)
+
+    live_match = {**stale_match, "event_id": "ewc-lol-live", "match_id": "ewc-lol-live", "slug": "league-of-legends", "game": "League of Legends"}
+
+    def fetch_detail(selected_event, _timezone_info, now_utc):
+        if selected_event["slug"] == "overwatch-2":
+            raise RuntimeError("page unavailable")
+        return {
+            "page_key": "2026:league-of-legends",
+            "fetched_at": now_utc.isoformat(),
+            "matches": SportsDashboard._encode_ewc_events([live_match]),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch_detail)
+
+    matches, source_state = plugin._load_ewc_detail_matches(
+        settings,
+        la,
+        events,
+        now,
+        14,
+    )
+    by_id = {match["event_id"]: match for match in matches}
+
+    assert source_state == "EWC DETAIL STALE"
+    assert by_id["ewc-lol-live"]["_ewc_detail_source_state"] == "EWC DETAIL LIVE"
+    assert by_id["ewc-overwatch-stale"]["_ewc_detail_source_state"] == "EWC DETAIL STALE"
+
+
 def test_right_sidebar_uses_global_earliest_ewc_match_not_rotated_later_game():
     now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -3147,6 +3420,88 @@ def test_right_sidebar_uses_global_earliest_ewc_match_not_rotated_later_game():
     assert choice["kind"] == "ewc"
     assert choice["selected"]["main"]["event_id"] == "lol-0717"
     assert choice["selected"]["selected_match_group"]["slug"] == "league-of-legends"
+
+
+def test_right_sidebar_rechecks_provenance_after_focusing_earliest_ewc_match():
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    def ewc_match(event_id, slug, game, start, source_state):
+        return {
+            "kind": "match",
+            "event_id": event_id,
+            "match_id": event_id,
+            "slug": slug,
+            "game": game,
+            "start": start,
+            "end": start + timedelta(hours=3),
+            "status": "UPCOMING",
+            "team_a": f"{game} Team A",
+            "team_b": f"{game} Team B",
+            "_ewc_detail_source_state": source_state,
+        }
+
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            ewc_match(
+                "lol-stale-earliest",
+                "league-of-legends",
+                "League of Legends",
+                now + timedelta(days=1),
+                "EWC DETAIL STALE",
+            ),
+            ewc_match(
+                "dota-fresh-later",
+                "dota2",
+                "Dota 2",
+                now + timedelta(days=4),
+                "EWC DETAIL CACHE",
+            ),
+        ],
+        now,
+        upcoming_window_days=21,
+        rotation_seed=1,
+    )
+    assert ewc_selected["main_match"]["event_id"] == "dota-fresh-later"
+
+    lpl_selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(days=2),
+                "state": "unstarted",
+                "team_a": "BLG",
+                "team_b": "TES",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "wins_a": None,
+                "wins_b": None,
+                "best_of": 3,
+                "block": "Split 3",
+            }
+        ],
+        now,
+    )
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": lpl_selected,
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "priority": 2,
+        },
+    )
+
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
 
 
 def test_right_sidebar_uses_ewc_next_match_when_no_live_right_competition():
@@ -16943,6 +17298,138 @@ def test_club_img2_league_wordmark_assets_are_transparent_and_wide():
         assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
 
 
+def test_club_league_icon_assets_are_bundled_for_all_five_leagues():
+    paths = sports_dashboard_module.LOCAL_CLUB_LEAGUE_ICON_PATHS
+
+    assert set(paths) == {"PL", "PD", "BL1", "SA", "FL1"}
+    assert len({Path(path).name for path in paths.values()}) == 5
+    icon_hashes = set()
+    for path in paths.values():
+        icon = Image.open(path).convert("RGBA")
+        alpha = icon.getchannel("A")
+        assert icon.size == (128, 128)
+        assert alpha.getbbox() is not None
+        assert alpha.getextrema() == (0, 255)
+        icon_hashes.add(hashlib.sha256(Path(path).read_bytes()).hexdigest())
+    assert len(icon_hashes) == 5
+
+
+def test_club_league_icons_keep_a_legible_silhouette_at_rail_size():
+    plugin = _plugin()
+
+    for league_code, path in sports_dashboard_module.LOCAL_CLUB_LEAGUE_ICON_PATHS.items():
+        icon = plugin._load_local_logo(path, (17, 15), alpha_threshold=8)
+        alpha = icon.getchannel("A")
+        bbox = alpha.getbbox()
+        opaque_pixels = sum(
+            alpha.getpixel((x, y)) >= 240
+            for y in range(alpha.height)
+            for x in range(alpha.width)
+        )
+
+        assert bbox is not None, league_code
+        assert bbox[2] - bbox[0] >= 10, league_code
+        assert opaque_pixels >= 30, league_code
+
+
+def test_club_panel_routes_every_league_badge_through_local_first_renderer(
+    monkeypatch,
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    selection = _sample_club_selection_for_render(now)
+    for event in selection["rail"]:
+        event["league_logo_url"] = ""
+    selection["rail"][2]["no_schedule"] = True
+
+    icon_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_draw_club_league_icon_contained",
+        lambda _image, league_code, logo_url, *_args, **_kwargs: icon_calls.append(
+            (league_code, logo_url)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_club_logo_contained",
+        lambda *_args, **_kwargs: (0, 0),
+    )
+
+    plugin._render_club_football_panel(
+        (536, 240), selection, "CLUB LIVE", None, now
+    )
+
+    assert icon_calls[0] == ("PL", "")
+    assert icon_calls[1:] == [
+        ("PL", ""),
+        ("PD", ""),
+        ("BL1", ""),
+        ("SA", ""),
+        ("FL1", ""),
+    ]
+
+
+@pytest.mark.parametrize("league_code", ["PL", "FL1"])
+@pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_club_monochrome_badges_contrast_with_both_panel_themes(
+    palette,
+    league_code,
+):
+    plugin = _plugin()
+    token = _ACTIVE_COLORS.set(palette)
+    try:
+        image = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+        rendered_size = plugin._draw_club_league_icon_contained(
+            image,
+            league_code,
+            "",
+            (0, 0, 24, 24),
+            Path("unused"),
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    pixels = image.load()
+    opaque = [
+        pixels[x, y][:3]
+        for y in range(image.height)
+        for x in range(image.width)
+        if pixels[x, y][3] >= 240
+    ]
+    assert rendered_size[0] > 0 and rendered_size[1] > 0
+    assert opaque
+    foreground = tuple(
+        sum(pixel[channel] for pixel in opaque) / len(opaque)
+        for channel in range(3)
+    )
+
+    def relative_luminance(rgb):
+        normalized = []
+        for channel in rgb:
+            value = channel / 255
+            normalized.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * normalized[0]
+            + 0.7152 * normalized[1]
+            + 0.0722 * normalized[2]
+        )
+
+    foreground_luminance = relative_luminance(foreground)
+    background_luminance = relative_luminance(palette["panel"])
+    contrast = (
+        max(foreground_luminance, background_luminance) + 0.05
+    ) / (
+        min(foreground_luminance, background_luminance) + 0.05
+    )
+    assert contrast >= 3.0
+
+
 def test_club_focus_uses_img2_league_wordmark_instead_of_plain_text(monkeypatch):
     plugin = _plugin()
     assert hasattr(plugin, "_draw_club_league_wordmark")
@@ -17476,13 +17963,22 @@ def test_worldcup_schedule_summary_reads_cache_without_extra_fetch(monkeypatch, 
     assert summary["final_complete"] is True
     assert summary["source_state"] == "ESPN CACHE"
 
-def test_club_football_source_check_summary_fails_only_on_failed_checks():
+def _load_club_football_source_checker(module_name):
     import importlib.util
 
     tool_path = Path(__file__).resolve().parents[4] / "tools" / "check_club_football_sources.py"
-    spec = importlib.util.spec_from_file_location("check_club_football_sources", tool_path)
+    if not tool_path.is_file():
+        pytest.skip("repository-only club football source checker is not packaged")
+    spec = importlib.util.spec_from_file_location(module_name, tool_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_club_football_source_check_summary_fails_only_on_failed_checks():
+    module = _load_club_football_source_checker(
+        "check_club_football_sources"
+    )
 
     healthy_code, healthy_lines = module.summarize_checks(
         [
@@ -17526,6 +18022,81 @@ def test_club_team_name_localization_supports_all_five_leagues(
     ) == expected_zh
 
 
+@pytest.mark.parametrize(
+    ("league_code", "provider_name", "expected_zh"),
+    [
+        ("PL", "Hull City AFC", "赫尔城"),
+        ("PL", "Sunderland AFC", "桑德兰"),
+        ("PD", "Club Atlético de Madrid", "马德里竞技"),
+        ("PD", "Deportivo Alavés", "阿拉维斯"),
+        ("PD", "FC Barcelona", "巴塞罗那"),
+        ("PD", "RC Celta de Vigo", "塞尔塔"),
+        ("PD", "RCD Espanyol de Barcelona", "西班牙人"),
+        ("PD", "Levante UD", "莱万特"),
+        ("PD", "RCD Mallorca", "马略卡"),
+        ("PD", "CA Osasuna", "奥萨苏纳"),
+        ("PD", "Rayo Vallecano de Madrid", "巴列卡诺"),
+        ("PD", "Real Betis Balompié", "皇家贝蒂斯"),
+        ("PD", "Real Sociedad de Fútbol", "皇家社会"),
+        ("BL1", "1. FC Köln", "科隆"),
+        ("BL1", "SV Werder Bremen", "云达不莱梅"),
+        ("BL1", "1. FC Heidenheim 1846", "海登海姆"),
+        ("BL1", "TSG 1899 Hoffenheim", "霍芬海姆"),
+        ("BL1", "Hamburger SV", "汉堡"),
+        ("BL1", "Bayer 04 Leverkusen", "勒沃库森"),
+        ("BL1", "1. FSV Mainz 05", "美因茨"),
+        ("BL1", "FC St. Pauli 1910", "圣保利"),
+        ("SA", "AC Pisa 1909", "比萨"),
+        ("SA", "Atalanta BC", "亚特兰大"),
+        ("SA", "Bologna FC 1909", "博洛尼亚"),
+        ("SA", "Como 1907", "科莫"),
+        ("SA", "US Cremonese", "克雷莫内塞"),
+        ("SA", "ACF Fiorentina", "佛罗伦萨"),
+        ("SA", "Genoa CFC", "热那亚"),
+        ("SA", "FC Internazionale Milano", "国际米兰"),
+        ("SA", "SS Lazio", "拉齐奥"),
+        ("SA", "US Lecce", "莱切"),
+        ("SA", "SSC Napoli", "那不勒斯"),
+        ("SA", "Parma Calcio 1913", "帕尔马"),
+        ("SA", "US Sassuolo Calcio", "萨索洛"),
+        ("FL1", "Angers SCO", "昂热"),
+        ("FL1", "Stade Brestois 29", "布雷斯特"),
+        ("FL1", "FC Metz", "梅斯"),
+        ("FL1", "Lille OSC", "里尔"),
+        ("FL1", "FC Lorient", "洛里昂"),
+        ("FL1", "Olympique de Marseille", "马赛"),
+        ("FL1", "FC Nantes", "南特"),
+        ("FL1", "OGC Nice", "尼斯"),
+        ("FL1", "Olympique Lyonnais", "里昂"),
+        ("FL1", "Racing Club de Lens", "朗斯"),
+        ("FL1", "Stade Rennais FC 1901", "雷恩"),
+        ("FL1", "RC Strasbourg Alsace", "斯特拉斯堡"),
+        ("FL1", "ES Troyes AC", "特鲁瓦"),
+    ],
+)
+def test_club_team_name_localization_supports_known_football_data_aliases(
+    league_code, provider_name, expected_zh
+):
+    assert (
+        SportsDashboard._club_team_zh_name(league_code, provider_name)
+        == expected_zh
+    )
+
+
+def test_club_team_name_localization_preserves_named_unmapped_team():
+    assert (
+        SportsDashboard._club_team_zh_name("SA", "Example United 1907")
+        == "Example United 1907"
+    )
+
+
+@pytest.mark.parametrize("provider_name", ["", "TBD", "To Be Determined"])
+def test_club_team_name_localization_reserves_pending_label_for_real_placeholders(
+    provider_name,
+):
+    assert SportsDashboard._club_team_zh_name("SA", provider_name) == "待定球队"
+
+
 def test_parse_club_espn_event_keeps_english_match_keys_and_adds_chinese_names():
     event = SportsDashboard._parse_club_espn_events(
         "PL", _sample_club_espn_payload(), timezone.utc
@@ -17535,6 +18106,70 @@ def test_parse_club_espn_event_keeps_english_match_keys_and_adds_chinese_names()
     assert event["away_name"] == "Chelsea"
     assert event["home_name_zh"] == "阿森纳"
     assert event["away_name_zh"] == "切尔西"
+
+
+def test_parse_club_football_data_event_localizes_fc_bayern_munchen():
+    matches = [
+        {
+            "id": 401884817,
+            "utcDate": "2026-08-28T18:30:00Z",
+            "status": "SCHEDULED",
+            "homeTeam": {
+                "id": 5,
+                "name": "FC Bayern München",
+                "shortName": "Bayern",
+                "tla": "FCB",
+                "crest": "https://crests.football-data.org/5.svg",
+            },
+            "awayTeam": {
+                "id": 10,
+                "name": "VfB Stuttgart",
+                "shortName": "Stuttgart",
+                "tla": "VFB",
+                "crest": "https://crests.football-data.org/10.svg",
+            },
+            "score": {"fullTime": {"home": None, "away": None}},
+        }
+    ]
+
+    event = SportsDashboard._parse_club_football_data_events(
+        "BL1", matches, timezone.utc
+    )[0]
+
+    assert event["home_name_zh"] == "拜仁慕尼黑"
+    assert event["away_name_zh"] == "斯图加特"
+
+
+def test_parse_club_football_data_alias_keeps_original_event_match_keys():
+    matches = [
+        {
+            "id": 544857,
+            "utcDate": "2026-08-23T18:45:00Z",
+            "status": "SCHEDULED",
+            "homeTeam": {
+                "id": 7397,
+                "name": "Como 1907",
+                "shortName": "Como",
+                "tla": "COM",
+            },
+            "awayTeam": {
+                "id": 115,
+                "name": "Udinese Calcio",
+                "shortName": "Udinese",
+                "tla": "UDI",
+            },
+            "score": {"fullTime": {"home": None, "away": None}},
+        }
+    ]
+
+    event = SportsDashboard._parse_club_football_data_events(
+        "SA", matches, timezone.utc
+    )[0]
+
+    assert event["home_name"] == "Como 1907"
+    assert event["home_name_zh"] == "科莫"
+    assert event["home_normalized"] == "como1907"
+    assert ":como1907:" in event["event_key"]
 
 
 def _sample_all_league_chinese_render_selection(now):
@@ -17654,12 +18289,9 @@ def test_club_title_headers_use_shared_sports_dashboard_palette(monkeypatch):
     assert panel.getpixel((300, 20)) == COLORS["border"]
 
 def test_club_source_checker_reports_unmapped_chinese_team_names():
-    import importlib.util
-
-    tool_path = Path(__file__).resolve().parents[4] / "tools" / "check_club_football_sources.py"
-    spec = importlib.util.spec_from_file_location("check_club_football_sources_zh", tool_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_club_football_source_checker(
+        "check_club_football_sources_zh"
+    )
     payload = {
         "events": [
             {
@@ -17679,6 +18311,52 @@ def test_club_source_checker_reports_unmapped_chinese_team_names():
 
     assert result["status"] == "FAIL"
     assert "Unknown United" in result["detail"]
+
+
+def test_club_source_checker_reports_unmapped_football_data_team_names():
+    module = _load_club_football_source_checker(
+        "check_club_football_sources_football_data_zh"
+    )
+    matches = [
+        {
+            "homeTeam": {"name": "Como 1907"},
+            "awayTeam": {"name": "Unknown United"},
+        }
+    ]
+
+    result = module._football_data_team_name_coverage(matches, "SA")
+
+    assert result["status"] == "FAIL"
+    assert "Unknown United" in result["detail"]
+    assert "Como 1907" not in result["detail"]
+
+
+def test_football_data_source_checks_include_chinese_name_coverage(monkeypatch):
+    module = _load_club_football_source_checker(
+        "check_club_football_sources_football_data_run"
+    )
+    monkeypatch.setattr(module, "_football_data_key", lambda: "test-token")
+    monkeypatch.setattr(module, "CLUB_FOOTBALL_LEAGUES", {"SA": {}})
+    monkeypatch.setattr(
+        module,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "matches": [
+                {
+                    "homeTeam": {"name": "Como 1907"},
+                    "awayTeam": {"name": "Unknown United"},
+                }
+            ]
+        },
+    )
+
+    results = module.run_football_data_checks(
+        now=datetime(2026, 7, 22, tzinfo=timezone.utc)
+    )
+
+    assert [result["status"] for result in results] == ["PASS", "FAIL"]
+    assert "Unknown United" in results[1]["detail"]
+
 
 def test_club_football_data_localization_does_not_reuse_espn_team_ids():
     matches = _sample_club_football_data_matches()

@@ -309,4 +309,5 @@ class BasePlugin:
         return get_browser_renderer().render_html(
             rendered_html,
             viewport=dimensions,
+            failure_domain=f"{self.get_plugin_id()}:{html_file}",
         )

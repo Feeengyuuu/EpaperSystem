@@ -28,15 +28,16 @@ import hashlib
 import json
 import logging
 import os
+import pytz
 import re
 from plugins.newspaper.constants import NEWSPAPERS
 from plugins.newspaper.presentation_bank import (
-    FRESH_SECONDS,
-    READY_TARGET,
-    REFILL_THRESHOLD,
+    MEDIA_MAX_FILES,
+    MAX_RECORDS_PER_PROFILE,
     NewspaperPresentationBank,
     instance_profile_fingerprint,
     read_state,
+    record_is_fresh,
     settings_fingerprint,
     settings_key,
     write_state,
@@ -48,7 +49,6 @@ logger = logging.getLogger(__name__)
 
 FREEDOM_FORUM_URL = "https://cdn.freedomforum.org/dfp/jpg{}/lg/{}.jpg"
 LYWB_A01_PDF_URL = "https://lywb.lyd.com.cn/images2/2/{year_month}/{day}/A01/{stamp}A01_pdf.pdf"
-LYWB_LOOKBACK_DAYS = 10
 NEWS_FRONTPAGE_ROTATION_VERSION = "news-frontpage-rotation-v1"
 MAX_DATA_SECONDS = 90.0
 MAX_BROWSER_SECONDS = 40.0
@@ -56,6 +56,7 @@ MAX_HTTP_SECONDS = 20.0
 MAX_DATA_SOURCES = 4
 MAX_BROWSER_SOURCES = 1
 MAX_HTTP_SOURCES = 3
+MAX_ROTATING_SOURCES = min(MAX_RECORDS_PER_PROFILE, MEDIA_MAX_FILES) - 2
 MAX_REDIRECTS = 4
 MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_PDF_BYTES = 25 * 1024 * 1024
@@ -477,7 +478,12 @@ class Newspaper(BasePlugin):
         if not sources:
             raise RuntimeError("Newspaper input not provided.")
         dimensions = self.get_dimensions(device_config)
-        bank = self._presentation_bank(settings, sources, dimensions)
+        bank = self._presentation_bank(
+            settings,
+            sources,
+            dimensions,
+            device_config=device_config,
+        )
 
         def check_deadline():
             _remaining_timeout(deadline, self._monotonic, MAX_DATA_SECONDS)
@@ -510,7 +516,8 @@ class Newspaper(BasePlugin):
                 raise RuntimeError("Newspaper protected recovery exceeded the shared DATA quota")
             ready = bank.ready_records(profile, prune=True)
             fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
-            if len(fresh_ready) < REFILL_THRESHOLD:
+            fresh_source_ids = {item["source"]["id"] for item in fresh_ready}
+            if len(fresh_source_ids) < len(sources):
                 profile["refill_in_progress"] = True
             if force_refresh or profile.get("refill_in_progress") is True:
                 provider_attempted_at = self._now_utc().isoformat()
@@ -522,7 +529,7 @@ class Newspaper(BasePlugin):
                 while (
                     scanned < len(sources)
                     and attempt_budget.total < MAX_DATA_SOURCES
-                    and (len(fresh_ready) < READY_TARGET or force_attempt_pending)
+                    and (len(fresh_source_ids) < len(sources) or force_attempt_pending)
                 ):
                     check_deadline()
                     source_index = scan_cursor
@@ -530,6 +537,8 @@ class Newspaper(BasePlugin):
                     scan_cursor = (scan_cursor + 1) % len(sources)
                     scanned += 1
                     is_browser = source["type"] == "url"
+                    if source["id"] in fresh_source_ids and not force_attempt_pending:
+                        continue
                     if not attempt_budget.claim(source):
                         if first_unattempted is None:
                             first_unattempted = source_index
@@ -561,11 +570,22 @@ class Newspaper(BasePlugin):
                             deadline_check=check_deadline,
                         )
                         ready = [item for item in ready if item["source"]["id"] != source["id"]]
-                        fresh_record = {**record, "provenance": "fresh_cache"}
+                        is_fresh = record_is_fresh(
+                            record,
+                            self._now_utc(),
+                            bank.local_timezone,
+                        )
+                        fresh_record = {
+                            **record,
+                            "provenance": "fresh_cache" if is_fresh else "stale_cache",
+                        }
                         ready.append(fresh_record)
                         fresh_ready = [item for item in fresh_ready if item["source"]["id"] != source["id"]]
-                        fresh_ready.append(fresh_record)
-                        captured_keys.add(record["record_key"])
+                        fresh_source_ids.discard(source["id"])
+                        if is_fresh:
+                            fresh_ready.append(fresh_record)
+                            fresh_source_ids.add(source["id"])
+                            captured_keys.add(record["record_key"])
                         provider_success = True
                     except Exception as exc:
                         provider_had_error = True
@@ -592,7 +612,8 @@ class Newspaper(BasePlugin):
             )
             ready = bank.ready_records(profile, prune=True)
             fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
-            profile["refill_in_progress"] = len(fresh_ready) < READY_TARGET
+            fresh_source_ids = {item["source"]["id"] for item in fresh_ready}
+            profile["refill_in_progress"] = len(fresh_source_ids) < len(sources)
             if not ready:
                 placeholder = self._render_metadata_placeholder(
                     sources[int(profile.get("refill_cursor") or 0) % len(sources)],
@@ -608,8 +629,16 @@ class Newspaper(BasePlugin):
                     placeholder,
                     SourceProvenance.LOCAL_FALLBACK,
                 )
-            current = bank.ensure_current(profile, ready)
-            record, image = bank.selection_media(profile, current)
+            current = profile.get("current_selection")
+            current_key = current.get("record_key") if isinstance(current, dict) else None
+            fresh_keys = {item["record_key"] for item in fresh_ready}
+            if current_key is None:
+                data_selection = bank.ensure_current(profile, fresh_ready or ready)
+            elif fresh_ready and current_key not in fresh_keys:
+                data_selection = bank.choose_selection(profile, fresh_ready)
+            else:
+                data_selection = bank.ensure_current(profile, ready)
+            record, image = bank.selection_media(profile, data_selection)
             image = self._normalize_display_image(image, dimensions)
             check_deadline()
             bank.save(
@@ -623,7 +652,7 @@ class Newspaper(BasePlugin):
             transaction.rollback()
             raise
 
-        provenance = self._record_provenance(record)
+        provenance = self._record_provenance(record, bank.local_timezone)
         image.info["inkypi_source_provenance"] = "live" if record["record_key"] in captured_keys else provenance
         trusted = (
             SourceProvenance.LIVE
@@ -654,21 +683,30 @@ class Newspaper(BasePlugin):
         settings = settings or {}
         sources = self._sources_for_settings(settings)
         dimensions = self.get_dimensions(device_config)
-        bank = self._presentation_bank(settings, sources, dimensions)
+        bank = self._presentation_bank(
+            settings,
+            sources,
+            dimensions,
+            device_config=device_config,
+        )
         document, profile = bank.load_warm()
         ready = bank.ready_records(profile, prune=False)
         fresh_ready = [item for item in ready if item.get("provenance") == "fresh_cache"]
         pending = bank.pending_for_request(profile, request.request_id)
         fresh_keys = {item["record_key"] for item in fresh_ready}
         if pending is not None and pending.get("record_key") not in fresh_keys:
-            logger.info(
-                "Newspaper presentation kept the current display while pending media refreshes."
-            )
-            return PresentationPreparation(
-                request_id=request.request_id,
-                image=None,
-                changed=False,
-            )
+            if fresh_ready:
+                profile["pending_selection"] = None
+                pending = None
+            else:
+                logger.info(
+                    "Newspaper presentation kept the current display while pending media refreshes."
+                )
+                return PresentationPreparation(
+                    request_id=request.request_id,
+                    image=None,
+                    changed=False,
+                )
         if pending is None and not fresh_ready:
             logger.info(
                 "Newspaper presentation kept the current display while the fresh-media bank warms."
@@ -691,7 +729,10 @@ class Newspaper(BasePlugin):
             if mode in {"day", "night"}:
                 image.info["inkypi_theme_mode"] = mode
         record, _media = bank.selection_media(profile, selection)
-        image.info["inkypi_source_provenance"] = self._record_provenance(record)
+        image.info["inkypi_source_provenance"] = self._record_provenance(
+            record,
+            bank.local_timezone,
+        )
         if pending is None:
             bank.set_pending(document, profile, request, selection)
         return PresentationPreparation(
@@ -735,7 +776,7 @@ class Newspaper(BasePlugin):
             }
         ]
 
-    def _presentation_bank(self, settings, sources, dimensions):
+    def _presentation_bank(self, settings, sources, dimensions, *, device_config=None):
         instance_uuid = get_presentation_instance_uuid(settings)
         if instance_uuid is None:
             raise RuntimeError("Newspaper bank requires trusted instance identity")
@@ -750,7 +791,25 @@ class Newspaper(BasePlugin):
             profile_settings_key=key,
             instance_uuid=instance_uuid,
             now=self._now_utc,
+            local_timezone=self._device_timezone(device_config),
         )
+
+    @staticmethod
+    def _device_timezone(device_config):
+        timezone_name = "UTC"
+        if device_config is not None:
+            try:
+                timezone_name = device_config.get_config("timezone", "UTC") or "UTC"
+            except (AttributeError, TypeError):
+                timezone_name = "UTC"
+        try:
+            return pytz.timezone(str(timezone_name))
+        except Exception:
+            logger.warning(
+                "Invalid Newspaper device timezone %r; falling back to UTC.",
+                timezone_name,
+            )
+            return pytz.UTC
 
     def _presentation_state_path(self):
         return self.data_dir(create=False) / ".newspaper_presentation_state.json"
@@ -835,7 +894,12 @@ class Newspaper(BasePlugin):
     def _generate_theme_only(self, settings, device_config):
         sources = self._sources_for_settings(settings)
         dimensions = self.get_dimensions(device_config)
-        bank = self._presentation_bank(settings, sources, dimensions)
+        bank = self._presentation_bank(
+            settings,
+            sources,
+            dimensions,
+            device_config=device_config,
+        )
         _document, profile = bank.load_warm()
         current = profile.get("current_selection")
         if current is None:
@@ -856,7 +920,10 @@ class Newspaper(BasePlugin):
         mode = theme.get("mode")
         if mode in {"day", "night"}:
             image.info["inkypi_theme_mode"] = mode
-        image.info["inkypi_source_provenance"] = self._record_provenance(record)
+        image.info["inkypi_source_provenance"] = self._record_provenance(
+            record,
+            bank.local_timezone,
+        )
         return image
 
     def _generate_stateless_preview(self, settings, device_config):
@@ -900,12 +967,12 @@ class Newspaper(BasePlugin):
         )
         return image
 
-    def _record_provenance(self, record):
-        downloaded = datetime.fromisoformat(record["downloaded_at"])
-        if downloaded.tzinfo is None:
-            downloaded = downloaded.replace(tzinfo=timezone.utc)
-        age = (self._now_utc() - downloaded.astimezone(timezone.utc)).total_seconds()
-        return "fresh_cache" if 0 <= age <= FRESH_SECONDS else "stale_cache"
+    def _record_provenance(self, record, local_timezone=timezone.utc):
+        return (
+            "fresh_cache"
+            if record_is_fresh(record, self._now_utc(), local_timezone)
+            else "stale_cache"
+        )
 
     def _now_utc(self):
         return datetime.now(timezone.utc)
@@ -971,6 +1038,12 @@ class Newspaper(BasePlugin):
             source_id = f"{source_type}:{identity_value}"
             if source_id in seen:
                 continue
+            if len(sources) >= MAX_ROTATING_SOURCES:
+                logger.warning(
+                    "Newspaper daily pool supports at most %s sources; ignoring the rest.",
+                    MAX_ROTATING_SOURCES,
+                )
+                break
             seen.add(source_id)
             sources.append(
                 {
@@ -1066,6 +1139,7 @@ class Newspaper(BasePlugin):
             html_text,
             viewport=dimensions,
             context=context,
+            failure_domain="newspaper:front-page",
             timeout_seconds=_remaining_timeout(
                 deadline,
                 self._monotonic,
@@ -1401,13 +1475,17 @@ class Newspaper(BasePlugin):
         newspaper_slug = newspaper_slug.upper()
         deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
 
-        # Get today's date
-        today = datetime.today()
+        current = self._now_utc()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        today = current.astimezone(self._device_timezone(device_config)).date()
 
-        # check the next day, then today, then prior day
-        days = [today + timedelta(days=diff) for diff in [1, 0, -1, -2]]
+        # Asian editions can arrive one day ahead of the device, but an older
+        # edition must never be downloaded and relabelled as today's paper.
+        days = [today + timedelta(days=1), today]
 
         image = None
+        edition_date = None
         for date in days:
             _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             image_url = FREEDOM_FORUM_URL.format(date.day, newspaper_slug)
@@ -1425,6 +1503,7 @@ class Newspaper(BasePlugin):
                 image = None
             if image:
                 logger.info(f"Found {newspaper_slug} front cover for {date.strftime('%Y-%m-%d')}")
+                edition_date = date.strftime("%Y-%m-%d")
                 break
 
         if image:
@@ -1448,6 +1527,7 @@ class Newspaper(BasePlugin):
         else:
             return None
 
+        image.info["inkypi_newspaper_edition_date"] = edition_date
         return image
 
     def _fetch_luoyang_evening_news_cover(self, device_config, *, deadline=None):
@@ -1464,14 +1544,16 @@ class Newspaper(BasePlugin):
                 continue
 
             logger.info("Found Luoyang Evening News front page for %s", date.strftime("%Y-%m-%d"))
-            return self._prepare_frontpage_image(image, device_config)
+            prepared = self._prepare_frontpage_image(image, device_config)
+            prepared.info["inkypi_newspaper_edition_date"] = date.strftime("%Y-%m-%d")
+            return prepared
 
         return None
 
     def _lywb_candidate_dates(self):
         # Luoyang is UTC+8; use source-local date instead of the device timezone.
         today = datetime.utcnow() + timedelta(hours=8)
-        return [today - timedelta(days=diff) for diff in range(LYWB_LOOKBACK_DAYS + 1)]
+        return [today]
 
     def _build_lywb_pdf_url(self, date):
         return LYWB_A01_PDF_URL.format(

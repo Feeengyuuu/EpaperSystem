@@ -535,7 +535,6 @@ def _candidate_order(candidate: DueCandidate):
     fairness_time = recorded_last_attempt if attempted_current_due else due_since
     return (
         not bootstrap_first_attempt,
-        attempted_current_due,
         fairness_time,
         candidate.reason is not DueReason.BOOTSTRAP_MISSING,
         due_since,

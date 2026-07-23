@@ -22,7 +22,6 @@ from utils.theme_utils import (
 )
 from utils.plugin_cache import read_json, write_json
 from utils.http_client import get_http_session
-from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
         
@@ -254,17 +253,8 @@ class Weather(BasePlugin):
                 "weather.css",
                 template_params,
             )
-        rendered_from_cache = False
-        if image:
-            self._write_original_render_cache(image, dimensions, theme_context)
-        else:
-            image = self._read_original_render_cache(dimensions, theme_context)
-            if image is None:
-                raise RuntimeError(
-                    "Could not render the original HTML weather layout and no original screenshot cache is available."
-                )
-            rendered_from_cache = True
-            image.info["inkypi_visual_fallback"] = "weather_html_cache"
+        if image is None:
+            raise RuntimeError("Could not render the original HTML weather layout.")
         image.info[EFFECTIVE_THEME_CONTEXT_INFO_KEY] = theme_context
         if weather_provider != "OpenWeatherMap":
             provenance = SourceProvenance.LIVE
@@ -274,54 +264,9 @@ class Weather(BasePlugin):
             provenance = SourceProvenance.FRESH_CACHE
         else:
             provenance = SourceProvenance.LIVE
-        if rendered_from_cache:
-            provenance = SourceProvenance.STALE_CACHE
         if provenance is SourceProvenance.STALE_CACHE:
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
-
-    def _original_render_cache_path(self, dimensions, theme_context):
-        # Render screenshots belong in the configured persistent runtime cache,
-        # never beside plugin source files (the legacy source-data cache fallback).
-        if not (
-            os.getenv("OPENWEATHER_CACHE_DIR", "").strip()
-            or os.getenv("INKYPI_CACHE_DIR", "").strip()
-        ):
-            return None
-        width, height = (int(dimensions[0]), int(dimensions[1]))
-        mode = str((theme_context or {}).get("mode") or "day").lower()
-        if mode not in {"day", "night"}:
-            mode = "day"
-        return os.path.join(
-            self._openweather_cache_dir(),
-            f"original-html-{width}x{height}-{mode}.png",
-        )
-
-    def _write_original_render_cache(self, image, dimensions, theme_context):
-        path = self._original_render_cache_path(dimensions, theme_context)
-        if not path:
-            return
-        temporary = f"{path}.tmp-{os.getpid()}"
-        try:
-            image.convert("RGB").save(temporary, format="PNG")
-            os.replace(temporary, path)
-        except OSError:
-            logger.warning("Could not save original weather screenshot cache.", exc_info=True)
-        finally:
-            try:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
-            except OSError:
-                pass
-
-    def _read_original_render_cache(self, dimensions, theme_context):
-        path = self._original_render_cache_path(dimensions, theme_context)
-        if not path:
-            return None
-        try:
-            return safe_open_image(path).convert("RGB")
-        except (OSError, ValueError):
-            return None
 
     @staticmethod
     def _now(tz):
