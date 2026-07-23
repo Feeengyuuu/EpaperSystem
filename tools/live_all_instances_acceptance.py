@@ -86,7 +86,7 @@ HEAVY_PLUGIN_IDS = frozenset({
     "telegram_digest",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
-SUCCESS_JOB_STATUS = "succeeded"
+SUCCESS_JOB_STATUSES = frozenset({"completed", "succeeded"})
 SAFE_RESPONSE_HEADERS = (
     "ETag",
     "Last-Modified",
@@ -696,6 +696,10 @@ def poll_job(
                 },
             )
         sleep(min(float(poll_interval), remaining))
+
+
+def job_succeeded(job: dict) -> bool:
+    return job.get("status") in SUCCESS_JOB_STATUSES
 
 
 def _parse_iso(value, *, code, failure_type=EvidenceFailure) -> datetime:
@@ -1937,7 +1941,7 @@ class AcceptanceRunner:
             monotonic=self.monotonic,
             sleep=self.sleep,
         )
-        if data_job.get("status") != SUCCESS_JOB_STATUS:
+        if not job_succeeded(data_job):
             raise EvidenceFailure(
                 "data_job_failed",
                 safe_details={"data_job": safe_job_record(data_job)},
@@ -1990,7 +1994,7 @@ class AcceptanceRunner:
                 monotonic=self.monotonic,
                 sleep=self.sleep,
             )
-            if display_job.get("status") != SUCCESS_JOB_STATUS:
+            if not job_succeeded(display_job):
                 raise EvidenceFailure("display_job_failed")
             runtime, manifest, display_evidence, artifacts = self._capture_display(
                 instance,

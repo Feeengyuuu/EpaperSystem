@@ -6,6 +6,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 from flask import Flask
 from PIL import Image
@@ -339,6 +340,37 @@ def test_submit_job_normalizes_the_authoritative_job_id(acceptance):
 
     assert job["id"] == "job-created-by-api"
     assert job["status"] == "queued"
+
+
+def test_public_completed_job_payload_is_accepted_as_success(acceptance, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "src"))
+    from refresh_task import RefreshTask
+    from runtime.refresh_contracts import CommandKind, JobStatus
+
+    entry = SimpleNamespace(
+        command=SimpleNamespace(
+            plugin_id="apod",
+            payload={"refresh_type": "cache_refresh"},
+            kind=CommandKind.CACHE_REFRESH,
+            instance_uuid="1" * 32,
+        ),
+        job=SimpleNamespace(
+            id="job-from-public-api",
+            status=JobStatus.SUCCEEDED,
+            submitted_at=1.0,
+            started_at=2.0,
+            completed_at=3.0,
+            cancel_requested_at=None,
+            superseded_by=None,
+            error_code=None,
+            error=None,
+        ),
+    )
+
+    public_payload = RefreshTask._job_payload(RefreshTask.__new__(RefreshTask), entry)
+
+    assert public_payload["status"] == "completed"
+    assert acceptance.job_succeeded(public_payload)
 
 
 def test_admin_session_cookie_contains_only_admin_csrf_and_permanent_state(acceptance):
