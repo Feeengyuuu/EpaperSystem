@@ -68,7 +68,7 @@ def normalize_scales(
     if not isinstance(raw, Mapping):
         raise ValueError("NOAA scales payload must be an object")
 
-    timeline = []
+    normalized_entries: dict[str, Mapping[str, Any]] = {}
     entries: dict[str, tuple[datetime, Mapping[str, Any]]] = {}
     for product_key in ("-1", "0", "1", "2", "3"):
         entry = raw.get(product_key)
@@ -82,8 +82,18 @@ def normalize_scales(
             "r": _scale_value(entry, "R", required=product_key in {"-1", "0"}),
             "s": _scale_value(entry, "S", required=product_key in {"-1", "0"}),
         }
-        timeline.append(normalized_entry)
+        normalized_entries[product_key] = normalized_entry
         entries[product_key] = (provider_time, entry)
+
+    forecast_keys = sorted(
+        ("1", "2", "3"),
+        key=lambda product_key: (entries[product_key][0].date(), product_key),
+    )
+    timeline = [
+        normalized_entries["-1"],
+        normalized_entries["0"],
+        *(normalized_entries[product_key] for product_key in forecast_keys),
+    ]
 
     observed_at = entries["0"][0]
     if observed_at > now + _FUTURE_CLOCK_SKEW:
@@ -91,7 +101,7 @@ def normalize_scales(
 
     current = timeline[1]
     probabilities = None
-    for product_key in ("1", "2", "3"):
+    for product_key in forecast_keys:
         valid_at, entry = entries[product_key]
         raw_probabilities = (
             _nested(entry, "R").get("MinorProb"),
@@ -121,10 +131,10 @@ def normalize_scales(
         "current": {key: current[key] for key in ("g", "r", "s")},
         "forecast_g": [
             {
-                "valid_at_utc": timeline[index]["valid_at_utc"],
-                "g": timeline[index]["g"],
+                "valid_at_utc": normalized_entries[product_key]["valid_at_utc"],
+                "g": normalized_entries[product_key]["g"],
             }
-            for index in range(2, 5)
+            for product_key in forecast_keys
         ],
         "probabilities": probabilities,
         "timeline": timeline,
@@ -318,9 +328,23 @@ class SpaceWeatherRepository:
                 raw_digest=hashlib.sha256(raw_bytes).hexdigest(),
                 freshness_kind=freshness_kind,
             )
+            state = _classify_freshness(
+                envelope,
+                now_utc=now_utc,
+                freshness_kind=freshness_kind,
+                live=True,
+            )
+            if state == "unavailable":
+                raise ValueError(
+                    f"{name} provider data is outside its diagnostic age window"
+                )
             atomic_write_json(path, _serialize_envelope(envelope))
         except Exception as error:
-            cached = _read_envelope(path, expected_endpoint=endpoint)
+            cached = _read_envelope(
+                path,
+                expected_endpoint=endpoint,
+                freshness_kind=freshness_kind,
+            )
             if cached is None:
                 return SourceResult(
                     name=name,
@@ -345,19 +369,6 @@ class SpaceWeatherRepository:
                 error=_error_text(error),
             )
 
-        state = _classify_freshness(
-            envelope,
-            now_utc=now_utc,
-            freshness_kind=freshness_kind,
-            live=True,
-        )
-        if state == "unavailable":
-            return SourceResult(
-                name=name,
-                state=state,
-                envelope=None,
-                error=f"{name} provider data is outside its diagnostic age window",
-            )
         return SourceResult(
             name=name,
             state=state,
@@ -410,10 +421,10 @@ def _classify_freshness(
     provider_time = envelope.observed_at_utc or envelope.issued_at_utc
     if provider_time is None or provider_time > now + _FUTURE_CLOCK_SKEW:
         return "unavailable"
-    fetch_age = now - envelope.fetched_at_utc
-    provider_age = now - provider_time
-    if fetch_age < timedelta(0):
+    if envelope.fetched_at_utc > now + _FUTURE_CLOCK_SKEW:
         return "unavailable"
+    fetch_age = max(timedelta(0), now - envelope.fetched_at_utc)
+    provider_age = now - provider_time
 
     if freshness_kind == "scales":
         fresh_provider = provider_age <= timedelta(minutes=30)
@@ -455,11 +466,15 @@ def _serialize_envelope(envelope: SourceEnvelope) -> dict[str, Any]:
     }
 
 
-def _read_envelope(path: Path, *, expected_endpoint: str) -> SourceEnvelope | None:
+def _read_envelope(
+    path: Path,
+    *,
+    expected_endpoint: str,
+    freshness_kind: Literal["scales", "kp", "wind"],
+) -> SourceEnvelope | None:
     try:
-        if path.stat().st_size > MAX_SOURCE_CACHE_BYTES:
-            return None
-        encoded = path.read_bytes()
+        with path.open("rb") as stream:
+            encoded = stream.read(MAX_SOURCE_CACHE_BYTES + 1)
         if len(encoded) > MAX_SOURCE_CACHE_BYTES:
             return None
         raw = json.loads(encoded)
@@ -479,7 +494,7 @@ def _read_envelope(path: Path, *, expected_endpoint: str) -> SourceEnvelope | No
         payload = raw.get("payload")
         if not isinstance(payload, Mapping):
             return None
-        return SourceEnvelope(
+        envelope = SourceEnvelope(
             schema=SOURCE_CACHE_SCHEMA,
             endpoint=expected_endpoint,
             fetched_at_utc=_parse_utc(raw["fetched_at_utc"]),
@@ -490,8 +505,138 @@ def _read_envelope(path: Path, *, expected_endpoint: str) -> SourceEnvelope | No
             payload=_freeze(payload),
             raw_digest=digest,
         )
+        _validate_cached_payload(envelope, freshness_kind=freshness_kind)
+        return envelope
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def _validate_cached_payload(
+    envelope: SourceEnvelope,
+    *,
+    freshness_kind: Literal["scales", "kp", "wind"],
+) -> None:
+    payload = envelope.payload
+    observed = _parse_utc(payload["observed_at_utc"])
+    if observed != envelope.observed_at_utc:
+        raise ValueError("cached provider time does not match normalized payload")
+
+    if freshness_kind == "scales":
+        _validate_cached_scales(payload)
+        return
+    if freshness_kind == "kp":
+        _validate_cached_kp(payload)
+        return
+    if envelope.endpoint == WIND_SPEED_ENDPOINT:
+        speed = _finite_number(payload["speed_km_s"], label="solar-wind speed")
+        if speed < 0:
+            raise ValueError("cached solar-wind speed must not be negative")
+        return
+    if envelope.endpoint == WIND_MAG_ENDPOINT:
+        _finite_number(payload["bt_nt"], label="Bt")
+        bz = _finite_number(payload["bz_gsm_nt"], label="Bz")
+        direction = payload["bz_direction"]
+        expected = "south" if bz < 0 else "north" if bz > 0 else "neutral"
+        if direction != expected:
+            raise ValueError("cached Bz direction does not match its sign")
+        return
+    raise ValueError("cached wind source endpoint is unknown")
+
+
+def _validate_cached_scales(payload: Mapping[str, Any]) -> None:
+    current = _required_mapping(payload, "current")
+    for key in ("g", "r", "s"):
+        _cached_scale(current[key], required=True)
+
+    forecast = _required_sequence(payload, "forecast_g")
+    forecast_times = []
+    for item in forecast:
+        if not isinstance(item, Mapping):
+            raise ValueError("cached scales forecast row must be an object")
+        forecast_times.append(_parse_utc(item["valid_at_utc"]))
+        _cached_scale(item["g"], required=False)
+    if not forecast_times or forecast_times != sorted(forecast_times):
+        raise ValueError("cached scales forecast must be date ordered")
+
+    timeline = _required_sequence(payload, "timeline")
+    product_keys = []
+    for item in timeline:
+        if not isinstance(item, Mapping):
+            raise ValueError("cached scales timeline row must be an object")
+        product_keys.append(item["product_key"])
+        _parse_utc(item["valid_at_utc"])
+        for key in ("g", "r", "s"):
+            _cached_scale(item[key], required=item["product_key"] in {"-1", "0"})
+    if set(product_keys) != {"-1", "0", "1", "2", "3"}:
+        raise ValueError("cached scales timeline has invalid product keys")
+
+    probabilities = payload["probabilities"]
+    if probabilities is not None:
+        if not isinstance(probabilities, Mapping):
+            raise ValueError("cached scales probabilities must be an object or null")
+        _parse_utc(probabilities["valid_at_utc"])
+        for key in ("r_minor", "r_major", "s"):
+            _probability(probabilities[key])
+
+
+def _validate_cached_kp(payload: Mapping[str, Any]) -> None:
+    current = _required_mapping(payload, "current")
+    _validate_cached_kp_row(current, predicted=False)
+    if _parse_utc(current["time_tag"]) != _parse_utc(payload["observed_at_utc"]):
+        raise ValueError("cached current Kp time does not match provider time")
+
+    forecast = _required_sequence(payload, "forecast_48h")
+    forecast_times = []
+    for row in forecast:
+        if not isinstance(row, Mapping):
+            raise ValueError("cached Kp forecast row must be an object")
+        _validate_cached_kp_row(row, predicted=True)
+        forecast_times.append(_parse_utc(row["time_tag"]))
+    if forecast_times != sorted(forecast_times):
+        raise ValueError("cached Kp forecast must be date ordered")
+
+    peak = payload["predicted_peak"]
+    if peak is not None:
+        if not isinstance(peak, Mapping):
+            raise ValueError("cached Kp predicted peak must be an object or null")
+        _validate_cached_kp_row(peak, predicted=True)
+
+
+def _validate_cached_kp_row(row: Mapping[str, Any], *, predicted: bool) -> None:
+    _parse_utc(row["time_tag"])
+    kp = _finite_number(row["kp"], label="Kp")
+    if not 0 <= kp <= 9:
+        raise ValueError("cached Kp must be between 0 and 9")
+    expected_states = {"predicted"} if predicted else {"observed", "estimated"}
+    if row["observed"] not in expected_states:
+        raise ValueError("cached Kp row has an invalid observation state")
+    scale = row["noaa_scale"]
+    if scale is not None and not isinstance(scale, str):
+        raise ValueError("cached Kp noaa_scale must be a string or null")
+
+
+def _required_mapping(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = payload[key]
+    if not isinstance(value, Mapping):
+        raise ValueError(f"cached {key} must be an object")
+    return value
+
+
+def _required_sequence(payload: Mapping[str, Any], key: str) -> Sequence[Any]:
+    value = payload[key]
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise ValueError(f"cached {key} must be an array")
+    return value
+
+
+def _cached_scale(value: Any, *, required: bool) -> int | None:
+    if value is None:
+        if required:
+            raise ValueError("cached NOAA scale is missing")
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 5:
+        raise ValueError("cached NOAA scale must be an integer from 0 to 5")
+    return value
 
 
 def _kp_object_rows(raw: Sequence[Any]) -> list[Mapping[str, Any]]:

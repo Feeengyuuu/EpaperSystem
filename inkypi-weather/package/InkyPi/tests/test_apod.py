@@ -15,6 +15,7 @@ from plugins.apod import apod as apod_module  # noqa: E402
 from plugins.apod.apod import Apod  # noqa: E402
 from plugins.apod.space_weather import (  # noqa: E402
     KP_ENDPOINT,
+    MAX_SOURCE_CACHE_BYTES,
     SCALES_ENDPOINT,
     WIND_MAG_ENDPOINT,
     WIND_SPEED_ENDPOINT,
@@ -541,3 +542,276 @@ def test_wind_source_failure_does_not_overwrite_either_last_good_file(tmp_path):
     assert speed.state == "stale_cache"
     assert magnetic.state == "stale_cache"
     assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths] == snapshots
+
+
+def test_scales_forecast_dates_not_product_keys_control_order_and_probabilities(
+    tmp_path,
+):
+    raw = _fixture("noaa_scales_shuffled_dates.json")
+
+    normalized = normalize_scales(raw, now_utc=NOW_UTC)
+
+    assert [entry["product_key"] for entry in normalized["timeline"]] == [
+        "-1",
+        "0",
+        "2",
+        "3",
+        "1",
+    ]
+    assert [entry["valid_at_utc"] for entry in normalized["forecast_g"]] == [
+        "2026-07-23T00:00:00Z",
+        "2026-07-24T00:00:00Z",
+        "2026-07-25T00:00:00Z",
+    ]
+    assert normalized["probabilities"] == {
+        "valid_at_utc": "2026-07-23T00:00:00Z",
+        "r_minor": 35,
+        "r_major": 5,
+        "s": 1,
+    }
+
+    scales, _kp = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=_core_http(raw, _fixture("noaa_kp_objects.json")),
+    ).refresh_core(now_utc=NOW_UTC, context=None)
+    assert scales.envelope.valid_from_utc == datetime(
+        2026, 7, 23, tzinfo=timezone.utc
+    )
+    assert scales.envelope.valid_until_utc == datetime(
+        2026, 7, 26, tzinfo=timezone.utc
+    )
+
+
+def test_scales_kp_wind_out_of_window_http_200_preserves_every_source_last_good(
+    tmp_path,
+):
+    valid_http = FakeHttp(
+        {
+            SCALES_ENDPOINT: [_fixture("noaa_scales.json")],
+            KP_ENDPOINT: [_fixture("noaa_kp_rows.json")],
+            WIND_SPEED_ENDPOINT: [_fixture("noaa_wind_speed.json")],
+            WIND_MAG_ENDPOINT: [_fixture("noaa_wind_mag.json")],
+        }
+    )
+    repository = SpaceWeatherRepository(cache_dir=tmp_path, http=valid_http)
+    repository.refresh_core(now_utc=NOW_UTC, context=None)
+    repository.refresh_wind(now_utc=NOW_UTC, context=None)
+    paths = [
+        tmp_path / "scales.json",
+        tmp_path / "kp.json",
+        tmp_path / "wind_speed.json",
+        tmp_path / "wind_mag.json",
+    ]
+    snapshots = [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths]
+
+    old_scales = _fixture("noaa_scales.json")
+    old_scales["0"]["TimeStamp"] = "08:00:00"
+    old_kp = _fixture("noaa_kp_rows.json")
+    old_kp[1][0] = "2026-07-22T00:00:00"
+    old_kp[2][0] = "2026-07-22T03:00:00"
+    old_speed = [
+        {"proton_speed": 390, "time_tag": "2026-07-22T10:00:00Z"}
+    ]
+    old_mag = [
+        {"bt": 4.0, "bz_gsm": -1.0, "time_tag": "2026-07-22T10:00:00Z"}
+    ]
+    repository.http = FakeHttp(
+        {
+            SCALES_ENDPOINT: [old_scales],
+            KP_ENDPOINT: [old_kp],
+            WIND_SPEED_ENDPOINT: [old_speed],
+            WIND_MAG_ENDPOINT: [old_mag],
+        }
+    )
+
+    core = repository.refresh_core(now_utc=NOW_UTC, context=None)
+    wind = repository.refresh_wind(now_utc=NOW_UTC, context=None)
+
+    assert [result.state for result in (*core, *wind)] == [
+        "fresh_cache",
+        "fresh_cache",
+        "fresh_cache",
+        "fresh_cache",
+    ]
+    assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths] == snapshots
+
+
+def test_corrupt_cache_reader_uses_one_bounded_handle_not_path_read_bytes(
+    monkeypatch, tmp_path
+):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=_core_http(
+            _fixture("noaa_scales.json"), _fixture("noaa_kp_objects.json")
+        ),
+    )
+    repository.refresh_core(now_utc=NOW_UTC, context=None)
+    repository.http = _core_http(RuntimeError("offline"), RuntimeError("offline"))
+
+    def reject_unbounded_read(_path):
+        raise AssertionError("cache reader must not use Path.read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_unbounded_read)
+
+    scales, kp = repository.refresh_core(
+        now_utc=NOW_UTC + timedelta(minutes=5), context=None
+    )
+
+    assert scales.state == "fresh_cache"
+    assert kp.state == "fresh_cache"
+
+
+@pytest.mark.parametrize(
+    ("source_name", "filename"),
+    [
+        ("scales", "scales.json"),
+        ("kp", "kp.json"),
+        ("wind_speed", "wind_speed.json"),
+        ("wind_mag", "wind_mag.json"),
+    ],
+)
+def test_corrupt_source_specific_normalized_payload_is_not_accepted(
+    tmp_path, source_name, filename
+):
+    valid_responses = {
+        SCALES_ENDPOINT: [_fixture("noaa_scales.json")],
+        KP_ENDPOINT: [_fixture("noaa_kp_objects.json")],
+        WIND_SPEED_ENDPOINT: [_fixture("noaa_wind_speed.json")],
+        WIND_MAG_ENDPOINT: [_fixture("noaa_wind_mag.json")],
+    }
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path, http=FakeHttp(valid_responses)
+    )
+    repository.refresh_core(now_utc=NOW_UTC, context=None)
+    repository.refresh_wind(now_utc=NOW_UTC, context=None)
+    target = tmp_path / filename
+    malformed = json.loads(target.read_text(encoding="utf-8"))
+    malformed["payload"] = {}
+    target.write_text(json.dumps(malformed), encoding="utf-8")
+
+    repository.http = FakeHttp(
+        {
+            SCALES_ENDPOINT: [RuntimeError("offline")],
+            KP_ENDPOINT: [RuntimeError("offline")],
+            WIND_SPEED_ENDPOINT: [RuntimeError("offline")],
+            WIND_MAG_ENDPOINT: [RuntimeError("offline")],
+        }
+    )
+    failed_results = {
+        result.name: result
+        for result in (
+            *repository.refresh_core(now_utc=NOW_UTC, context=None),
+            *repository.refresh_wind(now_utc=NOW_UTC, context=None),
+        )
+    }
+    assert failed_results[source_name].state == "unavailable"
+    assert failed_results[source_name].envelope is None
+
+    repository.http = FakeHttp(
+        {
+            SCALES_ENDPOINT: [_fixture("noaa_scales.json")],
+            KP_ENDPOINT: [_fixture("noaa_kp_objects.json")],
+            WIND_SPEED_ENDPOINT: [_fixture("noaa_wind_speed.json")],
+            WIND_MAG_ENDPOINT: [_fixture("noaa_wind_mag.json")],
+        }
+    )
+    refreshed_results = {
+        result.name: result
+        for result in (
+            *repository.refresh_core(now_utc=NOW_UTC, context=None),
+            *repository.refresh_wind(now_utc=NOW_UTC, context=None),
+        )
+    }
+    assert refreshed_results[source_name].state == "live"
+    assert json.loads(target.read_text(encoding="utf-8"))["payload"]
+
+
+def test_scales_cache_fetched_at_allows_five_minute_future_clock_skew(tmp_path):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=_core_http(
+            _fixture("noaa_scales.json"), _fixture("noaa_kp_objects.json")
+        ),
+    )
+    repository.refresh_core(now_utc=NOW_UTC, context=None)
+    path = tmp_path / "scales.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["fetched_at_utc"] = "2026-07-22T12:25:00Z"
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    repository.http = _core_http(RuntimeError("offline"), RuntimeError("offline"))
+
+    allowed, _kp = repository.refresh_core(now_utc=NOW_UTC, context=None)
+
+    assert allowed.state == "fresh_cache"
+
+    persisted["fetched_at_utc"] = "2026-07-22T12:25:01Z"
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    repository.http = _core_http(RuntimeError("offline"), RuntimeError("offline"))
+    rejected, _kp = repository.refresh_core(now_utc=NOW_UTC, context=None)
+    assert rejected.state == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "expected_state"),
+    [
+        (datetime(2026, 7, 22, 15, 30, tzinfo=timezone.utc), "live"),
+        (datetime(2026, 7, 22, 15, 30, 1, tzinfo=timezone.utc), "stale_cache"),
+        (datetime(2026, 7, 22, 18, 0, tzinfo=timezone.utc), "stale_cache"),
+        (datetime(2026, 7, 22, 18, 0, 1, tzinfo=timezone.utc), "unavailable"),
+    ],
+)
+def test_kp_three_hour_grace_and_six_hour_diagnostic_boundaries(
+    tmp_path, now_utc, expected_state
+):
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path / now_utc.isoformat().replace(":", "-"),
+        http=_core_http(
+            _fixture("noaa_scales.json"), _fixture("noaa_kp_rows.json")
+        ),
+    )
+
+    _scales, kp = repository.refresh_core(now_utc=now_utc, context=None)
+
+    assert kp.state == expected_state
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "expected_state"),
+    [
+        (datetime(2026, 7, 22, 12, 48, tzinfo=timezone.utc), "live"),
+        (datetime(2026, 7, 22, 12, 48, 1, tzinfo=timezone.utc), "stale_cache"),
+        (datetime(2026, 7, 22, 13, 18, tzinfo=timezone.utc), "stale_cache"),
+        (datetime(2026, 7, 22, 13, 18, 1, tzinfo=timezone.utc), "unavailable"),
+    ],
+)
+def test_wind_and_magnetic_thirty_and_sixty_minute_boundaries(
+    tmp_path, now_utc, expected_state
+):
+    magnetic = _fixture("noaa_wind_mag.json")
+    magnetic[1]["time_tag"] = "2026-07-22T12:18:00Z"
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path / now_utc.isoformat().replace(":", "-"),
+        http=FakeHttp(
+            {
+                WIND_SPEED_ENDPOINT: [_fixture("noaa_wind_speed.json")],
+                WIND_MAG_ENDPOINT: [magnetic],
+            }
+        ),
+    )
+
+    speed, field = repository.refresh_wind(now_utc=now_utc, context=None)
+
+    assert speed.state == expected_state
+    assert field.state == expected_state
+
+
+def test_corrupt_oversized_cache_is_bounded_and_unavailable(tmp_path):
+    (tmp_path / "scales.json").write_bytes(b"{" + b"x" * MAX_SOURCE_CACHE_BYTES)
+    repository = SpaceWeatherRepository(
+        cache_dir=tmp_path,
+        http=_core_http(RuntimeError("offline"), RuntimeError("offline")),
+    )
+
+    scales, _kp = repository.refresh_core(now_utc=NOW_UTC, context=None)
+
+    assert scales.state == "unavailable"
