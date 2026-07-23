@@ -3,6 +3,8 @@
     <input type="date" id="customDate" name="customDate" class="form-input" />
 </div>
 
+<input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="false">
+
 <div class="form-group">
     <label for="randomizeApod" class="form-label">Randomize date</label>
     <div class="toggle-container">
@@ -22,17 +24,19 @@
         const $toggle = document.getElementById('randomizeApod');
         const $date = document.getElementById('customDate');
 
-        const today = new Date().toISOString().split('T')[0];
-
         if (loadPluginSettings) {
-            $toggle.checked = pluginSettings.randomizeApod === 'true';
-            $toggle.value = pluginSettings.randomizeApod;
-            $date.value = pluginSettings.customDate || today;
+            const randomized = pluginSettings.randomizeApod === true
+                || pluginSettings.randomizeApod === 'true';
+            $toggle.checked = randomized;
+            $toggle.value = randomized ? 'true' : 'false';
+            $date.value = typeof pluginSettings.customDate === 'string'
+                ? pluginSettings.customDate
+                : '';
             $date.disabled = $toggle.checked;
         } else {
             $toggle.checked = false;
             $toggle.value = "false";
-            $date.value = today;
+            $date.value = "";
         }
     });
 </script>

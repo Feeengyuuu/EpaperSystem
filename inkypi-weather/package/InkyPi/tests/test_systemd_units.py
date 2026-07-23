@@ -1,4 +1,5 @@
 import configparser
+import json
 import re
 import subprocess
 import sys
@@ -198,6 +199,93 @@ def test_shared_release_archive_builder_excludes_yahei_binaries_from_any_directo
         "src/plugins/sports_dashboard/fonts/msyhbd.ttc",
         "vendor/deep/fonts/MSYHL.TTC",
     }.isdisjoint(members)
+
+
+def test_release_archive_builder_excludes_source_migration_control_files(tmp_path):
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.py").write_text("print('included')\n", encoding="utf-8")
+    install = project / "install"
+    install.mkdir()
+    (install / ".release-migrations.json").write_text(
+        '{"schema_version": 99, "migrations": ["untrusted"]}\n',
+        encoding="utf-8",
+    )
+    (install / ".nasapics-space-weather-v1.expectation.json").write_text(
+        '{"release_id": "source-tree-must-not-seed-device-identity"}\n',
+        encoding="utf-8",
+    )
+    nested = project / "nested" / "install"
+    nested.mkdir(parents=True)
+    (nested / ".release-migrations.json").write_text(
+        '{"schema_version": 1, "migrations": ["untrusted"]}\n',
+        encoding="utf-8",
+    )
+    (nested / ".nasapics-space-weather-v1.expectation.json").write_text(
+        '{"instance_uuid": "must-not-survive-anywhere"}\n',
+        encoding="utf-8",
+    )
+    artifact = tmp_path / "release.zip"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_ARCHIVE_HELPER),
+            str(project),
+            str(artifact),
+        ],
+        check=True,
+    )
+
+    with zipfile.ZipFile(artifact) as archive:
+        members = set(archive.namelist())
+    assert "src/app.py" in members
+    assert "install/.release-migrations.json" not in members
+    assert "install/.nasapics-space-weather-v1.expectation.json" not in members
+    assert not any(
+        Path(member).name
+        in {
+            ".release-migrations.json",
+            ".nasapics-space-weather-v1.expectation.json",
+        }
+        for member in members
+    )
+
+
+def test_release_archive_builder_injects_only_sanitized_nasapics_request(tmp_path):
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.py").write_text("print('included')\n", encoding="utf-8")
+    install = project / "install"
+    install.mkdir()
+    (install / ".nasapics-space-weather-v1.expectation.json").write_text(
+        '{"instance_uuid": "must-not-survive"}\n',
+        encoding="utf-8",
+    )
+    artifact = tmp_path / "release.zip"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(RELEASE_ARCHIVE_HELPER),
+            "--migration",
+            "nasapics_space_weather_v1",
+            str(project),
+            str(artifact),
+        ],
+        check=True,
+    )
+
+    with zipfile.ZipFile(artifact) as archive:
+        members = set(archive.namelist())
+        request = json.loads(
+            archive.read("install/.release-migrations.json").decode("utf-8")
+        )
+    assert request == {
+        "schema_version": 1,
+        "migrations": ["nasapics_space_weather_v1"],
+    }
+    assert "install/.nasapics-space-weather-v1.expectation.json" not in members
 
 
 @pytest.mark.parametrize(
