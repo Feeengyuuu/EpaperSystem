@@ -628,3 +628,31 @@ def test_config_public_plugins_are_json_serializable_but_runtime_keeps_manifest(
     assert "_manifest" not in public_plugins[0]
     assert json.loads(json.dumps(public_plugins))[0]["id"] == "lazy"
     assert isinstance(runtime_plugins[0]["_manifest"], PluginManifest)
+
+
+def test_nasapics_manifest_is_exactly_cache_only_without_plugin_owned_hooks():
+    manifest_path = PLUGIN_SOURCE_ROOT / "apod" / "plugin-info.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert payload == {
+        "schema_version": 2,
+        "refresh_on_display": False,
+        "capabilities": {
+            "supports_presentation_refresh": False,
+            "supports_live_refresh": False,
+            "supports_day_night_theme": False,
+        },
+        "display_name": "NASA Astronomy Picture Of the Day",
+        "id": "apod",
+        "class": "Apod",
+    }
+
+    from plugins.apod.apod import Apod
+
+    assert {
+        "presentation_mode",
+        "prepare_presentation",
+        "reconcile_presentation_receipt",
+        "get_live_refresh_state",
+        "resolve_theme",
+    }.isdisjoint(Apod.__dict__)

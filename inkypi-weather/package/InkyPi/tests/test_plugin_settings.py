@@ -1,3 +1,8 @@
+import json
+import re
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from plugins.plugin_settings import (
@@ -72,4 +77,146 @@ def test_base_default_is_used_only_when_instance_and_manifest_are_missing(
     assert (
         resolve_refresh_on_display(None, None, base_default=base_default)
         is base_default
+    )
+
+
+APOD_SETTINGS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "plugins"
+    / "apod"
+    / "settings.html"
+)
+
+
+def _run_nasapics_settings_roundtrip(plugin_settings):
+    html = APOD_SETTINGS_PATH.read_text(encoding="utf-8")
+    refresh_fields = [
+        tag
+        for tag in re.findall(r"<input\b[^>]*>", html, flags=re.IGNORECASE)
+        if re.search(
+            r"\bname=[\"']refreshOnDisplay[\"']",
+            tag,
+            flags=re.IGNORECASE,
+        )
+    ]
+    assert len(refresh_fields) == 1
+    refresh_tag = refresh_fields[0]
+    assert re.search(
+        r"\bid=[\"']refreshOnDisplay[\"']",
+        refresh_tag,
+        flags=re.IGNORECASE,
+    )
+    assert re.search(
+        r"\btype=[\"']hidden[\"']",
+        refresh_tag,
+        flags=re.IGNORECASE,
+    )
+    refresh_value = re.search(
+        r"\bvalue=[\"']([^\"']*)[\"']",
+        refresh_tag,
+        flags=re.IGNORECASE,
+    )
+    assert refresh_value is not None
+    assert refresh_value.group(1).lower() == "false"
+    scripts = re.findall(
+        r"<script(?:\s[^>]*)?>(.*?)</script>",
+        html,
+        flags=re.DOTALL,
+    )
+    assert scripts
+    payload = json.dumps(
+        {
+            "scripts": scripts,
+            "pluginSettings": plugin_settings,
+            "refreshOnDisplay": refresh_value.group(1),
+        }
+    )
+    harness = r"""
+const vm = require('node:vm');
+const payload = JSON.parse(process.argv[1]);
+const listeners = new Map();
+
+function element(id, name, type, value = '') {
+  return {id, name, type, value, checked: false, disabled: false};
+}
+
+const elements = {
+  customDate: element('customDate', 'customDate', 'date'),
+  randomizeApod: element('randomizeApod', 'randomizeApod', 'checkbox', 'false'),
+  refreshOnDisplay: element(
+    'refreshOnDisplay',
+    'refreshOnDisplay',
+    'hidden',
+    payload.refreshOnDisplay
+  ),
+};
+const form = {elements: Object.values(elements)};
+const document = {
+  addEventListener(type, callback) {
+    const callbacks = listeners.get(type) || [];
+    callbacks.push(callback);
+    listeners.set(type, callbacks);
+  },
+  getElementById(id) {
+    return elements[id] || null;
+  },
+};
+class FormData {
+  constructor(source) {
+    this.fields = [];
+    for (const field of source.elements) {
+      if (!field.name || field.disabled) continue;
+      if (field.type === 'checkbox' && !field.checked) continue;
+      this.fields.push([field.name, field.value]);
+    }
+  }
+  entries() { return this.fields[Symbol.iterator](); }
+}
+class ForbiddenDate {
+  constructor() { throw new Error('NASAPics settings synthesized a date'); }
+}
+const context = vm.createContext({
+  console,
+  document,
+  FormData,
+  Date: ForbiddenDate,
+  loadPluginSettings: true,
+  pluginSettings: payload.pluginSettings,
+});
+for (const script of payload.scripts) vm.runInContext(script, context);
+for (const callback of listeners.get('DOMContentLoaded') || []) callback();
+process.stdout.write(JSON.stringify({
+  dateValue: elements.customDate.value,
+  fields: [...new FormData(form).entries()],
+}));
+"""
+    completed = subprocess.run(
+        ["node", "-e", harness, payload],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize("plugin_settings", [{}, {"customDate": ""}])
+def test_nasapics_settings_roundtrip_keeps_absent_or_empty_date_empty(
+    plugin_settings,
+):
+    result = _run_nasapics_settings_roundtrip(plugin_settings)
+
+    assert result["dateValue"] == ""
+    assert ["customDate", ""] in result["fields"]
+    assert ["refreshOnDisplay", "false"] in result["fields"]
+    assert ["refreshOnDisplay", "true"] not in result["fields"]
+
+
+def test_nasapics_instance_false_wins_even_if_a_stale_manifest_was_true():
+    assert (
+        resolve_refresh_on_display(
+            {"refreshOnDisplay": "false"},
+            {"refresh_on_display": True},
+        )
+        is False
     )
