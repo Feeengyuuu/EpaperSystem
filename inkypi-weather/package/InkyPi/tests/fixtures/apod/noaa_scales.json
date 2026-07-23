@@ -1,0 +1,37 @@
+{
+  "3": {
+    "DateStamp": "2026-07-24",
+    "TimeStamp": "00:00:00",
+    "G": {"Scale": "3", "Text": "strong"},
+    "R": {"Scale": null, "Text": null, "MinorProb": "45", "MajorProb": "5"},
+    "S": {"Scale": null, "Text": null, "Prob": "5"}
+  },
+  "-1": {
+    "DateStamp": "2026-07-21",
+    "TimeStamp": "12:15:00",
+    "G": {"Scale": "4", "Text": "severe"},
+    "R": {"Scale": "3", "Text": "strong", "MinorProb": null, "MajorProb": null},
+    "S": {"Scale": "2", "Text": "moderate", "Prob": null}
+  },
+  "1": {
+    "DateStamp": "2026-07-22",
+    "TimeStamp": "12:15:00",
+    "G": {"Scale": "1", "Text": "minor"},
+    "R": {"Scale": null, "Text": null, "MinorProb": null, "MajorProb": null},
+    "S": {"Scale": null, "Text": null, "Prob": null}
+  },
+  "0": {
+    "DateStamp": "2026-07-22",
+    "TimeStamp": "12:15:00",
+    "G": {"Scale": "2", "Text": "moderate"},
+    "R": {"Scale": "1", "Text": "minor", "MinorProb": null, "MajorProb": null},
+    "S": {"Scale": "0", "Text": "none", "Prob": null}
+  },
+  "2": {
+    "DateStamp": "2026-07-23",
+    "TimeStamp": "00:00:00",
+    "G": {"Scale": "0", "Text": "none"},
+    "R": {"Scale": null, "Text": null, "MinorProb": "55", "MajorProb": "10"},
+    "S": {"Scale": null, "Text": null, "Prob": "5"}
+  }
+}

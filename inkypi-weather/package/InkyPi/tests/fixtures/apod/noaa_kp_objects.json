@@ -1,0 +1,9 @@
+[
+  {"time_tag": "2026-07-22T09:00:00", "kp": 3.33, "observed": "observed", "noaa_scale": null},
+  {"time_tag": "2026-07-24T12:21:00", "kp": 9.0, "observed": "predicted", "noaa_scale": "G5"},
+  {"time_tag": "2026-07-22T12:00:00", "kp": 4.67, "observed": "estimated", "noaa_scale": "G1"},
+  {"time_tag": "2026-07-22T12:20:00", "kp": 8.0, "observed": "predicted", "noaa_scale": "G4"},
+  {"time_tag": "2026-07-23T03:00:00", "kp": 5.67, "observed": "predicted", "noaa_scale": "G2"},
+  {"time_tag": "2026-07-24T12:20:00", "kp": 6.33, "observed": "predicted", "noaa_scale": "G2"},
+  {"time_tag": "2026-07-22T12:26:00", "kp": 7.0, "observed": "observed", "noaa_scale": "G3"}
+]
