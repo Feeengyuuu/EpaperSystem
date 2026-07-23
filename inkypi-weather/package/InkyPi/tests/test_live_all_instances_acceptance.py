@@ -1283,7 +1283,7 @@ def test_run_instance_records_prepared_request_consumed_by_exact_display(
     monkeypatch.setattr(
         acceptance,
         "poll_job",
-        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+        lambda *_args, **_kwargs: {"id": "job", "status": "succeeded"},
     )
     monkeypatch.setattr(
         runner,
@@ -1358,7 +1358,7 @@ def test_run_instance_rejects_missing_expected_presentation_request(
     monkeypatch.setattr(
         acceptance,
         "poll_job",
-        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+        lambda *_args, **_kwargs: {"id": "job", "status": "succeeded"},
     )
     monkeypatch.setattr(
         runner,
@@ -1434,7 +1434,7 @@ def test_run_instance_can_verify_fresh_data_display_without_post_display_refresh
     monkeypatch.setattr(
         acceptance,
         "poll_job",
-        lambda *_args, **_kwargs: {"id": "job", "status": "completed"},
+        lambda *_args, **_kwargs: {"id": "job", "status": "succeeded"},
     )
     monkeypatch.setattr(
         runner,

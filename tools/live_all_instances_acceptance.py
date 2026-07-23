@@ -86,7 +86,7 @@ HEAVY_PLUGIN_IDS = frozenset({
     "telegram_digest",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
-SUCCESS_JOB_STATUS = "completed"
+SUCCESS_JOB_STATUS = "succeeded"
 SAFE_RESPONSE_HEADERS = (
     "ETag",
     "Last-Modified",

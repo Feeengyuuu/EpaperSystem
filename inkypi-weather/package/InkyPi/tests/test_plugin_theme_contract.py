@@ -5,6 +5,7 @@ from utils.theme_utils import resolve_palette_roles
 
 
 PLUGIN_SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "plugins"
+STATIC_CACHE_ONLY_PLUGIN_IDS = {"apod"}
 
 
 def load_all_builtin_manifests():
@@ -38,11 +39,22 @@ def contrast_ratio(first, second):
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def test_every_builtin_renderer_owns_two_valid_palettes():
+def test_every_theme_capable_builtin_renderer_owns_two_valid_palettes():
     manifests = load_all_builtin_manifests()
 
     assert len(manifests) == 59
+    static_cache_only = {
+        manifest.id
+        for manifest in manifests
+        if not manifest.capabilities.supports_day_night_theme
+    }
+    assert static_cache_only == STATIC_CACHE_ONLY_PLUGIN_IDS
+
     for manifest in manifests:
+        if manifest.id in STATIC_CACHE_ONLY_PLUGIN_IDS:
+            assert manifest.theme is None
+            continue
+
         assert manifest.capabilities.supports_day_night_theme, manifest.id
         assert manifest.theme.presentation in {"ui", "media"}, manifest.id
         assert manifest.theme.day != manifest.theme.night, manifest.id
