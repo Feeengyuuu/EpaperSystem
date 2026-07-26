@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260726-003] best_practice
+
+**Logged**: 2026-07-26T13:28:40-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Low-memory services need execution-time admission control and an unconditional supervisor recovery path for clean memory-pressure termination.
+
+### Details
+SportsDashboard held the single render worker for several minutes while resident memory climbed until earlyoom sent `SIGTERM`. The service remained inactive because systemd classified that signal as a clean exit and `Restart=on-failure` did not restart it. A scheduler-only resource check would still race with queued work, and a cooperative restart request could still hang behind a non-daemon render worker.
+
+### Suggested Action
+Apply resource gates immediately before every renderer intent, persist lane-local deferral attempts and retry times so a blocked plugin cannot starve peers, and keep cached display provider-free. On constrained devices, quarantine unbounded heavyweight renderers behind a margin the hardware cannot accidentally satisfy. Configure the supervisor to restart clean terminations and force the process to a supervised exit only after bounded cleanup when a worker cannot join.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/runtime/runtime_state.py, inkypi-weather/package/InkyPi/src/inkypi.py, inkypi-weather/package/InkyPi/install/inkypi.service
+- Tags: low-memory, earlyoom, execution-gate, scheduler-fairness, systemd, supervised-restart
+- Pattern-Key: runtime.execution_admission_and_unconditional_supervisor_recovery
+- Recurrence-Count: 1
+- First-Seen: 2026-07-26
+- Last-Seen: 2026-07-26
+
+### Resolution
+- **Resolved**: 2026-07-26T13:50:00-07:00
+- **Commit/PR**: crash-recovery-hardening
+- **Notes**: Added execution-time heavyweight admission, persisted fair deferrals without hiding last-good cache, bounded supervised worker shutdown, and unconditional systemd recovery; 4768 tests passed.
+
+---
+
 ## [LRN-20260726-002] best_practice
 
 **Logged**: 2026-07-26T02:00:00-07:00

@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import _thread
 import argparse
 import logging
 import logging.config
 import os
+import signal
+import threading
 import time
 import warnings
 from collections.abc import Sequence
@@ -51,6 +54,34 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+MEMORY_PRESSURE_RESTART_EXIT_CODE = 75
+RESTART_REQUEST_POLL_SECONDS = 0.25
+MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS = 5.0
+PLATFORM_OS_NAME = os.name
+
+
+def _interrupt_waitress_for_restart() -> None:
+    if PLATFORM_OS_NAME == "nt":
+        _thread.interrupt_main()
+        return
+    os.kill(os.getpid(), signal.SIGINT)
+
+
+def _monitor_restart_request(refresh_task, stop_event: threading.Event) -> None:
+    while not stop_event.wait(RESTART_REQUEST_POLL_SECONDS):
+        request = getattr(refresh_task, "restart_request", None)
+        if not request:
+            continue
+        logger.error(
+            "Memory pressure restart request reached the process supervisor. | "
+            "reason: %s | available_mb: %s | swap_percent: %s",
+            request.get("reason", "unknown"),
+            request.get("available_mb", "unknown"),
+            request.get("swap_percent", "unknown"),
+        )
+        _interrupt_waitress_for_restart()
+        return
 
 
 def _mark_startup_degraded(app: Flask, stage: str, error: Exception) -> None:
@@ -209,6 +240,13 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
     device_config = app.config["DEVICE_CONFIG"]
     refresh_task = app.config["REFRESH_TASK"]
     health_collector = app.config.get("HEALTH_COLLECTOR")
+    restart_monitor_stop = threading.Event()
+    restart_monitor = threading.Thread(
+        target=_monitor_restart_request,
+        args=(refresh_task, restart_monitor_stop),
+        name="inkypi-restart-monitor",
+        daemon=True,
+    )
 
     try:
         if health_collector is not None:
@@ -230,6 +268,7 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
 
         from waitress import serve
 
+        restart_monitor.start()
         serve(
             app,
             host="0.0.0.0",
@@ -237,11 +276,43 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
             threads=_web_server_threads(device_config),
             max_request_body_size=WAITRESS_MAX_REQUEST_BODY_BYTES,
         )
+        restart_request = getattr(refresh_task, "restart_request", None)
+        if restart_request:
+            logger.error(
+                "Exiting InkyPi for supervised memory-pressure recovery. | "
+                "exit_code: %s",
+                MEMORY_PRESSURE_RESTART_EXIT_CODE,
+            )
+            return MEMORY_PRESSURE_RESTART_EXIT_CODE
         return 0
     finally:
+        restart_monitor_stop.set()
+        if restart_monitor.is_alive():
+            restart_monitor.join(timeout=1.0)
+        restart_requested = bool(getattr(refresh_task, "restart_request", None))
+        refresh_stopped = True
         try:
             try:
-                refresh_task.stop()
+                try:
+                    if restart_requested:
+                        refresh_stopped = (
+                            refresh_task.stop(
+                                join_timeout=(
+                                    MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS
+                                )
+                            )
+                            is not False
+                        )
+                    else:
+                        refresh_stopped = refresh_task.stop() is not False
+                except Exception:
+                    if not restart_requested:
+                        raise
+                    refresh_stopped = False
+                    logger.exception(
+                        "Refresh worker stop failed during memory-pressure recovery; "
+                        "continuing bounded cleanup before forced exit."
+                    )
             finally:
                 if health_collector is not None:
                     health_collector.stop()
@@ -254,7 +325,16 @@ def run(app: Flask, *, dev_mode: bool, port: int) -> int:
                 try:
                     close_browser_renderer()
                 finally:
-                    close_http_session()
+                    try:
+                        close_http_session()
+                    finally:
+                        if restart_requested and not refresh_stopped:
+                            logger.critical(
+                                "Refresh worker did not stop during memory-pressure "
+                                "recovery; forcing process exit. | exit_code: %s",
+                                MEMORY_PRESSURE_RESTART_EXIT_CODE,
+                            )
+                            os._exit(MEMORY_PRESSURE_RESTART_EXIT_CODE)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

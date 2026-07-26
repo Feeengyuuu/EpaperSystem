@@ -8529,6 +8529,36 @@ def test_failed_due_rotation_refresh_skips_stale_cache_during_backoff(
     assert playlist.is_rotation_reservation_current(stale.instance_uuid) is False
 
 
+def test_resource_deferral_keeps_last_good_rotation_cache_eligible():
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("resource-deferral-keeps-rotation-cache"),
+        playlists=[],
+    )
+    instance_uuid = "sports-dashboard-instance"
+    candidate = object()
+    task.runtime_state.record_failure(
+        instance_uuid,
+        (current_dt - timedelta(minutes=10)).isoformat(),
+        RuntimeError("older provider failure"),
+        (current_dt - timedelta(minutes=5)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_deferral(
+        instance_uuid,
+        current_dt.isoformat(),
+        (current_dt + timedelta(minutes=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+
+    eligible = task._rotation_cache_candidates_outside_refresh_backoff(
+        {instance_uuid: candidate},
+        current_dt + timedelta(seconds=1),
+    )
+
+    assert eligible == {instance_uuid: candidate}
+
+
 def test_noncacheable_due_rotation_refresh_enters_backoff_without_stale_display(
     monkeypatch,
 ):
@@ -8639,6 +8669,554 @@ def test_soft_pressure_makes_spaced_fair_progress_across_ordinary_instances(
     assert immediate is None
     assert second.intent is RefreshIntent.DATA_REFRESH
     assert second.instance_uuid != first.instance_uuid
+
+
+def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-background-execution-pressure")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    calls = []
+    resource_sample = {
+        "value": ResourceSample(available_mb=512, swap_percent=0),
+    }
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    assert command.source is CommandSource.BACKGROUND
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    resource_sample["value"] = ResourceSample(
+        available_mb=113,
+        swap_percent=50,
+    )
+    task._process_queue_entry(entry)
+
+    deferred = task.refresh_queue.get_entry(submitted.id)
+    assert deferred is not None
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_soft"
+    assert calls == []
+    state = task.runtime_state.snapshot().instances[command.instance_uuid].data
+    assert state.last_attempt_at == current_dt.isoformat()
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+    assert state.last_failure_at is None
+    assert state.last_error is None
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=512,
+        swap_percent=0,
+    )
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+
+    clock.advance(60)
+    retry = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=60)
+    )
+    assert retry is not None
+    assert retry.instance_uuid == command.instance_uuid
+
+    completed = _queue_and_process(task, retry)
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["sports_dashboard"]
+
+
+def test_heavyweight_margin_defers_sports_despite_generic_healthy_tier(monkeypatch):
+    tmp_path = make_test_dir("sports-background-heavyweight-margin")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    calls = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=300, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    completed = _queue_and_process(task, command)
+
+    assert task._resource_tier.value == "healthy"
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "heavyweight_renderer_margin"
+    assert calls == []
+    state = task.runtime_state.snapshot().instances[command.instance_uuid].data
+    assert state.last_attempt_at == current_dt.isoformat()
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+    assert state.last_failure_at is None
+    assert state.last_error is None
+
+
+def test_heavyweight_margin_allows_sports_with_ample_headroom(monkeypatch):
+    tmp_path = make_test_dir("sports-background-heavyweight-headroom")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    calls = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["sports_dashboard"]
+
+
+def test_heavyweight_renderer_margin_is_configurable(monkeypatch):
+    tmp_path = make_test_dir("sports-background-heavyweight-config")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "heavyweight_renderer_min_available_mb": 180,
+            "heavyweight_renderer_max_swap_percent": 50,
+        }
+    )
+    calls = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["sports_dashboard"]
+
+
+@pytest.mark.parametrize("unsafe_value", [True, 10**1000])
+def test_heavyweight_renderer_invalid_minimum_fails_safe(unsafe_value):
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("sports-heavyweight-invalid-minimum"),
+        playlists=[],
+    )
+    device_config.config["heavyweight_renderer_min_available_mb"] = unsafe_value
+
+    margin_available, required_available_mb, max_swap_percent = (
+        task._heavyweight_renderer_resource_margin(
+            ResourceSample(available_mb=300, swap_percent=0)
+        )
+    )
+
+    assert margin_available is False
+    assert required_available_mb == 384
+    assert max_swap_percent == 30
+
+
+def test_heavyweight_renderer_margin_blocks_manual_sports_render(monkeypatch):
+    tmp_path = make_test_dir("sports-manual-heavyweight-margin")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=current_dt.isoformat(),
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0].snapshot()
+    calls = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.MANUAL_RENDER,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+        current_dt=current_dt,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "heavyweight_renderer_margin"
+    assert calls == []
+    assert instance.instance_uuid not in task.runtime_state.snapshot().instances
+
+
+def test_heavyweight_renderer_margin_blocks_live_sports_render_and_cools_lane(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-live-heavyweight-margin")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=current_dt.isoformat(),
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0].snapshot()
+    calls = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.LIVE,
+        intent=RefreshIntent.LIVE_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+        background_live_refresh=True,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "heavyweight_renderer_margin"
+    assert calls == []
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.live.last_attempt_at == current_dt.isoformat()
+    assert state.live.next_retry_at == (
+        current_dt + timedelta(seconds=60)
+    ).isoformat()
+    assert state.data.last_attempt_at is None
+    assert state.data.next_retry_at is None
+
+
+@pytest.mark.parametrize(
+    ("intent", "expected_lane"),
+    [
+        (RefreshIntent.DATA_REFRESH, RefreshLane.DATA),
+        (RefreshIntent.LIVE_REFRESH, RefreshLane.LIVE),
+        (RefreshIntent.THEME_REDRAW, RefreshLane.THEME),
+        (RefreshIntent.PRESENTATION_REFRESH, RefreshLane.PRESENTATION),
+        (RefreshIntent.THEME_CATCHUP, None),
+        (RefreshIntent.MANUAL_RENDER, None),
+    ],
+)
+def test_heavyweight_renderer_low_margin_defers_every_renderer_intent_and_lane(
+    monkeypatch,
+    intent,
+    expected_lane,
+):
+    tmp_path = make_test_dir(f"sports-renderer-low-margin-{intent.value}")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        clock=clock,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
+    )
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: pytest.fail("low-margin renderer reached plugin work"),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.MANUAL,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-low-margin",
+        structural_generation=1,
+        settings_revision=1,
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=intent,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "heavyweight_renderer_margin"
+    runtime_instance = task.runtime_state.snapshot().instances.get(
+        command.instance_uuid
+    )
+    if expected_lane is None:
+        assert runtime_instance is None
+    else:
+        lane_state = getattr(runtime_instance, expected_lane.value)
+        assert lane_state.last_attempt_at == current_dt.isoformat()
+        assert lane_state.next_retry_at == (
+            current_dt + timedelta(seconds=60)
+        ).isoformat()
+
+
+def test_heavyweight_renderer_gate_excludes_display_cache_under_low_margin(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-display-cache-low-margin")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=current_dt.isoformat(),
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=60, swap_percent=90),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE must not invoke the plugin"),
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        display_cached_only=True,
+        current_dt=current_dt,
+        cache_theme_mode=None,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert len(task.display_manager.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "intent",
+    sorted(refresh_task_module._RENDERER_INTENTS, key=lambda value: value.value),
+)
+def test_heavyweight_renderer_gate_preserves_all_intents_with_headroom(
+    monkeypatch,
+    intent,
+):
+    tmp_path = make_test_dir(f"sports-renderer-headroom-{intent.value}")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        clock=clock,
+    )
+    executed = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_execute_command", executed.append)
+    command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-headroom",
+        structural_generation=1,
+        settings_revision=1,
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=intent,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert executed == [command]
+
+
+def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-background-soft-pressure-fairness")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        latest_refresh_time=None,
+    )
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        latest_refresh_time=None,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    calls = []
+    resource_sample = {
+        "value": ResourceSample(available_mb=512, swap_percent=0),
+    }
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(calls),
+    )
+
+    sports = task._select_independent_refresh_command(current_dt)
+    assert sports is not None
+    assert sports.plugin_id == "sports_dashboard"
+    resource_sample["value"] = ResourceSample(available_mb=113, swap_percent=50)
+    deferred = _queue_and_process(task, sports)
+
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_soft"
+    assert calls == []
+
+    clock.advance(1)
+    ordinary = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+    assert ordinary is not None
+    assert ordinary.plugin_id == "ordinary"
+    completed = _queue_and_process(task, ordinary)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["ordinary"]
+
+    clock.advance(60)
+    sports_retry = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=61)
+    )
+    assert sports_retry is not None
+    assert sports_retry.plugin_id == "sports_dashboard"
+    deferred_again = _queue_and_process(task, sports_retry)
+    assert deferred_again.job.status is JobStatus.CANCELED
+    assert deferred_again.job.error_code == "resource_pressure_soft"
+    assert calls == ["ordinary"]
 
 
 def test_hard_pressure_still_rotates_valid_caches_without_generation(monkeypatch):

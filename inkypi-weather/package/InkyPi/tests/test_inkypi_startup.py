@@ -1,7 +1,10 @@
 import importlib
+import subprocess
 import sys
+import threading
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Flask
 import pytest
@@ -471,6 +474,286 @@ def test_run_reaps_long_tasks_before_closing_browser_and_http(monkeypatch):
         "serve",
         "stop",
         "long_tasks",
+        "browser",
+        "http",
+    ]
+
+
+def test_run_consumes_staged_memory_restart_request(monkeypatch):
+    import inkypi
+    import waitress
+
+    events = []
+    interrupted = threading.Event()
+
+    class FakeConfig:
+        def get_config(self, key, default=None):
+            return False if key == "startup" else default
+
+    class RefreshTask:
+        restart_request = None
+
+        def start(self):
+            events.append("start")
+
+        def stop(self, join_timeout=None):
+            events.append(("stop", join_timeout))
+
+    refresh_task = RefreshTask()
+    app = Flask(__name__)
+    app.config.update(
+        DEVICE_CONFIG=FakeConfig(),
+        DISPLAY_MANAGER=object(),
+        REFRESH_TASK=refresh_task,
+    )
+
+    def request_memory_restart(_app, **_kwargs):
+        refresh_task.restart_request = {
+            "reason": "memory_pressure",
+            "available_mb": 40.0,
+            "swap_percent": 90.0,
+        }
+        assert interrupted.wait(1.0)
+        events.append("serve-returned")
+
+    monkeypatch.setattr(waitress, "serve", request_memory_restart)
+    monkeypatch.setattr(
+        inkypi,
+        "_interrupt_waitress_for_restart",
+        lambda: events.append("interrupt") or interrupted.set(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "RESTART_REQUEST_POLL_SECONDS",
+        0.01,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "shutdown_long_task_executors",
+        lambda **_kwargs: events.append("long-tasks"),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_browser_renderer",
+        lambda: events.append("browser"),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_http_session",
+        lambda: events.append("http"),
+    )
+
+    assert inkypi.run(app, dev_mode=False, port=80) == 75
+    assert events == [
+        "start",
+        "interrupt",
+        "serve-returned",
+        ("stop", inkypi.MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS),
+        "long-tasks",
+        "browser",
+        "http",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "expected_events"),
+    [
+        ("nt", ["interrupt-main"]),
+        ("posix", [("kill", 1234, 2)]),
+    ],
+)
+def test_memory_restart_interrupts_waitress_with_platform_safe_signal(
+    monkeypatch,
+    platform_name,
+    expected_events,
+):
+    import inkypi
+
+    events = []
+    monkeypatch.setattr(
+        inkypi,
+        "PLATFORM_OS_NAME",
+        platform_name,
+        raising=False,
+    )
+    monkeypatch.setattr(inkypi.os, "getpid", lambda: 1234)
+    monkeypatch.setattr(
+        inkypi.os,
+        "kill",
+        lambda pid, signal_number: events.append(("kill", pid, signal_number)),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "_thread",
+        SimpleNamespace(interrupt_main=lambda: events.append("interrupt-main")),
+        raising=False,
+    )
+
+    inkypi._interrupt_waitress_for_restart()
+
+    assert events == expected_events
+
+
+def test_memory_restart_force_exits_after_cleanup_when_worker_will_not_stop():
+    child_program = f"""
+import sys
+import threading
+import time
+
+sys.path.insert(0, {str(SRC_DIR)!r})
+
+from flask import Flask
+import inkypi
+import waitress
+
+
+class FakeConfig:
+    def get_config(self, key, default=None):
+        return False if key == "startup" else default
+
+
+class StuckRefreshTask:
+    restart_request = {{
+        "reason": "memory_pressure",
+        "available_mb": 40.0,
+        "swap_percent": 90.0,
+    }}
+
+    def __init__(self):
+        self.never_stop = threading.Event()
+
+    def start(self):
+        threading.Thread(
+            target=self.never_stop.wait,
+            name="stuck-refresh-worker",
+            daemon=False,
+        ).start()
+
+    def stop(self, join_timeout=None):
+        print(f"cleanup:refresh:{{join_timeout}}", flush=True)
+        return False
+
+
+def serve_until_interrupted(*_args, **_kwargs):
+    try:
+        while True:
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        return
+
+
+refresh_task = StuckRefreshTask()
+app = Flask(__name__)
+app.config.update(
+    DEVICE_CONFIG=FakeConfig(),
+    DISPLAY_MANAGER=object(),
+    REFRESH_TASK=refresh_task,
+)
+waitress.serve = serve_until_interrupted
+inkypi.shutdown_long_task_executors = (
+    lambda **_kwargs: print("cleanup:long-tasks", flush=True)
+)
+inkypi.close_browser_renderer = lambda: print("cleanup:browser", flush=True)
+inkypi.close_http_session = lambda: print("cleanup:http", flush=True)
+
+raise SystemExit(inkypi.run(app, dev_mode=False, port=80))
+"""
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", child_program],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        pytest.fail(
+            "memory restart stayed blocked behind a non-daemon refresh worker "
+            f"after {error.timeout} seconds"
+        )
+
+    assert result.returncode == 75, result.stderr
+    cleanup_events = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("cleanup:")
+    ]
+    assert cleanup_events == [
+        "cleanup:refresh:5.0",
+        "cleanup:long-tasks",
+        "cleanup:browser",
+        "cleanup:http",
+    ]
+
+
+def test_memory_restart_force_exits_after_cleanup_when_stop_raises(monkeypatch):
+    import inkypi
+    import waitress
+
+    events = []
+
+    class ForcedExit(BaseException):
+        def __init__(self, code):
+            self.code = code
+
+    class FakeConfig:
+        def get_config(self, key, default=None):
+            return False if key == "startup" else default
+
+    class BrokenStopRefreshTask:
+        restart_request = {
+            "reason": "memory_pressure",
+            "available_mb": 40.0,
+            "swap_percent": 90.0,
+        }
+
+        def start(self):
+            events.append("start")
+
+        def stop(self, join_timeout=None):
+            events.append(("stop", join_timeout))
+            raise RuntimeError("stop failed")
+
+    app = Flask(__name__)
+    app.config.update(
+        DEVICE_CONFIG=FakeConfig(),
+        DISPLAY_MANAGER=object(),
+        REFRESH_TASK=BrokenStopRefreshTask(),
+    )
+    monkeypatch.setattr(waitress, "serve", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        inkypi,
+        "shutdown_long_task_executors",
+        lambda **_kwargs: events.append("long-tasks"),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_browser_renderer",
+        lambda: events.append("browser"),
+    )
+    monkeypatch.setattr(
+        inkypi,
+        "close_http_session",
+        lambda: events.append("http"),
+    )
+    monkeypatch.setattr(
+        inkypi.os,
+        "_exit",
+        lambda code: (_ for _ in ()).throw(ForcedExit(code)),
+    )
+
+    with pytest.raises(ForcedExit) as error:
+        inkypi.run(app, dev_mode=False, port=80)
+
+    assert error.value.code == 75
+    assert events == [
+        "start",
+        ("stop", inkypi.MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS),
+        "long-tasks",
         "browser",
         "http",
     ]

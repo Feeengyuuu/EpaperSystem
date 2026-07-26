@@ -121,6 +121,11 @@ _RENDERER_INTENTS = frozenset(
         RefreshIntent.MANUAL_RENDER,
     }
 )
+_HEAVYWEIGHT_RENDERER_PLUGIN_IDS = frozenset({"sports_dashboard"})
+# Keep unbounded full-dashboard renders off 416 MiB-class devices by default.
+DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB = 384
+DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT = 30
+MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
 DEFAULT_ROTATION_MAX_INTERVAL_SECONDS = 7 * 60
@@ -1415,7 +1420,18 @@ class RefreshTask:
             data_retry = self._parse_iso_datetime(state.data.next_retry_at)
             if data_retry is not None:
                 data_retry = self._align_datetime_tz(data_retry, current_dt)
-                if data_retry > current_dt:
+                last_attempt = self._parse_iso_datetime(state.data.last_attempt_at)
+                last_failure = self._parse_iso_datetime(state.data.last_failure_at)
+                if last_attempt is not None:
+                    last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+                if last_failure is not None:
+                    last_failure = self._align_datetime_tz(last_failure, current_dt)
+                # A resource deferral advances the attempt timestamp but preserves
+                # failure provenance; its retry gate must not hide last-good cache.
+                resource_deferred = last_attempt is not None and (
+                    last_failure is None or last_attempt > last_failure
+                )
+                if data_retry > current_dt and not resource_deferred:
                     continue
             request = state.presentation_request
             failed_at = self._parse_iso_datetime(
@@ -2668,6 +2684,73 @@ class RefreshTask:
                 )
                 self._signal_completion(finished.id)
                 return
+            if (
+                command.plugin_id in _HEAVYWEIGHT_RENDERER_PLUGIN_IDS
+                and command.intent in _RENDERER_INTENTS
+            ):
+                resource_sample = self._resource_sample()
+                resource_tier = classify_resource_tier(
+                    resource_sample,
+                    self._resource_thresholds(),
+                )
+                self._resource_tier = resource_tier
+                if resource_tier is not ResourceTier.HEALTHY:
+                    next_retry_at = self._record_resource_pressure_deferral(command)
+                    logger.warning(
+                        "Deferring heavyweight renderer due to resource pressure. | "
+                        "plugin_id: %s | intent: %s | tier: %s | "
+                        "available_mb: %s | swap_percent: %s | next_retry_at: %s",
+                        command.plugin_id,
+                        command.intent.value,
+                        resource_tier.value,
+                        resource_sample.available_mb,
+                        resource_sample.swap_percent,
+                        next_retry_at,
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.CANCELED,
+                        error_code=f"resource_pressure_{resource_tier.value}",
+                        error=(
+                            "heavyweight renderer deferred under "
+                            f"{resource_tier.value} resource pressure"
+                        ),
+                    )
+                    self._signal_completion(finished.id)
+                    return
+                (
+                    margin_available,
+                    required_available_mb,
+                    max_swap_percent,
+                ) = self._heavyweight_renderer_resource_margin(resource_sample)
+                if not margin_available:
+                    next_retry_at = self._record_resource_pressure_deferral(command)
+                    logger.warning(
+                        "Deferring heavyweight renderer because "
+                        "the dedicated resource margin is unavailable. | "
+                        "plugin_id: %s | intent: %s | available_mb: %s | "
+                        "swap_percent: %s | "
+                        "required_available_mb: %s | max_swap_percent: %s | "
+                        "next_retry_at: %s",
+                        command.plugin_id,
+                        command.intent.value,
+                        resource_sample.available_mb,
+                        resource_sample.swap_percent,
+                        required_available_mb,
+                        max_swap_percent,
+                        next_retry_at,
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.CANCELED,
+                        error_code="heavyweight_renderer_margin",
+                        error=(
+                            "heavyweight renderer deferred until "
+                            "its dedicated resource margin is available"
+                        ),
+                    )
+                    self._signal_completion(finished.id)
+                    return
             instance_uuid_hash = (
                 hashlib.sha256(command.instance_uuid.encode("utf-8")).hexdigest()[:16]
                 if command.instance_uuid
@@ -2857,6 +2940,69 @@ class RefreshTask:
                 "Runtime refresh attempt state could not be recorded. | instance_uuid: %s",
                 command.instance_uuid,
             )
+
+    def _record_resource_pressure_deferral(self, command):
+        lane = self._lane_for_intent(command.intent)
+        if command.instance_uuid is None or lane is None:
+            return None
+        poll_seconds = self._scheduler_poll_seconds()
+        spacing_seconds = self._resource_thresholds().soft_spacing_seconds
+        delay_seconds = max(
+            poll_seconds,
+            min(
+                MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS,
+                max(poll_seconds, spacing_seconds),
+            ),
+        )
+        deferred_at = self._runtime_now_iso()
+        next_retry_at = (
+            datetime.fromisoformat(deferred_at) + timedelta(seconds=delay_seconds)
+        ).isoformat()
+        try:
+            self.runtime_state.record_deferral(
+                command.instance_uuid,
+                deferred_at,
+                next_retry_at,
+                lane=lane,
+            )
+        except Exception:
+            logger.exception(
+                "Runtime resource-pressure deferral could not be recorded. | "
+                "instance_uuid: %s",
+                command.instance_uuid,
+            )
+            return None
+        return next_retry_at
+
+    def _heavyweight_renderer_resource_margin(self, sample):
+        min_available_mb = self._config_float(
+            "heavyweight_renderer_min_available_mb",
+            DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB
+        max_swap_percent = self._config_float(
+            "heavyweight_renderer_max_swap_percent",
+            DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT,
+        )
+        if (
+            not math.isfinite(max_swap_percent)
+            or max_swap_percent < 0
+            or max_swap_percent > 100
+        ):
+            max_swap_percent = DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb, max_swap_percent
+        margin_available = (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb
+            and swap_percent < max_swap_percent
+        )
+        return margin_available, min_available_mb, max_swap_percent
 
     @staticmethod
     def _lane_for_intent(intent):
@@ -5643,9 +5789,11 @@ class RefreshTask:
 
     def _config_float(self, key, default):
         raw_value = self.device_config.get_config(key, default=default)
+        if isinstance(raw_value, bool):
+            return float(default)
         try:
             return float(raw_value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return float(default)
 
     def _read_memory_stats(self):

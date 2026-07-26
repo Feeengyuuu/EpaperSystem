@@ -337,7 +337,11 @@ def _next_phase_datetime(now_utc, age, target_age):
 
 def _surface_tone(x, y):
     tone = 1.0
-    for cx, cy, radius, depth in CRATERS:
+    for crater in CRATERS:
+        cx = crater[0]
+        cy = crater[1]
+        radius = crater[2]
+        depth = crater[3]
         dx = (x - cx) / radius
         dy = (y - cy) / (radius * 0.82)
         dist = math.sqrt(dx * dx + dy * dy)

@@ -362,6 +362,31 @@ class RuntimeStateStore:
             ),
         )
 
+    def record_deferral(
+        self,
+        instance_uuid,
+        deferred_at,
+        next_retry_at,
+        *,
+        lane=RefreshLane.DATA,
+    ) -> None:
+        """Record a non-failure attempt with a bounded retry gate."""
+
+        instance_uuid = self._instance_uuid(instance_uuid)
+        deferred_at = self._timestamp(deferred_at, "deferred_at")
+        next_retry_at = self._timestamp(next_retry_at, "next_retry_at")
+        lane = self._refresh_lane(lane)
+        self._update_instance(
+            instance_uuid,
+            deferred_at,
+            lambda previous: self._replace_lane(
+                previous,
+                lane,
+                last_attempt_at=deferred_at,
+                next_retry_at=next_retry_at,
+            ),
+        )
+
     def record_success(
         self,
         instance_uuid,

@@ -51,6 +51,12 @@ def test_main_unit_is_unprivileged_and_hardened():
     assert unit["Service"]["CapabilityBoundingSet"] == "CAP_NET_BIND_SERVICE"
 
 
+def test_main_unit_restarts_after_clean_external_termination():
+    unit = _parse_unit(INSTALL_ROOT / "inkypi.service")
+
+    assert unit["Service"]["Restart"] == "always"
+
+
 def test_updates_repair_runtime_env_without_persistent_root_service_hook():
     source = (INSTALL_ROOT / "inkypi.service").read_text(encoding="utf-8")
     helper_path = INSTALL_ROOT / "repair_env_permissions.py"

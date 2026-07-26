@@ -12,7 +12,7 @@ WorkingDirectory=/run/inkypi
 EnvironmentFile=-/etc/inkypi/inkypi.env
 Environment="PYTHONDONTWRITEBYTECODE=1" "INKYPI_CACHE_DIR=/var/cache/inkypi" "INKYPI_DATA_DIR=/var/lib/inkypi/data" "LG_WD=/run/inkypi"
 ExecStart=/usr/local/bin/inkypi run
-Restart=on-failure
+Restart=always
 RestartSec=60
 KillSignal=SIGINT
 TimeoutStopSec=240

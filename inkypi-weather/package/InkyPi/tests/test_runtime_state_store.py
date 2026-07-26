@@ -200,6 +200,30 @@ def test_failure_cools_only_requested_instance_lane(tmp_path):
     assert state.live.last_error == "live provider offline"
 
 
+def test_deferral_records_attempt_and_retry_without_reclassifying_failure(tmp_path):
+    store = RuntimeStateStore(tmp_path / "runtime.json")
+    store.record_success("one", "2026-07-09T09:55:00+00:00")
+    store.record_failure(
+        "one",
+        "2026-07-09T09:59:00+00:00",
+        "provider offline",
+        "2026-07-09T09:59:30+00:00",
+    )
+
+    store.record_deferral(
+        "one",
+        "2026-07-09T10:00:00+00:00",
+        "2026-07-09T10:01:00+00:00",
+    )
+
+    state = store.snapshot().instances["one"].data
+    assert state.last_attempt_at == "2026-07-09T10:00:00+00:00"
+    assert state.next_retry_at == "2026-07-09T10:01:00+00:00"
+    assert state.last_success_at == "2026-07-09T09:55:00+00:00"
+    assert state.last_failure_at == "2026-07-09T09:59:00+00:00"
+    assert state.last_error == "provider offline"
+
+
 def test_last_good_cache_requires_exact_revision(tmp_path):
     store = RuntimeStateStore(tmp_path / "runtime.json")
     cache = LastGoodCacheState(
