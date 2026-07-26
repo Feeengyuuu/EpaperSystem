@@ -662,7 +662,7 @@ def test_twitch_helix_batches_all_logins_and_reuses_cached_app_token():
         session,
         rooms,
         timeout=9,
-        fetch_avatars=True,
+        fetch_avatars=False,
         client_id="test-client-id",
         client_secret="test-client-secret",
     )
@@ -670,7 +670,7 @@ def test_twitch_helix_batches_all_logins_and_reuses_cached_app_token():
         session,
         rooms,
         timeout=9,
-        fetch_avatars=True,
+        fetch_avatars=False,
         client_id="test-client-id",
         client_secret="test-client-secret",
     )
@@ -691,6 +691,166 @@ def test_twitch_helix_batches_all_logins_and_reuses_cached_app_token():
     assert "test-client-id" not in serialized
     assert "test-client-secret" not in serialized
     assert "short-lived-token" not in serialized
+
+
+def test_twitch_helix_fetches_profiles_and_merges_display_names_and_avatars():
+    plugin = _plugin()
+    rooms = [
+        {"platform": "twitch", "id": "liveuser", "label": "Live label", "isFav": True},
+        {"platform": "twitch", "id": "offlineuser", "label": "Offline label", "isFav": False},
+    ]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, params, timeout, headers):
+            del url, params, timeout, headers
+            return FakeResponse({"access_token": "token", "expires_in": 3600})
+
+        def get(self, url, params, timeout, headers):
+            del timeout, headers
+            calls.append((url, params))
+            if url == live_radar_module.TWITCH_STREAMS_URL:
+                return FakeResponse(
+                    {
+                        "data": [
+                            {
+                                "user_login": "liveuser",
+                                "user_name": "Live User",
+                                "title": "Live now",
+                                "viewer_count": 321,
+                                "started_at": "2026-07-19T12:00:00Z",
+                                "thumbnail_url": "https://static-cdn.jtvnw.net/previews/live-{width}x{height}.jpg",
+                            }
+                        ]
+                    }
+                )
+            assert url == live_radar_module.TWITCH_USERS_URL
+            return FakeResponse(
+                {
+                    "data": [
+                        {
+                            "login": "liveuser",
+                            "display_name": "Live Profile",
+                            "profile_image_url": "https://static-cdn.jtvnw.net/jtv_user_pictures/live.png",
+                        },
+                        {
+                            "login": "offlineuser",
+                            "display_name": "Offline Profile",
+                            "profile_image_url": "https://static-cdn.jtvnw.net/jtv_user_pictures/offline.png",
+                        },
+                    ]
+                }
+            )
+
+    results = plugin._fetch_twitch_statuses_direct(
+        FakeSession(),
+        rooms,
+        timeout=9,
+        fetch_avatars=True,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    assert calls == [
+        (
+            live_radar_module.TWITCH_STREAMS_URL,
+            [("user_login", "liveuser"), ("user_login", "offlineuser")],
+        ),
+        (
+            live_radar_module.TWITCH_USERS_URL,
+            [("login", "liveuser"), ("login", "offlineuser")],
+        ),
+    ]
+    assert results[0]["status"]["owner"] == "Live User"
+    assert results[0]["status"]["avatar"].endswith("/live.png")
+    assert results[1]["status"]["owner"] == "Offline Profile"
+    assert results[1]["status"]["avatar"].endswith("/offline.png")
+    assert results[1]["status"]["isLive"] is False
+
+
+def test_twitch_profile_failure_keeps_successful_stream_data(caplog):
+    plugin = _plugin()
+    room = {"platform": "twitch", "id": "liveuser", "label": "Live label", "isFav": False}
+
+    class FakeResponse:
+        def __init__(self, payload, *, error=None):
+            self.payload = payload
+            self.error = error
+
+        def raise_for_status(self):
+            if self.error:
+                raise self.error
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def post(self, url, params, timeout, headers):
+            del url, params, timeout, headers
+            return FakeResponse({"access_token": "token", "expires_in": 3600})
+
+        def get(self, url, params, timeout, headers):
+            del params, timeout, headers
+            if url == live_radar_module.TWITCH_USERS_URL:
+                return FakeResponse({}, error=RuntimeError("profile endpoint unavailable"))
+            return FakeResponse(
+                {
+                    "data": [
+                        {
+                            "user_login": "liveuser",
+                            "user_name": "Live User",
+                            "title": "Stream survives",
+                            "viewer_count": 42,
+                            "thumbnail_url": "https://static-cdn.jtvnw.net/previews/live-{width}x{height}.jpg",
+                        }
+                    ]
+                }
+            )
+
+    results = plugin._fetch_twitch_statuses_direct(
+        FakeSession(),
+        [room],
+        timeout=9,
+        fetch_avatars=True,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    assert results[0]["status"]["isLive"] is True
+    assert results[0]["status"]["title"] == "Stream survives"
+    assert results[0]["status"]["heatValue"] == 42
+    assert results[0]["status"]["avatar"] == ""
+    assert "Twitch profile avatars unavailable: RuntimeError" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://static-cdn.jtvnw.net/avatar.png", "https://static-cdn.jtvnw.net/avatar.png"),
+        ("http://example.test/avatar.png", "http://example.test/avatar.png"),
+        ("data:image/png;base64,AAAA", ""),
+        ("javascript:alert(1)", ""),
+        ("//static-cdn.jtvnw.net/avatar.png", ""),
+    ],
+)
+def test_twitch_avatar_media_url_accepts_only_http_and_https(value, expected):
+    assert LiveRadar._http_media_url(value) == expected
+
+
+def test_jtvnw_media_uses_twitch_referer():
+    assert LiveRadar._cover_headers(
+        "https://static-cdn.jtvnw.net/jtv_user_pictures/avatar.png"
+    )["Referer"] == "https://www.twitch.tv/"
 
 
 def test_twitch_credentials_are_loaded_from_device_config_without_logging_values(monkeypatch):
@@ -2067,26 +2227,159 @@ def test_card_detail_text_size_nudge_is_uniform(monkeypatch):
     ) in fit_font_requests
 
 
-def test_platform_badges_render_known_icons():
+def _has_vivid_pixels(image, *, minimum=3):
+    vivid = 0
+    rgb = image.convert("RGB")
+    for y in range(rgb.height):
+        for x in range(rgb.width):
+            red, green, blue = rgb.getpixel((x, y))
+            if max(red, green, blue) - min(red, green, blue) > 35:
+                vivid += 1
+                if vivid >= minimum:
+                    return True
+    return False
+
+
+def test_live_radar_uses_local_transparent_color_icon_assets():
+    plugin_dir = Path(live_radar_module.PLUGIN_DIR)
+    expected = {
+        "platform_icons": ("bilibili.png", "douyu.png", "twitch.png"),
+        "status_icons": ("fav.png", "live.png"),
+    }
+
+    for directory, names in expected.items():
+        assert (plugin_dir / directory / "SOURCES.md").is_file()
+        for name in names:
+            path = plugin_dir / directory / name
+            assert path.is_file(), f"missing local LiveRadar icon asset: {path}"
+            with Image.open(path) as source:
+                icon = source.convert("RGBA")
+            alpha = icon.getchannel("A")
+            assert icon.size == (64, 64)
+            assert alpha.getextrema() == (0, 255)
+            assert alpha.getpixel((0, 0)) == 0
+            assert _has_vivid_pixels(icon)
+
+
+@pytest.mark.parametrize("platform", ("bilibili", "douyu", "twitch"))
+def test_platform_badges_paste_alpha_assets_without_generated_shell(monkeypatch, platform):
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
-    image = Image.new("RGB", (150, 42), theme["bg"])
+    background = (21, 22, 24)
+    image = Image.new("RGB", (52, 42), background)
     draw = ImageDraw.Draw(image)
 
-    for index, platform in enumerate(("bilibili", "douyu", "twitch")):
-        x = 8 + index * 46
-        plugin._draw_platform_badge(
-            draw,
-            (x, 8, x + 34, 31),
-            platform,
-            fill=theme["ink"],
-            ink=theme["bg"],
-            outline=theme["ink"],
-        )
+    def fail_generated_mark(*_args, **_kwargs):
+        raise AssertionError("local alpha icon must bypass generated badge/mark drawing")
 
-    pixels = set(image.crop((0, 0, 150, 42)).getdata())
-    assert theme["bg"] in pixels
-    assert theme["ink"] in pixels
+    monkeypatch.setattr(plugin, "_rounded_rectangle", fail_generated_mark)
+    monkeypatch.setattr(plugin, "_draw_bilibili_mark", fail_generated_mark)
+    monkeypatch.setattr(plugin, "_draw_douyu_mark", fail_generated_mark)
+    monkeypatch.setattr(plugin, "_draw_twitch_mark", fail_generated_mark)
+
+    plugin._draw_platform_badge(
+        image,
+        draw,
+        (9, 7, 43, 35),
+        platform,
+        fill=theme["ink"],
+        ink=theme["bg"],
+        outline=theme["ink"],
+    )
+
+    assert image.getpixel((9, 7)) == background
+    assert _has_vivid_pixels(image.crop((9, 7, 43, 35)))
+
+
+@pytest.mark.parametrize("kind", ("fav", "live"))
+def test_status_badges_paste_alpha_assets_without_generated_shell(monkeypatch, kind):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    background = (21, 22, 24)
+    image = Image.new("RGB", (44, 44), background)
+    draw = ImageDraw.Draw(image)
+
+    monkeypatch.setattr(
+        plugin,
+        "_rounded_rectangle",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("local alpha icon must bypass generated status badge drawing")
+        ),
+    )
+
+    plugin._draw_icon_badge(
+        image,
+        draw,
+        (8, 8, 36, 36),
+        kind,
+        fill=theme["panel"],
+        ink=theme["ink"],
+        outline=theme["line"],
+    )
+
+    assert image.getpixel((8, 8)) == background
+    assert _has_vivid_pixels(image.crop((8, 8, 36, 36)))
+
+
+def test_real_dashboard_contains_colored_platform_and_status_icon_pixels(monkeypatch):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    platform_boxes = {}
+    status_boxes = {}
+    draw_platform = plugin._draw_platform_badge
+    draw_status = plugin._draw_icon_badge
+
+    def capture_platform(image, draw, box, platform_key, *args, **kwargs):
+        result = draw_platform(image, draw, box, platform_key, *args, **kwargs)
+        platform_boxes.setdefault(platform_key, []).append(tuple(int(value) for value in box))
+        return result
+
+    def capture_status(image, draw, box, kind, *args, **kwargs):
+        result = draw_status(image, draw, box, kind, *args, **kwargs)
+        status_boxes.setdefault(kind, []).append(tuple(int(value) for value in box))
+        return result
+
+    monkeypatch.setattr(plugin, "_draw_platform_badge", capture_platform)
+    monkeypatch.setattr(plugin, "_draw_icon_badge", capture_status)
+    cards = [
+        {
+            "platform": platform,
+            "id": f"{platform}-live",
+            "owner": f"{platform} streamer",
+            "label": "",
+            "title": "Live stream",
+            "status": "live",
+            "is_fav": True,
+            "heat": 100 - index,
+            "start_time": None,
+            "cover": "",
+            "avatar": "",
+        }
+        for index, platform in enumerate(("bilibili", "douyu", "twitch"))
+    ]
+
+    dashboard = plugin._render_dashboard(
+        cards,
+        (800, 480),
+        theme,
+        datetime.now(timezone.utc),
+        False,
+        None,
+        {
+            "max_live_cards": 3,
+            "max_offline_cards": 3,
+            "show_snapshots": False,
+            "snapshot_cache_seconds": 60,
+            "avatar_cache_seconds": 60,
+        },
+    )
+
+    for platform in ("bilibili", "douyu", "twitch"):
+        assert platform_boxes.get(platform)
+        assert any(_has_vivid_pixels(dashboard.crop(box)) for box in platform_boxes[platform])
+    for kind in ("fav", "live"):
+        assert status_boxes.get(kind)
+        assert any(_has_vivid_pixels(dashboard.crop(box)) for box in status_boxes[kind])
 
 
 def test_light_theme_live_cards_use_white_shell():

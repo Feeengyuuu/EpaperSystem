@@ -152,12 +152,26 @@ def test_renderer_close_stops_egress_proxy(tmp_path):
     assert proxy.closed
 
 
+def _assert_calls_supply_ssrf_validator(path, calls):
+    assert calls, path
+    for call in calls:
+        validator = next(
+            (
+                keyword.value
+                for keyword in call.keywords
+                if keyword.arg == "validator"
+            ),
+            None,
+        )
+        assert isinstance(validator, ast.Name), path
+        assert validator.id == "validate_browser_target", path
+
+
 def test_all_take_screenshot_callers_supply_ssrf_validator():
     source_root = Path(__file__).resolve().parents[1] / "src" / "plugins"
     callers = (
         source_root / "screenshot" / "screenshot.py",
         source_root / "sports_dashboard" / "worldcup.py",
-        source_root / "tech_pulse" / "tech_pulse.py",
     )
 
     for path in callers:
@@ -169,11 +183,27 @@ def test_all_take_screenshot_callers_supply_ssrf_validator():
             and isinstance(node.func, ast.Name)
             and node.func.id == "take_screenshot"
         ]
-        assert calls, path
-        assert all(
-            any(keyword.arg == "validator" for keyword in call.keywords)
-            for call in calls
-        ), path
+        _assert_calls_supply_ssrf_validator(path, calls)
+
+
+def test_tech_pulse_direct_render_url_call_supplies_ssrf_validator():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "tech_pulse"
+        / "tech_pulse.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "render_url"
+    ]
+
+    _assert_calls_supply_ssrf_validator(path, calls)
 
 
 def test_newspaper_browser_capture_keeps_network_closed_security_chain():

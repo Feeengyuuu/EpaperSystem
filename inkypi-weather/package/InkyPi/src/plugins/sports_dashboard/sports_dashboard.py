@@ -6,6 +6,7 @@ from .common import SportsDashboardCommonMixin, _ACTIVE_COLORS, _safe_exception_
 from . import common as _common_module
 from . import worldcup as _worldcup_module
 from . import worldcup_render as _worldcup_render_module
+from . import csl as _csl_module
 from . import club_football as _club_football_module
 from . import club_football_render as _club_football_render_module
 from . import nba as _nba_module
@@ -16,6 +17,7 @@ from . import offseason_hub as _offseason_hub_module
 from . import offseason_render as _offseason_render_module
 from .worldcup import WorldCupMixin
 from .worldcup_render import WorldCupRenderMixin
+from .csl import CSL_LIVE_STATE_VERSION, CSLMixin
 from .club_football import (
     CLUB_FOOTBALL_LEAGUES,
     CLUB_FOOTBALL_LIVE_STATE_VERSION,
@@ -44,6 +46,7 @@ class SportsDashboard(
     SportsDashboardCommonMixin,
     WorldCupMixin,
     WorldCupRenderMixin,
+    CSLMixin,
     ClubFootballMixin,
     ClubFootballRenderMixin,
     NBAMixin,
@@ -111,6 +114,12 @@ class SportsDashboard(
         ) or self._worldcup_release_one_shot_window_active(current_dt):
             sources.append("worldcup")
         if self._live_state_active(
+            self._csl_live_state_path(),
+            CSL_LIVE_STATE_VERSION,
+            current_dt,
+        ):
+            sources.append("csl")
+        if self._live_state_active(
             self._club_football_live_state_path(),
             CLUB_FOOTBALL_LIVE_STATE_VERSION,
             current_dt,
@@ -156,6 +165,15 @@ class SportsDashboard(
                 "worldCupLiveRefreshEnabled",
                 True,
             ) or self._worldcup_one_shot_live_refresh_active(settings, current_dt)
+        if source == "csl":
+            return self._football_panel_mode(settings) in {
+                "auto",
+                "csl",
+            } and self._bool_setting(
+                settings,
+                "clubFootballLiveRefreshEnabled",
+                True,
+            )
         if source == "club_football":
             return self._bool_setting(settings, "clubFootballLiveRefreshEnabled", True)
         if source == "offseason_hub":
@@ -208,6 +226,14 @@ class SportsDashboard(
             return self._int_setting(settings, "nbaLiveRefreshIntervalSeconds", 60, 60, 900)
         if source == "worldcup":
             return self._int_setting(settings, "worldCupLiveRefreshIntervalSeconds", 60, 60, 900)
+        if source == "csl":
+            return self._int_setting(
+                settings,
+                "clubFootballLiveRefreshIntervalSeconds",
+                60,
+                60,
+                900,
+            )
         if source == "club_football":
             return self._int_setting(
                 settings, "clubFootballLiveRefreshIntervalSeconds", 60, 60, 900
@@ -572,7 +598,7 @@ class SportsDashboard(
             identifier = str(team_id or "").strip() or NCAA_ESPN_LOGO_IDS.get(normalized_code) or normalized_code.lower()
         elif normalized_league == "wnba":
             normalized_code = WNBA_TEAM_ALIAS_TO_CODE.get(alias_key, normalized_code)
-            identifier = WNBA_ESPN_LOGO_CODES.get(normalized_code, normalized_code.lower())
+            identifier = WNBA_ESPN_LOGO_CODES.get(normalized_code, "")
         elif normalized_league == "nfl":
             normalized_code = NFL_TEAM_ALIAS_TO_CODE.get(alias_key, normalized_code)
             identifier = NFL_ESPN_LOGO_CODES.get(normalized_code, normalized_code.lower())
@@ -1839,6 +1865,7 @@ _SPLIT_MODULES = (
     _common_module,
     _worldcup_module,
     _worldcup_render_module,
+    _csl_module,
     _club_football_module,
     _club_football_render_module,
     _nba_module,

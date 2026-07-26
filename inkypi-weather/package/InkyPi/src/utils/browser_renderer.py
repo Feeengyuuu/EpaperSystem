@@ -190,6 +190,7 @@ class BrowserRenderer:
         self._negative_cache = {}
         self._negative_lock = threading.Lock()
         self._html_circuit_until_by_domain = {}
+        self._html_system_circuit_until = 0.0
         self._html_circuit_lock = threading.Lock()
         self._processes = {}
         self._process_lock = threading.Lock()
@@ -228,6 +229,7 @@ class BrowserRenderer:
         timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         timezone_name=None,
         failure_domain=None,
+        retry_once=False,
     ):
         if not isinstance(html, str):
             raise TypeError("html must be a string")
@@ -246,23 +248,38 @@ class BrowserRenderer:
         )
         if self._negative_hit(key):
             return None
-        context = self._context(context, timeout_seconds)
+        attempt_count = 2 if retry_once else 1
+        context = self._context(context, timeout_seconds * attempt_count)
 
         def prepare(job_dir):
             html_path = job_dir / "input.html"
             html_path.write_bytes(encoded)
             return html_path.resolve().as_uri()
 
-        return self._render(
-            key,
-            prepare,
-            viewport=viewport,
-            context=context,
-            timeout_seconds=timeout_seconds,
-            timezone_name=timezone_name,
-            failure_scope="html",
-            failure_domain=failure_domain,
-        )
+        for attempt in range(attempt_count):
+            result = self._render(
+                key,
+                prepare,
+                viewport=viewport,
+                context=context,
+                timeout_seconds=timeout_seconds,
+                timezone_name=timezone_name,
+                failure_scope="html",
+                failure_domain=failure_domain,
+            )
+            if result is not None or attempt + 1 >= attempt_count:
+                return result
+
+            # A retry is useful only when it can launch a clean Chromium job.
+            # The first failure deliberately populated both guards, so clear
+            # this exact document/domain before the one bounded retry.
+            self._forget_negative(key)
+            self._forget_html_failure(failure_domain)
+            logger.warning(
+                "Retrying Chromium HTML render once for %s",
+                failure_domain,
+            )
+        return None
 
     def render_url(
         self,
@@ -550,11 +567,15 @@ class BrowserRenderer:
                 if not self.egress_proxy.start():
                     logger.error("Browser render refused because egress proxy is unavailable")
                     self._remember_negative(key)
+                    if failure_scope == "html":
+                        self._remember_html_failure(failure_domain)
                     return None
                 proxy_url = self.egress_proxy.proxy_url
                 if not proxy_url:
                     logger.error("Browser render refused because egress proxy has no endpoint")
                     self._remember_negative(key)
+                    if failure_scope == "html":
+                        self._remember_html_failure(failure_domain)
                     return None
                 job_dir = Path(
                     tempfile.mkdtemp(prefix="render-", dir=self.temp_root)
@@ -759,7 +780,10 @@ class BrowserRenderer:
         now = self._clock()
         with self._html_circuit_lock:
             self._prune_html_circuits_locked(now)
-            return failure_domain in self._html_circuit_until_by_domain
+            return (
+                self._html_system_circuit_until > now
+                or failure_domain in self._html_circuit_until_by_domain
+            )
 
     def _remember_html_failure(self, failure_domain):
         now = self._clock()
@@ -768,6 +792,11 @@ class BrowserRenderer:
             self._html_circuit_until_by_domain[failure_domain] = (
                 now + self.html_circuit_ttl_seconds
             )
+            if len(self._html_circuit_until_by_domain) >= 2:
+                self._html_system_circuit_until = max(
+                    self._html_system_circuit_until,
+                    now + self.html_circuit_ttl_seconds,
+                )
             while len(self._html_circuit_until_by_domain) > MAX_HTML_CIRCUIT_DOMAINS:
                 oldest = min(
                     self._html_circuit_until_by_domain,
@@ -778,6 +807,8 @@ class BrowserRenderer:
     def _forget_html_failure(self, failure_domain):
         with self._html_circuit_lock:
             self._html_circuit_until_by_domain.pop(failure_domain, None)
+            if len(self._html_circuit_until_by_domain) < 2:
+                self._html_system_circuit_until = 0.0
 
     def _prune_html_circuits_locked(self, now):
         self._html_circuit_until_by_domain = {
@@ -785,6 +816,8 @@ class BrowserRenderer:
             for domain, expires in self._html_circuit_until_by_domain.items()
             if expires > now
         }
+        if self._html_system_circuit_until <= now:
+            self._html_system_circuit_until = 0.0
 
     def _prune_negative_locked(self, now):
         self._negative_cache = {

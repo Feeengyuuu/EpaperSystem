@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 import hashlib
 import json
 import logging
@@ -121,6 +122,7 @@ BILIBILI_ROOM_MAP_TTL_SECONDS = 7 * 24 * 3600
 BILIBILI_ROOM_MAP_NEGATIVE_TTL_SECONDS = 6 * 3600
 TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 TWITCH_STREAMS_URL = "https://api.twitch.tv/helix/streams"
+TWITCH_USERS_URL = "https://api.twitch.tv/helix/users"
 BILIBILI_API_HEADERS = {
     "User-Agent": COVER_HEADERS["User-Agent"],
     "Accept": "application/json",
@@ -145,6 +147,16 @@ STATUS_TOTAL_FILLS = {
 STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+PLATFORM_ICON_SIZE = (64, 64)
+PLATFORM_ICON_FILES = {
+    platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
+    for platform in ("douyu", "bilibili", "twitch")
+}
+STATUS_ICON_SIZE = (64, 64)
+STATUS_ICON_FILES = {
+    kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
+    for kind in ("live", "fav")
+}
 TITLE_LOGO_FILE = "liveradar_logo.png"
 TITLE_WORDMARK_FILE = "liveradar_wordmark.png"
 HEADER_ART_FILE = "liveradar_header_art.png"
@@ -708,7 +720,6 @@ class LiveRadar(BasePlugin):
         client_id,
         client_secret,
     ):
-        del fetch_avatars
         client_id = str(client_id or "").strip()
         client_secret = str(client_secret or "").strip()
         if not client_id or not client_secret:
@@ -720,16 +731,17 @@ class LiveRadar(BasePlugin):
             client_id=client_id,
             client_secret=client_secret,
         )
+        request_headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "Client-Id": client_id,
+        }
         params = [("user_login", str(room.get("id") or "")) for room in rooms]
         response = session.get(
             TWITCH_STREAMS_URL,
             params=params,
             timeout=self._bounded_status_timeout(timeout),
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {token}",
-                "Client-Id": client_id,
-            },
+            headers=request_headers,
         )
         response.raise_for_status()
         payload = response.json()
@@ -741,11 +753,42 @@ class LiveRadar(BasePlugin):
             if isinstance(stream, dict) and stream.get("user_login")
         }
 
+        users_by_login = {}
+        if fetch_avatars:
+            try:
+                users_response = session.get(
+                    TWITCH_USERS_URL,
+                    params=[("login", str(room.get("id") or "")) for room in rooms],
+                    timeout=self._bounded_status_timeout(timeout),
+                    headers=request_headers,
+                )
+                users_response.raise_for_status()
+                users_payload = users_response.json()
+                if not isinstance(users_payload, dict) or not isinstance(users_payload.get("data"), list):
+                    raise RuntimeError("Twitch users API returned invalid JSON.")
+                users_by_login = {
+                    str(user.get("login") or "").lower(): user
+                    for user in users_payload["data"]
+                    if isinstance(user, dict) and user.get("login")
+                }
+            except Exception as exc:
+                logger.warning(
+                    "LiveRadar Twitch profile avatars unavailable: %s",
+                    exc.__class__.__name__,
+                )
+
         results = []
         for room in rooms:
             room_id = str(room.get("id") or "")
             stream = live_by_login.get(room_id.lower())
+            user = users_by_login.get(room_id.lower(), {})
             status = self._default_status(room)
+            status.update(
+                {
+                    "owner": user.get("display_name") or status["owner"],
+                    "avatar": user.get("profile_image_url") or "",
+                }
+            )
             if stream:
                 thumbnail = str(stream.get("thumbnail_url") or "")
                 status.update(
@@ -1080,7 +1123,7 @@ class LiveRadar(BasePlugin):
                 "heat": self._safe_int(status.get("heatValue"), 0),
                 "start_time": status.get("startTime"),
                 "cover": status.get("cover") or "",
-                "avatar": status.get("avatar") or "",
+                "avatar": self._http_media_url(status.get("avatar")),
                 "is_error": bool(status.get("isError")),
                 "status": self._status_kind(status),
                 "favorite_rank": self._favorite_priority(room["platform"], room["id"]),
@@ -1341,6 +1384,7 @@ class LiveRadar(BasePlugin):
             platform_w = 24
             pill_y = y + (5 if snapshot_h else 8)
             self._draw_platform_badge(
+                image,
                 draw,
                 (x + pad, pill_y, x + pad + platform_w, pill_y + 19),
                 card["platform"],
@@ -1380,6 +1424,7 @@ class LiveRadar(BasePlugin):
         pill_y = y + 10
         platform_w = 28
         self._draw_platform_badge(
+            image,
             draw,
             (x + pad, pill_y, x + pad + platform_w, pill_y + 23),
             card["platform"],
@@ -1391,6 +1436,7 @@ class LiveRadar(BasePlugin):
         icon_y = pill_y - 1
         if status == "live":
             icon_right = self._draw_icon_badge(
+                image,
                 draw,
                 (icon_right - 23, icon_y, icon_right, icon_y + 23),
                 "live",
@@ -1400,6 +1446,7 @@ class LiveRadar(BasePlugin):
             ) - 6
         if card.get("is_fav"):
             self._draw_icon_badge(
+                image,
                 draw,
                 (icon_right - 23, icon_y, icon_right, icon_y + 23),
                 "fav",
@@ -1961,6 +2008,7 @@ class LiveRadar(BasePlugin):
         platform_y = y + max(3, int((h - platform_h) / 2))
         right = x + w - pad
         self._draw_platform_badge(
+            image,
             draw,
             (right - platform_w, platform_y, right, platform_y + platform_h),
             card["platform"],
@@ -1972,6 +2020,7 @@ class LiveRadar(BasePlugin):
         if card.get("is_fav"):
             icon_size = min(15, max(12, h - 7))
             self._draw_icon_badge(
+                image,
                 draw,
                 (right - icon_size, platform_y, right, platform_y + icon_size),
                 "fav",
@@ -2007,6 +2056,7 @@ class LiveRadar(BasePlugin):
         platform_h = 16
         platform_y = y + max(6, int((h - platform_h) / 2))
         self._draw_platform_badge(
+            image,
             draw,
             (badge_right - platform_w, platform_y, badge_right, platform_y + platform_h),
             card["platform"],
@@ -2018,6 +2068,7 @@ class LiveRadar(BasePlugin):
         if card.get("is_fav"):
             icon_size = 17
             self._draw_icon_badge(
+                image,
                 draw,
                 (badge_right - icon_size, platform_y, badge_right, platform_y + icon_size),
                 "fav",
@@ -2116,7 +2167,7 @@ class LiveRadar(BasePlugin):
         if show_fav_badge and card.get("is_fav"):
             badge_size = max(10, int(avatar_size * 0.38))
             badge = (avatar_x + avatar_size - badge_size, avatar_y + avatar_size - badge_size, avatar_x + avatar_size + 1, avatar_y + avatar_size + 1)
-            self._draw_icon_badge(draw, badge, "fav", fill=ink, ink=fill, outline=ink)
+            self._draw_icon_badge(image, draw, badge, "fav", fill=ink, ink=fill, outline=ink)
 
     def _draw_quiet_panel(self, draw, box, tracked_count, theme):
         x, y, w, h = box
@@ -2377,18 +2428,62 @@ class LiveRadar(BasePlugin):
             font=font,
         )
 
-    def _draw_platform_badge(self, draw, box, platform_key, fill, ink, outline):
+    @staticmethod
+    @lru_cache(maxsize=16)
+    def _load_platform_icon_asset(platform_key):
+        path = PLATFORM_ICON_FILES.get(str(platform_key or "").strip().lower())
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with Image.open(path) as source:
+                return source.convert("RGBA").copy()
+        except Exception as exc:
+            logger.warning("LiveRadar platform icon unavailable for %s: %s", platform_key, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _load_status_icon_asset(kind):
+        path = STATUS_ICON_FILES.get(str(kind or "").strip().lower())
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with Image.open(path) as source:
+                return source.convert("RGBA").copy()
+        except Exception as exc:
+            logger.warning("LiveRadar status icon unavailable for %s: %s", kind, exc)
+            return None
+
+    def _draw_platform_badge(self, image, draw, box, platform_key, fill, ink, outline):
         left, top, right, bottom = [int(v) for v in box]
         width = max(1, right - left)
         height = max(1, bottom - top)
-        self._rounded_rectangle(draw, (left, top, right, bottom), radius=max(4, min(width, height) // 3), fill=fill, outline=outline, width=1)
+        key = str(platform_key or "").strip().lower()
+        asset = self._load_platform_icon_asset(key)
+        if asset is not None:
+            fitted = ImageOps.contain(
+                asset.copy(),
+                (width, height),
+                method=self._resampling_filter(),
+            )
+            paste_x = left + (width - fitted.width) // 2
+            paste_y = top + (height - fitted.height) // 2
+            image.paste(fitted, (paste_x, paste_y), fitted)
+            return left
+        self._rounded_rectangle(
+            draw,
+            (left, top, right, bottom),
+            radius=max(4, min(width, height) // 3),
+            fill=fill,
+            outline=outline,
+            width=1,
+        )
         icon_box = (
             left + max(3, width // 6),
             top + max(3, height // 5),
             right - max(3, width // 6),
             bottom - max(3, height // 5),
         )
-        key = str(platform_key or "").strip().lower()
         if key == "bilibili":
             self._draw_bilibili_mark(draw, icon_box, ink)
         elif key == "douyu":
@@ -2466,10 +2561,31 @@ class LiveRadar(BasePlugin):
         text_h = self._line_height(font)
         draw.text((left + (right - left - text_w) / 2, top + (bottom - top - text_h) / 2 - 1), short, fill=ink, font=font)
 
-    def _draw_icon_badge(self, draw, box, kind, fill, ink, outline):
+    def _draw_icon_badge(self, image, draw, box, kind, fill, ink, outline):
         left, top, right, bottom = [int(v) for v in box]
         size = max(1, min(right - left, bottom - top))
-        self._rounded_rectangle(draw, (left, top, right, bottom), radius=max(4, size // 4), fill=fill, outline=outline, width=1)
+        asset = self._load_status_icon_asset(kind)
+        if asset is not None:
+            fitted = ImageOps.contain(
+                asset.copy(),
+                (
+                    max(1, right - left),
+                    max(1, bottom - top),
+                ),
+                method=self._resampling_filter(),
+            )
+            paste_x = left + (right - left - fitted.width) // 2
+            paste_y = top + (bottom - top - fitted.height) // 2
+            image.paste(fitted, (paste_x, paste_y), fitted)
+            return left
+        self._rounded_rectangle(
+            draw,
+            (left, top, right, bottom),
+            radius=max(4, size // 4),
+            fill=fill,
+            outline=outline,
+            width=1,
+        )
         cx = left + (right - left) / 2
         cy = top + (bottom - top) / 2
         if kind == "live":
@@ -2783,7 +2899,7 @@ class LiveRadar(BasePlugin):
             headers["Referer"] = "https://live.bilibili.com/"
         elif "douyucdn" in lower or "douyu" in lower:
             headers["Referer"] = "https://www.douyu.com/"
-        elif "ttvnw.net" in lower or "twitch" in lower:
+        elif "ttvnw.net" in lower or "jtvnw.net" in lower or "twitch" in lower:
             headers["Referer"] = "https://www.twitch.tv/"
         return headers
 
@@ -2921,6 +3037,19 @@ class LiveRadar(BasePlugin):
             return max(0, int(float(value)))
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _http_media_url(value):
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return ""
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return ""
+        return value
 
     @staticmethod
     def _bool_setting(value, default=False):

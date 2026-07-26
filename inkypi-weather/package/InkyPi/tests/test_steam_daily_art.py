@@ -9,6 +9,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.steam_daily_art.steam_daily_art as steam_daily_art_module  # noqa: E402
 from plugins.steam_daily_art.steam_daily_art import SteamDailyArt  # noqa: E402
 from plugins.base_plugin.presentation import (  # noqa: E402
     PresentationMode,
@@ -63,6 +64,108 @@ def test_missing_optional_logo_is_negatively_cached(tmp_path, monkeypatch):
     assert plugin._download_first_available_logo({"id": 7}) == (None, None)
 
     assert calls == ["https://cdn.example.test/missing-logo.png"]
+
+
+def test_missing_primary_art_candidate_is_negatively_cached_without_blocking_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    missing_url = "https://cdn.example.test/missing-library-hero.jpg"
+    fallback_url = "https://cdn.example.test/store-capsule.jpg"
+    calls = []
+    plugin._candidate_image_urls = lambda _item, _settings: [
+        missing_url,
+        fallback_url,
+    ]
+
+    def download(url):
+        calls.append(url)
+        if url == missing_url:
+            raise RuntimeError("Steam media request failed with status 404")
+        return Image.new("RGB", (16, 9), "blue")
+
+    plugin._download_image = download
+
+    first_url, first_image = plugin._download_first_available_image(
+        {"id": 7},
+        base_settings(),
+    )
+    second_url, second_image = plugin._download_first_available_image(
+        {"id": 7},
+        base_settings(),
+    )
+
+    assert first_url == second_url == fallback_url
+    assert first_image.size == second_image.size == (16, 9)
+    assert calls == [missing_url, fallback_url, fallback_url]
+
+
+def test_missing_primary_art_candidate_retries_after_negative_cache_ttl(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    missing_url = "https://cdn.example.test/missing-library-hero.jpg"
+    fallback_url = "https://cdn.example.test/store-capsule.jpg"
+    now = [1000.0]
+    calls = []
+    plugin._optional_media_clock = lambda: now[0]
+    plugin._candidate_image_urls = lambda _item, _settings: [
+        missing_url,
+        fallback_url,
+    ]
+
+    def download(url):
+        calls.append(url)
+        if url == missing_url:
+            raise RuntimeError("Steam media request failed with status 404")
+        return Image.new("RGB", (16, 9), "blue")
+
+    plugin._download_image = download
+
+    plugin._download_first_available_image({"id": 7}, base_settings())
+    now[0] += steam_daily_art_module.OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS + 1
+    plugin._download_first_available_image({"id": 7}, base_settings())
+
+    assert calls == [
+        missing_url,
+        fallback_url,
+        missing_url,
+        fallback_url,
+    ]
+
+
+def test_non_404_primary_art_failure_is_not_negatively_cached(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    failing_url = "https://cdn.example.test/transient-library-hero.jpg"
+    fallback_url = "https://cdn.example.test/store-capsule.jpg"
+    calls = []
+    plugin._candidate_image_urls = lambda _item, _settings: [
+        failing_url,
+        fallback_url,
+    ]
+
+    def download(url):
+        calls.append(url)
+        if url == failing_url:
+            raise RuntimeError("Steam media request failed with status 500")
+        return Image.new("RGB", (16, 9), "blue")
+
+    plugin._download_image = download
+
+    plugin._download_first_available_image({"id": 7}, base_settings())
+    plugin._download_first_available_image({"id": 7}, base_settings())
+
+    assert calls == [
+        failing_url,
+        fallback_url,
+        failing_url,
+        fallback_url,
+    ]
 
 
 def base_settings():

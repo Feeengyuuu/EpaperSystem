@@ -13,6 +13,7 @@ from plugins.base_plugin.presentation import (
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.backtothedate.presentation_bank import (
+    DATA_REFRESH_HORIZON_SECONDS,
     MAX_HISTORY_URLS,
     READY_TARGET,
     REFILL_THRESHOLD,
@@ -147,7 +148,13 @@ class BacktotheDate(BasePlugin):
             return self._generate_stateless_preview(settings, dimensions, attempts)
         bank = self._presentation_bank(settings, dimensions)
         document, profile = bank.load_for_data()
-        ready = bank.ready_records(document, profile, prune=True)
+        hard_ready = bank.ready_records(document, profile, prune=True)
+        ready = bank.ready_records(
+            document,
+            profile,
+            prune=False,
+            min_remaining_seconds=DATA_REFRESH_HORIZON_SECONDS,
+        )
         errors = []
         live_media_keys = set()
         force_refresh = _force_refresh_requested(settings)
@@ -172,7 +179,13 @@ class BacktotheDate(BasePlugin):
             bank.ingest(profile, record, image)
         if protected_missing:
             bank.save(document)
-            ready = bank.ready_records(document, profile, prune=True)
+            hard_ready = bank.ready_records(document, profile, prune=True)
+            ready = bank.ready_records(
+                document,
+                profile,
+                prune=False,
+                min_remaining_seconds=DATA_REFRESH_HORIZON_SECONDS,
+            )
             if bank.missing_protected_records(profile, ready):
                 raise RuntimeError(
                     "Protected BacktotheDate current/pending media remains unavailable"
@@ -183,7 +196,10 @@ class BacktotheDate(BasePlugin):
         refill_threshold = 1 if forced_poster else REFILL_THRESHOLD
         maximum_attempts = target + attempts
         tries = 0
-        refill_bank = len(ready) < refill_threshold
+        refill_bank = (
+            len(ready) < refill_threshold
+            or len(ready) < len(hard_ready)
+        )
         while (
             (force_attempt_pending or (refill_bank and len(ready) < target))
             and tries < maximum_attempts
@@ -278,6 +294,16 @@ class BacktotheDate(BasePlugin):
         ready = bank.ready_records(document, profile, prune=False)
 
         pending = bank.pending_for_request(profile, request.request_id)
+        if pending is None and not ready:
+            logger.info(
+                "BacktotheDate presentation bank is cold; leaving the display "
+                "unchanged while DATA refresh warms it"
+            )
+            return PresentationPreparation(
+                request_id=request.request_id,
+                image=None,
+                changed=False,
+            )
         if pending is None:
             discarded_page_keys, discarded_image_keys = bank.discarded_keys(document)
             selection = bank.choose_selection(

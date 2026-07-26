@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from PIL import Image
 
 
 _THEME_MODES = {None, "day", "night"}
+_CACHE_PROMOTION_CLOCK_TOLERANCE_SECONDS = 1.0
 _CACHE_NAME_RE = re.compile(
     r"^(?P<prefix>[0-9a-f]{32})-"
     r"(?P<generation>[1-9][0-9]*)-"
@@ -183,7 +185,12 @@ class CacheCatalog:
             ),
             promoted_at=promoted_at,
         )
-        return candidate if self.validate(candidate) else None
+        return (
+            candidate
+            if self.validate(candidate)
+            and self._not_older_than_last_good(candidate, last_good)
+            else None
+        )
 
     def resolve(
         self,
@@ -250,9 +257,44 @@ class CacheCatalog:
                 cache_path=cache_path,
                 promoted_at=promoted_at,
             )
-            if self.validate(candidate):
+            if self.validate(candidate) and self._not_older_than_last_good(
+                candidate,
+                last_good,
+            ):
                 return candidate
         return None
+
+    @staticmethod
+    def _not_older_than_last_good(candidate, last_good) -> bool:
+        """Reject an exact cache superseded by a newer same-revision promotion."""
+
+        if (
+            last_good is None
+            or last_good.structural_generation != candidate.structural_generation
+            or last_good.settings_revision != candidate.settings_revision
+        ):
+            return True
+        promoted_at = getattr(last_good, "promoted_at", None)
+        if not isinstance(promoted_at, str) or not promoted_at.strip():
+            return True
+        try:
+            normalized = promoted_at.strip()
+            if normalized.endswith("Z"):
+                normalized = f"{normalized[:-1]}+00:00"
+            promoted_dt = datetime.fromisoformat(normalized)
+            if promoted_dt.tzinfo is None:
+                promoted_dt = promoted_dt.replace(tzinfo=timezone.utc)
+            promoted_timestamp = promoted_dt.timestamp()
+        except (OverflowError, TypeError, ValueError):
+            return True
+        try:
+            cache_timestamp = os.path.getmtime(candidate.cache_path)
+        except OSError:
+            return False
+        return (
+            cache_timestamp + _CACHE_PROMOTION_CLOCK_TOLERANCE_SECONDS
+            >= promoted_timestamp
+        )
 
     def validate(self, candidate: DisplayCacheCandidate) -> bool:
         path = self._candidate_path(candidate)

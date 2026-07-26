@@ -50,6 +50,23 @@ def plugin_supports_presentation_refresh(plugin_config):
     return bool(getattr(capabilities, "supports_presentation_refresh", False))
 
 
+def plugin_presentation_refresh_is_provider_free(plugin_config):
+    """Read the audited provider-free presentation attestation from metadata."""
+
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    if manifest is None:
+        return False
+    capabilities = getattr(manifest, "capabilities", None)
+    return bool(
+        getattr(capabilities, "supports_presentation_refresh", False)
+        and getattr(
+            capabilities,
+            "presentation_refresh_is_provider_free",
+            False,
+        )
+    )
+
+
 def load_plugins(plugins_config):
     """Register plugin metadata without importing plugin modules."""
     PLUGIN_CONFIGS.clear()

@@ -5,6 +5,80 @@ SportsDashboard = None
 
 
 class WorldCupRenderMixin:
+    @staticmethod
+    def _worldcup_presentation(selected):
+        if not isinstance(selected, Mapping):
+            return {}
+        presentation = selected.get("presentation")
+        return dict(presentation) if isinstance(presentation, Mapping) else {}
+
+    @staticmethod
+    def _worldcup_team_asset_kind(presentation):
+        value = str((presentation or {}).get("team_asset_kind") or "flag").strip().lower()
+        return "logo" if value == "logo" else "flag"
+
+    @staticmethod
+    def _worldcup_team_asset_url(event, side, presentation):
+        event = event if isinstance(event, Mapping) else {}
+        side_key = "a" if side == "a" else "b"
+        if SportsDashboard._worldcup_team_asset_kind(presentation) == "logo":
+            return str(
+                event.get(f"team_{side_key}_logo")
+                or event.get(f"team_{side_key}_logo_url")
+                or event.get(f"team_{side_key}_flag")
+                or ""
+            ).strip()
+        return str(event.get(f"team_{side_key}_flag") or "").strip()
+
+    def _draw_worldcup_presentation_logo(
+        self,
+        image,
+        draw,
+        x,
+        y,
+        size,
+        presentation,
+    ):
+        logo_url = str((presentation or {}).get("league_logo_url") or "").strip()
+        logo = None
+        if logo_url:
+            try:
+                logo = self._load_team_logo_for_render(logo_url, size)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to load competition presentation logo %s: %s",
+                    logo_url,
+                    _safe_exception_text(exc),
+                )
+        if logo is not None:
+            logo = ImageOps.contain(
+                logo.convert("RGBA"),
+                (size, size),
+                Image.Resampling.LANCZOS,
+            )
+            paste_x = int(x + (size - logo.width) / 2)
+            paste_y = int(y + (size - logo.height) / 2)
+            image.paste(logo, (paste_x, paste_y), logo)
+            return
+
+        fallback = str((presentation or {}).get("competition") or "?").strip().upper()
+        fallback = fallback[:3] or "?"
+        fallback, fallback_font = self._fit_text(
+            draw,
+            fallback,
+            size,
+            12,
+            bold=True,
+            min_size=8,
+        )
+        self._draw_centered(
+            draw,
+            (x + size / 2, y + size / 2),
+            fallback,
+            fallback_font,
+            COLORS["muted"],
+        )
+
     def _draw_worldcup_compact_panel(self, image, draw, bounds, selected, source_state, fetched_at, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         panel_w = x2 - x1 + 1
@@ -12,27 +86,79 @@ class WorldCupRenderMixin:
         draw.rectangle((x1, y1, x2, y2), fill=COLORS["paper"])
         self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["worldcup_accent"], COLORS["paper"], 20, 1)
 
+        presentation = self._worldcup_presentation(selected)
+        competition = str(presentation.get("competition") or "").strip().lower()
+        is_csl = competition == "csl"
+        is_csl_2026 = is_csl and str(selected.get("season") or "").strip() == "2026"
         header_y = y1 + 8
-        logo_size = 30
-        self._draw_worldcup_logo(image, draw, x1 + 14, header_y - 1, logo_size)
-        title_year = self._worldcup_title_year(selected)
+        logo_size = 39 if is_csl else 30
+        title_x = x1 + (61 if is_csl else 52)
         source_y = header_y + 24
-        title_drawn = False
-        if str(title_year) == "2026":
-            title_drawn = self._draw_worldcup_title_wordmark(
+        if presentation:
+            self._draw_worldcup_presentation_logo(
                 image,
-                x1 + 52,
-                header_y - 2,
-                178,
-                27,
+                draw,
+                x1 + 14,
+                header_y - 1,
+                logo_size,
+                presentation,
             )
-        if not title_drawn:
-            title, title_font = self._fit_text(draw, f"{title_year} World Cup", 178, 20, bold=True, min_size=15)
-            draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
-        source = self._worldcup_api_source_label(source_state, fetched_at)
+            title_value = str(presentation.get("title") or "").strip()
+            if not title_value:
+                title_value = f"{self._worldcup_title_year(selected)} World Cup"
+            title_drawn = is_csl_2026 and self._draw_csl_2026_title_wordmark(
+                image,
+                title_x,
+                header_y - 5,
+                190,
+                28,
+            )
+            if not title_drawn:
+                title, title_font = self._fit_text(
+                    draw,
+                    title_value,
+                    178,
+                    20,
+                    bold=True,
+                    min_size=12,
+                )
+                draw.text((title_x, header_y + 1), title, font=title_font, fill=COLORS["text"])
+        else:
+            self._draw_worldcup_logo(image, draw, x1 + 14, header_y - 1, logo_size)
+            title_year = self._worldcup_title_year(selected)
+            title_drawn = False
+            if str(title_year) == "2026":
+                title_drawn = self._draw_worldcup_title_wordmark(
+                    image,
+                    x1 + 52,
+                    header_y - 2,
+                    178,
+                    27,
+                )
+            if not title_drawn:
+                title, title_font = self._fit_text(
+                    draw,
+                    f"{title_year} World Cup",
+                    178,
+                    20,
+                    bold=True,
+                    min_size=15,
+                )
+                draw.text((x1 + 52, header_y + 1), title, font=title_font, fill=COLORS["text"])
+        source_timezone_info = (
+            selected.get("_source_timezone_info")
+            if presentation and isinstance(selected, Mapping)
+            else None
+        )
+        source = self._worldcup_api_source_label(
+            source_state,
+            fetched_at,
+            source_timezone_info,
+        )
         source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
-        draw.text((x1 + 52, source_y), source_text, font=source_font, fill=COLORS["muted"])
-        self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
+        draw.text((title_x, source_y), source_text, font=source_font, fill=COLORS["muted"])
+        if not presentation or bool(presentation.get("show_worldcup_banner")):
+            self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
 
         live = selected.get("live") or []
         upcoming = selected.get("upcoming") or []
@@ -57,49 +183,121 @@ class WorldCupRenderMixin:
         draw.line((split_x - 3, content_y - 5, split_x - 3, content_bottom), fill=COLORS["border"], width=1)
         draw.line((split_x - 1, content_y - 5, split_x - 1, content_bottom), fill=COLORS["line"], width=1)
 
-        self._draw_worldcup_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, main_mode)
+        if presentation:
+            self._draw_worldcup_main_card(
+                image,
+                draw,
+                left_x1,
+                content_y,
+                left_x2,
+                content_bottom,
+                main_event,
+                now,
+                main_mode,
+                presentation,
+            )
+        else:
+            self._draw_worldcup_main_card(
+                image,
+                draw,
+                left_x1,
+                content_y,
+                left_x2,
+                content_bottom,
+                main_event,
+                now,
+                main_mode,
+            )
 
         visible_matches = max(1, int(selected.get("visible_matches") or DEFAULT_WORLD_CUP_VISIBLE_MATCHES))
         upcoming_rows = [event for event in upcoming if event is not main_event]
         recent_rows = [event for event in recent if event is not main_event]
         if recent_rows:
-            upcoming_rows = upcoming_rows[:2]
+            upcoming_max_rows = 2
+            if presentation:
+                try:
+                    upcoming_max_rows = max(
+                        0,
+                        min(
+                            4,
+                            int(
+                                presentation.get(
+                                    "upcoming_max_rows",
+                                    upcoming_max_rows,
+                                )
+                            ),
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    pass
+            upcoming_rows = upcoming_rows[:upcoming_max_rows]
             recent_rows = recent_rows[:1]
         else:
             upcoming_rows = upcoming_rows[: max(0, visible_matches - 1)]
 
         upcoming_y = content_y
-        upcoming_used_bottom = self._draw_worldcup_mini_rows(
-            image,
-            draw,
-            right_x1,
-            right_x2,
-            upcoming_y,
-            content_bottom,
-            "UPCOMING",
-            upcoming_rows,
-            show_time=True,
-        )
-        if recent_rows:
-            recent_y = max(upcoming_used_bottom + 1, content_bottom - 53)
-            self._draw_worldcup_pitch_strip_in_gap(
+        if presentation:
+            upcoming_used_bottom = self._draw_worldcup_mini_rows(
                 image,
                 draw,
                 right_x1,
                 right_x2,
-                upcoming_used_bottom + 1,
-                recent_y - 1,
-            )
-            self._draw_worldcup_recent_rows(
-                image,
-                draw,
-                right_x1,
-                right_x2,
-                recent_y,
+                upcoming_y,
                 content_bottom,
-                recent_rows,
+                "UPCOMING",
+                upcoming_rows,
+                show_time=True,
+                presentation=presentation,
             )
         else:
+            upcoming_used_bottom = self._draw_worldcup_mini_rows(
+                image,
+                draw,
+                right_x1,
+                right_x2,
+                upcoming_y,
+                content_bottom,
+                "UPCOMING",
+                upcoming_rows,
+                show_time=True,
+            )
+        if recent_rows:
+            recent_y = max(upcoming_used_bottom + 1, content_bottom - 53)
+            if not presentation or bool(
+                presentation.get("show_worldcup_pitch_art")
+            ):
+                self._draw_worldcup_pitch_strip_in_gap(
+                    image,
+                    draw,
+                    right_x1,
+                    right_x2,
+                    upcoming_used_bottom + 1,
+                    recent_y - 1,
+                )
+            if presentation:
+                self._draw_worldcup_recent_rows(
+                    image,
+                    draw,
+                    right_x1,
+                    right_x2,
+                    recent_y,
+                    content_bottom,
+                    recent_rows,
+                    presentation=presentation,
+                )
+            else:
+                self._draw_worldcup_recent_rows(
+                    image,
+                    draw,
+                    right_x1,
+                    right_x2,
+                    recent_y,
+                    content_bottom,
+                    recent_rows,
+                )
+        elif not presentation or bool(
+            presentation.get("show_worldcup_pitch_art")
+        ):
             self._draw_worldcup_tactics_strip(image, draw, right_x1, right_x2, upcoming_used_bottom + 2, content_bottom, main_event)
 
     def _attach_worldcup_standings_points(self, events, settings):
@@ -372,7 +570,19 @@ class WorldCupRenderMixin:
                 return str(start.year)
         return fallback
 
-    def _draw_worldcup_main_card(self, image, draw, x1, y1, x2, y2, event, now, main_mode):
+    def _draw_worldcup_main_card(
+        self,
+        image,
+        draw,
+        x1,
+        y1,
+        x2,
+        y2,
+        event,
+        now,
+        main_mode,
+        presentation=None,
+    ):
         is_live = main_mode == "live"
         is_recent = main_mode == "recent"
         if is_live:
@@ -385,7 +595,12 @@ class WorldCupRenderMixin:
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
         if not event:
-            message, message_font = self._fit_text(draw, "No World Cup schedule", x2 - x1 - 36, 15, bold=True, min_size=10)
+            empty_text = (
+                str(presentation.get("empty_schedule_text") or "No schedule")
+                if presentation
+                else "No World Cup schedule"
+            )
+            message, message_font = self._fit_text(draw, empty_text, x2 - x1 - 36, 15, bold=True, min_size=10)
             self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), message, message_font, COLORS["text"])
             return
 
@@ -409,13 +624,47 @@ class WorldCupRenderMixin:
 
         center_x = (x1 + x2) / 2
         flag_h, flag_cap = 27, 54
+        if presentation:
+            try:
+                logo_scale = max(
+                    0.5,
+                    min(2.0, float(presentation.get("main_team_logo_scale", 1.0))),
+                )
+                flag_h = max(1, round(flag_h * logo_scale))
+                flag_cap = max(flag_h, round(flag_cap * logo_scale))
+            except (TypeError, ValueError):
+                pass
         left_area = (x1 + 18, center_x - 21)
         right_area = (center_x + 21, x2 - 18)
         flag_y = y1 + 58
         left_flag_x = int((left_area[0] + left_area[1] - flag_cap) / 2)
         right_flag_x = int((right_area[0] + right_area[1] - flag_cap) / 2)
-        self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_cap, flag_h, event.get("team_a_tla"), align="center")
-        self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), right_flag_x, flag_y, flag_cap, flag_h, event.get("team_b_tla"), align="center")
+        team_a_asset = self._worldcup_team_asset_url(event, "a", presentation)
+        team_b_asset = self._worldcup_team_asset_url(event, "b", presentation)
+        self._draw_worldcup_presented_flag(
+            image,
+            draw,
+            team_a_asset,
+            left_flag_x,
+            flag_y,
+            flag_cap,
+            flag_h,
+            event.get("team_a_tla"),
+            align="center",
+            presentation=presentation,
+        )
+        self._draw_worldcup_presented_flag(
+            image,
+            draw,
+            team_b_asset,
+            right_flag_x,
+            flag_y,
+            flag_cap,
+            flag_h,
+            event.get("team_b_tla"),
+            align="center",
+            presentation=presentation,
+        )
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
@@ -435,12 +684,82 @@ class WorldCupRenderMixin:
             )
 
         team_y = flag_y + flag_h + 16
-        team_a, team_a_font = self._fit_text(draw, event.get("team_a"), left_area[1] - left_area[0], 16, bold=True, min_size=9)
-        team_b, team_b_font = self._fit_text(draw, event.get("team_b"), right_area[1] - right_area[0], 16, bold=True, min_size=9)
+        team_name_max_size = 16
+        team_name_min_size = 9
+        points_offset = 13
+        odds_offset = 11
+        if presentation:
+            try:
+                team_name_max_size = max(
+                    7,
+                    min(
+                        24,
+                        int(
+                            presentation.get(
+                                "main_team_name_max_size",
+                                team_name_max_size,
+                            )
+                        ),
+                    ),
+                )
+                team_name_min_size = max(
+                    5,
+                    min(
+                        team_name_max_size,
+                        int(
+                            presentation.get(
+                                "main_team_name_min_size",
+                                team_name_min_size,
+                            )
+                        ),
+                    ),
+                )
+                points_offset = max(
+                    8,
+                    min(
+                        20,
+                        int(
+                            presentation.get(
+                                "main_team_points_offset",
+                                points_offset,
+                            )
+                        ),
+                    ),
+                )
+                odds_offset = max(
+                    6,
+                    min(
+                        20,
+                        int(
+                            presentation.get(
+                                "main_team_odds_offset",
+                                odds_offset,
+                            )
+                        ),
+                    ),
+                )
+            except (TypeError, ValueError):
+                pass
+        team_a, team_a_font = self._fit_text(
+            draw,
+            event.get("team_a"),
+            left_area[1] - left_area[0],
+            team_name_max_size,
+            bold=True,
+            min_size=team_name_min_size,
+        )
+        team_b, team_b_font = self._fit_text(
+            draw,
+            event.get("team_b"),
+            right_area[1] - right_area[0],
+            team_name_max_size,
+            bold=True,
+            min_size=team_name_min_size,
+        )
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, team_a_font, COLORS["text"])
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, team_b_font, COLORS["text"])
 
-        points_y = team_y + 13
+        points_y = team_y + points_offset
         left_meta = self._worldcup_team_points_meta(event, "a")
         right_meta = self._worldcup_team_points_meta(event, "b")
         left_meta_left, left_meta_right = int(left_area[0]), int(left_area[1])
@@ -450,17 +769,31 @@ class WorldCupRenderMixin:
         self._draw_worldcup_odds_text(draw, (right_meta_right - meta_width, points_y, right_meta_right, points_y + 11), right_meta, max_size=8)
 
         if self._worldcup_event_has_odds(event):
-            odds_y = points_y + 11
+            odds_y = points_y + odds_offset
             odds = event.get("odds") or {}
             self._draw_worldcup_odds_text(draw, (left_area[0], odds_y, left_area[1], odds_y + 12), (event.get("odds") or {}).get("team_a"), max_size=9)
             if odds.get("draw"):
                 self._draw_worldcup_odds_text(draw, (center_x - 26, odds_y, center_x + 26, odds_y + 12), f"X {odds.get('draw')}", max_size=9)
             self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
 
-    def _draw_worldcup_mini_rows(self, image, draw, x1, x2, y, bottom, title, events, show_time):
+    def _draw_worldcup_mini_rows(
+        self,
+        image,
+        draw,
+        x1,
+        x2,
+        y,
+        bottom,
+        title,
+        events,
+        show_time,
+        presentation=None,
+    ):
         self._draw_worldcup_mini_section_header(image, draw, x1, x2, y, title)
         if not events:
-            if title == "UPCOMING":
+            if title == "UPCOMING" and (
+                not presentation or bool(presentation.get("show_five_leagues_filler"))
+            ):
                 art_top = y + 20
                 art_height = max(1, min(52, bottom - art_top))
                 art = self._load_worldcup_five_leagues_upcoming((max(1, x2 - x1 - 8), art_height))
@@ -469,13 +802,27 @@ class WorldCupRenderMixin:
                     art_y = int(art_top + (art_height - art.height) / 2)
                     image.paste(art, (art_x, art_y), art)
                     return min(bottom, art_top + max(42, art.height) + 4)
-            message = "No more World Cup schedule" if title == "UPCOMING" else "No recent results"
+            if presentation:
+                message_key = "upcoming_empty_text" if title == "UPCOMING" else "recent_empty_text"
+                default_message = "No upcoming schedule" if title == "UPCOMING" else "No recent results"
+                message = str(presentation.get(message_key) or default_message)
+            else:
+                message = "No more World Cup schedule" if title == "UPCOMING" else "No recent results"
             message, message_font = self._fit_text(draw, message, x2 - x1 - 16, 10, bold=True, min_size=7)
             draw.text((x1 + 10, y + 23), message, font=message_font, fill=COLORS["muted"])
             return y + 38
         row_y = y + 21
         row_h = 33
-        max_rows = max(1, (bottom - row_y + 1) // (row_h + 2))
+        row_gap = 2
+        if presentation:
+            try:
+                row_gap = max(
+                    0,
+                    min(6, int(presentation.get("upcoming_row_gap", row_gap))),
+                )
+            except (TypeError, ValueError):
+                pass
+        max_rows = max(1, (bottom - row_y + row_gap) // (row_h + row_gap))
         rows = events[:max_rows]
         for index, event in enumerate(rows):
             center_text = "VS" if show_time else self._worldcup_score_or_vs(event)
@@ -484,13 +831,14 @@ class WorldCupRenderMixin:
                 draw,
                 x1,
                 x2,
-                row_y + index * (row_h + 2),
+                row_y + index * (row_h + row_gap),
                 row_h,
                 event,
                 center_text,
                 show_time=show_time,
+                presentation=presentation,
             )
-        return row_y + len(rows) * (row_h + 2) - 2
+        return row_y + len(rows) * (row_h + row_gap) - row_gap
 
     @staticmethod
     def _load_worldcup_five_leagues_upcoming(size):
@@ -505,7 +853,17 @@ class WorldCupRenderMixin:
         draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
         draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
 
-    def _draw_worldcup_recent_rows(self, image, draw, x1, x2, y, bottom, events):
+    def _draw_worldcup_recent_rows(
+        self,
+        image,
+        draw,
+        x1,
+        x2,
+        y,
+        bottom,
+        events,
+        presentation=None,
+    ):
         if bottom - y < 45:
             return y
         self._draw_worldcup_mini_section_header(image, draw, x1, x2, y, "RECENT")
@@ -518,7 +876,12 @@ class WorldCupRenderMixin:
         max_rows = 1 + max(0, (available - row_h) // (row_h + row_gap))
         visible_events = list(events or [])[: min(2, max_rows)]
         if not visible_events:
-            message, message_font = self._fit_text(draw, "No recent results", x2 - x1 - 16, 10, bold=True, min_size=7)
+            empty_text = (
+                str(presentation.get("recent_empty_text") or "No recent results")
+                if presentation
+                else "No recent results"
+            )
+            message, message_font = self._fit_text(draw, empty_text, x2 - x1 - 16, 10, bold=True, min_size=7)
             draw.text((x1 + 10, y + 23), message, font=message_font, fill=COLORS["muted"])
             return row_y
         for index, event in enumerate(visible_events):
@@ -530,10 +893,21 @@ class WorldCupRenderMixin:
                 row_y + index * (row_h + row_gap),
                 row_h,
                 event,
+                presentation=presentation,
             )
         return row_y + len(visible_events) * (row_h + row_gap) - row_gap
 
-    def _draw_worldcup_recent_match_row(self, image, draw, x1, x2, y, row_h, event):
+    def _draw_worldcup_recent_match_row(
+        self,
+        image,
+        draw,
+        x1,
+        x2,
+        y,
+        row_h,
+        event,
+        presentation=None,
+    ):
         draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
 
@@ -551,7 +925,16 @@ class WorldCupRenderMixin:
         right_score_edge = center_x + score_w / 2
         left_area = (x1 + 8, left_score_edge - left_detail_w - detail_gap - 4)
         right_area = (right_score_edge + right_detail_w + detail_gap + 4, x2 - 8)
-        self._draw_worldcup_recent_team_identity(image, draw, event, "a", left_area, team_y1, team_y2)
+        self._draw_worldcup_recent_team_identity(
+            image,
+            draw,
+            event,
+            "a",
+            left_area,
+            team_y1,
+            team_y2,
+            presentation=presentation,
+        )
         if left_label:
             self._draw_worldcup_score_detail_chip(
                 draw,
@@ -568,7 +951,16 @@ class WorldCupRenderMixin:
                 (right_score_edge + detail_gap, team_y1 + 1, right_score_edge + detail_gap + right_detail_w, team_y2 - 1),
                 right_label,
             )
-        self._draw_worldcup_recent_team_identity(image, draw, event, "b", right_area, team_y1, team_y2)
+        self._draw_worldcup_recent_team_identity(
+            image,
+            draw,
+            event,
+            "b",
+            right_area,
+            team_y1,
+            team_y2,
+            presentation=presentation,
+        )
         points_y = y + row_h - 10
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), score_w - 4, 7, bold=True, min_size=6)
         self._draw_centered_in_box(draw, (center_x - score_w / 2, points_y, center_x + score_w / 2, y + row_h - 1), date_text, date_font, COLORS["muted"])
@@ -587,7 +979,17 @@ class WorldCupRenderMixin:
         text, font = self._fit_text(draw, text, max(1, right - left), 9, bold=True, min_size=6)
         self._draw_text_in_box(draw, (left, top - 1, right, bottom + 1), text, font, COLORS["text"], align=align)
 
-    def _draw_worldcup_recent_team_identity(self, image, draw, event, side, area, y1, y2):
+    def _draw_worldcup_recent_team_identity(
+        self,
+        image,
+        draw,
+        event,
+        side,
+        area,
+        y1,
+        y2,
+        presentation=None,
+    ):
         left, right = [int(value) for value in area]
         area_w = max(1, right - left)
         flag_h, flag_cap = 13, 26
@@ -595,8 +997,14 @@ class WorldCupRenderMixin:
         side_key = "a" if side == "a" else "b"
         label = event.get(f"team_{side_key}")
         fallback = event.get(f"team_{side_key}_tla")
-        flag_url = event.get(f"team_{side_key}_flag")
-        flag_w = self._worldcup_flag_display_size(flag_url, fallback, flag_cap, flag_h)[0]
+        flag_url = self._worldcup_team_asset_url(event, side_key, presentation)
+        flag_w = self._worldcup_flag_display_size(
+            flag_url,
+            fallback,
+            flag_cap,
+            flag_h,
+            presentation=presentation,
+        )[0]
         max_text_w = max(24, area_w - flag_w - gap)
         label, font = self._fit_text(draw, label, max_text_w, 11, bold=True, min_size=7)
         text_w = min(max_text_w, self._text_width(draw, label, font))
@@ -628,7 +1036,17 @@ class WorldCupRenderMixin:
                 font,
                 COLORS["text"],
             )
-        self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback)
+        self._draw_worldcup_presented_flag(
+            image,
+            draw,
+            flag_url,
+            flag_x,
+            flag_y,
+            flag_w,
+            flag_h,
+            fallback,
+            presentation=presentation,
+        )
         if self._worldcup_team_eliminated(event, side_key):
             self._draw_worldcup_elimination_strike(draw, strike_left, strike_right, y1, y2)
 
@@ -641,7 +1059,19 @@ class WorldCupRenderMixin:
         strike_y = int(round((y1 + y2) / 2)) + 1
         draw.line((x1, strike_y, x2, strike_y), fill=COLORS["red"], width=2)
 
-    def _draw_worldcup_mini_match_row(self, image, draw, x1, x2, y, row_h, event, center_text, show_time=False):
+    def _draw_worldcup_mini_match_row(
+        self,
+        image,
+        draw,
+        x1,
+        x2,
+        y,
+        row_h,
+        event,
+        center_text,
+        show_time=False,
+        presentation=None,
+    ):
         draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), 36, 9, bold=True, min_size=7)
@@ -652,22 +1082,65 @@ class WorldCupRenderMixin:
         if show_time:
             time_text, time_font = self._fit_text(draw, self._worldcup_event_time_label(event), 48, 9, bold=True, min_size=7)
             self._draw_right_aligned(draw, (x2 - 8, y + 1), time_text, time_font, COLORS["text"])
-        self._draw_worldcup_row_lineup(image, draw, x1 + 9, x2 - 8, y + 13, event, center_text)
+        self._draw_worldcup_row_lineup(
+            image,
+            draw,
+            x1 + 9,
+            x2 - 8,
+            y + 13,
+            event,
+            center_text,
+            presentation=presentation,
+        )
 
-    def _draw_worldcup_row_lineup(self, image, draw, x1, x2, y, event, center_text):
+    def _draw_worldcup_row_lineup(
+        self,
+        image,
+        draw,
+        x1,
+        x2,
+        y,
+        event,
+        center_text,
+        presentation=None,
+    ):
         center_x = (x1 + x2) / 2
         flag_h, flag_cap = 14, 28
         left_flag_x = x1 + 1
         has_odds = center_text == "VS" and self._worldcup_event_has_odds(event)
         team_bottom = y + 11
         flag_y = y - 1
-        left_w = self._draw_worldcup_flag(image, draw, event.get("team_a_flag"), left_flag_x, flag_y, flag_cap, flag_h, event.get("team_a_tla"), align="left")
+        left_asset = self._worldcup_team_asset_url(event, "a", presentation)
+        right_asset = self._worldcup_team_asset_url(event, "b", presentation)
+        left_w = self._draw_worldcup_presented_flag(
+            image,
+            draw,
+            left_asset,
+            left_flag_x,
+            flag_y,
+            flag_cap,
+            flag_h,
+            event.get("team_a_tla"),
+            align="left",
+            presentation=presentation,
+        )
         left_text_x = left_flag_x + left_w + 4
         team_a, font_a = self._fit_text(draw, event.get("team_a"), max(20, center_x - left_text_x - 4), 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, (left_text_x, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
         center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
-        right_w = self._draw_worldcup_flag(image, draw, event.get("team_b_flag"), x2 - flag_cap - 1, flag_y, flag_cap, flag_h, event.get("team_b_tla"), align="right")
+        right_w = self._draw_worldcup_presented_flag(
+            image,
+            draw,
+            right_asset,
+            x2 - flag_cap - 1,
+            flag_y,
+            flag_cap,
+            flag_h,
+            event.get("team_b_tla"),
+            align="right",
+            presentation=presentation,
+        )
         right_text_x = x2 - 1 - right_w - 4
         team_b, font_b = self._fit_text(draw, event.get("team_b"), max(20, right_text_x - center_x - 28), 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
@@ -1071,6 +1544,29 @@ class WorldCupRenderMixin:
         image.paste(wordmark, (paste_x, paste_y), wordmark)
         return True
 
+    def _draw_csl_2026_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_CSL_2026_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        wordmark = wordmark.copy()
+        paper = tuple(COLORS["paper"])
+        theme_text = tuple(COLORS["text"])
+        if sum(paper) < sum(theme_text):
+            pixels = wordmark.load()
+            for pixel_y in range(wordmark.height):
+                for pixel_x in range(wordmark.width):
+                    red, green, blue, alpha = pixels[pixel_x, pixel_y]
+                    if alpha and max(red, green, blue) < 70:
+                        pixels[pixel_x, pixel_y] = (*theme_text, alpha)
+        paste_x = int(x)
+        paste_y = int(y + (int(max_height) - wordmark.height) / 2)
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
     def _draw_worldcup_header_brand(self, image, draw, width, compact=False):
 
         logo_size = 28 if compact else 36
@@ -1274,9 +1770,86 @@ class WorldCupRenderMixin:
             self._draw_text_in_box(draw, (text_x, y, text_x + text_w, y + row_h), label_text, label_font, COLORS["text"])
         self._draw_worldcup_flag(image, draw, flag_url, flag_x, flag_y, flag_w, flag_h, fallback_text)
 
-    def _draw_worldcup_flag(self, image, draw, flag_url, x, y, max_width, height, fallback_text, align="left"):
-        display_w, display_h = self._worldcup_flag_display_size(flag_url, fallback_text, max_width, height)
-        flag = self._load_flag_image(flag_url, (display_w, display_h))
+    def _draw_worldcup_presented_flag(
+        self,
+        image,
+        draw,
+        flag_url,
+        x,
+        y,
+        max_width,
+        height,
+        fallback_text,
+        *,
+        align="left",
+        presentation=None,
+    ):
+        if presentation:
+            return self._draw_worldcup_flag(
+                image,
+                draw,
+                flag_url,
+                x,
+                y,
+                max_width,
+                height,
+                fallback_text,
+                align=align,
+                presentation=presentation,
+            )
+        return self._draw_worldcup_flag(
+            image,
+            draw,
+            flag_url,
+            x,
+            y,
+            max_width,
+            height,
+            fallback_text,
+            align=align,
+        )
+
+    def _draw_worldcup_flag(
+        self,
+        image,
+        draw,
+        flag_url,
+        x,
+        y,
+        max_width,
+        height,
+        fallback_text,
+        align="left",
+        presentation=None,
+    ):
+        display_w, display_h = self._worldcup_flag_display_size(
+            flag_url,
+            fallback_text,
+            max_width,
+            height,
+            presentation=presentation,
+        )
+        if self._worldcup_team_asset_kind(presentation) == "logo":
+            try:
+                flag = self._load_team_logo_for_render(
+                    flag_url,
+                    min(display_w, display_h),
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Failed to load competition team logo %s: %s",
+                    flag_url,
+                    _safe_exception_text(exc),
+                )
+                flag = None
+            if flag is not None:
+                flag = ImageOps.contain(
+                    flag.convert("RGBA"),
+                    (display_w, display_h),
+                    Image.Resampling.LANCZOS,
+                )
+        else:
+            flag = self._load_flag_image(flag_url, (display_w, display_h))
         if align == "right":
             slot_x = int(x + max_width - display_w)
         elif align == "center":
@@ -1294,9 +1867,18 @@ class WorldCupRenderMixin:
         return display_w
 
     @staticmethod
-    def _worldcup_flag_display_size(flag_url, fallback_text, width, height):
+    def _worldcup_flag_display_size(
+        flag_url,
+        fallback_text,
+        width,
+        height,
+        presentation=None,
+    ):
         width = max(1, int(width))
         height = max(1, int(height))
+        if SportsDashboard._worldcup_team_asset_kind(presentation) == "logo":
+            side = min(width, height)
+            return side, side
         aspect_ratio = SportsDashboard._worldcup_flag_aspect_ratio(flag_url, fallback_text)
         slot_ratio = width / height
         if aspect_ratio >= slot_ratio:
@@ -1354,11 +1936,22 @@ class WorldCupRenderMixin:
         return flag
 
     @staticmethod
-    def _worldcup_api_source_label(source_state, fetched_at):
+    def _worldcup_api_source_label(source_state, fetched_at, timezone_info=None):
         fetched = SportsDashboard._parse_cached_utc(fetched_at)
-        time_text = fetched.astimezone(ZoneInfo(DEFAULT_TIMEZONE)).strftime("%I:%M %p").lstrip("0") if fetched else ""
+        source_timezone = timezone_info or ZoneInfo(DEFAULT_TIMEZONE)
+        time_text = fetched.astimezone(source_timezone).strftime("%I:%M %p").lstrip("0") if fetched else ""
         state = str(source_state or "API").upper()
-        if "ESPN" in state and "FOOTBALL" in state:
+        csl_prefixes = {
+            "CSL ESPN LIVE": "CSL ESPN DATA",
+            "CSL ESPN CACHE": "CSL ESPN CACHE",
+            "CSL ESPN STALE": "CSL ESPN STALE",
+            "CSL ESPN LIMIT": "CSL ESPN LIMIT",
+            "CSL ESPN UNAVAILABLE": "CSL ESPN UNAVAILABLE",
+            "CSL ESPN NO DATA": "CSL ESPN UNAVAILABLE",
+        }
+        if state in csl_prefixes:
+            prefix = csl_prefixes[state]
+        elif "ESPN" in state and "FOOTBALL" in state:
             prefix = "FD+ESPN"
         elif "ESPN" in state and state.startswith("API"):
             prefix = "API+ESPN"

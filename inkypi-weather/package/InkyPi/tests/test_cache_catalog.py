@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -108,6 +109,37 @@ def test_current_theme_exact_revision_wins_over_last_good(tmp_path):
     assert candidate is not None
     assert candidate.theme_mode == "night"
     assert candidate.cache_path == current
+
+
+def test_exact_theme_older_than_last_good_promotion_is_ineligible(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    instance = _instance()
+    current = authoritative_cache_path(root, "instance-one", 2, 5, "night")
+    previous = authoritative_cache_path(root, "instance-one", 2, 5, "day")
+    _write_png(current, "black")
+    _write_png(previous, "white")
+    stale_time = datetime.fromisoformat("2026-07-08T10:00:00+00:00").timestamp()
+    os.utime(current, (stale_time, stale_time))
+    state = InstanceRuntimeState(last_good_cache=_last_good(mode="day"))
+    catalog = CacheCatalog(root)
+
+    assert catalog.resolve_exact(instance, "night", state) is None
+    candidate = catalog.resolve(instance, "night", state)
+    assert candidate is not None
+    assert candidate.theme_mode == "day"
+    assert candidate.cache_path == previous
+
+
+def test_same_theme_cache_must_match_its_recorded_promotion_time(tmp_path):
+    root = tmp_path / ".refresh-cache"
+    instance = _instance()
+    current = authoritative_cache_path(root, "instance-one", 2, 5, "night")
+    _write_png(current, "black")
+    stale_time = datetime.fromisoformat("2026-07-08T10:00:00+00:00").timestamp()
+    os.utime(current, (stale_time, stale_time))
+    state = InstanceRuntimeState(last_good_cache=_last_good(mode="night"))
+
+    assert CacheCatalog(root).resolve_exact(instance, "night", state) is None
 
 
 def test_last_good_same_revision_is_used_when_current_theme_cache_is_missing(

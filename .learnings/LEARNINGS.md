@@ -6,6 +6,136 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260726-002] best_practice
+
+**Logged**: 2026-07-26T02:00:00-07:00
+**Priority**: critical
+**Status**: resolved
+**Area**: release-engineering
+
+### Summary
+An overall device deployment must prove that its source baseline contains the active release before packaging, and the archive must exclude runtime caches and the mutable current display image.
+
+### Details
+An overall repair archive was built from `d98efe8`, even though the approved live integration was based on descendant `78c0daab` plus reviewed changes. The deployment was healthy but silently restored older LiveRadar code-drawn icons and removed other already-live integrations. The same packaging path also admitted ignored plugin caches and `src/static/images/current_image.png`, which made stale runtime state capable of crossing release boundaries.
+
+### Suggested Action
+Before every overall deployment, record the active release, compare its source commit with the candidate using the commit graph, and stop if the candidate is an ancestor or lacks approved production files. Build from a clean integration branch, audit source-to-archive hashes, and reject plugin `cache` directories, hidden `*_cache` directories, and `current_image.png`.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/install/lib/release_archive.py, inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py
+- Tags: deployment, release-baseline, regression, archive-hygiene, runtime-cache, current-image
+- Pattern-Key: release_engineering.verify_baseline_and_exclude_runtime_state
+- Recurrence-Count: 1
+- First-Seen: 2026-07-26
+- Last-Seen: 2026-07-26
+
+### Resolution
+- **Resolved**: 2026-07-26T02:00:00-07:00
+- **Commit/PR**: pending
+- **Notes**: Reassembled the final release from `78c0daab`, merged all current fixes, and added archive exclusions and regression tests before redeployment.
+
+---
+
+## [LRN-20260726-001] correction
+
+**Logged**: 2026-07-26T01:45:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+A deployed visual fix can regress when the next release is assembled from a different worktree that never received the prior source and binary assets.
+
+### Details
+LiveRadar's official transparent platform icons, generated transparent status icons, and Twitch Helix `/users` avatar lookup existed in the worktree used for the earlier device release, but not in the main workspace later used for the overall release archive. The overall deployment therefore replaced the device's working icon/avatar implementation with older code-drawn badges and dropped the local assets even though the prior live release was correct.
+
+### Suggested Action
+Before every overall release, compare the chosen source root against the active device release for plugin-local assets and recently repaired code paths, require regression tests that fail when required alpha assets or provider enrichments disappear, and archive only after confirming the release source is the intended integrated worktree.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/src/plugins/live_radar/platform_icons, inkypi-weather/package/InkyPi/src/plugins/live_radar/status_icons, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: worktree, release-source, visual-regression, binary-assets, twitch
+- Pattern-Key: release.verify_integrated_worktree_and_plugin_assets
+- Recurrence-Count: 1
+- First-Seen: 2026-07-26
+- Last-Seen: 2026-07-26
+
+### Resolution
+- **Resolved**: 2026-07-26T01:45:00-07:00
+- **Commit/PR**: operational
+- **Notes**: Restored the previous release's exact transparent assets and selective icon/avatar hunks into the main workspace, added red-green regressions, and passed the complete LiveRadar suite plus Ruff before rebuilding the overall release.
+
+---
+
+## [LRN-20260725-002] best_practice
+
+**Logged**: 2026-07-25T16:10:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows pytest fixture paths must reserve headroom for the deepest nested artifact, not merely resolve `--basetemp` to an absolute path.
+
+### Details
+The custom `tmp_path` fixture produced a 270-character nested venv interpreter path inside a long Git worktree. Python 3.14 `ensurepip` failed deterministically there, while the same interpreter created a venv successfully at a 62-character path. Making a relative `--basetemp` absolute fixed pytest semantics but did not control the fixture leaf length.
+
+### Suggested Action
+Bound custom pytest fixture slugs, retain a random uniqueness suffix, and add a Windows contract that measures a representative deepest nested path. Keep that path below a documented safety budget before relying on installer or archive tests.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/tests/conftest.py, inkypi-weather/package/InkyPi/tests/test_tmp_path_contract.py, inkypi-weather/package/InkyPi/tests/test_install_update.py
+- Tags: windows, pytest, tmp-path, venv, ensurepip, path-length, worktree
+- See Also: LRN-20260716-010
+- Pattern-Key: windows.pytest_tmp_path_reserves_nested_artifact_headroom
+- Recurrence-Count: 1
+- First-Seen: 2026-07-25
+- Last-Seen: 2026-07-25
+
+### Resolution
+- **Resolved**: 2026-07-25T16:10:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Capped the fixture slug at 32 characters, added a 240-character nested-venv headroom contract, restored all installer tests, and passed the full 4714-test suite.
+
+---
+
+## [LRN-20260725-003] best_practice
+
+**Logged**: 2026-07-25T16:10:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Provider-confirmed live state must use one source-freshness rule across routing, event selection, and refresh scheduling.
+
+### Details
+A fixed three-hour match window incorrectly dropped a provider-confirmed long-running match, but blindly rolling the deadline let a day-old stale `2H` last-good cache masquerade as live and outrank current fixtures. Applying freshness only in the route was also insufficient because the stale event could still win the main-card live bucket.
+
+### Suggested Action
+Keep a bounded normal match window that tolerates short provider outages. Extend it only for a recent `LIVE` or fresh-cache observation, pass the same source state and fetch time into route summaries and render selection, and make stale live events leave both the live bucket and live-refresh lane. Test fresh long-running live, normal-window stale recovery, stale-only fallback, and stale-live plus a future fixture.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/csl.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard_csl_data.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard_csl_route.py
+- Tags: sports-dashboard, csl, live-state, source-freshness, last-good, routing, refresh
+- See Also: LRN-20260710-006
+- Pattern-Key: sports_dashboard.live_source_freshness_shared_across_route_render_refresh
+- Recurrence-Count: 1
+- First-Seen: 2026-07-25
+- Last-Seen: 2026-07-25
+
+### Resolution
+- **Resolved**: 2026-07-25T16:10:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Added source-aware CSL event bucketing and bounded live renewal, closed all review findings, and passed the full 4714-test suite.
+
+---
+
 ## [LRN-20260722-003] correction
 
 **Logged**: 2026-07-22T21:54:58-07:00
@@ -1932,5 +2062,102 @@ Keep last-good screenshots only in the outer instance/version/theme-scoped cache
 - **Resolved**: 2026-07-21T17:54:24-07:00
 - **Commit/PR**: operational
 - **Notes**: Removed Weather's internal screenshot cache, made degraded DATA jobs fail honestly, protected Steam HTML caches from emergency fallback replacement, and proved current 17:49 Steam and 17:51 Weather HTML images on the physical display with matching instance/current hashes.
+
+---
+
+## [LRN-20260725-001] correction
+
+**Logged**: 2026-07-25T14:35:40-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Platform-identification icons must come from current official online assets, never from a crop of the user's reference screenshot.
+
+### Details
+The LiveRadar reference screenshot showed the desired site-tab icon style, but it was a visual direction reference rather than an asset source. The correct implementation retrieves each current official favicon or press asset, selects the highest-resolution official layer available, verifies real alpha transparency, and normalizes it mechanically onto a transparent canvas. The user also explicitly rejected added badge borders and background fills, so the final icons must be pasted directly while retaining their own colors.
+
+### Suggested Action
+For future platform-icon work, inspect the current official site or brand asset page, record the source URL and retrieval date, verify RGBA alpha extrema and transparent corners, and inspect the final icon on both light and dark production backgrounds. Do not crop, trace, or reconstruct an icon from a user screenshot unless the user explicitly requests that method. Do not add a badge shell when the requested visual is a transparent standalone mark.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/platform_icons, inkypi-weather/package/InkyPi/src/plugins/live_radar/status_icons, inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: live-radar, official-assets, favicon, transparent-png, screenshot-reference, no-border
+- Pattern-Key: visual_assets.platform_icons_use_current_official_transparent_sources
+- Recurrence-Count: 1
+- First-Seen: 2026-07-25
+- Last-Seen: 2026-07-25
+
+### Resolution
+- **Resolved**: 2026-07-25T14:35:40-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Removed screenshot-derived attempts, bundled current official Douyu, Bilibili, and Twitch assets with source records, verified true alpha, removed badge borders and fills, and checked 800x480 day/night previews.
+
+---
+
+## [LRN-20260725-004] best_practice
+
+**Logged**: 2026-07-25T16:19:14-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Current third-party API repairs must combine official web documentation, a live response probe, and local data-path tracing.
+
+### Details
+LiveRadar's Twitch Helix path reported healthy stream status while every Twitch avatar remained empty. Local tracing showed that `/helix/streams` never supplied an avatar, but the decisive external check was Twitch's current API reference: `profile_image_url` belongs to `/helix/users`. A live probe also proved the CDN and decoder worked, exposed an aggregator value of `User not found: ...` masquerading as an avatar URL, and caught the real CDN hostname `jtvnw.net` while the request-header matcher only covered `ttvnw.net`. Any one evidence source alone would have left part of the defect unresolved.
+
+### Suggested Action
+When a plugin depends on a changing external service, search the current official documentation and probe a safe real response before finalizing the diagnosis. Keep optional enrichment failures from discarding fresh primary status, validate external media values as HTTP(S) URLs, and test live, offline, disabled-enrichment, and upstream-failure branches.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/live_radar/live_radar.py, inkypi-weather/package/InkyPi/tests/test_live_radar.py
+- Tags: live-radar, twitch, helix, internet-research, official-docs, live-probe, avatar, input-validation
+- See Also: LRN-20260725-001
+- Pattern-Key: external_integrations.official_docs_live_probe_and_local_trace
+- Recurrence-Count: 1
+- First-Seen: 2026-07-25
+- Last-Seen: 2026-07-25
+
+### Resolution
+- **Resolved**: 2026-07-25T16:19:14-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Added Twitch `/helix/users` avatar enrichment with graceful degradation, rejected non-URL avatar values, corrected the Twitch CDN Referer match, passed 107 LiveRadar tests and the full 4719-test suite, and rendered a live-network 800x480 avatar preview.
+
+---
+
+## [LRN-20260725-005] best_practice
+
+**Logged**: 2026-07-25T16:56:11-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+SportsDashboard main-card badge enlargement should use independent vertical offsets for the team name, meta row, and odds row.
+
+### Details
+Increasing the CSL main badge scale from 1.2 to 1.4 naturally moved the team-name anchor down by 6px. Moving every lower line by the same amount would waste the card's bottom safety area and preserve the overly loose rhythm. Keeping separate `main_team_points_offset` and `main_team_odds_offset` values let the name move with the badge while the lower rows moved only 4px and 3px. The final card retained 30px below the odds box and preserved 4px between synthetic meta and odds glyphs.
+
+### Suggested Action
+For future SportsDashboard identity-card scaling, parameterize each vertical relationship, verify final pixel bounding boxes in live/upcoming/recent states, and keep default offsets unchanged for unrelated competitions.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/csl.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/worldcup_render.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard_csl_render.py
+- Tags: sports-dashboard, csl, team-badge, vertical-spacing, pixel-geometry
+- Pattern-Key: sports_dashboard.main_card_independent_vertical_offsets
+- Recurrence-Count: 1
+- First-Seen: 2026-07-25
+- Last-Seen: 2026-07-25
+
+### Resolution
+- **Resolved**: 2026-07-25T16:56:11-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Implemented 1.4 badge scale with independent 11px and 10px lower-row offsets; 44 CSL tests and the full 4725-test suite passed.
 
 ---

@@ -69,37 +69,51 @@ class ClubFootballMixin:
     @staticmethod
     def _football_panel_mode(settings):
         mode = str((settings or {}).get("footballPanelMode") or "club").strip().lower()
-        return mode if mode in {"auto", "worldcup", "club"} else "club"
+        return mode if mode in {"auto", "worldcup", "csl", "club"} else "club"
 
     @staticmethod
-    def _select_football_panel_kind(mode, now, worldcup_summary):
-        if mode in {"worldcup", "club"}:
+    def _select_football_panel_kind(
+        mode,
+        now,
+        worldcup_summary,
+        csl_summary=None,
+    ):
+        if mode in {"worldcup", "csl", "club"}:
             return mode
-        if not isinstance(now, datetime) or not isinstance(worldcup_summary, Mapping):
+        if not isinstance(now, datetime):
             return "club"
 
-        first = worldcup_summary.get("first_start")
-        final = worldcup_summary.get("final_start")
-        if not isinstance(first, datetime) or not isinstance(final, datetime):
-            return "club"
-        if first.tzinfo is None:
-            first = first.replace(tzinfo=timezone.utc)
-        if final.tzinfo is None:
-            final = final.replace(tzinfo=timezone.utc)
+        if isinstance(worldcup_summary, Mapping):
+            first = worldcup_summary.get("first_start")
+            final = worldcup_summary.get("final_start")
+            if isinstance(first, datetime) and isinstance(final, datetime):
+                if first.tzinfo is None:
+                    first = first.replace(tzinfo=timezone.utc)
+                if final.tzinfo is None:
+                    final = final.replace(tzinfo=timezone.utc)
 
-        final_end = worldcup_summary.get("final_end")
-        if not isinstance(final_end, datetime):
-            final_end = final + CLUB_FOOTBALL_DEFAULT_FINAL_DURATION
-        if final_end.tzinfo is None:
-            final_end = final_end.replace(tzinfo=timezone.utc)
+                final_end = worldcup_summary.get("final_end")
+                if not isinstance(final_end, datetime):
+                    final_end = final + CLUB_FOOTBALL_DEFAULT_FINAL_DURATION
+                if final_end.tzinfo is None:
+                    final_end = final_end.replace(tzinfo=timezone.utc)
 
-        return (
-            "worldcup"
-            if first - CLUB_FOOTBALL_WORLD_CUP_LEAD
-            <= now
-            <= final_end + CLUB_FOOTBALL_WORLD_CUP_TAIL
-            else "club"
-        )
+                if (
+                    first - CLUB_FOOTBALL_WORLD_CUP_LEAD
+                    <= now
+                    <= final_end + CLUB_FOOTBALL_WORLD_CUP_TAIL
+                ):
+                    return "worldcup"
+
+        if isinstance(csl_summary, Mapping) and bool(
+            csl_summary.get(
+                "has_relevant_events",
+                csl_summary.get("active"),
+            )
+        ):
+            return "csl"
+
+        return "club"
 
 
     @staticmethod
@@ -1012,9 +1026,10 @@ class ClubFootballMixin:
         by_league = {}
         standings = {}
         freshness_values = []
-        fresh_provider_count = 0
+        live_provider_count = 0
+        cached_provider_count = 0
         usable_event_count = 0
-        expected_provider_count = len(enabled_leagues) * 2
+        expected_provider_count = len(enabled_leagues) * (2 if api_key else 1)
 
         for league_code in enabled_leagues:
             espn_payload = {}
@@ -1026,7 +1041,9 @@ class ClubFootballMixin:
                     )
                 )
                 if espn_state.endswith("LIVE"):
-                    fresh_provider_count += 1
+                    live_provider_count += 1
+                elif espn_state.endswith("CACHE"):
+                    cached_provider_count += 1
                 if espn_fetched_at:
                     freshness_values.append(espn_fetched_at)
             except Exception as exc:
@@ -1048,7 +1065,9 @@ class ClubFootballMixin:
                         )
                     )
                     if football_state.endswith("LIVE"):
-                        fresh_provider_count += 1
+                        live_provider_count += 1
+                    elif football_state.endswith("CACHE"):
+                        cached_provider_count += 1
                     if football_fetched_at:
                         freshness_values.append(football_fetched_at)
                 except Exception as exc:
@@ -1098,11 +1117,18 @@ class ClubFootballMixin:
 
         if (
             expected_provider_count
-            and fresh_provider_count == expected_provider_count
+            and live_provider_count == expected_provider_count
         ):
             source_state = "CLUB LIVE"
-        elif usable_event_count and fresh_provider_count:
+        elif usable_event_count and live_provider_count:
             source_state = "CLUB PARTIAL"
+        elif (
+            expected_provider_count
+            and cached_provider_count == expected_provider_count
+        ):
+            source_state = "CLUB CACHE"
+        elif usable_event_count and cached_provider_count:
+            source_state = "CLUB PARTIAL CACHE"
         elif usable_event_count:
             source_state = "CLUB STALE"
         else:

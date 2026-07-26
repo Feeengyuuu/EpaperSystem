@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import inspect
+import os
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -370,7 +371,10 @@ def test_live_reference_mutation_probe_rejects_resolver_config_mutation():
 
 def test_presentation_capability_lookup_is_metadata_only(monkeypatch):
     manifest = SimpleNamespace(
-        capabilities=SimpleNamespace(supports_presentation_refresh=True),
+        capabilities=SimpleNamespace(
+            supports_presentation_refresh=True,
+            presentation_refresh_is_provider_free=True,
+        ),
     )
     monkeypatch.setattr(
         plugin_registry,
@@ -388,6 +392,21 @@ def test_presentation_capability_lookup_is_metadata_only(monkeypatch):
     ) is True
     assert plugin_registry.plugin_supports_presentation_refresh(
         {"id": "legacy-metadata-free"}
+    ) is False
+    assert plugin_registry.plugin_presentation_refresh_is_provider_free(
+        {"id": "prepared", "_manifest": manifest}
+    ) is True
+    assert plugin_registry.plugin_presentation_refresh_is_provider_free(
+        {"id": "legacy-metadata-free"}
+    ) is False
+    contradictory = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            supports_presentation_refresh=False,
+            presentation_refresh_is_provider_free=True,
+        ),
+    )
+    assert plugin_registry.plugin_presentation_refresh_is_provider_free(
+        {"id": "contradictory", "_manifest": contradictory}
     ) is False
 
 
@@ -8203,6 +8222,66 @@ def test_cache_disappearing_after_selection_cancels_without_refresh_failure():
     assert playlist.is_rotation_reservation_current(command.instance_uuid) is True
 
 
+def test_cache_superseded_after_selection_is_not_displayed():
+    tmp_path = make_test_dir("cache-only-superseded-after-selection")
+    plugin_data = _runtime_plugin_data("themed_plugin", "Themed Plugin")
+    plugin_data["plugin_settings"]["themeMode"] = "auto"
+    playlist = _runtime_playlist(plugin_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        cycle_seconds=60,
+    )
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.refresh_info.refresh_time = (now - timedelta(minutes=5)).isoformat()
+    device_config.get_plugin = lambda _plugin_id: {
+        "id": "themed_plugin",
+        "_manifest": _theme_manifest("themed_plugin"),
+    }
+    instance = playlist.plugins[0].snapshot()
+    day_cache = _write_runtime_theme_cache(task, instance, "day")
+    day_promoted = now - timedelta(minutes=10)
+    os.utime(
+        day_cache,
+        (day_promoted.timestamp(), day_promoted.timestamp()),
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        day_promoted.isoformat(),
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="day",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=day_promoted.isoformat(),
+        ),
+    )
+    command = task._select_cached_display_command(now)
+    assert command.payload["cache_theme_mode"] == "day"
+
+    _write_runtime_theme_cache(task, instance, "night")
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        now.isoformat(),
+        lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="night",
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            promoted_at=now.isoformat(),
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    result = task.refresh_queue.get_entry(submitted.id).job
+
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "cache_unavailable"
+    assert task.display_manager.calls == []
+
+
 def test_production_playlist_commands_always_have_explicit_intent():
     tree = ast.parse(inspect.getsource(refresh_task_module))
     missing = []
@@ -9667,6 +9746,161 @@ def test_theme_catchup_waits_for_exact_displayed_transition_then_uses_no_rotatio
     assert _rotation_state(playlist) == before_rotation
 
 
+def test_cache_only_theme_transition_commits_on_normal_display_then_catches_up(
+    monkeypatch,
+):
+    task, device_config, playlist, configs = _theme_transition_runtime(
+        "theme-catchup-cache-only-normal-display"
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    configs["displayed"]["_manifest"] = _theme_manifest(
+        "displayed",
+        presentation="media",
+    )
+    configs["fallback"]["_manifest"] = _theme_manifest(
+        "fallback",
+        presentation="media",
+    )
+    device_config.get_resolution = lambda: (40, 24)
+    current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+    displayed, fallback = _prepare_independent_theme_candidate(
+        task,
+        playlist,
+        current_dt,
+    ), playlist.plugins[1].snapshot()
+    playlist.plugin_rotation_pool = [
+        displayed.instance_uuid,
+        fallback.instance_uuid,
+    ]
+    playlist.plugin_rotation_queue = [
+        displayed.instance_uuid,
+        fallback.instance_uuid,
+    ]
+    playlist.plugin_rotation_recent_history = []
+    for instance in (displayed, fallback):
+        _write_runtime_theme_cache(
+            task,
+            instance,
+            "day",
+            Image.new("RGB", (40, 24), (180, 20, 30)),
+        )
+    device_config.refresh_info.refresh_time = (
+        current_dt - timedelta(minutes=6)
+    ).isoformat()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    now = [current_dt]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    plugins = {
+        "displayed": ThemeOnlyRecordingPlugin(configs["displayed"], fail=True),
+        "fallback": ThemeOnlyRecordingPlugin(configs["fallback"], fail=True),
+    }
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda config: plugins[config["id"]],
+    )
+
+    redraw = task._select_independent_refresh_command(now[0])
+    assert redraw is not None
+    assert redraw.intent is RefreshIntent.THEME_REDRAW
+    redraw_result = _queue_and_process(task, redraw)
+    assert redraw_result.job.status is JobStatus.SUCCEEDED
+    assert Path(task._snapshot_cache_path(displayed, "night")).is_file()
+    assert device_config.config["active_theme"] == "day"
+    assert task.display_manager.calls == []
+    assert task.refresh_queue.take(timeout=0) is None
+    assert plugins["displayed"].calls == []
+
+    assert task._select_independent_refresh_command(now[0]) is None
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
+    )
+    assert task._select_cached_display_command(now[0]) is None
+    now[0] += timedelta(
+        seconds=refresh_task_module.DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS + 1
+    )
+    display_command = task._select_cached_display_command(now[0])
+    assert display_command is not None
+    assert display_command.intent is RefreshIntent.DISPLAY_CACHE
+    assert display_command.payload["theme_context"]["mode"] == "night"
+    display_result = _queue_and_process(task, display_command)
+    assert display_result.job.status is JobStatus.SUCCEEDED
+    assert len(task.display_manager.calls) == 1
+    assert device_config.config["active_theme"] == "night"
+    anchor = device_config.refresh_info.refresh_time
+
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda config: plugins[config["id"]],
+    )
+    now[0] += timedelta(seconds=1)
+    catchup = task._select_independent_refresh_command(now[0])
+    assert catchup is not None
+    assert catchup.intent is RefreshIntent.THEME_CATCHUP
+    assert catchup.instance_uuid == fallback.instance_uuid
+    catchup_result = _queue_and_process(task, catchup)
+
+    assert catchup_result.job.status is JobStatus.SUCCEEDED
+    assert Path(task._snapshot_cache_path(fallback, "night")).is_file()
+    assert plugins["fallback"].calls == []
+    assert len(task.display_manager.calls) == 1
+    assert device_config.refresh_info.refresh_time == anchor
+    assert task.refresh_queue.take(timeout=0) is None
+
+
+def test_theme_catchup_rebuilds_exact_cache_older_than_latest_data_success(
+    monkeypatch,
+):
+    task, _device_config, playlist, configs, current_dt = (
+        _prepare_theme_catchup_runtime("theme-catchup-stale-exact-cache")
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    displayed = playlist.plugins[0].snapshot()
+    target = playlist.plugins[1].snapshot()
+    displayed_night = _write_runtime_theme_cache(task, displayed, "night")
+    stale_target_night = _write_runtime_theme_cache(
+        task,
+        target,
+        "night",
+        Image.new("RGB", (32, 16), "black"),
+    )
+    fresh_cache_time = (current_dt - timedelta(minutes=5)).timestamp()
+    stale_cache_time = (current_dt - timedelta(days=1)).timestamp()
+    os.utime(displayed_night, (fresh_cache_time, fresh_cache_time))
+    os.utime(stale_target_night, (stale_cache_time, stale_cache_time))
+
+    plugin = ThemeOnlyRecordingPlugin(configs["fallback"], color="white")
+    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command.intent is RefreshIntent.THEME_CATCHUP
+    assert command.instance_uuid == target.instance_uuid
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert len(plugin.calls) == 1
+    assert plugin.calls[0]["theme_render_only"] is True
+    with Image.open(stale_target_night) as refreshed:
+        assert refreshed.getpixel((16, 8)) == (255, 255, 255)
+
+
 def test_theme_redraw_command_is_display_guarded_but_catchup_is_not():
     task, _device_config, playlist, _configs, current_dt = (
         _prepare_theme_catchup_runtime("theme-command-display-guard")
@@ -10200,14 +10434,21 @@ def test_presentation_instance_identity_binding_rejects_invalid_uuid(instance_uu
         presentation_contract.bind_presentation_instance_identity({}, instance_uuid)
 
 
-def _presentation_manifest(plugin_id="presentation_plugin"):
+def _presentation_manifest(
+    plugin_id="presentation_plugin",
+    *,
+    provider_free=False,
+):
     return PluginManifest(
         schema_version=2,
         id=plugin_id,
         class_name="PresentationPlugin",
         display_name="Presentation Plugin",
         refresh_on_display=True,
-        capabilities=PluginCapabilities(supports_presentation_refresh=True),
+        capabilities=PluginCapabilities(
+            supports_presentation_refresh=True,
+            presentation_refresh_is_provider_free=provider_free,
+        ),
         raw={},
     )
 
@@ -10391,6 +10632,7 @@ def _make_presentation_task(
     interval=3600,
     clock=None,
     display_manager=None,
+    provider_free=False,
 ):
     tmp_path = make_test_dir(name)
     plugins = [
@@ -10415,7 +10657,13 @@ def _make_presentation_task(
             "display_triggered_refresh_enabled": True,
         }
     )
-    manifests = {plugin["plugin_id"]: _presentation_manifest(plugin["plugin_id"]) for plugin in plugins}
+    manifests = {
+        plugin["plugin_id"]: _presentation_manifest(
+            plugin["plugin_id"],
+            provider_free=provider_free,
+        )
+        for plugin in plugins
+    }
     device_config.get_plugin = lambda plugin_id: {
         "id": plugin_id,
         "refresh_on_display": True,
@@ -10916,6 +11164,13 @@ def test_due_rotation_uses_last_good_theme_cache_after_short_recovery_window(
     assert fallback is not None
     assert fallback.instance_uuid == instance.instance_uuid
     assert fallback.payload["cache_theme_mode"] == "day"
+    assert fallback.payload.get("theme_context") is None
+
+    task._execute_command(fallback)
+
+    assert len(task.display_manager.calls) == 1
+    assert task.display_manager.calls[0][0].getpixel((0, 0)) == (255, 255, 255)
+    assert device_config.config["active_theme"] == "day"
 
 
 def _presentation_followup_command(task, playlist, instance, request):
@@ -11082,6 +11337,87 @@ def test_rotation_displays_cached_presentation_plugin_without_request_when_polic
     assert state is None or state.presentation_request is None
 
 
+def test_provider_free_presentation_prepares_under_cache_only_and_waits_for_next_display(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "provider-free-presentation-policy-off",
+        provider_free=True,
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    plugin = PresentationBankPlugin(prepared_color="white")
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+
+    assert task._select_cached_display_command(now[0]) is None
+    request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert request is not None
+    presentation = task._select_independent_refresh_command(now[0])
+    assert presentation is not None
+    assert presentation.intent is RefreshIntent.PRESENTATION_REFRESH
+
+    prepared_result = _queue_and_process(task, presentation)
+    prepared_state = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    candidate = _prepared_presentation_candidate(task, instance, request)
+    assert prepared_result.job.status is JobStatus.SUCCEEDED
+    assert prepared_state is not None
+    assert prepared_state.prepared_at is not None
+    assert Path(candidate.cache_path).is_file()
+    assert len(display.calls) == 0
+    assert task.refresh_queue.take(timeout=0) is None
+    assert [event[0] for event in plugin.events] == [
+        "mode",
+        "reconcile",
+        "prepare",
+    ]
+
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
+    )
+    now[0] += timedelta(seconds=1)
+    display_command = task._select_cached_display_command(now[0])
+    assert display_command is not None
+    assert display_command.intent is RefreshIntent.DISPLAY_CACHE
+    assert display_command.allow_prepared_presentation is True
+    assert display_command.payload["presentation_request_id"] == request.request_id
+
+    display_result = _queue_and_process(task, display_command)
+    final_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert display_result.job.status is JobStatus.SUCCEEDED
+    assert final_state.presentation_request is None
+    assert final_state.presentation_receipt.request_id == request.request_id
+    assert len(display.calls) == 1
+    assert display.calls[0]["image"].getpixel((0, 0)) == (255, 255, 255)
+    assert Path(candidate.cache_path).exists() is False
+    assert task.refresh_queue.take(timeout=0) is None
+
+
 def test_default_cached_display_ignores_pending_presentation_backoff(
     monkeypatch,
 ):
@@ -11177,6 +11513,49 @@ def test_queued_presentation_refresh_is_canceled_if_policy_is_disabled(
 
     assert result.status is JobStatus.CANCELED
     assert result.error_code == "stale_selection"
+
+
+def test_provider_free_attestation_revoked_during_execution_fails_before_plugin(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "provider-free-attestation-revoked-during-execution",
+        provider_free=True,
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    request = _seed_presentation_request(task, instance)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        presentation_request_id=request.request_id,
+    )
+    attested = _presentation_manifest(instance.plugin_id, provider_free=True)
+    revoked = _presentation_manifest(instance.plugin_id, provider_free=False)
+    manifests = iter((attested, revoked))
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": True,
+        "_manifest": next(manifests),
+    }
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: pytest.fail("revoked presentation instantiated plugin"),
+    )
+
+    with pytest.raises(
+        refresh_task_module._StaleSelection,
+        match="provider-free presentation capability is no longer enabled",
+    ):
+        task._execute_command(command)
 
 
 def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(monkeypatch):
@@ -12961,6 +13340,78 @@ def test_presentation_commit_published_then_raised_finishes_as_committed(
     assert not Path(candidate.cache_path).exists()
 
 
+def test_prepared_display_commits_theme_only_after_hardware_write(monkeypatch):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "prepared-display-theme-commit"
+    )
+    instance = playlist.plugins[0].snapshot()
+    device_config.config["theme_mode"] = "night"
+    manifest = PluginManifest(
+        schema_version=2,
+        id=instance.plugin_id,
+        class_name="PresentationPlugin",
+        display_name="Presentation Plugin",
+        refresh_on_display=True,
+        capabilities=PluginCapabilities(
+            supports_presentation_refresh=True,
+            supports_day_night_theme=True,
+        ),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": True,
+        "_manifest": manifest,
+    }
+    request = _seed_presentation_request(
+        task,
+        instance,
+        origin_theme_mode="day",
+    )
+    candidate = _seed_prepared_presentation(
+        task,
+        instance,
+        request,
+        image=Image.new("RGB", (32, 16), "white"),
+        theme_mode="night",
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=65,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        theme_context={"mode": "night", "source": "config"},
+        cache_theme_mode="night",
+        expected_displayed_instance_uuid=instance.instance_uuid,
+        preserve_rotation_anchor=True,
+        coalescing_scope=f"presentation-followup:{request.request_id}",
+        allow_prepared_presentation=True,
+        presentation_request_id=request.request_id,
+    )
+
+    result = _queue_and_process(task, command)
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert device_config.config["active_theme"] == "night"
+    assert state.presentation_request is None
+    assert state.presentation_receipt.theme_mode == "night"
+    assert not Path(candidate.cache_path).exists()
+
+
 def test_exact_presentation_followup_with_revoked_capability_never_falls_back(
     monkeypatch,
 ):
@@ -13010,6 +13461,50 @@ def test_exact_presentation_followup_with_revoked_capability_never_falls_back(
     assert state.presentation_receipt is None
     assert Path(candidate.cache_path).exists()
     assert canonical.read_bytes() == authoritative_bytes
+
+
+def test_prepared_display_rechecks_provider_free_attestation_before_consumption(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "prepared-provider-free-revoked-during-consumption",
+        provider_free=True,
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    candidate = _seed_prepared_presentation(task, instance, request)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    command = _presentation_followup_command(task, playlist, instance, request)
+    attested = _presentation_manifest(instance.plugin_id, provider_free=True)
+    revoked = _presentation_manifest(instance.plugin_id, provider_free=False)
+    manifest_calls = []
+
+    def current_plugin_config(plugin_id):
+        manifest_calls.append(plugin_id)
+        return {
+            "id": plugin_id,
+            "refresh_on_display": True,
+            "_manifest": attested if len(manifest_calls) == 1 else revoked,
+        }
+
+    device_config.get_plugin = current_plugin_config
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    with pytest.raises(
+        refresh_task_module._StaleSelection,
+        match="provider-free presentation capability is no longer enabled",
+    ):
+        task._execute_command(command)
+
+    assert display.calls == []
+    assert Path(candidate.cache_path).exists()
 
 
 def _task6_provenance_api():

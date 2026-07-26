@@ -46,6 +46,32 @@ def is_device_owned_yahei_font(path: PurePath) -> bool:
     )
 
 
+def is_runtime_plugin_cache(path: PurePath) -> bool:
+    """Return whether a member belongs to a plugin-owned runtime cache."""
+
+    parts = tuple(part.casefold() for part in path.parts)
+    return (
+        len(parts) >= 3
+        and parts[:2] == ("src", "plugins")
+        and any(
+            part == "cache"
+            or (part.startswith(".") and part.endswith("_cache"))
+            for part in parts[2:-1]
+        )
+    )
+
+
+def is_runtime_display_image(path: PurePath) -> bool:
+    """Return whether a member is the mutable last-displayed frame."""
+
+    return tuple(part.casefold() for part in path.parts) == (
+        "src",
+        "static",
+        "images",
+        "current_image.png",
+    )
+
+
 def build_release_archive(
     source_root: Path,
     artifact: Path,
@@ -73,7 +99,11 @@ def build_release_archive(
                 or relative.name in MIGRATION_CONTROL_NAMES
             ):
                 continue
-            if is_device_owned_yahei_font(relative):
+            if (
+                is_device_owned_yahei_font(relative)
+                or is_runtime_plugin_cache(relative)
+                or is_runtime_display_image(relative)
+            ):
                 continue
             if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
                 continue

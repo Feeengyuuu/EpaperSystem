@@ -188,9 +188,10 @@ def _fixed_now(plugin, value):
 def _capture_render(plugin):
     captured = {}
 
-    def render(dimensions, html_file, css_file, template_params):
+    def render(dimensions, html_file, css_file, template_params, **kwargs):
         captured.update(template_params)
         captured["_render_args"] = (dimensions, html_file, css_file)
+        captured["_render_kwargs"] = kwargs
         return Image.new("RGB", dimensions, "black")
 
     plugin.render_image = render
@@ -319,6 +320,64 @@ def test_weather_keeps_original_html_renderer_on_constrained_runtime(monkeypatch
 
     assert calls == ["html"]
     assert image.size == (64, 32)
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+
+
+def test_weather_retries_only_the_local_html_render_after_a_transient_timeout(
+    monkeypatch,
+):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+
+    fetches = {"weather": 0, "air": 0, "location": 0}
+    original_weather = plugin.get_weather_data
+    original_air = plugin.get_air_quality
+    original_location = plugin.get_location
+
+    def weather(*args, **kwargs):
+        fetches["weather"] += 1
+        return original_weather(*args, **kwargs)
+
+    def air(*args, **kwargs):
+        fetches["air"] += 1
+        return original_air(*args, **kwargs)
+
+    def location(*args, **kwargs):
+        fetches["location"] += 1
+        return original_location(*args, **kwargs)
+
+    plugin.get_weather_data = weather
+    plugin.get_air_quality = air
+    plugin.get_location = location
+    renders = []
+
+    def render(*_args, **kwargs):
+        renders.append(kwargs)
+        return Image.new("RGB", (64, 32), "white")
+
+    plugin.render_image = render
+
+    image = plugin.generate_image(
+        _settings(titleSelection="location"),
+        FakeDeviceConfig(),
+    )
+
+    assert image.size == (64, 32)
+    assert renders == [{"retry_once": True}]
+    assert fetches == {"weather": 1, "air": 1, "location": 1}
     assert read_source_provenance(image) is SourceProvenance.LIVE
 
 
@@ -755,7 +814,7 @@ def test_weather_render_replaces_queued_pin_with_fresh_effective_context(
     monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
     observed = {}
 
-    def render(dimensions, _html_file, _css_file, template_params):
+    def render(dimensions, _html_file, _css_file, template_params, **_kwargs):
         observed["template"] = template_params["theme"]
         observed["nested"] = theme_utils.get_theme_context(FakeDeviceConfig())
         return Image.new("RGB", dimensions, "black")

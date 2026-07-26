@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import (
     get_plugin_instance,
+    plugin_presentation_refresh_is_provider_free,
     plugin_supports_day_night_theme,
     plugin_supports_live_refresh,
     plugin_supports_presentation_refresh,
@@ -196,6 +197,15 @@ def _display_triggered_refresh_enabled(device_config):
     except Exception:
         configured = DEFAULT_DISPLAY_TRIGGERED_REFRESH_ENABLED
     return _setting_enabled(configured)
+
+
+def _presentation_refresh_enabled(device_config, plugin_config):
+    """Allow provider-free audited banks without reopening display provider work."""
+
+    return (
+        _display_triggered_refresh_enabled(device_config)
+        or plugin_presentation_refresh_is_provider_free(plugin_config)
+    )
 
 
 def _settings_with_force_refresh(settings, force=False, display_render=False):
@@ -1559,7 +1569,10 @@ class RefreshTask:
         allow_prepared_presentation = False
         plugin_config = self.device_config.get_plugin(selection.instance.plugin_id)
         if (
-            allow_display_triggered
+            _presentation_refresh_enabled(
+                self.device_config,
+                plugin_config,
+            )
             and plugin_supports_presentation_refresh(plugin_config)
         ):
             try:
@@ -1678,6 +1691,14 @@ class RefreshTask:
                             released,
                         )
                         return None
+        display_theme_context = (
+            theme_context
+            if (
+                theme_changed
+                and candidate.theme_mode == theme_context.get("mode")
+            )
+            else None
+        )
         return self._playlist_command(
             selection.playlist_name,
             selection.instance,
@@ -1688,6 +1709,7 @@ class RefreshTask:
             priority=50,
             current_dt=current_dt,
             cache_theme_mode=candidate.theme_mode,
+            theme_context=display_theme_context,
             automatic_rotation=True,
             allow_prepared_presentation=allow_prepared_presentation,
             presentation_request_id=presentation_request_id,
@@ -1890,7 +1912,10 @@ class RefreshTask:
                 data_candidates.append(evaluation.candidate)
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
             if (
-                not _display_triggered_refresh_enabled(self.device_config)
+                not _presentation_refresh_enabled(
+                    self.device_config,
+                    plugin_config,
+                )
                 or not plugin_supports_presentation_refresh(plugin_config)
             ):
                 continue
@@ -2386,10 +2411,32 @@ class RefreshTask:
             self._write_device_config()
             return None
 
-        state = runtime_instances.get(
+        runtime_instance = runtime_instances.get(
             selection.instance.instance_uuid,
             InstanceRuntimeState(),
-        ).theme
+        )
+        target_mode = (
+            theme_context.get("mode")
+            if isinstance(theme_context, Mapping)
+            else None
+        )
+        target_cache = (
+            self.cache_catalog.resolve_exact(
+                selection.instance,
+                target_mode,
+                runtime_instance,
+            )
+            if target_mode in {"day", "night"}
+            else None
+        )
+        if (
+            target_cache is not None
+            and target_cache.promoted_at is not None
+        ):
+            if theme_info_changed:
+                self._write_device_config()
+            return None
+        state = runtime_instance.theme
         next_retry = self._parse_iso_datetime(state.next_retry_at)
         if next_retry is not None:
             next_retry = self._align_datetime_tz(next_retry, current_dt)
@@ -2999,7 +3046,11 @@ class RefreshTask:
                         raise
                     raise _PreparedDisplayFailure(error) from error
             if command.intent is RefreshIntent.PRESENTATION_REFRESH:
-                if not _display_triggered_refresh_enabled(self.device_config):
+                plugin_config = self.device_config.get_plugin(command.plugin_id)
+                if not _presentation_refresh_enabled(
+                    self.device_config,
+                    plugin_config,
+                ):
                     raise _StaleSelection(
                         "display-triggered presentation refresh is disabled"
                     )
@@ -3054,17 +3105,47 @@ class RefreshTask:
     def _load_catalog_display_image(self, command, resolved):
         """Load prepared or authoritative bytes without plugin execution."""
         instance = None if resolved is None else resolved.instance
-        if (
-            command.allow_prepared_presentation
-            and instance is not None
-            and _display_triggered_refresh_enabled(self.device_config)
-        ):
-            plugin_config, _theme_context, resolved_theme_mode = self._latest_presentation_theme(instance)
+        if command.allow_prepared_presentation and instance is not None:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
             expected_request_id = command.payload.get("presentation_request_id")
-            if not plugin_supports_presentation_refresh(plugin_config):
+            if not _presentation_refresh_enabled(
+                self.device_config,
+                plugin_config,
+            ):
+                if expected_request_id is not None:
+                    raise _StaleSelection(
+                        "provider-free presentation capability is no longer enabled"
+                    )
+            elif not plugin_supports_presentation_refresh(plugin_config):
                 if expected_request_id is not None:
                     raise _StaleSelection("presentation capability is no longer enabled")
             else:
+                (
+                    plugin_config,
+                    _theme_context,
+                    resolved_theme_mode,
+                ) = self._latest_presentation_theme(instance)
+                if not _presentation_refresh_enabled(
+                    self.device_config,
+                    plugin_config,
+                ):
+                    if expected_request_id is not None:
+                        raise _StaleSelection(
+                            "provider-free presentation capability is no longer enabled"
+                        )
+                    return self._load_catalog_display_image(
+                        replace(command, allow_prepared_presentation=False),
+                        resolved,
+                    )
+                elif not plugin_supports_presentation_refresh(plugin_config):
+                    if expected_request_id is not None:
+                        raise _StaleSelection(
+                            "presentation capability is no longer enabled"
+                        )
+                    return self._load_catalog_display_image(
+                        replace(command, allow_prepared_presentation=False),
+                        resolved,
+                    )
                 state = self.runtime_state.snapshot().instances.get(
                     instance.instance_uuid,
                     InstanceRuntimeState(),
@@ -3110,20 +3191,18 @@ class RefreshTask:
                     raise _StaleSelection("exact prepared presentation is no longer displayable")
 
         theme_mode = command.payload.get("cache_theme_mode")
-        candidate = DisplayCacheCandidate(
-            instance_uuid=command.instance_uuid,
-            structural_generation=command.structural_generation,
-            settings_revision=command.settings_revision,
-            theme_mode=theme_mode,
-            cache_path=authoritative_cache_path(
-                self.cache_catalog.cache_root,
-                command.instance_uuid,
-                command.structural_generation,
-                command.settings_revision,
-                theme_mode,
-            ),
-            promoted_at=None,
+        cache_instance = instance if instance is not None else command
+        runtime_instance = self.runtime_state.snapshot().instances.get(
+            command.instance_uuid,
+            InstanceRuntimeState(),
         )
+        candidate = self.cache_catalog.resolve_exact(
+            cache_instance,
+            theme_mode,
+            runtime_instance,
+        )
+        if candidate is None:
+            raise _CacheUnavailable("display cache is unavailable or superseded")
         image = self.cache_catalog.load_image(candidate)
         if image is None:
             self.cache_catalog.invalidate(candidate)
@@ -3217,6 +3296,13 @@ class RefreshTask:
             raise _StaleSelection("presentation request changed before prepare")
 
         plugin_config, resolved_theme_context, theme_mode = self._latest_presentation_theme(instance)
+        if not _presentation_refresh_enabled(
+            self.device_config,
+            plugin_config,
+        ):
+            raise _StaleSelection(
+                "provider-free presentation capability is no longer enabled"
+            )
         if not plugin_supports_presentation_refresh(plugin_config):
             raise _StaleSelection("presentation capability is no longer enabled")
         plugin = get_plugin_instance(plugin_config)
@@ -3407,6 +3493,20 @@ class RefreshTask:
         image_missing = not os.path.exists(cache_path)
         display_cached_only = bool(command.payload.get("display_cached_only", True))
         theme_render_only = bool(command.payload.get("theme_render_only", False))
+        theme_cache_ready = not image_missing
+        if theme_render_only:
+            runtime_instance = self.runtime_state.snapshot().instances.get(
+                instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            theme_cache_ready = (
+                self.cache_catalog.resolve_exact(
+                    instance,
+                    theme_mode,
+                    runtime_instance,
+                )
+                is not None
+            )
         generated = False
         cacheable = False
 
@@ -3434,7 +3534,7 @@ class RefreshTask:
                 and _display_refresh_under_resource_pressure(self.device_config)
             )
             if display_under_pressure:
-                if theme_render_only and image_missing:
+                if theme_render_only and not theme_cache_ready:
                     self._set_render_metadata(
                         False,
                         False,
@@ -3460,7 +3560,7 @@ class RefreshTask:
                         )
                     return None
 
-                if theme_render_only and not image_missing:
+                if theme_render_only and theme_cache_ready:
                     image = _load_image_copy(cache_path)
                 elif theme_render_only:
                     image = self._render_theme_only_image(
@@ -4219,6 +4319,9 @@ class RefreshTask:
         ):
             refresh_info["refresh_time"] = latest_refresh.refresh_time
         self.device_config.refresh_info = RefreshInfo(**refresh_info)
+        theme_context = command.payload.get("theme_context")
+        if theme_context:
+            self._persist_active_theme(thaw_payload(theme_context), current_dt)
         self._write_playlist_display_commit(command)
 
         receipt = PresentationCommitReceipt(
@@ -4488,21 +4591,18 @@ class RefreshTask:
         return self.refresh_queue.submit(followup)
 
     def _exact_cache_is_valid(self, instance, theme_mode):
-        candidate = DisplayCacheCandidate(
-            instance_uuid=instance.instance_uuid,
-            structural_generation=instance.structural_generation,
-            settings_revision=instance.settings_revision,
-            theme_mode=theme_mode,
-            cache_path=authoritative_cache_path(
-                self.cache_catalog.cache_root,
-                instance.instance_uuid,
-                instance.structural_generation,
-                instance.settings_revision,
-                theme_mode,
-            ),
-            promoted_at=None,
+        runtime_instance = self.runtime_state.snapshot().instances.get(
+            instance.instance_uuid,
+            InstanceRuntimeState(),
         )
-        return self.cache_catalog.validate(candidate)
+        return (
+            self.cache_catalog.resolve_exact(
+                instance,
+                theme_mode,
+                runtime_instance,
+            )
+            is not None
+        )
 
     @staticmethod
     def _abort_details(error):
@@ -4823,7 +4923,11 @@ class RefreshTask:
                 and coalescing_scope is None
                 and expected_displayed_instance_uuid is None
             )
-        if not _display_triggered_refresh_enabled(self.device_config):
+        plugin_config = self.device_config.get_plugin(instance.plugin_id)
+        if not _presentation_refresh_enabled(
+            self.device_config,
+            plugin_config,
+        ):
             allow_prepared_presentation = False
         return RefreshCommand.create(
             kind=kind,

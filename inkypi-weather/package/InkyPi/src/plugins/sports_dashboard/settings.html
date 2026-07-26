@@ -20,8 +20,9 @@
     <label for="footballPanelMode" class="form-label">Top-left football panel:</label>
     <select id="footballPanelMode" name="footballPanelMode" class="form-input">
         <option value="club">Five club leagues</option>
-        <option value="auto">Auto: World Cup or club leagues</option>
+        <option value="auto">Auto: World Cup, Chinese Super League, or five leagues</option>
         <option value="worldcup">World Cup</option>
+        <option value="csl">Chinese Super League</option>
     </select>
 </div>
 
@@ -370,14 +371,9 @@
 
 <div class="form-group">
     <label class="form-label">
-        <input type="checkbox" id="valveEsportsCsapiEnabled" name="valveEsportsCsapiEnabled" value="true">
-        Use CSAPI for CS Major results
+        <input type="checkbox" id="valveEsportsHltvEnabled" name="valveEsportsHltvEnabled" value="true">
+        Use HLTV for CS Major results
     </label>
-</div>
-
-<div class="form-group">
-    <label for="valveEsportsCsapiBaseUrl" class="form-label">CSAPI base URL:</label>
-    <input type="text" id="valveEsportsCsapiBaseUrl" name="valveEsportsCsapiBaseUrl" placeholder="https://api.csapi.de" class="form-input">
 </div>
 
 <div class="form-group">
@@ -509,7 +505,7 @@
             document.getElementById('footballDataSeason').value = pluginSettings.footballDataSeason || '';
             document.getElementById('footballDataCacheHours').value = pluginSettings.footballDataCacheHours || '';
             document.getElementById('footballDataDailyLimit').value = pluginSettings.footballDataDailyLimit || '';
-            document.getElementById('footballPanelMode').value = pluginSettings.footballPanelMode || 'club';
+            document.getElementById('footballPanelMode').value = pluginSettings.footballPanelMode || 'auto';
             document.getElementById('clubFootballEnabledLeagues').value = pluginSettings.clubFootballEnabledLeagues || 'PL,PD,BL1,SA,FL1';
             document.getElementById('clubFootballLiveRefreshEnabled').checked = pluginSettings.clubFootballLiveRefreshEnabled !== 'false';
             document.getElementById('clubFootballLiveRefreshIntervalSeconds').value = pluginSettings.clubFootballLiveRefreshIntervalSeconds || '';
@@ -569,8 +565,7 @@
             document.getElementById('nbaOddsCacheHours').value = pluginSettings.nbaOddsCacheHours || '';
             document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
             document.getElementById('valveEsportsEnabled').checked = pluginSettings.valveEsportsEnabled !== 'false';
-            document.getElementById('valveEsportsCsapiEnabled').checked = pluginSettings.valveEsportsCsapiEnabled !== 'false';
-            document.getElementById('valveEsportsCsapiBaseUrl').value = pluginSettings.valveEsportsCsapiBaseUrl || '';
+            document.getElementById('valveEsportsHltvEnabled').checked = pluginSettings.valveEsportsHltvEnabled !== 'false';
             document.getElementById('valveEsportsOpenDotaEnabled').checked = pluginSettings.valveEsportsOpenDotaEnabled !== 'false';
             document.getElementById('valveEsportsCacheHours').value = pluginSettings.valveEsportsCacheHours || '';
             document.getElementById('valveEsportsDailyLimit').value = pluginSettings.valveEsportsDailyLimit || '';

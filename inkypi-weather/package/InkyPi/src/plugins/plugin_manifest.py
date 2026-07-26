@@ -24,6 +24,7 @@ _HEX_COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}\Z")
 class PluginCapabilities:
     supports_live_refresh: bool = False
     supports_presentation_refresh: bool = False
+    presentation_refresh_is_provider_free: bool = False
     supports_day_night_theme: bool = False
 
 
@@ -238,9 +239,30 @@ class PluginManifest:
                     "plugin manifest capabilities.supports_presentation_refresh "
                     "must be a boolean"
                 )
+            presentation_refresh_is_provider_free = raw_capabilities.get(
+                "presentation_refresh_is_provider_free",
+                False,
+            )
+            if type(presentation_refresh_is_provider_free) is not bool:
+                raise TypeError(
+                    "plugin manifest capabilities."
+                    "presentation_refresh_is_provider_free must be a boolean"
+                )
+            if (
+                presentation_refresh_is_provider_free
+                and not supports_presentation_refresh
+            ):
+                raise ValueError(
+                    "plugin manifest capabilities."
+                    "presentation_refresh_is_provider_free requires "
+                    "supports_presentation_refresh"
+                )
             capabilities = PluginCapabilities(
                 supports_live_refresh=supports_live_refresh,
                 supports_presentation_refresh=supports_presentation_refresh,
+                presentation_refresh_is_provider_free=(
+                    presentation_refresh_is_provider_free
+                ),
                 supports_day_night_theme=supports_day_night_theme,
             )
             if supports_day_night_theme:

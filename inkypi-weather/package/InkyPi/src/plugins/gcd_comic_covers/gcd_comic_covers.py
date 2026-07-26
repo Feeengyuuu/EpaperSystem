@@ -31,6 +31,7 @@ from plugins.gcd_comic_covers.presentation_bank import (
     GcdPresentationBank,
     instance_profile_fingerprint,
     read_bounded_json_object,
+    recent_selection_issue_ids,
     settings_fingerprint,
     settings_key,
 )
@@ -330,42 +331,20 @@ class GcdComicCovers(BasePlugin):
                     )
                 except GcdCoverImageUnavailable as exc:
                     provider_had_error = True
-                    cover = self._cover_from_unavailable_image(exc)
-                    if not self._has_candidate_metadata(cover):
-                        logger.warning(
-                            "GCD cover candidate failed for issue %s: %s",
-                            candidate.get("issue_id"),
-                            exc,
-                        )
-                        continue
-                    try:
-                        record = bank.ingest(profile, cover, render_kind="metadata")
-                    except RuntimeError as ingest_exc:
-                        logger.warning(
-                            "GCD metadata candidate was rejected for issue %s: %s",
-                            candidate.get("issue_id"),
-                            ingest_exc,
-                        )
-                        continue
+                    logger.warning(
+                        "GCD cover candidate has no usable image for issue %s: %s",
+                        candidate.get("issue_id"),
+                        exc,
+                    )
+                    continue
                 except Exception as exc:
                     provider_had_error = True
-                    if not self._has_candidate_metadata(candidate):
-                        logger.warning(
-                            "GCD cover candidate failed for issue %s: %s",
-                            candidate.get("issue_id"),
-                            exc,
-                        )
-                        continue
-                    cover = self._cover_from_candidate_metadata(candidate)
-                    try:
-                        record = bank.ingest(profile, cover, render_kind="metadata")
-                    except RuntimeError as ingest_exc:
-                        logger.warning(
-                            "GCD metadata candidate was rejected for issue %s: %s",
-                            candidate.get("issue_id"),
-                            ingest_exc,
-                        )
-                        continue
+                    logger.warning(
+                        "GCD cover candidate failed for issue %s: %s",
+                        candidate.get("issue_id"),
+                        exc,
+                    )
+                    continue
                 existing_issue_ids.add(record["issue_id"])
                 ready_keys.add(record["record_key"])
                 live_record_keys.add(record["record_key"])
@@ -396,16 +375,12 @@ class GcdComicCovers(BasePlugin):
                 ),
                 SourceProvenance.LOCAL_FALLBACK,
             )
-        current = profile.get("current_selection")
-        if current is None:
-            current = bank.ensure_current(
-                document,
-                profile,
-                ready,
-                self._fit_mode(settings),
-            )
-        else:
-            bank.selection_records(profile, current, load_media=True)
+        current = bank.ensure_current(
+            document,
+            profile,
+            ready,
+            self._fit_mode(settings),
+        )
         image = self._render_bank_selection(bank, profile, current, dimensions, settings)
         provenance = (
             SourceProvenance.LIVE
@@ -787,17 +762,17 @@ class GcdComicCovers(BasePlugin):
                 )
             return self._comic_vine_candidate_pool(settings, today)
 
-        if force_refresh:
-            gcd_candidates = self._gcd_candidate_pool(
-                settings,
-                today,
-                force_refresh=True,
-            )
-        else:
-            gcd_candidates = self._gcd_candidate_pool(settings, today)
         if source_mode != "mixed":
-            return gcd_candidates
+            if force_refresh:
+                return self._gcd_candidate_pool(
+                    settings,
+                    today,
+                    force_refresh=True,
+                )
+            return self._gcd_candidate_pool(settings, today)
 
+        source_errors = []
+        comic_vine_candidates = []
         try:
             if force_refresh:
                 comic_vine_candidates = self._comic_vine_candidate_pool(
@@ -811,9 +786,37 @@ class GcdComicCovers(BasePlugin):
                     today,
                 )
         except Exception as exc:
-            logger.warning("Comic Vine candidate fetch failed; using GCD candidates only: %s", exc)
-            comic_vine_candidates = []
-        return self._dedupe_candidates(comic_vine_candidates + gcd_candidates)
+            source_errors.append(exc)
+            logger.warning(
+                "Comic Vine candidate fetch failed; continuing with GCD: %s",
+                exc,
+            )
+
+        gcd_candidates = []
+        try:
+            if force_refresh:
+                gcd_candidates = self._gcd_candidate_pool(
+                    settings,
+                    today,
+                    force_refresh=True,
+                )
+            else:
+                gcd_candidates = self._gcd_candidate_pool(settings, today)
+        except Exception as exc:
+            source_errors.append(exc)
+            logger.warning(
+                "GCD candidate fetch failed; continuing with Comic Vine: %s",
+                exc,
+            )
+
+        candidates = self._dedupe_candidates(
+            comic_vine_candidates + gcd_candidates
+        )
+        if candidates:
+            return candidates
+        if source_errors:
+            raise RuntimeError("All configured comic cover candidate sources failed") from source_errors[0]
+        return []
 
     def _gcd_candidate_pool(self, settings, today, *, force_refresh=False):
         years = self._target_years(settings, today)
@@ -955,6 +958,7 @@ class GcdComicCovers(BasePlugin):
         source_bucket = date_buckets.get(date_key) if isinstance(date_buckets, dict) else None
         bucket = dict(source_bucket) if isinstance(source_bucket, dict) else {}
         seen = {str(value) for value in bucket.get("seen_issue_ids", [])}
+        seen.update(recent_selection_issue_ids(state, date_key))
         pending_issue_ids = set()
         profiles = state.get("profiles") if isinstance(state, dict) else None
         if isinstance(profiles, dict):

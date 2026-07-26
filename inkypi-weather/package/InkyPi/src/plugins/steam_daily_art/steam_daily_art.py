@@ -859,11 +859,17 @@ class SteamDailyArt(BasePlugin):
         for url in self._candidate_image_urls(item, settings):
             if not url:
                 continue
+            if self._optional_media_negative_hit(url):
+                continue
             try:
                 return url, self._download_image(url)
             except Exception as e:
                 errors.append(f"{url}: {type(e).__name__}")
-                logger.warning(f"Steam image candidate failed: {url} | {e}")
+                if self._is_not_found_error(e):
+                    self._remember_optional_media_negative(url)
+                    logger.info("Optional Steam image candidate is unavailable: %s", url)
+                else:
+                    logger.warning(f"Steam image candidate failed: {url} | {e}")
 
         raise RuntimeError("No usable Steam image found. " + "; ".join(errors[:3]))
 
@@ -886,7 +892,9 @@ class SteamDailyArt(BasePlugin):
             except Exception as e:
                 if self._is_not_found_error(e):
                     self._remember_optional_media_negative(url)
-                logger.warning(f"Steam logo candidate failed: {url} | {e}")
+                    logger.info("Optional Steam logo candidate is unavailable: %s", url)
+                else:
+                    logger.warning(f"Steam logo candidate failed: {url} | {e}")
 
         logger.info("No Steam logo overlay found for selected item.")
         return None, None

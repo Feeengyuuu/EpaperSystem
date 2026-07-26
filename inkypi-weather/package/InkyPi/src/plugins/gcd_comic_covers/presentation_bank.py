@@ -26,6 +26,7 @@ MAX_RECORDS_PER_PROFILE = READY_TARGET
 MAX_SEEN_ISSUES = 5000
 MAX_DATE_BUCKETS = 366
 MAX_STATE_BYTES = 4 * 1024 * 1024
+RECENT_SELECTION_BUCKETS = 7
 MEDIA_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 MEDIA_MAX_FILES = 128
 MEDIA_MAX_BYTES = 128 * 1024 * 1024
@@ -215,10 +216,15 @@ class GcdPresentationBank:
             same_day = record.get("display_date_key") == self.display_date_key
             try:
                 self._ensure_record_fresh(record)
-                if same_day and record.get("media_key"):
+                if same_day:
+                    if (
+                        record.get("render_kind") != "media"
+                        or not record.get("media_key")
+                    ):
+                        raise RuntimeError(
+                            "GCD bank record has no renderable media"
+                        )
                     self.load_media(record)
-                elif same_day and record.get("render_kind") != "metadata":
-                    raise RuntimeError("GCD bank record has no renderable media")
             except RuntimeError:
                 if record["record_key"] in protected:
                     survivors.append(record)
@@ -361,6 +367,11 @@ class GcdPresentationBank:
         return normalized
 
     def choose_selection(self, document, profile, ready, fit_mode):
+        ready = [
+            record
+            for record in ready
+            if record.get("render_kind") == "media"
+        ]
         if not ready:
             raise RuntimeError("GCD presentation bank has no ready cover records")
         current_keys = set((profile.get("current_selection") or {}).get("record_keys", []))
@@ -372,14 +383,27 @@ class GcdPresentationBank:
         }
         bucket = document.get("date_buckets", {}).get(self.display_date_key, {})
         seen_issue_ids = {str(value) for value in bucket.get("seen_issue_ids", [])}
+        recent_issue_ids = recent_selection_issue_ids(
+            document,
+            self.display_date_key,
+        )
         candidates = [
             record
             for record in ready
             if record["record_key"] not in current_keys
             and record["issue_id"] not in pending_issue_ids
             and record["issue_id"] not in seen_issue_ids
+            and record["issue_id"] not in recent_issue_ids
         ]
         reset_seen = False
+        if not candidates:
+            candidates = [
+                record
+                for record in ready
+                if record["record_key"] not in current_keys
+                and record["issue_id"] not in pending_issue_ids
+                and record["issue_id"] not in seen_issue_ids
+            ]
         if not candidates:
             candidates = [
                 record
@@ -398,32 +422,15 @@ class GcdPresentationBank:
             ordered.extend(tier)
 
         if fit_mode in {"triptych", "three_vertical", "three_covers", "three_posters", "gallery"}:
-            media_candidates = [
-                record for record in ordered if record.get("render_kind") == "media"
-            ]
             regular = [
                 record
-                for record in media_candidates
+                for record in ordered
                 if record.get("width", 0) <= record.get("height", 0) * 1.15
             ]
-            wide = [record for record in media_candidates if record not in regular]
+            wide = [record for record in ordered if record not in regular]
             chosen = (regular + wide)[:3]
-            if not chosen:
-                chosen = [
-                    record
-                    for record in ordered
-                    if record.get("render_kind") == "metadata"
-                ][:1]
         else:
-            chosen = [
-                record for record in ordered if record.get("render_kind") == "media"
-            ][:1]
-            if not chosen:
-                chosen = [
-                    record
-                    for record in ordered
-                    if record.get("render_kind") == "metadata"
-                ][:1]
+            chosen = ordered[:1]
         if not chosen:
             raise RuntimeError("GCD presentation bank could not choose a cover")
         return {
@@ -436,7 +443,10 @@ class GcdPresentationBank:
     def ensure_current(self, document, profile, ready, fit_mode):
         valid_keys = {record["record_key"] for record in ready}
         current = profile.get("current_selection")
-        if self._selection_is_valid(current, valid_keys):
+        if (
+            self._selection_is_valid(current, valid_keys)
+            and current.get("date_key") == self.display_date_key
+        ):
             return current
         current = self.choose_selection(document, profile, ready, fit_mode)
         profile["current_selection"] = current
@@ -632,15 +642,30 @@ class GcdPresentationBank:
                     ),
                 }
             )
-        profile["records"] = normalized_records[-MAX_RECORDS_PER_PROFILE:]
+        normalized_records = normalized_records[-MAX_RECORDS_PER_PROFILE:]
+        all_valid_keys = {
+            record["record_key"]
+            for record in normalized_records
+        }
+        media_records = [
+            record
+            for record in normalized_records
+            if record.get("render_kind") == "media"
+        ]
+        media_keys = {
+            record["record_key"]
+            for record in media_records
+        }
+        profile["records"] = media_records
         profile["refill_in_progress"] = profile.get("refill_in_progress") is True
-        valid_keys = {record["record_key"] for record in profile["records"]}
         for name in ("current_selection", "pending_selection"):
             selection = profile.get(name)
             if selection is None:
                 continue
-            if not self._selection_is_valid(selection, valid_keys):
+            if not self._selection_is_valid(selection, all_valid_keys):
                 raise RuntimeError("GCD protected selection metadata is invalid")
+            if not self._selection_is_valid(selection, media_keys):
+                profile[name] = None
         return profile
 
     def _valid_record(self, record):
@@ -805,6 +830,10 @@ def _commit_records(document, records, selection, committed_at):
     bucket["seen_issue_ids"] = seen[-MAX_SEEN_ISSUES:]
     existing_at = _parse_datetime(bucket.get("last_displayed_at"))
     if existing_at is None or incoming_at >= existing_at:
+        bucket["last_selection_issue_ids"] = [
+            record["issue_id"]
+            for record in records[-3:]
+        ]
         bucket["last_issue_id"] = records[-1]["issue_id"]
         bucket["last_displayed_at"] = incoming_at.isoformat()
     document["date_buckets"] = _bounded_date_buckets(buckets)
@@ -884,6 +913,19 @@ def validate_state_shape(payload):
                 for issue_id in seen
             ):
                 raise RuntimeError("GCD cover seen issue metadata exceeds the limit")
+            last_selection = bucket.get("last_selection_issue_ids", [])
+            if not (
+                isinstance(last_selection, list)
+                and len(last_selection) <= 3
+                and all(
+                    isinstance(issue_id, str)
+                    and len(issue_id) <= _TEXT_LIMITS["issue_id"]
+                    for issue_id in last_selection
+                )
+            ):
+                raise RuntimeError(
+                    "GCD cover recent selection metadata exceeds the limit"
+                )
 
 
 def read_bounded_json_object(path):
@@ -945,6 +987,39 @@ def _bounded_date_buckets(value):
     )
     retained = set(ranked[-MAX_DATE_BUCKETS:])
     return {key: bucket for key, bucket in candidates.items() if key in retained}
+
+
+def recent_selection_issue_ids(
+    document,
+    display_date_key,
+    *,
+    max_buckets=RECENT_SELECTION_BUCKETS,
+):
+    buckets = document.get("date_buckets") if isinstance(document, dict) else None
+    if not isinstance(buckets, dict):
+        return set()
+    ranked = []
+    for date_key, bucket in buckets.items():
+        if date_key == display_date_key or not isinstance(bucket, dict):
+            continue
+        displayed_at = _parse_datetime(bucket.get("last_displayed_at"))
+        if displayed_at is None:
+            continue
+        issue_ids = bucket.get("last_selection_issue_ids")
+        if not isinstance(issue_ids, list) or not issue_ids:
+            issue_ids = [bucket.get("last_issue_id")]
+        normalized = [
+            str(issue_id)
+            for issue_id in issue_ids[:3]
+            if isinstance(issue_id, str) and issue_id
+        ]
+        if normalized:
+            ranked.append((displayed_at, str(date_key), normalized))
+    ranked.sort(reverse=True)
+    recent = set()
+    for _displayed_at, _date_key, issue_ids in ranked[:max_buckets]:
+        recent.update(issue_ids)
+    return recent
 
 
 def _parse_datetime(value):

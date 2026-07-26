@@ -288,7 +288,15 @@ class BasePlugin:
         template_params['frame_styles'] = FRAME_STYLES
         return template_params
 
-    def render_image(self, dimensions, html_file, css_file=None, template_params=None):
+    def render_image(
+        self,
+        dimensions,
+        html_file,
+        css_file=None,
+        template_params=None,
+        *,
+        retry_once=False,
+    ):
         template_params = dict(template_params or {})
         # load the base plugin and current plugin css files
         css_files = [os.path.join(BASE_PLUGIN_RENDER_DIR, "plugin.css")]
@@ -310,4 +318,5 @@ class BasePlugin:
             rendered_html,
             viewport=dimensions,
             failure_domain=f"{self.get_plugin_id()}:{html_file}",
+            retry_once=retry_once,
         )

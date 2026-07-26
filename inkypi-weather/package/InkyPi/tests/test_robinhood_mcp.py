@@ -270,3 +270,71 @@ def test_robinhood_refresh_preserves_rotating_refresh_token_and_persists_atomica
         "client_id": "client-123",
         "resource": "https://agent.robinhood.com/mcp/trading",
     }
+
+
+def _write_test_credentials(token_path):
+    token_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mcp_url": "https://agent.robinhood.com/mcp/trading",
+                "token_url": "https://api.robinhood.com/oauth2/token/",
+                "registration": {"client_id": "client-123"},
+                "token": {
+                    "access_token": "old-access",
+                    "refresh_token": "refresh-123",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+class AuthRetryHTTP:
+    def __init__(self, mcp_statuses):
+        self.mcp_statuses = list(mcp_statuses)
+        self.mcp_authorizations = []
+        self.token_calls = 0
+
+    def post(self, url, **kwargs):
+        if url == "https://api.robinhood.com/oauth2/token/":
+            self.token_calls += 1
+            return FakeResponse({"access_token": "new-access", "expires_in": 3600})
+        self.mcp_authorizations.append(kwargs["headers"]["Authorization"])
+        status = self.mcp_statuses.pop(0)
+        return FakeResponse({"result": {"ok": True}}, status_code=status)
+
+
+def test_robinhood_mcp_401_refreshes_token_and_retries_once(tmp_path):
+    token_path = tmp_path / "robinhood.json"
+    _write_test_credentials(token_path)
+    http = AuthRetryHTTP([401, 200])
+    client = RobinhoodMCPClient(token_path=token_path, http=http)
+
+    result = client._post({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+
+    assert result == {"result": {"ok": True}}
+    assert http.token_calls == 1
+    assert http.mcp_authorizations == [
+        "Bearer old-access",
+        "Bearer new-access",
+    ]
+
+
+def test_robinhood_mcp_second_401_fails_closed_without_damaging_credentials(tmp_path):
+    token_path = tmp_path / "robinhood.json"
+    _write_test_credentials(token_path)
+    http = AuthRetryHTTP([401, 401])
+    client = RobinhoodMCPClient(token_path=token_path, http=http)
+
+    with pytest.raises(RobinhoodMCPError, match=r"HTTP request failed \(401\)"):
+        client._post({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+
+    saved = json.loads(token_path.read_text(encoding="utf-8"))
+    assert http.token_calls == 1
+    assert http.mcp_authorizations == [
+        "Bearer old-access",
+        "Bearer new-access",
+    ]
+    assert saved["token"]["access_token"] == "new-access"
+    assert saved["token"]["refresh_token"] == "refresh-123"

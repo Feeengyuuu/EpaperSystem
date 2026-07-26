@@ -72,7 +72,7 @@ class _HltvMajorEventParser(HTMLParser):
 
 
 class _HltvMajorResultsParser(HTMLParser):
-    """Normalize an HLTV event results page into the existing CSAPI schema."""
+    """Normalize an HLTV event results page into the internal CS match schema."""
 
     def __init__(self, event):
         super().__init__(convert_charrefs=True)
@@ -2314,16 +2314,19 @@ class EsportsMixin:
             }, "DOTA2 PREVIEW"
         cards = []
         source_states = []
-        if self._bool_setting(settings, "valveEsportsCsapiEnabled", True):
+        if self._bool_setting(settings, "valveEsportsHltvEnabled", True):
             try:
-                matches, source_state, _fetched_at = self._load_valve_csapi_matches(settings, timezone_info)
+                matches, source_state, _fetched_at = self._load_valve_hltv_matches(
+                    settings,
+                    timezone_info,
+                )
                 provider_cards = self._parse_valve_cs_major_cards(matches, timezone_info, now, settings)
                 for card in provider_cards:
                     card["source_state"] = source_state
                 cards.extend(provider_cards)
                 source_states.append(source_state)
             except Exception as exc:
-                logger.warning("CSAPI Major fetch failed: %s", _safe_exception_text(exc))
+                logger.warning("HLTV Major fetch failed: %s", _safe_exception_text(exc))
         if self._bool_setting(settings, "valveEsportsOpenDotaEnabled", True):
             try:
                 matches, source_state, _fetched_at = self._load_valve_opendota_matches(settings, timezone_info)
@@ -2435,71 +2438,47 @@ class EsportsMixin:
         except OSError:
             return False
 
-    def _load_valve_csapi_matches(self, settings, timezone_info):
+    def _load_valve_hltv_matches(self, settings, timezone_info):
         now_utc = datetime.now(timezone.utc)
-        cache_path = self._valve_csapi_cache_path()
+        cache_path = self._valve_hltv_cache_path()
         cache = self._read_json_file(cache_path)
-        cache_key = self._valve_csapi_cache_key(settings, timezone_info)
+        cache_key = self._valve_hltv_cache_key(timezone_info)
         force_refresh = self._force_refresh_requested(settings)
         cache_hours = self._int_setting(settings, "valveEsportsCacheHours", DEFAULT_VALVE_ESPORTS_CACHE_HOURS, 1, 48)
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("matches"), list)
         if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
-            return cache["matches"], self._valve_cs_source_state(cache, "CACHE"), cache.get("fetched_at")
+            return cache["matches"], self._valve_hltv_source_state("CACHE"), cache.get("fetched_at")
         if self._valve_esports_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:
-                return cache["matches"], self._valve_cs_source_state(cache, "STALE"), cache.get("fetched_at")
-            return [], "CSAPI LIMIT", None
+                return cache["matches"], self._valve_hltv_source_state("STALE"), cache.get("fetched_at")
+            return [], "HLTV LIMIT", None
         try:
-            payload = self._fetch_valve_csapi_payload(settings, cache_key, now_utc)
+            payload = self._fetch_valve_hltv_payload(settings, cache_key, now_utc)
         except Exception:
             if has_compatible_cache:
-                return cache["matches"], self._valve_cs_source_state(cache, "STALE"), cache.get("fetched_at")
+                return cache["matches"], self._valve_hltv_source_state("STALE"), cache.get("fetched_at")
             raise
         try:
             self._write_json_file(cache_path, payload)
         except OSError as exc:
-            logger.warning("Failed to write CSAPI cache: %s", exc)
-        return payload["matches"], self._valve_cs_source_state(payload, "LIVE"), payload.get("fetched_at")
+            logger.warning("Failed to write HLTV cache: %s", exc)
+        return payload["matches"], self._valve_hltv_source_state("LIVE"), payload.get("fetched_at")
 
     @staticmethod
-    def _valve_cs_source_state(payload, state):
-        provider = str((payload or {}).get("provider") or "csapi").strip().lower()
-        label = "HLTV" if provider == "hltv" else "CSAPI"
-        return f"{label} {str(state or '').strip().upper()}".strip()
+    def _valve_hltv_source_state(state):
+        return f"HLTV {str(state or '').strip().upper()}".strip()
 
-    def _fetch_valve_csapi_payload(self, settings, cache_key, now_utc):
-        base_url = str(settings.get("valveEsportsCsapiBaseUrl") or CSAPI_BASE_URL).strip().rstrip("/") or CSAPI_BASE_URL
-        limit = self._int_setting(settings, "valveEsportsCsLimit", DEFAULT_VALVE_ESPORTS_CS_LIMIT, 10, 500)
+    def _fetch_valve_hltv_payload(self, settings, cache_key, now_utc):
         session = get_http_session()
-        provider = "csapi"
         try:
-            try:
-                response = session.get(
-                    f"{base_url}/matches/latest",
-                    params={"limit": str(limit)},
-                    headers={"Accept": "application/json", "User-Agent": "EpaperSystem/ValveEsports"},
-                    timeout=25,
-                )
-                response.raise_for_status()
-                matches = response.json()
-                if not isinstance(matches, list) or not matches:
-                    raise ValueError("CSAPI returned no match records")
-            except Exception as primary_error:
-                if base_url.casefold() != CSAPI_BASE_URL.casefold():
-                    raise
-                logger.info(
-                    "CSAPI primary unavailable; using live HLTV Major fallback: %s",
-                    _safe_exception_text(primary_error),
-                )
-                matches = self._fetch_hltv_major_matches(session, settings, now_utc)
-                provider = "hltv"
+            matches = self._fetch_hltv_major_matches(session, settings, now_utc)
         finally:
             self._record_valve_esports_call(settings, now_utc)
         return {
             "version": VALVE_ESPORTS_STATE_VERSION,
             "cache_key": cache_key,
             "fetched_at": now_utc.isoformat(),
-            "provider": provider,
+            "provider": "hltv",
             "matches": matches,
         }
 
@@ -2719,12 +2698,12 @@ class EsportsMixin:
             event_name = str(item.get("event") or "").strip()
             if not SportsDashboard._is_valve_cs_major_name(event_name):
                 continue
-            start = SportsDashboard._parse_csapi_match_date(item.get("date"), timezone_info)
+            start = SportsDashboard._parse_hltv_match_date(item.get("date"), timezone_info)
             if not start:
                 continue
             team1 = item.get("team1") or {}
             team2 = item.get("team2") or {}
-            source_name = str(item.get("source") or "CSAPI").strip() or "CSAPI"
+            source_name = str(item.get("source") or "HLTV").strip() or "HLTV"
             match = {
                 "series": "CS",
                 "event_name": event_name,
@@ -2742,7 +2721,7 @@ class EsportsMixin:
                 "rank_a": SportsDashboard._lpl_int_value(team1.get("rank")),
                 "rank_b": SportsDashboard._lpl_int_value(team2.get("rank")),
                 "best_of": SportsDashboard._lpl_int_value(item.get("best_of")),
-                "maps": SportsDashboard._parse_csapi_maps(item.get("maps")),
+                "maps": SportsDashboard._parse_hltv_maps(item.get("maps")),
                 "source": source_name,
                 "score_kind": "MAPS",
             }
@@ -2751,7 +2730,7 @@ class EsportsMixin:
         for event_name, events in grouped.items():
             source_name = next(
                 (str(event.get("source") or "").strip() for event in events if str(event.get("source") or "").strip()),
-                "CSAPI",
+                "HLTV",
             )
             cards.append(
                 SportsDashboard._valve_esports_card_from_events(
@@ -2915,7 +2894,7 @@ class EsportsMixin:
         return not any(value in text for value in excluded)
 
     @staticmethod
-    def _parse_csapi_match_date(value, timezone_info):
+    def _parse_hltv_match_date(value, timezone_info):
         try:
             parsed = datetime.fromisoformat(str(value or "")).date()
         except ValueError:
@@ -2931,7 +2910,7 @@ class EsportsMixin:
         return datetime.fromtimestamp(timestamp, timezone.utc).astimezone(timezone_info)
 
     @staticmethod
-    def _parse_csapi_maps(maps):
+    def _parse_hltv_maps(maps):
         result = []
         for item in maps or []:
             if not isinstance(item, Mapping):
@@ -2958,8 +2937,8 @@ class EsportsMixin:
             return "VS"
         return f"{wins_a}:{wins_b}"
 
-    def _valve_csapi_cache_path(self):
-        return self._sports_dashboard_cache_dir() / "valve_csapi_matches.json"
+    def _valve_hltv_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_hltv_matches.json"
 
     def _valve_opendota_cache_path(self):
         return self._sports_dashboard_cache_dir() / "valve_opendota_matches.json"
@@ -2973,10 +2952,16 @@ class EsportsMixin:
     def _valve_esports_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "valve_esports_live_state.json"
 
-    def _valve_csapi_cache_key(self, settings, timezone_info):
-        base_url = str((settings or {}).get("valveEsportsCsapiBaseUrl") or CSAPI_BASE_URL).strip().rstrip("/") or CSAPI_BASE_URL
-        limit = self._int_setting(settings or {}, "valveEsportsCsLimit", DEFAULT_VALVE_ESPORTS_CS_LIMIT, 10, 500)
-        return "|".join([VALVE_ESPORTS_STATE_VERSION, "csapi", base_url, str(limit), self._timezone_key(timezone_info)])
+    def _valve_hltv_cache_key(self, timezone_info):
+        return "|".join(
+            [
+                VALVE_ESPORTS_STATE_VERSION,
+                "hltv",
+                HLTV_MAJOR_EVENTS_URL,
+                HLTV_MAJOR_ARCHIVE_URL,
+                self._timezone_key(timezone_info),
+            ]
+        )
 
     def _valve_opendota_cache_key(self, settings, timezone_info):
         base_url = str((settings or {}).get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
@@ -4442,9 +4427,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
 
 
 

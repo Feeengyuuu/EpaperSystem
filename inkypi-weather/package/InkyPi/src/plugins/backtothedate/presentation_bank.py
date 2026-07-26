@@ -21,6 +21,7 @@ from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 SCHEMA_VERSION = 1
 READY_TARGET = 24
 REFILL_THRESHOLD = 8
+DATA_REFRESH_HORIZON_SECONDS = 26 * 60 * 60
 MAX_PROFILES = 64
 MAX_HISTORY_URLS = 4096
 MAX_STATE_BYTES = 4 * 1024 * 1024
@@ -189,13 +190,23 @@ class PosterPresentationBank:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self.state_path, document, mode=0o600)
 
-    def ready_records(self, document, profile, *, prune):
+    def ready_records(
+        self,
+        document,
+        profile,
+        *,
+        prune,
+        min_remaining_seconds=0,
+    ):
         ready = []
         survivors = []
         protected_keys = self._protected_media_keys(profile)
         for record in profile["records"]:
             try:
-                self.load_media(record)
+                self.load_media(
+                    record,
+                    min_remaining_seconds=min_remaining_seconds,
+                )
             except RuntimeError:
                 if record["media_key"] in protected_keys:
                     survivors.append(record)
@@ -429,10 +440,14 @@ class PosterPresentationBank:
         profile["last_applied_request_id"] = receipt.request_id
         return True
 
-    def load_media(self, record):
+    def load_media(self, record, *, min_remaining_seconds=0):
         downloaded_at = _parse_datetime(record.get("downloaded_at"))
         now = datetime.now(timezone.utc)
-        if downloaded_at is None or (now - downloaded_at).total_seconds() > MEDIA_MAX_AGE_SECONDS:
+        maximum_age = MEDIA_MAX_AGE_SECONDS - max(
+            0,
+            int(min_remaining_seconds),
+        )
+        if downloaded_at is None or (now - downloaded_at).total_seconds() > maximum_age:
             raise RuntimeError("BacktotheDate poster media is expired")
         target = self.media.path(record["media_key"], suffix=".png")
         try:

@@ -467,8 +467,20 @@ class ClubFootballRenderMixin:
 
         logo_top = y(58)
         logo_size = max(52, y(128) - logo_top)
-        home_logo_box = (left + 24, logo_top, left + 24 + logo_size, logo_top + logo_size)
-        away_logo_box = (right - 24 - logo_size, logo_top, right - 24, logo_top + logo_size)
+        home_team_center_x = left + 70
+        away_team_center_x = right - 70
+        home_logo_box = (
+            home_team_center_x - logo_size / 2,
+            logo_top,
+            home_team_center_x + logo_size / 2,
+            logo_top + logo_size,
+        )
+        away_logo_box = (
+            away_team_center_x - logo_size / 2,
+            logo_top,
+            away_team_center_x + logo_size / 2,
+            logo_top + logo_size,
+        )
         self._draw_club_logo_contained(
             panel,
             focus.get("home_logo_url"),
@@ -539,10 +551,10 @@ class ClubFootballRenderMixin:
             min_size=9,
         )
         self._draw_centered(
-            draw, (left + 70, y(151)), home_name, home_font, COLORS["text"]
+            draw, (home_team_center_x, y(151)), home_name, home_font, COLORS["text"]
         )
         self._draw_centered(
-            draw, (right - 70, y(151)), away_name, away_font, COLORS["text"]
+            draw, (away_team_center_x, y(151)), away_name, away_font, COLORS["text"]
         )
 
         schedule_label, venue = self._club_focus_schedule_labels(focus, now)

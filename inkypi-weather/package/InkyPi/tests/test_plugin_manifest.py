@@ -32,6 +32,7 @@ def _write_plugin(
     schema_version=2,
     supports_live_refresh=False,
     supports_presentation_refresh=_UNSET,
+    presentation_refresh_is_provider_free=_UNSET,
     supports_day_night_theme=_UNSET,
     theme=_UNSET,
     source="class Example:\n    pass\n",
@@ -52,6 +53,10 @@ def _write_plugin(
         if supports_presentation_refresh is not _UNSET:
             payload["capabilities"]["supports_presentation_refresh"] = (
                 supports_presentation_refresh
+            )
+        if presentation_refresh_is_provider_free is not _UNSET:
+            payload["capabilities"]["presentation_refresh_is_provider_free"] = (
+                presentation_refresh_is_provider_free
             )
         if supports_day_night_theme is not _UNSET:
             payload["capabilities"]["supports_day_night_theme"] = (
@@ -81,6 +86,7 @@ def test_v2_manifest_declares_live_refresh_without_import(tmp_path, monkeypatch)
 
     assert manifest.capabilities.supports_live_refresh is True
     assert manifest.capabilities.supports_presentation_refresh is False
+    assert manifest.capabilities.presentation_refresh_is_provider_free is False
     assert manifest.capabilities.supports_day_night_theme is False
     assert manifest.theme is None
     assert imported == []
@@ -103,6 +109,53 @@ def test_v2_manifest_declares_presentation_capability_without_import(
 
     assert manifest.capabilities.supports_presentation_refresh is enabled
     assert imported == []
+
+
+def test_v2_manifest_attests_provider_free_presentation_without_import(
+    tmp_path,
+    monkeypatch,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=True,
+        presentation_refresh_is_provider_free=True,
+    )
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+
+    manifest = PluginManifest.from_path(manifest_path)
+
+    assert manifest.capabilities.supports_presentation_refresh is True
+    assert manifest.capabilities.presentation_refresh_is_provider_free is True
+    assert imported == []
+
+
+def test_v2_manifest_rejects_provider_free_attestation_without_presentation_capability(
+    tmp_path,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=False,
+        presentation_refresh_is_provider_free=True,
+    )
+
+    with pytest.raises(ValueError, match="requires supports_presentation_refresh"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_v2_manifest_rejects_coerced_provider_free_attestation_booleans(
+    tmp_path,
+    value,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=True,
+        presentation_refresh_is_provider_free=value,
+    )
+
+    with pytest.raises(TypeError, match="presentation_refresh_is_provider_free"):
+        PluginManifest.from_path(manifest_path)
 
 
 @pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])

@@ -1036,6 +1036,136 @@ def test_newspaper_cover_candidates_follow_device_timezone_not_host_day(monkeypa
     ]
 
 
+def test_newspaper_cover_cools_down_missing_editions_until_retry_window(monkeypatch):
+    plugin = make_plugin("frontpage-missing-edition-cooldown")
+    current_now = {
+        "value": datetime(2026, 7, 25, 19, tzinfo=timezone.utc),
+    }
+    monkeypatch.setattr(plugin, "_now_utc", lambda: current_now["value"])
+    attempted = []
+
+    def missing_edition(url, **_kwargs):
+        attempted.append(url)
+        raise newspaper_module.HttpStatusError("GET", url, 404)
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", missing_edition)
+
+    assert plugin._fetch_newspaper_cover("dc_wp", DeviceConfig()) is None
+    assert plugin._fetch_newspaper_cover("dc_wp", DeviceConfig()) is None
+    assert len(attempted) == 2
+
+    current_now["value"] += timedelta(minutes=16)
+    assert plugin._fetch_newspaper_cover("dc_wp", DeviceConfig()) is None
+    assert len(attempted) == 4
+
+
+def test_luoyang_waf_403_is_cooled_down_without_blocking_later_retry(monkeypatch):
+    plugin = make_plugin("luoyang-waf-cooldown")
+    current_now = {
+        "value": datetime(2026, 7, 25, 19, tzinfo=timezone.utc),
+    }
+    monkeypatch.setattr(plugin, "_now_utc", lambda: current_now["value"])
+    attempted = []
+    url = plugin._build_lywb_pdf_url(current_now["value"])
+
+    def blocked_by_waf(request_url, **_kwargs):
+        attempted.append(request_url)
+        raise newspaper_module.HttpStatusError("GET", request_url, 403)
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", blocked_by_waf)
+
+    assert plugin._download_pdf(url) is None
+    assert plugin._download_pdf(url) is None
+    assert attempted == [url]
+
+    current_now["value"] += timedelta(
+        seconds=newspaper_module.PROVIDER_FORBIDDEN_COOLDOWN_SECONDS + 1,
+    )
+    assert plugin._download_pdf(url) is None
+    assert attempted == [url, url]
+
+
+def test_newspaper_provider_failure_state_prunes_expired_malformed_and_old_entries(
+    monkeypatch,
+):
+    plugin = make_plugin("provider-failure-state-pruning")
+    now = datetime(2026, 7, 25, 19, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    state = {
+        f"active:{index}": {
+            "status": 404,
+            "expires_at": (now + timedelta(minutes=index + 1)).isoformat(),
+        }
+        for index in range(newspaper_module.PROVIDER_FAILURE_STATE_LIMIT + 20)
+    }
+    state["expired"] = {
+        "status": 403,
+        "expires_at": (now - timedelta(seconds=1)).isoformat(),
+    }
+    state["malformed"] = {"status": 404, "expires_at": "not-a-date"}
+    path = plugin._provider_failure_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    plugin._remember_provider_failure("latest", 403)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert len(saved) <= newspaper_module.PROVIDER_FAILURE_STATE_LIMIT
+    assert "expired" not in saved
+    assert "malformed" not in saved
+    assert saved["latest"]["status"] == 403
+
+
+def test_newspaper_provider_failure_state_uses_fail_soft_atomic_writer(
+    monkeypatch,
+):
+    plugin = make_plugin("provider-failure-state-atomic")
+    atomic_calls = []
+
+    def capture_atomic(path, payload, **kwargs):
+        atomic_calls.append((Path(path), payload, kwargs))
+
+    monkeypatch.setattr(
+        newspaper_module,
+        "atomic_write_json",
+        capture_atomic,
+        raising=False,
+    )
+
+    plugin._remember_provider_failure("freedom_forum:DC_WP:2026-07-25", 404)
+
+    assert len(atomic_calls) == 1
+    assert atomic_calls[0][0] == plugin._provider_failure_state_path()
+    assert atomic_calls[0][1][
+        "freedom_forum:DC_WP:2026-07-25"
+    ]["status"] == 404
+
+    monkeypatch.setattr(
+        newspaper_module,
+        "atomic_write_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk busy")),
+        raising=False,
+    )
+    plugin._remember_provider_failure("lywb_pdf:https://example.test/a.pdf", 403)
+
+
+def test_newspaper_provider_failure_state_bounds_untrusted_failure_key_size():
+    plugin = make_plugin("provider-failure-state-key-bound")
+    oversized_key = "custom-newspaper:" + (
+        "x" * (newspaper_module.PROVIDER_FAILURE_STATE_MAX_BYTES + 1024)
+    )
+
+    plugin._remember_provider_failure(oversized_key, 404)
+
+    path = plugin._provider_failure_state_path()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert path.stat().st_size <= newspaper_module.PROVIDER_FAILURE_STATE_MAX_BYTES
+    assert len(saved) == 1
+    assert max(len(key) for key in saved) <= (
+        newspaper_module.PROVIDER_FAILURE_KEY_MAX_CHARS
+    )
+
+
 @pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])
 def test_newspaper_force_refresh_attempts_provider_for_full_bank_without_consuming_selection(
     monkeypatch,
@@ -1109,6 +1239,55 @@ def test_newspaper_force_refresh_provider_error_marks_warm_bank_stale_and_skips_
     state = newspaper_bank.read_state(plugin._presentation_state_path())
     fingerprint = state["instance_profiles"]["newspaper-instance"]
     assert state["profiles"][fingerprint]["last_provider_status"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+
+
+def test_newspaper_force_refresh_bypasses_provider_cooldown_and_failed_retry_is_error(
+    monkeypatch,
+):
+    plugin = make_plugin("force-provider-cooldown")
+    now = datetime(2026, 7, 25, 19, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    settings = bound_settings(mediaSources="Washington Post|newspaper|dc_wp")
+    original_fetch_source_image = plugin._fetch_source_image
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
+    )
+    plugin.generate_image(settings, DeviceConfig())
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_source_image",
+        original_fetch_source_image,
+    )
+
+    local_today = now.astimezone(timezone.utc).date()
+    for edition_date in (local_today + timedelta(days=1), local_today):
+        plugin._remember_provider_failure(
+            f"freedom_forum:DC_WP:{edition_date.isoformat()}",
+            404,
+        )
+
+    attempted = []
+
+    def missing_edition(url, **_kwargs):
+        attempted.append(url)
+        raise newspaper_module.HttpStatusError("GET", url, 404)
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", missing_edition)
+
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": "true"},
+        DeviceConfig(),
+    )
+
+    state = newspaper_bank.read_state(plugin._presentation_state_path())
+    fingerprint = state["instance_profiles"]["newspaper-instance"]
+    profile = state["profiles"][fingerprint]
+    assert len(attempted) == 2
+    assert profile["last_provider_status"] == "error"
     assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
     assert image.info["inkypi_skip_cache"] is True
 

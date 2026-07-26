@@ -317,6 +317,117 @@ def test_warm_bank_presentation_has_zero_http_and_does_not_mark_seen_before_rece
     assert profile["last_applied_request_id"] is None
 
 
+def test_prepare_empty_warm_bank_returns_no_change_without_provider(monkeypatch):
+    plugin = make_plugin("empty-warm-presentation")
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    state = _state_json(plugin)
+    profile = _active_profile(state)
+    profile["records"] = []
+    profile["current_selection"] = None
+    profile["pending_selection"] = None
+    plugin._write_state(state)
+    request = _request("ab" * 16)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_text",
+        lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch HTML"),
+    )
+    monkeypatch.setattr(
+        "plugins.backtothedate.backtothedate.get_http_session",
+        lambda: pytest.fail("cold presentation must not open an HTTP session"),
+    )
+    monkeypatch.setattr(
+        plugin.image_loader,
+        "from_url",
+        lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch media"),
+    )
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+
+    assert preparation.request_id == request.request_id
+    assert preparation.changed is False
+    assert preparation.image is None
+    assert _active_profile(_state_json(plugin))["pending_selection"] is None
+
+
+def test_prepare_all_expired_warm_bank_returns_no_change_without_provider(monkeypatch):
+    plugin = make_plugin("expired-warm-presentation")
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    state = _state_json(plugin)
+    profile = _active_profile(state)
+    expired_at = (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat()
+    for record in profile["records"]:
+        record["downloaded_at"] = expired_at
+    plugin._write_state(state)
+    request = _request("ac" * 16)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_text",
+        lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch HTML"),
+    )
+    monkeypatch.setattr(
+        "plugins.backtothedate.backtothedate.get_http_session",
+        lambda: pytest.fail("cold presentation must not open an HTTP session"),
+    )
+    monkeypatch.setattr(
+        plugin.image_loader,
+        "from_url",
+        lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch media"),
+    )
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+
+    assert preparation.request_id == request.request_id
+    assert preparation.changed is False
+    assert preparation.image is None
+    assert _active_profile(_state_json(plugin))["pending_selection"] is None
+
+
+def test_prepare_corrupt_state_still_fails_before_provider(monkeypatch):
+    plugin = make_plugin("corrupt-warm-presentation")
+    settings = bind_presentation_instance_identity(
+        {"fitMode": "contain", "sourceMode": "all_archive", "maxPage": 0},
+        "corrupt-warm-presentation-instance",
+    )
+    plugin._state_path().write_text('{"profiles": [', encoding="utf-8")
+    before = plugin._state_path().read_bytes()
+    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "red"))
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_text",
+        lambda *_args, **_kwargs: pytest.fail("corrupt state must not fetch HTML"),
+    )
+    monkeypatch.setattr(
+        "plugins.backtothedate.backtothedate.get_http_session",
+        lambda: pytest.fail("corrupt state must not open an HTTP session"),
+    )
+    monkeypatch.setattr(
+        plugin.image_loader,
+        "from_url",
+        lambda *_args, **_kwargs: pytest.fail("corrupt state must not fetch media"),
+    )
+
+    with pytest.raises(RuntimeError, match="state"):
+        plugin.prepare_presentation(
+            settings,
+            DeviceConfig(),
+            request=_request("ad" * 16),
+            resolved_theme_context=None,
+        )
+
+    assert plugin._state_path().read_bytes() == before
+
+
 def test_matching_display_receipt_marks_exact_posters_once(monkeypatch):
     plugin = make_plugin("matching-receipt")
     settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
@@ -609,6 +720,89 @@ def test_data_pending_media_failure_preserves_receipt_metadata(monkeypatch):
     assert committed["last_page_urls"] == [
         poster["page_url"] for poster in pending_posters
     ]
+
+
+def test_data_renews_media_that_cannot_survive_next_cadence_without_rotating(
+    monkeypatch,
+):
+    plugin = make_plugin("data-renew-before-next-cadence")
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    request = _request("32" * 16)
+    plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+    before = _state_json(plugin)
+    profile = _active_profile(before)
+    current_before = dict(profile["current_selection"])
+    pending_before = dict(_pending(profile, request.request_id))
+    protected_keys = set(current_before["media_keys"]) | set(
+        pending_before["media_keys"]
+    )
+    stable_record = next(
+        record
+        for record in profile["records"]
+        if record["media_key"] not in protected_keys
+    )
+    observed_at = datetime.now(timezone.utc)
+    due_at = (observed_at - timedelta(hours=23)).isoformat()
+    stable_at = (observed_at - timedelta(hours=21)).isoformat()
+    for record in profile["records"]:
+        record["downloaded_at"] = (
+            stable_at if record["media_key"] == stable_record["media_key"] else due_at
+        )
+    plugin._write_state(before)
+    due_records = [
+        dict(record)
+        for record in profile["records"]
+        if record["media_key"] != stable_record["media_key"]
+    ]
+    due_unprotected = [
+        record
+        for record in due_records
+        if record["media_key"] not in protected_keys
+    ]
+    candidates = iter(due_unprotected)
+    loader = FakeImageLoader(Image.new("RGB", (200, 400), "blue"))
+    plugin.image_loader = loader
+    monkeypatch.setattr(
+        plugin,
+        "_select_random_poster",
+        lambda _settings: next(candidates),
+    )
+
+    plugin.generate_image(settings, DeviceConfig())
+
+    after = _state_json(plugin)
+    after_profile = _active_profile(after)
+    assert {call["url"] for call in loader.calls} == {
+        record["image_url"] for record in due_records
+    }
+    assert stable_record["image_url"] not in {
+        call["url"] for call in loader.calls
+    }
+    assert after_profile["current_selection"] == current_before
+    assert after_profile["pending_selection"] == pending_before
+    assert after.get("discarded_page_urls", []) == before.get(
+        "discarded_page_urls",
+        [],
+    )
+    assert after.get("discarded_image_urls", []) == before.get(
+        "discarded_image_urls",
+        [],
+    )
+    assert after.get("last_displayed_at") == before.get("last_displayed_at")
+    refreshed = {
+        record["media_key"]: record["downloaded_at"]
+        for record in after_profile["records"]
+    }
+    assert refreshed[stable_record["media_key"]] == stable_at
+    assert all(
+        refreshed[record["media_key"]] != due_at
+        for record in due_records
+    )
 
 
 @pytest.mark.parametrize(
@@ -1241,7 +1435,7 @@ def test_bank_writer_rejects_legacy_profile_overflow_before_atomic_write(monkeyp
         bank.save(document)
 
 
-def test_prepare_prunes_inactive_legacy_profile_overflow_before_any_save():
+def test_prepare_prunes_inactive_legacy_profile_overflow_and_returns_no_change():
     plugin = make_plugin("prepare-profile-overflow-prune")
     settings = bind_presentation_instance_identity(
         {"fitMode": "contain", "sourceMode": "all_archive", "maxPage": 0},
@@ -1250,15 +1444,16 @@ def test_prepare_prunes_inactive_legacy_profile_overflow_before_any_save():
     bank = plugin._presentation_bank(settings, DeviceConfig().get_resolution())
     path = _write_legacy_profile_overflow(plugin, bank, all_active=False)
 
-    with pytest.raises(RuntimeError, match="no decoded media"):
-        plugin.prepare_presentation(
-            settings,
-            DeviceConfig(),
-            request=_request("e" * 32, origin="overflow-prune-origin"),
-            resolved_theme_context=None,
-        )
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=_request("e" * 32, origin="overflow-prune-origin"),
+        resolved_theme_context=None,
+    )
 
     state = json.loads(path.read_text(encoding="utf-8"))
+    assert preparation.changed is False
+    assert preparation.image is None
     assert len(state["profiles"]) == 64
     assert len(state["instance_profiles"]) <= 64
     assert all(
@@ -1493,7 +1688,18 @@ def test_expired_media_is_pruned_by_download_age_not_recent_access(monkeypatch):
     settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
     state = _state_json(plugin)
     profile = _active_profile(state)
-    expired = profile["records"][0]
+    protected_keys = {
+        media_key
+        for selection_name in ("current_selection", "pending_selection")
+        for selection in (profile.get(selection_name),)
+        if isinstance(selection, dict)
+        for media_key in selection.get("media_keys", [])
+    }
+    expired = next(
+        record
+        for record in profile["records"]
+        if record["media_key"] not in protected_keys
+    )
     expired["downloaded_at"] = (
         datetime.now(timezone.utc) - timedelta(hours=49)
     ).isoformat()
@@ -1519,6 +1725,17 @@ def test_media_namespace_uses_prescribed_48h_64_file_96mib_budget():
     assert MEDIA_BUDGET.max_age_seconds == 48 * 60 * 60
     assert MEDIA_BUDGET.max_files == 64
     assert MEDIA_BUDGET.max_bytes == 96 * 1024 * 1024
+
+
+def test_manifest_attests_provider_free_presentation_bank():
+    manifest_path = Path(backtothedate_module.__file__).with_name("plugin-info.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert (
+        manifest["capabilities"]["presentation_refresh_is_provider_free"]
+        is True
+    )
 
 
 def test_extract_poster_links_deduplicates_image_and_text_links():

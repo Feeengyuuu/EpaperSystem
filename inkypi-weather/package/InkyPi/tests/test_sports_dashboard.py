@@ -3035,7 +3035,7 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
                 "main": {"match_id": "cs-1", "start": now, "team_a": "A", "team_b": "B"},
                 "window_active": True,
                 "status": "ACTIVE",
-                "source_state": "CSAPI LIVE",
+                "source_state": "HLTV LIVE",
             }
         ]
     }
@@ -3044,7 +3044,7 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
     choice = SportsDashboard._select_right_esports_sidebar(
         [{"league_key": "LPL", "selected": lpl_offseason, "source_state": "CACHE DATA", "priority": 0}],
         valve_selected,
-        "CSAPI LIVE",
+        "HLTV LIVE",
         now,
         ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
     )
@@ -3066,7 +3066,7 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
     choice = SportsDashboard._select_right_esports_sidebar(
         [{"league_key": "LPL", "selected": lpl_selected, "source_state": "LIVE DATA", "priority": 0}],
         valve_selected,
-        "CSAPI LIVE",
+        "HLTV LIVE",
         now,
         ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
     )
@@ -5124,6 +5124,30 @@ def test_wnba_parser_handles_2026_expansion_teams_without_payload_logos():
     assert event["team_b_code"] == "TOR"
     assert event["team_a_logo"].endswith("/wnba/500/por.png")
     assert event["team_b_logo"].endswith("/wnba/500/tor.png")
+
+
+def test_wnba_temporary_showcase_teams_do_not_generate_nonexistent_espn_logo_urls():
+    la = ZoneInfo("America/Los_Angeles")
+    payload = json.loads(json.dumps(_sample_wnba_scoreboard_payload()))
+    competition = payload["events"][0]["competitions"][0]
+    home_competitor, away_competitor = competition["competitors"]
+    away_competitor["team"] = {
+        "abbreviation": "SPO",
+        "shortDisplayName": "Team Spoon",
+        "displayName": "Team Spoon",
+    }
+    home_competitor["team"] = {
+        "abbreviation": "COOP",
+        "shortDisplayName": "Team Coop",
+        "displayName": "Team Coop",
+    }
+
+    event = SportsDashboard._parse_wnba_scoreboard(payload, la)["events"][0]
+
+    assert event["team_a_logo"] == ""
+    assert event["team_b_logo"] == ""
+    assert "espncdn.com" not in event["team_a_logo"]
+    assert "espncdn.com" not in event["team_b_logo"]
 
 
 def test_wnba_phoenix_alt_code_uses_mercury_chinese_name_and_logo():
@@ -15754,7 +15778,7 @@ def test_remote_team_logo_loader_replaces_oversized_disk_cache(monkeypatch, tmp_
         assert cached.size == (12, 12)
 
 
-def _sample_valve_csapi_major_payload():
+def _sample_valve_hltv_major_payload():
     return [
         {
             "id": 1001,
@@ -15860,46 +15884,42 @@ def test_hltv_major_results_parser_normalizes_payload_for_existing_cs_parser():
     ]
 
 
-@pytest.mark.parametrize("failure_kind", ["tls", "http_500"])
-def test_valve_csapi_fetch_uses_hltv_fallback_without_disabling_tls(monkeypatch, failure_kind):
+def test_valve_hltv_payload_fetches_hltv_directly_without_provider_preflight(monkeypatch):
     plugin = _plugin()
+    session = object()
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    matches = _sample_valve_hltv_major_payload()
     calls = []
-
-    class FailedResponse:
-        def raise_for_status(self):
-            raise RuntimeError("500 Server Error")
-
-    class FailedSession:
-        def get(self, url, **kwargs):
-            calls.append((url, kwargs))
-            if failure_kind == "tls":
-                raise RuntimeError("certificate verify failed: certificate has expired")
-            return FailedResponse()
-
-    fallback_matches = _sample_valve_csapi_major_payload()
-    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FailedSession())
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: session)
     monkeypatch.setattr(
         plugin,
         "_fetch_hltv_major_matches",
-        lambda _session, _settings, _now: fallback_matches,
+        lambda used_session, settings, used_now: (
+            calls.append((used_session, settings, used_now)) or matches
+        ),
     )
 
-    payload = plugin._fetch_valve_csapi_payload(
-        {},
-        "cache-key",
-        datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
-    )
+    payload = plugin._fetch_valve_hltv_payload({}, "cache-key", now)
 
+    assert calls == [(session, {}, now)]
     assert payload["provider"] == "hltv"
-    assert payload["matches"] == fallback_matches
-    assert calls[0][0] == "https://api.csapi.de/matches/latest"
-    assert "verify" not in calls[0][1]
+    assert payload["matches"] == matches
 
 
-def test_valve_csapi_cache_source_state_tracks_hltv_fallback():
-    assert SportsDashboard._valve_cs_source_state({"provider": "hltv"}, "LIVE") == "HLTV LIVE"
-    assert SportsDashboard._valve_cs_source_state({"provider": "hltv"}, "CACHE") == "HLTV CACHE"
-    assert SportsDashboard._valve_cs_source_state({"provider": "csapi"}, "STALE") == "CSAPI STALE"
+def test_valve_runtime_sources_do_not_reference_retired_csapi_provider():
+    plugin_dir = Path(__file__).resolve().parents[1] / "src" / "plugins" / "sports_dashboard"
+    runtime_paths = [*plugin_dir.glob("*.py"), plugin_dir / "settings.html"]
+
+    for path in runtime_paths:
+        source = path.read_text(encoding="utf-8").casefold()
+        assert "api.csapi.de" not in source
+        assert "csapi" not in source
+
+
+def test_valve_hltv_cache_source_state_is_provider_specific():
+    assert SportsDashboard._valve_hltv_source_state("LIVE") == "HLTV LIVE"
+    assert SportsDashboard._valve_hltv_source_state("CACHE") == "HLTV CACHE"
+    assert SportsDashboard._valve_hltv_source_state("STALE") == "HLTV STALE"
 
 
 def test_valve_loader_preserves_selected_hltv_freshness_state(monkeypatch):
@@ -15917,7 +15937,7 @@ def test_valve_loader_preserves_selected_hltv_freshness_state(monkeypatch):
     monkeypatch.setattr(SportsDashboard, "_valve_dota2_preview_enabled", staticmethod(lambda: False))
     monkeypatch.setattr(
         plugin,
-        "_load_valve_csapi_matches",
+        "_load_valve_hltv_matches",
         lambda *_args, **_kwargs: ([{"id": 1}], "HLTV CACHE", now.isoformat()),
     )
     monkeypatch.setattr(
@@ -15967,11 +15987,11 @@ def _sample_valve_ti_payload():
     ]
 
 
-def test_valve_csapi_parser_selects_active_major_and_excludes_qualifiers():
+def test_valve_hltv_parser_selects_active_major_and_excludes_qualifiers():
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
 
-    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_csapi_major_payload(), la, now, {})
+    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_hltv_major_payload(), la, now, {})
 
     assert len(cards) == 1
     card = cards[0]
@@ -15988,7 +16008,7 @@ def test_valve_csapi_parser_selects_active_major_and_excludes_qualifiers():
     assert SportsDashboard._valve_match_detail_label(card["main"], compact=True) == "Mirage 13-8  |  Anubis 14-16  |  Dust2 12-16"
 
 
-def test_valve_csapi_parser_marks_major_break_after_bo5_final_result():
+def test_valve_hltv_parser_marks_major_break_after_bo5_final_result():
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 21, 20, 0, tzinfo=la)
     payload = [
@@ -16041,7 +16061,13 @@ def test_valve_dota2_preview_flag_short_circuits_live_sources(monkeypatch):
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 22, 12, 0, tzinfo=la)
     monkeypatch.setattr(SportsDashboard, "_valve_dota2_preview_enabled", staticmethod(lambda: True))
-    monkeypatch.setattr(plugin, "_load_valve_csapi_matches", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("CSAPI should not load")))
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_hltv_matches",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("HLTV should not load")
+        ),
+    )
     monkeypatch.setattr(plugin, "_load_valve_opendota_matches", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("OpenDota should not load")))
 
     selected, source_state = plugin._load_valve_esports({}, la, now)
@@ -16243,7 +16269,7 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
         "logo_path": LOCAL_CS_MAJOR_LOGO_PATH,
         "start": now,
         "latest": now,
-        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "CSAPI"},
+        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "HLTV"},
         "recent": [],
     }
 
@@ -16260,7 +16286,7 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
-    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
+    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "HLTV CACHE")
     plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("valve_state")
     plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
     plugin._write_lol_live_state = lambda selected, now_arg, source_state, league_key="LPL": calls.append(f"lol_state:{league_key}")
@@ -16292,7 +16318,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
         "logo_path": LOCAL_CS_MAJOR_LOGO_PATH,
         "start": now,
         "latest": now,
-        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "CSAPI"},
+        "main": {"start": now, "team_a": "Spirit", "team_b": "Falcons", "wins_a": 1, "wins_b": 2, "source": "HLTV"},
         "recent": [],
     }
 
@@ -16309,7 +16335,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
-    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "CSAPI CACHE")
+    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "HLTV CACHE")
     plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("state")
     plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
     plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append("lpl")
@@ -16329,11 +16355,11 @@ def test_valve_esports_sidebar_render_smoke():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 6, 21, 12, 0, tzinfo=la)
-    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_csapi_major_payload(), la, now, {})
+    cards = SportsDashboard._parse_valve_cs_major_cards(_sample_valve_hltv_major_payload(), la, now, {})
     selected = SportsDashboard._select_valve_esports(cards, now)
     image = Image.new("RGB", (800, 480), COLORS["paper"])
 
-    plugin._draw_valve_esports_sidebar(image, 552, selected, "CSAPI CACHE", now)
+    plugin._draw_valve_esports_sidebar(image, 552, selected, "HLTV CACHE", now)
 
     assert image.getpixel((580, 24)) != COLORS["paper"]
     assert image.getpixel((620, 100)) != COLORS["paper"]
@@ -16416,8 +16442,7 @@ def test_settings_exposes_valve_esports_controls():
     html = settings_path.read_text(encoding="utf-8")
     fields = [
         "valveEsportsEnabled",
-        "valveEsportsCsapiEnabled",
-        "valveEsportsCsapiBaseUrl",
+        "valveEsportsHltvEnabled",
         "valveEsportsOpenDotaEnabled",
         "valveEsportsCacheHours",
         "valveEsportsDailyLimit",
@@ -16525,6 +16550,11 @@ def test_football_panel_manual_modes_override_schedule():
 
     assert SportsDashboard._select_football_panel_kind("worldcup", now, None) == "worldcup"
     assert SportsDashboard._select_football_panel_kind("club", now, summary) == "club"
+    assert SportsDashboard._football_panel_mode({"footballPanelMode": "csl"}) == "csl"
+    assert (
+        SportsDashboard._select_football_panel_kind("csl", now, summary, None)
+        == "csl"
+    )
 
 
 def test_football_panel_auto_mode_uses_fourteen_day_lead_and_twenty_four_hour_tail():
@@ -16542,6 +16572,186 @@ def test_football_panel_auto_mode_uses_fourteen_day_lead_and_twenty_four_hour_ta
     assert SportsDashboard._select_football_panel_kind("auto", final + timedelta(hours=27), summary) == "worldcup"
     assert SportsDashboard._select_football_panel_kind("auto", final + timedelta(hours=27, seconds=1), summary) == "club"
     assert SportsDashboard._select_football_panel_kind("auto", first, None) == "club"
+
+
+def test_football_panel_auto_mode_prioritizes_relevant_csl_schedule():
+    now = datetime(2026, 7, 26, 8, tzinfo=timezone.utc)
+    csl_summary = {
+        "has_relevant_events": True,
+        "first_start": now - timedelta(days=1),
+        "final_start": now + timedelta(days=6),
+    }
+
+    assert (
+        SportsDashboard._select_football_panel_kind(
+            "auto",
+            now,
+            None,
+            csl_summary,
+        )
+        == "csl"
+    )
+    assert (
+        SportsDashboard._select_football_panel_kind(
+            "auto",
+            now,
+            None,
+            {"has_relevant_events": False},
+        )
+        == "club"
+    )
+
+
+def test_csl_module_and_2026_wordmark_are_packaged():
+    plugin_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+    )
+
+    assert (plugin_dir / "csl.py").is_file()
+    wordmark = plugin_dir / "assets" / "decor" / "csl_2026_title_wordmark.png"
+    assert wordmark.is_file()
+    with Image.open(wordmark) as image:
+        assert image.width > image.height
+        assert "A" in image.convert("RGBA").getbands()
+
+
+def test_csl_espn_schedule_parses_recent_and_upcoming_sections():
+    def event(
+        event_id,
+        starts_at,
+        state,
+        *,
+        home_id,
+        home_name,
+        away_id,
+        away_name,
+        home_score="0",
+        away_score="0",
+    ):
+        completed = state == "post"
+        detail = "FT" if completed else "Scheduled"
+        return {
+            "id": event_id,
+            "date": starts_at,
+            "season": {"year": 2026},
+            "competitions": [
+                {
+                    "id": event_id,
+                    "date": starts_at,
+                    "status": {
+                        "type": {
+                            "state": state,
+                            "completed": completed,
+                            "shortDetail": detail,
+                        }
+                    },
+                    "competitors": [
+                        {
+                            "homeAway": "home",
+                            "score": home_score,
+                            "team": {
+                                "id": home_id,
+                                "displayName": home_name,
+                                "logos": [
+                                    {
+                                        "href": (
+                                            f"https://a.espncdn.com/i/teamlogos/"
+                                            f"soccer/500/{home_id}.png"
+                                        )
+                                    }
+                                ],
+                            },
+                        },
+                        {
+                            "homeAway": "away",
+                            "score": away_score,
+                            "team": {
+                                "id": away_id,
+                                "displayName": away_name,
+                                "logos": [
+                                    {
+                                        "href": (
+                                            f"https://a.espncdn.com/i/teamlogos/"
+                                            f"soccer/500/{away_id}.png"
+                                        )
+                                    }
+                                ],
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+
+    payload = {
+        "leagues": [
+            {
+                "slug": "chn.1",
+                "logos": [{"href": "https://a.espncdn.com/i/leaguelogos/soccer/500/23.png"}],
+            }
+        ],
+        "events": [
+            event(
+                "401861295",
+                "2026-07-25T12:00:00Z",
+                "post",
+                home_id="21506",
+                home_name="Wuhan Three Towns",
+                away_id="131704",
+                away_name="Chongqing Tonglianglong",
+                home_score="1",
+                away_score="0",
+            ),
+            event(
+                "401861431",
+                "2026-07-26T11:00:00Z",
+                "pre",
+                home_id="22536",
+                home_name="Yunnan Yukun",
+                away_id="22199",
+                away_name="Shenzhen Xinpengcheng",
+            ),
+        ],
+    }
+    now = datetime(2026, 7, 26, 8, tzinfo=timezone.utc)
+
+    events = SportsDashboard._parse_csl_espn_events(payload, timezone.utc)
+    selected = SportsDashboard._select_csl_event_sections(events, now, 99)
+    summary = SportsDashboard._csl_schedule_summary(events, now)
+
+    assert [event["event_id"] for event in events] == ["401861295", "401861431"]
+    assert selected["main"]["event_id"] == "401861431"
+    assert [event["event_id"] for event in selected["upcoming"]] == ["401861431"]
+    assert [event["event_id"] for event in selected["recent"]] == ["401861295"]
+    assert selected["visible_matches"] == 4
+    assert selected["presentation"]["competition"] == "csl"
+    assert selected["presentation"]["team_asset_kind"] == "logo"
+    assert summary["has_relevant_events"] is True
+    assert summary["next_start"] == datetime(2026, 7, 26, 11, tzinfo=timezone.utc)
+
+
+def test_csl_live_state_participates_in_live_refresh(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 7, 26, 11, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        plugin,
+        "_live_state_active",
+        lambda path, version, current_dt, live_status_fallback=False: (
+            Path(path).name == "csl_live_state.json"
+        ),
+    )
+
+    assert plugin._active_live_refresh_sources(
+        {
+            "footballPanelMode": "auto",
+            "clubFootballLiveRefreshEnabled": True,
+        },
+        now,
+    ) == ["csl"]
+    assert plugin._live_image_refresh_interval({}, "csl") == 60
 
 
 def _sample_club_espn_payload():
@@ -17797,6 +18007,68 @@ def test_football_panel_route_calls_only_selected_slot(monkeypatch):
     assert worldcup[0].getpixel((0, 0)) == (78, 90, 12)
 
 
+def test_football_panel_route_calls_only_csl_slot_when_relevant(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 7, 26, 8, tzinfo=timezone.utc)
+    calls = []
+    csl_marker = Image.new("RGB", (536, 240), (18, 120, 82))
+    monkeypatch.setattr(
+        plugin,
+        "_worldcup_schedule_summary",
+        lambda *args: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_csl_route_summary",
+        lambda *args: {"has_relevant_events": True},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_csl_slot",
+        lambda *args: (
+            calls.append("csl") or csl_marker,
+            SourceProvenance.LIVE,
+            "CSL ESPN LIVE",
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_club_football_slot",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("club slot must not render while CSL is relevant")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_render_worldcup_slot",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("World Cup slot must not render while CSL is relevant")
+        ),
+        raising=False,
+    )
+
+    panel, provenance, source, content_box = (
+        plugin._render_selected_football_panel(
+            {"footballPanelMode": "auto"},
+            FakeDeviceConfig(),
+            (536, 240),
+            timezone.utc,
+            4,
+            now,
+        )
+    )
+
+    assert calls == ["csl"]
+    assert panel.getpixel((0, 0)) == (18, 120, 82)
+    assert provenance is SourceProvenance.LIVE
+    assert source == "CSL ESPN LIVE"
+    assert content_box is None
+
+
 def _render_football_route_marker_dashboard(plugin, monkeypatch, mode, top_color):
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
     marker = Image.new("RGB", (536, 240), top_color)
@@ -17922,6 +18194,7 @@ def test_club_football_settings_use_scalar_registry_and_false_sentinel():
     assert 'clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1"]' in html
     assert 'id="clubFootballLiveRefreshIntervalSeconds"' in html
     assert 'id="footballPanelMode"' in html
+    assert '<option value="csl">Chinese Super League</option>' in html
 
 def test_worldcup_schedule_summary_reads_cache_without_extra_fetch(monkeypatch, tmp_path):
     plugin = _plugin()

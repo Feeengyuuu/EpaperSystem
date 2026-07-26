@@ -581,11 +581,12 @@ def test_title_wordmark_asset_exists_and_draws(tmp_path):
     assert len(crop.getcolors(maxcolors=1_000_000)) > 8
 
 
-def test_hn_story_preview_captures_story_target_page_and_caches(tmp_path, monkeypatch):
+def test_hn_story_preview_captures_hn_item_and_caches(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     captured = []
     story_url = "https://github.com/HackerNews/API/issues/1"
-    story = {"url": story_url}
+    hn_url = "https://news.ycombinator.com/item?id=42"
+    story = {"url": story_url, "hn_url": hn_url}
 
     def fake_capture(url):
         captured.append(url)
@@ -601,11 +602,11 @@ def test_hn_story_preview_captures_story_target_page_and_caches(tmp_path, monkey
     first = plugin._story_preview_image(story)
     second = plugin._story_preview_image(story)
 
-    assert captured == [story_url]
+    assert captured == [hn_url]
     assert first.size == second.size
     assert first.size[0] == 1100
     assert first.getpixel((0, 0)) == (36, 41, 47)
-    assert plugin._story_preview_cache_path(story_url).is_file()
+    assert plugin._story_preview_cache_path(hn_url).is_file()
 
 
 def test_story_preview_cache_uses_managed_namespace(tmp_path):
@@ -621,54 +622,92 @@ def test_story_preview_cache_uses_managed_namespace(tmp_path):
     assert namespace.budget.max_bytes == 50 * 1024 * 1024
 
 
-def test_hn_story_preview_falls_back_to_hn_homepage_when_target_fails(tmp_path, monkeypatch):
+def test_failed_hn_story_preview_is_not_retried_for_same_item(
+    tmp_path,
+    monkeypatch,
+):
     plugin = _plugin(tmp_path)
-    story_url = "https://example.com/dead"
+    hn_url = "https://news.ycombinator.com/item?id=42"
     captured = []
 
     def fake_capture(url):
         captured.append(url)
-        if url == story_url:
-            return None
-        img = Image.new("RGB", (1100, 720), (246, 248, 250))
-        draw = ImageDraw.Draw(img)
-        draw.rectangle((0, 0, 1100, 72), fill=(255, 102, 0))
-        draw.text((145, 184), "Hacker News", fill=(31, 35, 40))
-        return img
+        return None
 
     monkeypatch.setattr(plugin, "_capture_story_preview_page", fake_capture)
+    story = {"url": "https://example.com/dynamic-story", "hn_url": hn_url}
 
-    image = plugin._story_preview_image({"url": story_url})
-
-    assert captured == [story_url, HN_HOME_URL]
-    assert image is not None
-    assert image.getpixel((0, 0)) == (255, 102, 0)
-    assert plugin._story_preview_cache_path(HN_HOME_URL).is_file()
+    assert plugin._story_preview_image(story) is None
+    assert plugin._story_preview_image(story) is None
+    assert captured == [hn_url]
 
 
-def test_story_preview_remote_capture_uses_fail_closed_compatibility_wrapper(
+def test_failed_hn_story_preview_retries_after_backoff(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = _plugin(tmp_path)
+    hn_url = "https://news.ycombinator.com/item?id=42"
+    captured = []
+    now = [1000.0]
+
+    def fake_capture(url):
+        captured.append(url)
+        return None
+
+    monkeypatch.setattr(plugin, "_capture_story_preview_page", fake_capture)
+    monkeypatch.setattr(
+        plugin,
+        "_story_preview_failure_now",
+        lambda: now[0],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tech_pulse_module,
+        "STORY_PREVIEW_FAILURE_TTL_SECONDS",
+        60,
+        raising=False,
+    )
+    story = {"url": "https://example.com/dynamic-story", "hn_url": hn_url}
+
+    assert plugin._story_preview_image(story) is None
+    now[0] += 61
+    assert plugin._story_preview_image(story) is None
+    assert captured == [hn_url, hn_url]
+
+
+def test_story_preview_remote_capture_uses_exact_browser_timeout(
     tmp_path,
     monkeypatch,
 ):
     plugin = _plugin(tmp_path)
     calls = []
 
-    def fake_take_screenshot(url, dimensions, **kwargs):
-        calls.append((url, dimensions, kwargs))
-        return None
+    class FakeRenderer:
+        def render_url(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return None
 
     monkeypatch.setattr(
-        "plugins.tech_pulse.tech_pulse.take_screenshot",
-        fake_take_screenshot,
+        tech_pulse_module,
+        "get_browser_renderer",
+        lambda: FakeRenderer(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tech_pulse_module,
+        "take_screenshot",
+        lambda *args, **kwargs: pytest.fail("compatibility wrapper must not be used"),
+        raising=False,
     )
 
     assert plugin._capture_story_preview_page_direct(HN_HOME_URL) is None
     assert calls == [
         (
             HN_HOME_URL,
-            STORY_PREVIEW_CAPTURE_SIZE,
             {
-                "timeout_ms": STORY_PREVIEW_TIMEOUT_MS,
+                "viewport": STORY_PREVIEW_CAPTURE_SIZE,
+                "timeout_seconds": STORY_PREVIEW_TIMEOUT_MS / 1000.0,
                 "validator": validate_browser_target,
             },
         )

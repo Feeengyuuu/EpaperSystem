@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import re
+import time
 from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
@@ -25,9 +26,10 @@ from plugins.base_plugin.render_provenance import (
 from plugins.context_cache import write_context
 from security.ssrf import validate_browser_target
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
+from utils.browser_renderer import get_browser_renderer
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
-from utils.image_utils import take_screenshot, text_width
+from utils.image_utils import text_width
 from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ TITLE_WORDMARK_DISPLAY_SIZE = (246, 46)
 STORY_PREVIEW_CACHE_VERSION = "v1"
 STORY_PREVIEW_CAPTURE_SIZE = (1100, 720)
 STORY_PREVIEW_TIMEOUT_MS = 15000
+STORY_PREVIEW_FAILURE_TTL_SECONDS = 6 * 60 * 60
 STORY_PREVIEW_CROP_TOP = 0
 STORY_PREVIEW_CROP_HEIGHT = 520
 STORY_PREVIEW_CACHE_BUDGET = CacheBudget(
@@ -560,9 +563,13 @@ class TechPulse(BasePlugin):
                 return cached
             if not allow_fetch:
                 continue
+            if self._story_preview_failure_is_active(preview_url):
+                continue
             captured = self._capture_story_preview_page(preview_url)
             if captured is None:
+                self._remember_story_preview_failure(preview_url)
                 continue
+            self._forget_story_preview_failure(preview_url)
             prepared = self._prepare_story_screenshot(captured)
             try:
                 output = BytesIO()
@@ -581,10 +588,10 @@ class TechPulse(BasePlugin):
         return self._capture_story_preview_page_direct(url)
 
     def _capture_story_preview_page_direct(self, url):
-        return take_screenshot(
+        return get_browser_renderer().render_url(
             url,
-            STORY_PREVIEW_CAPTURE_SIZE,
-            timeout_ms=STORY_PREVIEW_TIMEOUT_MS,
+            viewport=STORY_PREVIEW_CAPTURE_SIZE,
+            timeout_seconds=STORY_PREVIEW_TIMEOUT_MS / 1000.0,
             validator=validate_browser_target,
         )
 
@@ -623,6 +630,30 @@ class TechPulse(BasePlugin):
             self._cache_dir() / "story_preview",
             STORY_PREVIEW_CACHE_BUDGET,
         )
+
+    def _story_preview_failed_targets(self):
+        failed_targets = getattr(self, "_story_preview_failed_target_times", None)
+        if failed_targets is None:
+            failed_targets = {}
+            self._story_preview_failed_target_times = failed_targets
+        return failed_targets
+
+    def _story_preview_failure_now(self):
+        return time.monotonic()
+
+    def _story_preview_failure_is_active(self, url):
+        failed_targets = self._story_preview_failed_targets()
+        now = self._story_preview_failure_now()
+        for target_url, failed_at in list(failed_targets.items()):
+            if now - failed_at >= STORY_PREVIEW_FAILURE_TTL_SECONDS:
+                failed_targets.pop(target_url, None)
+        return url in failed_targets
+
+    def _remember_story_preview_failure(self, url):
+        self._story_preview_failed_targets()[url] = self._story_preview_failure_now()
+
+    def _forget_story_preview_failure(self, url):
+        self._story_preview_failed_targets().pop(url, None)
 
     def _fallback_story_preview(self, size, palette, scale, story=None):
         width, height = [max(1, int(value)) for value in size]
@@ -664,11 +695,26 @@ class TechPulse(BasePlugin):
         return raw_url
 
     def _story_preview_candidate_urls(self, story):
-        urls = []
-        for url in (self._story_preview_url(story), HN_HOME_URL):
-            if url and url not in urls:
-                urls.append(url)
-        return urls
+        preview_url = self._story_preview_browser_url(story)
+        return [preview_url] if preview_url else []
+
+    def _story_preview_browser_url(self, story):
+        if isinstance(story, str):
+            raw_url = story.strip()
+        elif isinstance(story, dict):
+            raw_url = str(story.get("hn_url") or "").strip()
+        else:
+            raw_url = ""
+        if not raw_url:
+            return ""
+        parsed = urlparse(raw_url)
+        if (
+            parsed.scheme not in ("http", "https")
+            or parsed.hostname != "news.ycombinator.com"
+            or parsed.path.rstrip("/") != "/item"
+        ):
+            return ""
+        return raw_url
 
     def _panel(self, draw, box, palette, scale):
         draw.rounded_rectangle(box, radius=int(14 * scale), fill=palette["panel"], outline=palette["rule"], width=max(1, int(scale)))

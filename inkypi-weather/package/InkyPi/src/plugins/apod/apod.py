@@ -54,6 +54,7 @@ MAX_SELECTION_JSON_BYTES = 16 * 1024
 MAX_APOD_JSON_BYTES = 512 * 1024
 MAX_APOD_STATE_BYTES = 768 * 1024
 MAX_TRANSLATION_JSON_BYTES = 256 * 1024
+MAX_JSON_NESTING_DEPTH = 64
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
 MAX_MEDIA_PIXELS = 80_000_000
 MAX_DECODED_MEDIA_BYTES = 32 * 1024 * 1024
@@ -1341,6 +1342,8 @@ def _read_bounded_json(path: Path, *, max_bytes: int) -> Mapping[str, Any] | Non
             payload = handle.read(max_bytes + 1)
         if not payload or len(payload) > max_bytes:
             return None
+        if not _json_nesting_within_limit(payload):
+            return None
         decoded = json.loads(payload)
         return decoded if isinstance(decoded, Mapping) else None
     except (
@@ -1352,6 +1355,36 @@ def _read_bounded_json(path: Path, *, max_bytes: int) -> Mapping[str, Any] | Non
         ValueError,
     ):
         return None
+
+
+def _json_nesting_within_limit(
+    payload: bytes,
+    *,
+    max_depth: int = MAX_JSON_NESTING_DEPTH,
+) -> bool:
+    """Bound structural JSON depth independently of the CPython decoder."""
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == ord("\\"):
+                escaped = True
+            elif byte == ord('"'):
+                in_string = False
+            continue
+        if byte == ord('"'):
+            in_string = True
+        elif byte in (ord("{"), ord("[")):
+            depth += 1
+            if depth > max_depth:
+                return False
+        elif byte in (ord("}"), ord("]")):
+            depth -= 1
+    return True
 
 
 def _translation_cache_path(paths: InstancePaths, apod_date: str, title: str) -> Path:

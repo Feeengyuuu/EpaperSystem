@@ -16,6 +16,7 @@ from pathlib import Path
 import socket
 import ssl
 import sys
+import threading
 import time
 from urllib.parse import urljoin, urlparse, urlsplit
 from security.ssrf import get_ssrf_policy
@@ -43,9 +44,11 @@ from plugins.newspaper.presentation_bank import (
     write_state,
 )
 from utils.http_client import HttpStatusError
+from utils.atomic_file import atomic_write_json
 from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
+_PROVIDER_FAILURE_STATE_LOCK = threading.RLock()
 
 FREEDOM_FORUM_URL = "https://cdn.freedomforum.org/dfp/jpg{}/lg/{}.jpg"
 LYWB_A01_PDF_URL = "https://lywb.lyd.com.cn/images2/2/{year_month}/{day}/A01/{stamp}A01_pdf.pdf"
@@ -64,6 +67,12 @@ MAX_PDF_PAGES = 200
 MAX_PNG_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 8192
 MAX_IMAGE_PIXELS = 32_000_000
+PROVIDER_FAILURE_STATE_FILE = ".newspaper_provider_failures.json"
+PROVIDER_NOT_FOUND_COOLDOWN_SECONDS = 15 * 60
+PROVIDER_FORBIDDEN_COOLDOWN_SECONDS = 6 * 60 * 60
+PROVIDER_FAILURE_STATE_LIMIT = 128
+PROVIDER_FAILURE_STATE_MAX_BYTES = 256 * 1024
+PROVIDER_FAILURE_KEY_MAX_CHARS = 240
 REMOTE_IMAGE_LIMITS = ImageLimits(
     max_bytes=MAX_PNG_BYTES,
     max_width=MAX_IMAGE_DIMENSION,
@@ -558,6 +567,7 @@ class Newspaper(BasePlugin):
                             source,
                             device_config,
                             deadline=source_deadline,
+                            force_refresh=force_refresh,
                         )
                         check_deadline()
                         if image is None:
@@ -1076,7 +1086,14 @@ class Newspaper(BasePlugin):
         detail = "; ".join(errors[-4:])
         raise RuntimeError(f"No news front page could be fetched. {detail}")
 
-    def _fetch_source_image(self, source, device_config, *, deadline=None):
+    def _fetch_source_image(
+        self,
+        source,
+        device_config,
+        *,
+        deadline=None,
+        force_refresh=False,
+    ):
         if source["type"] == "headlines":
             headlines = self._fetch_web_headlines(source["value"], deadline=deadline)
             if headlines:
@@ -1093,15 +1110,21 @@ class Newspaper(BasePlugin):
             image = self._fetch_luoyang_evening_news_cover(
                 device_config,
                 deadline=deadline,
+                force_refresh=force_refresh,
             )
         else:
             image = self._fetch_newspaper_cover(
                 source["value"],
                 device_config,
                 deadline=deadline,
+                force_refresh=force_refresh,
             )
 
         if image is None:
+            if force_refresh and source["type"] in {"lywb", "newspaper"}:
+                raise RuntimeError(
+                    f"Forced newspaper provider refresh returned no image: {source['name']}"
+                )
             return None
         dimensions = self.get_dimensions(device_config)
         return self._normalize_display_image(image, dimensions)
@@ -1471,7 +1494,14 @@ class Newspaper(BasePlugin):
         box = draw.textbbox((0, 0), text or "A", font=font)
         return box[3] - box[1]
 
-    def _fetch_newspaper_cover(self, newspaper_slug, device_config, *, deadline=None):
+    def _fetch_newspaper_cover(
+        self,
+        newspaper_slug,
+        device_config,
+        *,
+        deadline=None,
+        force_refresh=False,
+    ):
         newspaper_slug = newspaper_slug.upper()
         deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
 
@@ -1489,6 +1519,18 @@ class Newspaper(BasePlugin):
         for date in days:
             _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             image_url = FREEDOM_FORUM_URL.format(date.day, newspaper_slug)
+            failure_key = (
+                f"freedom_forum:{newspaper_slug}:{date.strftime('%Y-%m-%d')}"
+            )
+            if (
+                not force_refresh
+                and self._provider_failure_is_cooling_down(failure_key)
+            ):
+                logger.info(
+                    "Skipping cooled-down newspaper edition %s",
+                    image_url,
+                )
+                continue
             try:
                 payload, _final_url, _headers = self._download_provider_bytes(
                     image_url,
@@ -1498,10 +1540,17 @@ class Newspaper(BasePlugin):
                     deadline=deadline,
                 )
                 image = self._decode_remote_image(payload, deadline=deadline)
+            except HttpStatusError as exc:
+                if exc.status in (403, 404):
+                    self._remember_provider_failure(failure_key, exc.status)
+                log = logger.info if exc.status == 404 else logger.warning
+                log("Could not fetch newspaper cover %s: %s", image_url, exc)
+                image = None
             except Exception as exc:
                 logger.warning("Could not fetch newspaper cover %s: %s", image_url, exc)
                 image = None
             if image:
+                self._forget_provider_failure(failure_key)
                 logger.info(f"Found {newspaper_slug} front cover for {date.strftime('%Y-%m-%d')}")
                 edition_date = date.strftime("%Y-%m-%d")
                 break
@@ -1530,12 +1579,22 @@ class Newspaper(BasePlugin):
         image.info["inkypi_newspaper_edition_date"] = edition_date
         return image
 
-    def _fetch_luoyang_evening_news_cover(self, device_config, *, deadline=None):
+    def _fetch_luoyang_evening_news_cover(
+        self,
+        device_config,
+        *,
+        deadline=None,
+        force_refresh=False,
+    ):
         deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
         for date in self._lywb_candidate_dates():
             _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             url = self._build_lywb_pdf_url(date)
-            pdf_bytes = self._download_pdf(url, deadline=deadline)
+            pdf_bytes = self._download_pdf(
+                url,
+                deadline=deadline,
+                force_refresh=force_refresh,
+            )
             if not pdf_bytes:
                 continue
 
@@ -1562,7 +1621,14 @@ class Newspaper(BasePlugin):
             stamp=date.strftime("%Y%m%d"),
         )
 
-    def _download_pdf(self, url, *, deadline=None):
+    def _download_pdf(self, url, *, deadline=None, force_refresh=False):
+        failure_key = f"lywb_pdf:{url}"
+        if (
+            not force_refresh
+            and self._provider_failure_is_cooling_down(failure_key)
+        ):
+            logger.info("Skipping cooled-down PDF front page %s", url)
+            return None
         try:
             payload, _final_url, _headers = self._download_provider_bytes(
                 url,
@@ -1576,6 +1642,8 @@ class Newspaper(BasePlugin):
                 },
             )
         except HttpStatusError as exc:
+            if exc.status in (403, 404):
+                self._remember_provider_failure(failure_key, exc.status)
             if exc.status == 404:
                 return None
             logger.warning("Could not fetch PDF front page %s: %s", url, exc)
@@ -1584,6 +1652,7 @@ class Newspaper(BasePlugin):
             logger.warning("Could not fetch PDF front page %s: %s", url, exc)
             return None
 
+        self._forget_provider_failure(failure_key)
         if not payload.startswith(b"%PDF"):
             logger.warning("PDF front page response was not a PDF: %s", url)
             return None
@@ -1814,6 +1883,134 @@ class Newspaper(BasePlugin):
 
     def _rotation_state_path(self):
         return self.cache_dir() / ".newspaper_rotation_state.json"
+
+    def _provider_failure_state_path(self):
+        return self.cache_dir() / PROVIDER_FAILURE_STATE_FILE
+
+    def _read_provider_failure_state(self):
+        path = self._provider_failure_state_path()
+        with _PROVIDER_FAILURE_STATE_LOCK:
+            try:
+                if not path.is_file():
+                    return {}
+                if path.stat().st_size > PROVIDER_FAILURE_STATE_MAX_BYTES:
+                    logger.warning(
+                        "Ignoring oversized newspaper provider failure state %s",
+                        path,
+                    )
+                    return {}
+                state = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(state, dict):
+                    return self._prune_provider_failure_state(state)
+            except Exception as exc:
+                logger.warning(
+                    "Could not read newspaper provider failure state %s: %s",
+                    path,
+                    exc,
+                )
+        return {}
+
+    def _write_provider_failure_state(self, state):
+        path = self._provider_failure_state_path()
+        with _PROVIDER_FAILURE_STATE_LOCK:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(
+                    path,
+                    self._prune_provider_failure_state(state),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not write newspaper provider failure state %s: %s",
+                    path,
+                    exc,
+                )
+
+    def _prune_provider_failure_state(self, state):
+        if not isinstance(state, dict):
+            return {}
+        now = self._now_utc()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now = now.astimezone(timezone.utc)
+        active = []
+        for failure_key, entry in state.items():
+            if not isinstance(failure_key, str) or not isinstance(entry, dict):
+                continue
+            if len(failure_key) > PROVIDER_FAILURE_KEY_MAX_CHARS:
+                continue
+            try:
+                status = int(entry.get("status"))
+                expires_at = datetime.fromisoformat(str(entry.get("expires_at") or ""))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                expires_at = expires_at.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                continue
+            if status not in (403, 404) or expires_at <= now:
+                continue
+            active.append(
+                (
+                    expires_at,
+                    failure_key,
+                    {
+                        "status": status,
+                        "expires_at": expires_at.isoformat(),
+                    },
+                )
+            )
+        active.sort(reverse=True)
+        return {
+            failure_key: entry
+            for _expires_at, failure_key, entry in active[
+                :PROVIDER_FAILURE_STATE_LIMIT
+            ]
+        }
+
+    def _provider_failure_is_cooling_down(self, failure_key):
+        normalized_key = self._normalize_provider_failure_key(failure_key)
+        return normalized_key in self._read_provider_failure_state()
+
+    @staticmethod
+    def _normalize_provider_failure_key(failure_key):
+        value = str(failure_key)
+        if len(value) <= PROVIDER_FAILURE_KEY_MAX_CHARS:
+            return value
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+        prefix_length = PROVIDER_FAILURE_KEY_MAX_CHARS - len(digest) - 1
+        return f"{value[:prefix_length]}:{digest}"
+
+    def _remember_provider_failure(self, failure_key, status):
+        status = int(status)
+        if status not in (403, 404):
+            return
+        cooldown_seconds = (
+            PROVIDER_FORBIDDEN_COOLDOWN_SECONDS
+            if status == 403
+            else PROVIDER_NOT_FOUND_COOLDOWN_SECONDS
+        )
+        now = self._now_utc()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        with _PROVIDER_FAILURE_STATE_LOCK:
+            state = self._read_provider_failure_state()
+            state[self._normalize_provider_failure_key(failure_key)] = {
+                "status": status,
+                "expires_at": (
+                    now.astimezone(timezone.utc)
+                    + timedelta(seconds=cooldown_seconds)
+                ).isoformat(),
+            }
+            self._write_provider_failure_state(state)
+
+    def _forget_provider_failure(self, failure_key):
+        with _PROVIDER_FAILURE_STATE_LOCK:
+            state = self._read_provider_failure_state()
+            normalized_key = self._normalize_provider_failure_key(failure_key)
+            if normalized_key not in state:
+                return
+            state.pop(normalized_key, None)
+            self._write_provider_failure_state(state)
 
     def _read_rotation_state(self):
         path = self._rotation_state_path()

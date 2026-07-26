@@ -117,6 +117,62 @@ def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path):
+    first = TimeoutProcess()
+    launches = []
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 5678
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    def popen(command, **_kwargs):
+        launches.append(command)
+        return first if len(launches) == 1 else SuccessProcess(command)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+    )
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+        retry_once=True,
+    )
+
+    assert result is not None
+    assert result.size == (80, 48)
+    assert len(launches) == 2
+    assert renderer.active_processes == ()
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
     commands = []
 
@@ -260,6 +316,15 @@ def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(tmp_path
     ) is None
     assert len(launches) == 2
 
+    assert renderer.render_html(
+        "<p>system failure circuit</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+        failure_domain="daily_ai_news:brief.html",
+    ) is None
+    assert len(launches) == 2
+
     now["value"] = 61.0
     assert renderer.render_html(
         "<p>after cooldown</p>",
@@ -269,6 +334,44 @@ def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(tmp_path
         failure_domain="weather:weather.html",
     ) is None
     assert len(launches) == 3
+
+
+def test_egress_proxy_start_failures_count_toward_html_system_circuit(tmp_path):
+    class UnavailableProxy:
+        def __init__(self):
+            self.start_calls = 0
+
+        def start(self):
+            self.start_calls += 1
+            return False
+
+        def close(self):
+            pass
+
+    proxy = UnavailableProxy()
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: pytest.fail(
+            "proxy failure started Chromium"
+        ),
+        egress_proxy=proxy,
+        html_circuit_ttl_seconds=60,
+    )
+
+    for domain in (
+        "weather:weather.html",
+        "steam_charts:steam_charts.html",
+        "daily_ai_news:brief.html",
+    ):
+        assert renderer.render_html(
+            f"<p>{domain}</p>",
+            viewport=(80, 48),
+            context=_context(),
+            failure_domain=domain,
+        ) is None
+
+    assert proxy.start_calls == 2
 
 
 def test_html_failure_domain_table_is_bounded_and_prunes_expired_entries(tmp_path):

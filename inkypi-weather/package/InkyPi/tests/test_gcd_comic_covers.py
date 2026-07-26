@@ -31,6 +31,7 @@ from plugins.gcd_comic_covers.presentation_bank import (  # noqa: E402
     MEDIA_MAX_OBJECT_BYTES,
     MEDIA_MAX_PIXELS,
     READY_TARGET,
+    _commit_records,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
 
@@ -314,6 +315,88 @@ def test_gcd_force_refresh_candidate_error_marks_warm_bank_stale_and_skips_cache
     assert image.info["inkypi_skip_cache"] is True
 
 
+def test_gcd_banked_refresh_keeps_blocked_metadata_out_of_ready_bank(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings(fit_mode="triptych")
+    comic_vine = [
+        _priority_candidate(index, "comicvine_recent")
+        for index in range(3)
+    ]
+    blocked_gcd = [
+        _priority_candidate(index + 20, "exact_day")
+        for index in range(5)
+    ]
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: comic_vine + blocked_gcd,
+    )
+
+    def load_cover(candidate, _dimensions, _settings):
+        if candidate["source"] == "gcd":
+            raise GcdCoverImageUnavailable(
+                "cover image blocked by source (403)",
+                candidate,
+                candidate,
+                candidate["cover_url"],
+            )
+        return {
+            **candidate,
+            "image": Image.new("RGB", (220, 360), "navy"),
+        }
+
+    monkeypatch.setattr(plugin, "_load_cover", load_cover)
+
+    image = plugin.generate_image(settings, DeviceConfig())
+
+    state = _state_json(plugin)
+    profile = _profile_for(state)
+    bank = plugin._presentation_bank(
+        settings,
+        DeviceConfig().get_resolution(),
+        date(2026, 7, 12),
+    )
+    _document, warm_profile = bank.load_warm()
+    ready = bank.ready_records(warm_profile, prune=False)
+    selected_ids = _selection_issue_ids(state, profile["current_selection"])
+    expected_ids = {candidate["issue_id"] for candidate in comic_vine}
+    assert image.size == DeviceConfig().get_resolution()
+    assert {record["issue_id"] for record in ready} == expected_ids
+    assert all(record["render_kind"] == "media" for record in ready)
+    assert set(selected_ids) == expected_ids
+    assert all(record["render_kind"] == "media" for record in profile["records"])
+
+
+def test_gcd_mixed_source_uses_comic_vine_when_gcd_provider_is_down(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    today = date(2026, 7, 12)
+    comic_vine = _priority_candidate(7, "comicvine_recent")
+    monkeypatch.setattr(
+        plugin,
+        "_comic_vine_candidate_pool",
+        lambda *_args, **_kwargs: [comic_vine],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_gcd_candidate_pool",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("GCD provider unavailable")
+        ),
+    )
+
+    candidates = plugin._candidate_pool({"sourceMode": "mixed"}, today)
+
+    assert [candidate["issue_id"] for candidate in candidates] == [
+        comic_vine["issue_id"]
+    ]
+
+
 def test_gcd_force_refresh_bypasses_month_and_comic_vine_candidate_caches(
     tmp_path,
     monkeypatch,
@@ -456,6 +539,7 @@ def test_gcd_matching_receipt_commits_single_or_triptych_exactly_once(
     committed = _state_json(plugin)
     bucket = committed["date_buckets"]["07-12"]
     assert bucket["seen_issue_ids"][-expected_count:] == pending_ids
+    assert bucket["last_selection_issue_ids"] == pending_ids
     assert bucket["last_issue_id"] == pending_ids[-1]
     assert bucket["last_displayed_at"] == receipt.committed_at
     assert _profile_for(committed)["pending_selection"] is None
@@ -464,31 +548,70 @@ def test_gcd_matching_receipt_commits_single_or_triptych_exactly_once(
     assert plugin._state_path().read_bytes() == committed_bytes
 
 
-def test_gcd_metadata_fallback_is_not_seen_until_its_display_receipt(tmp_path, monkeypatch):
+def test_gcd_older_receipt_only_accumulates_seen_ids_without_rolling_back_last_selection():
+    document = {
+        "date_buckets": {
+            "07-12": {
+                "seen_issue_ids": ["issue:new-a", "issue:new-b"],
+                "last_selection_issue_ids": ["issue:new-a", "issue:new-b"],
+                "last_issue_id": "issue:new-b",
+                "last_displayed_at": "2026-07-12T10:02:00+00:00",
+            }
+        }
+    }
+    records = [
+        {"issue_id": "issue:old-a"},
+        {"issue_id": "issue:old-b"},
+    ]
+
+    _commit_records(
+        document,
+        records,
+        {"date_key": "07-12", "reset_seen": False},
+        "2026-07-12T10:01:00+00:00",
+    )
+
+    bucket = document["date_buckets"]["07-12"]
+    assert bucket["seen_issue_ids"] == [
+        "issue:new-a",
+        "issue:new-b",
+        "issue:old-a",
+        "issue:old-b",
+    ]
+    assert bucket["last_selection_issue_ids"] == [
+        "issue:new-a",
+        "issue:new-b",
+    ]
+    assert bucket["last_issue_id"] == "issue:new-b"
+    assert bucket["last_displayed_at"] == "2026-07-12T10:02:00+00:00"
+
+
+def test_gcd_metadata_only_hydration_never_becomes_a_ready_display(
+    tmp_path,
+    monkeypatch,
+):
     plugin = make_plugin(tmp_path, monkeypatch)
     settings = _bound_settings()
-    _hydrate_presentation_bank(plugin, monkeypatch, settings, metadata_only=True)
+    _candidates, image = _hydrate_presentation_bank(
+        plugin,
+        monkeypatch,
+        settings,
+        metadata_only=True,
+    )
     hydrated = _state_json(plugin)
-    assert hydrated.get("date_buckets", {}).get("07-12", {}).get("seen_issue_ids", []) == []
+    profile = _profile_for(hydrated)
+    assert profile["records"] == []
+    assert profile["current_selection"] is None
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
     request = _request("e" * 32)
 
-    preparation = plugin.prepare_presentation(
-        settings,
-        DeviceConfig(),
-        request=request,
-        resolved_theme_context=None,
-    )
-    pending_ids = _pending_issue_ids(_state_json(plugin), request.request_id)
-    assert preparation.image.size == DeviceConfig().get_resolution()
-    seen_after_origin = set(
-        _state_json(plugin).get("date_buckets", {}).get("07-12", {}).get("seen_issue_ids", [])
-    )
-    assert seen_after_origin.isdisjoint(pending_ids)
-
-    plugin.reconcile_presentation_receipt(settings, _receipt(request.request_id))
-
-    bucket = _state_json(plugin)["date_buckets"]["07-12"]
-    assert bucket["seen_issue_ids"][-len(pending_ids):] == pending_ids
+    with pytest.raises(RuntimeError, match="no ready cover records"):
+        plugin.prepare_presentation(
+            settings,
+            DeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
 
 
 def test_gcd_bank_cleanup_is_bounded_and_does_not_follow_symlinks(tmp_path, monkeypatch):
@@ -985,15 +1108,13 @@ def test_gcd_data_recovers_exact_pending_or_fails_without_losing_receipt(
     assert _profile_for(committed)["last_applied_request_id"] == request.request_id
 
 
-@pytest.mark.parametrize("metadata_only", [False, True])
-def test_gcd_current_survives_date_rollover_without_unrelated_media_recovery(
+def test_gcd_date_rollover_does_not_promote_blocked_new_day_metadata(
     tmp_path,
     monkeypatch,
-    metadata_only,
 ):
     plugin = make_plugin(tmp_path, monkeypatch)
     settings = _bound_settings()
-    _fill_presentation_bank(plugin, monkeypatch, settings, metadata_only=metadata_only)
+    _fill_presentation_bank(plugin, monkeypatch, settings)
     before = _state_json(plugin)
     current = dict(_profile_for(before)["current_selection"])
     monkeypatch.setattr(plugin, "_current_date", lambda _device: date(2026, 7, 13))
@@ -1025,10 +1146,63 @@ def test_gcd_current_survives_date_rollover_without_unrelated_media_recovery(
     after = _state_json(plugin)
     assert image.size == DeviceConfig().get_resolution()
     assert _profile_for(after)["current_selection"] == current
-    assert any(
+    assert not any(
         record["display_date_key"] == "07-13"
         for record in _profile_for(after)["records"]
     )
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+
+
+def test_gcd_new_day_rotates_away_from_previous_triptych_when_alternatives_exist(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings(fit_mode="triptych")
+    candidates = [_bank_candidate(index) for index in range(8)]
+    monkeypatch.setattr(
+        "plugins.gcd_comic_covers.gcd_comic_covers.random.shuffle",
+        lambda _items: None,
+    )
+    monkeypatch.setattr(
+        "plugins.gcd_comic_covers.presentation_bank.random.shuffle",
+        lambda _items: None,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: list(candidates),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda candidate, _dimensions, _settings: {
+            **candidate,
+            "image": Image.new("RGB", (220, 360), "teal"),
+        },
+    )
+    plugin.generate_image(settings, DeviceConfig())
+    first_state = _state_json(plugin)
+    first_selection = _selection_issue_ids(
+        first_state,
+        _profile_for(first_state)["current_selection"],
+    )
+
+    monkeypatch.setattr(
+        plugin,
+        "_current_date",
+        lambda _device: date(2026, 7, 13),
+    )
+    plugin.generate_image(settings, DeviceConfig())
+
+    second_state = _state_json(plugin)
+    second_profile = _profile_for(second_state)
+    second_selection = _selection_issue_ids(
+        second_state,
+        second_profile["current_selection"],
+    )
+    assert second_profile["current_selection"]["date_key"] == "07-13"
+    assert set(second_selection).isdisjoint(first_selection)
 
 
 def _priority_candidate(index, quality):
@@ -1058,6 +1232,111 @@ def _priority_bank(tmp_path, monkeypatch, records):
         bank.ingest(profile, candidate, Image.new("RGB", size, "orange"))
     bank.save(document)
     return bank, document, profile
+
+
+def test_gcd_legacy_metadata_current_is_replaced_by_decodable_media(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    bank = plugin._presentation_bank(
+        settings,
+        DeviceConfig().get_resolution(),
+        date(2026, 7, 12),
+    )
+    document, profile = bank.load_for_data()
+    metadata = bank.ingest(
+        profile,
+        _priority_candidate(1, "comicvine_recent"),
+        render_kind="metadata",
+    )
+    media = bank.ingest(
+        profile,
+        _priority_candidate(2, "exact_day"),
+        Image.new("RGB", (220, 360), "orange"),
+    )
+    profile["current_selection"] = {
+        "record_keys": [metadata["record_key"]],
+        "request_id": None,
+        "date_key": "07-12",
+        "reset_seen": False,
+    }
+    bank.save(document)
+    monkeypatch.setattr(
+        plugin,
+        "_candidate_pool",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_metadata_cover_image",
+        lambda *_args, **_kwargs: pytest.fail(
+            "legacy metadata must not render"
+        ),
+    )
+
+    image = plugin.generate_image(settings, DeviceConfig())
+
+    state = _state_json(plugin)
+    migrated = _profile_for(state)
+    assert image.size == DeviceConfig().get_resolution()
+    assert all(record["render_kind"] == "media" for record in migrated["records"])
+    assert _selection_issue_ids(
+        state,
+        migrated["current_selection"],
+    ) == [media["issue_id"]]
+
+
+def test_gcd_selection_avoids_previous_day_issue_even_if_cover_url_changes(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    bank = plugin._presentation_bank(
+        settings,
+        DeviceConfig().get_resolution(),
+        date(2026, 7, 13),
+    )
+    document, profile = bank.load_for_data()
+    repeated = _priority_candidate(1, "comicvine_recent")
+    repeated["cover_url"] += "?size=large"
+    alternative = _priority_candidate(2, "comicvine_recent")
+    bank.ingest(
+        profile,
+        repeated,
+        Image.new("RGB", (220, 360), "red"),
+    )
+    bank.ingest(
+        profile,
+        alternative,
+        Image.new("RGB", (220, 360), "blue"),
+    )
+    document["date_buckets"]["07-12"] = {
+        "seen_issue_ids": [repeated["issue_id"]],
+        "last_issue_id": repeated["issue_id"],
+        "last_selection_issue_ids": [repeated["issue_id"]],
+        "last_displayed_at": "2026-07-12T10:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        "plugins.gcd_comic_covers.presentation_bank.random.shuffle",
+        lambda _items: None,
+    )
+
+    selection = bank.choose_selection(
+        document,
+        profile,
+        bank.ready_records(profile, prune=False),
+        "contain",
+    )
+
+    selected = bank.selection_records(
+        profile,
+        selection,
+        load_media=False,
+    )[0][0]
+    assert selected["issue_id"] == alternative["issue_id"]
 
 
 def test_gcd_single_selection_never_leaves_available_comic_vine_tier(tmp_path, monkeypatch):

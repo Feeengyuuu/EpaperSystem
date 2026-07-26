@@ -213,14 +213,12 @@ DEFAULT_LPL_ODDS_CACHE_HOURS = 12
 DEFAULT_LPL_ODDS_DAILY_LIMIT = 8
 DEFAULT_LPL_ODDS_BOOKMAKERS = "Bet365"
 DEFAULT_LPL_LIVE_REFRESH_SECONDS = 180
-CSAPI_BASE_URL = "https://api.csapi.de"
 HLTV_BASE_URL = "https://www.hltv.org"
 HLTV_MAJOR_EVENTS_URL = f"{HLTV_BASE_URL}/events"
 HLTV_MAJOR_ARCHIVE_URL = f"{HLTV_BASE_URL}/events/archive"
 OPENDOTA_BASE_URL = "https://api.opendota.com/api"
 DEFAULT_VALVE_ESPORTS_CACHE_HOURS = 6
 DEFAULT_VALVE_ESPORTS_DAILY_LIMIT = 48
-DEFAULT_VALVE_ESPORTS_CS_LIMIT = 80
 DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
 DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
@@ -285,6 +283,10 @@ LOCAL_WORLDCUP_FIVE_LEAGUES_UPCOMING_PATH = os.path.join(
 )
 LOCAL_WORLDCUP_HEADER_BANNER_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_header_banner.png")
 LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_title_wordmark.png")
+LOCAL_CSL_2026_TITLE_WORDMARK_PATH = os.path.join(
+    LOCAL_DECOR_DIR,
+    "csl_2026_title_wordmark.png",
+)
 LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
 LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
 LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
@@ -2390,6 +2392,108 @@ class SportsDashboardCommonMixin:
             provenance = self._sports_source_state_provenance(source_state)
         return panel.convert("RGB"), provenance, source_state
 
+    def _load_csl_route_summary(
+        self,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+    ):
+        del device_config
+        try:
+            scoreboard, source_state, fetched_at = self._load_csl_scoreboard(
+                settings,
+                timezone_info,
+                now,
+            )
+            events = self._parse_csl_espn_events(scoreboard, timezone_info)
+            summary = self._csl_schedule_summary(
+                events,
+                now,
+                source_state=source_state,
+                fetched_at=fetched_at,
+            )
+            if not isinstance(summary, Mapping):
+                return summary
+            summary = dict(summary)
+            summary["_render_data"] = {
+                "events": events,
+                "source_state": source_state,
+                "fetched_at": fetched_at,
+            }
+            return summary
+        except Exception as exc:
+            logger.warning(
+                "CSL football route summary failed: %s",
+                _safe_exception_text(exc),
+            )
+            return None
+
+    def _render_csl_slot(
+        self,
+        settings,
+        device_config,
+        dimensions,
+        timezone_info,
+        visible_matches,
+        now,
+        route_summary=None,
+    ):
+        del device_config
+        fetched_at = None
+        try:
+            render_data = (
+                route_summary.get("_render_data")
+                if isinstance(route_summary, Mapping)
+                else None
+            )
+            if isinstance(render_data, Mapping):
+                events = list(render_data.get("events") or [])
+                source_state = (
+                    render_data.get("source_state") or "CSL ESPN UNAVAILABLE"
+                )
+                fetched_at = render_data.get("fetched_at")
+            else:
+                scoreboard, source_state, fetched_at = self._load_csl_scoreboard(
+                    settings,
+                    timezone_info,
+                    now,
+                )
+                events = self._parse_csl_espn_events(scoreboard, timezone_info)
+            selected = self._select_csl_event_sections(
+                events,
+                now,
+                visible_matches,
+                source_state=source_state,
+                fetched_at=fetched_at,
+            )
+            selected = dict(selected or {})
+            selected["_source_timezone_info"] = timezone_info
+        except Exception as exc:
+            logger.warning(
+                "CSL top-left panel failed: %s",
+                _safe_exception_text(exc),
+            )
+            source_state = "CSL ESPN UNAVAILABLE"
+            selected = self._select_csl_event_sections([], now, visible_matches)
+
+        self._write_csl_live_state(
+            selected,
+            now,
+            source_state,
+            fetched_at,
+        )
+        panel = self._render_worldcup_api_panel(
+            dimensions,
+            selected,
+            source_state,
+            fetched_at,
+            visible_matches,
+            now,
+        )
+        provenance = self._sports_source_state_provenance(source_state)
+        return panel.convert("RGB"), provenance, source_state
+
     def _render_selected_football_panel(
         self,
         settings,
@@ -2401,6 +2505,7 @@ class SportsDashboardCommonMixin:
     ):
         mode = self._football_panel_mode(settings)
         worldcup_summary = None
+        csl_summary = None
         if mode == "auto":
             worldcup_summary = self._worldcup_schedule_summary(
                 settings,
@@ -2408,7 +2513,42 @@ class SportsDashboardCommonMixin:
                 timezone_info,
                 now,
             )
-        panel_kind = self._select_football_panel_kind(mode, now, worldcup_summary)
+            panel_kind = self._select_football_panel_kind(
+                mode,
+                now,
+                worldcup_summary,
+            )
+            if panel_kind != "worldcup":
+                csl_summary = self._load_csl_route_summary(
+                    settings,
+                    device_config,
+                    timezone_info,
+                    now,
+                )
+                panel_kind = self._select_football_panel_kind(
+                    mode,
+                    now,
+                    worldcup_summary,
+                    csl_summary,
+                )
+        else:
+            panel_kind = self._select_football_panel_kind(
+                mode,
+                now,
+                worldcup_summary,
+                csl_summary,
+            )
+        if panel_kind == "csl":
+            panel, provenance, source = self._render_csl_slot(
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                visible_worldcup_matches,
+                now,
+                csl_summary,
+            )
+            return panel, provenance, source, None
         if panel_kind == "club":
             panel, provenance, source = self._render_club_football_slot(
                 settings,
