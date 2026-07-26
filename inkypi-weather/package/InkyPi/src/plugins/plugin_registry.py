@@ -67,6 +67,23 @@ def plugin_presentation_refresh_is_provider_free(plugin_config):
     )
 
 
+def plugin_allows_display_triggered_provider_refresh(plugin_config):
+    """Read the explicit provider-refresh exception from plugin metadata."""
+
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    if manifest is None:
+        return False
+    capabilities = getattr(manifest, "capabilities", None)
+    return bool(
+        getattr(capabilities, "supports_presentation_refresh", False)
+        and getattr(
+            capabilities,
+            "allows_display_triggered_provider_refresh",
+            False,
+        )
+    )
+
+
 def load_plugins(plugins_config):
     """Register plugin metadata without importing plugin modules."""
     PLUGIN_CONFIGS.clear()

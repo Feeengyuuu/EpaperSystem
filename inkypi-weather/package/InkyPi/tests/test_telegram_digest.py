@@ -221,6 +221,45 @@ def test_telegram_prepared_refresh_rejects_sample_fallback(tmp_path):
         )
 
 
+def test_telegram_prepared_refresh_rejects_stale_cache(tmp_path):
+    plugin = _plugin(tmp_path)
+    plugin.config["refresh_on_display"] = True
+    plugin._payload = lambda *_args, **_kwargs: {
+        "schema": STATE_VERSION,
+        "messages": [
+            {
+                "key": "cached:42",
+                "title": "Last successful item",
+                "summary": "Keep the existing displayed image",
+                "media_kind": "text",
+                "date": 42,
+            }
+        ],
+        "channel_label": "Telegram",
+        "stats": {},
+        "status": {
+            "source_state": "cache",
+            "account_api": True,
+        },
+    }
+    request = PresentationRequestContext(
+        request_id="8" * 32,
+        requested_at="2026-07-13T20:00:00+00:00",
+        origin_display_commit_id="display-commit",
+        last_receipt=None,
+    )
+
+    with pytest.raises(RuntimeError, match="fresh cacheable image"):
+        plugin.prepare_presentation(
+            {"accessMode": "account"},
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=plugin.resolve_theme({}, DummyDeviceConfig()),
+        )
+
+    assert (tmp_path / "state.json").exists() is False
+
+
 def test_telegram_reconciles_plugin_read_state_only_from_display_receipt(tmp_path):
     plugin = _plugin(tmp_path)
     state = {

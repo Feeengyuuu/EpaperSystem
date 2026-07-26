@@ -11016,6 +11016,7 @@ def _presentation_manifest(
     plugin_id="presentation_plugin",
     *,
     provider_free=False,
+    provider_refresh=False,
 ):
     return PluginManifest(
         schema_version=2,
@@ -11026,6 +11027,7 @@ def _presentation_manifest(
         capabilities=PluginCapabilities(
             supports_presentation_refresh=True,
             presentation_refresh_is_provider_free=provider_free,
+            allows_display_triggered_provider_refresh=provider_refresh,
         ),
         raw={},
     )
@@ -11211,6 +11213,7 @@ def _make_presentation_task(
     clock=None,
     display_manager=None,
     provider_free=False,
+    provider_refresh=False,
 ):
     tmp_path = make_test_dir(name)
     plugins = [
@@ -11239,6 +11242,7 @@ def _make_presentation_task(
         plugin["plugin_id"]: _presentation_manifest(
             plugin["plugin_id"],
             provider_free=provider_free,
+            provider_refresh=provider_refresh,
         )
         for plugin in plugins
     }
@@ -11996,6 +12000,130 @@ def test_provider_free_presentation_prepares_under_cache_only_and_waits_for_next
     assert task.refresh_queue.take(timeout=0) is None
 
 
+def test_provider_refresh_opt_in_prepares_fresh_image_on_every_cached_rotation(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "provider-refresh-opt-in-policy-off",
+        latest_refresh_time=PRESENTATION_NOW.isoformat(),
+        interval=60,
+        provider_refresh=True,
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (PRESENTATION_NOW - timedelta(seconds=61)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    provider_calls = []
+    plugin = RefreshOnDisplayRerenderPlugin(provider_calls)
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+
+    assert task._select_cached_display_command(now[0]) is None
+    first_request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert first_request is not None
+    first_refresh = task._select_independent_refresh_command(now[0])
+    assert first_refresh is not None
+    assert first_refresh.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert first_refresh.kind is CommandKind.CACHE_REFRESH
+
+    first_prepared = _queue_and_process(task, first_refresh)
+
+    assert first_prepared.job.status is JobStatus.SUCCEEDED
+    assert len(provider_calls) == 1
+    assert len(display.calls) == 0
+    first_prepared_state = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ]
+    assert (
+        first_prepared_state.data.last_success_at
+        == first_prepared_state.presentation_request.prepared_at
+    )
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
+    )
+    first_display = task._select_cached_display_command(now[0])
+    assert first_display is not None
+    assert first_display.intent is RefreshIntent.DISPLAY_CACHE
+    assert first_display.allow_prepared_presentation is True
+
+    first_display_result = _queue_and_process(task, first_display)
+
+    assert first_display_result.job.status is JobStatus.SUCCEEDED
+    assert len(provider_calls) == 1
+    assert len(display.calls) == 1
+    assert display.calls[-1]["image"].getpixel((0, 0)) == (255, 255, 255)
+    first_display_state = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ]
+    assert (
+        first_display_state.data.last_success_at
+        == first_prepared_state.data.last_success_at
+    )
+    assert (
+        task._select_independent_refresh_command(
+            now[0] + timedelta(seconds=1)
+        )
+        is None
+    )
+
+    now[0] += timedelta(seconds=61)
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: plugin,
+    )
+    assert task._select_cached_display_command(now[0]) is None
+    second_request = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].presentation_request
+    assert second_request is not None
+    assert second_request.request_id != first_request.request_id
+    second_refresh = task._select_independent_refresh_command(now[0])
+    assert second_refresh is not None
+    assert second_refresh.intent is RefreshIntent.PRESENTATION_REFRESH
+
+    second_prepared = _queue_and_process(task, second_refresh)
+
+    assert second_prepared.job.status is JobStatus.SUCCEEDED
+    assert len(provider_calls) == 2
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
+    )
+    second_display = task._select_cached_display_command(now[0])
+    assert second_display is not None
+    assert second_display.intent is RefreshIntent.DISPLAY_CACHE
+
+    second_display_result = _queue_and_process(task, second_display)
+
+    assert second_display_result.job.status is JobStatus.SUCCEEDED
+    assert len(provider_calls) == 2
+    assert len(display.calls) == 2
+    assert display.calls[-1]["image"].getpixel((0, 0)) == (255, 255, 255)
+
+
 def test_default_cached_display_ignores_pending_presentation_backoff(
     monkeypatch,
 ):
@@ -12131,7 +12259,7 @@ def test_provider_free_attestation_revoked_during_execution_fails_before_plugin(
 
     with pytest.raises(
         refresh_task_module._StaleSelection,
-        match="provider-free presentation capability is no longer enabled",
+        match="presentation refresh policy is no longer enabled",
     ):
         task._execute_command(command)
 
@@ -12261,13 +12389,21 @@ def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
     assert command.priority == 90
 
 
+@pytest.mark.parametrize(
+    ("display_policy", "provider_refresh"),
+    [(True, False), (False, True)],
+)
 def test_failed_rotation_presentation_releases_member_during_retry_backoff(
     monkeypatch,
+    display_policy,
+    provider_refresh,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
         "failed-rotation-presentation-yields-during-backoff",
         plugin_count=2,
+        provider_refresh=provider_refresh,
     )
+    device_config.config["display_triggered_refresh_enabled"] = display_policy
     first, second = [plugin.snapshot() for plugin in playlist.plugins]
     playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
     playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
@@ -13806,19 +13942,27 @@ def test_presentation_commit_cas_false_retains_prepared_candidate(monkeypatch):
 
 
 @pytest.mark.parametrize("failure_point", ["display", "commit"])
+@pytest.mark.parametrize(
+    ("display_policy", "provider_refresh"),
+    [(True, False), (False, True)],
+)
 def test_prepared_display_exception_cools_only_presentation_and_schedules_exact_retry(
     monkeypatch,
     failure_point,
+    display_policy,
+    provider_refresh,
 ):
     def fail_after_display(_manager, _call):
         if failure_point == "display":
             raise RuntimeError("prepared display failed")
 
     display = PresentationTransactionDisplayManager(after_display=fail_after_display)
-    task, _config, clock, playlist, _display = _make_presentation_task(
+    task, device_config, clock, playlist, _display = _make_presentation_task(
         f"presentation-{failure_point}-exception",
         display_manager=display,
+        provider_refresh=provider_refresh,
     )
+    device_config.config["display_triggered_refresh_enabled"] = display_policy
     instance = playlist.plugins[0].snapshot()
     _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
     _seed_independent_lane_clocks(task, instance)
@@ -14077,7 +14221,7 @@ def test_prepared_display_rechecks_provider_free_attestation_before_consumption(
 
     with pytest.raises(
         refresh_task_module._StaleSelection,
-        match="provider-free presentation capability is no longer enabled",
+        match="presentation refresh policy is no longer enabled",
     ):
         task._execute_command(command)
 

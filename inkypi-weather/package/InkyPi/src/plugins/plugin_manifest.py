@@ -26,6 +26,7 @@ class PluginCapabilities:
     supports_presentation_refresh: bool = False
     presentation_refresh_is_provider_free: bool = False
     supports_day_night_theme: bool = False
+    allows_display_triggered_provider_refresh: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,11 +258,32 @@ class PluginManifest:
                     "presentation_refresh_is_provider_free requires "
                     "supports_presentation_refresh"
                 )
+            allows_display_triggered_provider_refresh = raw_capabilities.get(
+                "allows_display_triggered_provider_refresh",
+                False,
+            )
+            if type(allows_display_triggered_provider_refresh) is not bool:
+                raise TypeError(
+                    "plugin manifest capabilities."
+                    "allows_display_triggered_provider_refresh must be a boolean"
+                )
+            if (
+                allows_display_triggered_provider_refresh
+                and not supports_presentation_refresh
+            ):
+                raise ValueError(
+                    "plugin manifest capabilities."
+                    "allows_display_triggered_provider_refresh requires "
+                    "supports_presentation_refresh"
+                )
             capabilities = PluginCapabilities(
                 supports_live_refresh=supports_live_refresh,
                 supports_presentation_refresh=supports_presentation_refresh,
                 presentation_refresh_is_provider_free=(
                     presentation_refresh_is_provider_free
+                ),
+                allows_display_triggered_provider_refresh=(
+                    allows_display_triggered_provider_refresh
                 ),
                 supports_day_night_theme=supports_day_night_theme,
             )

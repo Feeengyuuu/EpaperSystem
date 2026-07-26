@@ -33,6 +33,7 @@ def _write_plugin(
     supports_live_refresh=False,
     supports_presentation_refresh=_UNSET,
     presentation_refresh_is_provider_free=_UNSET,
+    allows_display_triggered_provider_refresh=_UNSET,
     supports_day_night_theme=_UNSET,
     theme=_UNSET,
     source="class Example:\n    pass\n",
@@ -57,6 +58,10 @@ def _write_plugin(
         if presentation_refresh_is_provider_free is not _UNSET:
             payload["capabilities"]["presentation_refresh_is_provider_free"] = (
                 presentation_refresh_is_provider_free
+            )
+        if allows_display_triggered_provider_refresh is not _UNSET:
+            payload["capabilities"]["allows_display_triggered_provider_refresh"] = (
+                allows_display_triggered_provider_refresh
             )
         if supports_day_night_theme is not _UNSET:
             payload["capabilities"]["supports_day_night_theme"] = (
@@ -87,6 +92,7 @@ def test_v2_manifest_declares_live_refresh_without_import(tmp_path, monkeypatch)
     assert manifest.capabilities.supports_live_refresh is True
     assert manifest.capabilities.supports_presentation_refresh is False
     assert manifest.capabilities.presentation_refresh_is_provider_free is False
+    assert manifest.capabilities.allows_display_triggered_provider_refresh is False
     assert manifest.capabilities.supports_day_night_theme is False
     assert manifest.theme is None
     assert imported == []
@@ -143,6 +149,59 @@ def test_v2_manifest_rejects_provider_free_attestation_without_presentation_capa
         PluginManifest.from_path(manifest_path)
 
 
+def test_v2_manifest_allows_explicit_display_triggered_provider_refresh(
+    tmp_path,
+    monkeypatch,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=True,
+        allows_display_triggered_provider_refresh=True,
+    )
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+
+    manifest = PluginManifest.from_path(manifest_path)
+
+    assert manifest.capabilities.supports_presentation_refresh is True
+    assert (
+        manifest.capabilities.allows_display_triggered_provider_refresh
+        is True
+    )
+    assert imported == []
+
+
+def test_v2_manifest_rejects_provider_refresh_without_presentation_capability(
+    tmp_path,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=False,
+        allows_display_triggered_provider_refresh=True,
+    )
+
+    with pytest.raises(ValueError, match="requires supports_presentation_refresh"):
+        PluginManifest.from_path(manifest_path)
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_v2_manifest_rejects_coerced_provider_refresh_booleans(
+    tmp_path,
+    value,
+):
+    manifest_path = _write_plugin(
+        tmp_path,
+        supports_presentation_refresh=True,
+        allows_display_triggered_provider_refresh=value,
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="allows_display_triggered_provider_refresh",
+    ):
+        PluginManifest.from_path(manifest_path)
+
+
 @pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
 def test_v2_manifest_rejects_coerced_provider_free_attestation_booleans(
     tmp_path,
@@ -174,13 +233,19 @@ def test_v2_manifest_rejects_coerced_presentation_refresh_booleans(
 
 def test_presentation_contract_types_are_frozen_and_detach_mutable_image():
     presentation = importlib.import_module("plugins.base_plugin.presentation")
+    provenance = importlib.import_module(
+        "plugins.base_plugin.render_provenance"
+    )
     request = presentation.PresentationRequestContext(
         request_id="a" * 32,
         requested_at=" 2026-07-12T10:00:00+00:00 ",
         origin_display_commit_id=" display-commit ",
         last_receipt=None,
     )
-    source_image = Image.new("RGB", (1, 1), "red")
+    source_image = provenance.attach_source_provenance(
+        Image.new("RGB", (1, 1), "red"),
+        provenance.SourceProvenance.LIVE,
+    )
     preparation = presentation.PresentationPreparation(
         request_id=request.request_id,
         image=source_image,
@@ -197,6 +262,18 @@ def test_presentation_contract_types_are_frozen_and_detach_mutable_image():
     assert request.origin_display_commit_id == "display-commit"
     assert preparation.image is not source_image
     assert preparation.image.getpixel((0, 0)) == (255, 0, 0)
+    assert (
+        provenance.read_source_provenance(preparation.image)
+        is provenance.SourceProvenance.LIVE
+    )
+    forged_image = Image.new("RGB", (1, 1), "white")
+    forged_image.info["inkypi_source_provenance"] = "live"
+    forged_preparation = presentation.PresentationPreparation(
+        request_id=request.request_id,
+        image=forged_image,
+        changed=True,
+    )
+    assert provenance.read_source_provenance(forged_preparation.image) is None
     with pytest.raises(FrozenInstanceError):
         request.request_id = "b" * 32
     with pytest.raises(FrozenInstanceError):
@@ -523,6 +600,19 @@ def test_live_radar_manifest_declares_live_and_presentation_refresh_capabilities
 
     assert manifest.capabilities.supports_live_refresh is True
     assert manifest.capabilities.supports_presentation_refresh is True
+
+
+def test_telegram_manifest_explicitly_allows_display_triggered_provider_refresh():
+    manifest = PluginManifest.from_path(
+        PLUGIN_SOURCE_ROOT / "telegram_digest" / "plugin-info.json"
+    )
+
+    assert manifest.refresh_on_display is True
+    assert manifest.capabilities.supports_presentation_refresh is True
+    assert (
+        manifest.capabilities.allows_display_triggered_provider_refresh
+        is True
+    )
 
 
 def test_v1_capability_inspection_uses_ast_without_executing_source(tmp_path):

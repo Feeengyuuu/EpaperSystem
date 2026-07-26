@@ -140,6 +140,25 @@ def test_manifest_live_refresh_capability_is_read_without_loading_plugin():
     assert plugin_registry.plugin_supports_live_refresh({"id": "legacy-caller"}) is True
 
 
+def test_manifest_provider_refresh_exception_is_opt_in_and_metadata_only(monkeypatch):
+    manifest = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            supports_presentation_refresh=True,
+            allows_display_triggered_provider_refresh=True,
+        ),
+    )
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+
+    assert plugin_registry.plugin_allows_display_triggered_provider_refresh(
+        {"_manifest": manifest}
+    ) is True
+    assert plugin_registry.plugin_allows_display_triggered_provider_refresh(
+        {"id": "legacy-caller"}
+    ) is False
+    assert imported == []
+
+
 def test_manifest_day_night_capability_is_opt_in_and_metadata_only(monkeypatch):
     manifest = SimpleNamespace(
         capabilities=SimpleNamespace(supports_day_night_theme=True),

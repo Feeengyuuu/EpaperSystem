@@ -9,6 +9,10 @@ from enum import Enum
 
 from PIL import Image
 
+from plugins.base_plugin.render_provenance import (
+    attach_source_provenance,
+    read_source_provenance,
+)
 from runtime.runtime_state import PresentationCommitReceipt
 
 
@@ -141,4 +145,8 @@ class PresentationPreparation:
         if not self.changed and self.image is not None:
             raise ValueError("image must be None when changed is false")
         if self.image is not None:
-            object.__setattr__(self, "image", self.image.copy())
+            copied_image = self.image.copy()
+            source_provenance = read_source_provenance(self.image)
+            if source_provenance is not None:
+                attach_source_provenance(copied_image, source_provenance)
+            object.__setattr__(self, "image", copied_image)

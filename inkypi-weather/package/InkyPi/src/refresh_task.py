@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from plugins.plugin_registry import (
     get_plugin_instance,
+    plugin_allows_display_triggered_provider_refresh,
     plugin_presentation_refresh_is_provider_free,
     plugin_supports_day_night_theme,
     plugin_supports_live_refresh,
@@ -205,11 +206,12 @@ def _display_triggered_refresh_enabled(device_config):
 
 
 def _presentation_refresh_enabled(device_config, plugin_config):
-    """Allow provider-free audited banks without reopening display provider work."""
+    """Allow audited per-plugin exceptions without reopening provider work globally."""
 
     return (
         _display_triggered_refresh_enabled(device_config)
         or plugin_presentation_refresh_is_provider_free(plugin_config)
+        or plugin_allows_display_triggered_provider_refresh(plugin_config)
     )
 
 
@@ -1060,9 +1062,7 @@ class RefreshTask:
             restart_requested = self._memory_watchdog_should_restart()
             disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
-            command = None
-            if _display_triggered_refresh_enabled(self.device_config):
-                command = self._select_prepared_display_retry_command(current_dt)
+            command = self._select_prepared_display_retry_command(current_dt)
             if command is None:
                 command = self._select_cached_display_command(current_dt)
             if command is not None:
@@ -1433,26 +1433,71 @@ class RefreshTask:
                 )
                 if data_retry > current_dt and not resource_deferred:
                     continue
-            request = state.presentation_request
-            failed_at = self._parse_iso_datetime(
-                state.presentation.last_failure_at
-            )
-            next_retry = self._parse_iso_datetime(
-                state.presentation.next_retry_at
-            )
-            requested_at = self._parse_iso_datetime(
-                request.requested_at if request is not None else None
-            )
+            if self._presentation_request_in_retry_backoff(state, current_dt):
+                continue
+            eligible[instance_uuid] = candidate
+        return eligible
+
+    def _presentation_request_in_retry_backoff(self, state, current_dt):
+        request = state.presentation_request
+        failed_at = self._parse_iso_datetime(state.presentation.last_failure_at)
+        next_retry = self._parse_iso_datetime(state.presentation.next_retry_at)
+        requested_at = self._parse_iso_datetime(
+            request.requested_at if request is not None else None
+        )
+        if (
+            failed_at is None
+            or next_retry is None
+            or requested_at is None
+        ):
+            return False
+        failed_at = self._align_datetime_tz(failed_at, current_dt)
+        next_retry = self._align_datetime_tz(next_retry, current_dt)
+        requested_at = self._align_datetime_tz(requested_at, current_dt)
+        return failed_at >= requested_at and next_retry > current_dt
+
+    def _rotation_cache_candidates_outside_opt_in_presentation_backoff(
+        self,
+        active,
+        candidates,
+        current_dt,
+    ):
+        """Honor retry backoff only for opted-in presentation work."""
+
+        instances = {
+            instance.instance_uuid: instance
+            for instance in active.plugins
+        }
+        runtime_instances = self.runtime_state.snapshot().instances
+        eligible = {}
+        for instance_uuid, candidate in candidates.items():
+            instance = instances.get(instance_uuid)
+            if instance is None:
+                eligible[instance_uuid] = candidate
+                continue
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
             if (
-                failed_at is not None
-                and next_retry is not None
-                and requested_at is not None
+                not _presentation_refresh_enabled(
+                    self.device_config,
+                    plugin_config,
+                )
+                or not plugin_supports_presentation_refresh(plugin_config)
             ):
-                failed_at = self._align_datetime_tz(failed_at, current_dt)
-                next_retry = self._align_datetime_tz(next_retry, current_dt)
-                requested_at = self._align_datetime_tz(requested_at, current_dt)
-                if failed_at >= requested_at and next_retry > current_dt:
-                    continue
+                eligible[instance_uuid] = candidate
+                continue
+            try:
+                refresh_before_display = resolve_refresh_on_display_for_config(
+                    thaw_payload(instance.settings),
+                    plugin_config,
+                )
+            except Exception:
+                refresh_before_display = False
+            if not refresh_before_display:
+                eligible[instance_uuid] = candidate
+                continue
+            state = runtime_instances.get(instance_uuid, InstanceRuntimeState())
+            if self._presentation_request_in_retry_backoff(state, current_dt):
+                continue
             eligible[instance_uuid] = candidate
         return eligible
 
@@ -1499,6 +1544,14 @@ class RefreshTask:
                 candidates,
                 current_dt,
             )
+        else:
+            candidates = (
+                self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
+                    active,
+                    candidates,
+                    current_dt,
+                )
+            )
         recovery_elapsed = None
         if rotation_due and (theme_changed or not candidates):
             if self._rotation_cache_starved_since is None:
@@ -1517,6 +1570,14 @@ class RefreshTask:
             if allow_display_triggered:
                 fallback_candidates = (
                     self._rotation_cache_candidates_outside_refresh_backoff(
+                        fallback_candidates,
+                        current_dt,
+                    )
+                )
+            else:
+                fallback_candidates = (
+                    self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
+                        active,
                         fallback_candidates,
                         current_dt,
                     )
@@ -1765,8 +1826,6 @@ class RefreshTask:
         current_dt,
     ) -> RefreshCommand | None:
         """Retry a failed exact prepared display after presentation backoff."""
-        if not _display_triggered_refresh_enabled(self.device_config):
-            return None
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
@@ -1798,7 +1857,8 @@ class RefreshTask:
             instance
         )
         if (
-            not plugin_supports_presentation_refresh(plugin_config)
+            not _presentation_refresh_enabled(self.device_config, plugin_config)
+            or not plugin_supports_presentation_refresh(plugin_config)
             or request.structural_generation != instance.structural_generation
             or request.settings_revision != instance.settings_revision
             or request.prepared_theme_mode != theme_mode
@@ -1912,47 +1972,60 @@ class RefreshTask:
                 instance.instance_uuid,
                 InstanceRuntimeState(),
             )
-            evaluation = evaluate_data_due(
+            data_evaluation = evaluate_data_due(
                 instance,
                 runtime_instance,
                 instance.instance_uuid in cache_candidates,
                 current_dt,
             )
-            if evaluation.invalid_fields:
+            if data_evaluation.invalid_fields:
                 logger.warning(
                     "Ignoring invalid refresh cadence fields. | plugin_id: %s | fields: %s",
                     instance.plugin_id,
-                    ",".join(evaluation.invalid_fields),
+                    ",".join(data_evaluation.invalid_fields),
                 )
-            if evaluation.candidate is not None:
-                data_candidates.append(evaluation.candidate)
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            provider_presentation_due = False
             if (
-                not _presentation_refresh_enabled(
+                _presentation_refresh_enabled(
                     self.device_config,
                     plugin_config,
                 )
-                or not plugin_supports_presentation_refresh(plugin_config)
+                and plugin_supports_presentation_refresh(plugin_config)
             ):
-                continue
-            resolved_theme_context = _resolved_theme_context_for_instance(
-                instance,
-                plugin_config,
-                self.device_config,
-                current_dt=current_dt,
-            )
-            resolved_theme_mode = (
-                resolved_theme_context.get("mode") if isinstance(resolved_theme_context, Mapping) else None
-            )
-            presentation = evaluate_presentation_due(
-                instance,
-                runtime_instance,
-                instance.instance_uuid in cache_candidates,
-                resolved_theme_mode,
-                current_dt,
-            )
-            if presentation.candidate is not None:
-                presentation_candidates.append(presentation.candidate)
+                resolved_theme_context = _resolved_theme_context_for_instance(
+                    instance,
+                    plugin_config,
+                    self.device_config,
+                    current_dt=current_dt,
+                )
+                resolved_theme_mode = (
+                    resolved_theme_context.get("mode")
+                    if isinstance(resolved_theme_context, Mapping)
+                    else None
+                )
+                presentation = evaluate_presentation_due(
+                    instance,
+                    runtime_instance,
+                    instance.instance_uuid in cache_candidates,
+                    resolved_theme_mode,
+                    current_dt,
+                )
+                if presentation.candidate is not None:
+                    presentation_candidates.append(presentation.candidate)
+                    provider_presentation_due = (
+                        plugin_allows_display_triggered_provider_refresh(
+                            plugin_config
+                        )
+                    )
+            # An opted-in provider presentation performs the same fresh fetch
+            # and promotes its prepared image after the hardware commit. Avoid
+            # admitting a second DATA request for the same pending display.
+            if (
+                data_evaluation.candidate is not None
+                and not provider_presentation_due
+            ):
+                data_candidates.append(data_evaluation.candidate)
 
         thresholds = self._resource_thresholds()
         tier = classify_resource_tier(self._resource_sample(), thresholds)
@@ -3260,7 +3333,7 @@ class RefreshTask:
             ):
                 if expected_request_id is not None:
                     raise _StaleSelection(
-                        "provider-free presentation capability is no longer enabled"
+                        "presentation refresh policy is no longer enabled"
                     )
             elif not plugin_supports_presentation_refresh(plugin_config):
                 if expected_request_id is not None:
@@ -3277,7 +3350,7 @@ class RefreshTask:
                 ):
                     if expected_request_id is not None:
                         raise _StaleSelection(
-                            "provider-free presentation capability is no longer enabled"
+                            "presentation refresh policy is no longer enabled"
                         )
                     return self._load_catalog_display_image(
                         replace(command, allow_prepared_presentation=False),
@@ -3424,7 +3497,7 @@ class RefreshTask:
         return released
 
     def _render_presentation_command(self, command, resolved, context):
-        """Prepare provider-free presentation bytes on the shared worker."""
+        """Prepare presentation bytes on the shared worker."""
         selection = self._require_fresh_selection(command, context)
         instance = selection.instance
         state = self.runtime_state.snapshot().instances.get(
@@ -3447,7 +3520,7 @@ class RefreshTask:
             plugin_config,
         ):
             raise _StaleSelection(
-                "provider-free presentation capability is no longer enabled"
+                "presentation refresh policy is no longer enabled"
             )
         if not plugin_supports_presentation_refresh(plugin_config):
             raise _StaleSelection("presentation capability is no longer enabled")
@@ -3551,6 +3624,37 @@ class RefreshTask:
                 theme_mode,
             ):
                 raise _StaleSelection("presentation request changed before prepared publication")
+            source_provenance = read_source_provenance(preparation.image)
+            if (
+                plugin_allows_display_triggered_provider_refresh(plugin_config)
+                and source_provenance
+                in {
+                    SourceProvenance.LIVE,
+                    SourceProvenance.FRESH_CACHE,
+                }
+            ):
+                try:
+                    # The provider-backed preparation already completed the
+                    # fresh fetch. Count it for data cadence without promoting
+                    # last-good until the physical display transaction commits.
+                    self.runtime_state.record_success(
+                        instance.instance_uuid,
+                        prepared_at,
+                        lane=RefreshLane.DATA,
+                    )
+                    self.retry_registry.mark_success(
+                        self._lane_retry_key(
+                            instance.instance_uuid,
+                            RefreshLane.DATA,
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "Provider presentation could not satisfy data freshness. | "
+                        "plugin_id: %s | instance_uuid: %s",
+                        instance.plugin_id,
+                        instance.instance_uuid,
+                    )
         except BaseException:
             self.presentation_cache.remove(candidate)
             raise

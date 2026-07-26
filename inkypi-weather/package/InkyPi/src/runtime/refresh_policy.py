@@ -327,7 +327,7 @@ def evaluate_presentation_due(
     resolved_theme_mode: str | None,
     now: datetime,
 ) -> DueEvaluation:
-    """Evaluate provider-free presentation work from immutable state."""
+    """Evaluate opted-in presentation work from immutable state."""
     request = runtime_state.presentation_request
     lane = runtime_state.presentation
     if not has_displayable_cache or request is None:
