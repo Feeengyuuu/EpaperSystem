@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260726-004] correction
+
+**Logged**: 2026-07-26T15:39:51-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Keep playlist display cache-only by default, but let Telegram Digest fetch fresh provider data before every one of its own displays.
+
+### Details
+The global `display_triggered_refresh_enabled=false` stability policy correctly prevented provider calls during playlist display, but it also suppressed Telegram Digest even though its persisted `refreshOnDisplay` setting and manifest default were already true. The user explicitly wants Telegram to refresh on every rotation encounter while retaining the cache-only policy for other plugins. Telegram's existing presentation transaction is the correct boundary: prepare fresh data off-display, atomically display only a successful prepared image, and reconcile displayed-message state only after the physical commit.
+
+### Suggested Action
+Use an explicit manifest capability for the narrow provider-refresh exception. Keep `DISPLAY_CACHE` provider-free, run Telegram through `PRESENTATION_REFRESH`, retain the previous successful image when the provider result is stale or unavailable, and test two consecutive rotation encounters plus the capability-only prepared-display retry path.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/plugins/plugin_manifest.py, inkypi-weather/package/InkyPi/src/plugins/telegram_digest/plugin-info.json, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: telegram-digest, cache-only, refresh-on-display, presentation-refresh, provider-opt-in
+- Pattern-Key: refresh_scheduler.per_plugin_display_provider_opt_in
+- Recurrence-Count: 1
+- First-Seen: 2026-07-26
+- Last-Seen: 2026-07-26
+
+### Resolution
+- **Resolved**: 2026-07-26T16:32:00-07:00
+- **Commit/PR**: `66e343a4d41747e910f28a817dc88cd9fdb2d73a`
+- **Notes**: Added a Telegram-only manifest opt-in that uses the existing provider-backed presentation transaction before every automatic display while leaving `DISPLAY_CACHE` provider-free for all plugins. Consecutive-rotation coverage proves exactly one provider call per encounter, successful physical commit ordering, old-cache retention on failure, and fair backoff. The focused suite passed 597 tests, the clean archive gate passed 4,781 tests with 46 skips, and release `deploy-20260726T225719Z-tgrefresh-66e343a4` is active with zero restarts. A forced live queue mutation was rejected during safety review, so the production queue was left untouched.
+
+---
+
 ## [LRN-20260726-003] best_practice
 
 **Logged**: 2026-07-26T13:28:40-07:00
