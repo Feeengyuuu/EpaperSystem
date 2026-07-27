@@ -2225,3 +2225,36 @@ For future SportsDashboard identity-card scaling, parameterize each vertical rel
 - **Notes**: Implemented 1.4 badge scale with independent 11px and 10px lower-row offsets; 44 CSL tests and the full 4725-test suite passed.
 
 ---
+
+## [LRN-20260727-001] correction
+
+**Logged**: 2026-07-27T16:10:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Low-memory protection must preserve the plugin's required detail contract, not silently redefine an overview card as success.
+
+### Details
+The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation also exposed a second boundary: completed isolated-region result graphs and allocator pages must be released before starting the next region, otherwise the EWC worker can be stopped by the 70 MiB guard before the restored details reach the image.
+
+### Suggested Action
+Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, short-lived workers, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/src/runtime/sports_isolated_renderer.py, inkypi-weather/package/InkyPi/tests/test_sports_ewc_bounded_memory_contract.py, inkypi-weather/package/InkyPi/tests/test_sports_isolated_renderer.py
+- Tags: sports-dashboard, ewc, low-memory, detail-contract, streaming-json, isolated-worker, malloc-trim
+- See Also: LRN-20260720-003, LRN-20260716-006
+- Pattern-Key: stability_fallbacks.preserve_required_detail_contract
+- Recurrence-Count: 1
+- First-Seen: 2026-07-27
+- Last-Seen: 2026-07-27
+
+### Resolution
+- **Resolved**: 2026-07-27T16:10:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, and added parent heap reclamation before every isolated sports region.
+
+---

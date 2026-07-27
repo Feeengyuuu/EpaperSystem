@@ -14,6 +14,7 @@ import os
 
 
 WORKER_OOM_SCORE_ADJ = 800
+PANEL_PROVENANCE_ORDER = ("football", "lower", "esports")
 
 
 def _is_posix_platform():
@@ -83,6 +84,15 @@ class _WorkerDeviceConfig:
         return ""
 
 
+def _ordered_panel_provenances(values, region, region_provenance):
+    panel_provenance_values = dict(values or {})
+    panel_provenance_values[region] = region_provenance.value
+    return [
+        region_provenance.__class__(panel_provenance_values[panel_region])
+        for panel_region in PANEL_PROVENANCE_ORDER
+    ]
+
+
 def render_sports_region_task(payload, cancel_event):
     """Render exactly one provider region and return bounded PNG bytes."""
 
@@ -140,11 +150,11 @@ def render_sports_region_task(payload, cancel_event):
         "worker_pid": os.getpid(),
     }
     if payload.get("finalize"):
-        panel_provenances = [
-            region_provenance.__class__(value)
-            for value in payload.get("panel_provenances") or ()
-        ]
-        panel_provenances.append(region_provenance)
+        panel_provenances = _ordered_panel_provenances(
+            payload.get("panel_provenances"),
+            payload["region"],
+            region_provenance,
+        )
         primary_live_override = (
             plugin._worldcup_release_one_shot_window_active(now)
             and panel_provenances

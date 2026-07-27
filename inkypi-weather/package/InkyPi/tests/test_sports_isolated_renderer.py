@@ -79,7 +79,7 @@ class _RecordingExecutor:
             "worker_oom_score_adj": 800,
             "worker_pid": 4242 + index,
         }
-        if region == "esports":
+        if region == sports_isolated_renderer.SPORTS_REGIONS[-1]:
             value.update(
                 {
                     "composite_provenance": SourceProvenance.LIVE.value,
@@ -98,6 +98,12 @@ def _context(seconds=10):
 def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
     executor = _RecordingExecutor()
     monkeypatch.setattr(sports_isolated_renderer, "_get_executor", lambda: executor)
+    maintenance_calls = []
+    monkeypatch.setattr(
+        sports_isolated_renderer,
+        "_release_parent_transient_memory",
+        lambda: (maintenance_calls.append(True) or (0, False)),
+    )
     expected_identity = InstanceIdentity("sports", 1, 2)
 
     image = sports_isolated_renderer.render_sports_dashboard_isolated(
@@ -127,16 +133,17 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
     )
 
     assert [item[1]["region"] for item in executor.submissions] == [
+        "esports",
         "football",
         "lower",
-        "esports",
     ]
+    assert maintenance_calls == [True, True, True]
     assert executor.submissions[0][1]["base_png"] is None
     assert isinstance(executor.submissions[1][1]["base_png"], bytes)
-    assert executor.submissions[2][1]["panel_provenances"] == [
-        SourceProvenance.FRESH_CACHE.value,
-        SourceProvenance.FRESH_CACHE.value,
-    ]
+    assert executor.submissions[2][1]["panel_provenances"] == {
+        "esports": SourceProvenance.LIVE.value,
+        "football": SourceProvenance.FRESH_CACHE.value,
+    }
     assert all(
         submission[1]["settings"]["worldCupScreenshotFallback"] is False
         for submission in executor.submissions
@@ -265,6 +272,23 @@ def test_worker_oom_preference_round_trips_kernel_value(monkeypatch, tmp_path):
     assert score_path.read_text(encoding="ascii") == str(
         isolated_refresh.WORKER_OOM_SCORE_ADJ
     )
+
+
+def test_worker_finalize_restores_semantic_panel_provenance_order():
+    ordered = isolated_refresh._ordered_panel_provenances(
+        {
+            "esports": SourceProvenance.LIVE.value,
+            "football": SourceProvenance.FRESH_CACHE.value,
+        },
+        "lower",
+        SourceProvenance.STALE_CACHE,
+    )
+
+    assert ordered == [
+        SourceProvenance.FRESH_CACHE,
+        SourceProvenance.STALE_CACHE,
+        SourceProvenance.LIVE,
+    ]
 
 
 def test_worker_oom_preference_fails_closed_when_kernel_value_is_not_applied(

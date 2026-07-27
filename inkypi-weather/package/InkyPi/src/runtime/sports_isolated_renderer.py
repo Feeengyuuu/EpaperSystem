@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import logging
 import math
@@ -19,7 +20,9 @@ from utils.theme_utils import normalize_palette_colors
 
 
 SPORTS_REGION_TASK = "sports_dashboard_region"
-SPORTS_REGIONS = ("football", "lower", "esports")
+# Run the heaviest/provider-dense region before earlier results and allocator
+# fragmentation reduce the child-process safety margin on 416 MiB devices.
+SPORTS_REGIONS = ("esports", "football", "lower")
 # Keep the PNG plus settings safely below LongTaskExecutor's 2 MiB input cap
 # when the previous region becomes the next child payload.
 SPORTS_RESULT_MAX_BYTES = 1536 * 1024
@@ -32,6 +35,33 @@ logger = logging.getLogger(__name__)
 
 class SportsIsolatedResourcePressure(TaskCancelled):
     """The child was stopped before system pressure could threaten the parent."""
+
+
+def _release_parent_transient_memory():
+    """Return process-boundary allocations before starting the next region."""
+
+    collected_objects = 0
+    malloc_trimmed = False
+    try:
+        collected_objects = gc.collect()
+    except Exception:
+        logger.debug(
+            "Sports Dashboard parent garbage collection failed.",
+            exc_info=True,
+        )
+    if os.name == "posix":
+        try:
+            import ctypes
+
+            malloc_trim = getattr(ctypes.CDLL("libc.so.6"), "malloc_trim", None)
+            if malloc_trim is not None:
+                malloc_trimmed = bool(malloc_trim(0))
+        except Exception:
+            logger.debug(
+                "Sports Dashboard parent malloc_trim is unavailable.",
+                exc_info=True,
+            )
+    return collected_objects, malloc_trimmed
 
 
 def _get_executor():
@@ -181,11 +211,19 @@ def render_sports_dashboard_isolated(
     ).hexdigest()[:24]
     executor = _get_executor()
     base_png = None
-    panel_provenances = []
+    panel_provenances = {}
     final_value = None
 
     for region in SPORTS_REGIONS:
         context.raise_if_cancelled()
+        collected_objects, malloc_trimmed = _release_parent_transient_memory()
+        logger.info(
+            "Sports Dashboard parent memory maintenance completed. | "
+            "before_region: %s | collected_objects: %s | malloc_trim: %s",
+            region,
+            collected_objects,
+            malloc_trimmed,
+        )
         try:
             start_sample = resource_sampler()
         except Exception:
@@ -205,7 +243,7 @@ def render_sports_dashboard_isolated(
             "env_file": env_file,
             "now": now.isoformat(),
             "base_png": base_png,
-            "panel_provenances": list(panel_provenances),
+            "panel_provenances": dict(panel_provenances),
             "finalize": region == SPORTS_REGIONS[-1],
             "cache_identity": cache_identity,
             "timeout_seconds": context.remaining_seconds(),
@@ -264,8 +302,21 @@ def render_sports_dashboard_isolated(
         if not isinstance(image_png, bytes) or len(image_png) > SPORTS_RESULT_MAX_BYTES:
             raise RuntimeError("isolated Sports Dashboard returned an invalid image")
         base_png = image_png
-        panel_provenances.append(provenance.value)
-        final_value = value
+        panel_provenances[region] = provenance.value
+        if region == SPORTS_REGIONS[-1]:
+            final_value = {
+                "composite_provenance": value.get("composite_provenance"),
+                "skip_cache": value.get("skip_cache"),
+                "theme_mode": value.get("theme_mode"),
+            }
+        # Drop the completed process-boundary graph before the next iteration.
+        # The next maintenance pass can then return its allocator pages to Linux
+        # instead of carrying each region's transient heap into the EWC worker.
+        payload = None
+        handle = None
+        result = None
+        value = None
+        image_png = None
 
     image = safe_open_image(
         base_png,
