@@ -642,9 +642,30 @@ class EsportsMixin:
         cache_path = self._ewc_competitions_cache_path()
         cache = self._read_json_file(cache_path)
         cache_key = self._ewc_competitions_cache_key(settings, timezone_info)
-        force_refresh = self._force_refresh_requested(settings)
+        cache_only = self._bool_setting(
+            settings,
+            "_inkypi_ewc_cache_only",
+            False,
+        )
+        force_refresh = self._force_refresh_requested(settings) and not cache_only
         cache_hours = self._int_setting(settings, "ewcCacheHours", DEFAULT_EWC_CACHE_HOURS, 1, 48)
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("events"), list)
+        if cache_only:
+            if has_compatible_cache:
+                source_state = (
+                    "EWC CACHE"
+                    if self._worldcup_cache_is_fresh(
+                        cache,
+                        cache_hours,
+                        now_utc,
+                    )
+                    else "EWC STALE"
+                )
+                return (
+                    self._decode_ewc_events(cache.get("events"), timezone_info),
+                    source_state,
+                )
+            return self._fallback_ewc_events(timezone_info), "EWC FALLBACK"
         if has_compatible_cache and not force_refresh and self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
             return self._decode_ewc_events(cache.get("events"), timezone_info), "EWC CACHE"
         try:
@@ -697,7 +718,12 @@ class EsportsMixin:
         cache_path = self._ewc_detail_cache_path()
         cache = self._read_json_file(cache_path)
         cache_key = self._ewc_detail_cache_key(settings, timezone_info)
-        force_refresh = self._force_refresh_requested(settings)
+        cache_only = self._bool_setting(
+            settings,
+            "_inkypi_ewc_cache_only",
+            False,
+        )
+        force_refresh = self._force_refresh_requested(settings) and not cache_only
         cache_seconds = self._int_setting(
             settings,
             "ewcDetailCacheSeconds",
@@ -749,6 +775,23 @@ class EsportsMixin:
                 timezone_info,
             )
             return cached_matches, "EWC DETAIL CACHE" if cached_matches else ""
+        if cache_only:
+            cached_matches = self._decode_ewc_events(
+                self._ewc_detail_cached_matches(
+                    {"pages": pages},
+                    candidates,
+                    page_source_states=page_source_states,
+                ),
+                timezone_info,
+            )
+            if not cached_matches:
+                return [], ""
+            source_state = (
+                "EWC DETAIL STALE"
+                if "EWC DETAIL STALE" in page_source_states.values()
+                else "EWC DETAIL CACHE"
+            )
+            return cached_matches, source_state
 
         low_memory_next_index = None
         low_memory = self._bool_setting(
@@ -4710,7 +4753,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 

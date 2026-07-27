@@ -93,6 +93,46 @@ def _ordered_panel_provenances(values, region, region_provenance):
     ]
 
 
+def prefetch_ewc_detail_task(payload, cancel_event):
+    """Refresh one bounded EWC detail page without loading other providers."""
+
+    worker_oom_score_adj = _require_worker_oom_preference()
+    if cancel_event.is_set():
+        from runtime.refresh_contracts import TaskCancelled
+
+        raise TaskCancelled("isolated Sports Dashboard EWC prefetch was canceled")
+
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+    from runtime.refresh_contracts import TaskCancelled
+
+    device_config = _WorkerDeviceConfig(
+        payload.get("device_config"),
+        payload.get("env_file"),
+    )
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    settings = payload.get("settings") or {}
+    now_value = payload.get("now")
+    now = datetime.fromisoformat(now_value) if now_value else None
+    timezone_info = plugin._timezone(settings, device_config)
+    if now is None:
+        now = datetime.now(timezone_info)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone_info)
+    else:
+        now = now.astimezone(timezone_info)
+    card = plugin._load_ewc_sidebar_card(settings, timezone_info, now)
+    if cancel_event.is_set():
+        raise TaskCancelled("isolated Sports Dashboard EWC prefetch was canceled")
+    selected = (card or {}).get("selected") or {}
+    return {
+        "region": "ewc_prefetch",
+        "source_state": (card or {}).get("source_state") or "",
+        "has_detail": bool(selected.get("main_match")),
+        "worker_oom_score_adj": worker_oom_score_adj,
+        "worker_pid": os.getpid(),
+    }
+
+
 def render_sports_region_task(payload, cancel_event):
     """Render exactly one provider region and return bounded PNG bytes."""
 

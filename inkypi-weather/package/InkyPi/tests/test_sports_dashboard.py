@@ -2382,6 +2382,111 @@ def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
     assert source == "EWC DETAIL LIVE"
 
 
+def test_ewc_competitions_cache_only_ignores_force_and_skips_network(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(timezone.utc)
+    settings = {
+        "_inkypi_ewc_cache_only": True,
+        "forceRefresh": True,
+    }
+    cached_event = {
+        "event_id": "ewc-cached-competition",
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "start": now - timedelta(days=1),
+        "end": now + timedelta(days=2),
+        "status": "ONGOING",
+    }
+    cache = {
+        "cache_key": plugin._ewc_competitions_cache_key(settings, la),
+        "fetched_at": now.isoformat(),
+        "events": SportsDashboard._encode_ewc_events([cached_event]),
+    }
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: cache)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ewc_competitions_payload",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cache-only EWC competitions must not use the network"
+        ),
+    )
+
+    events, source = plugin._load_ewc_events(settings, la)
+
+    assert [event["event_id"] for event in events] == [
+        "ewc-cached-competition"
+    ]
+    assert source == "EWC CACHE"
+
+
+def test_ewc_detail_cache_only_returns_stale_page_without_network(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=la)
+    settings = {
+        "_inkypi_ewc_cache_only": True,
+        "forceRefresh": True,
+        "ewcDetailCacheSeconds": 600,
+    }
+    event = {
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "year": "2026",
+        "source_url": (
+            "https://esportsworldcup.com/en/competitions/2026/overwatch-2"
+        ),
+        "start": now - timedelta(days=1),
+        "end": now + timedelta(days=2),
+    }
+    cached_match = {
+        "kind": "match",
+        "event_id": "overwatch-cached-match",
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "start": now + timedelta(hours=1),
+        "end": now + timedelta(hours=3),
+        "status": "UPCOMING",
+        "team_a": "A",
+        "team_b": "B",
+    }
+    stale_at = (now - timedelta(hours=1)).astimezone(timezone.utc)
+    cache = {
+        "version": "sports-dashboard-ewc-detail-v2",
+        "cache_key": plugin._ewc_detail_cache_key(settings, la),
+        "fetched_at": stale_at.isoformat(),
+        "pages": {
+            "2026:overwatch-2": {
+                "page_key": "2026:overwatch-2",
+                "fetched_at": stale_at.isoformat(),
+                "matches": SportsDashboard._encode_ewc_events([cached_match]),
+            }
+        },
+    }
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: cache)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ewc_detail_page",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cache-only EWC details must not use the network"
+        ),
+    )
+
+    matches, source = plugin._load_ewc_detail_matches(
+        settings,
+        la,
+        [event],
+        now,
+        7,
+    )
+
+    assert [match["event_id"] for match in matches] == [
+        "overwatch-cached-match"
+    ]
+    assert matches[0]["_ewc_detail_source_state"] == "EWC DETAIL STALE"
+    assert source == "EWC DETAIL STALE"
+
+
 def test_ewc_detail_low_memory_advances_after_failed_page(monkeypatch):
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")

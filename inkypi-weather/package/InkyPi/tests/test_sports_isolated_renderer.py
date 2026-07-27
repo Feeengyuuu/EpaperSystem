@@ -15,6 +15,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.base_plugin.presentation import bind_presentation_instance_identity
 from plugins.sports_dashboard import isolated_refresh
+from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from runtime.long_task_executor import (
     MAX_PAYLOAD_BYTES,
     InstanceIdentity,
@@ -65,7 +66,24 @@ class _RecordingExecutor:
     def submit(self, task_name, payload, **kwargs):
         payload = _copy_primitive(payload, max_bytes=MAX_PAYLOAD_BYTES)
         self.submissions.append((task_name, payload, kwargs))
-        index = len(self.submissions) - 1
+        if task_name == sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK:
+            return _CompletedHandle(
+                LongTaskResult(
+                    "succeeded",
+                    value={
+                        "region": "ewc_prefetch",
+                        "source_state": "EWC DETAIL LIVE",
+                        "has_detail": True,
+                        "worker_oom_score_adj": 800,
+                        "worker_pid": 4241,
+                    },
+                )
+            )
+        index = sum(
+            1
+            for submitted_task, _payload, _kwargs in self.submissions[:-1]
+            if submitted_task == sports_isolated_renderer.SPORTS_REGION_TASK
+        )
         region = sports_isolated_renderer.SPORTS_REGIONS[index]
         value = {
             "region": region,
@@ -132,15 +150,24 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         now=SimpleNamespace(isoformat=lambda: "2026-07-27T09:00:00-07:00"),
     )
 
-    assert [item[1]["region"] for item in executor.submissions] == [
+    assert executor.submissions[0][0] == (
+        sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK
+    )
+    assert "base_png" not in executor.submissions[0][1]
+    region_submissions = [
+        item
+        for item in executor.submissions
+        if item[0] == sports_isolated_renderer.SPORTS_REGION_TASK
+    ]
+    assert [item[1]["region"] for item in region_submissions] == [
         "esports",
         "football",
         "lower",
     ]
-    assert maintenance_calls == [True, True, True]
-    assert executor.submissions[0][1]["base_png"] is None
-    assert isinstance(executor.submissions[1][1]["base_png"], bytes)
-    assert executor.submissions[2][1]["panel_provenances"] == {
+    assert maintenance_calls == [True, True, True, True]
+    assert region_submissions[0][1]["base_png"] is None
+    assert isinstance(region_submissions[1][1]["base_png"], bytes)
+    assert region_submissions[2][1]["panel_provenances"] == {
         "esports": SourceProvenance.LIVE.value,
         "football": SourceProvenance.FRESH_CACHE.value,
     }
@@ -152,6 +179,11 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         submission[1]["settings"]["_inkypi_sports_low_memory"] is True
         for submission in executor.submissions
     )
+    assert "_inkypi_ewc_cache_only" not in executor.submissions[0][1]["settings"]
+    assert all(
+        submission[1]["settings"]["_inkypi_ewc_cache_only"] is True
+        for submission in region_submissions
+    )
     assert all(
         "_inkypi_presentation_instance_identity"
         not in submission[1]["settings"]
@@ -160,7 +192,7 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
     assert len(
         {
             submission[1]["cache_identity"]
-            for submission in executor.submissions
+            for submission in region_submissions
         }
     ) == 1
     assert all(
@@ -289,6 +321,48 @@ def test_worker_finalize_restores_semantic_panel_provenance_order():
         SourceProvenance.STALE_CACHE,
         SourceProvenance.LIVE,
     ]
+
+
+def test_ewc_prefetch_worker_returns_only_bounded_summary(monkeypatch):
+    monkeypatch.setattr(
+        isolated_refresh,
+        "_require_worker_oom_preference",
+        lambda: 800,
+    )
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_load_ewc_sidebar_card",
+        lambda *_args, **_kwargs: {
+            "source_state": "EWC DETAIL LIVE",
+            "selected": {
+                "main_match": {
+                    "event_id": "ewc-match",
+                    "team_a": "A",
+                    "team_b": "B",
+                }
+            },
+        },
+    )
+
+    result = isolated_refresh.prefetch_ewc_detail_task(
+        {
+            "settings": {"_inkypi_sports_low_memory": True},
+            "device_config": {
+                "resolution": [800, 480],
+                "timezone": "America/Los_Angeles",
+            },
+            "now": "2026-07-27T09:00:00-07:00",
+        },
+        SimpleNamespace(is_set=lambda: False),
+    )
+
+    assert result == {
+        "region": "ewc_prefetch",
+        "source_state": "EWC DETAIL LIVE",
+        "has_detail": True,
+        "worker_oom_score_adj": 800,
+        "worker_pid": result["worker_pid"],
+    }
 
 
 def test_worker_oom_preference_fails_closed_when_kernel_value_is_not_applied(

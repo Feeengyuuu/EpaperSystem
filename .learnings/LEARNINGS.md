@@ -2237,10 +2237,10 @@ For future SportsDashboard identity-card scaling, parameterize each vertical rel
 Low-memory protection must preserve the plugin's required detail contract, not silently redefine an overview card as success.
 
 ### Details
-The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation also exposed a second boundary: completed isolated-region result graphs and allocator pages must be released before starting the next region, otherwise the EWC worker can be stopped by the 70 MiB guard before the restored details reach the image.
+The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation exposed a second boundary: even when the heaviest region ran first, its EWC parser peak could overlap LoL, Valve, and image allocations and trip the 70 MiB guard. The stable shape is a dedicated short-lived EWC prefetch worker followed by an esports renderer that reads only the atomically committed EWC cache.
 
 ### Suggested Action
-Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, short-lived workers, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
+Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, provider-specific prefetch workers, cache-only composition, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
 
 ### Metadata
 - Source: user_feedback
@@ -2255,6 +2255,6 @@ Define the minimum user-visible contract before introducing a stability fallback
 ### Resolution
 - **Resolved**: 2026-07-27T16:10:00-07:00
 - **Commit/PR**: local-worktree
-- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, and added parent heap reclamation before every isolated sports region.
+- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, and separated EWC network parsing from the multi-provider esports composition worker.
 
 ---

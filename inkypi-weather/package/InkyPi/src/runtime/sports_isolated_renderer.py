@@ -20,6 +20,7 @@ from utils.theme_utils import normalize_palette_colors
 
 
 SPORTS_REGION_TASK = "sports_dashboard_region"
+SPORTS_EWC_PREFETCH_TASK = "sports_dashboard_ewc_prefetch"
 # Run the heaviest/provider-dense region before earlier results and allocator
 # fragmentation reduce the child-process safety margin on 416 MiB devices.
 SPORTS_REGIONS = ("esports", "football", "lower")
@@ -64,6 +65,23 @@ def _release_parent_transient_memory():
     return collected_objects, malloc_trimmed
 
 
+def _require_worker_isolation_evidence(value):
+    if os.name != "posix":
+        return None, None
+    worker_oom_score_adj = value.get("worker_oom_score_adj")
+    worker_pid = value.get("worker_pid")
+    if (
+        type(worker_oom_score_adj) is not int
+        or worker_oom_score_adj < MIN_POSIX_WORKER_OOM_SCORE_ADJ
+        or type(worker_pid) is not int
+        or worker_pid <= 1
+    ):
+        raise RuntimeError(
+            "isolated Sports Dashboard returned invalid OOM isolation evidence"
+        )
+    return worker_pid, worker_oom_score_adj
+
+
 def _get_executor():
     global _EXECUTOR
     with _EXECUTOR_LOCK:
@@ -73,7 +91,11 @@ def _get_executor():
                     SPORTS_REGION_TASK: (
                         "plugins.sports_dashboard.isolated_refresh:"
                         "render_sports_region_task"
-                    )
+                    ),
+                    SPORTS_EWC_PREFETCH_TASK: (
+                        "plugins.sports_dashboard.isolated_refresh:"
+                        "prefetch_ewc_detail_task"
+                    ),
                 },
                 max_workers=1,
                 max_queue=0,
@@ -214,6 +236,81 @@ def render_sports_dashboard_isolated(
     panel_provenances = {}
     final_value = None
 
+    collected_objects, malloc_trimmed = _release_parent_transient_memory()
+    logger.info(
+        "Sports Dashboard parent memory maintenance completed. | "
+        "before_region: ewc_prefetch | collected_objects: %s | malloc_trim: %s",
+        collected_objects,
+        malloc_trimmed,
+    )
+    try:
+        prefetch_start_sample = resource_sampler()
+    except Exception:
+        prefetch_start_sample = None
+    if not _resource_margin_available(
+        prefetch_start_sample,
+        min_available_mb=start_min_available_mb,
+        max_swap_percent=start_max_swap_percent,
+    ):
+        raise SportsIsolatedResourcePressure(
+            "isolated Sports Dashboard worker deferred before EWC prefetch"
+        )
+    prefetch_payload = {
+        "settings": render_settings,
+        "device_config": device_values,
+        "env_file": env_file,
+        "now": now.isoformat(),
+        "timeout_seconds": context.remaining_seconds(),
+    }
+    prefetch_handle = executor.submit(
+        SPORTS_EWC_PREFETCH_TASK,
+        prefetch_payload,
+        context=context,
+        instance_identity=instance_identity,
+        identity_validator=identity_validator,
+    )
+    prefetch_result = _wait_for_result(
+        prefetch_handle,
+        context=context,
+        resource_sampler=resource_sampler,
+        abort_min_available_mb=abort_min_available_mb,
+        abort_max_swap_percent=abort_max_swap_percent,
+        poll_seconds=DEFAULT_RESOURCE_POLL_SECONDS,
+    )
+    if prefetch_result.status != "succeeded":
+        raise RuntimeError(
+            "isolated Sports Dashboard EWC prefetch failed: "
+            f"{prefetch_result.error_code or prefetch_result.status}"
+        )
+    prefetch_value = prefetch_result.value
+    if (
+        not isinstance(prefetch_value, dict)
+        or prefetch_value.get("region") != "ewc_prefetch"
+    ):
+        raise RuntimeError(
+            "isolated Sports Dashboard EWC prefetch returned an invalid result"
+        )
+    prefetch_worker_pid, prefetch_oom_score_adj = (
+        _require_worker_isolation_evidence(prefetch_value)
+    )
+    logger.info(
+        "Sports Dashboard isolated EWC prefetch completed. | "
+        "worker_pid: %s | worker_oom_score_adj: %s | has_detail: %s | "
+        "source_state: %s",
+        prefetch_worker_pid,
+        prefetch_oom_score_adj,
+        bool(prefetch_value.get("has_detail")),
+        prefetch_value.get("source_state") or "none",
+    )
+    # The dedicated child has atomically refreshed at most one bounded EWC
+    # detail page. The later panel worker must only read that cache so its LoL,
+    # Valve, image, and EWC parser peaks cannot overlap.
+    render_settings["_inkypi_ewc_cache_only"] = True
+    prefetch_payload = None
+    prefetch_handle = None
+    prefetch_result = None
+    prefetch_value = None
+
     for region in SPORTS_REGIONS:
         context.raise_if_cancelled()
         collected_objects, malloc_trimmed = _release_parent_transient_memory()
@@ -274,17 +371,9 @@ def render_sports_dashboard_isolated(
         if value.get("region") != region:
             raise RuntimeError("isolated Sports Dashboard returned the wrong region")
         if os.name == "posix":
-            worker_oom_score_adj = value.get("worker_oom_score_adj")
-            worker_pid = value.get("worker_pid")
-            if (
-                type(worker_oom_score_adj) is not int
-                or worker_oom_score_adj < MIN_POSIX_WORKER_OOM_SCORE_ADJ
-                or type(worker_pid) is not int
-                or worker_pid <= 1
-            ):
-                raise RuntimeError(
-                    "isolated Sports Dashboard returned invalid OOM isolation evidence"
-                )
+            worker_pid, worker_oom_score_adj = _require_worker_isolation_evidence(
+                value
+            )
             logger.info(
                 "Sports Dashboard isolated region completed. | region: %s | "
                 "worker_pid: %s | worker_oom_score_adj: %s",
