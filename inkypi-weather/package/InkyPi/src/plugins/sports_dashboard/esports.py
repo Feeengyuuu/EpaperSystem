@@ -3,6 +3,7 @@ from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_ali
 from html.parser import HTMLParser
 import ctypes
 import gc
+import uuid
 
 SportsDashboard = None
 
@@ -637,6 +638,35 @@ class EsportsMixin:
             "source_state": source_state,
             "priority": self._right_sidebar_ewc_priority(),
         }
+
+    def _publish_ewc_cache(self, cache_path, payload, settings, label):
+        require_publish = self._bool_setting(
+            settings,
+            "_inkypi_ewc_require_cache_publish",
+            False,
+        )
+        published_payload = payload
+        publish_token = None
+        if require_publish:
+            published_payload = dict(payload)
+            publish_token = uuid.uuid4().hex
+            published_payload["_inkypi_cache_publish_token"] = publish_token
+        try:
+            self._write_json_file(cache_path, published_payload)
+            if require_publish:
+                persisted = self._read_json_file(cache_path)
+                if (
+                    not isinstance(persisted, Mapping)
+                    or persisted.get("_inkypi_cache_publish_token")
+                    != publish_token
+                ):
+                    raise OSError(f"{label} cache publish verification failed")
+        except OSError as exc:
+            logger.warning("Failed to publish %s cache: %s", label, exc)
+            if require_publish:
+                raise
+        return published_payload
+
     def _load_ewc_events(self, settings, timezone_info):
         now_utc = datetime.now(timezone.utc)
         cache_path = self._ewc_competitions_cache_path()
@@ -675,10 +705,12 @@ class EsportsMixin:
             if has_compatible_cache:
                 return self._decode_ewc_events(cache.get("events"), timezone_info), "EWC STALE"
             return self._fallback_ewc_events(timezone_info), "EWC FALLBACK"
-        try:
-            self._write_json_file(cache_path, payload)
-        except OSError as exc:
-            logger.warning("Failed to write EWC cache: %s", exc)
+        payload = self._publish_ewc_cache(
+            cache_path,
+            payload,
+            settings,
+            "EWC competitions",
+        )
         return self._decode_ewc_events(payload.get("events"), timezone_info), "EWC LIVE"
 
     def _fetch_ewc_competitions_payload(self, settings, timezone_info, cache_key, now_utc):
@@ -863,10 +895,12 @@ class EsportsMixin:
             }
             if low_memory_next_index is not None:
                 payload["low_memory_next_index"] = low_memory_next_index
-            try:
-                self._write_json_file(cache_path, payload)
-            except OSError as exc:
-                logger.warning("Failed to write EWC detail cache: %s", exc)
+            payload = self._publish_ewc_cache(
+                cache_path,
+                payload,
+                settings,
+                "EWC detail",
+            )
             cache = payload
         elif has_compatible_cache:
             matches = self._decode_ewc_events(
@@ -4753,8 +4787,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
 
 
 

@@ -2420,6 +2420,20 @@ def test_ewc_competitions_cache_only_ignores_force_and_skips_network(monkeypatch
     assert source == "EWC CACHE"
 
 
+def test_ewc_prefetch_cache_publish_requires_readback_attestation(monkeypatch):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_write_json_file", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: {})
+
+    with pytest.raises(OSError, match="publish verification failed"):
+        plugin._publish_ewc_cache(
+            Path("ewc-cache.json"),
+            {"cache_key": "expected", "events": []},
+            {"_inkypi_ewc_require_cache_publish": True},
+            "EWC competitions",
+        )
+
+
 def test_ewc_detail_cache_only_returns_stale_page_without_network(monkeypatch):
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")

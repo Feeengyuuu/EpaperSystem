@@ -286,6 +286,7 @@ def render_sports_dashboard_isolated(
     if (
         not isinstance(prefetch_value, dict)
         or prefetch_value.get("region") != "ewc_prefetch"
+        or prefetch_value.get("cache_handoff_verified") is not True
     ):
         raise RuntimeError(
             "isolated Sports Dashboard EWC prefetch returned an invalid result"
@@ -293,18 +294,33 @@ def render_sports_dashboard_isolated(
     prefetch_worker_pid, prefetch_oom_score_adj = (
         _require_worker_isolation_evidence(prefetch_value)
     )
-    logger.info(
-        "Sports Dashboard isolated EWC prefetch completed. | "
-        "worker_pid: %s | worker_oom_score_adj: %s | has_detail: %s | "
-        "source_state: %s",
-        prefetch_worker_pid,
-        prefetch_oom_score_adj,
-        bool(prefetch_value.get("has_detail")),
-        prefetch_value.get("source_state") or "none",
-    )
-    # The dedicated child has atomically refreshed at most one bounded EWC
-    # detail page. The later panel worker must only read that cache so its LoL,
-    # Valve, image, and EWC parser peaks cannot overlap.
+    degraded_reason = str(prefetch_value.get("degraded_reason") or "")
+    if degraded_reason:
+        logger.warning(
+            "Sports Dashboard isolated EWC prefetch degraded to its durable "
+            "cache hand-off. | worker_pid: %s | worker_oom_score_adj: %s | "
+            "has_detail: %s | source_state: %s | reason: %s",
+            prefetch_worker_pid,
+            prefetch_oom_score_adj,
+            bool(prefetch_value.get("has_detail")),
+            prefetch_value.get("source_state") or "none",
+            degraded_reason,
+        )
+    else:
+        logger.info(
+            "Sports Dashboard isolated EWC prefetch completed. | "
+            "worker_pid: %s | worker_oom_score_adj: %s | has_detail: %s | "
+            "source_state: %s | prefetch_source_state: %s",
+            prefetch_worker_pid,
+            prefetch_oom_score_adj,
+            bool(prefetch_value.get("has_detail")),
+            prefetch_value.get("source_state") or "none",
+            prefetch_value.get("prefetch_source_state") or "none",
+        )
+    # The dedicated child has either published and attested at most one bounded
+    # EWC detail page or explicitly degraded to the last durable cache. The
+    # later panel worker must stay cache-only so its LoL, Valve, image, and EWC
+    # parser peaks cannot overlap.
     render_settings["_inkypi_ewc_cache_only"] = True
     prefetch_payload = None
     prefetch_handle = None

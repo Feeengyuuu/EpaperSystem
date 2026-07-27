@@ -93,6 +93,44 @@ def _ordered_panel_provenances(values, region, region_provenance):
     ]
 
 
+def _ewc_event_identity(event):
+    if not isinstance(event, dict):
+        return None
+    values = []
+    for key in (
+        "event_id",
+        "slug",
+        "game",
+        "start",
+        "team_a",
+        "team_b",
+        "score_a",
+        "score_b",
+        "status",
+        "stage",
+    ):
+        value = event.get(key)
+        if isinstance(value, datetime):
+            values.append(("datetime", value.isoformat()))
+        elif value is None:
+            values.append(None)
+        else:
+            values.append((type(value).__name__, str(value)))
+    return tuple(values)
+
+
+def _ewc_card_selection_identity(card):
+    selected = (card or {}).get("selected") or {}
+    values = []
+    for key in ("main", "main_match", "live", "upcoming", "recent"):
+        value = selected.get(key)
+        if isinstance(value, list):
+            values.append(tuple(_ewc_event_identity(item) for item in value))
+        else:
+            values.append(_ewc_event_identity(value))
+    return tuple(values)
+
+
 def prefetch_ewc_detail_task(payload, cancel_event):
     """Refresh one bounded EWC detail page without loading other providers."""
 
@@ -110,7 +148,8 @@ def prefetch_ewc_detail_task(payload, cancel_event):
         payload.get("env_file"),
     )
     plugin = SportsDashboard({"id": "sports_dashboard"})
-    settings = payload.get("settings") or {}
+    settings = dict(payload.get("settings") or {})
+    settings["_inkypi_ewc_require_cache_publish"] = True
     now_value = payload.get("now")
     now = datetime.fromisoformat(now_value) if now_value else None
     timezone_info = plugin._timezone(settings, device_config)
@@ -120,14 +159,48 @@ def prefetch_ewc_detail_task(payload, cancel_event):
         now = now.replace(tzinfo=timezone_info)
     else:
         now = now.astimezone(timezone_info)
-    card = plugin._load_ewc_sidebar_card(settings, timezone_info, now)
+    prefetch_card = None
+    degraded_reason = ""
+    try:
+        prefetch_card = plugin._load_ewc_sidebar_card(
+            settings,
+            timezone_info,
+            now,
+        )
+    except OSError:
+        # Cache publication is the hand-off boundary between this short-lived
+        # parser and the later cache-only panel worker. Preserve Dashboard
+        # availability with the last durable cache, but report the degraded
+        # hand-off explicitly instead of claiming a successful prefetch.
+        degraded_reason = "cache_publish_failed"
+    cache_only_settings = dict(settings)
+    cache_only_settings.pop("_inkypi_ewc_require_cache_publish", None)
+    cache_only_settings["_inkypi_ewc_cache_only"] = True
+    cached_card = plugin._load_ewc_sidebar_card(
+        cache_only_settings,
+        timezone_info,
+        now,
+    )
+    handoff_matches = (
+        not degraded_reason
+        and _ewc_card_selection_identity(prefetch_card)
+        == _ewc_card_selection_identity(cached_card)
+    )
+    if not degraded_reason and not handoff_matches:
+        degraded_reason = "cache_attestation_mismatch"
     if cancel_event.is_set():
         raise TaskCancelled("isolated Sports Dashboard EWC prefetch was canceled")
-    selected = (card or {}).get("selected") or {}
+    selected = (cached_card or {}).get("selected") or {}
     return {
         "region": "ewc_prefetch",
-        "source_state": (card or {}).get("source_state") or "",
+        "source_state": (cached_card or {}).get("source_state") or "",
+        "prefetch_source_state": (
+            (prefetch_card or {}).get("source_state") or ""
+        ),
         "has_detail": bool(selected.get("main_match")),
+        "cache_handoff_verified": True,
+        "prefetch_handoff_matches": handoff_matches,
+        "degraded_reason": degraded_reason,
         "worker_oom_score_adj": worker_oom_score_adj,
         "worker_pid": os.getpid(),
     }

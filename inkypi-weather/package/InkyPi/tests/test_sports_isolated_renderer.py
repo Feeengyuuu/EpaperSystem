@@ -73,7 +73,11 @@ class _RecordingExecutor:
                     value={
                         "region": "ewc_prefetch",
                         "source_state": "EWC DETAIL LIVE",
+                        "prefetch_source_state": "EWC DETAIL LIVE",
                         "has_detail": True,
+                        "cache_handoff_verified": True,
+                        "prefetch_handoff_matches": True,
+                        "degraded_reason": "",
                         "worker_oom_score_adj": 800,
                         "worker_pid": 4241,
                     },
@@ -359,10 +363,67 @@ def test_ewc_prefetch_worker_returns_only_bounded_summary(monkeypatch):
     assert result == {
         "region": "ewc_prefetch",
         "source_state": "EWC DETAIL LIVE",
+        "prefetch_source_state": "EWC DETAIL LIVE",
         "has_detail": True,
+        "cache_handoff_verified": True,
+        "prefetch_handoff_matches": True,
+        "degraded_reason": "",
         "worker_oom_score_adj": 800,
         "worker_pid": result["worker_pid"],
     }
+
+
+def test_ewc_prefetch_publish_failure_degrades_to_verified_cache_only_card(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        isolated_refresh,
+        "_require_worker_oom_preference",
+        lambda: 800,
+    )
+    calls = []
+
+    def load_card(_plugin, settings, _timezone_info, _now):
+        calls.append(dict(settings))
+        if settings.get("_inkypi_ewc_require_cache_publish"):
+            raise OSError("publish failed")
+        return {
+            "source_state": "EWC DETAIL STALE",
+            "selected": {
+                "main_match": {
+                    "event_id": "ewc-cached-match",
+                    "team_a": "A",
+                    "team_b": "B",
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_load_ewc_sidebar_card",
+        load_card,
+    )
+
+    result = isolated_refresh.prefetch_ewc_detail_task(
+        {
+            "settings": {"_inkypi_sports_low_memory": True},
+            "device_config": {
+                "resolution": [800, 480],
+                "timezone": "America/Los_Angeles",
+            },
+            "now": "2026-07-27T09:00:00-07:00",
+        },
+        SimpleNamespace(is_set=lambda: False),
+    )
+
+    assert calls[0]["_inkypi_ewc_require_cache_publish"] is True
+    assert "_inkypi_ewc_require_cache_publish" not in calls[1]
+    assert calls[1]["_inkypi_ewc_cache_only"] is True
+    assert result["cache_handoff_verified"] is True
+    assert result["prefetch_handoff_matches"] is False
+    assert result["degraded_reason"] == "cache_publish_failed"
+    assert result["source_state"] == "EWC DETAIL STALE"
+    assert result["has_detail"] is True
 
 
 def test_worker_oom_preference_fails_closed_when_kernel_value_is_not_applied(
