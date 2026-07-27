@@ -227,6 +227,7 @@ DEFAULT_EWC_CACHE_HOURS = 12
 DEFAULT_EWC_DETAIL_CACHE_SECONDS = 600
 DEFAULT_EWC_DETAIL_LOOKAHEAD_DAYS = 7
 DEFAULT_EWC_DETAIL_MAX_PAGES = 5
+EWC_HTML_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
 DEFAULT_EWC_UPCOMING_WINDOW_DAYS = 21
 DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS = 1
 DEFAULT_EWC_LIVE_REFRESH_SECONDS = 60
@@ -2568,6 +2569,101 @@ class SportsDashboardCommonMixin:
         )
 
     def _generate_image_with_active_colors(self, settings, device_config, dimensions, timezone_info, now):
+        image = Image.new("RGB", dimensions, COLORS["paper"])
+        panel_provenances = [
+            self._render_dashboard_region(
+                image,
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                now,
+                region,
+            )
+            for region in ("football", "lower", "esports")
+        ]
+        primary_live_override = (
+            self._worldcup_release_one_shot_window_active(now)
+            and panel_provenances[0] is SourceProvenance.LIVE
+        )
+        return self._attest_sports_dashboard_image(
+            image,
+            *panel_provenances,
+            force_refresh=self._force_refresh_requested(settings),
+            primary_live_override=primary_live_override,
+        )
+
+    def render_isolated_region(
+        self,
+        settings,
+        device_config,
+        *,
+        region,
+        base_image=None,
+        now=None,
+    ):
+        """Render one independently cacheable dashboard region.
+
+        The refresh runtime uses this entrypoint in short-lived worker
+        processes. Each process owns only one provider/render region so its
+        transient parser and image allocations are reclaimed before the next
+        region begins.
+        """
+
+        if region not in {"football", "lower", "esports"}:
+            raise ValueError("region must be football, lower, or esports")
+        dimensions = self._display_dimensions(device_config)
+        timezone_info = self._timezone(settings, device_config)
+        current = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone_info)
+        else:
+            current = current.astimezone(timezone_info)
+        theme_context = self._sports_dashboard_theme_context(
+            settings,
+            device_config,
+            current,
+        )
+        theme_token = _ACTIVE_COLORS.set(
+            self._sports_dashboard_colors(theme_context)
+        )
+        try:
+            if base_image is None:
+                image = Image.new("RGB", dimensions, COLORS["paper"])
+            else:
+                image = base_image.convert("RGB")
+                if image.size != dimensions:
+                    raise ValueError(
+                        "isolated Sports Dashboard base image dimensions "
+                        f"{image.size!r} do not match {dimensions!r}"
+                    )
+                image = image.copy()
+            provenance = self._render_dashboard_region(
+                image,
+                settings,
+                device_config,
+                dimensions,
+                timezone_info,
+                current,
+                region,
+            )
+            image.info["inkypi_theme_mode"] = str(
+                (theme_context or {}).get("mode") or "day"
+            )
+            return image, provenance
+        finally:
+            _ACTIVE_COLORS.reset(theme_token)
+
+    def _render_dashboard_region(
+        self,
+        image,
+        settings,
+        device_config,
+        dimensions,
+        timezone_info,
+        now,
+        region,
+    ):
         left_width = self._left_width(settings, dimensions)
         visible_worldcup_matches = self._visible_worldcup_matches(settings)
         separator_height = 4
@@ -2575,98 +2671,91 @@ class SportsDashboardCommonMixin:
         nba_top = worldcup_height + separator_height
         nba_height = max(1, dimensions[1] - nba_top)
 
-        image = Image.new("RGB", dimensions, COLORS["paper"])
-        left, left_provenance, left_source, worldcup_content_box = (
-            self._render_selected_football_panel(
-                settings,
-                device_config,
-                (left_width, worldcup_height),
-                timezone_info,
-                visible_worldcup_matches,
-                now,
+        if region == "football":
+            left, left_provenance, left_source, worldcup_content_box = (
+                self._render_selected_football_panel(
+                    settings,
+                    device_config,
+                    (left_width, worldcup_height),
+                    timezone_info,
+                    visible_worldcup_matches,
+                    now,
+                )
             )
-        )
-        image.paste(left, (0, 0))
+            image.paste(left, (0, 0))
 
-        if left_source == "screenshot" and self._bool_setting(settings, "overlayWorldCupLocalTimes", True):
-            self._overlay_worldcup_local_times(
+            if left_source == "screenshot" and self._bool_setting(settings, "overlayWorldCupLocalTimes", True):
+                self._overlay_worldcup_local_times(
+                    image,
+                    left_width,
+                    timezone_info,
+                    visible_worldcup_matches,
+                    worldcup_content_box,
+                )
+
+            football_provenance = self._apply_sports_region_cache(
                 image,
-                left_width,
-                timezone_info,
-                visible_worldcup_matches,
-                worldcup_content_box,
+                "football",
+                (0, 0, left_width, worldcup_height),
+                left_provenance,
             )
 
-        football_provenance = self._apply_sports_region_cache(
-            image,
-            "football",
-            (0, 0, left_width, worldcup_height),
-            left_provenance,
-        )
+            draw = ImageDraw.Draw(image)
+            separator_y = worldcup_height
+            draw.rectangle((0, separator_y, left_width - 1, separator_y + separator_height - 1), fill=COLORS["border"])
+            if separator_height > 2:
+                draw.line((0, separator_y + 2, left_width - 1, separator_y + 2), fill=COLORS["line"], width=1)
+            return football_provenance
 
-        draw = ImageDraw.Draw(image)
-        separator_y = worldcup_height
-        draw.rectangle((0, separator_y, left_width - 1, separator_y + separator_height - 1), fill=COLORS["border"])
-        if separator_height > 2:
-            draw.line((0, separator_y + 2, left_width - 1, separator_y + 2), fill=COLORS["line"], width=1)
-
-        try:
-            lower_provenance = self._draw_lower_sports_region(
+        if region == "lower":
+            draw = ImageDraw.Draw(image)
+            try:
+                lower_provenance = self._draw_lower_sports_region(
+                    image,
+                    draw,
+                    settings,
+                    device_config,
+                    timezone_info,
+                    now,
+                    (0, nba_top, left_width - 1, nba_top + nba_height - 1),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Lower Sports Dashboard region failed independently: %s",
+                    _safe_exception_text(exc),
+                )
+                lower_provenance = SourceProvenance.LOCAL_FALLBACK
+            return self._apply_sports_region_cache(
                 image,
-                draw,
-                settings,
-                device_config,
-                timezone_info,
-                now,
-                (0, nba_top, left_width - 1, nba_top + nba_height - 1),
+                "lower",
+                (0, nba_top, left_width, dimensions[1]),
+                lower_provenance,
             )
-        except Exception as exc:
-            logger.warning(
-                "Lower Sports Dashboard region failed independently: %s",
-                _safe_exception_text(exc),
-            )
-            lower_provenance = SourceProvenance.LOCAL_FALLBACK
-        lower_provenance = self._apply_sports_region_cache(
-            image,
-            "lower",
-            (0, nba_top, left_width, dimensions[1]),
-            lower_provenance,
-        )
 
-        try:
-            esports_provenance = self._draw_right_esports_region(
+        if region == "esports":
+            try:
+                esports_provenance = self._draw_right_esports_region(
+                    image,
+                    settings,
+                    device_config,
+                    timezone_info,
+                    now,
+                    left_width,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Right Sports Dashboard region failed independently: %s",
+                    _safe_exception_text(exc),
+                )
+                esports_provenance = SourceProvenance.LOCAL_FALLBACK
+            return self._apply_sports_region_cache(
                 image,
-                settings,
-                device_config,
-                timezone_info,
-                now,
-                left_width,
+                "esports",
+                (left_width, 0, dimensions[0], dimensions[1]),
+                esports_provenance,
             )
-        except Exception as exc:
-            logger.warning(
-                "Right Sports Dashboard region failed independently: %s",
-                _safe_exception_text(exc),
-            )
-            esports_provenance = SourceProvenance.LOCAL_FALLBACK
-        esports_provenance = self._apply_sports_region_cache(
-            image,
-            "esports",
-            (left_width, 0, dimensions[0], dimensions[1]),
-            esports_provenance,
-        )
 
-        primary_live_override = (
-            self._worldcup_release_one_shot_window_active(now)
-            and football_provenance is SourceProvenance.LIVE
-        )
-        return self._attest_sports_dashboard_image(
-            image,
-            football_provenance,
-            lower_provenance,
-            esports_provenance,
-            force_refresh=self._force_refresh_requested(settings),
-            primary_live_override=primary_live_override,
-        )
+        raise ValueError("unknown Sports Dashboard region")
 
     def _draw_lower_sports_region(
         self,
@@ -2931,7 +3020,19 @@ class SportsDashboardCommonMixin:
         }
         signature = hashlib.sha256(
             json.dumps(
-                {"version": 1, "size": [width, height], "palette": palette},
+                {
+                    "version": 2,
+                    "size": [width, height],
+                    "palette": palette,
+                    "isolated_identity": str(
+                        getattr(
+                            self,
+                            "_isolated_region_cache_identity",
+                            "",
+                        )
+                        or ""
+                    ),
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")

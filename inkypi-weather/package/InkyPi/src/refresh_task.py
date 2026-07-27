@@ -98,6 +98,10 @@ from runtime.refresh_policy import (
 )
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.render_arbiter import RenderArbiter
+from runtime.sports_isolated_renderer import (
+    SportsIsolatedResourcePressure,
+    render_sports_dashboard_isolated,
+)
 from runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
@@ -126,6 +130,10 @@ _HEAVYWEIGHT_RENDERER_PLUGIN_IDS = frozenset({"sports_dashboard"})
 # Keep unbounded full-dashboard renders off 416 MiB-class devices by default.
 DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB = 384
 DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT = 30
+DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB = 115
+DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT = 70
+DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
+DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT = 75
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -420,6 +428,7 @@ class RefreshTask:
         browser_renderer=None,
         display_transaction=None,
         disk_usage=None,
+        sports_isolated_renderer=None,
     ):
         self.device_config = device_config
         self.display_manager = display_manager
@@ -549,6 +558,11 @@ class RefreshTask:
         self._last_memory_pressure_restart_monotonic = 0.0
         self._libc = None
         self._restart_request = None
+        self._sports_isolated_renderer = (
+            render_sports_dashboard_isolated
+            if sports_isolated_renderer is None
+            else sports_isolated_renderer
+        )
 
     def _config_int(self, key, default, minimum, maximum):
         try:
@@ -2761,13 +2775,22 @@ class RefreshTask:
                 command.plugin_id in _HEAVYWEIGHT_RENDERER_PLUGIN_IDS
                 and command.intent in _RENDERER_INTENTS
             ):
+                isolated_sports_refresh = self._is_isolated_sports_refresh_command(
+                    command
+                )
                 resource_sample = self._resource_sample()
                 resource_tier = classify_resource_tier(
                     resource_sample,
                     self._resource_thresholds(),
                 )
                 self._resource_tier = resource_tier
-                if resource_tier is not ResourceTier.HEALTHY:
+                if (
+                    resource_tier is ResourceTier.HARD
+                    or (
+                        not isolated_sports_refresh
+                        and resource_tier is not ResourceTier.HEALTHY
+                    )
+                ):
                     next_retry_at = self._record_resource_pressure_deferral(command)
                     logger.warning(
                         "Deferring heavyweight renderer due to resource pressure. | "
@@ -2791,39 +2814,77 @@ class RefreshTask:
                     )
                     self._signal_completion(finished.id)
                     return
-                (
-                    margin_available,
-                    required_available_mb,
-                    max_swap_percent,
-                ) = self._heavyweight_renderer_resource_margin(resource_sample)
-                if not margin_available:
-                    next_retry_at = self._record_resource_pressure_deferral(command)
-                    logger.warning(
-                        "Deferring heavyweight renderer because "
-                        "the dedicated resource margin is unavailable. | "
-                        "plugin_id: %s | intent: %s | available_mb: %s | "
-                        "swap_percent: %s | "
-                        "required_available_mb: %s | max_swap_percent: %s | "
-                        "next_retry_at: %s",
-                        command.plugin_id,
-                        command.intent.value,
-                        resource_sample.available_mb,
-                        resource_sample.swap_percent,
+                if isolated_sports_refresh:
+                    (
+                        margin_available,
                         required_available_mb,
                         max_swap_percent,
-                        next_retry_at,
-                    )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.CANCELED,
-                        error_code="heavyweight_renderer_margin",
-                        error=(
-                            "heavyweight renderer deferred until "
-                            "its dedicated resource margin is available"
-                        ),
-                    )
-                    self._signal_completion(finished.id)
-                    return
+                    ) = self._sports_isolated_start_margin(resource_sample)
+                    if not margin_available:
+                        next_retry_at = self._record_resource_pressure_deferral(
+                            command
+                        )
+                        logger.warning(
+                            "Deferring isolated Sports Dashboard data refresh "
+                            "until its child-process start margin is available. | "
+                            "available_mb: %s | swap_percent: %s | "
+                            "required_available_mb: %s | max_swap_percent: %s | "
+                            "next_retry_at: %s",
+                            resource_sample.available_mb,
+                            resource_sample.swap_percent,
+                            required_available_mb,
+                            max_swap_percent,
+                            next_retry_at,
+                        )
+                        finished = self.refresh_queue.finish(
+                            entry.job.id,
+                            JobStatus.CANCELED,
+                            error_code=(
+                                "resource_pressure_soft"
+                                if resource_tier is ResourceTier.SOFT
+                                else "sports_isolated_start_margin"
+                            ),
+                            error=(
+                                "isolated Sports Dashboard data refresh deferred "
+                                "until its start margin is available"
+                            ),
+                        )
+                        self._signal_completion(finished.id)
+                        return
+                else:
+                    (
+                        margin_available,
+                        required_available_mb,
+                        max_swap_percent,
+                    ) = self._heavyweight_renderer_resource_margin(resource_sample)
+                    if not margin_available:
+                        next_retry_at = self._record_resource_pressure_deferral(command)
+                        logger.warning(
+                            "Deferring heavyweight renderer because "
+                            "the dedicated resource margin is unavailable. | "
+                            "plugin_id: %s | intent: %s | available_mb: %s | "
+                            "swap_percent: %s | "
+                            "required_available_mb: %s | max_swap_percent: %s | "
+                            "next_retry_at: %s",
+                            command.plugin_id,
+                            command.intent.value,
+                            resource_sample.available_mb,
+                            resource_sample.swap_percent,
+                            required_available_mb,
+                            max_swap_percent,
+                            next_retry_at,
+                        )
+                        finished = self.refresh_queue.finish(
+                            entry.job.id,
+                            JobStatus.CANCELED,
+                            error_code="heavyweight_renderer_margin",
+                            error=(
+                                "heavyweight renderer deferred until "
+                                "its dedicated resource margin is available"
+                            ),
+                        )
+                        self._signal_completion(finished.id)
+                        return
             instance_uuid_hash = (
                 hashlib.sha256(command.instance_uuid.encode("utf-8")).hexdigest()[:16]
                 if command.instance_uuid
@@ -2846,6 +2907,19 @@ class RefreshTask:
                 )
                 with bind_long_task_runtime(context, identity):
                     self._execute_command(command)
+            except SportsIsolatedResourcePressure as error:
+                next_retry_at = self._record_resource_pressure_deferral(command)
+                logger.warning(
+                    "Isolated Sports Dashboard worker stopped before resource "
+                    "pressure could threaten the service. | next_retry_at: %s",
+                    next_retry_at,
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="sports_isolated_resource_pressure",
+                    error=str(error),
+                )
             except TaskDeadlineExceeded as error:
                 finished = self.refresh_queue.finish(
                     entry.job.id,
@@ -3076,6 +3150,80 @@ class RefreshTask:
             and swap_percent < max_swap_percent
         )
         return margin_available, min_available_mb, max_swap_percent
+
+    @staticmethod
+    def _is_isolated_sports_refresh_command(command):
+        return (
+            command.plugin_id == "sports_dashboard"
+            and command.kind is CommandKind.CACHE_REFRESH
+            and command.intent
+            in {
+                RefreshIntent.DATA_REFRESH,
+                RefreshIntent.LIVE_REFRESH,
+            }
+            and bool(command.payload.get("playlist_name"))
+        )
+
+    def _sports_isolated_start_margin(self, sample):
+        min_available_mb = self._config_float(
+            "sports_isolated_start_min_available_mb",
+            DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB
+        max_swap_percent = self._config_float(
+            "sports_isolated_start_max_swap_percent",
+            DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT,
+        )
+        if (
+            not math.isfinite(max_swap_percent)
+            or max_swap_percent < 0
+            or max_swap_percent > 100
+        ):
+            max_swap_percent = DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb, max_swap_percent
+        return (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb
+            and swap_percent < max_swap_percent,
+            min_available_mb,
+            max_swap_percent,
+        )
+
+    def _sports_isolated_abort_thresholds(self):
+        min_available_mb = self._config_float(
+            "sports_isolated_abort_min_available_mb",
+            DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB
+        max_swap_percent = self._config_float(
+            "sports_isolated_abort_max_swap_percent",
+            DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT,
+        )
+        if (
+            not math.isfinite(max_swap_percent)
+            or max_swap_percent < 0
+            or max_swap_percent > 100
+        ):
+            max_swap_percent = DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT
+        return min_available_mb, max_swap_percent
+
+    def _sports_isolated_identity_is_current(self, command, identity):
+        expected = InstanceIdentity(
+            command.instance_uuid,
+            command.structural_generation,
+            command.settings_revision,
+        )
+        return (
+            identity == expected
+            and self._resolve_playlist_command(command) is not None
+        )
 
     @staticmethod
     def _lane_for_intent(intent):
@@ -3729,8 +3877,13 @@ class RefreshTask:
         plugin_config = self.device_config.get_plugin(command.plugin_id)
         if plugin_config is None:
             raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
-        plugin = get_plugin_instance(plugin_config)
         settings = thaw_payload(instance.settings)
+        isolated_sports_refresh = self._is_isolated_sports_refresh_command(command)
+        plugin = (
+            None
+            if isolated_sports_refresh
+            else get_plugin_instance(plugin_config)
+        )
         if plugin_supports_presentation_refresh(plugin_config):
             settings = bind_presentation_instance_identity(
                 settings,
@@ -3764,6 +3917,7 @@ class RefreshTask:
             context.raise_if_cancelled()
             if (
                 command.intent is RefreshIntent.DATA_REFRESH
+                and plugin is not None
                 and plugin_supports_presentation_refresh(plugin_config)
                 and PresentationMode(plugin.presentation_mode(settings)) is PresentationMode.PREPARED_BANK
             ):
@@ -3810,7 +3964,46 @@ class RefreshTask:
                         )
                     return None
 
-                if theme_render_only and theme_cache_ready:
+                if isolated_sports_refresh:
+                    (
+                        _start_margin_available,
+                        start_min_available_mb,
+                        start_max_swap_percent,
+                    ) = self._sports_isolated_start_margin(
+                        self._resource_sample()
+                    )
+                    abort_min_available_mb, abort_max_swap_percent = (
+                        self._sports_isolated_abort_thresholds()
+                    )
+                    image = self._sports_isolated_renderer(
+                        settings=_settings_with_force_refresh(
+                            settings,
+                            command.force,
+                            display_render=False,
+                        ),
+                        device_config=self.device_config,
+                        resolved_theme_context=resolved_theme_context,
+                        context=context,
+                        instance_identity=InstanceIdentity(
+                            command.instance_uuid,
+                            command.structural_generation,
+                            command.settings_revision,
+                        ),
+                        identity_validator=(
+                            lambda identity: self._sports_isolated_identity_is_current(
+                                command,
+                                identity,
+                            )
+                        ),
+                        resource_sampler=self._resource_sample,
+                        start_min_available_mb=start_min_available_mb,
+                        start_max_swap_percent=start_max_swap_percent,
+                        abort_min_available_mb=abort_min_available_mb,
+                        abort_max_swap_percent=abort_max_swap_percent,
+                        now=current_dt,
+                    )
+                    generated = True
+                elif theme_render_only and theme_cache_ready:
                     image = _load_image_copy(cache_path)
                 elif theme_render_only:
                     image = self._render_theme_only_image(
@@ -3883,7 +4076,9 @@ class RefreshTask:
                         theme_render_only = True
                         generated = True
 
-                if not theme_render_only and display_cached_only and not should_generate:
+                if isolated_sports_refresh:
+                    pass
+                elif not theme_render_only and display_cached_only and not should_generate:
                     try:
                         image = _load_image_copy(cache_path)
                     except Exception:

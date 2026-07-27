@@ -1,8 +1,41 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from html.parser import HTMLParser
+import ctypes
+import gc
 
 SportsDashboard = None
+
+
+def _release_ewc_transient_memory():
+    gc.collect()
+    if os.name != "posix":
+        return
+    try:
+        malloc_trim = getattr(ctypes.CDLL("libc.so.6"), "malloc_trim", None)
+        if malloc_trim is not None:
+            malloc_trim(0)
+    except OSError:
+        pass
+
+
+def _fetch_limited_ewc_html(url, headers):
+    session = get_http_session()
+    response = session.get(
+        url,
+        headers=headers,
+        timeout=25,
+        stream=True,
+    )
+    encoding = str(getattr(response, "encoding", "") or "utf-8").strip()
+    payload = read_limited_response_bytes(
+        response,
+        max_bytes=EWC_HTML_RESPONSE_MAX_BYTES,
+    )
+    try:
+        return payload.decode(encoding, errors="replace")
+    finally:
+        del payload
 
 
 class _HltvMajorEventParser(HTMLParser):
@@ -491,18 +524,23 @@ class EsportsMixin:
 
     def _fetch_ewc_competitions_payload(self, settings, timezone_info, cache_key, now_utc):
         url = str(settings.get("ewcCompetitionsUrl") or DEFAULT_EWC_COMPETITIONS_URL).strip() or DEFAULT_EWC_COMPETITIONS_URL
-        session = get_http_session()
-        response = session.get(
+        html_text = _fetch_limited_ewc_html(
             url,
-            headers={
+            {
                 "Accept": "text/html,application/xhtml+xml",
                 "Accept-Language": "en-US,en;q=0.9",
                 "User-Agent": "EpaperSystem/SportsDashboard EWC",
             },
-            timeout=25,
         )
-        response.raise_for_status()
-        events = self._parse_ewc_competitions_html(response.text, timezone_info, url)
+        try:
+            events = self._parse_ewc_competitions_html(
+                html_text,
+                timezone_info,
+                url,
+            )
+        finally:
+            del html_text
+            _release_ewc_transient_memory()
         if not events:
             raise ValueError("EWC competitions page did not contain parseable event cards")
         return {
@@ -648,18 +686,26 @@ class EsportsMixin:
         slug = str((event or {}).get("slug") or "").strip().lower()
         game = str((event or {}).get("game") or self._ewc_game_name(slug)).strip() or "EWC"
         year = str((event or {}).get("year") or self._ewc_year_from_url(source_url) or "").strip()
-        session = get_http_session()
-        response = session.get(
+        html_text = _fetch_limited_ewc_html(
             source_url,
-            headers={
+            {
                 "Accept": "text/html,application/xhtml+xml",
                 "Accept-Language": "en-US,en;q=0.9",
                 "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
             },
-            timeout=25,
         )
-        response.raise_for_status()
-        matches = self._parse_ewc_detail_schedule_html(response.text, timezone_info, slug, game, source_url, year=year)
+        try:
+            matches = self._parse_ewc_detail_schedule_html(
+                html_text,
+                timezone_info,
+                slug,
+                game,
+                source_url,
+                year=year,
+            )
+        finally:
+            del html_text
+            _release_ewc_transient_memory()
         page_key = f"{year or self._ewc_year_from_url(source_url) or 'unknown'}:{slug or source_url}"
         return {
             "page_key": page_key,
@@ -716,8 +762,7 @@ class EsportsMixin:
         active.sort(key=lambda item: (item.get("end") or now, item.get("game") or ""))
         future.sort(key=lambda item: (item.get("start") or now, item.get("game") or ""))
         recent.sort(key=lambda item: (item.get("end") or item.get("start") or now), reverse=True)
-        remaining = max(0, DEFAULT_EWC_DETAIL_MAX_PAGES - len(active))
-        return active + (future + recent)[:remaining]
+        return (active + future + recent)[:DEFAULT_EWC_DETAIL_MAX_PAGES]
 
     @staticmethod
     def _ewc_detail_page_key(event):
@@ -4427,10 +4472,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
 
 
 

@@ -49,6 +49,7 @@ def test_main_unit_is_unprivileged_and_hardened():
     assert unit["Unit"]["Requires"] == "inkypi-privileged.socket"
     assert unit["Service"]["AmbientCapabilities"] == "CAP_NET_BIND_SERVICE"
     assert unit["Service"]["CapabilityBoundingSet"] == "CAP_NET_BIND_SERVICE"
+    assert unit["Service"]["OOMPolicy"] == "continue"
 
 
 def test_main_unit_restarts_after_clean_external_termination():

@@ -61,6 +61,7 @@ from runtime.runtime_state import (
     RefreshLane,
 )
 from runtime.long_task_executor import (
+    InstanceIdentity,
     current_instance_identity,
     current_task_context,
 )
@@ -518,6 +519,14 @@ class FakePlugin(DelegatingThemeWrapper):
     def generate_image(self, settings, device_config):
         self.calls.append(settings["id"])
         return Image.new("RGB", (1, 1), "white")
+
+
+def _fake_sports_isolated_renderer(calls):
+    def render(**kwargs):
+        calls.append(kwargs["settings"]["id"])
+        return Image.new("RGB", (1, 1), "white")
+
+    return render
 
 
 class CapturePlugin(DelegatingThemeWrapper):
@@ -8684,13 +8693,14 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
             latest_refresh_time=None,
         )
     )
+    calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
     )
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    calls = []
     resource_sample = {
         "value": ResourceSample(available_mb=512, swap_percent=0),
     }
@@ -8752,7 +8762,9 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
     assert calls == ["sports_dashboard"]
 
 
-def test_heavyweight_margin_defers_sports_despite_generic_healthy_tier(monkeypatch):
+def test_background_sports_isolated_path_bypasses_legacy_full_render_margin(
+    monkeypatch,
+):
     tmp_path = make_test_dir("sports-background-heavyweight-margin")
     current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     clock = RuntimeClock(wall=current_dt.timestamp())
@@ -8763,13 +8775,14 @@ def test_heavyweight_margin_defers_sports_despite_generic_healthy_tier(monkeypat
             latest_refresh_time=None,
         )
     )
+    calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
     )
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    calls = []
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -8785,14 +8798,110 @@ def test_heavyweight_margin_defers_sports_despite_generic_healthy_tier(monkeypat
     completed = _queue_and_process(task, command)
 
     assert task._resource_tier.value == "healthy"
-    assert completed.job.status is JobStatus.CANCELED
-    assert completed.job.error_code == "heavyweight_renderer_margin"
-    assert calls == []
-    state = task.runtime_state.snapshot().instances[command.instance_uuid].data
-    assert state.last_attempt_at == current_dt.isoformat()
-    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
-    assert state.last_failure_at is None
-    assert state.last_error is None
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["sports_dashboard"]
+
+
+def test_background_sports_data_uses_isolated_renderer_below_legacy_margin(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-background-isolated-renderer")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    isolated_calls = []
+
+    def isolated_renderer(**kwargs):
+        isolated_calls.append(kwargs)
+        return Image.new("RGB", (1, 1), "white")
+
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        sports_isolated_renderer=isolated_renderer,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=300, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([]),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert len(isolated_calls) == 1
+    assert isolated_calls[0]["settings"]["id"] == "sports_dashboard"
+    assert isolated_calls[0]["instance_identity"] == InstanceIdentity(
+        command.instance_uuid,
+        command.structural_generation,
+        command.settings_revision,
+    )
+    assert isolated_calls[0]["identity_validator"](
+        isolated_calls[0]["instance_identity"]
+    )
+
+
+def test_manual_sports_data_refresh_uses_the_same_isolated_renderer(monkeypatch):
+    tmp_path = make_test_dir("sports-manual-isolated-renderer")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    isolated_calls = []
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        sports_isolated_renderer=lambda **kwargs: (
+            isolated_calls.append(kwargs)
+            or Image.new("RGB", (1, 1), "white")
+        ),
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=300, swap_percent=0),
+    )
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+        require_active=False,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert len(isolated_calls) == 1
+    assert isolated_calls[0]["settings"]["forceRefresh"] is True
+    assert isolated_calls[0]["settings"]["force_refresh"] is True
 
 
 def test_heavyweight_margin_allows_sports_with_ample_headroom(monkeypatch):
@@ -8806,13 +8915,14 @@ def test_heavyweight_margin_allows_sports_with_ample_headroom(monkeypatch):
             latest_refresh_time=None,
         )
     )
+    calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
     )
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    calls = []
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -8831,7 +8941,7 @@ def test_heavyweight_margin_allows_sports_with_ample_headroom(monkeypatch):
     assert calls == ["sports_dashboard"]
 
 
-def test_heavyweight_renderer_margin_is_configurable(monkeypatch):
+def test_sports_isolated_start_margin_is_configurable(monkeypatch):
     tmp_path = make_test_dir("sports-background-heavyweight-config")
     current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     clock = RuntimeClock(wall=current_dt.timestamp())
@@ -8842,20 +8952,21 @@ def test_heavyweight_renderer_margin_is_configurable(monkeypatch):
             latest_refresh_time=None,
         )
     )
+    calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
     )
     device_config.config.update(
         {
             "theme_mode": "day",
             "active_theme": "day",
-            "heavyweight_renderer_min_available_mb": 180,
-            "heavyweight_renderer_max_swap_percent": 50,
+            "sports_isolated_start_min_available_mb": 180,
+            "sports_isolated_start_max_swap_percent": 50,
         }
     )
-    calls = []
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -8940,7 +9051,7 @@ def test_heavyweight_renderer_margin_blocks_manual_sports_render(monkeypatch):
     assert instance.instance_uuid not in task.runtime_state.snapshot().instances
 
 
-def test_heavyweight_renderer_margin_blocks_live_sports_render_and_cools_lane(
+def test_live_sports_refresh_uses_isolated_renderer_below_legacy_margin(
     monkeypatch,
 ):
     tmp_path = make_test_dir("sports-live-heavyweight-margin")
@@ -8953,22 +9064,22 @@ def test_heavyweight_renderer_margin_blocks_live_sports_render_and_cools_lane(
             latest_refresh_time=current_dt.isoformat(),
         )
     )
+    isolated_calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=lambda **kwargs: (
+            isolated_calls.append(kwargs)
+            or Image.new("RGB", (1, 1), "white")
+        ),
     )
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     instance = playlist.plugins[0].snapshot()
-    calls = []
     monkeypatch.setattr(
         task,
         "_resource_sample",
         lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
-    )
-    monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
-        lambda _config: FakePlugin(calls),
     )
     command = task._playlist_command(
         playlist.name,
@@ -8983,14 +9094,12 @@ def test_heavyweight_renderer_margin_blocks_live_sports_render_and_cools_lane(
 
     completed = _queue_and_process(task, command)
 
-    assert completed.job.status is JobStatus.CANCELED
-    assert completed.job.error_code == "heavyweight_renderer_margin"
-    assert calls == []
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert len(isolated_calls) == 1
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
     assert state.live.last_attempt_at == current_dt.isoformat()
-    assert state.live.next_retry_at == (
-        current_dt + timedelta(seconds=60)
-    ).isoformat()
+    assert state.live.last_success_at is not None
+    assert state.live.next_retry_at is None
     assert state.data.last_attempt_at is None
     assert state.data.next_retry_at is None
 
@@ -9414,11 +9523,22 @@ def _sports_live_runtime(name, *, background_value="missing"):
             background_value
         )
     playlist = _runtime_playlist(plugin_data)
+    isolated_calls = []
+
+    def isolated_renderer(**kwargs):
+        isolated_calls.append(kwargs)
+        return attach_source_provenance(
+            Image.new("RGB", (1, 1), "white"),
+            SourceProvenance.LIVE,
+        )
+
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         cycle_seconds=300,
+        sports_isolated_renderer=isolated_renderer,
     )
+    task._test_isolated_sports_calls = isolated_calls
     manifest = PluginManifest(
         schema_version=2,
         id="sports_dashboard",
@@ -9665,7 +9785,8 @@ def test_queued_sports_live_success_does_not_write_the_current_screen_when_polic
 
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
     assert followup is None
-    assert calls == ["sports_dashboard"]
+    assert calls == []
+    assert len(task._test_isolated_sports_calls) == 1
     assert device_config.refresh_info.refresh_time == anchor
     assert len(task.display_manager.calls) == display_calls_before
 

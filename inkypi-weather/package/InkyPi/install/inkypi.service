@@ -20,6 +20,7 @@ StandardOutput=journal
 StandardError=journal
 CPUQuota=40%
 MemoryMax=200M
+OOMPolicy=continue
 NoNewPrivileges=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE

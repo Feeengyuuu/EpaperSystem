@@ -51,6 +51,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
     DEFAULT_EWC_COMPETITIONS_URL,
+    DEFAULT_EWC_DETAIL_MAX_PAGES,
     DEFAULT_MSI_LEAGUE_ID,
     DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS,
     DEFAULT_WORLD_CUP_STANDINGS_URL,
@@ -2152,7 +2153,7 @@ def test_ewc_live_and_pregame_detail_cache_uses_live_refresh_interval():
     assert SportsDashboard._ewc_detail_effective_cache_seconds([later], now, 600) == 600
 
 
-def test_ewc_detail_candidates_keep_all_active_events_ahead_of_recent_pages():
+def test_ewc_detail_candidates_hard_cap_active_events_before_recent_pages():
     now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
     events = []
     for index in range(6):
@@ -2178,8 +2179,51 @@ def test_ewc_detail_candidates_keep_all_active_events_ahead_of_recent_pages():
 
     candidates = SportsDashboard._ewc_detail_candidate_events(events, now, 7)
 
-    assert [item["slug"] for item in candidates[:6]] == [f"active-{index}" for index in range(6)]
-    assert len([item for item in candidates if item["slug"].startswith("active-")]) == 6
+    assert [item["slug"] for item in candidates] == [
+        f"active-{index}" for index in range(DEFAULT_EWC_DETAIL_MAX_PAGES)
+    ]
+    assert len(candidates) == DEFAULT_EWC_DETAIL_MAX_PAGES
+
+
+def test_ewc_competitions_fetch_streams_with_a_hard_response_cap(monkeypatch):
+    plugin = _plugin()
+    closed = []
+
+    class FakeResponse:
+        headers = {"Content-Length": str((4 * 1024 * 1024) + 1)}
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("oversized response must fail before body consumption")
+
+        def close(self):
+            closed.append(True)
+
+    class FakeSession:
+        def get(self, _url, *, headers, timeout, stream):
+            assert headers["Accept"].startswith("text/html")
+            assert timeout == 25
+            assert stream is True
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+
+    with pytest.raises(Exception, match="exceeds limit"):
+        plugin._fetch_ewc_competitions_payload(
+            {},
+            ZoneInfo("America/Los_Angeles"),
+            "cache-key",
+            datetime(2026, 7, 27, tzinfo=timezone.utc),
+        )
+
+    assert closed == [True]
 
 
 def test_ewc_detail_cache_refreshes_only_stale_pregame_page(monkeypatch):
@@ -14622,6 +14666,63 @@ def test_generate_image_builds_top_worldcup_panel_with_lpl_and_nba_below():
     assert image.getpixel((560, 230)) != (1, 2, 3)
 
 
+def test_isolated_region_render_invokes_only_requested_dashboard_region(
+    monkeypatch,
+):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 27, 9, 0, tzinfo=la)
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_render_selected_football_panel",
+        lambda *_args, **_kwargs: pytest.fail("football region was rendered"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_lower_sports_region",
+        lambda *_args, **_kwargs: pytest.fail("lower region was rendered"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_right_esports_region",
+        lambda *_args, **_kwargs: (
+            calls.append("esports") or SourceProvenance.LIVE
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_apply_sports_region_cache",
+        lambda _image, region, _box, provenance: (
+            calls.append(f"cache:{region}") or provenance
+        ),
+    )
+
+    image, provenance = plugin.render_isolated_region(
+        {
+            "_inkypi_theme": {
+                "mode": "day",
+                "palette": {
+                    "background": "#ffffff",
+                    "panel": "#f5f5f5",
+                    "ink": "#111111",
+                    "muted": "#555555",
+                    "rule": "#222222",
+                    "accent": "#008855",
+                },
+            }
+        },
+        FakeDeviceConfig(),
+        region="esports",
+        base_image=Image.new("RGB", (800, 480), "white"),
+        now=now,
+    )
+
+    assert calls == ["esports", "cache:esports"]
+    assert image.size == (800, 480)
+    assert provenance is SourceProvenance.LIVE
+
+
 def _render_dashboard_with_source_states(
     plugin,
     monkeypatch,
@@ -14842,6 +14943,22 @@ def test_sports_regions_restore_only_the_failed_region_from_its_last_success(mon
     assert effective is SourceProvenance.STALE_CACHE
     assert second.getpixel((20, 20)) == (18, 140, 70)
     assert second.getpixel((180, 20)) == (255, 255, 255)
+
+
+def test_isolated_sports_region_cache_is_scoped_to_instance_revision(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    plugin = _plugin()
+    box = (0, 0, 120, 80)
+
+    plugin._isolated_region_cache_identity = "revision-a"
+    first = plugin._sports_region_cache_path("football", box)
+    plugin._isolated_region_cache_identity = "revision-b"
+    second = plugin._sports_region_cache_path("football", box)
+
+    assert first != second
 
 
 def test_worldcup_release_one_shot_promotes_live_primary_with_stale_secondary(monkeypatch):
