@@ -2232,7 +2232,7 @@ def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
     parsed = []
 
     class FakeResponse:
-        headers = {"Content-Length": str((1024 * 1024) + 1)}
+        headers = {"Content-Length": str((512 * 1024) + 1)}
         encoding = "utf-8"
 
         def raise_for_status(self):
@@ -2275,7 +2275,7 @@ def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
             },
             ZoneInfo("America/Los_Angeles"),
             datetime(2026, 7, 27, tzinfo=timezone.utc),
-            max_html_bytes=1024 * 1024,
+            max_html_bytes=512 * 1024,
         )
 
     assert closed == [True]
@@ -2347,7 +2347,7 @@ def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
         7,
     )
 
-    assert fetched == [("league-of-legends", 1024 * 1024)]
+    assert fetched == [("league-of-legends", 512 * 1024)]
     assert [match["event_id"] for match in matches] == [
         "league-of-legends-match"
     ]
