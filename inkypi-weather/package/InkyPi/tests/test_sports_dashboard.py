@@ -52,6 +52,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     DEEP_NIGHT_COLORS,
     DEFAULT_EWC_COMPETITIONS_URL,
     DEFAULT_EWC_DETAIL_MAX_PAGES,
+    EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
     DEFAULT_MSI_LEAGUE_ID,
     DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS,
     DEFAULT_WORLD_CUP_STANDINGS_URL,
@@ -2226,27 +2227,38 @@ def test_ewc_competitions_fetch_streams_with_a_hard_response_cap(monkeypatch):
     assert closed == [True]
 
 
-def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
+def test_ewc_detail_low_memory_value_cap_rejects_before_parsing(monkeypatch):
     plugin = _plugin()
     closed = []
     parsed = []
+    chunk_size = 64 * 1024
+    body = (
+        b'0:{"initialStructures":["'
+        + (b"x" * (EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES + chunk_size))
+        + b'"]}'
+    )
+    yielded_bytes = []
 
     class FakeResponse:
-        headers = {"Content-Length": str((512 * 1024) + 1)}
-        encoding = "utf-8"
+        headers = {"Content-Length": str(len(body))}
 
         def raise_for_status(self):
             return None
 
         def iter_content(self, chunk_size):
-            raise AssertionError("oversized response must fail before body consumption")
+            assert chunk_size == 64 * 1024
+            for offset in range(0, len(body), chunk_size):
+                chunk = body[offset:offset + chunk_size]
+                yielded_bytes.append(len(chunk))
+                yield chunk
 
         def close(self):
             closed.append(True)
 
     class FakeSession:
         def get(self, _url, *, headers, timeout, stream):
-            assert headers["Accept"].startswith("text/html")
+            assert headers["Accept"] == "text/x-component"
+            assert headers["RSC"] == "1"
             assert timeout == 25
             assert stream is True
             return FakeResponse()
@@ -2258,11 +2270,11 @@ def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
     )
     monkeypatch.setattr(
         plugin,
-        "_parse_ewc_detail_schedule_html",
+        "_parse_ewc_structures_matches",
         lambda *_args, **_kwargs: parsed.append(True),
     )
 
-    with pytest.raises(Exception, match="exceeds limit"):
+    with pytest.raises(Exception, match="value exceeds limit"):
         plugin._fetch_ewc_detail_page(
             {
                 "slug": "league-of-legends",
@@ -2275,12 +2287,16 @@ def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
             },
             ZoneInfo("America/Los_Angeles"),
             datetime(2026, 7, 27, tzinfo=timezone.utc),
-            max_html_bytes=512 * 1024,
+            use_rsc_initial_structures=True,
+            max_value_bytes=EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
         )
 
+    assert sum(yielded_bytes) <= (
+        EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES + (2 * chunk_size)
+    )
+    assert sum(yielded_bytes) < len(body)
     assert closed == [True]
     assert parsed == []
-
 
 def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
     plugin = _plugin()
@@ -2312,7 +2328,13 @@ def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
     monkeypatch.setattr(plugin, "_write_json_file", lambda *_args: None)
 
     def fetch(event, _timezone_info, now_utc, **kwargs):
-        fetched.append((event["slug"], kwargs.get("max_html_bytes")))
+        fetched.append(
+            (
+                event["slug"],
+                kwargs.get("use_rsc_initial_structures"),
+                kwargs.get("max_value_bytes"),
+            )
+        )
         return {
             "page_key": f"2026:{event['slug']}",
             "slug": event["slug"],
@@ -2347,7 +2369,13 @@ def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
         7,
     )
 
-    assert fetched == [("league-of-legends", 512 * 1024)]
+    assert fetched == [
+        (
+            "league-of-legends",
+            True,
+            EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
+        )
+    ]
     assert [match["event_id"] for match in matches] == [
         "league-of-legends-match"
     ]

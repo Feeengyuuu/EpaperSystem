@@ -38,6 +38,131 @@ def _fetch_limited_ewc_html(url, headers, *, max_bytes=EWC_HTML_RESPONSE_MAX_BYT
         del payload
 
 
+def _fetch_streamed_ewc_initial_structures(
+    url,
+    *,
+    scan_max_bytes=EWC_DETAIL_LOW_MEMORY_SCAN_MAX_BYTES,
+    max_value_bytes=EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
+):
+    if type(scan_max_bytes) is not int or scan_max_bytes <= 0:
+        raise ValueError("EWC detail scan limit must be a positive integer")
+    if type(max_value_bytes) is not int or max_value_bytes <= 0:
+        raise ValueError("EWC detail value limit must be a positive integer")
+    if max_value_bytes > scan_max_bytes:
+        raise ValueError("EWC detail value limit cannot exceed scan limit")
+
+    response = get_http_session().get(
+        url,
+        headers={
+            "Accept": "text/x-component",
+            "Accept-Language": "en-US,en;q=0.9",
+            "RSC": "1",
+            "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
+        },
+        timeout=25,
+        stream=True,
+    )
+    close = getattr(response, "close", None)
+    marker = b'"initialStructures":'
+    marker_tail = b""
+    marker_found = False
+    value_started = False
+    value = bytearray()
+    array_depth = 0
+    in_string = False
+    escaped = False
+    scanned_bytes = 0
+
+    def consume_value(data):
+        nonlocal array_depth, escaped, in_string, value_started
+        for byte in data:
+            if not value_started:
+                if byte in b" \t\r\n":
+                    continue
+                if byte != ord("["):
+                    raise ValueError("EWC RSC initialStructures is not an array")
+                value_started = True
+
+            value.append(byte)
+            if len(value) > max_value_bytes:
+                raise ValueError(
+                    "EWC RSC initialStructures value exceeds limit of "
+                    f"{max_value_bytes}"
+                )
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif byte == ord("\\"):
+                    escaped = True
+                elif byte == ord('"'):
+                    in_string = False
+                continue
+            if byte == ord('"'):
+                in_string = True
+            elif byte == ord("["):
+                array_depth += 1
+            elif byte == ord("]"):
+                array_depth -= 1
+                if array_depth == 0:
+                    return True
+        return False
+
+    try:
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+        iter_content = getattr(response, "iter_content", None)
+        if not callable(iter_content):
+            raise TypeError("EWC RSC response must provide iter_content()")
+
+        for chunk in iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise TypeError("EWC RSC response chunks must be bytes")
+
+            chunk_view = memoryview(chunk)
+            remaining = scan_max_bytes - scanned_bytes
+            if remaining <= 0:
+                raise ValueError(
+                    f"EWC RSC scan exceeds limit of {scan_max_bytes}"
+                )
+            segment = bytes(chunk_view[:remaining])
+            scanned_bytes += len(segment)
+
+            if marker_found:
+                complete = consume_value(segment)
+            else:
+                combined = marker_tail + segment
+                marker_index = combined.find(marker)
+                if marker_index < 0:
+                    marker_tail = combined[-(len(marker) - 1):]
+                    complete = False
+                else:
+                    marker_found = True
+                    marker_tail = b""
+                    complete = consume_value(
+                        combined[marker_index + len(marker):]
+                    )
+
+            if complete:
+                structures = json.loads(value)
+                if not isinstance(structures, list):
+                    raise ValueError("EWC RSC initialStructures is not a list")
+                return structures
+            if len(chunk_view) > remaining:
+                raise ValueError(
+                    f"EWC RSC scan exceeds limit of {scan_max_bytes}"
+                )
+
+        if not marker_found:
+            raise ValueError("EWC RSC initialStructures marker was not found")
+        raise ValueError("EWC RSC initialStructures value was incomplete")
+    finally:
+        if callable(close):
+            close()
+
+
 class _HltvMajorEventParser(HTMLParser):
     """Extract Major event metadata from HLTV's public event listings."""
 
@@ -646,7 +771,8 @@ class EsportsMixin:
                         event,
                         timezone_info,
                         now_utc,
-                        max_html_bytes=EWC_DETAIL_LOW_MEMORY_RESPONSE_MAX_BYTES,
+                        use_rsc_initial_structures=True,
+                        max_value_bytes=EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
                     )
                 else:
                     page = self._fetch_ewc_detail_page(
@@ -729,35 +855,69 @@ class EsportsMixin:
         now_utc,
         *,
         max_html_bytes=EWC_HTML_RESPONSE_MAX_BYTES,
+        use_rsc_initial_structures=False,
+        max_value_bytes=EWC_DETAIL_LOW_MEMORY_VALUE_MAX_BYTES,
     ):
         source_url = str((event or {}).get("source_url") or "").strip()
         if not source_url:
             raise ValueError("EWC event has no detail source_url")
         slug = str((event or {}).get("slug") or "").strip().lower()
-        game = str((event or {}).get("game") or self._ewc_game_name(slug)).strip() or "EWC"
-        year = str((event or {}).get("year") or self._ewc_year_from_url(source_url) or "").strip()
-        html_text = _fetch_limited_ewc_html(
-            source_url,
-            {
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
-            },
-            max_bytes=max_html_bytes,
-        )
-        try:
-            matches = self._parse_ewc_detail_schedule_html(
-                html_text,
-                timezone_info,
-                slug,
-                game,
+        game = str(
+            (event or {}).get("game") or self._ewc_game_name(slug)
+        ).strip() or "EWC"
+        year = str(
+            (event or {}).get("year")
+            or self._ewc_year_from_url(source_url)
+            or ""
+        ).strip()
+
+        if use_rsc_initial_structures:
+            structures = _fetch_streamed_ewc_initial_structures(
                 source_url,
-                year=year,
+                max_value_bytes=max_value_bytes,
             )
-        finally:
-            del html_text
-            _release_ewc_transient_memory()
-        page_key = f"{year or self._ewc_year_from_url(source_url) or 'unknown'}:{slug or source_url}"
+            try:
+                try:
+                    year_value = int(year)
+                except (TypeError, ValueError):
+                    year_value = now_utc.astimezone(timezone_info).year
+                matches = self._parse_ewc_structures_matches(
+                    structures,
+                    timezone_info,
+                    slug,
+                    game,
+                    source_url,
+                    year_value,
+                )
+            finally:
+                del structures
+                _release_ewc_transient_memory()
+        else:
+            html_text = _fetch_limited_ewc_html(
+                source_url,
+                {
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
+                },
+                max_bytes=max_html_bytes,
+            )
+            try:
+                matches = self._parse_ewc_detail_schedule_html(
+                    html_text,
+                    timezone_info,
+                    slug,
+                    game,
+                    source_url,
+                    year=year,
+                )
+            finally:
+                del html_text
+                _release_ewc_transient_memory()
+        page_key = (
+            f"{year or self._ewc_year_from_url(source_url) or 'unknown'}:"
+            f"{slug or source_url}"
+        )
         return {
             "page_key": page_key,
             "source_url": source_url,
@@ -898,15 +1058,24 @@ class EsportsMixin:
             if script_content_start <= 0 or script_end < 0:
                 search_from = marker + len("initialStructures")
                 continue
-            script = html[script_content_start:script_end].strip()
             push_marker = "self.__next_f.push("
-            push_start = script.find(push_marker)
+            push_start = html.find(
+                push_marker,
+                script_content_start,
+                script_end,
+            )
             if push_start < 0:
                 search_from = marker + len("initialStructures")
                 continue
             try:
-                pushed, _ = decoder.raw_decode(script[push_start + len(push_marker):])
+                pushed, pushed_end = decoder.raw_decode(
+                    html,
+                    push_start + len(push_marker),
+                )
             except (TypeError, ValueError, json.JSONDecodeError):
+                search_from = marker + len("initialStructures")
+                continue
+            if pushed_end > script_end:
                 search_from = marker + len("initialStructures")
                 continue
             if not isinstance(pushed, list) or len(pushed) < 2 or not isinstance(pushed[1], str):
@@ -1113,6 +1282,24 @@ class EsportsMixin:
     @staticmethod
     def _parse_ewc_next_flight_matches(html_text, timezone_info, slug, game, source_url, year_value):
         structures = SportsDashboard._extract_ewc_initial_structures(html_text)
+        return SportsDashboard._parse_ewc_structures_matches(
+            structures,
+            timezone_info,
+            slug,
+            game,
+            source_url,
+            year_value,
+        )
+
+    @staticmethod
+    def _parse_ewc_structures_matches(
+        structures,
+        timezone_info,
+        slug,
+        game,
+        source_url,
+        year_value,
+    ):
         if not structures:
             return []
         series_by_id = {
