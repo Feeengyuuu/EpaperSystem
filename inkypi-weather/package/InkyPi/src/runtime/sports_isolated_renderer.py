@@ -15,6 +15,7 @@ from plugins.base_plugin.render_provenance import (
 from runtime.long_task_executor import LongTaskExecutor
 from runtime.refresh_contracts import TaskCancelled, thaw_payload
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import normalize_palette_colors
 
 
 SPORTS_REGION_TASK = "sports_dashboard_region"
@@ -153,7 +154,9 @@ def render_sports_dashboard_isolated(
     # worker is terminated. Structured/cache fallbacks stay inside the worker.
     render_settings["worldCupScreenshotFallback"] = False
     if resolved_theme_context is not None:
-        render_settings["_inkypi_theme"] = thaw_payload(resolved_theme_context)
+        render_settings["_inkypi_theme"] = normalize_palette_colors(
+            thaw_payload(resolved_theme_context)
+        )
     device_values, env_file = _device_payload(device_config)
     cache_identity = hashlib.sha256(
         (

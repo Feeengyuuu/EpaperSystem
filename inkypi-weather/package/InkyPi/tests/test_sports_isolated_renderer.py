@@ -161,6 +161,44 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
     assert read_source_provenance(image) is SourceProvenance.LIVE
 
 
+def test_isolated_renderer_normalizes_thawed_night_palette_for_pillow(monkeypatch):
+    executor = _RecordingExecutor()
+    monkeypatch.setattr(sports_isolated_renderer, "_get_executor", lambda: executor)
+
+    sports_isolated_renderer.render_sports_dashboard_isolated(
+        settings={"id": "sports_dashboard"},
+        device_config=_DeviceConfig(),
+        resolved_theme_context=freeze_payload(
+            {
+                "mode": "night",
+                "palette": {
+                    "background": (0, 0, 0),
+                    "panel": (0, 0, 0),
+                    "ink": (255, 255, 255),
+                    "muted": (194, 196, 202),
+                    "rule": (46, 48, 56),
+                    "accent": (107, 204, 255),
+                },
+            }
+        ),
+        context=_context(),
+        instance_identity=InstanceIdentity("sports", 1, 2),
+        resource_sampler=lambda: SimpleNamespace(
+            available_mb=240,
+            swap_percent=10,
+        ),
+        start_min_available_mb=180,
+        start_max_swap_percent=60,
+        abort_min_available_mb=150,
+        abort_max_swap_percent=70,
+        now=SimpleNamespace(isoformat=lambda: "2026-07-27T01:00:00-07:00"),
+    )
+
+    for _task_name, payload, _kwargs in executor.submissions:
+        palette = payload["settings"]["_inkypi_theme"]["palette"]
+        assert all(type(color) is tuple for color in palette.values())
+
+
 class _BlockingHandle:
     def __init__(self):
         self.canceled = False
