@@ -2772,9 +2772,7 @@ class SportsDashboardCommonMixin:
         box,
     ):
         nba_events, nba_source_state = self._load_nba_events(settings, timezone_info)
-        nba_events = self._attach_nba_odds(nba_events, settings, device_config, timezone_info)
         nba_selected = self._select_nba_events(nba_events, now)
-        self._write_nba_live_state(nba_selected, now, nba_source_state)
         if self._should_show_offseason_hub_panel(settings, nba_selected):
             try:
                 hub_selected, hub_source_state = self._load_offseason_hub(settings, timezone_info, now)
@@ -2787,12 +2785,16 @@ class SportsDashboardCommonMixin:
                     hub_source_state,
                     now,
                 )
+                self._write_nba_live_state(nba_selected, now, nba_source_state)
                 return self._sports_source_state_provenance(hub_source_state)
             except Exception as exc:
                 logger.warning(
                     "Offseason hub panel failed, falling back to NBA panel: %s",
                     _safe_exception_text(exc),
                 )
+        nba_events = self._attach_nba_odds(nba_events, settings, device_config, timezone_info)
+        nba_selected = self._select_nba_events(nba_events, now)
+        self._write_nba_live_state(nba_selected, now, nba_source_state)
         self._draw_nba_compact_panel(
             image,
             draw,
@@ -3556,15 +3558,25 @@ class SportsDashboardCommonMixin:
             return TEAM_LOGO_CACHE[cache_key]
         try:
             disk_path = SportsDashboard._team_logo_disk_cache_path(cache_dir, logo_url)
-            data = SportsDashboard._read_team_logo_disk_cache(disk_path)
+            data = SportsDashboard._read_team_logo_disk_cache(disk_path, validate_image=False)
+            logo = None
+            if data is not None:
+                logo = SportsDashboard._team_logo_from_bytes(data, size)
+                if logo is None:
+                    SportsDashboard._remove_team_logo_disk_cache(disk_path)
+                    data = None
             if data is None:
                 data = SportsDashboard._fetch_remote_image_bytes(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)
-                if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
-                    logger.warning("Skipping oversized team logo %s", logo_url)
+                logo = SportsDashboard._team_logo_from_bytes(data, size)
+                if logo is None:
+                    logger.warning("Skipping invalid or oversized team logo %s", logo_url)
                     TEAM_LOGO_CACHE[cache_key] = None
                     return None
-                SportsDashboard._write_team_logo_disk_cache(disk_path, data)
-            logo = SportsDashboard._team_logo_from_bytes(data, size)
+                SportsDashboard._write_team_logo_disk_cache(
+                    disk_path,
+                    data,
+                    already_validated=True,
+                )
             TEAM_LOGO_CACHE[cache_key] = logo
             return logo
         except Exception as exc:
@@ -3606,10 +3618,13 @@ class SportsDashboardCommonMixin:
         return namespace.path(digest, suffix)
 
     @staticmethod
-    def _read_team_logo_disk_cache(path):
+    def _read_team_logo_disk_cache(path, *, validate_image=True):
         if path is None or not path.exists():
             return None
         try:
+            if path.stat().st_size > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+                SportsDashboard._remove_team_logo_disk_cache(path)
+                return None
             namespace = cache_namespace_for_directory(
                 path.parent,
                 TEAM_LOGO_DISK_CACHE_BUDGET,
@@ -3618,17 +3633,32 @@ class SportsDashboardCommonMixin:
         except (OSError, CacheError) as exc:
             logger.warning("Failed to read team logo disk cache %s: %s", path, exc)
             return None
-        if not SportsDashboard._team_logo_data_is_safe_to_decode(data):
-            try:
-                namespace.remove(path.stem, suffix=path.suffix)
-            except (OSError, CacheError) as exc:
-                logger.warning("Failed to remove oversized team logo disk cache %s: %s", path, exc)
+        if not data or len(data) > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+            SportsDashboard._remove_team_logo_disk_cache(path)
+            return None
+        if validate_image and not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+            SportsDashboard._remove_team_logo_disk_cache(path)
             return None
         return data
 
     @staticmethod
-    def _write_team_logo_disk_cache(path, data):
-        if path is None or not SportsDashboard._team_logo_data_is_safe_to_decode(data):
+    def _remove_team_logo_disk_cache(path):
+        if path is None:
+            return
+        try:
+            namespace = cache_namespace_for_directory(
+                path.parent,
+                TEAM_LOGO_DISK_CACHE_BUDGET,
+            )
+            namespace.remove(path.stem, suffix=path.suffix)
+        except (OSError, CacheError) as exc:
+            logger.warning("Failed to remove invalid team logo disk cache %s: %s", path, exc)
+
+    @staticmethod
+    def _write_team_logo_disk_cache(path, data, *, already_validated=False):
+        if path is None or not data or len(data) > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+            return
+        if not already_validated and not SportsDashboard._team_logo_data_is_safe_to_decode(data):
             return
         try:
             namespace = cache_namespace_for_directory(

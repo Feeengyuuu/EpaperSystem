@@ -11153,7 +11153,9 @@ def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
     monkeypatch.setattr(plugin, "_try_worldcup_scoreboard_panel", lambda *args, **kwargs: None)
     monkeypatch.setattr(plugin, "_prepare_worldcup_panel", lambda panel, dimensions, visible: (panel, (0, 0, dimensions[0], dimensions[1])))
     monkeypatch.setattr(plugin, "_load_nba_events", lambda *_args, **_kwargs: (SportsDashboard._fallback_nba_events(la), "NBA FALLBACK"))
-    monkeypatch.setattr(plugin, "_attach_nba_odds", lambda events, *_args, **_kwargs: events)
+    monkeypatch.setattr(
+        plugin, "_attach_nba_odds", lambda *_args, **_kwargs: pytest.fail("offseason panel fetched NBA odds")
+    )
     monkeypatch.setattr(plugin, "_write_nba_live_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_load_offseason_hub", lambda *_args, **_kwargs: (hub_selected, "HUB LIVE"))
     monkeypatch.setattr(plugin, "_write_offseason_hub_state", lambda *_args, **_kwargs: None)
@@ -14655,6 +14657,61 @@ def test_offseason_hub_force_refresh_bypasses_exhausted_internal_budget(tmp_path
     assert payload["payloads"] == {"pga": {"events": []}}
     assert source_state == "HUB LIVE"
 
+
+def test_offseason_hub_low_memory_force_refresh_reads_cache_only_on_failure(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    plugin._offseason_hub_cache_key = lambda *_args: "current-key"
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(la)
+    cache_reads = []
+
+    def read_cache(_path):
+        cache_reads.append("read")
+        return {
+            "cache_key": "current-key",
+            "fetched_at": now.isoformat(),
+            "payloads": {"pga": {"events": [{"id": "cached"}]}},
+        }
+
+    fresh = {
+        "version": "sports-dashboard-offseason-hub-v1",
+        "cache_key": "current-key",
+        "fetched_at": now.isoformat(),
+        "payloads": {"pga": {"events": [{"id": "fresh"}]}},
+    }
+
+    def fetch(*_args):
+        assert cache_reads == []
+        return fresh
+
+    monkeypatch.setattr(plugin, "_read_json_file", read_cache)
+    monkeypatch.setattr(plugin, "_write_json_file", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_fetch_offseason_hub_payload", fetch)
+
+    payload, source_state, _fetched_at = plugin._load_offseason_hub_payload(
+        {"forceRefresh": True, "_inkypi_sports_low_memory": True}, la, now
+    )
+
+    assert payload is fresh
+    assert source_state == "HUB LIVE"
+    assert cache_reads == []
+
+    def fail_fetch(*_args):
+        assert cache_reads == []
+        raise OSError("provider offline")
+
+    monkeypatch.setattr(plugin, "_fetch_offseason_hub_payload", fail_fetch)
+
+    payload, source_state, _fetched_at = plugin._load_offseason_hub_payload(
+        {"forceRefresh": True, "_inkypi_sports_low_memory": True}, la, now
+    )
+
+    assert payload["payloads"]["pga"]["events"] == [{"id": "cached"}]
+    assert source_state == "HUB STALE"
+    assert cache_reads == ["read"]
+
+
 def test_worldcup_scoreboard_default_daily_budget_supports_minute_refresh(tmp_path):
     plugin = _plugin()
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
@@ -16118,6 +16175,37 @@ def test_remote_team_logo_loader_uses_disk_cache(monkeypatch, tmp_path):
     assert second is not None
     assert calls == [(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)]
     assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_remote_team_logo_loader_decodes_each_candidate_once(monkeypatch, tmp_path):
+    logo_url = "https://a.espncdn.com/i/teamlogos/wnba/500/sea.png"
+    TEAM_LOGO_CACHE.clear()
+    source = Image.new("RGBA", (32, 32), (0, 92, 185, 255))
+    buffer = BytesIO()
+    source.save(buffer, format="PNG")
+    data = buffer.getvalue()
+    original_safe_open_image = sports_dashboard_module.safe_open_image
+    decode_calls = []
+
+    def track_safe_open_image(*args, **kwargs):
+        decode_calls.append(args[0])
+        return original_safe_open_image(*args, **kwargs)
+
+    monkeypatch.setattr(sports_dashboard_module, "safe_open_image", track_safe_open_image)
+    monkeypatch.setattr(SportsDashboard, "_fetch_remote_image_bytes", lambda *_args: data)
+
+    first = SportsDashboard._load_team_logo(logo_url, 24, cache_dir=tmp_path)
+
+    assert first is not None
+    assert len(decode_calls) == 1
+
+    TEAM_LOGO_CACHE.clear()
+    decode_calls.clear()
+    second = SportsDashboard._load_team_logo(logo_url, 24, cache_dir=tmp_path)
+
+    assert second is not None
+    assert len(decode_calls) == 1
+
 
 
 def test_sports_image_caches_are_lru_bounded_after_one_thousand_misses():

@@ -36,9 +36,12 @@ class OffseasonHubMixin:
     def _load_offseason_hub_payload(self, settings, timezone_info, now):
         now_utc = datetime.now(timezone.utc)
         cache_path = self._offseason_hub_cache_path()
-        cache = self._read_json_file(cache_path)
         cache_key = self._offseason_hub_cache_key(settings, timezone_info, now_utc)
         force_refresh = self._force_refresh_requested(settings)
+        low_memory_force_refresh = force_refresh and self._bool_setting(
+            settings, "_inkypi_sports_low_memory", False
+        )
+        cache = {} if low_memory_force_refresh else self._read_json_file(cache_path)
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("payloads"), dict)
         if (
             has_compatible_cache
@@ -55,6 +58,13 @@ class OffseasonHubMixin:
         try:
             payload = self._fetch_offseason_hub_payload(settings, timezone_info, cache_key, now_utc)
         except Exception:
+            if low_memory_force_refresh:
+                # Keep the old parsed payload out of memory while new provider
+                # responses are being assembled. Load it only for fallback.
+                cache = self._read_json_file(cache_path)
+                has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(
+                    cache.get("payloads"), dict
+                )
             if has_compatible_cache:
                 return cache, "HUB STALE", cache.get("fetched_at")
             raise
