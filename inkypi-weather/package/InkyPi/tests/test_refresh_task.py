@@ -8985,6 +8985,15 @@ def test_sports_isolated_start_margin_is_configurable(monkeypatch):
     assert calls == ["sports_dashboard"]
 
 
+def test_sports_isolated_abort_defaults_preserve_earlyoom_headroom():
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("sports-isolated-abort-defaults"),
+        playlists=[],
+    )
+
+    assert task._sports_isolated_abort_thresholds() == (48, 75)
+
+
 @pytest.mark.parametrize("unsafe_value", [True, 10**1000])
 def test_heavyweight_renderer_invalid_minimum_fails_safe(unsafe_value):
     task, device_config, _clock = _make_runtime_task(

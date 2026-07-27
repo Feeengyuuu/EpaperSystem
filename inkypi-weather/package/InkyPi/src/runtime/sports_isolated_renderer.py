@@ -115,6 +115,17 @@ def _wait_for_result(
             min_available_mb=abort_min_available_mb,
             max_swap_percent=abort_max_swap_percent,
         ):
+            available_mb = _finite_metric(getattr(sample, "available_mb", None))
+            swap_percent = _finite_metric(getattr(sample, "swap_percent", None))
+            logger.warning(
+                "Sports Dashboard isolated resource guard tripped. | "
+                "available_mb: %s | swap_percent: %s | minimum_available_mb: %s "
+                "| maximum_swap_percent: %s",
+                "unknown" if available_mb is None else f"{available_mb:.1f}",
+                "unknown" if swap_percent is None else f"{swap_percent:.1f}",
+                abort_min_available_mb,
+                abort_max_swap_percent,
+            )
             handle.cancel()
             try:
                 handle.result(timeout=2)

@@ -213,7 +213,7 @@ class _BlockingHandle:
         return True
 
 
-def test_parent_resource_guard_terminates_child_before_hard_pressure():
+def test_parent_resource_guard_terminates_child_before_hard_pressure(caplog):
     handle = _BlockingHandle()
 
     with pytest.raises(
@@ -232,6 +232,8 @@ def test_parent_resource_guard_terminates_child_before_hard_pressure():
         )
 
     assert handle.canceled is True
+    assert "available_mb: 149.9" in caplog.text
+    assert "minimum_available_mb: 150" in caplog.text
 
 
 @pytest.mark.parametrize(
