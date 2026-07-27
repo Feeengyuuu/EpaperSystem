@@ -19,7 +19,7 @@ def _release_ewc_transient_memory():
         pass
 
 
-def _fetch_limited_ewc_html(url, headers):
+def _fetch_limited_ewc_html(url, headers, *, max_bytes=EWC_HTML_RESPONSE_MAX_BYTES):
     session = get_http_session()
     response = session.get(
         url,
@@ -30,7 +30,7 @@ def _fetch_limited_ewc_html(url, headers):
     encoding = str(getattr(response, "encoding", "") or "utf-8").strip()
     payload = read_limited_response_bytes(
         response,
-        max_bytes=EWC_HTML_RESPONSE_MAX_BYTES,
+        max_bytes=max_bytes,
     )
     try:
         return payload.decode(encoding, errors="replace")
@@ -485,6 +485,19 @@ class EsportsMixin:
             90,
         )
         detail_matches, detail_source_state = self._load_ewc_detail_matches(settings, timezone_info, events, now, window_days)
+        competitions_provenance = self._sports_source_state_provenance(
+            source_state
+        )
+        if (
+            self._bool_setting(settings, "_inkypi_sports_low_memory", False)
+            and competitions_provenance
+            in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}
+        ):
+            detail_matches = [
+                match
+                for match in detail_matches
+                if match.get("_ewc_detail_source_state") != "EWC DETAIL STALE"
+            ]
         selected = self._select_ewc_events([*events, *detail_matches], now, window_days, rotation_seed=now)
         if not self._ewc_selected_has_displayable_event(selected):
             return None
@@ -612,11 +625,35 @@ class EsportsMixin:
             )
             return cached_matches, "EWC DETAIL CACHE" if cached_matches else ""
 
+        low_memory_next_index = None
+        low_memory = self._bool_setting(
+            settings, "_inkypi_sports_low_memory", False
+        )
+        if low_memory:
+            pending_count = len(events_to_fetch)
+            cursor = cache.get("low_memory_next_index") if has_compatible_cache else 0
+            if type(cursor) is not int or cursor < 0:
+                cursor = 0
+            cursor %= pending_count
+            events_to_fetch = events_to_fetch[cursor:cursor + EWC_DETAIL_LOW_MEMORY_MAX_FETCHES]
+            low_memory_next_index = (cursor + 1) % pending_count
         fetched_any = False
         stale_any = False
         for event in events_to_fetch:
             try:
-                page = self._fetch_ewc_detail_page(event, timezone_info, now_utc)
+                if low_memory:
+                    page = self._fetch_ewc_detail_page(
+                        event,
+                        timezone_info,
+                        now_utc,
+                        max_html_bytes=EWC_DETAIL_LOW_MEMORY_RESPONSE_MAX_BYTES,
+                    )
+                else:
+                    page = self._fetch_ewc_detail_page(
+                        event,
+                        timezone_info,
+                        now_utc,
+                    )
             except Exception as exc:
                 stale_any = True
                 logger.warning(
@@ -644,13 +681,19 @@ class EsportsMixin:
             page_source_states[page["page_key"]] = "EWC DETAIL LIVE"
             fetched_any = True
 
-        if fetched_any:
+        if fetched_any or low_memory_next_index is not None:
             payload = {
                 "version": EWC_DETAIL_STATE_VERSION,
                 "cache_key": cache_key,
-                "fetched_at": now_utc.isoformat(),
+                "fetched_at": (
+                    now_utc.isoformat()
+                    if fetched_any
+                    else cache.get("fetched_at") or now_utc.isoformat()
+                ),
                 "pages": pages,
             }
+            if low_memory_next_index is not None:
+                payload["low_memory_next_index"] = low_memory_next_index
             try:
                 self._write_json_file(cache_path, payload)
             except OSError as exc:
@@ -679,7 +722,14 @@ class EsportsMixin:
             return matches, "EWC DETAIL STALE"
         return matches, "EWC DETAIL LIVE" if fetched_any and matches else ("EWC DETAIL CACHE" if matches else "")
 
-    def _fetch_ewc_detail_page(self, event, timezone_info, now_utc):
+    def _fetch_ewc_detail_page(
+        self,
+        event,
+        timezone_info,
+        now_utc,
+        *,
+        max_html_bytes=EWC_HTML_RESPONSE_MAX_BYTES,
+    ):
         source_url = str((event or {}).get("source_url") or "").strip()
         if not source_url:
             raise ValueError("EWC event has no detail source_url")
@@ -693,6 +743,7 @@ class EsportsMixin:
                 "Accept-Language": "en-US,en;q=0.9",
                 "User-Agent": "EpaperSystem/SportsDashboard EWC Detail",
             },
+            max_bytes=max_html_bytes,
         )
         try:
             matches = self._parse_ewc_detail_schedule_html(

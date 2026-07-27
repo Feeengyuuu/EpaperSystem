@@ -164,6 +164,9 @@ def render_sports_dashboard_isolated(
     # Browser screenshots can leave a detached Chromium process behind if this
     # worker is terminated. Structured/cache fallbacks stay inside the worker.
     render_settings["worldCupScreenshotFallback"] = False
+    # EWC detail pages contain deeply nested Next.js payloads. Keep their
+    # parser input bounded on 416 MiB-class devices.
+    render_settings["_inkypi_sports_low_memory"] = True
     if resolved_theme_context is not None:
         render_settings["_inkypi_theme"] = normalize_palette_colors(
             thaw_payload(resolved_theme_context)

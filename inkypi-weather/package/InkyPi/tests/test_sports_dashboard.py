@@ -2226,6 +2226,275 @@ def test_ewc_competitions_fetch_streams_with_a_hard_response_cap(monkeypatch):
     assert closed == [True]
 
 
+def test_ewc_detail_low_memory_cap_rejects_before_parsing(monkeypatch):
+    plugin = _plugin()
+    closed = []
+    parsed = []
+
+    class FakeResponse:
+        headers = {"Content-Length": str((1024 * 1024) + 1)}
+        encoding = "utf-8"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("oversized response must fail before body consumption")
+
+        def close(self):
+            closed.append(True)
+
+    class FakeSession:
+        def get(self, _url, *, headers, timeout, stream):
+            assert headers["Accept"].startswith("text/html")
+            assert timeout == 25
+            assert stream is True
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_parse_ewc_detail_schedule_html",
+        lambda *_args, **_kwargs: parsed.append(True),
+    )
+
+    with pytest.raises(Exception, match="exceeds limit"):
+        plugin._fetch_ewc_detail_page(
+            {
+                "slug": "league-of-legends",
+                "game": "League of Legends",
+                "year": "2026",
+                "source_url": (
+                    "https://esportsworldcup.com/en/competitions/2026/"
+                    "league-of-legends"
+                ),
+            },
+            ZoneInfo("America/Los_Angeles"),
+            datetime(2026, 7, 27, tzinfo=timezone.utc),
+            max_html_bytes=1024 * 1024,
+        )
+
+    assert closed == [True]
+    assert parsed == []
+
+
+def test_ewc_detail_low_memory_fetches_at_most_one_stale_page(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=la)
+    settings = {
+        "_inkypi_sports_low_memory": True,
+        "ewcDetailCacheSeconds": 600,
+        "forceRefresh": True,
+    }
+    events = [
+        {
+            "slug": slug,
+            "game": game,
+            "year": "2026",
+            "source_url": (
+                f"https://esportsworldcup.com/en/competitions/2026/{slug}"
+            ),
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        }
+        for slug, game in (
+            ("league-of-legends", "League of Legends"),
+            ("overwatch-2", "Overwatch 2"),
+        )
+    ]
+    fetched = []
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: {})
+    monkeypatch.setattr(plugin, "_write_json_file", lambda *_args: None)
+
+    def fetch(event, _timezone_info, now_utc, **kwargs):
+        fetched.append((event["slug"], kwargs.get("max_html_bytes")))
+        return {
+            "page_key": f"2026:{event['slug']}",
+            "slug": event["slug"],
+            "game": event["game"],
+            "year": "2026",
+            "source_url": event["source_url"],
+            "fetched_at": now_utc.isoformat(),
+            "matches": SportsDashboard._encode_ewc_events(
+                [
+                    {
+                        "kind": "match",
+                        "event_id": f"{event['slug']}-match",
+                        "slug": event["slug"],
+                        "game": event["game"],
+                        "start": now + timedelta(hours=1),
+                        "end": now + timedelta(hours=4),
+                        "status": "UPCOMING",
+                        "team_a": "A",
+                        "team_b": "B",
+                    }
+                ]
+            ),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch)
+
+    matches, source = plugin._load_ewc_detail_matches(
+        settings,
+        la,
+        events,
+        now,
+        7,
+    )
+
+    assert fetched == [("league-of-legends", 1024 * 1024)]
+    assert [match["event_id"] for match in matches] == [
+        "league-of-legends-match"
+    ]
+    assert source == "EWC DETAIL LIVE"
+
+
+def test_ewc_detail_low_memory_advances_after_failed_page(monkeypatch):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=la)
+    settings = {
+        "_inkypi_sports_low_memory": True,
+        "ewcDetailCacheSeconds": 600,
+        "forceRefresh": True,
+    }
+    events = [
+        {
+            "slug": slug,
+            "game": game,
+            "year": "2026",
+            "source_url": (
+                f"https://esportsworldcup.com/en/competitions/2026/{slug}"
+            ),
+            "start": now - timedelta(days=1),
+            "end": now + timedelta(days=2),
+        }
+        for slug, game in (
+            ("league-of-legends", "League of Legends"),
+            ("overwatch-2", "Overwatch 2"),
+        )
+    ]
+    cache = {}
+    fetched = []
+    monkeypatch.setattr(plugin, "_read_json_file", lambda *_args: dict(cache))
+
+    def write_cache(_path, payload):
+        cache.clear()
+        cache.update(payload)
+
+    monkeypatch.setattr(plugin, "_write_json_file", write_cache)
+
+    def fetch(event, _timezone_info, now_utc, **_kwargs):
+        fetched.append(event["slug"])
+        if event["slug"] == "league-of-legends":
+            raise ValueError("detail page exceeds limit")
+        return {
+            "page_key": "2026:overwatch-2",
+            "slug": "overwatch-2",
+            "game": "Overwatch 2",
+            "year": "2026",
+            "source_url": event["source_url"],
+            "fetched_at": now_utc.isoformat(),
+            "matches": SportsDashboard._encode_ewc_events(
+                [
+                    {
+                        "kind": "match",
+                        "event_id": "overwatch-match",
+                        "slug": "overwatch-2",
+                        "game": "Overwatch 2",
+                        "start": now + timedelta(hours=1),
+                        "end": now + timedelta(hours=4),
+                        "status": "UPCOMING",
+                        "team_a": "A",
+                        "team_b": "B",
+                    }
+                ]
+            ),
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_ewc_detail_page", fetch)
+
+    first_matches, _first_source = plugin._load_ewc_detail_matches(
+        settings, la, events, now, 7
+    )
+    second_matches, second_source = plugin._load_ewc_detail_matches(
+        settings, la, events, now + timedelta(minutes=1), 7
+    )
+
+    assert first_matches == []
+    assert fetched == ["league-of-legends", "overwatch-2"]
+    assert [match["event_id"] for match in second_matches] == [
+        "overwatch-match"
+    ]
+    assert second_source == "EWC DETAIL LIVE"
+
+
+def test_ewc_low_memory_stale_detail_does_not_hide_fresh_competitions(
+    monkeypatch,
+):
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=la)
+    competition = {
+        "event_id": "ewc-lol-competition",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "year": "2026",
+        "source_url": (
+            "https://esportsworldcup.com/en/competitions/2026/"
+            "league-of-legends"
+        ),
+        "start": now + timedelta(days=1),
+        "end": now + timedelta(days=4),
+        "status": "UPCOMING",
+    }
+    stale_match = {
+        "kind": "match",
+        "event_id": "stale-match",
+        "match_id": "stale-match",
+        "slug": "league-of-legends",
+        "game": "League of Legends",
+        "start": now + timedelta(hours=1),
+        "end": now + timedelta(hours=4),
+        "status": "UPCOMING",
+        "team_a": "Old A",
+        "team_b": "Old B",
+        "_ewc_detail_source_state": "EWC DETAIL STALE",
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_events",
+        lambda *_args: ([competition], "EWC LIVE"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_detail_matches",
+        lambda *_args: ([stale_match], "EWC DETAIL STALE"),
+    )
+
+    card = plugin._load_ewc_sidebar_card(
+        {"_inkypi_sports_low_memory": True},
+        la,
+        now,
+    )
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card=card,
+    )
+
+    assert card["source_state"] == "EWC LIVE"
+    assert card["selected"]["main"]["event_id"] == "ewc-lol-competition"
+    assert choice["kind"] == "ewc"
+
+
 def test_ewc_detail_cache_refreshes_only_stale_pregame_page(monkeypatch):
     plugin = _plugin()
     cache_dir = _sports_dashboard_tmp("ewc_detail_page_ttl")
@@ -14697,6 +14966,15 @@ def test_isolated_region_render_invokes_only_requested_dashboard_region(
             calls.append(f"cache:{region}") or provenance
         ),
     )
+    base_image = Image.new("RGB", (800, 480), "white")
+
+    def fail_rgb_convert(self, *args, **kwargs):
+        if self is base_image:
+            pytest.fail("RGB isolated base image must not be converted before copying")
+        return original_convert(self, *args, **kwargs)
+
+    original_convert = Image.Image.convert
+    monkeypatch.setattr(Image.Image, "convert", fail_rgb_convert)
 
     image, provenance = plugin.render_isolated_region(
         {
@@ -14714,12 +14992,13 @@ def test_isolated_region_render_invokes_only_requested_dashboard_region(
         },
         FakeDeviceConfig(),
         region="esports",
-        base_image=Image.new("RGB", (800, 480), "white"),
+        base_image=base_image,
         now=now,
     )
 
     assert calls == ["esports", "cache:esports"]
     assert image.size == (800, 480)
+    assert image is not base_image
     assert provenance is SourceProvenance.LIVE
 
 

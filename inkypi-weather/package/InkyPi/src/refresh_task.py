@@ -132,9 +132,9 @@ DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB = 384
 DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT = 30
 DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB = 115
 DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT = 70
-# On 416 MiB units this stays above earlyoom's default 10% memory line while
-# leaving room for the bounded EWC child process's measured import/render peak.
-DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 48
+# Preserve a measured safety margin above earlyoom's default 10% line; burst
+# allocations can outrun the parent worker's resource polling interval.
+DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
 DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT = 75
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60

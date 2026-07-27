@@ -8991,7 +8991,7 @@ def test_sports_isolated_abort_defaults_preserve_earlyoom_headroom():
         playlists=[],
     )
 
-    assert task._sports_isolated_abort_thresholds() == (48, 75)
+    assert task._sports_isolated_abort_thresholds() == (70, 75)
 
 
 @pytest.mark.parametrize("unsafe_value", [True, 10**1000])

@@ -142,6 +142,10 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         for submission in executor.submissions
     )
     assert all(
+        submission[1]["settings"]["_inkypi_sports_low_memory"] is True
+        for submission in executor.submissions
+    )
+    assert all(
         "_inkypi_presentation_instance_identity"
         not in submission[1]["settings"]
         for submission in executor.submissions

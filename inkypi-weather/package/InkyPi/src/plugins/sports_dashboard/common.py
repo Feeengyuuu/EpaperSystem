@@ -228,6 +228,8 @@ DEFAULT_EWC_DETAIL_CACHE_SECONDS = 600
 DEFAULT_EWC_DETAIL_LOOKAHEAD_DAYS = 7
 DEFAULT_EWC_DETAIL_MAX_PAGES = 5
 EWC_HTML_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
+EWC_DETAIL_LOW_MEMORY_RESPONSE_MAX_BYTES = 1 * 1024 * 1024
+EWC_DETAIL_LOW_MEMORY_MAX_FETCHES = 1
 DEFAULT_EWC_UPCOMING_WINDOW_DAYS = 21
 DEFAULT_EWC_EVENT_ACTIVE_AFTER_DAYS = 1
 DEFAULT_EWC_LIVE_REFRESH_SECONDS = 60
@@ -2631,13 +2633,15 @@ class SportsDashboardCommonMixin:
             if base_image is None:
                 image = Image.new("RGB", dimensions, COLORS["paper"])
             else:
-                image = base_image.convert("RGB")
-                if image.size != dimensions:
+                if base_image.size != dimensions:
                     raise ValueError(
                         "isolated Sports Dashboard base image dimensions "
-                        f"{image.size!r} do not match {dimensions!r}"
+                        f"{base_image.size!r} do not match {dimensions!r}"
                     )
-                image = image.copy()
+                if base_image.mode == "RGB":
+                    image = base_image.copy()
+                else:
+                    image = base_image.convert("RGB")
             provenance = self._render_dashboard_region(
                 image,
                 settings,
