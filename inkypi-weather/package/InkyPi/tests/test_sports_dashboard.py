@@ -2585,7 +2585,7 @@ def test_ewc_detail_low_memory_advances_after_failed_page(monkeypatch):
     assert second_source == "EWC DETAIL LIVE"
 
 
-def test_ewc_low_memory_stale_detail_does_not_hide_fresh_competitions(
+def test_ewc_low_memory_stale_detail_keeps_overview_but_not_detail_priority(
     monkeypatch,
 ):
     plugin = _plugin()
@@ -2643,7 +2643,7 @@ def test_ewc_low_memory_stale_detail_does_not_hide_fresh_competitions(
 
     assert card["source_state"] == "EWC LIVE"
     assert card["selected"]["main"]["event_id"] == "ewc-lol-competition"
-    assert choice["kind"] == "ewc"
+    assert choice["kind"] == "lol"
 
 
 def test_ewc_detail_cache_refreshes_only_stale_pregame_page(monkeypatch):
@@ -3474,7 +3474,7 @@ def test_select_ewc_events_activates_upcoming_window_and_live_range():
     assert live_selected["main"]["game"] == "Apex Legends"
 
 
-def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
+def test_right_sidebar_prefers_active_valve_over_ewc_schedule_overview():
     now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
     ewc_selected = SportsDashboard._select_ewc_events(
         [
@@ -3512,7 +3512,7 @@ def test_right_sidebar_prefers_ewc_over_valve_but_not_lpl_upcoming():
         now,
         ewc_card={"selected": ewc_selected, "source_state": "EWC CACHE", "priority": 2},
     )
-    assert choice["kind"] == "ewc"
+    assert choice["kind"] == "valve"
 
     lpl_event = {
         "start": now + timedelta(hours=2),
@@ -3543,11 +3543,16 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
     ewc_selected = SportsDashboard._select_ewc_events(
         [
             {
+                "kind": "match",
                 "event_id": "ewc-lol",
+                "match_id": "ewc-lol",
                 "game": "League of Legends",
                 "start": now + timedelta(days=1),
                 "end": now + timedelta(days=4),
                 "status": "UPCOMING",
+                "team_a": "BLG",
+                "team_b": "T1",
+                "_ewc_detail_source_state": "EWC DETAIL LIVE",
             }
         ],
         now,
@@ -3588,6 +3593,335 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
 
     assert choice["kind"] == "ewc"
     assert choice["selected"]["main"]["game"] == "League of Legends"
+
+
+def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    detailed_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-opening-match",
+        "match_id": "ewc-overwatch-opening-match",
+        "game": "Overwatch 2",
+        "slug": "overwatch-2",
+        "start": now + timedelta(days=2),
+        "end": now + timedelta(days=2, hours=3),
+        "status": "UPCOMING",
+        "stage": "Group B - Opening Match #4",
+        "team_a": "ZETA DIVISION",
+        "team_b": "VARREL",
+        "_ewc_detail_source_state": "EWC DETAIL CACHE",
+    }
+    later_match = {
+        "kind": "match",
+        "event_id": "ewc-later-match",
+        "match_id": "ewc-later-match",
+        "game": "PUBG",
+        "slug": "pubg",
+        "start": now + timedelta(days=3),
+        "end": now + timedelta(days=3, hours=3),
+        "status": "UPCOMING",
+        "stage": "Group A - Match #1",
+        "team_a": "17 GAMING",
+        "team_b": "TWISTED MINDS",
+        "_ewc_detail_source_state": "EWC DETAIL CACHE",
+    }
+    ewc_selected = SportsDashboard._select_ewc_events(
+        [
+            {
+                "event_id": "ewc-mid-season-cup",
+                "game": "Mobile Legends: Bang Bang",
+                "start": now - timedelta(days=5),
+                "end": now + timedelta(days=5),
+                "status": "ONGOING",
+            },
+            detailed_match,
+            later_match,
+        ],
+        now,
+        upcoming_window_days=21,
+        rotation_seed=1,
+    )
+    lck_selected = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(hours=1),
+                "state": "unstarted",
+                "team_a": "T1",
+                "team_b": "KT",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "wins_a": None,
+                "wins_b": None,
+                "best_of": 3,
+                "block": "Week 10",
+            }
+        ],
+        now,
+    )
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LCK",
+                "selected": lck_selected,
+                "source_state": "LIVE DATA",
+                "priority": 1,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "competition_source_state": "EWC LIVE",
+            "priority": 2,
+        },
+    )
+
+    assert ewc_selected["competition_live"] is True
+    assert ewc_selected["main_match"]["event_id"] == later_match["event_id"]
+    assert SportsDashboard._ewc_sidebar_candidate_phase(
+        {"selected": ewc_selected}
+    ) == 0
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main_match"]["event_id"] == detailed_match["event_id"]
+    assert choice["selected"]["main_match"]["team_a"] == "ZETA DIVISION"
+    assert choice["selected"]["main_match"]["team_b"] == "VARREL"
+    assert choice["selected"]["main_match"]["stage"] == "Group B - Opening Match #4"
+
+
+def test_live_lol_still_precedes_active_ewc_competition_details():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    ewc_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-opening-match",
+        "game": "Overwatch 2",
+        "start": now + timedelta(days=2),
+        "end": now + timedelta(days=2, hours=3),
+        "status": "UPCOMING",
+        "_ewc_detail_source_state": "EWC DETAIL CACHE",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "competition_live": True,
+        "live": [],
+        "upcoming": [ewc_match],
+        "recent": [],
+        "main": ewc_match,
+        "main_match": ewc_match,
+        "all_upcoming_matches": [ewc_match],
+    }
+    lck_live = {
+        "start": now - timedelta(minutes=5),
+        "state": "inProgress",
+        "team_a": "T1",
+        "team_b": "KT",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LCK",
+                "selected": {
+                    "live": [lck_live],
+                    "upcoming": [],
+                    "recent": [],
+                    "main": lck_live,
+                },
+                "source_state": "LIVE DATA",
+                "priority": 1,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "competition_source_state": "EWC LIVE",
+            "priority": 2,
+        },
+    )
+
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LCK"
+
+
+def test_stale_ewc_competition_cannot_promote_fresh_future_detail():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    ewc_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-opening-match",
+        "game": "Overwatch 2",
+        "start": now + timedelta(days=2),
+        "end": now + timedelta(days=2, hours=3),
+        "status": "UPCOMING",
+        "_ewc_detail_source_state": "EWC DETAIL CACHE",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "competition_live": True,
+        "live": [],
+        "upcoming": [ewc_match],
+        "recent": [],
+        "main": ewc_match,
+        "main_match": ewc_match,
+        "all_upcoming_matches": [ewc_match],
+    }
+    lck_match = {
+        "start": now + timedelta(hours=1),
+        "state": "unstarted",
+        "team_a": "T1",
+        "team_b": "KT",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LCK",
+                "selected": {
+                    "live": [],
+                    "upcoming": [lck_match],
+                    "recent": [],
+                    "main": lck_match,
+                },
+                "source_state": "LIVE DATA",
+                "priority": 1,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "competition_source_state": "EWC STALE",
+            "priority": 2,
+        },
+    )
+
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LCK"
+
+
+def test_stale_ewc_competition_demotes_but_keeps_fresh_upcoming_detail():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    ewc_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-opening-match",
+        "game": "Overwatch 2",
+        "start": now + timedelta(days=1),
+        "end": now + timedelta(days=1, hours=3),
+        "status": "UPCOMING",
+        "team_a": "ZETA DIVISION",
+        "team_b": "VARREL",
+        "_ewc_detail_source_state": "EWC DETAIL CACHE",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "competition_live": True,
+        "live": [],
+        "upcoming": [ewc_match],
+        "recent": [],
+        "main": ewc_match,
+        "main_match": ewc_match,
+        "all_upcoming_matches": [ewc_match],
+    }
+    lpl_match = {
+        "start": now + timedelta(days=3),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": {
+                    "live": [],
+                    "upcoming": [lpl_match],
+                    "recent": [],
+                    "main": lpl_match,
+                },
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "competition_source_state": "EWC STALE",
+            "priority": 2,
+        },
+    )
+
+    assert choice["kind"] == "ewc"
+    assert choice["phase"] == 1
+    assert choice["selected"]["main_match"]["event_id"] == ewc_match["event_id"]
+
+
+def test_fresh_live_ewc_match_does_not_depend_on_competition_overview_freshness():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    ewc_match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-live-match",
+        "game": "Overwatch 2",
+        "start": now - timedelta(minutes=20),
+        "end": now + timedelta(hours=2),
+        "status": "LIVE",
+        "team_a": "ZETA DIVISION",
+        "team_b": "VARREL",
+        "_ewc_detail_source_state": "EWC DETAIL LIVE",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "competition_live": True,
+        "live": [ewc_match],
+        "upcoming": [],
+        "recent": [],
+        "main": ewc_match,
+        "main_match": ewc_match,
+        "all_live_matches": [ewc_match],
+    }
+    lck_match = {
+        "start": now + timedelta(hours=1),
+        "state": "unstarted",
+        "team_a": "T1",
+        "team_b": "KT",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LCK",
+                "selected": {
+                    "live": [],
+                    "upcoming": [lck_match],
+                    "recent": [],
+                    "main": lck_match,
+                },
+                "source_state": "LIVE DATA",
+                "priority": 1,
+            }
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+        ewc_card={
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL LIVE",
+            "competition_source_state": "EWC STALE",
+            "priority": 2,
+        },
+    )
+
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main_match"]["event_id"] == ewc_match["event_id"]
 
 
 def test_right_esports_skips_valve_fetch_after_timed_ewc_candidate(
@@ -3707,6 +4041,7 @@ def test_right_esports_loads_valve_when_ewc_cannot_win(
     }
     selected = {
         "display_window_active": True,
+        "competition_live": True,
         "live": [],
         "upcoming": [],
         "recent": [],
@@ -4190,14 +4525,19 @@ def test_right_sidebar_uses_ewc_next_match_when_no_live_right_competition():
         "priority": 1,
     }
     ewc_selected = SportsDashboard._select_ewc_events(
-        [
-            {
-                "event_id": "ewc-apex",
-                "game": "Apex Legends",
-                "start": now + timedelta(days=2),
-                "end": now + timedelta(days=6),
-                "status": "UPCOMING",
-            }
+            [
+                {
+                    "kind": "match",
+                    "event_id": "ewc-apex",
+                    "match_id": "ewc-apex",
+                    "game": "Apex Legends",
+                    "start": now + timedelta(days=2),
+                    "end": now + timedelta(days=6),
+                    "status": "UPCOMING",
+                    "team_a": "Alliance",
+                    "team_b": "Ninjas in Pyjamas",
+                    "_ewc_detail_source_state": "EWC DETAIL CACHE",
+                }
         ],
         now,
         upcoming_window_days=21,

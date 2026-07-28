@@ -603,6 +603,7 @@ class EsportsMixin:
 
     def _load_ewc_sidebar_card(self, settings, timezone_info, now):
         events, source_state = self._load_ewc_events(settings, timezone_info)
+        competition_source_state = source_state
         window_days = self._int_setting(
             settings,
             "ewcUpcomingWindowDays",
@@ -636,6 +637,7 @@ class EsportsMixin:
         return {
             "selected": selected,
             "source_state": source_state,
+            "competition_source_state": competition_source_state,
             "priority": self._right_sidebar_ewc_priority(),
         }
 
@@ -2044,6 +2046,7 @@ class EsportsMixin:
             "recent": recent,
             "main": main,
             "main_match": main_match,
+            "competition_live": bool(live_events),
             "live_matches": group_live_matches if selected_match_group else live_matches,
             "upcoming_matches": group_upcoming_matches if selected_match_group else upcoming_matches,
             "recent_matches": group_recent_matches if selected_match_group else recent_matches,
@@ -2193,13 +2196,59 @@ class EsportsMixin:
         selected = (card or {}).get("selected") or {}
         if not selected.get("display_window_active"):
             return None
-        if selected.get("live"):
+        if SportsDashboard._ewc_selected_has_match_in_bucket(selected, "live"):
             return 0
-        if selected.get("upcoming"):
+        if (
+            selected.get("competition_live")
+            and SportsDashboard._ewc_selected_main_match_is_in_bucket(
+                selected,
+                "upcoming",
+            )
+        ):
+            return 0
+        if SportsDashboard._ewc_selected_has_match_in_bucket(selected, "upcoming"):
             return 1
-        if selected.get("recent"):
+        if SportsDashboard._ewc_selected_has_match_in_bucket(selected, "recent"):
             return 2
-        return None
+        # Competition schedule rows are useful context, but are not a detailed
+        # match card. Keep them below every live/upcoming match provider.
+        return 2
+
+    @staticmethod
+    def _ewc_selected_match_bucket(selected, bucket):
+        selected = selected or {}
+        candidates = []
+        for key in (
+            f"all_{bucket}_matches",
+            f"{bucket}_matches",
+            bucket,
+        ):
+            values = selected.get(key)
+            if isinstance(values, list):
+                candidates.extend(values)
+        return [
+            candidate
+            for candidate in candidates
+            if SportsDashboard._is_ewc_match_item(candidate)
+        ]
+
+    @staticmethod
+    def _ewc_selected_has_match_in_bucket(selected, bucket):
+        return bool(SportsDashboard._ewc_selected_match_bucket(selected, bucket))
+
+    @staticmethod
+    def _ewc_selected_main_match_is_in_bucket(selected, bucket):
+        selected = selected or {}
+        main_match = selected.get("main_match")
+        if not SportsDashboard._is_ewc_match_item(main_match):
+            return False
+        return any(
+            candidate is main_match or candidate == main_match
+            for candidate in SportsDashboard._ewc_selected_match_bucket(
+                selected,
+                bucket,
+            )
+        )
 
     @staticmethod
     def _right_sidebar_ewc_priority():
@@ -2298,7 +2347,11 @@ class EsportsMixin:
         seen = set()
         for pool in pools:
             for event in pool or []:
-                if not isinstance(event, Mapping) or not isinstance(event.get("start"), datetime):
+                if (
+                    not isinstance(event, Mapping)
+                    or not SportsDashboard._is_ewc_match_item(event)
+                    or not isinstance(event.get("start"), datetime)
+                ):
                     continue
                 identity = id(event)
                 if identity in seen:
@@ -2472,7 +2525,19 @@ class EsportsMixin:
         ewc_phase = SportsDashboard._ewc_sidebar_candidate_phase(ewc_card)
         if ewc_phase is not None:
             ewc_selected = (ewc_card or {}).get("selected") or {}
-            if ewc_phase == 1:
+            promoted_upcoming_detail = bool(
+                ewc_phase == 0
+                and not SportsDashboard._ewc_selected_has_match_in_bucket(
+                    ewc_selected,
+                    "live",
+                )
+                and ewc_selected.get("competition_live")
+                and SportsDashboard._ewc_selected_main_match_is_in_bucket(
+                    ewc_selected,
+                    "upcoming",
+                )
+            )
+            if ewc_phase == 1 or promoted_upcoming_detail:
                 earliest_ewc_event = SportsDashboard._ewc_sidebar_earliest_upcoming(ewc_selected)
                 ewc_selected = SportsDashboard._ewc_sidebar_focus_selected(ewc_selected, earliest_ewc_event)
             focused_ewc_card = dict(ewc_card or {})
@@ -2487,6 +2552,31 @@ class EsportsMixin:
             ewc_provenance = SportsDashboard._sports_source_state_provenance(
                 ewc_source_state
             )
+            promoted_upcoming_detail = bool(
+                ewc_phase == 0
+                and not SportsDashboard._ewc_selected_has_match_in_bucket(
+                    ewc_selected,
+                    "live",
+                )
+                and ewc_selected.get("competition_live")
+                and SportsDashboard._ewc_selected_main_match_is_in_bucket(
+                    ewc_selected,
+                    "upcoming",
+                )
+            )
+            competition_provenance = (
+                SportsDashboard._sports_source_state_provenance(
+                    (ewc_card or {}).get("competition_source_state") or ""
+                )
+            )
+            if promoted_upcoming_detail and competition_provenance not in {
+                SourceProvenance.LIVE,
+                SourceProvenance.FRESH_CACHE,
+            }:
+                # The detail itself is still a valid upcoming match. An
+                # untrusted competition overview only removes the phase-0
+                # promotion; it must not discard the detailed match.
+                ewc_phase = 1
             if ewc_phase is not None and ewc_provenance in {
                 SourceProvenance.LIVE,
                 SourceProvenance.FRESH_CACHE,
@@ -4787,11 +4877,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
 
 
 

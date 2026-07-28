@@ -8,6 +8,7 @@ service process.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from io import BytesIO
 import os
@@ -94,14 +95,17 @@ def _ordered_panel_provenances(values, region, region_provenance):
 
 
 def _ewc_event_identity(event):
-    if not isinstance(event, dict):
+    if not isinstance(event, Mapping):
         return None
     values = []
     for key in (
+        "kind",
         "event_id",
+        "match_id",
         "slug",
         "game",
         "start",
+        "end",
         "team_a",
         "team_b",
         "score_a",
@@ -116,18 +120,64 @@ def _ewc_event_identity(event):
             values.append(None)
         else:
             values.append((type(value).__name__, str(value)))
+    values.append(
+        (
+            "_ewc_detail_source_state",
+            _ewc_source_state_identity(event.get("_ewc_detail_source_state")),
+        )
+    )
     return tuple(values)
+
+
+def _ewc_source_state_identity(source_state):
+    value = getattr(source_state, "value", source_state)
+    state = str(value or "").strip().upper()
+    if any(
+        marker in state
+        for marker in ("FALLBACK", "NO DATA", "LIMIT", "BLOCKED", "PREVIEW", "WATCH")
+    ):
+        return "local_fallback"
+    if "STALE" in state:
+        return "stale_cache"
+    if "CACHE" in state or "LIVE" in state or state in {"API", "SCREENSHOT"}:
+        # A successful publish legitimately changes LIVE labels to CACHE labels.
+        # Both are trusted by the sidebar selector and are equivalent here.
+        return "trusted"
+    return "local_fallback"
 
 
 def _ewc_card_selection_identity(card):
     selected = (card or {}).get("selected") or {}
-    values = []
-    for key in ("main", "main_match", "live", "upcoming", "recent"):
+    values = [
+        ("source_state", _ewc_source_state_identity((card or {}).get("source_state"))),
+        (
+            "competition_source_state",
+            _ewc_source_state_identity(
+                (card or {}).get("competition_source_state")
+            ),
+        ),
+        ("competition_live", bool(selected.get("competition_live"))),
+        ("display_window_active", bool(selected.get("display_window_active"))),
+    ]
+    for key in (
+        "main",
+        "main_match",
+        "live",
+        "upcoming",
+        "recent",
+        "live_matches",
+        "upcoming_matches",
+        "recent_matches",
+        "all_live_matches",
+        "all_upcoming_matches",
+        "all_recent_matches",
+    ):
         value = selected.get(key)
         if isinstance(value, list):
-            values.append(tuple(_ewc_event_identity(item) for item in value))
+            identity = tuple(_ewc_event_identity(item) for item in value)
         else:
-            values.append(_ewc_event_identity(value))
+            identity = _ewc_event_identity(value)
+        values.append((key, identity))
     return tuple(values)
 
 

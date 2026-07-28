@@ -1,5 +1,6 @@
 import sys
 import time
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -333,19 +334,39 @@ def test_ewc_prefetch_worker_returns_only_bounded_summary(monkeypatch):
         "_require_worker_oom_preference",
         lambda: 800,
     )
+    def load_card(_plugin, settings, _timezone_info, _now):
+        cache_only = settings.get("_inkypi_ewc_cache_only")
+        match = {
+            "kind": "match",
+            "event_id": "ewc-match",
+            "match_id": "ewc-match",
+            "team_a": "A",
+            "team_b": "B",
+            "_ewc_detail_source_state": (
+                "EWC DETAIL CACHE" if cache_only else "EWC DETAIL LIVE"
+            ),
+        }
+        return {
+            "source_state": (
+                "EWC DETAIL CACHE" if cache_only else "EWC DETAIL LIVE"
+            ),
+            "competition_source_state": (
+                "EWC CACHE" if cache_only else "EWC LIVE"
+            ),
+            "selected": {
+                "main": match,
+                "main_match": match,
+                "competition_live": True,
+                "display_window_active": True,
+                "upcoming": [match],
+                "all_upcoming_matches": [match],
+            },
+        }
+
     monkeypatch.setattr(
         SportsDashboard,
         "_load_ewc_sidebar_card",
-        lambda *_args, **_kwargs: {
-            "source_state": "EWC DETAIL LIVE",
-            "selected": {
-                "main_match": {
-                    "event_id": "ewc-match",
-                    "team_a": "A",
-                    "team_b": "B",
-                }
-            },
-        },
+        load_card,
     )
 
     result = isolated_refresh.prefetch_ewc_detail_task(
@@ -362,7 +383,7 @@ def test_ewc_prefetch_worker_returns_only_bounded_summary(monkeypatch):
 
     assert result == {
         "region": "ewc_prefetch",
-        "source_state": "EWC DETAIL LIVE",
+        "source_state": "EWC DETAIL CACHE",
         "prefetch_source_state": "EWC DETAIL LIVE",
         "has_detail": True,
         "cache_handoff_verified": True,
@@ -371,6 +392,126 @@ def test_ewc_prefetch_worker_returns_only_bounded_summary(monkeypatch):
         "worker_oom_score_adj": 800,
         "worker_pid": result["worker_pid"],
     }
+
+
+def test_ewc_handoff_identity_covers_selection_phase_and_provenance():
+    match = {
+        "kind": "match",
+        "event_id": "ewc-match",
+        "match_id": "ewc-match",
+        "start": "2026-07-27T09:00:00-07:00",
+        "end": "2026-07-27T12:00:00-07:00",
+        "team_a": "A",
+        "team_b": "B",
+        "_ewc_detail_source_state": "EWC DETAIL LIVE",
+    }
+    live_card = {
+        "source_state": "EWC DETAIL LIVE",
+        "competition_source_state": "EWC LIVE",
+        "selected": {
+            "main": match,
+            "main_match": match,
+            "competition_live": True,
+            "display_window_active": True,
+            "live": [],
+            "upcoming": [match],
+            "all_live_matches": [],
+            "all_upcoming_matches": [match],
+        },
+    }
+    cached_card = deepcopy(live_card)
+    cached_card["source_state"] = "EWC DETAIL CACHE"
+    cached_card["competition_source_state"] = "EWC CACHE"
+    cached_card["selected"]["main"]["_ewc_detail_source_state"] = (
+        "EWC DETAIL CACHE"
+    )
+
+    expected = isolated_refresh._ewc_card_selection_identity(live_card)
+    assert isolated_refresh._ewc_card_selection_identity(cached_card) == expected
+
+    mutations = []
+    for path, value in (
+        (("selected", "competition_live"), False),
+        (("selected", "display_window_active"), False),
+        (("selected", "all_upcoming_matches"), []),
+        (("selected", "main_match", "end"), "2026-07-27T13:00:00-07:00"),
+        (
+            ("selected", "main_match", "_ewc_detail_source_state"),
+            "EWC DETAIL STALE",
+        ),
+        (("competition_source_state",), "EWC STALE"),
+    ):
+        mutated = deepcopy(cached_card)
+        target = mutated
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+        mutations.append(mutated)
+
+    assert all(
+        isolated_refresh._ewc_card_selection_identity(mutated) != expected
+        for mutated in mutations
+    )
+
+
+def test_ewc_prefetch_reports_attestation_mismatch_for_phase_change(monkeypatch):
+    monkeypatch.setattr(
+        isolated_refresh,
+        "_require_worker_oom_preference",
+        lambda: 800,
+    )
+
+    def load_card(_plugin, settings, _timezone_info, _now):
+        cache_only = settings.get("_inkypi_ewc_cache_only")
+        match = {
+            "kind": "match",
+            "event_id": "ewc-match",
+            "team_a": "A",
+            "team_b": "B",
+            "_ewc_detail_source_state": (
+                "EWC DETAIL CACHE" if cache_only else "EWC DETAIL LIVE"
+            ),
+        }
+        return {
+            "source_state": (
+                "EWC DETAIL CACHE" if cache_only else "EWC DETAIL LIVE"
+            ),
+            "competition_source_state": (
+                "EWC CACHE" if cache_only else "EWC LIVE"
+            ),
+            "selected": {
+                "main": match,
+                "main_match": match,
+                "competition_live": not cache_only,
+                "display_window_active": True,
+                "upcoming": [match],
+                "all_upcoming_matches": [match],
+            },
+        }
+
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_load_ewc_sidebar_card",
+        load_card,
+    )
+
+    result = isolated_refresh.prefetch_ewc_detail_task(
+        {
+            "settings": {"_inkypi_sports_low_memory": True},
+            "device_config": {
+                "resolution": [800, 480],
+                "timezone": "America/Los_Angeles",
+            },
+            "now": "2026-07-27T09:00:00-07:00",
+        },
+        SimpleNamespace(is_set=lambda: False),
+    )
+
+    assert result["cache_handoff_verified"] is True
+    assert result["prefetch_handoff_matches"] is False
+    assert result["degraded_reason"] == "cache_attestation_mismatch"
+    assert result["source_state"] == "EWC DETAIL CACHE"
+    assert result["has_detail"] is True
 
 
 def test_ewc_prefetch_publish_failure_degrades_to_verified_cache_only_card(
