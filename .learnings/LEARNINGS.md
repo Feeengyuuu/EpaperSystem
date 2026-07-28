@@ -2389,3 +2389,35 @@ Bound retained background ownership to at most `queue.capacity - 1`, reject or d
 - **Notes**: Ian retained ownership is capped below queue capacity and the capacity-two urgent-display regression passes.
 
 ---
+
+## [LRN-20260728-002] best_practice
+
+**Logged**: 2026-07-28T15:06:25-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Install GitHub CLI without administrator access or WinGet from the verified official portable release.
+
+### Details
+On a non-admin Windows machine where WinGet is unavailable, use GitHub's official amd64 ZIP and checksum release assets. Require the published SHA-256 to match and the executable to have a valid GitHub, Inc. Authenticode signature before installing under `%LOCALAPPDATA%\Programs` and adding its `bin` directory to the user PATH. Keep CLI authentication separate: `gh auth status` may remain logged out while existing Git credentials still permit a direct push. When command policy rejects a monolithic PowerShell installer, split download, verification, extraction, installation, PATH update, and cleanup into bounded auditable steps.
+
+### Suggested Action
+Reuse the verified portable-install sequence and leave `gh auth login` as an explicit interactive follow-up.
+
+### Metadata
+- Source: error
+- Related Files: .learnings/LEARNINGS.md
+- Tags: windows, github-cli, portable-install, checksum, authenticode, path
+- Pattern-Key: tooling.verified_portable_github_cli_install
+- Recurrence-Count: 1
+- First-Seen: 2026-07-28
+- Last-Seen: 2026-07-28
+
+### Resolution
+- **Resolved**: 2026-07-28T15:06:25-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Installed GitHub CLI 2.96.0 from the official portable release, verified its checksum and signer, added it to the user PATH, and removed the installer staging directory.
+
+---
