@@ -3595,7 +3595,7 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
     assert choice["selected"]["main"]["game"] == "League of Legends"
 
 
-def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details():
+def test_active_ewc_competition_with_future_detail_does_not_preempt_earlier_upcoming_lpl():
     now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
     detailed_match = {
         "kind": "match",
@@ -3611,20 +3611,6 @@ def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details()
         "team_b": "VARREL",
         "_ewc_detail_source_state": "EWC DETAIL CACHE",
     }
-    later_match = {
-        "kind": "match",
-        "event_id": "ewc-later-match",
-        "match_id": "ewc-later-match",
-        "game": "PUBG",
-        "slug": "pubg",
-        "start": now + timedelta(days=3),
-        "end": now + timedelta(days=3, hours=3),
-        "status": "UPCOMING",
-        "stage": "Group A - Match #1",
-        "team_a": "17 GAMING",
-        "team_b": "TWISTED MINDS",
-        "_ewc_detail_source_state": "EWC DETAIL CACHE",
-    }
     ewc_selected = SportsDashboard._select_ewc_events(
         [
             {
@@ -3635,25 +3621,23 @@ def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details()
                 "status": "ONGOING",
             },
             detailed_match,
-            later_match,
         ],
         now,
         upcoming_window_days=21,
-        rotation_seed=1,
     )
-    lck_selected = SportsDashboard._select_lpl_events(
+    lpl_selected = SportsDashboard._select_lpl_events(
         [
             {
                 "start": now + timedelta(hours=1),
                 "state": "unstarted",
-                "team_a": "T1",
-                "team_b": "KT",
+                "team_a": "TES",
+                "team_b": "AL",
                 "team_a_logo": "",
                 "team_b_logo": "",
                 "wins_a": None,
                 "wins_b": None,
                 "best_of": 3,
-                "block": "Week 10",
+                "block": "Week 2",
             }
         ],
         now,
@@ -3662,10 +3646,10 @@ def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details()
     choice = SportsDashboard._select_right_esports_sidebar(
         [
             {
-                "league_key": "LCK",
-                "selected": lck_selected,
+                "league_key": "LPL",
+                "selected": lpl_selected,
                 "source_state": "LIVE DATA",
-                "priority": 1,
+                "priority": 0,
             }
         ],
         {},
@@ -3680,15 +3664,12 @@ def test_right_sidebar_keeps_active_ewc_competition_visible_with_match_details()
     )
 
     assert ewc_selected["competition_live"] is True
-    assert ewc_selected["main_match"]["event_id"] == later_match["event_id"]
+    assert ewc_selected["main_match"]["event_id"] == detailed_match["event_id"]
     assert SportsDashboard._ewc_sidebar_candidate_phase(
         {"selected": ewc_selected}
-    ) == 0
-    assert choice["kind"] == "ewc"
-    assert choice["selected"]["main_match"]["event_id"] == detailed_match["event_id"]
-    assert choice["selected"]["main_match"]["team_a"] == "ZETA DIVISION"
-    assert choice["selected"]["main_match"]["team_b"] == "VARREL"
-    assert choice["selected"]["main_match"]["stage"] == "Group B - Opening Match #4"
+    ) == 1
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
 
 
 def test_live_lol_still_precedes_active_ewc_competition_details():
