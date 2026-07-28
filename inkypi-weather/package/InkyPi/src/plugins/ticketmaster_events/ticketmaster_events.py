@@ -498,7 +498,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         hero_img_w = left_w - margin
         hero_img_h = max(176, int(height * 0.43))
         self._paste_event_image(image, hero, (hero_x, top, hero_img_w, hero_img_h), colors)
-        if colors["mode"] == "color":
+        if colors.get("chromatic_media", colors["mode"] == "color"):
             draw.rectangle((hero_x, top + hero_img_h - 9, hero_x + hero_img_w, top + hero_img_h), fill=self._event_color(hero, colors))
         self._draw_date_chip(draw, hero, hero_x + 10, top + 10, 72, 54, colors, chip_font, day_font)
         self._draw_status_chip(draw, hero.status or "onsale", hero_x + 10, top + hero_img_h - 32, colors, chip_font)
@@ -527,7 +527,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             if idx:
                 separator_y = y - int(round(9 * right_scale))
                 draw.line((list_x, separator_y, width - margin, separator_y), fill=colors["line"], width=1)
-            if colors["mode"] == "color":
+            if colors.get("chromatic_media", colors["mode"] == "color"):
                 draw.rectangle((list_x - 6, y, list_x - 3, y + date_h), fill=self._event_color(event, colors))
             self._draw_date_chip(draw, event, list_x, y, date_w, date_h, colors, list_chip_font, list_day_font)
             thumb_x = list_x + date_w + thumb_gap
@@ -557,9 +557,14 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 wordmark = wordmark.convert("RGBA")
                 wordmark.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
                 if colors["mode"] == "dark":
-                    tint = Image.new("RGBA", wordmark.size, colors["ink"] + (0,))
-                    tint.putalpha(wordmark.getchannel("A"))
-                    wordmark = tint
+                    alpha = wordmark.getchannel("A")
+                    grayscale = ImageOps.grayscale(wordmark.convert("RGB"))
+                    wordmark = ImageOps.colorize(
+                        grayscale,
+                        black=colors.get("wordmark_shadow", colors.get("accent", colors["ink"])),
+                        white=colors.get("wordmark_highlight", colors["ink"]),
+                    )
+                    wordmark.putalpha(alpha)
                 target.paste(wordmark, (x, y), wordmark)
                 return y + wordmark.height
         except Exception as exc:
@@ -572,7 +577,12 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         if image is None:
             image = self._placeholder_event_image(event, (w, h), colors)
         image = ImageOps.fit(image.convert("RGB"), (w, h), method=Image.Resampling.LANCZOS)
-        if colors["mode"] == "dark":
+        chromatic_media = colors.get("chromatic_media", colors["mode"] == "color")
+        if colors["mode"] == "dark" and chromatic_media:
+            image = ImageEnhance.Color(image).enhance(1.08)
+            image = ImageEnhance.Contrast(image).enhance(1.10)
+            image = ImageEnhance.Brightness(image).enhance(0.88)
+        elif colors["mode"] == "dark":
             image = ImageOps.grayscale(image).convert("RGB")
         elif colors["mode"] == "color":
             image = ImageEnhance.Color(image).enhance(0.82)
@@ -597,12 +607,12 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         base = (36 + key[0] // 7, 36 + key[1] // 8, 36 + key[2] // 8)
         if colors["mode"] == "paper":
             base = (180 + key[0] // 6, 176 + key[1] // 8, 166 + key[2] // 10)
-        elif colors["mode"] == "color":
+        elif colors.get("chromatic_media", colors["mode"] == "color"):
             accent = self._event_color(event, colors)
             base = self._blend(colors["paper"], accent, 0.38)
         image = Image.new("RGB", size, base)
         draw = ImageDraw.Draw(image)
-        if colors["mode"] == "color":
+        if colors.get("chromatic_media", colors["mode"] == "color"):
             shade = self._blend(base, self._event_color(event, colors), 0.45)
             draw.rectangle((0, h - max(18, h // 7), w, h), fill=shade)
         else:
@@ -763,6 +773,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             if injected["mode"] == "night":
                 return {
                     "mode": "dark",
+                    "chromatic_media": True,
                     "paper": paper,
                     "ink": ink,
                     "muted": muted,
@@ -775,6 +786,8 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     "header_muted": muted,
                     "footer": muted,
                     "accent": accent,
+                    "wordmark_shadow": accent,
+                    "wordmark_highlight": ink,
                     "date_chip": accent,
                     "date_ink": paper,
                     "status_chip": accent,
@@ -792,6 +805,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 }
             return {
                 "mode": "color",
+                "chromatic_media": True,
                 "paper": paper,
                 "header_band": panel,
                 "footer_band": panel,
@@ -826,6 +840,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         if mode == "paper":
             return {
                 "mode": "paper",
+                "chromatic_media": False,
                 "paper": (235, 232, 222),
                 "ink": (28, 30, 32),
                 "muted": (86, 88, 84),
@@ -839,6 +854,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         if mode == "dark":
             return {
                 "mode": "dark",
+                "chromatic_media": True,
                 "paper": (0, 0, 0),
                 "ink": (238, 238, 231),
                 "muted": (176, 176, 168),
@@ -847,10 +863,13 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 "outline": (213, 215, 208),
                 "chip": (236, 236, 226),
                 "chip_ink": (20, 22, 24),
+                "wordmark_shadow": (229, 188, 88),
+                "wordmark_highlight": (238, 238, 231),
                 "shadow": (10, 12, 14),
             }
         return {
             "mode": "color",
+            "chromatic_media": True,
             "paper": (229, 236, 232),
             "header_band": (207, 226, 220),
             "footer_band": (216, 228, 224),

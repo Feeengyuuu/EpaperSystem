@@ -262,6 +262,103 @@ def test_ticketmaster_uses_injected_canonical_day_and_night_palettes():
     assert night["ink"] == (238, 238, 231)
     assert night["line"] == (46, 48, 52)
     assert night["accent"] == (229, 188, 88)
+    assert night["chromatic_media"] is True
+    assert night["wordmark_shadow"] == night["accent"]
+    assert night["wordmark_highlight"] == night["ink"]
+
+
+def test_ticketmaster_night_theme_keeps_each_event_poster_color(tmp_path):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    poster_colors = (
+        (212, 42, 38),
+        (28, 172, 82),
+        (18, 122, 220),
+        (218, 132, 30),
+        (156, 52, 204),
+    )
+    events = []
+
+    for index, poster_color in enumerate(poster_colors):
+        poster = tmp_path / f"poster-{index}.png"
+        Image.new("RGB", (80, 48), poster_color).save(poster)
+        events.append(TicketmasterEvent(
+            rank=index + 1,
+            title=f"Color event {index + 1}",
+            local_date=f"2026-08-{index + 1:02d}",
+            local_time="19:30:00",
+            venue_name=f"Venue {index + 1}",
+            city="San Francisco",
+            state_code="CA",
+            segment="Music",
+            genre="Live",
+            status="onsale",
+            poster_path=str(poster),
+        ))
+
+    target = plugin._render_events(
+        (800, 480),
+        events,
+        {"_inkypi_theme": _canonical_theme("night")},
+        "Ticketmaster Discovery",
+        datetime.now(timezone.utc),
+    )
+    poster_samples = (
+        (200, 180),
+        (429, 128),
+        (429, 214),
+        (429, 300),
+        (429, 386),
+    )
+
+    for sample, poster_color in zip(poster_samples, poster_colors):
+        rendered = target.getpixel(sample)
+        assert max(rendered) - min(rendered) > 45
+        assert rendered.index(max(rendered)) == poster_color.index(max(poster_color))
+
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme("night")})
+    placeholder = plugin._placeholder_event_image(
+        TicketmasterEvent(rank=6, title="Missing poster", segment="Sports"),
+        (80, 48),
+        colors,
+    )
+    assert any(
+        max(placeholder.getpixel((x, y))) - min(placeholder.getpixel((x, y))) > 25
+        for y in range(placeholder.height)
+        for x in range(placeholder.width)
+    )
+
+
+def test_ticketmaster_night_wordmark_uses_readable_gold_and_cream_tones():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme("night")})
+    target = Image.new("RGB", (360, 64), colors["paper"])
+
+    bottom = plugin._draw_header_wordmark(
+        target,
+        ImageDraw.Draw(target),
+        0,
+        0,
+        320,
+        48,
+        colors,
+    )
+
+    assert bottom is not None
+    visible = [
+        pixel
+        for pixel in target.get_flattened_data()
+        if pixel != colors["paper"]
+    ]
+    assert visible
+    assert any(
+        red > green + 20 and green > blue + 35
+        for red, green, blue in visible
+    )
+    assert any(
+        max(pixel) - min(pixel) < 18 and min(pixel) > 180
+        for pixel in visible
+    )
+    assert sum(max(pixel) >= 90 for pixel in visible) / len(visible) > 0.8
 
 
 def test_ticketmaster_source_cache_key_ignores_dimensions_and_theme():
