@@ -6,6 +6,39 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260727-003] best_practice
+
+**Logged**: 2026-07-27T19:09:36-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: release-engineering
+
+### Summary
+Build Linux deployment archives on Windows with `core.autocrlf=false`, then inspect the ZIP contents for carriage returns before uploading.
+
+### Details
+The committed `update_vendors.sh` blob and Windows working-tree file both contained LF line endings, and `.gitattributes` declared `*.sh text eol=lf`. Even so, `git archive` under the repository's Windows `core.autocrlf=true` configuration produced a ZIP entry with CRLF endings. The Pi updater safely rejected the release before switching `current` because Bash parsed `pipefail\r` as an invalid option. Rebuilding the same commit with `git -c core.autocrlf=false archive` restored LF endings. Exact file-list comparison alone would not have detected this content transformation.
+
+### Suggested Action
+For every Pi release, run `git -c core.autocrlf=false archive`, compare all ZIP file names with `git ls-tree`, reject runtime or cache paths, and scan every Linux text entry plus extensionless install entry point for carriage returns. After any failed preflight, verify that `current`, PID, restart count, health endpoints, update journal, and uploaded temporary ZIP all remain safe before retrying.
+
+### Metadata
+- Source: error
+- Related Files: .gitattributes, tools/epaperpod-deploy-zip.ps1, inkypi-weather/package/InkyPi/install/update_vendors.sh
+- Tags: windows, git-archive, autocrlf, linux, deployment, preflight, line-endings
+- See Also: LRN-20260726-002
+- Pattern-Key: release_engineering.force_lf_archive_and_scan_zip_contents
+- Recurrence-Count: 1
+- First-Seen: 2026-07-27
+- Last-Seen: 2026-07-27
+
+### Resolution
+- **Resolved**: 2026-07-27T19:09:36-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Verified 1,241 Git files, excluded runtime state, scanned 568 Linux text entries with zero carriage returns, and successfully deployed release `sports-ewc-active-detail-a7d3c0e9-lf1`.
+
+---
+
 ## [LRN-20260727-002] best_practice
 
 **Logged**: 2026-07-27T18:30:00-07:00
