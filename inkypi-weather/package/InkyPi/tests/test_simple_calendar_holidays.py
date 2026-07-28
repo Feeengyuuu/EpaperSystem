@@ -1352,6 +1352,113 @@ END:VCALENDAR
     ]
 
 
+def test_same_day_personal_event_row_orders_titles_by_start_time():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    event_date = date(2026, 7, 30)
+    events = [
+        {
+            "date": event_date,
+            "title": "Quest Diagnostics Appointment",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "kind": "personal",
+            "time": "3p",
+            "starts_at": tz.localize(datetime(2026, 7, 30, 15, 0)),
+        },
+        {
+            "date": event_date,
+            "title": "Lunch Appointment",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "kind": "personal",
+            "time": "12p",
+            "starts_at": tz.localize(datetime(2026, 7, 30, 12, 0)),
+        },
+    ]
+
+    rows = plugin._upcoming_event_rows(
+        events,
+        date(2026, 7, 28),
+        reference_dt=tz.localize(datetime(2026, 7, 28, 12, 0)),
+        limit=3,
+    )
+
+    assert [event["title"] for event in rows] == [
+        "12p Lunch Appointment / 3p Quest Diagnostics Appointment",
+    ]
+
+
+def test_same_day_event_row_sorts_cross_day_projection_by_visible_time():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    tz = pytz.timezone("America/Los_Angeles")
+    event_date = date(2026, 7, 30)
+    events = [
+        {
+            "date": event_date,
+            "title": "Overnight Event",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "kind": "personal",
+            "time": "10p",
+        },
+        {
+            "date": event_date,
+            "title": "Lunch Appointment",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "kind": "personal",
+            "time": "12p",
+            "starts_at": tz.localize(datetime(2026, 7, 30, 12, 0)),
+        },
+    ]
+
+    rows = plugin._upcoming_event_rows(
+        events,
+        date(2026, 7, 28),
+        reference_dt=tz.localize(datetime(2026, 7, 28, 12, 0)),
+        limit=3,
+    )
+
+    assert [event["title"] for event in rows] == [
+        "12p Lunch Appointment / 10p Overnight Event",
+    ]
+
+
+def test_same_day_event_row_keeps_untimed_events_in_stable_order():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    event_date = date(2026, 7, 30)
+    events = [
+        {
+            "date": event_date,
+            "title": "All Day First",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "time": "",
+        },
+        {
+            "date": event_date,
+            "title": "Unknown Time Second",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "time": "TBD",
+        },
+        {
+            "date": event_date,
+            "title": "Lunch Appointment",
+            "label": "ME",
+            "color": (46, 125, 50),
+            "time": "12p",
+        },
+    ]
+
+    rows = plugin._merge_same_day_events(events)
+
+    assert [event["title"] for event in rows] == [
+        "All Day First / TBD Unknown Time Second / 12p Lunch Appointment",
+    ]
+
+
 def test_calendar_title_cleaning_removes_emoji_symbol_noise():
     plugin = SimpleCalendar({"id": "simple_calendar"})
 

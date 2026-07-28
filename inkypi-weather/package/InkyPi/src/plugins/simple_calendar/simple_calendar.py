@@ -2926,7 +2926,10 @@ class SimpleCalendar(BasePlugin):
             bucket = by_day.setdefault(event["date"], [])
             bucket.append(event)
         for event_date in sorted(by_day):
-            day_events = by_day[event_date]
+            day_events = sorted(
+                by_day[event_date],
+                key=self._same_day_event_sort_key,
+            )
             labels = "/".join(dict.fromkeys(event["label"] for event in day_events if event.get("label")))
             title = " / ".join(dict.fromkeys(self._event_display_title(event) for event in day_events if event.get("title")))
             merged.append({
@@ -2936,6 +2939,28 @@ class SimpleCalendar(BasePlugin):
                 "color": day_events[0].get("color", (80, 80, 80)),
             })
         return merged
+
+    @staticmethod
+    def _same_day_event_sort_key(event):
+        starts_at = event.get("starts_at")
+        if isinstance(starts_at, datetime):
+            return (
+                1,
+                starts_at.hour,
+                starts_at.minute,
+                starts_at.second,
+                starts_at.microsecond,
+            )
+        time_match = re.fullmatch(
+            r"([1-9]|1[0-2])(?::([0-5][0-9]))?([ap])",
+            str(event.get("time") or "").strip().lower(),
+        )
+        if time_match is None:
+            return (0, 0, 0, 0, 0)
+        hour = int(time_match.group(1)) % 12
+        if time_match.group(3) == "p":
+            hour += 12
+        return (1, hour, int(time_match.group(2) or 0), 0, 0)
 
     def _event_display_title(self, event):
         title = str(event.get("title") or "").strip()
