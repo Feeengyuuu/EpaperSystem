@@ -29,6 +29,7 @@ def test_dashboard_background_layer_stays_flat_for_color_epaper():
 
 def install_import_stubs():
     base_pkg = types.ModuleType("plugins.base_plugin")
+    base_pkg.__path__ = []
     sys.modules.setdefault("plugins.base_plugin", base_pkg)
     base = types.ModuleType("plugins.base_plugin.base_plugin")
 
@@ -52,6 +53,33 @@ def install_import_stubs():
     base.BasePlugin = BasePlugin
     sys.modules.setdefault("plugins.base_plugin.base_plugin", base)
 
+    presentation = types.ModuleType(
+        "plugins.base_plugin.refresh_on_display_presentation"
+    )
+
+    class RefreshOnDisplayPresentationMixin:
+        pass
+
+    presentation.RefreshOnDisplayPresentationMixin = RefreshOnDisplayPresentationMixin
+    sys.modules.setdefault(
+        "plugins.base_plugin.refresh_on_display_presentation",
+        presentation,
+    )
+
+    provenance = types.ModuleType("plugins.base_plugin.render_provenance")
+
+    class SourceProvenance:
+        FRESH_CACHE = "fresh_cache"
+        LIVE = "live"
+        LOCAL_FALLBACK = "local_fallback"
+        STALE_CACHE = "stale_cache"
+
+    provenance.SourceProvenance = SourceProvenance
+    provenance.attach_source_provenance = (
+        lambda image, source: image.info.update({"source_provenance": source}) or image
+    )
+    sys.modules.setdefault("plugins.base_plugin.render_provenance", provenance)
+
     context = types.ModuleType("plugins.context_cache")
     context.write_context = lambda *args, **kwargs: None
     sys.modules.setdefault("plugins.context_cache", context)
@@ -69,7 +97,11 @@ def install_import_stubs():
 install_import_stubs()
 
 import plugins.lol_info.lol_info as lol_info_module  # noqa: E402
-from plugins.lol_info.lol_info import LoLInfo, STYLE_VERSION  # noqa: E402
+from plugins.lol_info.lol_info import (  # noqa: E402
+    LOCAL_ASSET_IMAGE_LIMITS,
+    LoLInfo,
+    STYLE_VERSION,
+)
 
 
 class FakeDeviceConfig:
@@ -269,6 +301,29 @@ def test_asset_logos_are_available(tmp_path):
     assert riot_logo is not None
     assert lol_logo.width <= 100 and lol_logo.height <= 42
     assert riot_logo.width <= 90 and riot_logo.height <= 28
+    for filename in ("league-of-legends-logo.png", "riot-games-logo.png"):
+        path = Path(plugin.get_plugin_dir()) / "assets" / filename
+        with Image.open(path) as source:
+            width, height = source.size
+        assert width <= LOCAL_ASSET_IMAGE_LIMITS.max_width
+        assert height <= LOCAL_ASSET_IMAGE_LIMITS.max_height
+        assert width * height <= LOCAL_ASSET_IMAGE_LIMITS.max_pixels
+        assert path.stat().st_size <= LOCAL_ASSET_IMAGE_LIMITS.max_bytes
+
+
+def test_asset_logo_rejects_oversized_source(tmp_path):
+    plugin = make_plugin(tmp_path)
+    asset_dir = tmp_path / "plugin" / "assets"
+    asset_dir.mkdir(parents=True)
+    path = asset_dir / "oversized.png"
+    Image.new(
+        "RGBA",
+        (LOCAL_ASSET_IMAGE_LIMITS.max_width + 1, 1),
+        (0, 0, 0, 0),
+    ).save(path)
+    plugin.get_plugin_dir = lambda: str(tmp_path / "plugin")
+
+    assert plugin._asset_logo("oversized.png", (100, 42)) is None
 
 
 def test_hangul_riot_id_uses_font_with_korean_glyphs(tmp_path):

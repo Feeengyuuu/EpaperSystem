@@ -7,7 +7,16 @@ from PIL import ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.steam_charts.steam_charts as steam_charts_module
-from plugins.steam_charts.steam_charts import Image, SANS_FONT_PATHS, STATIC_YAHEI_FONT_PATH, STEAM_PIXEL_KAIJU_PATH, STEAM_TITLE_WORDMARK_PATH, SteamCharts
+from plugins.steam_charts.steam_charts import (
+    Image,
+    SANS_FONT_PATHS,
+    STATIC_YAHEI_FONT_PATH,
+    STEAM_LOCAL_ASSET_IMAGE_LIMITS,
+    STEAM_LOGO_PATH,
+    STEAM_PIXEL_KAIJU_PATH,
+    STEAM_TITLE_WORDMARK_PATH,
+    SteamCharts,
+)
 
 
 class FakeDeviceConfig:
@@ -1007,6 +1016,34 @@ def test_steam_logo_renders_theme_colors():
     ]
     assert (255, 255, 255) in night_pixels
     assert (0, 0, 0) in night_pixels
+
+
+def test_packaged_steam_assets_fit_low_memory_decode_budget():
+    paths = sorted(Path(STEAM_LOGO_PATH).parent.glob("*.png"))
+
+    assert paths
+    for path in paths:
+        with Image.open(path) as source:
+            width, height = source.size
+        assert width <= STEAM_LOCAL_ASSET_IMAGE_LIMITS.max_width, path
+        assert height <= STEAM_LOCAL_ASSET_IMAGE_LIMITS.max_height, path
+        assert width * height <= STEAM_LOCAL_ASSET_IMAGE_LIMITS.max_pixels, path
+        assert path.stat().st_size <= STEAM_LOCAL_ASSET_IMAGE_LIMITS.max_bytes, path
+
+
+def test_steam_logo_loader_rejects_oversized_source(monkeypatch, tmp_path):
+    path = tmp_path / "oversized.png"
+    Image.new(
+        "RGBA",
+        (STEAM_LOCAL_ASSET_IMAGE_LIMITS.max_width + 1, 1),
+        (0, 0, 0, 0),
+    ).save(path)
+    monkeypatch.setattr(steam_charts_module, "STEAM_LOGO_PATH", str(path))
+    SteamCharts._load_steam_logo_source.cache_clear()
+    try:
+        assert SteamCharts._load_steam_logo_source() is None
+    finally:
+        SteamCharts._load_steam_logo_source.cache_clear()
 
 
 

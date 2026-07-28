@@ -40,6 +40,7 @@ except ModuleNotFoundError:
     sys.modules["jinja2"] = jinja2_stub
 
 import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
+import plugins.sports_dashboard.common as sports_dashboard_common_module
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
@@ -65,6 +66,9 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_LPL_TEAM_LOGO_DIR,
     LOCAL_LCK_LOGO_PATH,
     LOCAL_LCK_TEAM_LOGO_DIR,
+    LOCAL_BRAND_LOGO_IMAGE_LIMITS,
+    LOCAL_TEAM_LOGO_IMAGE_LIMITS,
+    LOCAL_TEAM_LOGO_DIR,
     LOCAL_LPL_MARBLE_FILLER_PATH,
     LOCAL_LPL_MSI_CARD_ACCENT_DIR,
     LOCAL_LPL_MSI_CARD_ACCENT_PATH,
@@ -16273,9 +16277,72 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
         assert logo.getchannel("A").getextrema()[0] == 0
 
 
+def test_packaged_local_logos_fit_low_memory_decode_budget():
+    supported_suffixes = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
+    logo_paths = [
+        path
+        for path in Path(LOCAL_TEAM_LOGO_DIR).rglob("*")
+        if path.is_file() and path.suffix.lower() in supported_suffixes
+    ]
+
+    assert logo_paths
+    for path in logo_paths:
+        with Image.open(path) as source:
+            width, height = source.size
+            source.verify()
+        with Image.open(path) as source:
+            visible = source.convert("RGBA")
+            visible.load()
+        limits = SportsDashboard._local_logo_image_limits(str(path))
+        assert width <= limits.max_width, path
+        assert height <= limits.max_height, path
+        assert width * height <= limits.max_pixels, path
+        assert path.stat().st_size <= limits.max_bytes, path
+        assert visible.getbbox() is not None, path
+
+
+@pytest.mark.parametrize("loader_kind", ["brand", "team"])
+def test_local_logo_loaders_reject_oversized_source_before_rgba(
+    monkeypatch,
+    tmp_path,
+    loader_kind,
+):
+    path = tmp_path / "oversized.png"
+    limits = (
+        LOCAL_BRAND_LOGO_IMAGE_LIMITS
+        if loader_kind == "brand"
+        else LOCAL_TEAM_LOGO_IMAGE_LIMITS
+    )
+    Image.new("RGBA", (limits.max_width + 1, 1), (0, 0, 0, 0)).save(path)
+    rgba_calls = []
+
+    def unexpected_rgba(_source):
+        rgba_calls.append(True)
+        raise AssertionError("oversized local logo reached RGBA conversion")
+
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_logo_with_transparent_background",
+        staticmethod(unexpected_rgba),
+    )
+
+    if loader_kind == "brand":
+        result = SportsDashboard._load_local_logo(str(path), (74, 38), alpha_threshold=8)
+    else:
+        monkeypatch.setattr(
+            SportsDashboard,
+            "_local_team_logo_candidates",
+            staticmethod(lambda _team_code: [str(path)]),
+        )
+        result = SportsDashboard._load_local_team_logo("OVERSIZED", 44)
+
+    assert result is None
+    assert rgba_calls == []
+
+
 def test_local_brand_logo_retries_after_transient_decode_failure(monkeypatch):
     cache_key = (LOCAL_LCK_LOGO_PATH, (74, 38), 8)
-    original_open = sports_dashboard_module.Image.open
+    original_safe_open_image = sports_dashboard_common_module.safe_open_image
     attempts = []
 
     def fail_first_open(path, *args, **kwargs):
@@ -16283,10 +16350,10 @@ def test_local_brand_logo_retries_after_transient_decode_failure(monkeypatch):
             attempts.append(path)
             if len(attempts) == 1:
                 raise MemoryError("transient image decode pressure")
-        return original_open(path, *args, **kwargs)
+        return original_safe_open_image(path, *args, **kwargs)
 
     TEAM_LOGO_CACHE.pop(cache_key, None)
-    monkeypatch.setattr(sports_dashboard_module.Image, "open", fail_first_open)
+    monkeypatch.setattr(sports_dashboard_common_module, "safe_open_image", fail_first_open)
     try:
         assert SportsDashboard._load_local_logo(LOCAL_LCK_LOGO_PATH, (74, 38), alpha_threshold=8) is None
 

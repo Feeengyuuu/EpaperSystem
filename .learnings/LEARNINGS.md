@@ -6,6 +6,39 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260727-002] best_practice
+
+**Logged**: 2026-07-27T18:30:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+On a small-memory Pi with an SD card, recurring images should be cached at render size while memory hotness and disk-access timestamps are managed separately.
+
+### Details
+Plugin refreshes run in short-lived spawned workers, so a process-local `lru_cache` does not survive the next refresh and cannot prevent repeated full-size decoding. Fixed transparent assets should be resized offline to roughly three to five times their display size, validated from image headers before RGBA conversion, and shipped with the plugin. Repeated network images can use the existing bounded persistent cache, but only as content-addressed render-size derivatives; random or real-time sources must remain opt-in. The live 16 GB card was already about 85 percent full, so increasing every namespace independently would create storage pressure. After removing verified stale deployment artifacts, a 256 MiB global cap balances offline fallback depth with free-space safety and avoids the cold-start churn of a more aggressive 128 MiB cut. Cache hits should always update in-memory LRU order, while durable access timestamps are coalesced to `min(24 hours, TTL / 2)` to reduce SD metadata writes without disabling expiry.
+
+### Suggested Action
+When adding a recurring image, first decide whether it is fixed, repeated network content, or intentionally live. Package fixed assets at bounded render size; opt repeated network images into the shared managed cache with a strict namespace and object budget; do not cache live/random images by default. Keep at least 1.5 GiB or 15 percent of the SD card free, and validate both first-decode memory and repeated-hit disk writes.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/lol_info/lol_info.py, inkypi-weather/package/InkyPi/src/plugins/steam_charts/steam_charts.py, inkypi-weather/package/InkyPi/src/utils/cache_manager.py
+- Tags: raspberry-pi, sd-card, image-cache, render-size, spawned-worker, write-amplification, cache-budget
+- See Also: LRN-20260727-001
+- Pattern-Key: caching.render_size_derivatives_and_coalesced_disk_touches
+- Recurrence-Count: 1
+- First-Seen: 2026-07-27
+- Last-Seen: 2026-07-27
+
+### Resolution
+- **Resolved**: 2026-07-27T18:30:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Bounded the high-risk LoL and Steam static assets, reduced the shared managed-cache ceiling to 256 MiB, and coalesced cache-hit timestamp writes. A common opt-in derivative cache for still-uncached network media remains future work.
+
+---
+
 ## [LRN-20260726-004] correction
 
 **Logged**: 2026-07-26T15:39:51-07:00
@@ -2237,15 +2270,15 @@ For future SportsDashboard identity-card scaling, parameterize each vertical rel
 Low-memory protection must preserve the plugin's required detail contract, not silently redefine an overview card as success.
 
 ### Details
-The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation exposed a second boundary: even when the heaviest region ran first, its EWC parser peak could overlap LoL, Valve, and image allocations and trip the 70 MiB guard. The stable shape is a dedicated short-lived EWC prefetch worker followed by an esports renderer that reads only the atomically committed EWC cache. Because that cache is a cross-process hand-off boundary, a successful network parse is insufficient: the prefetch worker must write a unique publication token, read it back from disk, and verify that the exact cache-only selection is reproducible; otherwise it must report an explicit degraded hand-off to the last durable cache. A protected live canary then exposed a third boundary: the esports renderer still fetched Valve's HLTV/OpenDota data even when a timed LoL or EWC candidate made Valve mathematically unable to win. Lazy elimination based on the existing candidate sort contract removed that 47 MiB losing-provider spike without changing the selected card.
+The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation exposed a second boundary: even when the heaviest region ran first, its EWC parser peak could overlap LoL, Valve, and image allocations and trip the 70 MiB guard. The stable shape is a dedicated short-lived EWC prefetch worker followed by an esports renderer that reads only the atomically committed EWC cache. Because that cache is a cross-process hand-off boundary, a successful network parse is insufficient: the prefetch worker must write a unique publication token, read it back from disk, and verify that the exact cache-only selection is reproducible; otherwise it must report an explicit degraded hand-off to the last durable cache. A protected live canary then exposed a third boundary: the esports renderer still fetched Valve's HLTV/OpenDota data even when a timed LoL or EWC candidate made Valve mathematically unable to win. Lazy elimination based on the existing candidate sort contract removed needless provider work without changing the selected card, but the next canary proved it was not the remaining peak. The actual 70+ MiB jump came after selection, when local LCK/LPL logos as large as 5000x3513 were converted to full-size RGBA and copied into a separate alpha plane before being reduced to roughly 40-100 display pixels. The durable fix is to package bounded official thumbnails, reject oversized local assets from image headers before decode, avoid alpha-plane copies, and cache only the small render-ready result.
 
 ### Suggested Action
-Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, provider-specific prefetch workers, write/read cache attestation, selection-dominance lazy loading, cache-only composition, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
+Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, provider-specific prefetch workers, write/read cache attestation, selection-dominance lazy loading, cache-only composition, packaged render-size image assets, bounded small-image caches, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
 
 ### Metadata
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/src/runtime/sports_isolated_renderer.py, inkypi-weather/package/InkyPi/tests/test_sports_ewc_bounded_memory_contract.py, inkypi-weather/package/InkyPi/tests/test_sports_isolated_renderer.py
-- Tags: sports-dashboard, ewc, low-memory, detail-contract, streaming-json, isolated-worker, cache-attestation, lazy-provider-loading, malloc-trim
+- Tags: sports-dashboard, ewc, low-memory, detail-contract, streaming-json, isolated-worker, cache-attestation, lazy-provider-loading, image-cache, logo-decode, malloc-trim
 - See Also: LRN-20260720-003, LRN-20260716-006
 - Pattern-Key: stability_fallbacks.preserve_required_detail_contract
 - Recurrence-Count: 1
@@ -2255,6 +2288,6 @@ Define the minimum user-visible contract before introducing a stability fallback
 ### Resolution
 - **Resolved**: 2026-07-27T16:10:00-07:00
 - **Commit/PR**: local-worktree
-- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, verified the durable cache hand-off before enabling cache-only composition, and skipped Valve live fetches whenever the original selector proves Valve cannot win.
+- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, verified the durable cache hand-off before enabling cache-only composition, skipped Valve live fetches whenever the original selector proves Valve cannot win, and bounded recurring logo assets before RGBA decode.
 
 ---

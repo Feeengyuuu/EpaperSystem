@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_CACHE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_CACHE_MAX_FILES = 256
 DEFAULT_CACHE_MAX_BYTES = 50 * 1024 * 1024
-DEFAULT_GLOBAL_CACHE_MAX_BYTES = 512 * 1024 * 1024
+DEFAULT_GLOBAL_CACHE_MAX_BYTES = 256 * 1024 * 1024
+DEFAULT_ACCESS_TOUCH_INTERVAL_SECONDS = 24 * 60 * 60
 DEFAULT_IMAGE_CACHE_MAX_ENTRIES = 128
 DEFAULT_IMAGE_CACHE_MAX_BYTES = 20 * 1024 * 1024
 DEFAULT_GLOBAL_IMAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024
@@ -215,6 +216,7 @@ class CacheManager:
         root_or_runtime_paths,
         *,
         global_max_bytes: int = DEFAULT_GLOBAL_CACHE_MAX_BYTES,
+        access_touch_interval_seconds: float = DEFAULT_ACCESS_TOUCH_INTERVAL_SECONDS,
         health_publisher=None,
         clock=time.time,
     ):
@@ -222,6 +224,20 @@ class CacheManager:
             raise ValueError("global_max_bytes must be a positive integer")
         if global_max_bytes <= 0:
             raise ValueError("global_max_bytes must be a positive integer")
+        try:
+            access_touch_interval = float(access_touch_interval_seconds)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError(
+                "access_touch_interval_seconds must be finite and non-negative"
+            ) from error
+        if (
+            isinstance(access_touch_interval_seconds, bool)
+            or not math.isfinite(access_touch_interval)
+            or access_touch_interval < 0
+        ):
+            raise ValueError(
+                "access_touch_interval_seconds must be finite and non-negative"
+            )
         self.root = _cache_root(root_or_runtime_paths)
         if self.root.exists() and self.root.is_symlink():
             raise CachePathError("managed cache roots cannot be symlinks")
@@ -230,6 +246,7 @@ class CacheManager:
             raise CachePathError("managed cache roots cannot be symlinks")
         self._root_resolved = self.root.resolve(strict=True)
         self.global_max_bytes = global_max_bytes
+        self.access_touch_interval_seconds = access_touch_interval
         self.health_publisher = health_publisher
         self._clock = clock
         self._lock = threading.RLock()
@@ -403,7 +420,12 @@ class CacheManager:
                 if _is_relative_to(path.absolute(), namespace.root.absolute())
             }
 
-    def _remember_path_locked(self, path: Path) -> _FileRecord | None:
+    def _remember_path_locked(
+        self,
+        path: Path,
+        *,
+        last_used: float | None = None,
+    ) -> _FileRecord | None:
         try:
             info = path.stat(follow_symlinks=False)
         except OSError:
@@ -415,7 +437,11 @@ class CacheManager:
         record = _FileRecord(
             path,
             int(info.st_size),
-            max(float(info.st_atime), float(info.st_mtime)),
+            (
+                max(float(info.st_atime), float(info.st_mtime))
+                if last_used is None
+                else float(last_used)
+            ),
         )
         self._records[path] = record
         for namespace in self._namespaces.values():
@@ -547,8 +573,13 @@ class CacheNamespace:
                 self.manager._publish_locked()
                 return None
             data = target.read_bytes()
-            os.utime(target, (now, now))
-            self.manager._remember_path_locked(target)
+            touch_interval = min(
+                self.manager.access_touch_interval_seconds,
+                self.budget.max_age_seconds / 2,
+            )
+            if touch_interval == 0 or now - last_used >= touch_interval:
+                os.utime(target, (now, now))
+            self.manager._remember_path_locked(target, last_used=now)
             return data
 
     def remove(self, key: str, *, suffix: str = "") -> bool:

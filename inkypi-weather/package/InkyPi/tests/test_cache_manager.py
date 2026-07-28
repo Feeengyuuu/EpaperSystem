@@ -14,6 +14,7 @@ from utils.cache_manager import (
     CacheManager,
     CacheObjectTooLarge,
     CachePathError,
+    DEFAULT_GLOBAL_CACHE_MAX_BYTES,
     ImageLRUCache,
     _ImageCachePool,
 )
@@ -38,6 +39,36 @@ class Publisher:
         self.components.append((name, value))
 
 
+def test_default_global_cache_budget_is_bounded_for_small_storage(tmp_path):
+    manager = CacheManager(tmp_path / "managed")
+
+    assert DEFAULT_GLOBAL_CACHE_MAX_BYTES == 256 * 1024 * 1024
+    assert manager.global_max_bytes == DEFAULT_GLOBAL_CACHE_MAX_BYTES
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        -1,
+        float("-inf"),
+        float("inf"),
+        float("nan"),
+        True,
+        None,
+        "invalid",
+    ],
+)
+def test_access_touch_interval_must_be_finite_and_non_negative(tmp_path, value):
+    with pytest.raises(
+        ValueError,
+        match="access_touch_interval_seconds must be finite and non-negative",
+    ):
+        CacheManager(
+            tmp_path / "managed",
+            access_touch_interval_seconds=value,
+        )
+
+
 def test_namespace_prunes_lru_before_write_and_stays_under_budget(tmp_path):
     manager = CacheManager(tmp_path / "managed")
     namespace = manager.namespace("ticketmaster", CacheBudget(3600, 2, 10))
@@ -60,18 +91,101 @@ def test_read_updates_lru_so_recent_object_survives_next_write(tmp_path):
         "previews",
         CacheBudget(3600, 2, 10),
     )
-    namespace.put_bytes("one", b"11111")
+    first_path = namespace.put_bytes("one", b"11111")
+    first_disk_timestamp = first_path.stat().st_mtime
     clock.advance(1)
     namespace.put_bytes("two", b"22222")
     clock.advance(1)
 
     assert namespace.get_bytes("one") == b"11111"
+    assert first_path.stat().st_mtime == first_disk_timestamp
     clock.advance(1)
     namespace.put_bytes("three", b"33333")
 
     assert namespace.path("one").exists()
     assert not namespace.path("two").exists()
     assert namespace.path("three").exists()
+
+
+def test_repeated_reads_within_one_day_do_not_touch_disk(tmp_path, monkeypatch):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "logos",
+        CacheBudget(7 * 24 * 60 * 60, 10, 1000),
+    )
+    path = namespace.put_bytes("team", b"logo")
+    disk_timestamp = path.stat().st_mtime
+    touch_calls = []
+    real_utime = os.utime
+
+    def record_utime(*args, **kwargs):
+        touch_calls.append((args, kwargs))
+        return real_utime(*args, **kwargs)
+
+    monkeypatch.setattr(os, "utime", record_utime)
+
+    clock.advance(60 * 60)
+    assert namespace.get_bytes("team") == b"logo"
+    clock.advance(60 * 60)
+    assert namespace.get_bytes("team") == b"logo"
+
+    assert path.stat().st_mtime == disk_timestamp
+    assert touch_calls == []
+
+
+def test_read_touches_disk_after_access_interval(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "logos",
+        CacheBudget(7 * 24 * 60 * 60, 10, 1000),
+    )
+    path = namespace.put_bytes("team", b"logo")
+    clock.advance(24 * 60 * 60)
+
+    assert namespace.get_bytes("team") == b"logo"
+
+    assert path.stat().st_mtime == pytest.approx(clock(), abs=0.001)
+
+
+def test_short_ttl_reads_touch_at_half_ttl_and_keep_object_alive(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "scores",
+        CacheBudget(10, 10, 1000),
+    )
+    path = namespace.put_bytes("latest", b"score")
+    original_timestamp = path.stat().st_mtime
+
+    clock.advance(4)
+    assert namespace.get_bytes("latest") == b"score"
+    assert path.stat().st_mtime == original_timestamp
+
+    # Keep the disk clock deterministic on filesystems that update atime on reads.
+    os.utime(path, (original_timestamp, original_timestamp))
+    clock.advance(4)
+    assert namespace.get_bytes("latest") == b"score"
+    assert path.stat().st_mtime == pytest.approx(clock(), abs=0.001)
+
+    clock.advance(4)
+    assert namespace.get_bytes("latest") == b"score"
+
+
+def test_zero_access_touch_interval_touches_every_hit(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(
+        tmp_path / "managed",
+        access_touch_interval_seconds=0,
+        clock=clock,
+    ).namespace(
+        "logos",
+        CacheBudget(3600, 10, 1000),
+    )
+    path = namespace.put_bytes("team", b"logo")
+    clock.advance(1)
+
+    assert namespace.get_bytes("team") == b"logo"
+
+    assert path.stat().st_mtime == pytest.approx(clock(), abs=0.001)
 
 
 def test_namespace_rejects_traversal_absolute_paths_and_unsafe_suffixes(tmp_path):

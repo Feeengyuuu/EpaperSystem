@@ -22,13 +22,13 @@ from plugins.context_cache import write_context
 from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
-from utils.safe_image import safe_open_image, safe_open_image_response
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context
 
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "lol_info"
-STYLE_VERSION = "lol-info-v17-pro-account-rotation"
+STYLE_VERSION = "lol-info-v18-bounded-local-assets"
 DEFAULT_GAME_NAME = "Hide on bush"
 DEFAULT_TAG_LINE = "KR1"
 DEFAULT_PLATFORM = "kr"
@@ -52,6 +52,12 @@ LOL_LOGO_FILE = "league-of-legends-logo.png"
 RIOT_LOGO_FILE = "riot-games-logo.png"
 RANK_EMBLEM_TIERS = {"iron", "bronze", "silver", "gold", "platinum", "emerald", "diamond", "master", "grandmaster", "challenger"}
 _ALLOW_PROVIDER_MEDIA = ContextVar("lol_info_allow_provider_media", default=True)
+LOCAL_ASSET_IMAGE_LIMITS = ImageLimits(
+    max_bytes=2 * 1024 * 1024,
+    max_width=1024,
+    max_height=1024,
+    max_pixels=1024 * 1024,
+)
 
 PLATFORM_ROUTES = {"br1", "eun1", "euw1", "jp1", "kr", "la1", "la2", "na1", "oc1", "tr1"}
 REGIONAL_ROUTES = {"americas", "asia", "europe", "sea"}
@@ -1521,7 +1527,8 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         if not path.exists():
             return None
         try:
-            raw = Image.open(path).convert("RGBA")
+            with safe_open_image(path, limits=LOCAL_ASSET_IMAGE_LIMITS) as source:
+                raw = source.convert("RGBA")
             if remove_light:
                 raw = self._remove_light_background(raw)
             raw = self._trim_alpha(raw)

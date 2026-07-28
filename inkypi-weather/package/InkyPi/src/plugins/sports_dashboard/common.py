@@ -146,6 +146,18 @@ TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
     max_height=TEAM_LOGO_DISK_CACHE_MAX_SIDE,
     max_pixels=TEAM_LOGO_DISK_CACHE_MAX_PIXELS,
 )
+LOCAL_TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
+    max_bytes=2 * 1024 * 1024,
+    max_width=1024,
+    max_height=1024,
+    max_pixels=1024 * 1024,
+)
+LOCAL_BRAND_LOGO_IMAGE_LIMITS = ImageLimits(
+    max_bytes=2 * 1024 * 1024,
+    max_width=4096,
+    max_height=4096,
+    max_pixels=4 * 1024 * 1024,
+)
 TEAM_LOGO_DISK_CACHE_BUDGET = CacheBudget(
     30 * 24 * 60 * 60,
     256,
@@ -3519,7 +3531,9 @@ class SportsDashboardCommonMixin:
             if not os.path.exists(path):
                 continue
             try:
-                with Image.open(path) as source:
+                with safe_open_image(path, limits=LOCAL_TEAM_LOGO_IMAGE_LIMITS) as source:
+                    working_size = min(512, max(64, int(size) * 4))
+                    source.thumbnail((working_size, working_size), Image.LANCZOS)
                     logo = SportsDashboard._logo_with_transparent_background(source)
                     bbox = logo.getbbox()
                     if bbox:
@@ -3533,6 +3547,16 @@ class SportsDashboardCommonMixin:
         return None
 
     @staticmethod
+    def _local_logo_image_limits(path):
+        try:
+            relative = Path(path).relative_to(Path(LOCAL_TEAM_LOGO_DIR))
+        except (TypeError, ValueError):
+            return LOCAL_BRAND_LOGO_IMAGE_LIMITS
+        if len(relative.parts) > 1:
+            return LOCAL_TEAM_LOGO_IMAGE_LIMITS
+        return LOCAL_BRAND_LOGO_IMAGE_LIMITS
+
+    @staticmethod
     def _load_local_logo(path, size, alpha_threshold=1):
         if not path or not os.path.exists(path):
             return None
@@ -3540,7 +3564,8 @@ class SportsDashboardCommonMixin:
         if cache_key in TEAM_LOGO_CACHE:
             return TEAM_LOGO_CACHE[cache_key]
         try:
-            with Image.open(path) as source:
+            limits = SportsDashboard._local_logo_image_limits(path)
+            with safe_open_image(path, limits=limits) as source:
                 logo = SportsDashboard._logo_with_transparent_background(source)
             if alpha_threshold > 1:
                 pixels = logo.load()
@@ -3708,8 +3733,7 @@ class SportsDashboardCommonMixin:
     @staticmethod
     def _logo_with_transparent_background(source):
         logo = source.convert("RGBA")
-        alpha = logo.getchannel("A")
-        if alpha.getextrema()[0] < 255:
+        if logo.getextrema()[3][0] < 255:
             return logo
 
         width, height = logo.size

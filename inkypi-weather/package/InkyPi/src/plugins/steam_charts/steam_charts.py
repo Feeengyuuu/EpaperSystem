@@ -7,7 +7,7 @@ from utils.app_utils import (
 )
 from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
-from utils.safe_image import ImageLimits, safe_open_base64_image
+from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
 import concurrent.futures
@@ -32,6 +32,12 @@ SPARKLINE_INK = (6, 78, 59)
 LINE_SPARKLINE_AMPLIFICATION = 1.55
 LINE_SPARKLINE_EDGE_PADDING = 2.0
 STEAM_CAPSULE_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
+STEAM_LOCAL_ASSET_IMAGE_LIMITS = ImageLimits(
+    max_bytes=2 * 1024 * 1024,
+    max_width=1024,
+    max_height=1024,
+    max_pixels=1024 * 1024,
+)
 BOLD_SAFE_MIDDLE_DOT = "\u2027"
 TRUE_SETTING_VALUES = {"1", "true", "yes", "on"}
 FALSE_SETTING_VALUES = {"0", "false", "no", "off"}
@@ -1197,7 +1203,10 @@ class SteamCharts(BasePlugin):
         if not os.path.exists(STEAM_PIXEL_KAIJU_PATH):
             return None
         try:
-            with Image.open(STEAM_PIXEL_KAIJU_PATH) as kaiju:
+            with safe_open_image(
+                STEAM_PIXEL_KAIJU_PATH,
+                limits=STEAM_LOCAL_ASSET_IMAGE_LIMITS,
+            ) as kaiju:
                 return kaiju.convert("RGBA")
         except Exception:
             logger.warning("Could not load Steam pixel kaiju asset: %s", STEAM_PIXEL_KAIJU_PATH)
@@ -1209,7 +1218,10 @@ class SteamCharts(BasePlugin):
         if not os.path.exists(STEAM_HEADER_BAR_PATH):
             return None
         try:
-            with Image.open(STEAM_HEADER_BAR_PATH) as bar:
+            with safe_open_image(
+                STEAM_HEADER_BAR_PATH,
+                limits=STEAM_LOCAL_ASSET_IMAGE_LIMITS,
+            ) as bar:
                 return bar.convert("RGBA")
         except Exception:
             logger.warning("Could not load Steam header bar asset: %s", STEAM_HEADER_BAR_PATH)
@@ -1221,7 +1233,10 @@ class SteamCharts(BasePlugin):
         if not os.path.exists(STEAM_LOGO_PATH):
             return None
         try:
-            with Image.open(STEAM_LOGO_PATH) as logo:
+            with safe_open_image(
+                STEAM_LOGO_PATH,
+                limits=STEAM_LOCAL_ASSET_IMAGE_LIMITS,
+            ) as logo:
                 return logo.convert("RGBA")
         except Exception:
             logger.warning("Could not load Steam logo asset: %s", STEAM_LOGO_PATH)
@@ -1233,7 +1248,10 @@ class SteamCharts(BasePlugin):
         if not os.path.exists(STEAM_TITLE_WORDMARK_PATH):
             return None
         try:
-            with Image.open(STEAM_TITLE_WORDMARK_PATH) as wordmark:
+            with safe_open_image(
+                STEAM_TITLE_WORDMARK_PATH,
+                limits=STEAM_LOCAL_ASSET_IMAGE_LIMITS,
+            ) as wordmark:
                 return wordmark.convert("RGBA")
         except Exception:
             logger.warning("Could not load Steam title wordmark asset: %s", STEAM_TITLE_WORDMARK_PATH)
