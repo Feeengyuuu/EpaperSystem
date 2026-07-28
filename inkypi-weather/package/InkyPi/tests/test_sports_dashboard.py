@@ -3538,7 +3538,7 @@ def test_right_sidebar_prefers_active_valve_over_ewc_schedule_overview():
     assert choice["choice"]["league_key"] == "LPL"
 
 
-def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
+def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_ewc():
     now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
     ewc_selected = SportsDashboard._select_ewc_events(
         [
@@ -3591,8 +3591,57 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
         ewc_card={"selected": ewc_selected, "source_state": "EWC LIVE", "priority": 2},
     )
 
-    assert choice["kind"] == "ewc"
-    assert choice["selected"]["main"]["game"] == "League of Legends"
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
+
+
+def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_lck():
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    lpl_match = {
+        "start": now + timedelta(hours=2),
+        "state": "unstarted",
+        "team_a": "TES",
+        "team_b": "AL",
+    }
+    lck_match = {
+        "start": now + timedelta(hours=1),
+        "state": "unstarted",
+        "team_a": "KRX",
+        "team_b": "NS",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": {
+                    "live": [],
+                    "upcoming": [lpl_match],
+                    "recent": [],
+                    "main": lpl_match,
+                },
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            },
+            {
+                "league_key": "LCK",
+                "selected": {
+                    "live": [],
+                    "upcoming": [lck_match],
+                    "recent": [],
+                    "main": lck_match,
+                },
+                "source_state": "LCK LIVE DATA",
+                "priority": 1,
+            },
+        ],
+        {},
+        "VALVE NO DATA",
+        now,
+    )
+
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
 
 
 def test_active_ewc_competition_with_future_detail_does_not_preempt_earlier_upcoming_lpl():
@@ -3786,7 +3835,7 @@ def test_stale_ewc_competition_cannot_promote_fresh_future_detail():
     assert choice["choice"]["league_key"] == "LCK"
 
 
-def test_stale_ewc_competition_demotes_but_keeps_fresh_upcoming_detail():
+def test_stale_ewc_competition_detail_remains_below_upcoming_lpl():
     now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
     ewc_match = {
         "kind": "match",
@@ -3841,9 +3890,8 @@ def test_stale_ewc_competition_demotes_but_keeps_fresh_upcoming_detail():
         },
     )
 
-    assert choice["kind"] == "ewc"
-    assert choice["phase"] == 1
-    assert choice["selected"]["main_match"]["event_id"] == ewc_match["event_id"]
+    assert choice["kind"] == "lol"
+    assert choice["choice"]["league_key"] == "LPL"
 
 
 def test_fresh_live_ewc_match_does_not_depend_on_competition_overview_freshness():
@@ -4378,26 +4426,10 @@ def test_right_sidebar_uses_global_earliest_ewc_match_not_rotated_later_game():
     assert ewc_selected["main"]["game"] == "Dota 2"
     assert ewc_selected["all_upcoming_matches"][0]["game"] == "League of Legends"
 
-    lpl_selected = SportsDashboard._select_lpl_events(
-        [
-            {
-                "start": now + timedelta(days=2),
-                "state": "unstarted",
-                "team_a": "BLG",
-                "team_b": "TES",
-                "team_a_logo": "",
-                "team_b_logo": "",
-                "wins_a": None,
-                "wins_b": None,
-                "best_of": 3,
-                "block": "Split 3",
-            }
-        ],
-        now,
-    )
+    lpl_selected = SportsDashboard._select_lpl_events([], now)
 
     choice = SportsDashboard._select_right_esports_sidebar(
-        [{"league_key": "LPL", "selected": lpl_selected, "source_state": "LIVE DATA", "priority": 0}],
+        [{"league_key": "LPL", "selected": lpl_selected, "source_state": "LPL FALLBACK", "priority": 0}],
         {},
         "VALVE NO DATA",
         now,

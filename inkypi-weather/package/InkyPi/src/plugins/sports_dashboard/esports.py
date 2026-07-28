@@ -2567,8 +2567,8 @@ class EsportsMixin:
         kind = str((item or {}).get("kind") or "").strip().lower()
 
         # LoL league cards and EWC cards both carry a real next-match time.
-        # Within the upcoming phase, surface the earliest match before applying
-        # the historical league/provider preference as a deterministic tie-break.
+        # Preserve the configured provider order within the upcoming phase,
+        # then use the schedule to choose between equally ranked candidates.
         if phase == 1 and kind in {"lol", "ewc"}:
             try:
                 scheduled_at = float((item or {}).get("tie"))
@@ -2576,7 +2576,7 @@ class EsportsMixin:
                 scheduled_at = float("inf")
             if scheduled_at != scheduled_at or scheduled_at in {float("inf"), float("-inf")}:
                 scheduled_at = float("inf")
-            return (phase, 0, scheduled_at, priority, kind)
+            return (phase, 0, priority, scheduled_at, kind)
 
         # Valve cards represent an active tournament/result window rather than
         # a comparable next-match timestamp, so retain their existing priority.
@@ -4818,7 +4818,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 
