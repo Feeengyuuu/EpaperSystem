@@ -136,6 +136,9 @@ DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT = 70
 # allocations can outrun the parent worker's resource polling interval.
 DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
 DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT = 75
+DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS = 30 * 60
+DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS = 90
+DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -172,6 +175,14 @@ class ActiveOperationSnapshot:
     intent: str
     plugin_id: str
     instance_uuid: str | None
+    started_monotonic: float
+    deadline_monotonic: float
+
+
+@dataclass(frozen=True)
+class _SportsLivenessWindow:
+    instance_uuid: str
+    due_since: datetime
     started_monotonic: float
     deadline_monotonic: float
 
@@ -560,6 +571,8 @@ class RefreshTask:
         self._last_memory_pressure_restart_monotonic = 0.0
         self._libc = None
         self._restart_request = None
+        self._sports_liveness_window = None
+        self._sports_liveness_cooldown_until_monotonic = 0.0
         self._sports_isolated_renderer = (
             render_sports_dashboard_isolated
             if sports_isolated_renderer is None
@@ -2044,7 +2057,8 @@ class RefreshTask:
                 data_candidates.append(data_evaluation.candidate)
 
         thresholds = self._resource_thresholds()
-        tier = classify_resource_tier(self._resource_sample(), thresholds)
+        resource_sample = self._resource_sample()
+        tier = classify_resource_tier(resource_sample, thresholds)
         live_candidates = self._live_due_candidates(
             active,
             runtime_instances,
@@ -2086,8 +2100,33 @@ class RefreshTask:
                 expected_playlist_name=active.name,
             )
         }
+        (
+            sports_liveness_candidate,
+            sports_liveness_holds_independent,
+            sports_liveness_excluded_uuids,
+        ) = self._sports_liveness_decision(
+            active,
+            data_candidates,
+            runtime_instances,
+            current_dt,
+            resource_sample,
+        )
+        if sports_liveness_excluded_uuids:
+            data_candidates = [
+                candidate
+                for candidate in data_candidates
+                if candidate.instance.instance_uuid
+                not in sports_liveness_excluded_uuids
+            ]
+            auxiliary_candidates = [
+                candidate
+                for candidate in auxiliary_candidates
+                if candidate.instance.instance_uuid
+                not in sports_liveness_excluded_uuids
+            ]
         if (
-            reserved_instance_uuids
+            not sports_liveness_holds_independent
+            and reserved_instance_uuids
             and self._admission_state.consecutive_data_admissions < 1
             and self._get_rotation_wait_seconds()
             > DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
@@ -2105,6 +2144,8 @@ class RefreshTask:
                 >= starvation_seconds
             ]
             if starved_data:
+                if sports_liveness_candidate is not None:
+                    starved_data = [sports_liveness_candidate]
                 concession = choose_refresh_candidate(
                     starved_data,
                     [],
@@ -2201,6 +2242,33 @@ class RefreshTask:
             self._get_rotation_wait_seconds()
             <= DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
         ):
+            return None
+
+        if sports_liveness_candidate is not None:
+            liveness_admission = choose_refresh_candidate(
+                [sports_liveness_candidate],
+                [],
+                tier=tier,
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            )
+            self._admission_state = liveness_admission.state
+            candidate = liveness_admission.candidate
+            if candidate is None:
+                return None
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=97,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+            )
+        if sports_liveness_holds_independent:
             return None
 
         decision = choose_refresh_candidate(
@@ -3165,6 +3233,234 @@ class RefreshTask:
             }
             and bool(command.payload.get("playlist_name"))
         )
+
+    def _sports_liveness_seconds(self, key, default, maximum):
+        value = self._config_float(key, default)
+        if not math.isfinite(value) or value < 0:
+            value = float(default)
+        return min(float(maximum), value)
+
+    def _sports_liveness_anchor(
+        self,
+        candidate,
+        runtime_instances,
+        current_dt,
+    ):
+        due_since = self._align_datetime_tz(candidate.due_since, current_dt)
+        runtime = runtime_instances.get(
+            candidate.instance.instance_uuid,
+            InstanceRuntimeState(),
+        ).data
+        if self._parse_iso_datetime(runtime.last_success_at) is not None:
+            return due_since
+        if candidate.last_attempt_at is None:
+            return None
+        last_attempt = self._align_datetime_tz(
+            candidate.last_attempt_at,
+            current_dt,
+        )
+        return min(due_since, last_attempt)
+
+    def _sports_liveness_target(
+        self,
+        data_candidates,
+        runtime_instances,
+        current_dt,
+    ):
+        starvation_seconds = self._sports_liveness_seconds(
+            "sports_isolated_liveness_starvation_seconds",
+            DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS,
+            7 * 24 * 60 * 60,
+        )
+        eligible = []
+        for candidate in data_candidates:
+            if candidate.instance.plugin_id != "sports_dashboard":
+                continue
+            due_since = self._sports_liveness_anchor(
+                candidate,
+                runtime_instances,
+                current_dt,
+            )
+            if due_since is None:
+                continue
+            if (current_dt - due_since).total_seconds() < starvation_seconds:
+                continue
+            eligible.append((due_since, candidate.instance.instance_uuid, candidate))
+        if not eligible:
+            return None, None
+        due_since, _instance_uuid, candidate = min(
+            eligible,
+            key=lambda item: item[:2],
+        )
+        return candidate, due_since
+
+    def _sports_liveness_decision(
+        self,
+        active,
+        data_candidates,
+        runtime_instances,
+        current_dt,
+        resource_sample,
+    ):
+        """Reserve a bounded idle window for a persistently overdue Sports render."""
+        now = self._clock()
+        candidates_by_uuid = {
+            candidate.instance.instance_uuid: candidate
+            for candidate in data_candidates
+            if candidate.instance.plugin_id == "sports_dashboard"
+        }
+        active_sports_uuids = frozenset(
+            instance.instance_uuid
+            for instance in active.plugins
+            if instance.plugin_id == "sports_dashboard"
+        )
+        unproven_attempted_uuids = frozenset(
+            instance_uuid
+            for instance_uuid in active_sports_uuids
+            if self._parse_iso_datetime(
+                runtime_instances.get(
+                    instance_uuid,
+                    InstanceRuntimeState(),
+                ).data.last_attempt_at
+            )
+            is not None
+            and self._parse_iso_datetime(
+                runtime_instances.get(
+                    instance_uuid,
+                    InstanceRuntimeState(),
+                ).data.last_success_at
+            )
+            is None
+        )
+        margin_available, required_mb, max_swap = (
+            self._sports_isolated_start_margin(resource_sample)
+        )
+        window = self._sports_liveness_window
+        if window is not None and window.instance_uuid not in active_sports_uuids:
+            logger.info(
+                "Canceling Sports Dashboard quiet window because its target "
+                "left the active playlist. | instance_uuid_hash: %s",
+                hashlib.sha256(
+                    window.instance_uuid.encode("utf-8")
+                ).hexdigest()[:16],
+            )
+            self._sports_liveness_window = None
+            window = None
+
+        if window is not None:
+            target = candidates_by_uuid.get(window.instance_uuid)
+            retry_pending = False
+            if target is None:
+                runtime = runtime_instances.get(
+                    window.instance_uuid,
+                    InstanceRuntimeState(),
+                ).data
+                next_retry = self._parse_iso_datetime(runtime.next_retry_at)
+                if next_retry is not None:
+                    next_retry = self._align_datetime_tz(next_retry, current_dt)
+                    retry_pending = current_dt < next_retry
+                if not retry_pending:
+                    logger.info(
+                        "Canceling Sports Dashboard quiet window because its "
+                        "target is no longer due. | instance_uuid_hash: %s",
+                        hashlib.sha256(
+                            window.instance_uuid.encode("utf-8")
+                        ).hexdigest()[:16],
+                    )
+                    self._sports_liveness_window = None
+                    window = None
+
+        if window is not None:
+            target = candidates_by_uuid.get(window.instance_uuid)
+            if now >= window.deadline_monotonic:
+                cooldown_seconds = self._sports_liveness_seconds(
+                    "sports_isolated_liveness_cooldown_seconds",
+                    DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS,
+                    60 * 60,
+                )
+                self._sports_liveness_window = None
+                self._sports_liveness_cooldown_until_monotonic = (
+                    now + cooldown_seconds
+                )
+                logger.warning(
+                    "Sports Dashboard quiet window expired before a refresh "
+                    "completed; ordinary refreshes resume. | "
+                    "instance_uuid_hash: %s | window_seconds: %.1f | "
+                    "cooldown_seconds: %.1f | available_mb: %s | "
+                    "swap_percent: %s",
+                    hashlib.sha256(
+                        window.instance_uuid.encode("utf-8")
+                    ).hexdigest()[:16],
+                    max(
+                        0.0,
+                        window.deadline_monotonic
+                        - window.started_monotonic,
+                    ),
+                    cooldown_seconds,
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                )
+                return None, False, active_sports_uuids
+            if target is not None and margin_available:
+                # Keep the window until execution has actually completed.
+                # The child-process gate samples resources again; retaining the
+                # original deadline makes a scheduler/execution margin race
+                # expire into cooldown instead of silently starting over.
+                return target, False, frozenset()
+            return None, True, active_sports_uuids
+
+        target, due_since = self._sports_liveness_target(
+            data_candidates,
+            runtime_instances,
+            current_dt,
+        )
+        if target is not None and margin_available:
+            return target, False, frozenset()
+        if (
+            not margin_available
+            and now < self._sports_liveness_cooldown_until_monotonic
+        ):
+            return None, False, active_sports_uuids
+        if target is None:
+            return (
+                None,
+                False,
+                (
+                    unproven_attempted_uuids
+                    if not margin_available
+                    else frozenset()
+                ),
+            )
+
+        window_seconds = self._sports_liveness_seconds(
+            "sports_isolated_liveness_window_seconds",
+            DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS,
+            5 * 60,
+        )
+        if window_seconds <= 0:
+            return None, False, active_sports_uuids
+        self._sports_liveness_window = _SportsLivenessWindow(
+            instance_uuid=target.instance.instance_uuid,
+            due_since=due_since,
+            started_monotonic=now,
+            deadline_monotonic=now + window_seconds,
+        )
+        logger.warning(
+            "Reserving bounded quiet window for starved Sports Dashboard. | "
+            "instance_uuid_hash: %s | overdue_seconds: %.1f | "
+            "window_seconds: %.1f | available_mb: %s | swap_percent: %s | "
+            "required_available_mb: %s | max_swap_percent: %s",
+            hashlib.sha256(
+                target.instance.instance_uuid.encode("utf-8")
+            ).hexdigest()[:16],
+            max(0.0, (current_dt - due_since).total_seconds()),
+            window_seconds,
+            resource_sample.available_mb,
+            resource_sample.swap_percent,
+            required_mb,
+            max_swap,
+        )
+        return None, True, active_sports_uuids
 
     def _sports_isolated_start_margin(self, sample):
         min_available_mb = self._config_float(

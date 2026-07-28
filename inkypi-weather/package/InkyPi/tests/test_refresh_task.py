@@ -9265,34 +9265,56 @@ def test_heavyweight_renderer_gate_preserves_all_intents_with_headroom(
     assert executed == [command]
 
 
-def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
+def test_starved_sports_reserves_quiet_window_then_runs_when_margin_recovers(
     monkeypatch,
 ):
-    tmp_path = make_test_dir("sports-background-soft-pressure-fairness")
+    tmp_path = make_test_dir("sports-starvation-quiet-window-recovers")
     current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     clock = RuntimeClock(wall=current_dt.timestamp())
     sports_data = _runtime_plugin_data(
         "sports_dashboard",
         "SportsDashboard",
-        latest_refresh_time=None,
+        interval=900,
     )
     sports_data["instance_uuid"] = "00000000000000000000000000000001"
     ordinary_data = _runtime_plugin_data(
         "ordinary",
         "Ordinary",
-        latest_refresh_time=None,
+        interval=60,
     )
     ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
     playlist = _runtime_playlist(sports_data, ordinary_data)
+    calls = []
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
         clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
     )
-    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    calls = []
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+        }
+    )
+    sports, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
     resource_sample = {
-        "value": ResourceSample(available_mb=512, swap_percent=0),
+        "value": ResourceSample(available_mb=113, swap_percent=50),
     }
     monkeypatch.setattr(
         task,
@@ -9304,6 +9326,526 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
         lambda _config: FakePlugin(calls),
     )
 
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert calls == []
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=120,
+        swap_percent=50,
+    )
+    clock.advance(1)
+    sports_retry = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert sports_retry is not None
+    assert sports_retry.plugin_id == "sports_dashboard"
+    assert task._admission_state.consecutive_data_admissions == 1
+    assert (
+        task._admission_state.last_soft_data_admitted_monotonic
+        == clock.monotonic()
+    )
+    assert (
+        task._admission_state.last_soft_renderer_admitted_monotonic
+        == clock.monotonic()
+    )
+    completed = _queue_and_process(task, sports_retry)
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == ["sports_dashboard"]
+
+    clock.advance(1)
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=2)
+        )
+        is None
+    )
+    assert task._sports_liveness_window is None
+
+
+def test_sports_quiet_window_survives_execution_margin_race(monkeypatch):
+    tmp_path = make_test_dir("sports-starvation-execution-margin-race")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        interval=900,
+    )
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+        }
+    )
+    sports, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    resource_sample = {
+        "value": ResourceSample(available_mb=113, swap_percent=50),
+    }
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    original_deadline = task._sports_liveness_window.deadline_monotonic
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=120,
+        swap_percent=50,
+    )
+    clock.advance(1)
+    sports_retry = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert sports_retry is not None
+    assert sports_retry.instance_uuid == sports.instance_uuid
+    assert (
+        task._sports_liveness_window.deadline_monotonic
+        == original_deadline
+    )
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=113,
+        swap_percent=50,
+    )
+    deferred = _queue_and_process(task, sports_retry)
+
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_soft"
+    assert (
+        task._sports_liveness_window.deadline_monotonic
+        == original_deadline
+    )
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=120,
+        swap_percent=50,
+    )
+    clock.advance(60)
+    ordinary_refresh = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=61)
+    )
+
+    assert ordinary_refresh is not None
+    assert ordinary_refresh.instance_uuid == ordinary.instance_uuid
+    assert task._sports_liveness_window is None
+    assert (
+        task._sports_liveness_cooldown_until_monotonic
+        > clock.monotonic()
+    )
+
+
+def test_sports_quiet_window_expires_before_ordinary_refresh_is_starved(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-starvation-quiet-window-bounded")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        interval=900,
+    )
+    sports_data["plugin_settings"]["backgroundCacheRefreshEnabled"] = "true"
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+            "display_triggered_refresh_enabled": True,
+        }
+    )
+    sports_manifest = PluginManifest(
+        schema_version=2,
+        id="sports_dashboard",
+        class_name="SportsDashboard",
+        display_name="Sports Dashboard",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=True),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": (
+            sports_manifest if plugin_id == "sports_dashboard" else None
+        ),
+    }
+    sports, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=sports.instance_uuid,
+        changed_at=(current_dt - timedelta(minutes=1)).isoformat(),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._due_counts[RefreshLane.LIVE.value] == 1
+
+    clock.advance(61)
+    ordinary_refresh = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=61)
+    )
+
+    assert ordinary_refresh is not None
+    assert ordinary_refresh.plugin_id == "ordinary"
+
+
+def test_never_successful_sports_uses_first_resource_deferral_as_starvation_anchor(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-starvation-first-deferral-anchor")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        latest_refresh_time=None,
+        interval=60,
+    )
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    playlist = _runtime_playlist(sports_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+        }
+    )
+    sports = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, sports)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+
+    first_attempt = task._select_independent_refresh_command(current_dt)
+
+    assert first_attempt is not None
+    assert first_attempt.instance_uuid == sports.instance_uuid
+    deferred = _queue_and_process(task, first_attempt)
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_soft"
+    task.runtime_state.flush()
+
+    restarted_task, restarted_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    restarted_config.config.update(device_config.config)
+    monkeypatch.setattr(
+        restarted_task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+
+    clock.advance(301)
+    after_starvation = restarted_task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=301)
+    )
+
+    assert after_starvation is None
+    assert restarted_task._sports_liveness_window is not None
+    assert (
+        restarted_task._sports_liveness_window.instance_uuid
+        == sports.instance_uuid
+    )
+
+
+def test_sports_quiet_window_cooldown_excludes_all_sports_instances(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-starvation-cooldown-all-instances")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    first_sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsOne",
+        interval=900,
+    )
+    first_sports_data["instance_uuid"] = (
+        "00000000000000000000000000000001"
+    )
+    second_sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsTwo",
+        interval=900,
+    )
+    second_sports_data["instance_uuid"] = (
+        "00000000000000000000000000000002"
+    )
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(
+        first_sports_data,
+        second_sports_data,
+        ordinary_data,
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+        }
+    )
+    first_sports, second_sports, ordinary = [
+        instance.snapshot() for instance in playlist.plugins
+    ]
+    for instance in (first_sports, second_sports, ordinary):
+        _write_runtime_cache(task, instance)
+    for sports in (first_sports, second_sports):
+        task.runtime_state.record_success(
+            sports.instance_uuid,
+            (current_dt - timedelta(hours=2)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+
+    clock.advance(61)
+    ordinary_refresh = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=61)
+    )
+
+    assert ordinary_refresh is not None
+    assert ordinary_refresh.instance_uuid == ordinary.instance_uuid
+
+
+def test_sports_starvation_entitlement_is_rebuilt_after_runtime_restart(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-starvation-rebuilt-after-restart")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        interval=900,
+    )
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+            "sports_isolated_liveness_cooldown_seconds": 300,
+        }
+    )
+    sports, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.flush()
+
+    restarted_task, restarted_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+    )
+    restarted_config.config.update(device_config.config)
+    monkeypatch.setattr(
+        restarted_task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+
+    assert (
+        restarted_task._select_independent_refresh_command(current_dt)
+        is None
+    )
+
+
+def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("sports-background-soft-pressure-fairness")
+    current_dt = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        latest_refresh_time=None,
+    )
+    sports_data["plugin_settings"]["backgroundCacheRefreshEnabled"] = "true"
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        latest_refresh_time=None,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    calls = []
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        sports_isolated_renderer=_fake_sports_isolated_renderer(calls),
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "display_triggered_refresh_enabled": True,
+        }
+    )
+    sports_manifest = PluginManifest(
+        schema_version=2,
+        id="sports_dashboard",
+        class_name="SportsDashboard",
+        display_name="Sports Dashboard",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=True),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": (
+            sports_manifest if plugin_id == "sports_dashboard" else None
+        ),
+    }
+    resource_sample = {
+        "value": ResourceSample(available_mb=512, swap_percent=0),
+    }
+    live_state = {"value": None}
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            calls,
+            live_state=live_state["value"],
+        ),
+    )
+
     sports = task._select_independent_refresh_command(current_dt)
     assert sports is not None
     assert sports.plugin_id == "sports_dashboard"
@@ -9313,6 +9855,19 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
     assert deferred.job.status is JobStatus.CANCELED
     assert deferred.job.error_code == "resource_pressure_soft"
     assert calls == []
+
+    sports_instance = playlist.plugins[0].snapshot()
+    task.runtime_state.record_success(
+        sports_instance.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=sports_instance.instance_uuid,
+        changed_at=(current_dt - timedelta(minutes=1)).isoformat(),
+    )
+    live_state["value"] = {"active": True, "interval_seconds": 60}
 
     clock.advance(1)
     ordinary = task._select_independent_refresh_command(
@@ -9326,15 +9881,27 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
     assert calls == ["ordinary"]
 
     clock.advance(60)
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=61)
+        )
+        is None
+    )
+    assert calls == ["ordinary"]
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=120,
+        swap_percent=50,
+    )
+    clock.advance(60)
     sports_retry = task._select_independent_refresh_command(
-        current_dt + timedelta(seconds=61)
+        current_dt + timedelta(seconds=121)
     )
     assert sports_retry is not None
     assert sports_retry.plugin_id == "sports_dashboard"
-    deferred_again = _queue_and_process(task, sports_retry)
-    assert deferred_again.job.status is JobStatus.CANCELED
-    assert deferred_again.job.error_code == "resource_pressure_soft"
-    assert calls == ["ordinary"]
+    completed_sports = _queue_and_process(task, sports_retry)
+    assert completed_sports.job.status is JobStatus.SUCCEEDED
+    assert calls == ["ordinary", "sports_dashboard"]
 
 
 def test_hard_pressure_still_rotates_valid_caches_without_generation(monkeypatch):
