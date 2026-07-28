@@ -2312,7 +2312,7 @@ Define the minimum user-visible contract before introducing a stability fallback
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/src/runtime/sports_isolated_renderer.py, inkypi-weather/package/InkyPi/tests/test_sports_ewc_bounded_memory_contract.py, inkypi-weather/package/InkyPi/tests/test_sports_isolated_renderer.py
 - Tags: sports-dashboard, ewc, low-memory, detail-contract, selection-phase, streaming-json, isolated-worker, cache-attestation, lazy-provider-loading, image-cache, logo-decode, malloc-trim
-- See Also: LRN-20260720-003, LRN-20260716-006
+- See Also: LRN-20260720-003, LRN-20260716-006, LRN-20260727-002
 - Pattern-Key: stability_fallbacks.preserve_required_detail_contract
 - Recurrence-Count: 1
 - First-Seen: 2026-07-27
@@ -2321,6 +2321,39 @@ Define the minimum user-visible contract before introducing a stability fallback
 ### Resolution
 - **Resolved**: 2026-07-27T16:10:00-07:00
 - **Commit/PR**: local-worktree
-- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, verified the durable cache hand-off before enabling cache-only composition, skipped Valve live fetches whenever the original selector proves Valve cannot win, bounded recurring logo assets before RGBA decode, and separated real EWC match priority from overview-only scheduling.
+- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, verified the durable cache hand-off before enabling cache-only composition, skipped Valve live fetches whenever the original selector proves Valve cannot win, bounded recurring logo assets before RGBA decode, and separated real EWC match priority from overview-only scheduling. The earlier suggestion to promote a future EWC detail from an active competition to phase 0 was superseded by LRN-20260727-002 after physical-display validation.
+
+---
+
+## [LRN-20260727-002] correction
+
+**Logged**: 2026-07-27T22:27:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Esports detail completeness and competition provenance must not override the customized right-sidebar selection contract.
+
+### Details
+The EWC detail repair correctly restored teams, stage, status, score, and scheduled time, but an active overall competition flag was then allowed to promote a future detailed match into live phase 0. Removing that promotion exposed a second regression: upcoming candidates were sorted by absolute time before configured provider priority, so an earlier LCK match still displaced LPL. The intended contract is independent of data richness: compare actual match phase first; within the same phase preserve LPL, LCK, EWC, then Valve; use scheduled time only inside the same provider priority. An overall competition being active is context and provenance, not proof that its focused future match is live.
+
+### Suggested Action
+Keep match phase, provider priority, schedule, detail completeness, and competition provenance as separate fields. Select by phase, then configured provider priority, then time. Accept a live deployment only after the actual instance image and physical display show the requested provider; disappearance of the previously wrong provider is not sufficient proof.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py
+- Tags: sports-dashboard, lpl, lck, ewc, sidebar, provider-priority, selection-phase, physical-display
+- See Also: LRN-20260727-001, LRN-20260716-006
+- Pattern-Key: selection_contracts.keep_phase_priority_and_provenance_orthogonal
+- Recurrence-Count: 1
+- First-Seen: 2026-07-27
+- Last-Seen: 2026-07-27
+
+### Resolution
+- **Resolved**: 2026-07-27T22:27:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Removed future-detail phase promotion, restored configured provider priority ahead of time within the same phase, added LPL-over-EWC and LPL-over-LCK regression tests, and required live instance plus physical-display proof.
 
 ---
