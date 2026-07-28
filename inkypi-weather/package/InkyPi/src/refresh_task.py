@@ -84,6 +84,14 @@ from runtime.presentation_cache import (
     prepared_presentation_path,
 )
 from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.ian import (
+    Ian,
+    IanExecutionResult,
+    IanOfferStatus,
+    IanResourceSample,
+    IanTurnStatus,
+)
+from runtime.ian_refresh_adapter import refresh_command_to_ian_request
 from runtime.refresh_policy import (
     AdmissionState,
     DueCandidate,
@@ -163,6 +171,8 @@ DEFAULT_THEME_CATCHUP_RETRY_COOLDOWN_SECONDS = 10 * 60
 DEFAULT_DISPLAY_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_DISPLAY_REFRESH_MAX_SWAP_PERCENT = 30
 DEFAULT_DISPLAY_TRIGGERED_REFRESH_ENABLED = False
+DEFAULT_IAN_ADMISSION_RETRY_SECONDS = 1.0
+DEFAULT_IAN_RETAINED_LIMIT = 16
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
@@ -442,6 +452,10 @@ class RefreshTask:
         display_transaction=None,
         disk_usage=None,
         sports_isolated_renderer=None,
+        ian=None,
+        ian_resource_sampler=None,
+        ian_request_adapter=None,
+        ian_retained_limit=None,
     ):
         self.device_config = device_config
         self.display_manager = display_manager
@@ -577,6 +591,45 @@ class RefreshTask:
             render_sports_dashboard_isolated
             if sports_isolated_renderer is None
             else sports_isolated_renderer
+        )
+        self._ian_retained_entries = {}
+        self._ian_recorded_deferrals = set()
+        self._ian_retry_not_before = 0.0
+        configured_retained_limit = (
+            self._config_int(
+                "ian_retained_limit",
+                DEFAULT_IAN_RETAINED_LIMIT,
+                0,
+                128,
+            )
+            if ian_retained_limit is None
+            else max(0, min(128, int(ian_retained_limit)))
+        )
+        self._ian_retained_limit = min(
+            configured_retained_limit,
+            max(0, self.refresh_queue.capacity - 1),
+        )
+        self._ian_last_turn_status = IanTurnStatus.IDLE.value
+        self._ian_last_queue_status = None
+        self._ian_request_adapter = (
+            refresh_command_to_ian_request
+            if ian_request_adapter is None
+            else ian_request_adapter
+        )
+        resource_sampler = (
+            self._sample_ian_resources
+            if ian_resource_sampler is None
+            else ian_resource_sampler
+        )
+        self._ian = (
+            Ian(
+                clock=clock,
+                resource_sampler=resource_sampler,
+                executor=self._execute_ian_stage,
+                cancellation_probe=self._ian_request_canceled,
+            )
+            if ian is None
+            else ian
         )
 
     def _config_int(self, key, default, minimum, maximum):
@@ -938,6 +991,11 @@ class RefreshTask:
             "resource_tier": "unknown" if tier is None else str(tier),
             "due_counts": dict(self._due_counts),
             "oldest_data_overdue_seconds": self._oldest_data_overdue_seconds,
+            "ian_status": self._ian_last_turn_status,
+            "ian_last_queue_status": self._ian_last_queue_status,
+            "ian_retained": len(self._ian_retained_entries),
+            "ian_retained_limit": self._ian_retained_limit,
+            "ian_retry_not_before_monotonic": self._ian_retry_not_before,
         }
 
     @property
@@ -962,7 +1020,7 @@ class RefreshTask:
             logger.info("Starting refresh task")
             self.thread = threading.Thread(
                 target=self._run,
-                name="inkypi-refresh-worker",
+                name="inkypi-ian-refresh-worker",
                 daemon=False,
             )
             self.running = True
@@ -1004,6 +1062,7 @@ class RefreshTask:
                 if self.lifecycle.state is LifecycleState.DRAINING:
                     self.lifecycle.mark_forced_exit("refresh worker did not stop")
                 return False
+            self._finalize_retained_ian_entries()
             self._cleanup_all_transient_uploads()
             if self.lifecycle.state is LifecycleState.QUIESCING:
                 self.lifecycle.begin_draining()
@@ -1029,6 +1088,7 @@ class RefreshTask:
                     continue
                 self._process_queue_entry(entry)
         finally:
+            self._finalize_retained_ian_entries()
             self.running = False
             self._cleanup_all_transient_uploads()
             self._waiting_event.clear()
@@ -1056,12 +1116,27 @@ class RefreshTask:
             timeout = 30.0
         else:
             timeout = max(0.0, scheduler.next_attempt_monotonic - self._clock())
+        ian_entry = self._ian_entry_ready_to_resume()
+        if ian_entry is not None:
+            return ian_entry
+        if self._ian_retained_entries:
+            timeout = min(
+                timeout,
+                max(0.0, self._ian_retry_not_before - self._clock()),
+            )
         self._waiting_event.set()
         try:
             self.refresh_queue.wait_for_change(token, timeout=timeout)
         finally:
             self._waiting_event.clear()
-        return self.refresh_queue.take(timeout=0)
+        entry = self.refresh_queue.take(timeout=0)
+        if entry is not None:
+            return entry
+        self._schedule_if_due()
+        entry = self.refresh_queue.take(timeout=0)
+        if entry is not None:
+            return entry
+        return self._ian_entry_ready_to_resume()
 
     def wait_until_waiting(self, timeout=1.0):
         return self._waiting_event.wait(timeout=max(0.0, float(timeout)))
@@ -1072,9 +1147,19 @@ class RefreshTask:
         if entry is None:
             self._schedule_if_due()
             entry = self.refresh_queue.take(timeout=0)
+        if entry is None:
+            entry = self._ian_entry_ready_to_resume()
         if entry is not None:
             self._process_queue_entry(entry)
         return entry
+
+    def _ian_entry_ready_to_resume(self):
+        if (
+            self._ian_retained_entries
+            and self._clock() >= self._ian_retry_not_before
+        ):
+            return next(iter(self._ian_retained_entries.values()))
+        return None
 
     def _schedule_if_due(self):
         now = self._clock()
@@ -2806,6 +2891,296 @@ class RefreshTask:
         )
 
     def _process_queue_entry(self, entry: QueueEntry):
+        if self._uses_ian_admission(entry.command):
+            self._process_ian_queue_entry(entry)
+            return
+        self._execute_queue_entry(entry)
+
+    def _uses_ian_admission(self, command):
+        return (
+            command.source is CommandSource.BACKGROUND
+            and self._is_isolated_sports_refresh_command(command)
+        )
+
+    def _sample_ian_resources(self):
+        sample = self._resource_sample()
+        return IanResourceSample(
+            available_mb=sample.available_mb,
+            swap_percent=sample.swap_percent,
+        )
+
+    def _ian_request_canceled(self, request):
+        entry = self._ian_retained_entries.get(request.request_id)
+        return bool(
+            self.stop_event.is_set()
+            or (entry is not None and entry.cancel_event.is_set())
+        )
+
+    def _execute_ian_stage(self, request, _stage, _previous_checkpoint):
+        entry = self._ian_retained_entries.get(request.request_id)
+        if entry is None:
+            raise RuntimeError("Ian request has no matching running refresh job")
+        self._execute_queue_entry(entry, ian_admitted=True)
+        current = self.refresh_queue.get_entry(entry.job.id)
+        return IanExecutionResult(
+            result=None if current is None else current.job.status.value,
+        )
+
+    def _ian_retry_seconds(self):
+        value = self._config_float(
+            "ian_admission_retry_seconds",
+            DEFAULT_IAN_ADMISSION_RETRY_SECONDS,
+        )
+        if not math.isfinite(value):
+            value = DEFAULT_IAN_ADMISSION_RETRY_SECONDS
+        return max(0.05, min(30.0, value))
+
+    def _process_ian_queue_entry(self, entry):
+        request_id = entry.command.id
+        if request_id not in self._ian_retained_entries:
+            if len(self._ian_retained_entries) >= self._ian_retained_limit:
+                self._record_resource_pressure_deferral(entry.command)
+                self._ian_last_turn_status = "retained_capacity_deferred"
+                logger.warning(
+                    "Ian retained capacity reached; deferring new background "
+                    "refresh. | plugin_id: %s | request_id: %s | "
+                    "retained: %s | retained_limit: %s",
+                    entry.command.plugin_id,
+                    request_id,
+                    len(self._ian_retained_entries),
+                    self._ian_retained_limit,
+                )
+                self._finish_queue_entry_once(
+                    entry,
+                    JobStatus.CANCELED,
+                    error_code="ian_retained_capacity",
+                    error="Ian retained capacity is reserved for urgent work",
+                )
+                return
+            try:
+                request = self._ian_request_adapter(entry.command)
+            except Exception:
+                logger.exception(
+                    "Could not adapt background refresh for Ian. | "
+                    "plugin_id: %s | request_id: %s",
+                    entry.command.plugin_id,
+                    request_id,
+                )
+                self._finish_queue_entry_once(
+                    entry,
+                    JobStatus.FAILED,
+                    error_code="ian_adapter_failed",
+                    error="Background execution admission could not be prepared",
+                )
+                return
+            offer = self._ian.offer(request)
+            if offer.status is IanOfferStatus.REJECTED:
+                status = (
+                    JobStatus.ABANDONED
+                    if offer.reason == "ian_deadline_expired"
+                    else JobStatus.FAILED
+                )
+                self._finish_queue_entry_once(
+                    entry,
+                    status,
+                    error_code=offer.reason or "ian_offer_rejected",
+                    error="Ian rejected background execution admission",
+                )
+                return
+            if offer.status is IanOfferStatus.COALESCED:
+                self._ian_last_turn_status = "coalesced"
+                self._finish_queue_entry_once(
+                    entry,
+                    JobStatus.CANCELED,
+                    error_code="ian_coalesced",
+                    error="Equivalent background execution is already retained",
+                )
+            else:
+                superseded_id = offer.superseded_request_id
+                if (
+                    offer.status is IanOfferStatus.SUPERSEDED
+                    and superseded_id is not None
+                ):
+                    self._finish_ian_entry(
+                        superseded_id,
+                        JobStatus.CANCELED,
+                        error_code="ian_superseded",
+                        error="A newer background execution superseded this job",
+                    )
+                self._ian_retained_entries[request_id] = entry
+                self._ian_last_turn_status = offer.status.value
+                logger.info(
+                    "Ian retained background refresh. | plugin_id: %s | "
+                    "request_id: %s | offer_status: %s | retained: %s",
+                    entry.command.plugin_id,
+                    request_id,
+                    offer.status.value,
+                    len(self._ian_retained_entries),
+                )
+
+        turn = self._ian.run_turn()
+        self._ian_last_turn_status = turn.status.value
+        if turn.status is IanTurnStatus.IDLE:
+            if self._ian_retained_entries:
+                for retained_id in tuple(self._ian_retained_entries):
+                    self._finish_ian_entry(
+                        retained_id,
+                        JobStatus.FAILED,
+                        error_code="ian_lost_request",
+                        error="Ian lost a retained background execution",
+                    )
+            self._ian_retry_not_before = self._clock()
+            return
+        if turn.status in {
+            IanTurnStatus.DEFERRED,
+            IanTurnStatus.RESOURCE_UNKNOWN,
+            IanTurnStatus.DRAINING,
+            IanTurnStatus.COOLDOWN,
+            IanTurnStatus.CHECKPOINTED,
+        }:
+            deferred_id = (
+                None if turn.request is None else turn.request.request_id
+            )
+            deferred_entry = self._ian_retained_entries.get(deferred_id)
+            if (
+                deferred_entry is not None
+                and deferred_id not in self._ian_recorded_deferrals
+            ):
+                self._record_resource_pressure_deferral(
+                    deferred_entry.command
+                )
+                self._ian_recorded_deferrals.add(deferred_id)
+            self._ian_retry_not_before = self._clock() + self._ian_retry_seconds()
+            logger.info(
+                "Ian deferred background execution turn. | status: %s | "
+                "request_id: %s | retained: %s | retry_not_before: %s",
+                turn.status.value,
+                None if turn.request is None else turn.request.request_id,
+                len(self._ian_retained_entries),
+                self._ian_retry_not_before,
+            )
+            return
+        terminal_id = (
+            None if turn.request is None else turn.request.request_id
+        )
+        if terminal_id is None:
+            for retained_id in tuple(self._ian_retained_entries):
+                self._finish_ian_entry(
+                    retained_id,
+                    JobStatus.FAILED,
+                    error_code="ian_invalid_turn",
+                    error="Ian returned a terminal turn without a request",
+                )
+            self._ian_retry_not_before = self._clock()
+            return
+        if turn.status is IanTurnStatus.SUCCEEDED:
+            terminal_entry = self._finish_ian_entry(
+                terminal_id,
+                JobStatus.SUCCEEDED,
+            )
+        elif turn.status is IanTurnStatus.DEADLINE_EXPIRED:
+            terminal_entry = self._finish_ian_entry(
+                terminal_id,
+                JobStatus.ABANDONED,
+                error_code=turn.reason or "ian_deadline_expired",
+                error="Ian background execution deadline expired",
+            )
+        elif turn.status is IanTurnStatus.CANCELED:
+            terminal_entry = self._finish_ian_entry(
+                terminal_id,
+                JobStatus.CANCELED,
+                error_code=turn.reason or "ian_execution_canceled",
+                error="Ian background execution canceled",
+            )
+        elif turn.status is IanTurnStatus.FAILED:
+            terminal_entry = self._finish_ian_entry(
+                terminal_id,
+                JobStatus.FAILED,
+                error_code=turn.reason or "ian_execution_failed",
+                error=(
+                    "Ian background execution failed"
+                    if turn.error is None
+                    else str(turn.error)
+                ),
+            )
+        else:
+            terminal_entry = self._finish_ian_entry(
+                terminal_id,
+                JobStatus.FAILED,
+                error_code="ian_invalid_turn",
+                error=f"Ian returned unexpected turn status: {turn.status.value}",
+            )
+        queue_status = (
+            None if terminal_entry is None else terminal_entry.job.status.value
+        )
+        self._ian_last_queue_status = queue_status
+        logger.info(
+            "Ian completed background admission turn. | status: %s | "
+            "queue_status: %s | request_id: %s | retained: %s",
+            turn.status.value,
+            queue_status,
+            terminal_id,
+            len(self._ian_retained_entries),
+        )
+        self._ian_retry_not_before = self._clock()
+
+    def _finish_ian_entry(
+        self,
+        request_id,
+        status,
+        *,
+        error_code=None,
+        error=None,
+    ):
+        entry = self._ian_retained_entries.pop(request_id, None)
+        self._ian_recorded_deferrals.discard(request_id)
+        if entry is None:
+            return None
+        return self._finish_queue_entry_once(
+            entry,
+            status,
+            error_code=error_code,
+            error=error,
+        )
+
+    def _finish_queue_entry_once(
+        self,
+        entry,
+        status,
+        *,
+        error_code=None,
+        error=None,
+    ):
+        current = self.refresh_queue.get_entry(entry.job.id)
+        if current is None or current.job.status is not JobStatus.RUNNING:
+            return current
+        finished = self.refresh_queue.finish(
+            entry.job.id,
+            status,
+            error_code=error_code,
+            error=error,
+        )
+        self._signal_completion(finished.id)
+        self._cleanup_transient_uploads(entry.job.id, entry.command)
+        return self.refresh_queue.get_entry(finished.id)
+
+    def _finalize_retained_ian_entries(self):
+        for request_id in tuple(self._ian_retained_entries):
+            self._finish_ian_entry(
+                request_id,
+                JobStatus.CANCELED,
+                error_code="ian_worker_stopped",
+                error="Ian background execution stopped before admission",
+            )
+        if self._ian_last_turn_status not in {
+            IanTurnStatus.SUCCEEDED.value,
+            IanTurnStatus.FAILED.value,
+            IanTurnStatus.CANCELED.value,
+            IanTurnStatus.DEADLINE_EXPIRED.value,
+        }:
+            self._ian_last_turn_status = "stopped"
+
+    def _execute_queue_entry(self, entry: QueueEntry, *, ian_admitted=False):
         command = entry.command
         context = TaskContext(
             entry.cancel_event,
@@ -2842,6 +3217,8 @@ class RefreshTask:
                 self._signal_completion(finished.id)
                 return
             if (
+                not ian_admitted
+                and
                 command.plugin_id in _HEAVYWEIGHT_RENDERER_PLUGIN_IDS
                 and command.intent in _RENDERER_INTENTS
             ):

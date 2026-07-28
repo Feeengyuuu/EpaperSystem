@@ -482,6 +482,10 @@ def _independent_refresh_health_collector(tmp_path):
             "resource_tier": "healthy",
             "due_counts": {"data": 2, "live": 1, "theme": 1},
             "oldest_data_overdue_seconds": 90.0,
+            "ian_status": "deferred",
+            "ian_last_queue_status": "running",
+            "ian_retained": 1,
+            "ian_retained_limit": 16,
         },
         _scheduler_poll_seconds=lambda: 30.0,
     )
@@ -522,6 +526,13 @@ def test_health_exposes_only_aggregate_tier_due_counts_and_active_intent(tmp_pat
     assert dict(scheduler["due_counts"]) == {"data": 2, "live": 1, "theme": 1}
     assert scheduler["oldest_data_overdue_seconds"] == 90.0
     assert scheduler["active_intent"] == "theme_redraw"
+    assert scheduler["ian"] == {
+        "name": "Ian",
+        "status": "deferred",
+        "last_queue_status": "running",
+        "retained": 1,
+        "retained_limit": 16,
+    }
     assert "active_command_id" not in scheduler
 
 

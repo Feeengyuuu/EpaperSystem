@@ -45,6 +45,7 @@ from runtime.refresh_contracts import (
     TaskContext,
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
+from runtime.ian import IanResourceSample
 from runtime.cache_catalog import authoritative_cache_path
 from runtime.cache_lifecycle import DiskPressureTier
 from runtime.presentation_cache import (
@@ -6163,6 +6164,7 @@ def test_start_registers_one_non_daemon_worker():
 
         assert task.thread is first_thread
         assert task.thread.daemon is False
+        assert task.thread.name == "inkypi-ian-refresh-worker"
     finally:
         task.stop(join_timeout=1.0)
 
@@ -8730,8 +8732,8 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
 
     deferred = task.refresh_queue.get_entry(submitted.id)
     assert deferred is not None
-    assert deferred.job.status is JobStatus.CANCELED
-    assert deferred.job.error_code == "resource_pressure_soft"
+    assert deferred.job.status is JobStatus.RUNNING
+    assert deferred.job.error_code is None
     assert calls == []
     state = task.runtime_state.snapshot().instances[command.instance_uuid].data
     assert state.last_attempt_at == current_dt.isoformat()
@@ -8750,14 +8752,9 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
         is None
     )
 
-    clock.advance(60)
-    retry = task._select_independent_refresh_command(
-        current_dt + timedelta(seconds=60)
-    )
-    assert retry is not None
-    assert retry.instance_uuid == command.instance_uuid
-
-    completed = _queue_and_process(task, retry)
+    clock.advance(1)
+    task._process_queue_entry(deferred)
+    completed = task.refresh_queue.get_entry(submitted.id)
     assert completed.job.status is JobStatus.SUCCEEDED
     assert calls == ["sports_dashboard"]
 
@@ -9441,8 +9438,8 @@ def test_sports_quiet_window_survives_execution_margin_race(monkeypatch):
     )
     deferred = _queue_and_process(task, sports_retry)
 
-    assert deferred.job.status is JobStatus.CANCELED
-    assert deferred.job.error_code == "resource_pressure_soft"
+    assert deferred.job.status is JobStatus.RUNNING
+    assert deferred.job.error_code is None
     assert (
         task._sports_liveness_window.deadline_monotonic
         == original_deadline
@@ -9605,8 +9602,8 @@ def test_never_successful_sports_uses_first_resource_deferral_as_starvation_anch
     assert first_attempt is not None
     assert first_attempt.instance_uuid == sports.instance_uuid
     deferred = _queue_and_process(task, first_attempt)
-    assert deferred.job.status is JobStatus.CANCELED
-    assert deferred.job.error_code == "resource_pressure_soft"
+    assert deferred.job.status is JobStatus.RUNNING
+    assert deferred.job.error_code is None
     task.runtime_state.flush()
 
     restarted_task, restarted_config, _clock = _make_runtime_task(
@@ -9852,8 +9849,8 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
     resource_sample["value"] = ResourceSample(available_mb=113, swap_percent=50)
     deferred = _queue_and_process(task, sports)
 
-    assert deferred.job.status is JobStatus.CANCELED
-    assert deferred.job.error_code == "resource_pressure_soft"
+    assert deferred.job.status is JobStatus.RUNNING
+    assert deferred.job.error_code is None
     assert calls == []
 
     sports_instance = playlist.plugins[0].snapshot()
@@ -9894,12 +9891,8 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
         swap_percent=50,
     )
     clock.advance(60)
-    sports_retry = task._select_independent_refresh_command(
-        current_dt + timedelta(seconds=121)
-    )
-    assert sports_retry is not None
-    assert sports_retry.plugin_id == "sports_dashboard"
-    completed_sports = _queue_and_process(task, sports_retry)
+    task._process_queue_entry(deferred)
+    completed_sports = task.refresh_queue.get_entry(deferred.job.id)
     assert completed_sports.job.status is JobStatus.SUCCEEDED
     assert calls == ["ordinary", "sports_dashboard"]
 
@@ -12068,6 +12061,397 @@ def _queue_and_process(task, command):
     assert entry.job.id == submitted.id
     task._process_queue_entry(entry)
     return task.refresh_queue.get_entry(submitted.id)
+
+
+@pytest.mark.parametrize(
+    "first_sample",
+    [
+        IanResourceSample(available_mb=100, swap_percent=0),
+        IanResourceSample(available_mb=None, swap_percent=None),
+    ],
+)
+def test_ian_resource_deferral_keeps_background_job_running_then_executes_once(
+    monkeypatch,
+    first_sample,
+):
+    clock = RuntimeClock()
+    samples = iter(
+        (
+            first_sample,
+            IanResourceSample(available_mb=115, swap_percent=0),
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ian-background-recovery"),
+        clock=clock,
+        ian_resource_sampler=lambda: next(samples),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted = task.refresh_queue.submit(command)
+
+    task._run_one_iteration_for_test()
+
+    deferred = task.refresh_queue.get_entry(submitted.id)
+    assert deferred.job.status is JobStatus.RUNNING
+    assert deferred.command.id == command.id
+    assert executions == []
+
+    assert task._run_one_iteration_for_test() is None
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.RUNNING
+    assert executions == []
+
+    clock.advance(1)
+    task._run_one_iteration_for_test()
+    task._run_one_iteration_for_test()
+
+    completed = task.refresh_queue.get_entry(submitted.id)
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert executions == [command.id]
+
+
+@pytest.mark.parametrize(
+    ("urgent_kind", "urgent_source", "urgent_intent"),
+    [
+        (
+            CommandKind.DISPLAY,
+            CommandSource.SCHEDULER,
+            RefreshIntent.DISPLAY_CACHE,
+        ),
+        (
+            CommandKind.DISPLAY,
+            CommandSource.MANUAL,
+            RefreshIntent.MANUAL_RENDER,
+        ),
+    ],
+)
+def test_display_and_manual_run_before_deferred_ian_background_resume(
+    monkeypatch,
+    urgent_kind,
+    urgent_source,
+    urgent_intent,
+):
+    clock = RuntimeClock()
+    samples = iter(
+        (
+            IanResourceSample(available_mb=100, swap_percent=0),
+            IanResourceSample(available_mb=115, swap_percent=0),
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(f"ian-preemption-{urgent_source.value}"),
+        clock=clock,
+        ian_resource_sampler=lambda: next(samples),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    background = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    urgent = RefreshCommand.create(
+        kind=urgent_kind,
+        source=urgent_source,
+        plugin_id="calendar",
+        instance_uuid="calendar-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=100,
+        intent=urgent_intent,
+    )
+    background_job = task.refresh_queue.submit(background)
+
+    task._run_one_iteration_for_test()
+    urgent_job = task.refresh_queue.submit(urgent)
+    clock.advance(1)
+    task._run_one_iteration_for_test()
+
+    assert executions == [urgent.id]
+    assert (
+        task.refresh_queue.get_entry(urgent_job.id).job.status
+        is JobStatus.SUCCEEDED
+    )
+    assert (
+        task.refresh_queue.get_entry(background_job.id).job.status
+        is JobStatus.RUNNING
+    )
+
+    task._run_one_iteration_for_test()
+
+    assert executions == [urgent.id, background.id]
+    assert (
+        task.refresh_queue.get_entry(background_job.id).job.status
+        is JobStatus.SUCCEEDED
+    )
+
+
+def test_ordinary_background_progresses_while_sports_is_retained_by_ian(
+    monkeypatch,
+):
+    clock = RuntimeClock()
+    samples = iter(
+        (
+            IanResourceSample(available_mb=100, swap_percent=0),
+            IanResourceSample(available_mb=115, swap_percent=0),
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ian-background-nonblocking"),
+        clock=clock,
+        ian_resource_sampler=lambda: next(samples),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    sports = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    ordinary = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    sports_job = task.refresh_queue.submit(sports)
+
+    task._run_one_iteration_for_test()
+    ordinary_job = task.refresh_queue.submit(ordinary)
+    task._run_one_iteration_for_test()
+
+    assert executions == [ordinary.id]
+    assert (
+        task.refresh_queue.get_entry(ordinary_job.id).job.status
+        is JobStatus.SUCCEEDED
+    )
+    assert (
+        task.refresh_queue.get_entry(sports_job.id).job.status
+        is JobStatus.RUNNING
+    )
+
+    clock.advance(1)
+    task._run_one_iteration_for_test()
+
+    assert executions == [ordinary.id, sports.id]
+    assert (
+        task.refresh_queue.get_entry(sports_job.id).job.status
+        is JobStatus.SUCCEEDED
+    )
+
+
+def test_ian_retained_limit_preserves_queue_slot_for_manual_display(monkeypatch):
+    clock = RuntimeClock()
+    refresh_queue = RefreshQueue(
+        capacity=2,
+        manual_reserved=1,
+        clock=clock.monotonic,
+        wall_clock=clock.wall_time,
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ian-retained-urgent-slot"),
+        clock=clock,
+        refresh_queue=refresh_queue,
+        ian_resource_sampler=lambda: IanResourceSample(
+            available_mb=100,
+            swap_percent=0,
+        ),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+
+    def sports_command(instance_uuid):
+        return RefreshCommand.create(
+            kind=CommandKind.CACHE_REFRESH,
+            source=CommandSource.BACKGROUND,
+            plugin_id="sports_dashboard",
+            instance_uuid=instance_uuid,
+            structural_generation=1,
+            settings_revision=1,
+            payload={"playlist_name": "Daily"},
+            now_monotonic=clock.monotonic(),
+            deadline_monotonic=clock.monotonic() + 60,
+            priority=10,
+            intent=RefreshIntent.DATA_REFRESH,
+        )
+
+    first = sports_command("sports-one")
+    second = sports_command("sports-two")
+    first_job = task.refresh_queue.submit(first)
+    task._run_one_iteration_for_test()
+    second_job = task.refresh_queue.submit(second)
+    task._run_one_iteration_for_test()
+
+    assert (
+        task.refresh_queue.get_entry(first_job.id).job.status
+        is JobStatus.RUNNING
+    )
+    rejected = task.refresh_queue.get_entry(second_job.id)
+    assert rejected.job.status is JobStatus.CANCELED
+    assert rejected.job.error_code == "ian_retained_capacity"
+
+    manual = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="calendar",
+        instance_uuid="calendar-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=100,
+        intent=RefreshIntent.MANUAL_RENDER,
+    )
+    manual_job = task.refresh_queue.submit(manual)
+    task._run_one_iteration_for_test()
+
+    assert executions == [manual.id]
+    assert (
+        task.refresh_queue.get_entry(manual_job.id).job.status
+        is JobStatus.SUCCEEDED
+    )
+    health = task.refresh_health_snapshot()
+    assert health["ian_retained"] == 1
+    assert health["ian_retained_limit"] == 1
+    assert health["ian_status"] == "retained_capacity_deferred"
+
+
+def test_ian_health_reports_real_queue_terminal_after_executor_terminalization(
+    monkeypatch,
+):
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ian-terminal-health"),
+        clock=clock,
+        ian_resource_sampler=lambda: IanResourceSample(
+            available_mb=115,
+            swap_percent=0,
+        ),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+
+    def fail_execution(_command):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(task, "_execute_command", fail_execution)
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted = task.refresh_queue.submit(command)
+
+    task._run_one_iteration_for_test()
+
+    terminal = task.refresh_queue.get_entry(submitted.id)
+    assert terminal.job.status is JobStatus.CANCELED
+    health = task.refresh_health_snapshot()
+    assert health["ian_status"] == "canceled"
+    assert health["ian_last_queue_status"] == "canceled"
+    assert health["ian_retained"] == 0
+
+
+def test_stop_terminalizes_every_ian_retained_queue_entry(monkeypatch):
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ian-stop-retained"),
+        clock=clock,
+        ian_resource_sampler=lambda: IanResourceSample(
+            available_mb=100,
+            swap_percent=0,
+        ),
+    )
+    monkeypatch.setattr(task, "_schedule_if_due", lambda: None)
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted = task.refresh_queue.submit(command)
+    task._run_one_iteration_for_test()
+
+    assert task.stop(join_timeout=0) is True
+
+    canceled = task.refresh_queue.get_entry(submitted.id)
+    assert canceled.job.status is JobStatus.CANCELED
+    assert canceled.job.error_code == "ian_worker_stopped"
+    assert task.refresh_health_snapshot()["ian_retained"] == 0
 
 
 def _normal_cache_display_command(task, playlist, instance, *, source=CommandSource.SCHEDULER):

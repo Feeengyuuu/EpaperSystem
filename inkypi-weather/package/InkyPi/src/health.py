@@ -476,6 +476,21 @@ class HealthCollector:
                 "active_intent": (
                     None if active_intent is None else str(active_intent)
                 ),
+                "ian": {
+                    "name": "Ian",
+                    "status": str(aggregate.get("ian_status", "unknown")),
+                    "last_queue_status": str(
+                        aggregate.get("ian_last_queue_status", "unknown")
+                    ),
+                    "retained": max(
+                        0,
+                        int(aggregate.get("ian_retained", 0)),
+                    ),
+                    "retained_limit": max(
+                        0,
+                        int(aggregate.get("ian_retained_limit", 0)),
+                    ),
+                },
             }
         except Exception as error:
             return {

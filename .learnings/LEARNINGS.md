@@ -2357,3 +2357,35 @@ Keep match phase, provider priority, schedule, detail completeness, and competit
 - **Notes**: Removed future-detail phase promotion, restored configured provider priority ahead of time within the same phase, added LPL-over-EWC and LPL-over-LCK regression tests, and required live instance plus physical-display proof.
 
 ---
+
+## [LRN-20260728-001] best_practice
+
+**Logged**: 2026-07-28T14:16:11-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Retained background jobs must leave at least one queue running slot for urgent display work.
+
+### Details
+Moving deferred work from QUEUED to RUNNING can bypass pending-queue reserved-slot accounting. If retained jobs are allowed to reach the queue capacity, later MANUAL or DISPLAY work cannot be taken even when submission reserved capacity was configured.
+
+### Suggested Action
+Bound retained background ownership to at most `queue.capacity - 1`, reject or defer excess intake immediately, and cover the capacity-two case with a regression test that proves a manual display can still run.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/runtime/refresh_queue.py
+- Tags: scheduler, queue, starvation, display
+- Pattern-Key: harden.retained_queue_capacity
+- Recurrence-Count: 1
+- First-Seen: 2026-07-28
+- Last-Seen: 2026-07-28
+
+### Resolution
+- **Resolved**: 2026-07-28T14:16:11-07:00
+- **Commit/PR**: local branch
+- **Notes**: Ian retained ownership is capped below queue capacity and the capacity-two urgent-display regression passes.
+
+---
