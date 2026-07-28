@@ -2842,9 +2842,29 @@ class SportsDashboardCommonMixin:
                         "EWC sidebar failed, falling back to other esports panels: %s",
                         _safe_exception_text(exc),
                     )
-            valve_selected = None
-            valve_source_state = ""
-            if self._bool_setting(settings, "valveEsportsEnabled", True):
+            esports_choice = self._select_right_esports_sidebar(
+                lol_cards,
+                None,
+                "",
+                now,
+                ewc_card=ewc_card,
+            )
+            choice_kind = str(
+                (esports_choice or {}).get("kind") or ""
+            ).strip().lower()
+            has_timed_lol_or_ewc = choice_kind == "ewc" or (
+                choice_kind == "lol"
+                and self._lol_sidebar_candidate_phase(
+                    (esports_choice or {}).get("choice")
+                )
+                in (0, 1)
+            )
+            if (
+                not has_timed_lol_or_ewc
+                and self._bool_setting(settings, "valveEsportsEnabled", True)
+            ):
+                valve_selected = None
+                valve_source_state = ""
                 try:
                     valve_selected, valve_source_state = self._load_valve_esports(
                         settings,
@@ -2856,13 +2876,13 @@ class SportsDashboardCommonMixin:
                         "Valve esports sidebar failed, falling back to LPL: %s",
                         _safe_exception_text(exc),
                     )
-            esports_choice = self._select_right_esports_sidebar(
-                lol_cards,
-                valve_selected,
-                valve_source_state,
-                now,
-                ewc_card=ewc_card,
-            )
+                esports_choice = self._select_right_esports_sidebar(
+                    lol_cards,
+                    valve_selected,
+                    valve_source_state,
+                    now,
+                    ewc_card=ewc_card,
+                )
 
         if esports_choice.get("kind") == "ewc":
             ewc_selected = esports_choice["selected"]

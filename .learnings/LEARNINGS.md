@@ -2237,15 +2237,15 @@ For future SportsDashboard identity-card scaling, parameterize each vertical rel
 Low-memory protection must preserve the plugin's required detail contract, not silently redefine an overview card as success.
 
 ### Details
-The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation exposed a second boundary: even when the heaviest region ran first, its EWC parser peak could overlap LoL, Valve, and image allocations and trip the 70 MiB guard. The stable shape is a dedicated short-lived EWC prefetch worker followed by an esports renderer that reads only the atomically committed EWC cache. Because that cache is a cross-process hand-off boundary, a successful network parse is insufficient: the prefetch worker must write a unique publication token, read it back from disk, and verify that the exact cache-only selection is reproducible; otherwise it must report an explicit degraded hand-off to the last durable cache.
+The EWC sidebar remained renderable after its original detail-page parser was bounded, but it showed only competition cards. That output protected the 416 MiB device while dropping the user-visible match contract: teams or participants, score, stage, status, and scheduled time. The correct repair used the official RSC response, scanned only to the bounded `initialStructures` value, stopped at the matching array close, and kept the existing match mapping. Live validation exposed a second boundary: even when the heaviest region ran first, its EWC parser peak could overlap LoL, Valve, and image allocations and trip the 70 MiB guard. The stable shape is a dedicated short-lived EWC prefetch worker followed by an esports renderer that reads only the atomically committed EWC cache. Because that cache is a cross-process hand-off boundary, a successful network parse is insufficient: the prefetch worker must write a unique publication token, read it back from disk, and verify that the exact cache-only selection is reproducible; otherwise it must report an explicit degraded hand-off to the last durable cache. A protected live canary then exposed a third boundary: the esports renderer still fetched Valve's HLTV/OpenDota data even when a timed LoL or EWC candidate made Valve mathematically unable to win. Lazy elimination based on the existing candidate sort contract removed that 47 MiB losing-provider spike without changing the selected card.
 
 ### Suggested Action
-Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, provider-specific prefetch workers, write/read cache attestation, cache-only composition, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
+Define the minimum user-visible contract before introducing a stability fallback. For EWC, competition metadata alone is not detailed-match success. Prefer bounded streaming, early termination, provider-specific prefetch workers, write/read cache attestation, selection-dominance lazy loading, cache-only composition, and between-region parent memory reclamation; keep resource guards intact and verify the final plugin image and physical display.
 
 ### Metadata
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/src/runtime/sports_isolated_renderer.py, inkypi-weather/package/InkyPi/tests/test_sports_ewc_bounded_memory_contract.py, inkypi-weather/package/InkyPi/tests/test_sports_isolated_renderer.py
-- Tags: sports-dashboard, ewc, low-memory, detail-contract, streaming-json, isolated-worker, cache-attestation, malloc-trim
+- Tags: sports-dashboard, ewc, low-memory, detail-contract, streaming-json, isolated-worker, cache-attestation, lazy-provider-loading, malloc-trim
 - See Also: LRN-20260720-003, LRN-20260716-006
 - Pattern-Key: stability_fallbacks.preserve_required_detail_contract
 - Recurrence-Count: 1
@@ -2255,6 +2255,6 @@ Define the minimum user-visible contract before introducing a stability fallback
 ### Resolution
 - **Resolved**: 2026-07-27T16:10:00-07:00
 - **Commit/PR**: local-worktree
-- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, and verified the durable cache hand-off before enabling cache-only composition.
+- **Notes**: Restored bounded EWC match parsing, retained the 70 MiB worker guard, separated EWC network parsing from the multi-provider esports composition worker, verified the durable cache hand-off before enabling cache-only composition, and skipped Valve live fetches whenever the original selector proves Valve cannot win.
 
 ---

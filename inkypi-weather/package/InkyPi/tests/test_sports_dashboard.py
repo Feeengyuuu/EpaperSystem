@@ -3586,6 +3586,213 @@ def test_right_sidebar_prefers_earliest_upcoming_ewc_over_later_lpl():
     assert choice["selected"]["main"]["game"] == "League of Legends"
 
 
+def test_right_esports_skips_valve_fetch_after_timed_ewc_candidate(
+    monkeypatch,
+):
+    plugin = _plugin()
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    match = {
+        "kind": "match",
+        "event_id": "ewc-overwatch-upcoming",
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "start": now + timedelta(hours=2),
+        "end": now + timedelta(hours=5),
+        "status": "UPCOMING",
+        "team_a": "A",
+        "team_b": "B",
+    }
+    ewc_card = {
+        "selected": {
+            "display_window_active": True,
+            "live": [],
+            "upcoming": [match],
+            "recent": [],
+            "main": match,
+            "main_match": match,
+            "all_upcoming_matches": [match],
+        },
+        "source_state": "EWC DETAIL CACHE",
+        "priority": 2,
+    }
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_load_lol_esports_sidebar_cards",
+        lambda *_args: [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([], now),
+                "source_state": "LPL FALLBACK",
+                "priority": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_sidebar_card",
+        lambda *_args: ewc_card,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_ewc_live_state",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_esports",
+        lambda *_args: pytest.fail(
+            "Valve must not be loaded after a timed EWC candidate wins"
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_ewc_sidebar",
+        lambda *_args: calls.append("ewc"),
+    )
+
+    provenance = plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {"ewcSidebarEnabled": True, "valveEsportsEnabled": True},
+        FakeDeviceConfig(),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    assert calls == ["ewc"]
+    assert provenance is SourceProvenance.FRESH_CACHE
+
+
+@pytest.mark.parametrize(
+    ("source_state", "selection_bucket"),
+    [
+        ("EWC DETAIL STALE", "upcoming"),
+        ("EWC DETAIL CACHE", "recent"),
+    ],
+)
+def test_right_esports_loads_valve_when_ewc_cannot_win(
+    monkeypatch,
+    source_state,
+    selection_bucket,
+):
+    plugin = _plugin()
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    event = {
+        "kind": "match",
+        "event_id": f"ewc-{selection_bucket}",
+        "slug": "overwatch-2",
+        "game": "Overwatch 2",
+        "start": (
+            now + timedelta(hours=2)
+            if selection_bucket == "upcoming"
+            else now - timedelta(days=1)
+        ),
+        "end": (
+            now + timedelta(hours=5)
+            if selection_bucket == "upcoming"
+            else now - timedelta(hours=20)
+        ),
+        "status": (
+            "UPCOMING"
+            if selection_bucket == "upcoming"
+            else "COMPLETED"
+        ),
+        "team_a": "A",
+        "team_b": "B",
+    }
+    selected = {
+        "display_window_active": True,
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": event,
+        "main_match": event,
+    }
+    selected[selection_bucket] = [event]
+    valve_card = {
+        "series": "CS",
+        "event_name": "CS Major",
+        "status": "ACTIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "cs-1",
+            "start": now,
+            "team_a": "Spirit",
+            "team_b": "Falcons",
+        },
+    }
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_load_lol_esports_sidebar_cards",
+        lambda *_args: [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([], now),
+                "source_state": "LPL FALLBACK",
+                "priority": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_sidebar_card",
+        lambda *_args: {
+            "selected": selected,
+            "source_state": source_state,
+            "priority": 2,
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_ewc_live_state",
+        lambda *_args: None,
+    )
+
+    def load_valve(*_args):
+        calls.append("load")
+        return (
+            {
+                "primary": valve_card,
+                "cards": [valve_card],
+                "rotation_pool": ["CS"],
+            },
+            "HLTV CACHE",
+        )
+
+    monkeypatch.setattr(plugin, "_load_valve_esports", load_valve)
+    monkeypatch.setattr(
+        plugin,
+        "_write_valve_esports_live_state",
+        lambda *_args: calls.append("state"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_valve_esports_sidebar",
+        lambda *_args: calls.append("valve"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_lpl_sidebar",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Valve must win when EWC is stale or only recent"
+        ),
+    )
+
+    provenance = plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {"ewcSidebarEnabled": True, "valveEsportsEnabled": True},
+        FakeDeviceConfig(),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    assert calls == ["load", "state", "valve"]
+    assert provenance is SourceProvenance.FRESH_CACHE
+
+
 def test_stale_live_ewc_does_not_replace_fresh_upcoming_lpl_with_old_region():
     now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
     lpl_event = {
@@ -16917,14 +17124,20 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
-    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "HLTV CACHE")
+    plugin._load_valve_esports = lambda *_args, **_kwargs: pytest.fail(
+        "Valve must not be loaded after a timed LoL candidate wins"
+    )
     plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("valve_state")
     plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
     plugin._write_lol_live_state = lambda selected, now_arg, source_state, league_key="LPL": calls.append(f"lol_state:{league_key}")
     plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append(f"lol:{kwargs.get('league_key', 'LPL')}")
 
     image = plugin._generate_image_with_active_colors(
-        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false"},
+        {
+            "worldCupTopHeight": "208",
+            "overlayWorldCupLocalTimes": "false",
+            "ewcSidebarEnabled": "false",
+        },
         FakeDeviceConfig(),
         (800, 480),
         la,
@@ -16966,7 +17179,18 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
-    plugin._load_valve_esports = lambda settings, timezone_info, now_arg: ({"primary": active_card, "cards": [active_card], "rotation_pool": ["CS"]}, "HLTV CACHE")
+    def load_valve(_settings, _timezone_info, _now):
+        calls.append("load")
+        return (
+            {
+                "primary": active_card,
+                "cards": [active_card],
+                "rotation_pool": ["CS"],
+            },
+            "HLTV CACHE",
+        )
+
+    plugin._load_valve_esports = load_valve
     plugin._write_valve_esports_live_state = lambda selected, now_arg, source_state: calls.append("state")
     plugin._draw_valve_esports_sidebar = lambda *args, **kwargs: calls.append("valve")
     plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append("lpl")
@@ -16980,7 +17204,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     )
 
     assert image.size == (800, 480)
-    assert calls == ["state", "valve"]
+    assert calls == ["load", "state", "valve"]
 
 def test_valve_esports_sidebar_render_smoke():
     plugin = _plugin()
