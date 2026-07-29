@@ -181,7 +181,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 if not api_key:
                     raise MissingTicketmasterCredentials("Ticketmaster API key is not configured.")
                 events = self._load_events(settings, items_count, api_key)
-                self._download_event_images(events)
+                self._download_event_images(events, dimensions)
                 generated_at = self._now_for_device(device_config)
                 self._write_cache({
                     "version": STATE_VERSION,
@@ -424,26 +424,47 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             return ""
         return f"{number:.1f} mi"
 
-    def _download_event_images(self, events):
+    def _download_event_images(self, events, display_dimensions):
+        poster_size = (
+            max(1, int(display_dimensions[0])),
+            max(1, int(display_dimensions[1])),
+        )
         namespace = self._poster_cache_namespace()
         for event in events:
             if not event.image_url:
                 continue
             try:
                 key = self._event_image_cache_key(event)
-                path = namespace.path(key, suffix=".jpg")
-                if namespace.get_bytes(key, suffix=".jpg"):
-                    event.poster_path = str(path)
-                    continue
+                cached_path = namespace.get_path(key, suffix=".jpg")
+                if cached_path is not None:
+                    try:
+                        cached_size = cached_path.stat().st_size
+                    except OSError:
+                        cached_size = 0
+                    if cached_size > 0:
+                        event.poster_path = str(cached_path)
+                        continue
+                    namespace.remove(key, suffix=".jpg")
                 response = get_http_session().get(
                     event.image_url,
                     timeout=18,
                     headers=IMAGE_HEADERS,
                     stream=True,
                 )
-                image = safe_open_image_response(response).convert("RGB")
-                encoded = BytesIO()
-                image.save(encoded, format="JPEG", quality=88)
+                image = safe_open_image_response(
+                    response,
+                    draft_size=poster_size,
+                )
+                try:
+                    image.thumbnail(poster_size, Image.Resampling.LANCZOS)
+                    if image.mode != "RGB":
+                        converted = image.convert("RGB")
+                        image.close()
+                        image = converted
+                    encoded = BytesIO()
+                    image.save(encoded, format="JPEG", quality=88)
+                finally:
+                    image.close()
                 path = namespace.put_bytes(
                     key,
                     encoded.getvalue(),

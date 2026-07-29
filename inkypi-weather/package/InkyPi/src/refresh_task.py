@@ -138,8 +138,14 @@ _HEAVYWEIGHT_RENDERER_PLUGIN_IDS = frozenset({"sports_dashboard"})
 # Keep unbounded full-dashboard renders off 416 MiB-class devices by default.
 DEFAULT_HEAVYWEIGHT_RENDERER_MIN_AVAILABLE_MB = 384
 DEFAULT_HEAVYWEIGHT_RENDERER_MAX_SWAP_PERCENT = 30
-DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB = 115
+DEFAULT_BACKGROUND_BURST_START_MIN_AVAILABLE_MB = 115
+DEFAULT_SPORTS_ISOLATED_START_MIN_AVAILABLE_MB = (
+    DEFAULT_BACKGROUND_BURST_START_MIN_AVAILABLE_MB
+)
 DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT = 70
+DEFAULT_TICKETMASTER_BACKGROUND_START_MIN_AVAILABLE_MB = (
+    DEFAULT_BACKGROUND_BURST_START_MIN_AVAILABLE_MB
+)
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
 # allocations can outrun the parent worker's resource polling interval.
 DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
@@ -2185,6 +2191,43 @@ class RefreshTask:
                 expected_playlist_name=active.name,
             )
         }
+        eligible_data_candidates = list(data_candidates)
+        (
+            ticketmaster_margin_available,
+            ticketmaster_required_available_mb,
+            ticketmaster_max_swap_percent,
+        ) = self._ticketmaster_background_start_margin(resource_sample)
+        if not ticketmaster_margin_available:
+            eligible_data_candidates = []
+            for candidate in data_candidates:
+                instance = candidate.instance
+                if (
+                    instance.plugin_id == "ticketmaster_events"
+                    and instance.instance_uuid not in reserved_instance_uuids
+                ):
+                    next_retry_at = (
+                        self._record_lane_resource_pressure_deferral(
+                            instance.instance_uuid,
+                            RefreshIntent.DATA_REFRESH,
+                        )
+                    )
+                    logger.warning(
+                        "Deferring ordinary Ticketmaster background data at "
+                        "scheduler admission until its memory reserve is "
+                        "available. | plugin_id: %s | source: %s | intent: %s | "
+                        "available_mb: %s | required_available_mb: %s | "
+                        "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
+                        instance.plugin_id,
+                        CommandSource.BACKGROUND.value,
+                        RefreshIntent.DATA_REFRESH.value,
+                        resource_sample.available_mb,
+                        ticketmaster_required_available_mb,
+                        resource_sample.swap_percent,
+                        ticketmaster_max_swap_percent,
+                        next_retry_at,
+                    )
+                    continue
+                eligible_data_candidates.append(candidate)
         (
             sports_liveness_candidate,
             sports_liveness_holds_independent,
@@ -2200,6 +2243,12 @@ class RefreshTask:
             data_candidates = [
                 candidate
                 for candidate in data_candidates
+                if candidate.instance.instance_uuid
+                not in sports_liveness_excluded_uuids
+            ]
+            eligible_data_candidates = [
+                candidate
+                for candidate in eligible_data_candidates
                 if candidate.instance.instance_uuid
                 not in sports_liveness_excluded_uuids
             ]
@@ -2219,7 +2268,7 @@ class RefreshTask:
             starvation_seconds = self._independent_refresh_starvation_seconds()
             starved_data = [
                 candidate
-                for candidate in data_candidates
+                for candidate in eligible_data_candidates
                 if candidate.reason
                 in {DueReason.INTERVAL, DueReason.SCHEDULED}
                 and (
@@ -2357,7 +2406,7 @@ class RefreshTask:
             return None
 
         decision = choose_refresh_candidate(
-            data_candidates,
+            eligible_data_candidates,
             auxiliary_candidates,
             tier=tier,
             state=self._admission_state,
@@ -3216,6 +3265,56 @@ class RefreshTask:
                 )
                 self._signal_completion(finished.id)
                 return
+            if self._is_ticketmaster_background_data_command(command):
+                if self._resolve_playlist_command(command) is None:
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.CANCELED,
+                        error_code="stale_selection",
+                        error=(
+                            "playlist selection changed before Ticketmaster "
+                            "resource admission"
+                        ),
+                    )
+                    self._signal_completion(finished.id)
+                    return
+                if not self._has_current_rotation_reservation(command):
+                    resource_sample = self._resource_sample()
+                    (
+                        margin_available,
+                        required_available_mb,
+                        max_swap_percent,
+                    ) = self._ticketmaster_background_start_margin(resource_sample)
+                    if not margin_available:
+                        next_retry_at = self._record_resource_pressure_deferral(
+                            command
+                        )
+                        logger.warning(
+                            "Deferring Ticketmaster background data refresh until "
+                            "its memory reserve is available. | plugin_id: %s | "
+                            "source: %s | intent: %s | available_mb: %s | "
+                            "required_available_mb: %s | swap_percent: %s | "
+                            "max_swap_percent: %s | next_retry_at: %s",
+                            command.plugin_id,
+                            command.source.value,
+                            command.intent.value,
+                            resource_sample.available_mb,
+                            required_available_mb,
+                            resource_sample.swap_percent,
+                            max_swap_percent,
+                            next_retry_at,
+                        )
+                        finished = self.refresh_queue.finish(
+                            entry.job.id,
+                            JobStatus.CANCELED,
+                            error_code="plugin_resource_reserve",
+                            error=(
+                                "Ticketmaster background data refresh deferred "
+                                "until its memory reserve is available"
+                            ),
+                        )
+                        self._signal_completion(finished.id)
+                        return
             if (
                 not ian_admitted
                 and
@@ -3500,7 +3599,10 @@ class RefreshTask:
             self._execution_local.effective_theme_context = None
             self._active_operation = None
             try:
-                self._run_memory_maintenance("refresh-command-finally")
+                self._run_memory_maintenance(
+                    "refresh-command-finally",
+                    command=command,
+                )
             except Exception:
                 logger.exception("Refresh memory maintenance failed")
 
@@ -3536,8 +3638,14 @@ class RefreshTask:
             )
 
     def _record_resource_pressure_deferral(self, command):
-        lane = self._lane_for_intent(command.intent)
-        if command.instance_uuid is None or lane is None:
+        return self._record_lane_resource_pressure_deferral(
+            command.instance_uuid,
+            command.intent,
+        )
+
+    def _record_lane_resource_pressure_deferral(self, instance_uuid, intent):
+        lane = self._lane_for_intent(intent)
+        if instance_uuid is None or lane is None:
             return None
         poll_seconds = self._scheduler_poll_seconds()
         spacing_seconds = self._resource_thresholds().soft_spacing_seconds
@@ -3554,7 +3662,7 @@ class RefreshTask:
         ).isoformat()
         try:
             self.runtime_state.record_deferral(
-                command.instance_uuid,
+                instance_uuid,
                 deferred_at,
                 next_retry_at,
                 lane=lane,
@@ -3563,7 +3671,7 @@ class RefreshTask:
             logger.exception(
                 "Runtime resource-pressure deferral could not be recorded. | "
                 "instance_uuid: %s",
-                command.instance_uuid,
+                instance_uuid,
             )
             return None
         return next_retry_at
@@ -3597,6 +3705,62 @@ class RefreshTask:
             and swap_percent < max_swap_percent
         )
         return margin_available, min_available_mb, max_swap_percent
+
+    @staticmethod
+    def _is_ticketmaster_background_data_command(command):
+        return (
+            command.plugin_id == "ticketmaster_events"
+            and command.kind is CommandKind.CACHE_REFRESH
+            and command.source is CommandSource.BACKGROUND
+            and command.intent is RefreshIntent.DATA_REFRESH
+        )
+
+    def _has_current_rotation_reservation(self, command):
+        playlist_name = command.payload.get("playlist_name")
+        if command.instance_uuid is None or not playlist_name:
+            return False
+        try:
+            manager = self.device_config.get_playlist_manager()
+            return manager.validate_rotation_reservation(
+                command.instance_uuid, expected_playlist_name=playlist_name
+            )
+        except Exception:
+            logger.exception(
+                "Could not validate rotation reservation before resource admission. | "
+                "plugin_id: %s",
+                command.plugin_id,
+            )
+            return False
+
+    def _ticketmaster_background_start_margin(self, sample):
+        min_available_mb = self._config_float(
+            "ticketmaster_background_start_min_available_mb",
+            DEFAULT_TICKETMASTER_BACKGROUND_START_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = (
+                DEFAULT_TICKETMASTER_BACKGROUND_START_MIN_AVAILABLE_MB
+            )
+        max_swap_percent = self._resource_thresholds().hard_max_swap_percent
+        if (
+            not math.isfinite(max_swap_percent)
+            or max_swap_percent < 0
+            or max_swap_percent > 100
+        ):
+            max_swap_percent = DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb, max_swap_percent
+        return (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb
+            and swap_percent < max_swap_percent,
+            min_available_mb,
+            max_swap_percent,
+        )
 
     @staticmethod
     def _is_isolated_sports_refresh_command(command):
@@ -6783,12 +6947,77 @@ class RefreshTask:
             "swap_percent": getattr(swap, "percent", 0.0),
         }
 
-    def _run_memory_maintenance(self, reason, force=False):
+    def _read_process_memory_stats(self):
+        try:
+            memory_info = psutil.Process(os.getpid()).memory_info()
+        except Exception:
+            logger.debug("Could not read process memory stats.", exc_info=True)
+            return {"rss_mb": None, "hwm_mb": None}
+
+        rss_bytes = getattr(memory_info, "rss", None)
+        hwm_bytes = getattr(memory_info, "peak_wset", None)
+        if hwm_bytes is None and os.name == "posix":
+            try:
+                with open("/proc/self/status", "r", encoding="ascii") as handle:
+                    for line in handle:
+                        if line.startswith("VmHWM:"):
+                            hwm_bytes = int(line.split()[1]) * 1024
+                            break
+            except (OSError, ValueError, IndexError):
+                logger.debug(
+                    "Could not read process high-water memory.",
+                    exc_info=True,
+                )
+
+        def as_mb(value):
+            try:
+                return float(value) / (1024 * 1024)
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        return {
+            "rss_mb": as_mb(rss_bytes),
+            "hwm_mb": as_mb(hwm_bytes),
+        }
+
+    def _log_skipped_command_memory_maintenance(self, reason, command, skip_reason):
+        if command is None:
+            return
+        process_memory = self._read_process_memory_stats()
+        source = getattr(command, "source", None)
+        intent = getattr(command, "intent", None)
+        logger.info(
+            "Memory maintenance skipped for command. | reason: %s | "
+            "skip_reason: %s | plugin_id: %s | source: %s | intent: %s | "
+            "process_rss_mb: %s | process_hwm_mb: %s",
+            reason,
+            skip_reason,
+            getattr(command, "plugin_id", None),
+            getattr(source, "value", source),
+            getattr(intent, "value", intent),
+            (
+                None
+                if process_memory["rss_mb"] is None
+                else round(process_memory["rss_mb"], 1)
+            ),
+            (
+                None
+                if process_memory["hwm_mb"] is None
+                else round(process_memory["hwm_mb"], 1)
+            ),
+        )
+
+    def _run_memory_maintenance(self, reason, force=False, *, command=None):
         interval_seconds = max(0.0, self._config_float(
             "memory_maintenance_interval_seconds",
             DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS,
         ))
         if interval_seconds <= 0 and not force:
+            self._log_skipped_command_memory_maintenance(
+                reason,
+                command,
+                "disabled",
+            )
             return None
 
         now = time.monotonic()
@@ -6797,6 +7026,11 @@ class RefreshTask:
             and self._last_memory_maintenance_monotonic
             and now - self._last_memory_maintenance_monotonic < interval_seconds
         ):
+            self._log_skipped_command_memory_maintenance(
+                reason,
+                command,
+                "interval",
+            )
             return None
         self._last_memory_maintenance_monotonic = now
 
@@ -6808,11 +7042,29 @@ class RefreshTask:
             logger.exception("Python garbage collection failed during memory maintenance.")
         malloc_trimmed = self._malloc_trim()
         after = self._read_memory_stats()
+        process_memory = self._read_process_memory_stats()
+        source = getattr(command, "source", None)
+        intent = getattr(command, "intent", None)
         logger.info(
-            "Memory maintenance completed. | reason: %s | collected_objects: %s | "
+            "Memory maintenance completed. | reason: %s | plugin_id: %s | "
+            "source: %s | intent: %s | process_rss_mb: %s | "
+            "process_hwm_mb: %s | collected_objects: %s | "
             "malloc_trim: %s | available_mb_before: %s | available_mb_after: %s | "
             "swap_percent_after: %s",
             reason,
+            getattr(command, "plugin_id", None),
+            getattr(source, "value", source),
+            getattr(intent, "value", intent),
+            (
+                None
+                if process_memory["rss_mb"] is None
+                else round(process_memory["rss_mb"], 1)
+            ),
+            (
+                None
+                if process_memory["hwm_mb"] is None
+                else round(process_memory["hwm_mb"], 1)
+            ),
             collected_objects,
             malloc_trimmed,
             None if before is None else round(before.get("available_mb", 0.0), 1),

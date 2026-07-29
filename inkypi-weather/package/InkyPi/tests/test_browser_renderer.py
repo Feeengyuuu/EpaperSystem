@@ -13,7 +13,13 @@ from src.runtime.cache_lifecycle import (
     LifecycleAggregate,
     LifecycleAllowance,
 )
-from src.runtime.refresh_contracts import TaskContext
+from runtime.refresh_contracts import TaskContext
+from runtime.refresh_policy import ResourceSample
+from runtime.long_task_executor import (
+    InstanceIdentity,
+    bind_long_task_runtime,
+    current_task_context,
+)
 from src.utils import browser_renderer as browser_renderer_module
 from src.utils.browser_renderer import BrowserRenderer
 
@@ -117,6 +123,226 @@ def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_html_render_inherits_bound_task_context_without_leaking_it(
+    tmp_path,
+    caplog,
+):
+    launches = []
+
+    class FailedProcess:
+        returncode = 1
+        pid = 4321
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda command, **_kwargs: launches.append(command)
+        or FailedProcess(),
+    )
+    cancel_event = threading.Event()
+    cancel_event.set()
+    context = TaskContext(
+        cancel_event,
+        time.monotonic() + 60,
+    )
+
+    with bind_long_task_runtime(
+        context,
+        InstanceIdentity("weather-instance", 1, 1),
+    ):
+        caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+        result = renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            retry_once=True,
+        )
+        assert current_task_context() is context
+
+    assert result is None
+    assert launches == []
+    assert current_task_context() is None
+    assert renderer.negative_cache_size == 0
+    assert not any(
+        record.getMessage().startswith("Retrying Chromium")
+        for record in caplog.records
+    )
+
+    renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+    )
+
+    assert len(launches) == 1
+
+
+def test_html_retry_cancellation_after_first_launch_does_not_poison_cache(
+    tmp_path,
+    caplog,
+):
+    cancel_event = threading.Event()
+    launches = []
+
+    class CancelingTimeoutProcess(TimeoutProcess):
+        def wait(self, timeout=None):
+            cancel_event.set()
+            return super().wait(timeout)
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 7654
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    first = CancelingTimeoutProcess()
+
+    def popen(command, **_kwargs):
+        launches.append(command)
+        return first if len(launches) == 1 else SuccessProcess(command)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=512,
+            swap_percent=0,
+        ),
+    )
+    context = TaskContext(
+        cancel_event,
+        time.monotonic() + 60,
+    )
+    caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+
+    with bind_long_task_runtime(
+        context,
+        InstanceIdentity("weather-instance", 1, 1),
+    ):
+        canceled = renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            timeout_seconds=0.01,
+            failure_domain="weather:weather.html",
+            retry_once=True,
+        )
+
+    assert canceled is None
+    assert len(launches) == 1
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert current_task_context() is None
+    assert not any(
+        record.getMessage().startswith("Retrying Chromium")
+        for record in caplog.records
+    )
+
+    recovered = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+    )
+
+    assert recovered is not None
+    assert recovered.size == (80, 48)
+    assert len(launches) == 2
+
+
+def test_html_single_attempt_deadline_timeout_does_not_poison_cache(tmp_path):
+    now = {"value": 0.0}
+
+    class DeadlineTimeoutProcess(TimeoutProcess):
+        def wait(self, timeout=None):
+            now["value"] = 1.0
+            return super().wait(timeout)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: DeadlineTimeoutProcess(),
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=0.5,
+        clock=lambda: now["value"],
+    )
+
+    result = renderer.render_html(
+        "<p>deadline</p>",
+        viewport=(80, 48),
+        context=context,
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+    )
+
+    assert result is None
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
+def test_html_second_attempt_cancellation_does_not_poison_cache(tmp_path):
+    cancel_event = threading.Event()
+    launches = []
+
+    class CancelingTimeoutProcess(TimeoutProcess):
+        def wait(self, timeout=None):
+            cancel_event.set()
+            return super().wait(timeout)
+
+    def popen(*_args, **_kwargs):
+        launches.append(True)
+        if len(launches) == 1:
+            return TimeoutProcess()
+        return CancelingTimeoutProcess()
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=512,
+            swap_percent=0,
+        ),
+    )
+    context = TaskContext(
+        cancel_event,
+        time.monotonic() + 60,
+    )
+
+    result = renderer.render_html(
+        "<p>cancel on retry</p>",
+        viewport=(80, 48),
+        context=context,
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+        retry_once=True,
+    )
+
+    assert result is None
+    assert len(launches) == 2
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
 def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path):
     first = TimeoutProcess()
     launches = []
@@ -153,12 +379,15 @@ def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path)
         binary="chromium",
         temp_root=tmp_path,
         popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=512,
+            swap_percent=0,
+        ),
     )
 
     result = renderer.render_html(
         "<p>weather</p>",
         viewport=(80, 48),
-        context=_context(),
         timeout_seconds=0.01,
         failure_domain="weather:weather.html",
         retry_once=True,
@@ -171,6 +400,61 @@ def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path)
     assert renderer.negative_cache_size == 0
     assert renderer.html_circuit_size == 0
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("available_mb", [100, 60])
+def test_html_retry_once_skips_second_launch_under_resource_pressure(
+    tmp_path,
+    caplog,
+    available_mb,
+):
+    first = TimeoutProcess()
+    launches = []
+
+    class FailedProcess:
+        returncode = 1
+        pid = 9876
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    def popen(command, **_kwargs):
+        launches.append(command)
+        return first if len(launches) == 1 else FailedProcess()
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=available_mb,
+            swap_percent=0,
+        ),
+    )
+
+    caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+        retry_once=True,
+    )
+
+    assert result is None
+    assert len(launches) == 1
+    assert renderer.active_processes == ()
+    assert renderer.negative_cache_size == 1
+    assert renderer.html_circuit_size == 1
+    assert list(tmp_path.iterdir()) == []
+    assert not any(
+        record.getMessage().startswith("Retrying Chromium")
+        for record in caplog.records
+    )
 
 
 def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
@@ -478,6 +762,94 @@ def test_remote_url_requires_validator_and_negative_cache_is_bounded(tmp_path):
 
     assert calls == []
     assert renderer.negative_cache_size <= 1
+
+
+def test_url_deadline_timeout_does_not_poison_negative_cache(tmp_path, caplog):
+    now = {"value": 0.0}
+    launches = []
+
+    class DeadlineTimeoutProcess(TimeoutProcess):
+        def wait(self, timeout=None):
+            now["value"] = 1.0
+            return super().wait(timeout)
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 8765
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    class AllowPolicy:
+        @staticmethod
+        def resolve_and_validate(url):
+            return SimpleNamespace(normalized_url=url)
+
+    class AvailableProxy:
+        proxy_url = "http://127.0.0.1:12345"
+
+        @staticmethod
+        def start():
+            return True
+
+        @staticmethod
+        def close():
+            pass
+
+    def popen(command, **_kwargs):
+        launches.append(command)
+        if len(launches) == 1:
+            return DeadlineTimeoutProcess()
+        return SuccessProcess(command)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        ssrf_policy=AllowPolicy(),
+        egress_proxy=AvailableProxy(),
+    )
+    deadline_context = TaskContext.never_cancelled(
+        deadline_monotonic=0.5,
+        clock=lambda: now["value"],
+    )
+
+    with caplog.at_level("WARNING", logger="src.utils.browser_renderer"):
+        timed_out = renderer.render_url(
+            "https://example.test/page",
+            viewport=(80, 48),
+            context=deadline_context,
+            validator=lambda url: url,
+            timeout_seconds=0.01,
+        )
+    recovered = renderer.render_url(
+        "https://example.test/page",
+        viewport=(80, 48),
+        context=_context(),
+        validator=lambda url: url,
+        timeout_seconds=0.01,
+    )
+
+    assert timed_out is None
+    assert recovered is not None
+    assert recovered.size == (80, 48)
+    assert len(launches) == 2
+    assert renderer.negative_cache_size == 0
+    assert not any(
+        record.getMessage().startswith("Chromium render timed out")
+        for record in caplog.records
+    )
 
 
 def test_repeated_failures_leave_no_processes_or_temp_growth(tmp_path):

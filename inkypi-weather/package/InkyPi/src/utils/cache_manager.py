@@ -556,6 +556,70 @@ class CacheNamespace:
             self.manager._publish_locked()
             return target
 
+    def publish_file(self, key: str, source, *, suffix: str = "") -> Path:
+        """Atomically consume one staged file into this managed namespace."""
+
+        target = self.path(key, suffix)
+        staged = Path(source)
+        with self.manager._lock:
+            self.manager._maybe_maintenance_locked()
+            _assert_resolved_within(self.root, staged)
+            if not staged.name.endswith(".tmp"):
+                raise CachePathError("published cache files must use a .tmp staging path")
+            try:
+                info = staged.stat(follow_symlinks=False)
+            except OSError as error:
+                raise CacheError("cache staging file is unavailable") from error
+            if staged.is_symlink() or not stat.S_ISREG(info.st_mode):
+                raise CachePathError("cache staging path must be a regular file")
+            incoming = int(info.st_size)
+            maximum = min(self.budget.max_bytes, self.manager.global_max_bytes)
+            if incoming > maximum:
+                self.manager._rejected_total += 1
+                self.manager._publish_locked()
+                raise CacheObjectTooLarge("cache object exceeds its namespace budget")
+            self._prune_for_incoming_locked(target, incoming)
+            self.manager._prune_global_for_incoming_locked(target, incoming)
+            _assert_resolved_within(self.root, target.parent)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _assert_resolved_within(self.root, target.parent)
+            _assert_resolved_within(self.root, staged)
+            _assert_resolved_within(self.root, target)
+            os.chmod(staged, 0o600)
+            os.replace(staged, target)
+            now = float(self.manager._clock())
+            os.utime(target, (now, now))
+            self.manager._remember_path_locked(target)
+            self.manager._publish_locked()
+            return target
+
+    def get_path(self, key: str, *, suffix: str = "") -> Path | None:
+        """Return a fresh managed file path while updating its LRU metadata."""
+
+        target = self.path(key, suffix)
+        with self.manager._lock:
+            self.manager._maybe_maintenance_locked()
+            if not target.is_file() or target.is_symlink():
+                return None
+            try:
+                info = target.stat(follow_symlinks=False)
+            except OSError:
+                return None
+            now = float(self.manager._clock())
+            last_used = max(float(info.st_atime), float(info.st_mtime))
+            if now - last_used > self.budget.max_age_seconds:
+                self.manager._unlink_locked(target)
+                self.manager._publish_locked()
+                return None
+            touch_interval = min(
+                self.manager.access_touch_interval_seconds,
+                self.budget.max_age_seconds / 2,
+            )
+            if touch_interval == 0 or now - last_used >= touch_interval:
+                os.utime(target, (now, now))
+            self.manager._remember_path_locked(target, last_used=now)
+            return target
+
     def get_bytes(self, key: str, *, suffix: str = "") -> bytes | None:
         target = self.path(key, suffix)
         with self.manager._lock:

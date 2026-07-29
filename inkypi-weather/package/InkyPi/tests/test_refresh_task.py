@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import inspect
+import logging
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -53,7 +54,12 @@ from runtime.presentation_cache import (
     PresentationCache,
     prepared_presentation_path,
 )
-from runtime.refresh_policy import AdmissionState, ResourceSample
+from runtime.refresh_policy import (
+    AdmissionState,
+    DueCandidate,
+    DueReason,
+    ResourceSample,
+)
 from runtime.render_arbiter import RenderArbiter
 from runtime.runtime_state import (
     LastGoodCacheState,
@@ -2431,6 +2437,85 @@ def test_memory_maintenance_collects_and_trims_when_forced(monkeypatch):
     assert result["collected_objects"] == 7
     assert result["malloc_trim"] is True
     assert result["after"]["swap_percent"] == 99.0
+
+
+def test_queue_command_final_memory_log_includes_command_and_process_usage(
+    monkeypatch,
+    caplog,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("command-final-memory-log"),
+        clock=clock,
+    )
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 256.0,
+            "memory_percent": 50.0,
+            "swap_percent": 10.0,
+        },
+    )
+    monkeypatch.setattr(refresh_task_module.gc, "collect", lambda: 0)
+    monkeypatch.setattr(task, "_malloc_trim", lambda: True)
+    monkeypatch.setattr(
+        refresh_task_module.psutil,
+        "Process",
+        lambda _pid: SimpleNamespace(
+            memory_info=lambda: SimpleNamespace(
+                rss=42 * 1024 * 1024,
+                peak_wset=64 * 1024 * 1024,
+            )
+        ),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    second_command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    with caplog.at_level(logging.INFO, logger="src.refresh_task"):
+        completed = _queue_and_process(task, command)
+        second_completed = _queue_and_process(task, second_command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert second_completed.job.status is JobStatus.SUCCEEDED
+    memory_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reason: refresh-command-finally" in record.getMessage()
+    ]
+    assert len(memory_logs) == 2
+    for memory_log in memory_logs:
+        assert "plugin_id: weather" in memory_log
+        assert "source: background" in memory_log
+        assert "intent: data_refresh" in memory_log
+        assert "process_rss_mb: 42.0" in memory_log
+        assert "process_hwm_mb: 64.0" in memory_log
 
 
 def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
@@ -8757,6 +8842,446 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
     completed = task.refresh_queue.get_entry(submitted.id)
     assert completed.job.status is JobStatus.SUCCEEDED
     assert calls == ["sports_dashboard"]
+
+
+def test_ticketmaster_background_data_waits_for_memory_reserve_without_blocking_cached_display(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-background-memory-reserve"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    resource_sample = {
+        "value": ResourceSample(available_mb=100, swap_percent=0),
+    }
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    background = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="ticketmaster_events",
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={"playlist_name": playlist.name},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    deferred = _queue_and_process(task, background)
+
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "plugin_resource_reserve"
+    state = task.runtime_state.snapshot().instances[background.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+    assert state.last_failure_at is None
+    assert executions == []
+
+    cached_display = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        plugin_id="ticketmaster_events",
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={
+            "playlist_name": playlist.name,
+            "display_cached_only": True,
+        },
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=100,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+
+    displayed = _queue_and_process(task, cached_display)
+
+    assert displayed.job.status is JobStatus.SUCCEEDED
+    assert executions == [cached_display.id]
+
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    automatic_rotation = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="ticketmaster_events",
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={
+            "playlist_name": playlist.name,
+            "automatic_rotation": True,
+        },
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=95,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    rotation_refresh = _queue_and_process(task, automatic_rotation)
+
+    assert rotation_refresh.job.status is JobStatus.SUCCEEDED
+    assert executions == [cached_display.id, automatic_rotation.id]
+
+    playlist._plugin_rotation_reserved_key = None
+    resource_sample["value"] = ResourceSample(
+        available_mb=115,
+        swap_percent=0,
+    )
+    retry = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="ticketmaster_events",
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={"playlist_name": playlist.name},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    completed = _queue_and_process(task, retry)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert executions == [cached_display.id, automatic_rotation.id, retry.id]
+
+
+def test_reserved_ticketmaster_starvation_concession_bypasses_execution_reserve(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("reserved-ticketmaster-starvation-concession"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+
+    def starvation_concession():
+        return RefreshCommand.create(
+            kind=CommandKind.CACHE_REFRESH,
+            source=CommandSource.BACKGROUND,
+            plugin_id=instance.plugin_id,
+            instance_uuid=instance.instance_uuid,
+            structural_generation=instance.structural_generation,
+            settings_revision=instance.settings_revision,
+            payload={"playlist_name": playlist.name},
+            now_monotonic=clock.monotonic(),
+            deadline_monotonic=clock.monotonic() + 180,
+            priority=96,
+            intent=RefreshIntent.DATA_REFRESH,
+        )
+
+    reserved = starvation_concession()
+    reserved_result = _queue_and_process(task, reserved)
+
+    assert reserved_result.job.status is JobStatus.SUCCEEDED
+    assert executions == [reserved.id]
+
+    playlist._plugin_rotation_reserved_key = None
+    ordinary = starvation_concession()
+    ordinary_result = _queue_and_process(task, ordinary)
+
+    assert ordinary_result.job.status is JobStatus.CANCELED
+    assert ordinary_result.job.error_code == "plugin_resource_reserve"
+    assert executions == [reserved.id]
+
+
+def test_stale_automatic_rotation_marker_cannot_bypass_ticketmaster_reserve(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("stale-ticketmaster-automatic-rotation-marker"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id=instance.plugin_id,
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={
+            "playlist_name": playlist.name,
+            "automatic_rotation": True,
+        },
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=95,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+
+    playlist._plugin_rotation_reserved_key = None
+    task._process_queue_entry(entry)
+
+    completed = task.refresh_queue.get_entry(submitted.id)
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "plugin_resource_reserve"
+    assert executions == []
+
+
+@pytest.mark.parametrize(
+    ("available_mb", "swap_percent", "expected_status"),
+    [
+        (200, 80, JobStatus.CANCELED),
+        (115, 75, JobStatus.CANCELED),
+        (115, 74.9, JobStatus.SUCCEEDED),
+    ],
+)
+def test_ticketmaster_background_start_margin_closes_memory_and_swap_races(
+    monkeypatch,
+    available_mb,
+    swap_percent,
+    expected_status,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(
+            f"ticketmaster-margin-{available_mb}-{swap_percent}"
+        ),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(
+            available_mb=available_mb,
+            swap_percent=swap_percent,
+        ),
+    )
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id=instance.plugin_id,
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        payload={"playlist_name": playlist.name},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is expected_status
+    assert executions == (
+        [command.id] if expected_status is JobStatus.SUCCEEDED else []
+    )
+
+
+def test_ticketmaster_reserve_deferral_does_not_consume_soft_live_admission(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    ticketmaster_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster",
+        latest_refresh_time=None,
+    )
+    ticketmaster_data["instance_uuid"] = "00000000000000000000000000000001"
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "SportsDashboard",
+        latest_refresh_time=current_dt.isoformat(),
+        interval=3600,
+    )
+    sports_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(ticketmaster_data, sports_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-reserve-live-fairness"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    ticketmaster, sports = [
+        instance.snapshot()
+        for instance in playlist.plugins
+    ]
+    _write_runtime_cache(task, sports)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+    live_due = {"value": False}
+    monkeypatch.setattr(
+        task,
+        "_live_due_candidates",
+        lambda *_args, **_kwargs: (
+            [
+                DueCandidate(
+                    instance=sports,
+                    lane=RefreshLane.LIVE,
+                    due_since=current_dt + timedelta(seconds=1),
+                    reason=DueReason.LIVE,
+                    last_attempt_at=None,
+                    requires_displayed_instance=False,
+                )
+            ]
+            if live_due["value"]
+            else []
+        ),
+    )
+
+    first = task._select_independent_refresh_command(current_dt)
+
+    assert first is None
+    ticket_state = task.runtime_state.snapshot().instances[
+        ticketmaster.instance_uuid
+    ].data
+    assert ticket_state.next_retry_at == (
+        current_dt + timedelta(seconds=60)
+    ).isoformat()
+
+    live_due["value"] = True
+    clock.advance(1)
+    second = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert second is not None
+    assert second.instance_uuid == sports.instance_uuid
+    assert second.intent is RefreshIntent.LIVE_REFRESH
+
+
+def test_stale_ticketmaster_command_cannot_defer_current_instance_revision(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("stale-ticketmaster-reserve"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+    stale = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="ticketmaster_events",
+        instance_uuid=instance.instance_uuid,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision + 1,
+        payload={"playlist_name": playlist.name, "require_active": True},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    completed = _queue_and_process(task, stale)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "stale_selection"
+    runtime = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
+    assert runtime is None or runtime.data.next_retry_at is None
 
 
 def test_background_sports_isolated_path_bypasses_legacy_full_render_margin(

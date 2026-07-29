@@ -1211,13 +1211,12 @@ def _resolve_media_url_blob(
         try:
             _probe_media_blob(target, minimum_size)
             _task_checkpoint(context)
-            cached_payload = namespace.get_bytes(digest, suffix=".img")
-            if cached_payload is None:
+            cached_path = namespace.get_path(digest, suffix=".img")
+            if cached_path is None:
                 raise ApodMediaUnavailable("APOD media cache miss")
-            del cached_payload
-            _probe_media_blob(target, minimum_size)
+            _probe_media_blob(cached_path, minimum_size)
             _task_checkpoint(context)
-            return target
+            return cached_path
         except _ABORT_EXCEPTIONS:
             raise
         except Exception:
@@ -1239,11 +1238,9 @@ def _resolve_media_url_blob(
         _task_checkpoint(context)
         _probe_media_blob(candidate, minimum_size)
         _task_checkpoint(context)
-        payload = candidate.read_bytes()
-        _task_checkpoint(context)
-        target = namespace.put_bytes(
+        target = namespace.publish_file(
             digest,
-            payload,
+            candidate,
             suffix=".img",
         )
         _probe_media_blob(target, minimum_size)

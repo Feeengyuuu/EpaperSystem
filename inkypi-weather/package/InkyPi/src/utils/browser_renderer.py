@@ -18,6 +18,8 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 import weakref
 
+import psutil
+
 try:
     from ..runtime.cache_lifecycle import (
         CleanupBudget,
@@ -33,6 +35,13 @@ except ImportError:  # pragma: no cover - production imports modules from src/
         LifecycleBudget,
     )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.long_task_executor import current_task_context
+from runtime.refresh_policy import (
+    ResourceSample,
+    ResourceThresholds,
+    ResourceTier,
+    classify_resource_tier,
+)
 from security.egress_proxy import EgressProxy
 from security.ssrf import ApprovedTarget, UnsafeTarget, get_ssrf_policy
 from utils.safe_image import safe_open_image
@@ -170,6 +179,8 @@ class BrowserRenderer:
         run_as_root=None,
         ssrf_policy=None,
         egress_proxy=None,
+        resource_sampler=None,
+        resource_thresholds=None,
     ):
         self.binary = binary or find_browser_binary()
         configured_root = os.getenv("INKYPI_BROWSER_TEMP_DIR", "").strip()
@@ -196,6 +207,12 @@ class BrowserRenderer:
         self._process_lock = threading.Lock()
         self.ssrf_policy = ssrf_policy or get_ssrf_policy()
         self.egress_proxy = egress_proxy or EgressProxy(policy=self.ssrf_policy)
+        self._resource_sampler = resource_sampler or self._sample_resources
+        self._resource_thresholds = (
+            ResourceThresholds()
+            if resource_thresholds is None
+            else resource_thresholds
+        )
         self._proxy_finalizer = weakref.finalize(self, self.egress_proxy.close)
         self._closed = False
 
@@ -267,8 +284,33 @@ class BrowserRenderer:
                 failure_scope="html",
                 failure_domain=failure_domain,
             )
-            if result is not None or attempt + 1 >= attempt_count:
+            if result is not None:
                 return result
+
+            try:
+                context.raise_if_cancelled()
+            except TaskCancelled:
+                self._forget_negative(key)
+                self._forget_html_failure(failure_domain)
+                return None
+            if attempt + 1 >= attempt_count:
+                return None
+            resource_sample = self._retry_resource_sample()
+            resource_tier = classify_resource_tier(
+                resource_sample,
+                self._resource_thresholds,
+            )
+            if resource_tier is not ResourceTier.HEALTHY:
+                logger.warning(
+                    "Skipping Chromium HTML retry due to resource pressure. | "
+                    "failure_domain: %s | tier: %s | available_mb: %s | "
+                    "swap_percent: %s",
+                    failure_domain,
+                    resource_tier.value,
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                )
+                return None
 
             # A retry is useful only when it can launch a clean Chromium job.
             # The first failure deliberately populated both guards, so clear
@@ -611,8 +653,12 @@ class BrowserRenderer:
                         context.raise_if_cancelled()
                     process.wait(timeout=max(0.001, wait_timeout))
                 except subprocess.TimeoutExpired:
-                    logger.warning("Chromium render timed out for %s", _safe_target(target))
                     self._stop_process(process)
+                    context.raise_if_cancelled()
+                    logger.warning(
+                        "Chromium render timed out for %s",
+                        _safe_target(target),
+                    )
                     self._remember_negative(key)
                     if failure_scope == "html":
                         self._remember_html_failure(failure_domain)
@@ -633,7 +679,6 @@ class BrowserRenderer:
         except TaskCancelled:
             if process is not None and process.poll() is None:
                 self._stop_process(process)
-            self._remember_negative(key)
             return None
         except Exception:
             if process is not None and process.poll() is None:
@@ -849,13 +894,38 @@ class BrowserRenderer:
             timeout = DEFAULT_TIMEOUT_SECONDS
         return max(0.01, min(180.0, timeout))
 
-    @staticmethod
-    def _context(context, timeout_seconds):
+    def _context(self, context, timeout_seconds):
         if context is not None:
             return context
+        inherited = current_task_context()
+        if inherited is not None:
+            return inherited
         return TaskContext.never_cancelled(
-            deadline_monotonic=time.monotonic()
-            + BrowserRenderer._timeout(timeout_seconds),
+            deadline_monotonic=self._clock()
+            + self._timeout(timeout_seconds),
+            clock=self._clock,
+        )
+
+    @staticmethod
+    def _sample_resources():
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        return ResourceSample(
+            available_mb=getattr(memory, "available", 0) / (1024 * 1024),
+            swap_percent=getattr(swap, "percent", None),
+        )
+
+    def _retry_resource_sample(self):
+        try:
+            sample = self._resource_sampler()
+        except Exception:
+            logger.exception("Could not sample resources before Chromium retry.")
+            return ResourceSample(available_mb=None, swap_percent=None)
+        if isinstance(sample, ResourceSample):
+            return sample
+        return ResourceSample(
+            available_mb=getattr(sample, "available_mb", None),
+            swap_percent=getattr(sample, "swap_percent", None),
         )
 
 

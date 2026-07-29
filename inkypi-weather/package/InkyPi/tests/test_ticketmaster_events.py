@@ -389,7 +389,11 @@ def test_theme_only_render_reuses_even_expired_source_cache(monkeypatch, tmp_pat
         return [TicketmasterEvent(rank=1, title="Theme-safe event")]
 
     monkeypatch.setattr(plugin, "_load_events", fake_load)
-    monkeypatch.setattr(plugin, "_download_event_images", lambda _events: None)
+    monkeypatch.setattr(
+        plugin,
+        "_download_event_images",
+        lambda _events, _dimensions: None,
+    )
     monkeypatch.setattr(plugin, "_write_ticketmaster_context", lambda *_args: None)
     monkeypatch.setattr(
         plugin,
@@ -430,7 +434,11 @@ def test_force_refresh_bypasses_fresh_source_cache(monkeypatch, tmp_path, force_
         return [TicketmasterEvent(rank=1, title=f"Refresh {calls['load']}")]
 
     monkeypatch.setattr(plugin, "_load_events", fake_load)
-    monkeypatch.setattr(plugin, "_download_event_images", lambda _events: None)
+    monkeypatch.setattr(
+        plugin,
+        "_download_event_images",
+        lambda _events, _dimensions: None,
+    )
     monkeypatch.setattr(plugin, "_write_ticketmaster_context", lambda *_args: None)
     monkeypatch.setattr(
         plugin,
@@ -502,8 +510,8 @@ def test_poster_download_uses_owned_bounded_image_decoder(monkeypatch, tmp_path)
 
     decoded = []
 
-    def fake_safe_open_image_response(received):
-        decoded.append(received)
+    def fake_safe_open_image_response(received, *, draft_size=None):
+        decoded.append((received, draft_size))
         return Image.new("RGB", (40, 24), "green")
 
     monkeypatch.setattr(ticketmaster_module, "get_http_session", lambda: FakeSession())
@@ -520,11 +528,125 @@ def test_poster_download_uses_owned_bounded_image_decoder(monkeypatch, tmp_path)
         image_url="https://example.test/poster.jpg",
     )
 
-    plugin._download_event_images([event])
+    plugin._download_event_images([event], (800, 480))
 
-    assert decoded == [response]
+    assert decoded == [(response, (800, 480))]
     assert request_kwargs["stream"] is True
     assert Path(event.poster_path).is_file()
+
+
+def test_cold_poster_is_drafted_and_cached_within_display_dimensions(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_TICKETMASTER_EVENTS_CACHE", str(tmp_path))
+    response = object()
+
+    class FakeSession:
+        def get(self, _url, **_kwargs):
+            return response
+
+    decoded = {}
+
+    def fake_safe_open_image_response(received, *, draft_size=None):
+        decoded["response"] = received
+        decoded["draft_size"] = draft_size
+        return Image.new("RGB", (1600, 960), (18, 122, 220))
+
+    monkeypatch.setattr(ticketmaster_module, "get_http_session", lambda: FakeSession())
+    monkeypatch.setattr(
+        ticketmaster_module,
+        "safe_open_image_response",
+        fake_safe_open_image_response,
+    )
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    event = TicketmasterEvent(
+        rank=1,
+        title="Large poster",
+        image_url="https://example.test/large-poster.jpg",
+    )
+
+    plugin._download_event_images([event], (800, 480))
+
+    with Image.open(event.poster_path) as cached:
+        assert cached.format == "JPEG"
+        assert cached.width <= 800
+        assert cached.height <= 480
+    assert decoded == {
+        "response": response,
+        "draft_size": (800, 480),
+    }
+
+
+def test_poster_cache_hit_uses_managed_path_without_reading_bytes(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_TICKETMASTER_EVENTS_CACHE", str(tmp_path))
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    event = TicketmasterEvent(
+        rank=1,
+        title="Cached poster",
+        image_url="https://example.test/cached-poster.jpg",
+    )
+    namespace = plugin._poster_cache_namespace()
+    key = plugin._event_image_cache_key(event)
+    expected = namespace.put_bytes(key, b"cached jpeg", suffix=".jpg")
+
+    def fail_read(_path):
+        raise AssertionError("poster cache hits must not read the payload")
+
+    def fail_http():
+        raise AssertionError("poster cache hits must not use the network")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+    monkeypatch.setattr(ticketmaster_module, "get_http_session", fail_http)
+
+    plugin._download_event_images([event], (800, 480))
+
+    assert event.poster_path == str(expected)
+
+
+def test_zero_byte_poster_cache_entry_is_replaced_from_network(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("INKYPI_TICKETMASTER_EVENTS_CACHE", str(tmp_path))
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    event = TicketmasterEvent(
+        rank=1,
+        title="Empty cached poster",
+        image_url="https://example.test/replacement-poster.jpg",
+    )
+    namespace = plugin._poster_cache_namespace()
+    key = plugin._event_image_cache_key(event)
+    target = namespace.put_bytes(key, b"", suffix=".jpg")
+    response = object()
+    requests = []
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return response
+
+    def fake_safe_open_image_response(received, *, draft_size=None):
+        assert received is response
+        assert draft_size == (800, 480)
+        return Image.new("RGB", (80, 48), "green")
+
+    monkeypatch.setattr(ticketmaster_module, "get_http_session", lambda: FakeSession())
+    monkeypatch.setattr(
+        ticketmaster_module,
+        "safe_open_image_response",
+        fake_safe_open_image_response,
+    )
+
+    plugin._download_event_images([event], (800, 480))
+
+    assert len(requests) == 1
+    assert event.poster_path == str(target)
+    with Image.open(target) as cached:
+        assert cached.size == (80, 48)
 
 
 def test_one_bad_poster_does_not_block_later_posters(monkeypatch, tmp_path):
@@ -537,10 +659,11 @@ def test_one_bad_poster_does_not_block_later_posters(monkeypatch, tmp_path):
 
     decode_calls = {"count": 0}
 
-    def fake_safe_open_image_response(_response):
+    def fake_safe_open_image_response(_response, *, draft_size=None):
         decode_calls["count"] += 1
         if decode_calls["count"] == 1:
             raise ValueError("bad image")
+        assert draft_size == (800, 480)
         return Image.new("RGB", (40, 24), "green")
 
     monkeypatch.setattr(ticketmaster_module, "get_http_session", lambda: FakeSession())
@@ -555,7 +678,7 @@ def test_one_bad_poster_does_not_block_later_posters(monkeypatch, tmp_path):
         TicketmasterEvent(rank=2, title="Good", image_url="https://example.test/good"),
     ]
 
-    plugin._download_event_images(events)
+    plugin._download_event_images(events, (800, 480))
 
     assert events[0].poster_path == ""
     assert Path(events[1].poster_path).is_file()

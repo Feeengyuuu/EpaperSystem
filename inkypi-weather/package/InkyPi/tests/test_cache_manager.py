@@ -147,6 +147,38 @@ def test_read_touches_disk_after_access_interval(tmp_path):
     assert path.stat().st_mtime == pytest.approx(clock(), abs=0.001)
 
 
+def test_path_hit_touches_lru_without_reading_payload(tmp_path, monkeypatch):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "media",
+        CacheBudget(7 * 24 * 60 * 60, 10, 1000),
+    )
+    path = namespace.put_bytes("photo", b"payload", suffix=".jpg")
+    clock.advance(24 * 60 * 60)
+
+    def fail_read(_path):
+        raise AssertionError("path cache hits must not read the payload")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    assert namespace.get_path("photo", suffix=".jpg") == path
+    assert path.stat().st_mtime == pytest.approx(clock(), abs=0.001)
+
+
+def test_path_hit_rejects_and_removes_expired_payload(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "media",
+        CacheBudget(10, 10, 1000),
+    )
+    path = namespace.put_bytes("photo", b"payload", suffix=".jpg")
+    clock.advance(11)
+
+    assert namespace.get_path("photo", suffix=".jpg") is None
+    assert not path.exists()
+    assert namespace.status().files == 0
+
+
 def test_short_ttl_reads_touch_at_half_ttl_and_keep_object_alive(tmp_path):
     clock = Clock()
     namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
@@ -282,6 +314,104 @@ def test_failed_atomic_replace_keeps_old_value_and_removes_temp(tmp_path, monkey
 
     assert namespace.get_bytes("state") == b"old"
     assert list(namespace.root.rglob("*.tmp")) == []
+
+
+def test_publish_file_atomically_moves_staged_payload_without_reading(
+    tmp_path,
+    monkeypatch,
+):
+    namespace = CacheManager(tmp_path / "managed").namespace(
+        "media",
+        CacheBudget(3600, 10, 100),
+    )
+    staged = namespace.root / ".download.tmp"
+    staged.write_bytes(b"streamed media")
+
+    def fail_read(_path):
+        raise AssertionError("file publication must not read the whole payload")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    target = namespace.publish_file("photo", staged, suffix=".img")
+
+    assert target == namespace.path("photo", ".img")
+    assert target.stat().st_size == len(b"streamed media")
+    assert not staged.exists()
+    assert namespace.status().bytes == len(b"streamed media")
+
+
+def test_publish_file_rejects_oversize_without_replacing_or_consuming(
+    tmp_path,
+):
+    namespace = CacheManager(tmp_path / "managed").namespace(
+        "media",
+        CacheBudget(3600, 10, 5),
+    )
+    target = namespace.put_bytes("photo", b"old", suffix=".img")
+    staged = namespace.root / ".oversize.tmp"
+    staged.write_bytes(b"123456")
+
+    with pytest.raises(CacheObjectTooLarge):
+        namespace.publish_file("photo", staged, suffix=".img")
+
+    assert target.read_bytes() == b"old"
+    assert staged.read_bytes() == b"123456"
+
+
+def test_publish_file_replace_failure_preserves_target_and_staged(
+    tmp_path,
+    monkeypatch,
+):
+    from utils import cache_manager as module
+
+    namespace = CacheManager(tmp_path / "managed").namespace(
+        "media",
+        CacheBudget(3600, 10, 100),
+    )
+    target = namespace.put_bytes("photo", b"old", suffix=".img")
+    staged = namespace.root / ".replacement.tmp"
+    staged.write_bytes(b"new")
+    monkeypatch.setattr(
+        module.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+
+    with pytest.raises(OSError, match="replace failed"):
+        namespace.publish_file("photo", staged, suffix=".img")
+
+    assert target.read_bytes() == b"old"
+    assert staged.read_bytes() == b"new"
+
+
+def test_publish_file_rejects_non_regular_staging_path(tmp_path):
+    namespace = CacheManager(tmp_path / "managed").namespace(
+        "media",
+        CacheBudget(3600, 10, 100),
+    )
+    staged = namespace.root / ".directory.tmp"
+    staged.mkdir()
+
+    with pytest.raises(CachePathError, match="regular file"):
+        namespace.publish_file("photo", staged, suffix=".img")
+
+    assert staged.is_dir()
+    assert not namespace.path("photo", ".img").exists()
+
+
+def test_publish_file_rejects_staging_path_outside_namespace(tmp_path):
+    namespace = CacheManager(tmp_path / "managed").namespace(
+        "media",
+        CacheBudget(3600, 10, 100),
+    )
+    staged = tmp_path / ".outside.tmp"
+    staged.write_bytes(b"outside")
+
+    with pytest.raises(CachePathError, match="escaped"):
+        namespace.publish_file("photo", staged, suffix=".img")
+
+    assert staged.read_bytes() == b"outside"
+    assert not namespace.path("photo", ".img").exists()
 
 
 def test_startup_and_daily_maintenance_remove_only_old_managed_temp_files(tmp_path):

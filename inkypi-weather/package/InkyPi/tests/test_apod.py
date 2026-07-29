@@ -3927,6 +3927,37 @@ def test_apod_media_prefers_valid_standard_url_without_touching_hd(
     assert [item["url"] for item in http.downloads] == [standard]
 
 
+def test_apod_media_cold_publish_does_not_materialize_downloaded_blob(
+    monkeypatch,
+    apod_storage,
+):
+    media_url = "https://media.example.test/path-only-publish.jpg"
+    payload = _image_bytes()
+    http = _MediaHttp({media_url: payload})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-path-only-publish",
+    )
+
+    def fail_read(_path):
+        raise AssertionError("APOD publication must not read the whole blob")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    blob, selected_url = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=_task5_record(url=media_url, hdurl=None),
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert selected_url == media_url
+    assert blob.stat().st_size == len(payload)
+    assert len(http.downloads) == 1
+
+
 def test_apod_media_download_disables_redirect_following(
     monkeypatch, apod_storage
 ):
@@ -4061,6 +4092,44 @@ def test_apod_media_reuses_persisted_hd_without_retrying_invalid_standard(
     assert http.downloads == []
 
 
+def test_apod_media_cache_hit_does_not_materialize_blob_bytes(
+    monkeypatch,
+    apod_storage,
+):
+    media_url = "https://media.example.test/path-only-hit.jpg"
+    http = _MediaHttp({media_url: _image_bytes()})
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
+    paths = apod_module._instance_paths(
+        apod_storage,
+        preview_namespace="media-path-only-hit",
+    )
+    record = _task5_record(url=media_url, hdurl=None)
+    first_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=record,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+    http.downloads.clear()
+
+    def fail_read(_path):
+        raise AssertionError("APOD cache hits must not read the whole blob")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    second_blob, _ = apod_module._resolve_media_blob(
+        plugin=apod_storage,
+        record=record,
+        paths=paths,
+        minimum_size=(432, 299),
+        context=None,
+    )
+
+    assert second_blob == first_blob
+    assert http.downloads == []
+
+
 def test_apod_record_media_continues_to_hd_after_standard_load_failure(
     monkeypatch, apod_storage
 ):
@@ -4101,38 +4170,30 @@ def test_apod_record_media_continues_to_hd_after_standard_load_failure(
 
 
 @pytest.mark.parametrize("abort_type", [TaskCancelled, TaskDeadlineExceeded])
-def test_apod_abort_after_candidate_read_never_publishes_managed_blob(
+def test_apod_abort_after_candidate_validation_never_publishes_managed_blob(
     monkeypatch,
     apod_storage,
     abort_type,
 ):
-    media_url = "https://media.example.test/cancel-after-read.jpg"
+    media_url = "https://media.example.test/cancel-before-publish.jpg"
     http = _MediaHttp({media_url: _image_bytes()})
     monkeypatch.setattr(apod_module, "get_http_client", lambda: http)
     paths = apod_module._instance_paths(
         apod_storage,
-        preview_namespace=f"media-read-abort-{abort_type.__name__}",
+        preview_namespace=f"media-publish-abort-{abort_type.__name__}",
     )
     digest = hashlib.sha256(media_url.encode("utf-8")).hexdigest()
-    signal = abort_type("abort after candidate read")
+    signal = abort_type("abort after candidate validation")
 
     class Context:
-        cancelled = False
+        checkpoints = 0
 
         def raise_if_cancelled(self):
-            if self.cancelled:
+            self.checkpoints += 1
+            if self.checkpoints == 4:
                 raise signal
 
     context = Context()
-    original_read_bytes = Path.read_bytes
-
-    def cancelling_read_bytes(path):
-        payload = original_read_bytes(path)
-        if path.parent == paths.media and path.name.startswith(f".{digest}."):
-            context.cancelled = True
-        return payload
-
-    monkeypatch.setattr(Path, "read_bytes", cancelling_read_bytes)
 
     with pytest.raises(abort_type) as caught:
         apod_module._resolve_media_blob(
