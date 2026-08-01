@@ -29,6 +29,7 @@ from utils.cache_manager import (
     cache_namespace_for_directory,
 )
 from utils.safe_image import ImageLimits, read_limited_response_bytes, safe_open_image
+from utils.secret_redaction import redact_sensitive_text
 
 try:
     from utils.app_utils import resolve_dimensions as _resolve_dimensions
@@ -46,11 +47,8 @@ except Exception:  # pragma: no cover - compatibility with older image_utils lay
 
 logger = logging.getLogger(__name__)
 
-SECRET_QUERY_PARAM_RE = re.compile(r"([?&](?:apiKey|api_key|apikey|key|token)=)[^&\s]+", re.IGNORECASE)
-
-
 def _safe_exception_text(exc):
-    return SECRET_QUERY_PARAM_RE.sub(r"\1<redacted>", str(exc))
+    return redact_sensitive_text(exc)
 
 DEFAULT_WORLD_CUP_URL = "https://www.sportbusy.com/embed/world-cup"
 DEFAULT_WORLD_CUP_VISIBLE_MATCHES = 4

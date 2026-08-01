@@ -8942,8 +8942,9 @@ def test_ticketmaster_background_data_waits_for_memory_reserve_without_blocking_
 
     rotation_refresh = _queue_and_process(task, automatic_rotation)
 
-    assert rotation_refresh.job.status is JobStatus.SUCCEEDED
-    assert executions == [cached_display.id, automatic_rotation.id]
+    assert rotation_refresh.job.status is JobStatus.CANCELED
+    assert rotation_refresh.job.error_code == "plugin_resource_reserve"
+    assert executions == [cached_display.id]
 
     playlist._plugin_rotation_reserved_key = None
     resource_sample["value"] = ResourceSample(
@@ -8967,10 +8968,10 @@ def test_ticketmaster_background_data_waits_for_memory_reserve_without_blocking_
     completed = _queue_and_process(task, retry)
 
     assert completed.job.status is JobStatus.SUCCEEDED
-    assert executions == [cached_display.id, automatic_rotation.id, retry.id]
+    assert executions == [cached_display.id, retry.id]
 
 
-def test_reserved_ticketmaster_starvation_concession_bypasses_execution_reserve(
+def test_reserved_ticketmaster_starvation_concession_cannot_bypass_execution_reserve(
     monkeypatch,
 ):
     current_dt = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
@@ -9020,8 +9021,9 @@ def test_reserved_ticketmaster_starvation_concession_bypasses_execution_reserve(
     reserved = starvation_concession()
     reserved_result = _queue_and_process(task, reserved)
 
-    assert reserved_result.job.status is JobStatus.SUCCEEDED
-    assert executions == [reserved.id]
+    assert reserved_result.job.status is JobStatus.CANCELED
+    assert reserved_result.job.error_code == "plugin_resource_reserve"
+    assert executions == []
 
     playlist._plugin_rotation_reserved_key = None
     ordinary = starvation_concession()
@@ -9029,7 +9031,38 @@ def test_reserved_ticketmaster_starvation_concession_bypasses_execution_reserve(
 
     assert ordinary_result.job.status is JobStatus.CANCELED
     assert ordinary_result.job.error_code == "plugin_resource_reserve"
-    assert executions == [reserved.id]
+    assert executions == []
+
+
+def test_reserved_ticketmaster_is_deferred_before_queue_admission(monkeypatch):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "ticketmaster_events",
+            "Ticketmaster",
+            latest_refresh_time=None,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("reserved-ticketmaster-scheduler-admission"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=100, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is None
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
 
 
 def test_stale_automatic_rotation_marker_cannot_bypass_ticketmaster_reserve(
@@ -9237,6 +9270,276 @@ def test_ticketmaster_reserve_deferral_does_not_consume_soft_live_admission(
     assert second is not None
     assert second.instance_uuid == sports.instance_uuid
     assert second.intent is RefreshIntent.LIVE_REFRESH
+
+
+def test_starved_ticketmaster_reserves_bounded_window_then_runs_when_margin_recovers(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    ticketmaster_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster",
+        interval=3 * 60 * 60,
+    )
+    ticketmaster_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(ticketmaster_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-starvation-window-recovers"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "ticketmaster_liveness_starvation_seconds": 300,
+            "ticketmaster_liveness_window_seconds": 60,
+            "ticketmaster_liveness_cooldown_seconds": 300,
+        }
+    )
+    ticketmaster, ordinary = [
+        instance.snapshot()
+        for instance in playlist.plugins
+    ]
+    for instance in (ticketmaster, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        ticketmaster.instance_uuid,
+        (current_dt - timedelta(hours=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    resource_sample = {
+        "value": ResourceSample(available_mb=110, swap_percent=50),
+    }
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: resource_sample["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._ticketmaster_liveness_window is not None
+    assert (
+        task._ticketmaster_liveness_window.instance_uuid
+        == ticketmaster.instance_uuid
+    )
+
+    resource_sample["value"] = ResourceSample(
+        available_mb=120,
+        swap_percent=50,
+    )
+    clock.advance(1)
+    retry = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert retry is not None
+    assert retry.plugin_id == "ticketmaster_events"
+    assert retry.instance_uuid == ticketmaster.instance_uuid
+    assert retry.intent is RefreshIntent.DATA_REFRESH
+    assert retry.priority == 97
+
+
+def test_ticketmaster_liveness_window_expires_before_ordinary_refresh_is_starved(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    ticketmaster_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster",
+        interval=3 * 60 * 60,
+    )
+    ticketmaster_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(ticketmaster_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-starvation-window-bounded"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "ticketmaster_liveness_starvation_seconds": 300,
+            "ticketmaster_liveness_window_seconds": 60,
+            "ticketmaster_liveness_cooldown_seconds": 300,
+        }
+    )
+    ticketmaster, ordinary = [
+        instance.snapshot()
+        for instance in playlist.plugins
+    ]
+    for instance in (ticketmaster, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        ticketmaster.instance_uuid,
+        (current_dt - timedelta(hours=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=110, swap_percent=50),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._ticketmaster_liveness_window is not None
+
+    clock.advance(61)
+    ordinary_refresh = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=61)
+    )
+
+    assert ordinary_refresh is not None
+    assert ordinary_refresh.instance_uuid == ordinary.instance_uuid
+    assert task._ticketmaster_liveness_window is None
+    assert (
+        task._ticketmaster_liveness_cooldown_until_monotonic
+        > clock.monotonic()
+    )
+
+
+def test_missing_ticketmaster_cache_uses_stable_liveness_anchor(monkeypatch):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    ticketmaster_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster",
+        interval=3 * 60 * 60,
+        latest_refresh_time=None,
+    )
+    playlist = _runtime_playlist(ticketmaster_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-bootstrap-liveness-anchor"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "ticketmaster_liveness_starvation_seconds": 300,
+            "ticketmaster_liveness_window_seconds": 30,
+        }
+    )
+    ticketmaster = playlist.plugins[0].snapshot()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=110, swap_percent=50),
+    )
+
+    for elapsed_seconds in (0, 61, 122, 183, 244):
+        if elapsed_seconds:
+            clock.advance(61)
+        assert (
+            task._select_independent_refresh_command(
+                current_dt + timedelta(seconds=elapsed_seconds)
+            )
+            is None
+        )
+        assert task._ticketmaster_liveness_window is None
+
+    clock.advance(61)
+    assert task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=305)
+    ) is None
+    assert task._ticketmaster_liveness_window is not None
+    assert (
+        task._ticketmaster_liveness_window.instance_uuid
+        == ticketmaster.instance_uuid
+    )
+
+
+def test_completed_ticketmaster_window_yields_before_another_window(monkeypatch):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    first_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster First",
+        interval=3 * 60 * 60,
+    )
+    first_data["instance_uuid"] = "00000000000000000000000000000001"
+    second_data = _runtime_plugin_data(
+        "ticketmaster_events",
+        "Ticketmaster Second",
+        interval=3 * 60 * 60,
+    )
+    second_data["instance_uuid"] = "00000000000000000000000000000002"
+    ordinary_data = _runtime_plugin_data("ordinary", "Ordinary", interval=60)
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(first_data, second_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("ticketmaster-window-yields-between-instances"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "ticketmaster_liveness_starvation_seconds": 300,
+            "ticketmaster_liveness_window_seconds": 60,
+        }
+    )
+    first, second, ordinary = [
+        instance.snapshot()
+        for instance in playlist.plugins
+    ]
+    for instance in (first, second, ordinary):
+        _write_runtime_cache(task, instance)
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (current_dt - timedelta(hours=20)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=110, swap_percent=50),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._ticketmaster_liveness_window is not None
+    assert task._ticketmaster_liveness_window.instance_uuid == first.instance_uuid
+
+    clock.advance(1)
+    task.runtime_state.record_success(
+        first.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    next_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert next_command is not None
+    assert next_command.instance_uuid == ordinary.instance_uuid
+    assert task._ticketmaster_liveness_window is None
 
 
 def test_stale_ticketmaster_command_cannot_defer_current_instance_revision(
@@ -9882,6 +10185,77 @@ def test_starved_sports_reserves_quiet_window_then_runs_when_margin_recovers(
         )
         is None
     )
+    assert task._sports_liveness_window is None
+
+
+def test_completed_sports_window_yields_before_another_window(monkeypatch):
+    current_dt = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    first_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports First",
+        interval=900,
+    )
+    first_data["instance_uuid"] = "00000000000000000000000000000001"
+    second_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports Second",
+        interval=900,
+    )
+    second_data["instance_uuid"] = "00000000000000000000000000000002"
+    ordinary_data = _runtime_plugin_data("ordinary", "Ordinary", interval=60)
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(first_data, second_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("sports-window-yields-between-instances"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": 300,
+            "sports_isolated_liveness_window_seconds": 60,
+        }
+    )
+    first, second, ordinary = [
+        instance.snapshot()
+        for instance in playlist.plugins
+    ]
+    for instance in (first, second, ordinary):
+        _write_runtime_cache(task, instance)
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (current_dt - timedelta(hours=20)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=113, swap_percent=50),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([]),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._sports_liveness_window is not None
+    assert task._sports_liveness_window.instance_uuid == first.instance_uuid
+
+    clock.advance(1)
+    task.runtime_state.record_success(
+        first.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    next_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert next_command is not None
+    assert next_command.instance_uuid == ordinary.instance_uuid
     assert task._sports_liveness_window is None
 
 

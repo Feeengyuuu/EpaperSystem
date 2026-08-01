@@ -1436,6 +1436,36 @@ def test_unsplash_request_timeout_is_wrapped(monkeypatch):
     assert calls[0]["timeout"] == 15
 
 
+def test_unsplash_http_error_does_not_log_access_key(monkeypatch, caplog):
+    marker = "unsplash-credential-marker"
+
+    class Session:
+        def get(self, _url, params=None, timeout=None):
+            assert params["client_id"] == marker
+            assert timeout == 15
+            raise requests.exceptions.HTTPError(
+                "401 Client Error for url: "
+                f"https://api.unsplash.com/photos/random?client_id={marker}"
+            )
+
+    monkeypatch.setattr(unsplash_module, "get_http_session", lambda: Session())
+
+    with caplog.at_level("ERROR", logger="plugins.unsplash.unsplash"):
+        with pytest.raises(
+            RuntimeError,
+            match="Failed to fetch image from Unsplash API",
+        ) as error_info:
+            Unsplash({"id": "unsplash"}).generate_image(
+                {},
+                FakeDeviceConfig({"UNSPLASH_ACCESS_KEY": marker}),
+            )
+
+    assert marker not in caplog.text
+    assert "client_id=<redacted>" in caplog.text
+    assert error_info.value.__context__ is None
+    assert error_info.value.__cause__ is None
+
+
 def test_immich_metadata_requests_use_timeout(monkeypatch):
     calls = []
 

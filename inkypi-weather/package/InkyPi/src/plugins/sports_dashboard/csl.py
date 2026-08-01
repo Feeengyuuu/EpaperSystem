@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from .common import get_http_session
 
 
-CSL_SCOREBOARD_LOOKBACK_DAYS = 2
+CSL_SCOREBOARD_LOOKBACK_DAYS = 7
 CSL_SCOREBOARD_LOOKAHEAD_DAYS = 7
 CSL_VISIBLE_MATCH_LIMIT = 4
 CSL_SCOREBOARD_EVENT_LIMIT = 100

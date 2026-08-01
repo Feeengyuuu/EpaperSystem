@@ -296,6 +296,7 @@ class BasePlugin:
         template_params=None,
         *,
         retry_once=False,
+        abort_on_hard_pressure=False,
     ):
         template_params = dict(template_params or {})
         # load the base plugin and current plugin css files
@@ -319,4 +320,5 @@ class BasePlugin:
             viewport=dimensions,
             failure_domain=f"{self.get_plugin_id()}:{html_file}",
             retry_once=retry_once,
+            abort_on_hard_pressure=abort_on_hard_pressure,
         )

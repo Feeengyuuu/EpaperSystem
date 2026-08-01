@@ -30,6 +30,34 @@ def _context(seconds=2):
     )
 
 
+def _route_fake_process_group_signals(monkeypatch, processes):
+    """Keep fake PIDs away from the host while exercising POSIX cleanup."""
+
+    if os.name == "nt":
+        return
+
+    def killpg(pid, signal_number):
+        process = next(
+            (
+                candidate
+                for candidate in reversed(tuple(processes()))
+                if candidate.pid == pid and candidate.poll() is None
+            ),
+            None,
+        )
+        if process is None:
+            raise ProcessLookupError(pid)
+        if signal_number == browser_renderer_module.signal.SIGTERM:
+            process.terminate()
+            return
+        if signal_number == browser_renderer_module.signal.SIGKILL:
+            process.kill()
+            return
+        raise AssertionError(f"unexpected signal: {signal_number}")
+
+    monkeypatch.setattr(browser_renderer_module.os, "killpg", killpg)
+
+
 def _cleanup_allowance(
     *,
     scanned=64,
@@ -100,13 +128,17 @@ class TimeoutProcess:
         return self.returncode
 
 
-def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(tmp_path):
+def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(
+    tmp_path,
+    monkeypatch,
+):
     process = TimeoutProcess()
     renderer = BrowserRenderer(
         binary="chromium",
         temp_root=tmp_path,
         popen=lambda *_args, **_kwargs: process,
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
     result = renderer.render_html(
         "<p>x</p>",
@@ -185,6 +217,7 @@ def test_html_render_inherits_bound_task_context_without_leaking_it(
 def test_html_retry_cancellation_after_first_launch_does_not_poison_cache(
     tmp_path,
     caplog,
+    monkeypatch,
 ):
     cancel_event = threading.Event()
     launches = []
@@ -227,6 +260,7 @@ def test_html_retry_cancellation_after_first_launch_does_not_poison_cache(
             swap_percent=0,
         ),
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: (first,))
     context = TaskContext(
         cancel_event,
         time.monotonic() + 60,
@@ -268,7 +302,10 @@ def test_html_retry_cancellation_after_first_launch_does_not_poison_cache(
     assert len(launches) == 2
 
 
-def test_html_single_attempt_deadline_timeout_does_not_poison_cache(tmp_path):
+def test_html_single_attempt_deadline_timeout_does_not_poison_cache(
+    tmp_path,
+    monkeypatch,
+):
     now = {"value": 0.0}
 
     class DeadlineTimeoutProcess(TimeoutProcess):
@@ -276,11 +313,13 @@ def test_html_single_attempt_deadline_timeout_does_not_poison_cache(tmp_path):
             now["value"] = 1.0
             return super().wait(timeout)
 
+    process = DeadlineTimeoutProcess()
     renderer = BrowserRenderer(
         binary="chromium",
         temp_root=tmp_path,
-        popen=lambda *_args, **_kwargs: DeadlineTimeoutProcess(),
+        popen=lambda *_args, **_kwargs: process,
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
     context = TaskContext.never_cancelled(
         deadline_monotonic=0.5,
         clock=lambda: now["value"],
@@ -299,9 +338,12 @@ def test_html_single_attempt_deadline_timeout_does_not_poison_cache(tmp_path):
     assert renderer.html_circuit_size == 0
 
 
-def test_html_second_attempt_cancellation_does_not_poison_cache(tmp_path):
+def test_html_second_attempt_cancellation_does_not_poison_cache(
+    tmp_path,
+    monkeypatch,
+):
     cancel_event = threading.Event()
-    launches = []
+    processes = []
 
     class CancelingTimeoutProcess(TimeoutProcess):
         def wait(self, timeout=None):
@@ -309,10 +351,13 @@ def test_html_second_attempt_cancellation_does_not_poison_cache(tmp_path):
             return super().wait(timeout)
 
     def popen(*_args, **_kwargs):
-        launches.append(True)
-        if len(launches) == 1:
-            return TimeoutProcess()
-        return CancelingTimeoutProcess()
+        process = (
+            TimeoutProcess()
+            if not processes
+            else CancelingTimeoutProcess()
+        )
+        processes.append(process)
+        return process
 
     renderer = BrowserRenderer(
         binary="chromium",
@@ -323,6 +368,7 @@ def test_html_second_attempt_cancellation_does_not_poison_cache(tmp_path):
             swap_percent=0,
         ),
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: processes)
     context = TaskContext(
         cancel_event,
         time.monotonic() + 60,
@@ -338,12 +384,15 @@ def test_html_second_attempt_cancellation_does_not_poison_cache(tmp_path):
     )
 
     assert result is None
-    assert len(launches) == 2
+    assert len(processes) == 2
     assert renderer.negative_cache_size == 0
     assert renderer.html_circuit_size == 0
 
 
-def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path):
+def test_html_render_can_retry_once_after_a_transient_chromium_timeout(
+    tmp_path,
+    monkeypatch,
+):
     first = TimeoutProcess()
     launches = []
 
@@ -384,6 +433,7 @@ def test_html_render_can_retry_once_after_a_transient_chromium_timeout(tmp_path)
             swap_percent=0,
         ),
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: (first,))
 
     result = renderer.render_html(
         "<p>weather</p>",
@@ -407,6 +457,7 @@ def test_html_retry_once_skips_second_launch_under_resource_pressure(
     tmp_path,
     caplog,
     available_mb,
+    monkeypatch,
 ):
     first = TimeoutProcess()
     launches = []
@@ -434,6 +485,7 @@ def test_html_retry_once_skips_second_launch_under_resource_pressure(
             swap_percent=0,
         ),
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: (first,))
 
     caplog.set_level("WARNING", logger="src.utils.browser_renderer")
     result = renderer.render_html(
@@ -455,6 +507,643 @@ def test_html_retry_once_skips_second_launch_under_resource_pressure(
         record.getMessage().startswith("Retrying Chromium")
         for record in caplog.records
     )
+
+
+def test_html_render_aborts_running_chromium_when_pressure_becomes_hard(
+    tmp_path,
+    caplog,
+    monkeypatch,
+):
+    class RunningProcess:
+        returncode = None
+        pid = 2468
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+            self.wait_calls = 0
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    process = RunningProcess()
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: process,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=60,
+            swap_percent=0,
+        ),
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+
+    with caplog.at_level("WARNING", logger="src.utils.browser_renderer"):
+        result = renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(),
+            timeout_seconds=5,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
+
+    assert result is None
+    assert process.terminated
+    assert not process.killed
+    assert renderer.active_processes == ()
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
+    assert any(
+        record.getMessage().startswith(
+            "Aborting Chromium render due to hard resource pressure"
+        )
+        for record in caplog.records
+    )
+
+
+def test_html_pressure_abort_does_not_retry_same_call_or_poison_next_request(
+    tmp_path,
+    monkeypatch,
+):
+    launches = []
+    sample_calls = 0
+
+    class Process:
+        returncode = None
+        pid = 2470
+
+        def __init__(self, command, *, succeeds):
+            self.terminated = False
+            if succeeds:
+                output = next(
+                    item.split("=", 1)[1]
+                    for item in command
+                    if item.startswith("--screenshot=")
+                )
+                Image.new("RGB", (80, 48), "white").save(output)
+                self.returncode = 0
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    def popen(command, **_kwargs):
+        process = Process(command, succeeds=bool(launches))
+        launches.append(process)
+        return process
+
+    def sample_resources():
+        nonlocal sample_calls
+        sample_calls += 1
+        if sample_calls == 1:
+            return ResourceSample(available_mb=100, swap_percent=80)
+        return ResourceSample(available_mb=512, swap_percent=0)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=sample_resources,
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: launches)
+
+    first_result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        retry_once=True,
+        abort_on_hard_pressure=True,
+    )
+
+    second_result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert first_result is None
+    assert second_result is not None
+    assert second_result.size == (80, 48)
+    assert len(launches) == 2
+    assert launches[0].terminated
+    assert not launches[1].terminated
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
+def test_delayed_pressure_kill_does_not_poison_next_request(
+    tmp_path,
+    monkeypatch,
+):
+    launches = []
+    sample_calls = 0
+
+    class LateKilledProcess:
+        returncode = None
+        pid = 2475
+
+        def __init__(self):
+            self.wait_calls = 0
+            self.terminated = False
+            self.killed = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls <= 3:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            self.returncode = -9
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 2476
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    def popen(command, **_kwargs):
+        process = (
+            LateKilledProcess()
+            if not launches
+            else SuccessProcess(command)
+        )
+        launches.append(process)
+        return process
+
+    def sample_resources():
+        nonlocal sample_calls
+        sample_calls += 1
+        if sample_calls == 1:
+            return ResourceSample(available_mb=60, swap_percent=80)
+        return ResourceSample(available_mb=512, swap_percent=0)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=sample_resources,
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: launches)
+
+    first_result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(seconds=10),
+        timeout_seconds=10,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+    second_result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert first_result is None
+    assert launches[0].terminated
+    assert launches[0].killed
+    assert launches[0].wait_calls == 4
+    assert second_result is not None
+    assert second_result.size == (80, 48)
+    assert len(launches) == 2
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
+def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
+    tmp_path,
+    monkeypatch,
+):
+    class NeverExitProcess:
+        returncode = None
+        pid = 2477
+
+        def __init__(self):
+            self.wait_calls = 0
+            self.terminated = False
+            self.killed = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            raise subprocess.TimeoutExpired("chromium", timeout)
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    process = NeverExitProcess()
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: process,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=60,
+            swap_percent=80,
+        ),
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(seconds=10),
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is None
+    assert process.terminated
+    assert process.killed
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
+def test_html_render_keeps_screenshot_completed_during_pressure_sample(tmp_path):
+    process = None
+
+    class CompletingProcess:
+        returncode = None
+        pid = 2471
+
+        def __init__(self, command):
+            self.output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            self.terminated = False
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    def popen(command, **_kwargs):
+        nonlocal process
+        process = CompletingProcess(command)
+        return process
+
+    def complete_during_sample():
+        Image.new("RGB", (80, 48), "white").save(process.output)
+        process.returncode = 0
+        return ResourceSample(available_mb=60, swap_percent=80)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=complete_during_sample,
+    )
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is not None
+    assert result.size == (80, 48)
+    assert not process.terminated
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+
+
+def test_pressure_stop_waits_for_late_process_exit_without_caching_failure(
+    tmp_path,
+    monkeypatch,
+):
+    class LateExitProcess:
+        returncode = None
+        pid = 2474
+
+        def __init__(self, command):
+            self.output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            self.wait_calls = 0
+            self.terminated = False
+            self.killed = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls <= 3:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            Image.new("RGB", (80, 48), "white").save(self.output)
+            self.returncode = 0
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    process = None
+
+    def popen(command, **_kwargs):
+        nonlocal process
+        process = LateExitProcess(command)
+        return process
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=60,
+            swap_percent=80,
+        ),
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(seconds=10),
+        timeout_seconds=10,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is None
+    assert process.terminated
+    assert process.killed
+    assert process.wait_calls == 4
+    assert renderer.active_processes == ()
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_html_pressure_polling_uses_bounded_budget_with_static_clock(
+    tmp_path,
+    monkeypatch,
+):
+    class TimeoutProcess:
+        returncode = None
+        pid = 2472
+
+        def __init__(self):
+            self.wait_calls = 0
+            self.terminated = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.returncode is not None:
+                return self.returncode
+            if self.wait_calls >= 50:
+                self.returncode = 1
+                return self.returncode
+            raise subprocess.TimeoutExpired("chromium", timeout)
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    process = TimeoutProcess()
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: process,
+        clock=lambda: 1.0,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=100,
+            swap_percent=0,
+        ),
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        timeout_seconds=0.01,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is None
+    assert process.terminated
+    assert process.wait_calls < 10
+
+
+def test_html_render_does_not_abort_running_chromium_under_soft_pressure(tmp_path):
+    class RecoveringProcess:
+        returncode = None
+        pid = 2469
+
+        def __init__(self, command):
+            self.output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            self.wait_calls = 0
+            self.terminated = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            Image.new("RGB", (80, 48), "white").save(self.output)
+            self.returncode = 0
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    processes = []
+
+    def popen(command, **_kwargs):
+        process = RecoveringProcess(command)
+        processes.append(process)
+        return process
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=100,
+            swap_percent=0,
+        ),
+    )
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is not None
+    assert result.size == (80, 48)
+    assert len(processes) == 1
+    assert not processes[0].terminated
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_html_render_continues_with_high_swap_when_memory_headroom_remains(
+    tmp_path,
+):
+    class CompletingProcess:
+        returncode = None
+        pid = 2473
+
+        def __init__(self, command):
+            self.output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            self.wait_calls = 0
+            self.terminated = False
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            Image.new("RGB", (80, 48), "white").save(self.output)
+            self.returncode = 0
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    process = None
+
+    def popen(command, **_kwargs):
+        nonlocal process
+        process = CompletingProcess(command)
+        return process
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_sampler=lambda: ResourceSample(
+            available_mb=146,
+            swap_percent=75.3,
+        ),
+    )
+
+    result = renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert result is not None
+    assert result.size == (80, 48)
+    assert not process.terminated
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):
@@ -557,7 +1246,10 @@ def test_root_renderer_adds_required_no_sandbox_without_disabling_zygote(tmp_pat
     assert "--no-zygote" not in commands[0]
 
 
-def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(tmp_path):
+def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(
+    tmp_path,
+    monkeypatch,
+):
     now = {"value": 0.0}
     launches = []
 
@@ -574,6 +1266,7 @@ def test_html_timeout_circuit_isolated_by_failure_domain_until_cooldown(tmp_path
         clock=lambda: now["value"],
         html_circuit_ttl_seconds=60,
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: launches)
 
     assert renderer.render_html(
         "<p>first timestamp</p>",
@@ -764,9 +1457,14 @@ def test_remote_url_requires_validator_and_negative_cache_is_bounded(tmp_path):
     assert renderer.negative_cache_size <= 1
 
 
-def test_url_deadline_timeout_does_not_poison_negative_cache(tmp_path, caplog):
+def test_url_deadline_timeout_does_not_poison_negative_cache(
+    tmp_path,
+    caplog,
+    monkeypatch,
+):
     now = {"value": 0.0}
     launches = []
+    processes = []
 
     class DeadlineTimeoutProcess(TimeoutProcess):
         def wait(self, timeout=None):
@@ -809,9 +1507,13 @@ def test_url_deadline_timeout_does_not_poison_negative_cache(tmp_path, caplog):
 
     def popen(command, **_kwargs):
         launches.append(command)
-        if len(launches) == 1:
-            return DeadlineTimeoutProcess()
-        return SuccessProcess(command)
+        process = (
+            DeadlineTimeoutProcess()
+            if len(launches) == 1
+            else SuccessProcess(command)
+        )
+        processes.append(process)
+        return process
 
     renderer = BrowserRenderer(
         binary="chromium",
@@ -820,6 +1522,7 @@ def test_url_deadline_timeout_does_not_poison_negative_cache(tmp_path, caplog):
         ssrf_policy=AllowPolicy(),
         egress_proxy=AvailableProxy(),
     )
+    _route_fake_process_group_signals(monkeypatch, lambda: processes)
     deadline_context = TaskContext.never_cancelled(
         deadline_monotonic=0.5,
         clock=lambda: now["value"],

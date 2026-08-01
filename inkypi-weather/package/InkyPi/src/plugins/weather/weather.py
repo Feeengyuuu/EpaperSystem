@@ -253,6 +253,7 @@ class Weather(BasePlugin):
                 "weather.css",
                 template_params,
                 retry_once=True,
+                abort_on_hard_pressure=True,
             )
         if image is None:
             raise RuntimeError("Could not render the original HTML weather layout.")

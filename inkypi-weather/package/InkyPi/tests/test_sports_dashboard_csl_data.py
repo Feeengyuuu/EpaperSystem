@@ -147,7 +147,7 @@ def _sample_csl_scoreboard():
     }
 
 
-def test_csl_scoreboard_window_uses_local_today_minus_two_through_plus_seven():
+def test_csl_scoreboard_window_uses_local_today_minus_seven_through_plus_seven():
     now = datetime(2026, 7, 25, 6, 30, tzinfo=timezone.utc)
 
     start_date, end_date = CSLMixin._csl_scoreboard_date_range(
@@ -155,7 +155,7 @@ def test_csl_scoreboard_window_uses_local_today_minus_two_through_plus_seven():
         now,
     )
 
-    assert start_date.isoformat() == "2026-07-22"
+    assert start_date.isoformat() == "2026-07-17"
     assert end_date.isoformat() == "2026-07-31"
 
 
@@ -440,7 +440,7 @@ def test_csl_loader_returns_compatible_fresh_cache_without_network(tmp_path):
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
             "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
-            "2026-07-23|2026-08-01|America/Los_Angeles|100"
+            "2026-07-18|2026-08-01|America/Los_Angeles|100"
         ),
         "fetched_at": "2026-07-25T11:59:30+00:00",
         "scoreboard": scoreboard,
@@ -484,7 +484,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
             "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard",
             {
                 "params": {
-                    "dates": "20260723-20260801",
+                    "dates": "20260718-20260801",
                     "limit": "100",
                 },
                 "headers": {

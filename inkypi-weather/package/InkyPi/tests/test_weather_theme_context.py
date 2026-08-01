@@ -376,7 +376,12 @@ def test_weather_retries_only_the_local_html_render_after_a_transient_timeout(
     )
 
     assert image.size == (64, 32)
-    assert renders == [{"retry_once": True}]
+    assert renders == [
+        {
+            "retry_once": True,
+            "abort_on_hard_pressure": True,
+        }
+    ]
     assert fetches == {"weather": 1, "air": 1, "location": 1}
     assert read_source_provenance(image) is SourceProvenance.LIVE
 

@@ -7,6 +7,7 @@ from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image, safe_open_image_response
+from utils.secret_redaction import redact_sensitive_text
 from utils.theme_utils import get_theme_context, get_theme_palette
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from datetime import datetime, timezone
@@ -156,7 +157,8 @@ class SteamProfileDashboard(BasePlugin):
             )
             return attach_source_provenance(image, provenance)
         except Exception as e:
-            logger.error(f"Steam Profile Dashboard failed: {e}")
+            safe_error = redact_sensitive_text(e)
+            logger.error("Steam Profile Dashboard failed: %s", safe_error)
             if cache_entry and cache_entry.get("image_path") and os.path.exists(cache_entry["image_path"]):
                 logger.warning("Using stale Steam profile dashboard cache.")
                 image = safe_open_image(cache_entry["image_path"]).convert("RGB")
@@ -165,7 +167,12 @@ class SteamProfileDashboard(BasePlugin):
                     image,
                     SourceProvenance.STALE_CACHE,
                 )
-            raise RuntimeError(f"Steam 个人资料看板生成失败：{str(e)}")
+            public_error = RuntimeError(
+                f"Steam 个人资料看板生成失败：{safe_error}"
+            )
+        # Raise after leaving the handler so the private requests exception is
+        # not retained in __context__ for callers that inspect exception objects.
+        raise public_error
 
     def _write_steam_profile_context(self, data, generated_at):
         if not isinstance(data, dict):
@@ -277,7 +284,10 @@ class SteamProfileDashboard(BasePlugin):
             try:
                 data["api_calls"] += self._refresh_cached_friend_statuses(api_key, data)
             except Exception as e:
-                logger.warning(f"Steam friend status refresh unavailable: {e}")
+                logger.warning(
+                    "Steam friend status refresh unavailable: %s",
+                    redact_sensitive_text(e),
+                )
                 data.setdefault("warnings", []).append("好友状态不可用")
 
         if (
@@ -296,7 +306,10 @@ class SteamProfileDashboard(BasePlugin):
                     data["api_calls"] += 1
                     data["recent_games"] = recent_data.get("response", {}).get("games", [])
                 except Exception as e:
-                    logger.warning(f"Steam recent games refresh unavailable after game change: {e}")
+                    logger.warning(
+                        "Steam recent games refresh unavailable after game change: %s",
+                        redact_sensitive_text(e),
+                    )
                     data.setdefault("warnings", []).append("近期游戏不可用")
 
             data["spotlight_game"] = self._spotlight_game(
@@ -310,7 +323,10 @@ class SteamProfileDashboard(BasePlugin):
                     data["app_details"] = self._fetch_store_appdetails(data["spotlight_game"].get("appid"), settings)
                     data["api_calls"] += 1
                 except Exception as e:
-                    logger.warning(f"Steam app details refresh unavailable after game change: {e}")
+                    logger.warning(
+                        "Steam app details refresh unavailable after game change: %s",
+                        redact_sensitive_text(e),
+                    )
                     data.setdefault("warnings", []).append("商店详情不可用")
 
         data["api_calls"] += self._enrich_localized_game_names(data)
@@ -351,7 +367,10 @@ class SteamProfileDashboard(BasePlugin):
             return profile, 1, warnings
         except Exception as e:
             warnings.append("实时状态不可用")
-            raise RuntimeError(f"Steam 实时状态不可用：{e}")
+            public_error = RuntimeError(
+                f"Steam 实时状态不可用：{redact_sensitive_text(e)}"
+            )
+        raise public_error
 
     def _fetch_dashboard_data(self, api_key, steam_id, settings):
         api_calls = 0
@@ -364,7 +383,7 @@ class SteamProfileDashboard(BasePlugin):
                 return self._steam_api(path, api_key, params)
             except Exception as e:
                 message = f"{path.split('/')[-2]} 不可用"
-                logger.warning(f"{message}: {e}")
+                logger.warning("%s: %s", message, redact_sensitive_text(e))
                 warnings.append(message)
                 if required:
                     raise
@@ -514,7 +533,10 @@ class SteamProfileDashboard(BasePlugin):
             )
             return reconciled
         except Exception as e:
-            logger.warning("Steam Community presence cross-check unavailable: %s", e)
+            logger.warning(
+                "Steam Community presence cross-check unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return profile
 
     def _fetch_store_appdetails(self, appid, settings):
@@ -572,7 +594,12 @@ class SteamProfileDashboard(BasePlugin):
                     result[appid] = entry["data"]
             return result, 1
         except Exception as e:
-            logger.warning(f"Steam store appdetails unavailable for {','.join(normalized)} ({language}): {e}")
+            logger.warning(
+                "Steam store appdetails unavailable for %s (%s): %s",
+                ",".join(normalized),
+                language,
+                redact_sensitive_text(e),
+            )
         return {}, 1
 
     def _enrich_localized_game_names(self, data):
@@ -1030,7 +1057,11 @@ class SteamProfileDashboard(BasePlugin):
             background = Image.open(path).convert("RGB")
             return ImageOps.fit(background, dimensions, method=Image.Resampling.LANCZOS)
         except Exception as e:
-            logger.warning(f"Steam dashboard background {image_name} unavailable: {e}")
+            logger.warning(
+                "Steam dashboard background %s unavailable: %s",
+                image_name,
+                redact_sensitive_text(e),
+            )
             return Image.new("RGB", dimensions, fallback_color)
 
     def _fetch_badge_icon_records(self, steam_id, badges):
@@ -1048,7 +1079,10 @@ class SteamProfileDashboard(BasePlugin):
             response.raise_for_status()
             return self._extract_badge_icon_records(response.text, badges)
         except Exception as e:
-            logger.warning(f"Steam badge icons unavailable: {e}")
+            logger.warning(
+                "Steam badge icons unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return []
 
     def _extract_badge_icon_records(self, page_html, badges):
@@ -1268,7 +1302,10 @@ class SteamProfileDashboard(BasePlugin):
                 os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
                 icon.save(icon_cache_path)
         except Exception as e:
-            logger.warning(f"Steam badge icon unavailable: {e}")
+            logger.warning(
+                "Steam badge icon unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return None
 
         return ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
@@ -1290,7 +1327,10 @@ class SteamProfileDashboard(BasePlugin):
                 backdrop = source.convert("RGB")
             return ImageOps.fit(backdrop, (width, height), method=Image.Resampling.LANCZOS)
         except Exception as e:
-            logger.warning(f"Steam dashboard game backdrop unavailable: {e}")
+            logger.warning(
+                "Steam dashboard game backdrop unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return None
 
     def _draw_game_strip(self, image, x, y, width, height):
@@ -1310,7 +1350,10 @@ class SteamProfileDashboard(BasePlugin):
                 strip = source.convert("RGB")
             return ImageOps.fit(strip, (width, height), method=Image.Resampling.LANCZOS)
         except Exception as e:
-            logger.warning(f"Steam dashboard game strip unavailable: {e}")
+            logger.warning(
+                "Steam dashboard game strip unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return None
 
     def _draw_section_wordmark(self, image, key, x, y):
@@ -1341,7 +1384,11 @@ class SteamProfileDashboard(BasePlugin):
             with Image.open(path) as source:
                 return self._readable_section_wordmark(source.convert("RGBA"))
         except Exception as e:
-            logger.warning(f"Steam dashboard section wordmark unavailable: {image_name}: {e}")
+            logger.warning(
+                "Steam dashboard section wordmark unavailable: %s: %s",
+                image_name,
+                redact_sensitive_text(e),
+            )
             return None
 
     def _readable_section_wordmark(self, wordmark):
@@ -1622,7 +1669,10 @@ class SteamProfileDashboard(BasePlugin):
                 os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
                 icon.save(icon_cache_path)
         except Exception as e:
-            logger.warning(f"Steam game icon unavailable: {e}")
+            logger.warning(
+                "Steam game icon unavailable: %s",
+                redact_sensitive_text(e),
+            )
             return None
 
         icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
@@ -1699,7 +1749,10 @@ class SteamProfileDashboard(BasePlugin):
                     os.makedirs(os.path.dirname(avatar_cache_path), exist_ok=True)
                     avatar.save(avatar_cache_path)
             except Exception as e:
-                logger.warning(f"Steam avatar unavailable: {e}")
+                logger.warning(
+                    "Steam avatar unavailable: %s",
+                    redact_sensitive_text(e),
+                )
 
         if avatar is None:
             avatar = Image.new("RGB", (size, size), (0, 0, 0))

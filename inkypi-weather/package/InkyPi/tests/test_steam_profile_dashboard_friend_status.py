@@ -1,7 +1,9 @@
 import sys
+import traceback
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageStat
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -38,6 +40,44 @@ class _CommunityPresenceResponse:
     def raise_for_status(self):
         if self._error:
             raise self._error
+
+
+def test_generate_image_redacts_api_key_from_logs_error_and_traceback(
+    caplog,
+    monkeypatch,
+):
+    marker = "steam-credential-marker-123"
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    monkeypatch.setattr(plugin, "_read_cache", lambda _cache_key: None)
+
+    class Response:
+        def raise_for_status(self):
+            raise RuntimeError(
+                "503 Server Error for url: "
+                "https://api.steampowered.com/ISteamUser/"
+                f"GetPlayerSummaries/v2/?key={marker}&steamids=7"
+            )
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(steam_profile_module, "get_http_session", lambda: Session())
+
+    with caplog.at_level("WARNING", logger=steam_profile_module.__name__):
+        with pytest.raises(RuntimeError) as caught:
+            plugin.generate_image({}, _SteamDeviceConfig())
+
+    rendered_traceback = "".join(
+        traceback.format_exception(caught.type, caught.value, caught.tb)
+    )
+    for public_text in (caplog.text, str(caught.value), rendered_traceback):
+        assert marker not in public_text
+        assert "GetPlayerSummaries" in public_text
+    assert "<redacted>" in caplog.text
+    assert "<redacted>" in str(caught.value)
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
 
 
 def test_missing_optional_game_icon_is_negatively_cached(tmp_path, monkeypatch):

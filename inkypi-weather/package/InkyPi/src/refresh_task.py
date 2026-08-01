@@ -146,6 +146,9 @@ DEFAULT_SPORTS_ISOLATED_START_MAX_SWAP_PERCENT = 70
 DEFAULT_TICKETMASTER_BACKGROUND_START_MIN_AVAILABLE_MB = (
     DEFAULT_BACKGROUND_BURST_START_MIN_AVAILABLE_MB
 )
+DEFAULT_TICKETMASTER_LIVENESS_STARVATION_SECONDS = 30 * 60
+DEFAULT_TICKETMASTER_LIVENESS_WINDOW_SECONDS = 90
+DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
 # allocations can outrun the parent worker's resource polling interval.
 DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
@@ -197,6 +200,14 @@ class ActiveOperationSnapshot:
 
 @dataclass(frozen=True)
 class _SportsLivenessWindow:
+    instance_uuid: str
+    due_since: datetime
+    started_monotonic: float
+    deadline_monotonic: float
+
+
+@dataclass(frozen=True)
+class _TicketmasterLivenessWindow:
     instance_uuid: str
     due_since: datetime
     started_monotonic: float
@@ -593,6 +604,9 @@ class RefreshTask:
         self._restart_request = None
         self._sports_liveness_window = None
         self._sports_liveness_cooldown_until_monotonic = 0.0
+        self._ticketmaster_liveness_window = None
+        self._ticketmaster_liveness_cooldown_until_monotonic = 0.0
+        self._ticketmaster_bootstrap_due_since = {}
         self._sports_isolated_renderer = (
             render_sports_dashboard_isolated
             if sports_isolated_renderer is None
@@ -2192,19 +2206,66 @@ class RefreshTask:
             )
         }
         eligible_data_candidates = list(data_candidates)
+        ticketmaster_liveness_candidate = None
+        ticketmaster_liveness_holds_independent = False
+        if self._ticketmaster_liveness_window is not None:
+            (
+                ticketmaster_liveness_candidate,
+                ticketmaster_liveness_holds_independent,
+            ) = self._ticketmaster_liveness_decision(
+                active,
+                data_candidates,
+                runtime_instances,
+                current_dt,
+                resource_sample,
+            )
+            # One expired/completed window must yield a scheduler turn before a
+            # different burst renderer can reserve another quiet window.
+            sports_liveness_candidate = None
+            sports_liveness_holds_independent = False
+            sports_liveness_excluded_uuids = frozenset()
+        else:
+            sports_window_was_active = self._sports_liveness_window is not None
+            (
+                sports_liveness_candidate,
+                sports_liveness_holds_independent,
+                sports_liveness_excluded_uuids,
+            ) = self._sports_liveness_decision(
+                active,
+                data_candidates,
+                runtime_instances,
+                current_dt,
+                resource_sample,
+            )
+            if (
+                not sports_window_was_active
+                and sports_liveness_candidate is None
+                and not sports_liveness_holds_independent
+            ):
+                (
+                    ticketmaster_liveness_candidate,
+                    ticketmaster_liveness_holds_independent,
+                ) = self._ticketmaster_liveness_decision(
+                    active,
+                    data_candidates,
+                    runtime_instances,
+                    current_dt,
+                    resource_sample,
+                )
         (
             ticketmaster_margin_available,
             ticketmaster_required_available_mb,
             ticketmaster_max_swap_percent,
         ) = self._ticketmaster_background_start_margin(resource_sample)
-        if not ticketmaster_margin_available:
+        if (
+            not ticketmaster_margin_available
+            and ticketmaster_liveness_candidate is None
+            and not ticketmaster_liveness_holds_independent
+        ):
             eligible_data_candidates = []
             for candidate in data_candidates:
                 instance = candidate.instance
-                if (
-                    instance.plugin_id == "ticketmaster_events"
-                    and instance.instance_uuid not in reserved_instance_uuids
-                ):
+                if instance.plugin_id == "ticketmaster_events":
                     next_retry_at = (
                         self._record_lane_resource_pressure_deferral(
                             instance.instance_uuid,
@@ -2228,17 +2289,6 @@ class RefreshTask:
                     )
                     continue
                 eligible_data_candidates.append(candidate)
-        (
-            sports_liveness_candidate,
-            sports_liveness_holds_independent,
-            sports_liveness_excluded_uuids,
-        ) = self._sports_liveness_decision(
-            active,
-            data_candidates,
-            runtime_instances,
-            current_dt,
-            resource_sample,
-        )
         if sports_liveness_excluded_uuids:
             data_candidates = [
                 candidate
@@ -2260,6 +2310,7 @@ class RefreshTask:
             ]
         if (
             not sports_liveness_holds_independent
+            and not ticketmaster_liveness_holds_independent
             and reserved_instance_uuids
             and self._admission_state.consecutive_data_admissions < 1
             and self._get_rotation_wait_seconds()
@@ -2325,7 +2376,14 @@ class RefreshTask:
             data_candidate = data_by_instance_uuid.get(
                 presentation_instance.instance_uuid
             )
-            if data_candidate is not None and tier is not ResourceTier.HARD:
+            if (
+                data_candidate is not None
+                and tier is not ResourceTier.HARD
+                and (
+                    presentation_instance.plugin_id != "ticketmaster_events"
+                    or ticketmaster_margin_available
+                )
+            ):
                 data_attempt = data_candidate.last_attempt_at
                 presentation_due = presentation_candidate.due_since
                 if data_attempt is None or (
@@ -2402,7 +2460,33 @@ class RefreshTask:
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
             )
+        if ticketmaster_liveness_candidate is not None:
+            liveness_admission = choose_refresh_candidate(
+                [ticketmaster_liveness_candidate],
+                [],
+                tier=tier,
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            )
+            self._admission_state = liveness_admission.state
+            candidate = liveness_admission.candidate
+            if candidate is None:
+                return None
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=97,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+            )
         if sports_liveness_holds_independent:
+            return None
+        if ticketmaster_liveness_holds_independent:
             return None
 
         decision = choose_refresh_candidate(
@@ -3278,43 +3362,40 @@ class RefreshTask:
                     )
                     self._signal_completion(finished.id)
                     return
-                if not self._has_current_rotation_reservation(command):
-                    resource_sample = self._resource_sample()
-                    (
-                        margin_available,
+                resource_sample = self._resource_sample()
+                (
+                    margin_available,
+                    required_available_mb,
+                    max_swap_percent,
+                ) = self._ticketmaster_background_start_margin(resource_sample)
+                if not margin_available:
+                    next_retry_at = self._record_resource_pressure_deferral(command)
+                    logger.warning(
+                        "Deferring Ticketmaster background data refresh until "
+                        "its memory reserve is available. | plugin_id: %s | "
+                        "source: %s | intent: %s | available_mb: %s | "
+                        "required_available_mb: %s | swap_percent: %s | "
+                        "max_swap_percent: %s | next_retry_at: %s",
+                        command.plugin_id,
+                        command.source.value,
+                        command.intent.value,
+                        resource_sample.available_mb,
                         required_available_mb,
+                        resource_sample.swap_percent,
                         max_swap_percent,
-                    ) = self._ticketmaster_background_start_margin(resource_sample)
-                    if not margin_available:
-                        next_retry_at = self._record_resource_pressure_deferral(
-                            command
-                        )
-                        logger.warning(
-                            "Deferring Ticketmaster background data refresh until "
-                            "its memory reserve is available. | plugin_id: %s | "
-                            "source: %s | intent: %s | available_mb: %s | "
-                            "required_available_mb: %s | swap_percent: %s | "
-                            "max_swap_percent: %s | next_retry_at: %s",
-                            command.plugin_id,
-                            command.source.value,
-                            command.intent.value,
-                            resource_sample.available_mb,
-                            required_available_mb,
-                            resource_sample.swap_percent,
-                            max_swap_percent,
-                            next_retry_at,
-                        )
-                        finished = self.refresh_queue.finish(
-                            entry.job.id,
-                            JobStatus.CANCELED,
-                            error_code="plugin_resource_reserve",
-                            error=(
-                                "Ticketmaster background data refresh deferred "
-                                "until its memory reserve is available"
-                            ),
-                        )
-                        self._signal_completion(finished.id)
-                        return
+                        next_retry_at,
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.CANCELED,
+                        error_code="plugin_resource_reserve",
+                        error=(
+                            "Ticketmaster background data refresh deferred "
+                            "until its memory reserve is available"
+                        ),
+                    )
+                    self._signal_completion(finished.id)
+                    return
             if (
                 not ian_admitted
                 and
@@ -3715,22 +3796,224 @@ class RefreshTask:
             and command.intent is RefreshIntent.DATA_REFRESH
         )
 
-    def _has_current_rotation_reservation(self, command):
-        playlist_name = command.payload.get("playlist_name")
-        if command.instance_uuid is None or not playlist_name:
-            return False
-        try:
-            manager = self.device_config.get_playlist_manager()
-            return manager.validate_rotation_reservation(
-                command.instance_uuid, expected_playlist_name=playlist_name
+    def _ticketmaster_liveness_seconds(self, key, default, maximum):
+        value = self._config_float(key, default)
+        if not math.isfinite(value) or value < 0:
+            value = float(default)
+        return min(float(maximum), value)
+
+    def _ticketmaster_liveness_target(self, data_candidates, current_dt):
+        starvation_seconds = self._ticketmaster_liveness_seconds(
+            "ticketmaster_liveness_starvation_seconds",
+            DEFAULT_TICKETMASTER_LIVENESS_STARVATION_SECONDS,
+            7 * 24 * 60 * 60,
+        )
+        eligible = []
+        for candidate in data_candidates:
+            if candidate.instance.plugin_id != "ticketmaster_events":
+                continue
+            instance_uuid = candidate.instance.instance_uuid
+            if candidate.reason is DueReason.BOOTSTRAP_MISSING:
+                observed_since = self._align_datetime_tz(
+                    candidate.last_attempt_at or candidate.due_since,
+                    current_dt,
+                )
+                due_since = self._ticketmaster_bootstrap_due_since.get(
+                    instance_uuid
+                )
+                if due_since is None or observed_since < due_since:
+                    due_since = observed_since
+                    self._ticketmaster_bootstrap_due_since[instance_uuid] = (
+                        due_since
+                    )
+            elif candidate.reason in {DueReason.INTERVAL, DueReason.SCHEDULED}:
+                self._ticketmaster_bootstrap_due_since.pop(instance_uuid, None)
+                due_since = self._align_datetime_tz(
+                    candidate.due_since,
+                    current_dt,
+                )
+            else:
+                continue
+            if (current_dt - due_since).total_seconds() < starvation_seconds:
+                continue
+            eligible.append(
+                (due_since, instance_uuid, candidate)
             )
-        except Exception:
-            logger.exception(
-                "Could not validate rotation reservation before resource admission. | "
-                "plugin_id: %s",
-                command.plugin_id,
+        if not eligible:
+            return None, None
+        due_since, _instance_uuid, candidate = min(
+            eligible,
+            key=lambda item: item[:2],
+        )
+        return candidate, due_since
+
+    def _ticketmaster_liveness_decision(
+        self,
+        active,
+        data_candidates,
+        runtime_instances,
+        current_dt,
+        resource_sample,
+    ):
+        """Reserve bounded idle time for persistently stale Ticketmaster data."""
+
+        now = self._clock()
+        candidates_by_uuid = {
+            candidate.instance.instance_uuid: candidate
+            for candidate in data_candidates
+            if candidate.instance.plugin_id == "ticketmaster_events"
+        }
+        active_ticketmaster_uuids = frozenset(
+            instance.instance_uuid
+            for instance in active.plugins
+            if instance.plugin_id == "ticketmaster_events"
+        )
+        for instance_uuid, due_since in tuple(
+            self._ticketmaster_bootstrap_due_since.items()
+        ):
+            if instance_uuid not in active_ticketmaster_uuids:
+                self._ticketmaster_bootstrap_due_since.pop(instance_uuid, None)
+                continue
+            runtime = runtime_instances.get(
+                instance_uuid,
+                InstanceRuntimeState(),
+            ).data
+            last_success = self._parse_iso_datetime(runtime.last_success_at)
+            if last_success is None:
+                continue
+            last_success = self._align_datetime_tz(last_success, current_dt)
+            if last_success >= due_since:
+                self._ticketmaster_bootstrap_due_since.pop(instance_uuid, None)
+        margin_available, required_mb, max_swap = (
+            self._ticketmaster_background_start_margin(resource_sample)
+        )
+        window = self._ticketmaster_liveness_window
+        if (
+            window is not None
+            and window.instance_uuid not in active_ticketmaster_uuids
+        ):
+            logger.info(
+                "Canceling Ticketmaster quiet window because its target left "
+                "the active playlist. | instance_uuid_hash: %s",
+                hashlib.sha256(
+                    window.instance_uuid.encode("utf-8")
+                ).hexdigest()[:16],
             )
-            return False
+            self._ticketmaster_liveness_window = None
+            return None, False
+
+        if window is not None:
+            target = candidates_by_uuid.get(window.instance_uuid)
+            retry_pending = False
+            if target is None:
+                runtime = runtime_instances.get(
+                    window.instance_uuid,
+                    InstanceRuntimeState(),
+                ).data
+                next_retry = self._parse_iso_datetime(runtime.next_retry_at)
+                if next_retry is not None:
+                    next_retry = self._align_datetime_tz(next_retry, current_dt)
+                    retry_pending = current_dt < next_retry
+                if not retry_pending:
+                    logger.info(
+                        "Canceling Ticketmaster quiet window because its target "
+                        "is no longer due. | instance_uuid_hash: %s",
+                        hashlib.sha256(
+                            window.instance_uuid.encode("utf-8")
+                        ).hexdigest()[:16],
+                    )
+                    self._ticketmaster_liveness_window = None
+                    self._ticketmaster_bootstrap_due_since.pop(
+                        window.instance_uuid,
+                        None,
+                    )
+                    return None, False
+
+        if window is not None:
+            target = candidates_by_uuid.get(window.instance_uuid)
+            if now >= window.deadline_monotonic:
+                cooldown_seconds = self._ticketmaster_liveness_seconds(
+                    "ticketmaster_liveness_cooldown_seconds",
+                    DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS,
+                    60 * 60,
+                )
+                self._ticketmaster_liveness_window = None
+                self._ticketmaster_liveness_cooldown_until_monotonic = (
+                    now + cooldown_seconds
+                )
+                logger.warning(
+                    "Ticketmaster quiet window expired before a refresh "
+                    "completed; ordinary refreshes resume. | "
+                    "instance_uuid_hash: %s | window_seconds: %.1f | "
+                    "cooldown_seconds: %.1f | available_mb: %s | "
+                    "swap_percent: %s",
+                    hashlib.sha256(
+                        window.instance_uuid.encode("utf-8")
+                    ).hexdigest()[:16],
+                    max(
+                        0.0,
+                        window.deadline_monotonic - window.started_monotonic,
+                    ),
+                    cooldown_seconds,
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                )
+                return None, False
+            if target is not None and margin_available:
+                return target, False
+            return None, True
+
+        target, due_since = self._ticketmaster_liveness_target(
+            data_candidates,
+            current_dt,
+        )
+        if target is not None and margin_available:
+            return target, False
+        if (
+            not margin_available
+            and now < self._ticketmaster_liveness_cooldown_until_monotonic
+        ):
+            return None, False
+        if target is None:
+            return None, False
+
+        window_seconds = self._ticketmaster_liveness_seconds(
+            "ticketmaster_liveness_window_seconds",
+            DEFAULT_TICKETMASTER_LIVENESS_WINDOW_SECONDS,
+            5 * 60,
+        )
+        if window_seconds <= 0:
+            return None, False
+
+        # This is intentionally one bounded maintenance pass. The next
+        # scheduler poll re-samples resources while ordinary background work is
+        # held, and execution still applies the same 115 MiB / swap gate.
+        self._run_memory_maintenance(
+            "ticketmaster-liveness-window",
+            force=True,
+        )
+        self._ticketmaster_liveness_window = _TicketmasterLivenessWindow(
+            instance_uuid=target.instance.instance_uuid,
+            due_since=due_since,
+            started_monotonic=now,
+            deadline_monotonic=now + window_seconds,
+        )
+        logger.warning(
+            "Reserving bounded quiet window for starved Ticketmaster data. | "
+            "instance_uuid_hash: %s | overdue_seconds: %.1f | "
+            "window_seconds: %.1f | available_mb: %s | swap_percent: %s | "
+            "required_available_mb: %s | max_swap_percent: %s",
+            hashlib.sha256(
+                target.instance.instance_uuid.encode("utf-8")
+            ).hexdigest()[:16],
+            max(0.0, (current_dt - due_since).total_seconds()),
+            window_seconds,
+            resource_sample.available_mb,
+            resource_sample.swap_percent,
+            required_mb,
+            max_swap,
+        )
+        return None, True
 
     def _ticketmaster_background_start_margin(self, sample):
         min_available_mb = self._config_float(
@@ -3886,7 +4169,7 @@ class RefreshTask:
                 ).hexdigest()[:16],
             )
             self._sports_liveness_window = None
-            window = None
+            return None, False, active_sports_uuids
 
         if window is not None:
             target = candidates_by_uuid.get(window.instance_uuid)
@@ -3909,7 +4192,7 @@ class RefreshTask:
                         ).hexdigest()[:16],
                     )
                     self._sports_liveness_window = None
-                    window = None
+                    return None, False, active_sports_uuids
 
         if window is not None:
             target = candidates_by_uuid.get(window.instance_uuid)

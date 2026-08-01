@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from enum import Enum
 import hashlib
 import logging
 import math
@@ -52,14 +53,23 @@ logger = logging.getLogger(__name__)
 RENDERER_VERSION = "browser-renderer-v2-ssrf-proxy"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_VIRTUAL_TIME_BUDGET_MS = 2_000
+RESOURCE_PRESSURE_POLL_SECONDS = 1.0
+BROWSER_PRESSURE_ABORT_MAX_AVAILABLE_MB = 115.0
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
 HTML_CIRCUIT_TTL_SECONDS = 300.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
 MAX_HTML_CIRCUIT_DOMAINS = 256
 MAX_HTML_BYTES = 5 * 1024 * 1024
+_PRESSURE_ABORTED = object()
 _GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
 _GLOBAL_RENDERER = None
 _GLOBAL_RENDERER_LOCK = threading.Lock()
+
+
+class _ProcessStopState(Enum):
+    NOT_SIGNALLED = "not_signalled"
+    SIGNALLED_RUNNING = "signalled_running"
+    SIGNALLED_EXITED = "signalled_exited"
 
 
 def _lifecycle_allowance(*, budget, allowance, aggregate, clock):
@@ -247,6 +257,7 @@ class BrowserRenderer:
         timezone_name=None,
         failure_domain=None,
         retry_once=False,
+        abort_on_hard_pressure=False,
     ):
         if not isinstance(html, str):
             raise TypeError("html must be a string")
@@ -283,7 +294,10 @@ class BrowserRenderer:
                 timezone_name=timezone_name,
                 failure_scope="html",
                 failure_domain=failure_domain,
+                abort_on_hard_pressure=abort_on_hard_pressure,
             )
+            if result is _PRESSURE_ABORTED:
+                return None
             if result is not None:
                 return result
 
@@ -295,7 +309,7 @@ class BrowserRenderer:
                 return None
             if attempt + 1 >= attempt_count:
                 return None
-            resource_sample = self._retry_resource_sample()
+            resource_sample = self._resource_sample()
             resource_tier = classify_resource_tier(
                 resource_sample,
                 self._resource_thresholds,
@@ -596,6 +610,7 @@ class BrowserRenderer:
         timezone_name,
         failure_scope,
         failure_domain,
+        abort_on_hard_pressure=False,
     ):
         if self._closed or not self.binary:
             self._remember_negative(key)
@@ -651,7 +666,18 @@ class BrowserRenderer:
                     )
                     if wait_timeout <= 0:
                         context.raise_if_cancelled()
-                    process.wait(timeout=max(0.001, wait_timeout))
+                    pressure_aborted = self._wait_for_process(
+                        process,
+                        wait_timeout=max(0.001, wait_timeout),
+                        context=context,
+                        abort_on_hard_pressure=bool(abort_on_hard_pressure),
+                        failure_domain=failure_domain,
+                    )
+                    if pressure_aborted:
+                        # Resource pressure says nothing about the document.
+                        # The sentinel prevents an immediate same-call retry;
+                        # do not poison later requests after memory recovers.
+                        return _PRESSURE_ABORTED
                 except subprocess.TimeoutExpired:
                     self._stop_process(process)
                     context.raise_if_cancelled()
@@ -693,6 +719,92 @@ class BrowserRenderer:
                 self._unregister_process(process)
             if job_dir is not None:
                 shutil.rmtree(job_dir, ignore_errors=True)
+
+    def _wait_for_process(
+        self,
+        process,
+        *,
+        wait_timeout,
+        context,
+        abort_on_hard_pressure,
+        failure_domain,
+    ):
+        if not abort_on_hard_pressure:
+            process.wait(timeout=wait_timeout)
+            return False
+
+        remaining_budget = max(0.0, float(wait_timeout))
+        pressure_stop_started = False
+        while True:
+            context.raise_if_cancelled()
+            remaining = min(
+                remaining_budget,
+                context.remaining_seconds(),
+            )
+            if remaining <= 0:
+                context.raise_if_cancelled()
+                if pressure_stop_started:
+                    # Keep resource-pressure termination distinct from a
+                    # document timeout even when process reaping outlives the
+                    # original render budget. Make one final bounded stop
+                    # attempt before returning the pressure sentinel.
+                    self._stop_process(process)
+                    return True
+                raise subprocess.TimeoutExpired("chromium", wait_timeout)
+            try:
+                wait_slice = max(
+                    0.001,
+                    min(RESOURCE_PRESSURE_POLL_SECONDS, remaining),
+                )
+                process.wait(
+                    timeout=wait_slice
+                )
+                return pressure_stop_started
+            except subprocess.TimeoutExpired:
+                remaining_budget = max(0.0, remaining_budget - wait_slice)
+                context.raise_if_cancelled()
+                if process.poll() is not None:
+                    return pressure_stop_started
+                if pressure_stop_started:
+                    continue
+                resource_sample = self._resource_sample()
+                resource_tier = classify_resource_tier(
+                    resource_sample,
+                    self._resource_thresholds,
+                )
+                if resource_tier is not ResourceTier.HARD:
+                    continue
+                try:
+                    available_mb = float(resource_sample.available_mb)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if (
+                    not math.isfinite(available_mb)
+                    or available_mb >= BROWSER_PRESSURE_ABORT_MAX_AVAILABLE_MB
+                ):
+                    # Swap occupancy includes cold pages and can remain high
+                    # after acute pressure has cleared. Admission stays
+                    # conservative at the global threshold, but terminating an
+                    # in-flight Chromium process additionally requires low
+                    # memory headroom.
+                    continue
+                if process.poll() is not None:
+                    return False
+                stop_state = self._stop_process(process)
+                if stop_state is _ProcessStopState.NOT_SIGNALLED:
+                    if process.poll() is not None:
+                        return False
+                    continue
+                pressure_stop_started = True
+                logger.warning(
+                    "Aborting Chromium render due to hard resource pressure. | "
+                    "failure_domain: %s | available_mb: %s | swap_percent: %s",
+                    failure_domain,
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                )
+                if stop_state is _ProcessStopState.SIGNALLED_EXITED:
+                    return True
 
     @contextmanager
     def _browser_slot(self, context):
@@ -777,14 +889,17 @@ class BrowserRenderer:
 
     def _stop_process(self, process):
         if process.poll() is not None:
-            return
+            return _ProcessStopState.NOT_SIGNALLED
+        signaled = False
         try:
             if os.name != "nt":
                 os.killpg(process.pid, signal.SIGTERM)
             else:
                 process.terminate()
+            signaled = True
             process.wait(timeout=2)
-            return
+            if process.poll() is not None:
+                return _ProcessStopState.SIGNALLED_EXITED
         except (OSError, subprocess.TimeoutExpired):
             pass
         try:
@@ -792,9 +907,17 @@ class BrowserRenderer:
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
+            signaled = True
             process.wait(timeout=2)
         except (OSError, subprocess.TimeoutExpired):
             logger.warning("Chromium process did not exit cleanly: %s", process.pid)
+        if process.poll() is not None:
+            if signaled:
+                return _ProcessStopState.SIGNALLED_EXITED
+            return _ProcessStopState.NOT_SIGNALLED
+        if signaled:
+            return _ProcessStopState.SIGNALLED_RUNNING
+        return _ProcessStopState.NOT_SIGNALLED
 
     def _negative_hit(self, key):
         now = self._clock()
@@ -915,11 +1038,11 @@ class BrowserRenderer:
             swap_percent=getattr(swap, "percent", None),
         )
 
-    def _retry_resource_sample(self):
+    def _resource_sample(self):
         try:
             sample = self._resource_sampler()
         except Exception:
-            logger.exception("Could not sample resources before Chromium retry.")
+            logger.exception("Could not sample resources for Chromium.")
             return ResourceSample(available_mb=None, swap_percent=None)
         if isinstance(sample, ResourceSample):
             return sample

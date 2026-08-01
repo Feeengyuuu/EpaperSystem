@@ -1,6 +1,7 @@
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.image_loader import _is_low_resource_device
 from utils.http_client import get_http_session
+from utils.secret_redaction import redact_sensitive_text
 import logging
 import random
 import requests
@@ -58,6 +59,7 @@ class Unsplash(BasePlugin):
         if orientation:
             params['orientation'] = orientation
 
+        request_failed = False
         try:
             logger.debug("Fetching image from Unsplash API...")
             session = get_http_session()
@@ -81,12 +83,19 @@ class Unsplash(BasePlugin):
                 logger.debug("Retrieved random image URL")
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching image from Unsplash API: {e}")
-            raise RuntimeError("Failed to fetch image from Unsplash API, please check logs.")
+            logger.error(
+                "Error fetching image from Unsplash API: %s",
+                redact_sensitive_text(e),
+            )
+            request_failed = True
         except (KeyError, IndexError) as e:
             logger.error(f"Error parsing Unsplash API response: {e}")
             raise RuntimeError("Failed to parse Unsplash API response, please check logs.")
 
+        if request_failed:
+            raise RuntimeError(
+                "Failed to fetch image from Unsplash API, please check logs."
+            )
 
         dimensions = self.get_dimensions(device_config)
 
