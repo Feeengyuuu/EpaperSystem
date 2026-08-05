@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "epaper-tesla-fleet-bootstrap",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "TESLA_AUDIENCE": "https://fleet-api.prd.na.vn.cloud.tesla.com"
+  },
+  "secrets": {
+    "required": [
+      "PROBE_AUTH_TOKEN",
+      "TESLA_CLIENT_ID",
+      "TESLA_CLIENT_SECRET"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+}
