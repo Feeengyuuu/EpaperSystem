@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - production imports modules from src/
         LifecycleBudget,
     )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.long_task_executor import current_task_context
 from runtime.refresh_policy import (
     ResourceSample,
@@ -55,12 +56,12 @@ DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_VIRTUAL_TIME_BUDGET_MS = 2_000
 RESOURCE_PRESSURE_POLL_SECONDS = 1.0
 BROWSER_PRESSURE_ABORT_MAX_AVAILABLE_MB = 115.0
+BROWSER_RESOURCE_PRESSURE_REASON = "browser_resource_pressure"
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
 HTML_CIRCUIT_TTL_SECONDS = 300.0
 MAX_NEGATIVE_CACHE_ENTRIES = 256
 MAX_HTML_CIRCUIT_DOMAINS = 256
 MAX_HTML_BYTES = 5 * 1024 * 1024
-_PRESSURE_ABORTED = object()
 _GLOBAL_BROWSER_SLOT = threading.Semaphore(1)
 _GLOBAL_RENDERER = None
 _GLOBAL_RENDERER_LOCK = threading.Lock()
@@ -296,8 +297,6 @@ class BrowserRenderer:
                 failure_domain=failure_domain,
                 abort_on_hard_pressure=abort_on_hard_pressure,
             )
-            if result is _PRESSURE_ABORTED:
-                return None
             if result is not None:
                 return result
 
@@ -621,6 +620,26 @@ class BrowserRenderer:
         try:
             with self._browser_slot(context):
                 context.raise_if_cancelled()
+                if abort_on_hard_pressure:
+                    resource_sample = self._resource_sample()
+                    resource_tier = classify_resource_tier(
+                        resource_sample,
+                        self._resource_thresholds,
+                    )
+                    if resource_tier is ResourceTier.HARD:
+                        logger.warning(
+                            "Deferring Chromium start due to hard resource pressure. | "
+                            "failure_domain: %s | available_mb: %s | swap_percent: %s",
+                            failure_domain,
+                            resource_sample.available_mb,
+                            resource_sample.swap_percent,
+                        )
+                        raise ResourcePressureDeferred(
+                            reason=BROWSER_RESOURCE_PRESSURE_REASON,
+                            phase="start",
+                            available_mb=resource_sample.available_mb,
+                            swap_percent=resource_sample.swap_percent,
+                        )
                 if not self.egress_proxy.start():
                     logger.error("Browser render refused because egress proxy is unavailable")
                     self._remember_negative(key)
@@ -666,18 +685,23 @@ class BrowserRenderer:
                     )
                     if wait_timeout <= 0:
                         context.raise_if_cancelled()
-                    pressure_aborted = self._wait_for_process(
+                    pressure_sample = self._wait_for_process(
                         process,
                         wait_timeout=max(0.001, wait_timeout),
                         context=context,
                         abort_on_hard_pressure=bool(abort_on_hard_pressure),
                         failure_domain=failure_domain,
                     )
-                    if pressure_aborted:
+                    if pressure_sample is not None:
                         # Resource pressure says nothing about the document.
-                        # The sentinel prevents an immediate same-call retry;
-                        # do not poison later requests after memory recovers.
-                        return _PRESSURE_ABORTED
+                        # Raise a typed cancellation so callers can defer this
+                        # work without retrying or poisoning document state.
+                        raise ResourcePressureDeferred(
+                            reason=BROWSER_RESOURCE_PRESSURE_REASON,
+                            phase="in_flight",
+                            available_mb=pressure_sample.available_mb,
+                            swap_percent=pressure_sample.swap_percent,
+                        )
                 except subprocess.TimeoutExpired:
                     self._stop_process(process)
                     context.raise_if_cancelled()
@@ -702,6 +726,8 @@ class BrowserRenderer:
                 if failure_scope == "html":
                     self._forget_html_failure(failure_domain)
                 return image
+        except ResourcePressureDeferred:
+            raise
         except TaskCancelled:
             if process is not None and process.poll() is None:
                 self._stop_process(process)
@@ -731,10 +757,11 @@ class BrowserRenderer:
     ):
         if not abort_on_hard_pressure:
             process.wait(timeout=wait_timeout)
-            return False
+            return None
 
         remaining_budget = max(0.0, float(wait_timeout))
         pressure_stop_started = False
+        pressure_sample = None
         while True:
             context.raise_if_cancelled()
             remaining = min(
@@ -747,9 +774,9 @@ class BrowserRenderer:
                     # Keep resource-pressure termination distinct from a
                     # document timeout even when process reaping outlives the
                     # original render budget. Make one final bounded stop
-                    # attempt before returning the pressure sentinel.
+                    # attempt before returning the pressure sample.
                     self._stop_process(process)
-                    return True
+                    return pressure_sample
                 raise subprocess.TimeoutExpired("chromium", wait_timeout)
             try:
                 wait_slice = max(
@@ -759,12 +786,12 @@ class BrowserRenderer:
                 process.wait(
                     timeout=wait_slice
                 )
-                return pressure_stop_started
+                return pressure_sample
             except subprocess.TimeoutExpired:
                 remaining_budget = max(0.0, remaining_budget - wait_slice)
                 context.raise_if_cancelled()
                 if process.poll() is not None:
-                    return pressure_stop_started
+                    return pressure_sample
                 if pressure_stop_started:
                     continue
                 resource_sample = self._resource_sample()
@@ -789,13 +816,14 @@ class BrowserRenderer:
                     # memory headroom.
                     continue
                 if process.poll() is not None:
-                    return False
+                    return None
                 stop_state = self._stop_process(process)
                 if stop_state is _ProcessStopState.NOT_SIGNALLED:
                     if process.poll() is not None:
-                        return False
+                        return None
                     continue
                 pressure_stop_started = True
+                pressure_sample = resource_sample
                 logger.warning(
                     "Aborting Chromium render due to hard resource pressure. | "
                     "failure_domain: %s | available_mb: %s | swap_percent: %s",
@@ -804,7 +832,7 @@ class BrowserRenderer:
                     resource_sample.swap_percent,
                 )
                 if stop_state is _ProcessStopState.SIGNALLED_EXITED:
-                    return True
+                    return pressure_sample
 
     @contextmanager
     def _browser_slot(self, context):

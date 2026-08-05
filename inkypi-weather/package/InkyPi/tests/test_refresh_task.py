@@ -46,6 +46,7 @@ from runtime.refresh_contracts import (
     TaskContext,
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
+from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.ian import IanResourceSample
 from runtime.cache_catalog import authoritative_cache_path
 from runtime.cache_lifecycle import DiskPressureTier
@@ -2518,7 +2519,7 @@ def test_queue_command_final_memory_log_includes_command_and_process_usage(
         assert "process_hwm_mb: 64.0" in memory_log
 
 
-def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
+def test_memory_watchdog_first_swap_only_pressure_maintains_without_restart(monkeypatch):
     tmp_path = make_test_dir("memory-watchdog-swap")
     device_config = FakeDeviceConfig(tmp_path)
     device_config.config["memory_watchdog_min_available_mb"] = 70
@@ -2526,6 +2527,7 @@ def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
     device_config.config["memory_watchdog_restart_min_interval_seconds"] = 1800
     task = RefreshTask(device_config, display_manager=None)
     captured = []
+    maintenance = []
 
     memory = type("Memory", (), {"available": 200 * 1024 * 1024, "percent": 82.0})()
     swap = type("Swap", (), {"percent": 99.0})()
@@ -2540,13 +2542,315 @@ def test_memory_watchdog_requests_restart_on_hard_swap_pressure(monkeypatch):
             (stats, min_available_mb, max_swap_percent)
         ),
     )
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
 
-    assert task._memory_watchdog_should_restart() is True
+    assert task._memory_watchdog_should_restart() is False
 
-    assert captured[0][0]["available_mb"] == 200.0
-    assert captured[0][0]["swap_percent"] == 99.0
-    assert captured[0][1:] == (70.0, 98.0)
-    assert float((tmp_path / ".memory_watchdog_last_restart").read_text(encoding="utf-8")) == 2000.0
+    assert captured == []
+    assert maintenance == [("memory-watchdog-pressure", True)]
+    assert not (tmp_path / ".memory_watchdog_last_restart").exists()
+
+
+def test_memory_watchdog_persistent_swap_only_pressure_never_restarts(monkeypatch):
+    tmp_path = make_test_dir("memory-watchdog-persistent-swap-only")
+    device_config = FakeDeviceConfig(tmp_path)
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
+    task = RefreshTask(device_config, display_manager=None)
+    monotonic = [1000.0]
+    captured = []
+    maintenance = []
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 200.0,
+            "memory_percent": 82.0,
+            "swap_percent": 80.0,
+        },
+    )
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda *args: captured.append(args),
+    )
+
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 60
+    assert task._memory_watchdog_should_restart() is False
+    assert captured == []
+    assert maintenance == [("memory-watchdog-pressure", True)]
+
+
+def test_memory_watchdog_recovery_starts_a_new_maintenance_episode(monkeypatch):
+    task = RefreshTask(
+        FakeDeviceConfig(make_test_dir("memory-watchdog-recovery-episode")),
+        display_manager=None,
+    )
+    current = {
+        "available_mb": 100.0,
+        "memory_percent": 82.0,
+        "swap_percent": 80.0,
+    }
+    monotonic = [1000.0]
+    maintenance = []
+    restarts = []
+    monkeypatch.setattr(task, "_read_memory_stats", lambda: dict(current))
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda *args: restarts.append(args),
+    )
+
+    assert task._memory_watchdog_should_restart() is False
+    current["swap_percent"] = 10.0
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 60
+    current["swap_percent"] = 80.0
+    assert task._memory_watchdog_should_restart() is False
+
+    assert restarts == []
+    assert maintenance == [
+        ("memory-watchdog-pressure", True),
+        ("memory-watchdog-pressure", True),
+    ]
+
+
+def test_memory_watchdog_unknown_sample_restarts_dual_pressure_confirmation(
+    monkeypatch,
+):
+    device_config = FakeDeviceConfig(
+        make_test_dir("memory-watchdog-unknown-sample-reset")
+    )
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
+    task = RefreshTask(device_config, display_manager=None)
+    monotonic = [1000.0]
+    current = [
+        {
+            "available_mb": 100.0,
+            "memory_percent": 82.0,
+            "swap_percent": 80.0,
+        }
+    ]
+    maintenance = []
+    restarts = []
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: None if current[0] is None else dict(current[0]),
+    )
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda *args: restarts.append(args),
+    )
+
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 5
+    current[0] = None
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 15
+    current[0] = {
+        "available_mb": 100.0,
+        "memory_percent": 82.0,
+        "swap_percent": 80.0,
+    }
+    assert task._memory_watchdog_should_restart() is False
+
+    assert restarts == []
+    assert maintenance == [
+        ("memory-watchdog-pressure", True),
+        ("memory-watchdog-pressure", True),
+    ]
+
+
+def test_disabling_watchdog_resets_pressure_confirmation_episode(monkeypatch):
+    device_config = FakeDeviceConfig(
+        make_test_dir("memory-watchdog-disabled-reset")
+    )
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
+    task = RefreshTask(device_config, display_manager=None)
+    monotonic = [1000.0]
+    maintenance = []
+    restarts = []
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 100.0,
+            "memory_percent": 82.0,
+            "swap_percent": 80.0,
+        },
+    )
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda *args: restarts.append(args),
+    )
+
+    assert task._memory_watchdog_should_restart() is False
+    device_config.config["memory_watchdog_enabled"] = False
+    monotonic[0] += 60
+    assert task._memory_watchdog_should_restart() is False
+    device_config.config["memory_watchdog_enabled"] = True
+    assert task._memory_watchdog_should_restart() is False
+
+    assert restarts == []
+    assert maintenance == [
+        ("memory-watchdog-pressure", True),
+        ("memory-watchdog-pressure", True),
+    ]
+
+
+def test_swap_only_watchdog_pressure_keeps_ordinary_scheduler_lane_progressing(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("ordinary", "Ordinary", latest_refresh_time=None)
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("memory-watchdog-swap-only-ordinary-progress"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    sample = ResourceSample(available_mb=200.0, swap_percent=80.0)
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": sample.available_mb,
+            "memory_percent": 82.0,
+            "swap_percent": sample.swap_percent,
+        },
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_sample_disk_pressure", lambda: DiskPressureTier.HEALTHY)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_cache_lifecycle_should_yield", lambda: False)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+
+    assert task.restart_request is None
+    assert entry is not None
+    assert entry.command.plugin_id == "ordinary"
+    assert entry.command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_watchdog_dual_pressure_confirmation_shortens_next_scheduler_probe(
+    monkeypatch,
+):
+    clock = RuntimeClock(monotonic=1000.0, wall=2000.0)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("memory-watchdog-confirmation-probe"),
+        playlists=[],
+        clock=clock,
+    )
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
+    monkeypatch.setattr("src.refresh_task.time.monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 100.0,
+            "memory_percent": 82.0,
+            "swap_percent": 80.0,
+        },
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_sample_disk_pressure", lambda: DiskPressureTier.HEALTHY)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_cache_lifecycle_should_yield", lambda: False)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+
+    task._schedule_if_due()
+
+    assert task.restart_request is None
+    assert task.scheduler_state.snapshot().next_attempt_monotonic == 1015.0
+
+
+def test_watchdog_confirmation_keeps_cached_display_work_running(monkeypatch):
+    clock = RuntimeClock(monotonic=1000.0, wall=2000.0)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("memory-watchdog-cached-display-progress"),
+        playlists=[],
+        clock=clock,
+    )
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
+    display_command = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.SCHEDULER,
+        plugin_id="cached",
+        payload={},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        intent=RefreshIntent.DISPLAY_CACHE,
+    )
+    monkeypatch.setattr("src.refresh_task.time.monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 100.0,
+            "memory_percent": 82.0,
+            "swap_percent": 80.0,
+        },
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_sample_disk_pressure", lambda: DiskPressureTier.HEALTHY)
+    monkeypatch.setattr(
+        task,
+        "_select_prepared_display_retry_command",
+        lambda _dt: display_command,
+    )
+    monkeypatch.setattr(
+        task,
+        "_select_cached_display_command",
+        lambda _dt: pytest.fail("prepared cached display selection fell through"),
+    )
+
+    selected = task._schedule_if_due()
+    entry = task.refresh_queue.take(timeout=0)
+
+    assert selected is display_command
+    assert entry is not None
+    assert entry.command == display_command
+    assert task.restart_request is None
+    assert task.scheduler_state.snapshot().next_attempt_monotonic == 1015.0
 
 
 def test_memory_restart_request_never_exits_from_refresh_worker(monkeypatch):
@@ -2568,18 +2872,20 @@ def test_memory_restart_request_never_exits_from_refresh_worker(monkeypatch):
     }
 
 
-def test_memory_watchdog_default_restarts_before_kernel_oom_swap_pressure(monkeypatch):
+def test_memory_watchdog_restarts_after_dual_pressure_is_confirmed(monkeypatch):
     tmp_path = make_test_dir("memory-watchdog-default-swap")
     device_config = FakeDeviceConfig(tmp_path)
     device_config.config["memory_watchdog_restart_min_interval_seconds"] = 1800
+    device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
     task = RefreshTask(device_config, display_manager=None)
     captured = []
+    monotonic = [1000.0]
 
-    memory = type("Memory", (), {"available": 200 * 1024 * 1024, "percent": 82.0})()
+    memory = type("Memory", (), {"available": 100 * 1024 * 1024, "percent": 82.0})()
     swap = type("Swap", (), {"percent": 80.0})()
     monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
     monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
     monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
     monkeypatch.setattr(
         task,
@@ -2589,11 +2895,54 @@ def test_memory_watchdog_default_restarts_before_kernel_oom_swap_pressure(monkey
         ),
     )
 
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 15
     assert task._memory_watchdog_should_restart() is True
+    monotonic[0] += 15
+    assert task._memory_watchdog_should_restart() is False
+    monotonic[0] += 15
+    assert task._memory_watchdog_should_restart() is False
 
-    assert captured[0][0]["available_mb"] == 200.0
+    assert len(captured) == 1
+    assert captured[0][0]["available_mb"] == 100.0
     assert captured[0][0]["swap_percent"] == 80.0
     assert captured[0][1:] == (70.0, 75.0)
+
+
+def test_memory_watchdog_escalates_persistent_low_memory_immediately(monkeypatch):
+    task = RefreshTask(
+        FakeDeviceConfig(make_test_dir("memory-watchdog-low-memory-immediate")),
+        display_manager=None,
+    )
+    maintenance = []
+    captured = []
+    monkeypatch.setattr(
+        task,
+        "_read_memory_stats",
+        lambda: {
+            "available_mb": 60.0,
+            "memory_percent": 92.0,
+            "swap_percent": 20.0,
+        },
+    )
+    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False: maintenance.append((reason, force)),
+    )
+    monkeypatch.setattr(
+        task,
+        "_restart_process_for_memory_pressure",
+        lambda *args: captured.append(args),
+    )
+
+    assert task._memory_watchdog_should_restart() is True
+
+    assert maintenance == [("memory-watchdog-pressure", True)]
+    assert len(captured) == 1
+    assert captured[0][0]["available_mb"] == 60.0
 
 
 def test_memory_watchdog_respects_persisted_restart_cooldown(monkeypatch):
@@ -7050,6 +7399,173 @@ def test_process_queue_entry_logs_privacy_safe_command_origin(monkeypatch, caplo
         "Refresh command started. | source: background | intent: data_refresh | "
         f"plugin_id: audit_plugin | instance_uuid_hash: {expected_hash}"
     ]
+
+
+def test_resource_pressure_deferral_preserves_last_good_and_cached_display(
+    monkeypatch,
+    caplog,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("weather", "Weather", latest_refresh_time=current_dt.isoformat())
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("resource-pressure-deferral-last-good"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    cached = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), (17, 34, 51)),
+    )
+    cached_bytes = cached.read_bytes()
+    cached_mtime_ns = cached.stat().st_mtime_ns
+    promoted_at = (current_dt - timedelta(minutes=5)).isoformat()
+    last_good = LastGoodCacheState(
+        theme_mode=None,
+        structural_generation=instance.structural_generation,
+        settings_revision=instance.settings_revision,
+        promoted_at=promoted_at,
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        promoted_at,
+        lane=RefreshLane.DATA,
+        last_good_cache=last_good,
+    )
+    before_retry = task.retry_registry.snapshot()
+    before_scheduler_failure = task.scheduler_state.snapshot().last_failure_wall
+    plugin_calls = []
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: FakePlugin(plugin_calls),
+    )
+    monkeypatch.setattr(task, "_renderer_blocked_by_disk_pressure", lambda _command: False)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    original_execute = task._execute_command
+
+    def defer_data(command):
+        if command.intent is RefreshIntent.DATA_REFRESH:
+            raise ResourcePressureDeferred(
+                reason="browser_resource_pressure",
+                phase="start",
+                available_mb=100.0,
+                swap_percent=80.0,
+            )
+        return original_execute(command)
+
+    monkeypatch.setattr(task, "_execute_command", defer_data)
+    data_command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+
+    with caplog.at_level("WARNING", logger=refresh_task_module.__name__):
+        deferred = _queue_and_process(task, data_command)
+
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_deferred"
+    assert task.retry_registry.snapshot() == before_retry
+    assert task.scheduler_state.snapshot().last_failure_wall == before_scheduler_failure
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+    assert state.last_good_cache == last_good
+    assert cached.read_bytes() == cached_bytes
+    assert cached.stat().st_mtime_ns == cached_mtime_ns
+    assert "reason: browser_resource_pressure" in caplog.text
+    assert "phase: start" in caplog.text
+    assert "next_retry_at:" in caplog.text
+
+    display_command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        display_cached_only=True,
+        kind=CommandKind.DISPLAY,
+        current_dt=current_dt,
+    )
+    displayed = _queue_and_process(task, display_command)
+
+    assert displayed.job.status is JobStatus.SUCCEEDED
+    assert plugin_calls == []
+    assert len(task.display_manager.calls) == 1
+    assert task.display_manager.calls[0][0].getpixel((0, 0)) == (17, 34, 51)
+
+
+def test_cached_load_fallback_reraises_typed_resource_pressure(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("weather", "Weather", latest_refresh_time=current_dt.isoformat())
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("cached-load-resource-pressure-reraise"),
+        playlists=[playlist],
+    )
+    instance = playlist.plugins[0].snapshot()
+    cached = _write_runtime_cache(
+        task,
+        instance,
+        Image.new("RGB", (32, 16), (17, 34, 51)),
+    )
+    cached_bytes = cached.read_bytes()
+    cached_mtime_ns = cached.stat().st_mtime_ns
+    deferred = ResourcePressureDeferred(
+        reason="browser_resource_pressure",
+        phase="start",
+        available_mb=100.0,
+        swap_percent=80.0,
+    )
+
+    class PressurePlugin:
+        def wants_refresh_on_display(self, _settings):
+            return False
+
+        def render_themed_image(self, *_args, **_kwargs):
+            raise deferred
+
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: PressurePlugin(),
+    )
+    monkeypatch.setattr(
+        refresh_task_module,
+        "_load_image_copy",
+        lambda _path: (_ for _ in ()).throw(OSError("cache read failed")),
+    )
+    monkeypatch.setattr(
+        refresh_task_module,
+        "_display_refresh_under_resource_pressure",
+        lambda *_args, **_kwargs: False,
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.THEME_REDRAW,
+        display_cached_only=True,
+        kind=CommandKind.DISPLAY,
+        current_dt=current_dt,
+    )
+
+    with pytest.raises(ResourcePressureDeferred) as captured:
+        task._execute_command(command)
+
+    assert captured.value is deferred
+    assert task.display_manager.calls == []
+    assert cached.read_bytes() == cached_bytes
+    assert cached.stat().st_mtime_ns == cached_mtime_ns
 
 
 def test_process_queue_entry_start_log_excludes_private_command_fields(monkeypatch, caplog):
@@ -16896,3 +17412,452 @@ def test_nasapics_display_now_is_provider_free_and_forces_one_hardware_write(
     assert result.command.allow_prepared_presentation is False
     assert len(display.calls) == 1
     assert display.calls[0]["force_hardware_write"] is True
+
+
+def _weather_margin_runtime(name, current_dt):
+    weather_data = _runtime_plugin_data(
+        "weather",
+        "AwesomeWeather",
+        interval=60,
+    )
+    weather_data["instance_uuid"] = "00000000000000000000000000000001"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=60,
+    )
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(weather_data, ordinary_data)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir(name),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "weather_liveness_window_seconds": 90,
+            "weather_liveness_cooldown_seconds": 300,
+        }
+    )
+    weather, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (weather, ordinary):
+        _write_runtime_cache(task, instance)
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (current_dt - timedelta(minutes=20)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    return task, clock, weather, ordinary
+
+
+def test_weather_scheduler_requires_normal_150_mib_start_margin(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-normal-start-margin",
+        current_dt,
+    )
+    maintenance = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=149, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, *, force=False: maintenance.append((reason, force)),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is None
+    assert task._weather_liveness_window is not None
+    assert task._weather_liveness_window.instance_uuid == weather.instance_uuid
+    assert maintenance == [("weather-liveness-window", True)]
+    state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+
+
+def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-normal-margin-preserves-ordering",
+        current_dt,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=30)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.priority == 10
+
+
+def test_weather_window_starts_immediately_when_normal_margin_recovers(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-window-early-margin-recovery",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=149, swap_percent=0)}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+
+    sample["value"] = ResourceSample(available_mb=150, swap_percent=0)
+    clock.advance(1)
+    recovered = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert recovered is not None
+    assert recovered.instance_uuid == weather.instance_uuid
+    assert "weather_liveness_concession" not in recovered.payload
+
+
+def test_weather_window_concedes_once_at_deadline_with_115_mib_floor(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-deadline-concession",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    clock.advance(90)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+
+    assert concession is not None
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
+    assert task._weather_liveness_window is None
+    assert task._weather_liveness_cooldown_until_monotonic > clock.monotonic()
+
+
+def test_weather_below_115_mib_never_opens_window_or_holds_ordinary(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-below-concession-floor",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=100, swap_percent=80)}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is None
+
+    sample["value"] = ResourceSample(available_mb=146, swap_percent=75.3)
+    clock.advance(1)
+    ordinary_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert ordinary_command is not None
+    assert ordinary_command.instance_uuid == ordinary.instance_uuid
+
+
+@pytest.mark.parametrize(
+    ("available_mb", "swap_percent", "expected"),
+    [
+        (150, 69.9, True),
+        (149.9, 0, False),
+        (200, 70, False),
+        (float("nan"), 0, False),
+        (200, float("nan"), False),
+    ],
+)
+def test_weather_normal_start_margin_is_strict_and_finite(
+    available_mb,
+    swap_percent,
+    expected,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, _ordinary = _weather_margin_runtime(
+        f"weather-normal-margin-{available_mb}-{swap_percent}",
+        current_dt,
+    )
+
+    available, required_mb, max_swap = task._weather_background_start_margin(
+        ResourceSample(available_mb=available_mb, swap_percent=swap_percent)
+    )
+
+    assert available is expected
+    assert required_mb == 150
+    assert max_swap == 70
+
+
+def test_weather_concession_execution_race_stops_before_plugin_start(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-concession-execution-race",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=75.3)}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+    plugin_starts = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: plugin_starts.append(config),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    clock.advance(90)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession.payload["weather_liveness_concession"] is True
+
+    sample["value"] = ResourceSample(available_mb=114.9, swap_percent=0)
+    result = _queue_and_process(task, concession)
+
+    assert result.job.status is JobStatus.CANCELED
+    assert result.job.error_code == "weather_browser_start_margin"
+    assert plugin_starts == []
+    state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=150)).isoformat()
+    assert state.last_failure_at is None
+
+
+def test_weather_normal_execution_rechecks_150_mib_margin(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-normal-execution-race",
+        current_dt,
+    )
+    plugin_starts = []
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=149, swap_percent=0),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda config: plugin_starts.append(config),
+    )
+    command = task._playlist_command(
+        "DailyDoseOfDay",
+        weather,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+
+    result = _queue_and_process(task, command)
+
+    assert result.job.status is JobStatus.CANCELED
+    assert result.job.error_code == "weather_browser_start_margin"
+    assert plugin_starts == []
+    state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+
+
+def test_weather_concession_yields_next_soft_pressure_turn_to_ordinary_data(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-concession-ordinary-yield",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    clock.advance(90)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
+
+    clock.advance(1)
+    ordinary_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=91)
+    )
+
+    assert ordinary_command is not None
+    assert ordinary_command.instance_uuid == ordinary.instance_uuid
+    assert "weather_liveness_concession" not in ordinary_command.payload
+    assert task._burst_liveness_yield_ordinary_pending is False
+    assert task._weather_liveness_window is None
+
+
+def test_weather_quiet_window_does_not_block_cached_display(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-window-cached-display",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+    executions = []
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda command: executions.append(command.id),
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is not None
+    cached_display = task._playlist_command(
+        "DailyDoseOfDay",
+        weather,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        display_cached_only=True,
+        kind=CommandKind.DISPLAY,
+        current_dt=current_dt,
+    )
+
+    result = _queue_and_process(task, cached_display)
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert executions == [cached_display.id]
+    assert task._weather_liveness_window is not None
+
+
+def test_rotation_deadline_guard_blocks_weather_concession(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, _ordinary = _weather_margin_runtime(
+        "weather-concession-rotation-deadline-guard",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    task._rotation_deadline_guard_active = True
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 60)
+    clock.advance(90)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=90)
+        )
+        is None
+    )
+    assert task._weather_liveness_window is None
+    assert task._burst_liveness_yield_ordinary_pending is True
+
+
+@pytest.mark.parametrize("window_owner", ["sports", "ticketmaster", "weather"])
+def test_burst_liveness_windows_are_mutually_exclusive(monkeypatch, window_owner):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    plugin_data = []
+    if window_owner == "sports":
+        plugin_data.append(
+            _runtime_plugin_data("sports_dashboard", "Sports", interval=60)
+        )
+    elif window_owner == "ticketmaster":
+        plugin_data.append(
+            _runtime_plugin_data("ticketmaster_events", "Tickets", interval=60)
+        )
+    else:
+        plugin_data.extend(
+            [
+                _runtime_plugin_data("sports_dashboard", "Sports", interval=60),
+                _runtime_plugin_data("ticketmaster_events", "Tickets", interval=60),
+            ]
+        )
+    plugin_data.append(_runtime_plugin_data("weather", "Weather", interval=60))
+    for index, data in enumerate(plugin_data, start=1):
+        data["instance_uuid"] = f"{index:032x}"
+    playlist = _runtime_playlist(*plugin_data)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir(f"burst-window-exclusive-{window_owner}"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_isolated_liveness_starvation_seconds": (
+                0 if window_owner == "sports" else 60 * 60
+            ),
+            "ticketmaster_liveness_starvation_seconds": (
+                0 if window_owner == "ticketmaster" else 60 * 60
+            ),
+            "weather_liveness_window_seconds": 90,
+        }
+    )
+    for instance in playlist.plugins:
+        snapshot = instance.snapshot()
+        _write_runtime_cache(task, snapshot)
+        task.runtime_state.record_success(
+            snapshot.instance_uuid,
+            (current_dt - timedelta(minutes=20)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    windows = {
+        "sports": task._sports_liveness_window,
+        "ticketmaster": task._ticketmaster_liveness_window,
+        "weather": task._weather_liveness_window,
+    }
+
+    assert windows[window_owner] is not None
+    assert sum(window is not None for window in windows.values()) == 1
+    if window_owner == "weather":
+        device_config.config.update(
+            {
+                "sports_isolated_liveness_starvation_seconds": 0,
+                "ticketmaster_liveness_starvation_seconds": 0,
+            }
+        )
+        clock.advance(1)
+        assert (
+            task._select_independent_refresh_command(
+                current_dt + timedelta(seconds=1)
+            )
+            is None
+        )
+        assert task._sports_liveness_window is None
+        assert task._ticketmaster_liveness_window is None

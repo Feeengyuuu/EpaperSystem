@@ -44,6 +44,7 @@ class ResourceThresholds:
     soft_max_swap_percent: float = 70.0
     hard_min_available_mb: float = 70.0
     hard_max_swap_percent: float = 75.0
+    hard_swap_max_available_mb: float = 115.0
     soft_spacing_seconds: float = 60.0
 
 
@@ -89,6 +90,10 @@ def classify_resource_tier(
     ) or (
         swap is not None
         and swap >= thresholds.hard_max_swap_percent
+        and (
+            available is None
+            or available < thresholds.hard_swap_max_available_mb
+        )
     ):
         return ResourceTier.HARD
     if available is None or swap is None:

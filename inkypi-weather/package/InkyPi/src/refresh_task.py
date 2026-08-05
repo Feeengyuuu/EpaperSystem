@@ -84,6 +84,7 @@ from runtime.presentation_cache import (
     prepared_presentation_path,
 )
 from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.ian import (
     Ian,
     IanExecutionResult,
@@ -149,6 +150,12 @@ DEFAULT_TICKETMASTER_BACKGROUND_START_MIN_AVAILABLE_MB = (
 DEFAULT_TICKETMASTER_LIVENESS_STARVATION_SECONDS = 30 * 60
 DEFAULT_TICKETMASTER_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
+DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB = 150
+DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT = 70
+DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS = 90
+DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
+DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 115
+DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS = 30
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
 # allocations can outrun the parent worker's resource polling interval.
 DEFAULT_SPORTS_ISOLATED_ABORT_MIN_AVAILABLE_MB = 70
@@ -174,6 +181,8 @@ DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT = 70
 DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS = 60
 DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
 DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 75
+DEFAULT_MEMORY_WATCHDOG_CONFIRMATION_MAX_AVAILABLE_MB = 115
+DEFAULT_MEMORY_WATCHDOG_PRESSURE_CONFIRMATION_SECONDS = 15
 DEFAULT_MEMORY_WATCHDOG_RESTART_MIN_INTERVAL_SECONDS = 30 * 60
 DEFAULT_THEME_REFRESH_RETRY_COOLDOWN_SECONDS = 10 * 60
 DEFAULT_THEME_CATCHUP_RETRY_COOLDOWN_SECONDS = 10 * 60
@@ -212,6 +221,15 @@ class _TicketmasterLivenessWindow:
     due_since: datetime
     started_monotonic: float
     deadline_monotonic: float
+
+
+@dataclass(frozen=True)
+class _WeatherLivenessWindow:
+    instance_uuid: str
+    due_since: datetime
+    started_monotonic: float
+    deadline_monotonic: float
+    candidate: DueCandidate
 
 
 class _StaleSelection(TaskCancelled):
@@ -600,6 +618,9 @@ class RefreshTask:
         self._last_cache_pressure_log_monotonic = 0.0
         self._last_memory_maintenance_monotonic = 0.0
         self._last_memory_pressure_restart_monotonic = 0.0
+        self._memory_watchdog_pressure_episode_active = False
+        self._memory_watchdog_pressure_since_monotonic = None
+        self._memory_watchdog_next_check_seconds = None
         self._libc = None
         self._restart_request = None
         self._sports_liveness_window = None
@@ -607,6 +628,10 @@ class RefreshTask:
         self._ticketmaster_liveness_window = None
         self._ticketmaster_liveness_cooldown_until_monotonic = 0.0
         self._ticketmaster_bootstrap_due_since = {}
+        self._weather_liveness_window = None
+        self._weather_liveness_cooldown_until_monotonic = 0.0
+        self._burst_liveness_yield_ordinary_pending = False
+        self._burst_liveness_yield_deadline_monotonic = 0.0
         self._sports_isolated_renderer = (
             render_sports_dashboard_isolated
             if sports_isolated_renderer is None
@@ -1216,6 +1241,14 @@ class RefreshTask:
                 if refresh_command is not None:
                     self.refresh_queue.submit(refresh_command)
             next_delay = 30.0 if restart_requested else self._scheduler_poll_seconds()
+            if (
+                not restart_requested
+                and self._memory_watchdog_next_check_seconds is not None
+            ):
+                next_delay = min(
+                    next_delay,
+                    max(0.05, self._memory_watchdog_next_check_seconds),
+                )
             self.scheduler_state.set_next_attempt(now + next_delay)
             return command
         except Exception as error:
@@ -2053,6 +2086,13 @@ class RefreshTask:
                 "memory_watchdog_max_swap_percent",
                 DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT,
             ),
+            hard_swap_max_available_mb=max(
+                0.0,
+                self._config_float(
+                    "memory_watchdog_confirmation_max_available_mb",
+                    DEFAULT_MEMORY_WATCHDOG_CONFIRMATION_MAX_AVAILABLE_MB,
+                ),
+            ),
             soft_spacing_seconds=max(
                 0.0,
                 self._config_float(
@@ -2208,7 +2248,25 @@ class RefreshTask:
         eligible_data_candidates = list(data_candidates)
         ticketmaster_liveness_candidate = None
         ticketmaster_liveness_holds_independent = False
-        if self._ticketmaster_liveness_window is not None:
+        sports_liveness_candidate = None
+        sports_liveness_holds_independent = False
+        sports_liveness_excluded_uuids = frozenset()
+        weather_liveness_candidate = None
+        weather_liveness_holds_independent = False
+        weather_liveness_concession = False
+        if self._weather_liveness_window is not None:
+            (
+                weather_liveness_candidate,
+                weather_liveness_holds_independent,
+                weather_liveness_concession,
+            ) = self._weather_liveness_decision(
+                active,
+                data_candidates,
+                runtime_instances,
+                current_dt,
+                resource_sample,
+            )
+        elif self._ticketmaster_liveness_window is not None:
             (
                 ticketmaster_liveness_candidate,
                 ticketmaster_liveness_holds_independent,
@@ -2221,11 +2279,19 @@ class RefreshTask:
             )
             # One expired/completed window must yield a scheduler turn before a
             # different burst renderer can reserve another quiet window.
-            sports_liveness_candidate = None
-            sports_liveness_holds_independent = False
-            sports_liveness_excluded_uuids = frozenset()
-        else:
-            sports_window_was_active = self._sports_liveness_window is not None
+        elif self._sports_liveness_window is not None:
+            (
+                sports_liveness_candidate,
+                sports_liveness_holds_independent,
+                sports_liveness_excluded_uuids,
+            ) = self._sports_liveness_decision(
+                active,
+                data_candidates,
+                runtime_instances,
+                current_dt,
+                resource_sample,
+            )
+        elif not self._burst_liveness_yield_ordinary_pending:
             (
                 sports_liveness_candidate,
                 sports_liveness_holds_independent,
@@ -2238,14 +2304,33 @@ class RefreshTask:
                 resource_sample,
             )
             if (
-                not sports_window_was_active
-                and sports_liveness_candidate is None
+                sports_liveness_candidate is None
                 and not sports_liveness_holds_independent
+                and self._sports_liveness_window is None
             ):
                 (
                     ticketmaster_liveness_candidate,
                     ticketmaster_liveness_holds_independent,
                 ) = self._ticketmaster_liveness_decision(
+                    active,
+                    data_candidates,
+                    runtime_instances,
+                    current_dt,
+                    resource_sample,
+                )
+            if (
+                sports_liveness_candidate is None
+                and not sports_liveness_holds_independent
+                and self._sports_liveness_window is None
+                and ticketmaster_liveness_candidate is None
+                and not ticketmaster_liveness_holds_independent
+                and self._ticketmaster_liveness_window is None
+            ):
+                (
+                    weather_liveness_candidate,
+                    weather_liveness_holds_independent,
+                    weather_liveness_concession,
+                ) = self._weather_liveness_decision(
                     active,
                     data_candidates,
                     runtime_instances,
@@ -2289,6 +2374,50 @@ class RefreshTask:
                     )
                     continue
                 eligible_data_candidates.append(candidate)
+        (
+            weather_margin_available,
+            weather_required_available_mb,
+            weather_max_swap_percent,
+        ) = self._weather_background_start_margin(resource_sample)
+        if (
+            not weather_margin_available
+            and weather_liveness_candidate is None
+        ):
+            weather_excluded_uuids = set()
+            filtered_candidates = []
+            for candidate in eligible_data_candidates:
+                instance = candidate.instance
+                if instance.plugin_id != "weather":
+                    filtered_candidates.append(candidate)
+                    continue
+                weather_excluded_uuids.add(instance.instance_uuid)
+                next_retry_at = self._record_lane_resource_pressure_deferral(
+                    instance.instance_uuid,
+                    RefreshIntent.DATA_REFRESH,
+                )
+                logger.warning(
+                    "Deferring ordinary Weather background data at scheduler "
+                    "admission until its browser start margin is available. | "
+                    "plugin_id: %s | source: %s | intent: %s | available_mb: %s | "
+                    "required_available_mb: %s | swap_percent: %s | "
+                    "max_swap_percent: %s | next_retry_at: %s",
+                    instance.plugin_id,
+                    CommandSource.BACKGROUND.value,
+                    RefreshIntent.DATA_REFRESH.value,
+                    resource_sample.available_mb,
+                    weather_required_available_mb,
+                    resource_sample.swap_percent,
+                    weather_max_swap_percent,
+                    next_retry_at,
+                )
+            eligible_data_candidates = filtered_candidates
+            if weather_excluded_uuids:
+                data_candidates = [
+                    candidate
+                    for candidate in data_candidates
+                    if candidate.instance.instance_uuid
+                    not in weather_excluded_uuids
+                ]
         if sports_liveness_excluded_uuids:
             data_candidates = [
                 candidate
@@ -2435,6 +2564,81 @@ class RefreshTask:
             <= DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
         ):
             return None
+
+        if weather_liveness_candidate is not None:
+            liveness_admission = choose_refresh_candidate(
+                [weather_liveness_candidate],
+                [],
+                tier=tier,
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            )
+            self._admission_state = liveness_admission.state
+            candidate = liveness_admission.candidate
+            if candidate is None:
+                return None
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=98,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                weather_liveness_concession=weather_liveness_concession,
+            )
+        if weather_liveness_holds_independent:
+            return None
+        if self._burst_liveness_yield_ordinary_pending:
+            if self._clock() >= self._burst_liveness_yield_deadline_monotonic:
+                self._burst_liveness_yield_ordinary_pending = False
+                self._burst_liveness_yield_deadline_monotonic = 0.0
+            else:
+                ordinary_candidates = [
+                    candidate
+                    for candidate in eligible_data_candidates
+                    if candidate.instance.plugin_id
+                    not in {
+                        "sports_dashboard",
+                        "ticketmaster_events",
+                        "weather",
+                    }
+                ]
+                ordinary_admission = choose_refresh_candidate(
+                    ordinary_candidates,
+                    [],
+                    # The concession itself just consumed the SOFT spacing
+                    # clock. This one bounded handoff intentionally bypasses
+                    # that spacing, while HARD pressure still admits nothing.
+                    tier=(
+                        ResourceTier.HARD
+                        if tier is ResourceTier.HARD
+                        else ResourceTier.HEALTHY
+                    ),
+                    state=self._admission_state,
+                    now_monotonic=self._clock(),
+                    thresholds=thresholds,
+                )
+                self._admission_state = ordinary_admission.state
+                candidate = ordinary_admission.candidate
+                if candidate is None:
+                    return None
+                self._burst_liveness_yield_ordinary_pending = False
+                self._burst_liveness_yield_deadline_monotonic = 0.0
+                return self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.DATA_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=98,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                )
 
         if sports_liveness_candidate is not None:
             liveness_admission = choose_refresh_candidate(
@@ -3396,6 +3600,51 @@ class RefreshTask:
                     )
                     self._signal_completion(finished.id)
                     return
+            if self._is_weather_background_data_command(command):
+                resource_sample = self._resource_sample()
+                concession = bool(
+                    command.payload.get("weather_liveness_concession")
+                )
+                if concession:
+                    margin_available, required_available_mb = (
+                        self._weather_concession_margin(resource_sample)
+                    )
+                    max_swap_percent = None
+                else:
+                    (
+                        margin_available,
+                        required_available_mb,
+                        max_swap_percent,
+                    ) = self._weather_background_start_margin(resource_sample)
+                if not margin_available:
+                    next_retry_at = self._record_resource_pressure_deferral(command)
+                    logger.warning(
+                        "Deferring Weather background data refresh until its "
+                        "browser start margin is available. | plugin_id: %s | "
+                        "source: %s | intent: %s | concession: %s | "
+                        "available_mb: %s | required_available_mb: %s | "
+                        "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
+                        command.plugin_id,
+                        command.source.value,
+                        command.intent.value,
+                        concession,
+                        resource_sample.available_mb,
+                        required_available_mb,
+                        resource_sample.swap_percent,
+                        max_swap_percent,
+                        next_retry_at,
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.CANCELED,
+                        error_code="weather_browser_start_margin",
+                        error=(
+                            "Weather background data refresh deferred until its "
+                            "browser start margin is available"
+                        ),
+                    )
+                    self._signal_completion(finished.id)
+                    return
             if (
                 not ian_admitted
                 and
@@ -3545,6 +3794,26 @@ class RefreshTask:
                     entry.job.id,
                     JobStatus.CANCELED,
                     error_code="sports_isolated_resource_pressure",
+                    error=str(error),
+                )
+            except ResourcePressureDeferred as error:
+                next_retry_at = self._record_resource_pressure_deferral(command)
+                logger.warning(
+                    "Deferring refresh after typed resource pressure. | "
+                    "plugin_id: %s | intent: %s | reason: %s | phase: %s | "
+                    "available_mb: %s | swap_percent: %s | next_retry_at: %s",
+                    command.plugin_id,
+                    command.intent.value if command.intent is not None else "none",
+                    error.reason,
+                    error.phase,
+                    error.available_mb,
+                    error.swap_percent,
+                    next_retry_at,
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="resource_pressure_deferred",
                     error=str(error),
                 )
             except TaskDeadlineExceeded as error:
@@ -3786,6 +4055,267 @@ class RefreshTask:
             and swap_percent < max_swap_percent
         )
         return margin_available, min_available_mb, max_swap_percent
+
+    @staticmethod
+    def _is_weather_background_data_command(command):
+        return (
+            command.plugin_id == "weather"
+            and command.kind is CommandKind.CACHE_REFRESH
+            and command.source is CommandSource.BACKGROUND
+            and command.intent is RefreshIntent.DATA_REFRESH
+            and bool(command.payload.get("playlist_name"))
+        )
+
+    def _weather_background_start_margin(self, sample):
+        min_available_mb = self._config_float(
+            "weather_background_start_min_available_mb",
+            DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB
+        max_swap_percent = self._config_float(
+            "weather_background_start_max_swap_percent",
+            DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT,
+        )
+        if (
+            not math.isfinite(max_swap_percent)
+            or max_swap_percent < 0
+            or max_swap_percent > 100
+        ):
+            max_swap_percent = DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb, max_swap_percent
+        return (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb
+            and swap_percent < max_swap_percent,
+            min_available_mb,
+            max_swap_percent,
+        )
+
+    def _weather_concession_margin(self, sample):
+        min_available_mb = self._config_float(
+            "weather_liveness_concession_min_available_mb",
+            DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb) or min_available_mb < 0:
+            min_available_mb = (
+                DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB
+            )
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb
+        return (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb,
+            min_available_mb,
+        )
+
+    def _weather_liveness_seconds(self, key, default, maximum):
+        value = self._config_float(key, default)
+        if not math.isfinite(value) or value < 0:
+            value = float(default)
+        return min(float(maximum), value)
+
+    def _request_burst_liveness_ordinary_yield(self):
+        duration = self._weather_liveness_seconds(
+            "burst_liveness_ordinary_yield_seconds",
+            DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS,
+            90,
+        )
+        self._burst_liveness_yield_ordinary_pending = duration > 0
+        self._burst_liveness_yield_deadline_monotonic = self._clock() + duration
+
+    def _finish_weather_liveness_window(self, *, reason, resource_sample):
+        window = self._weather_liveness_window
+        if window is None:
+            return
+        now = self._clock()
+        cooldown_seconds = self._weather_liveness_seconds(
+            "weather_liveness_cooldown_seconds",
+            DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS,
+            60 * 60,
+        )
+        self._weather_liveness_window = None
+        self._weather_liveness_cooldown_until_monotonic = now + cooldown_seconds
+        self._request_burst_liveness_ordinary_yield()
+        logger.warning(
+            "Weather quiet window ended; ordinary background data gets the next "
+            "bounded admission turn. | reason: %s | instance_uuid_hash: %s | "
+            "window_seconds: %.1f | cooldown_seconds: %.1f | available_mb: %s | "
+            "swap_percent: %s",
+            reason,
+            hashlib.sha256(window.instance_uuid.encode("utf-8")).hexdigest()[:16],
+            max(0.0, window.deadline_monotonic - window.started_monotonic),
+            cooldown_seconds,
+            getattr(resource_sample, "available_mb", None),
+            getattr(resource_sample, "swap_percent", None),
+        )
+
+    def _weather_liveness_decision(
+        self,
+        active,
+        data_candidates,
+        runtime_instances,
+        current_dt,
+        resource_sample,
+    ):
+        """Reserve one bounded quiet window for a due Weather browser start."""
+
+        now = self._clock()
+        candidates_by_uuid = {
+            candidate.instance.instance_uuid: candidate
+            for candidate in data_candidates
+            if candidate.instance.plugin_id == "weather"
+        }
+        active_weather = {
+            instance.instance_uuid: instance
+            for instance in active.plugins
+            if instance.plugin_id == "weather"
+        }
+        normal_margin, required_mb, max_swap = (
+            self._weather_background_start_margin(resource_sample)
+        )
+        concession_margin, concession_min_mb = self._weather_concession_margin(
+            resource_sample
+        )
+        window = self._weather_liveness_window
+        if window is not None:
+            active_instance = active_weather.get(window.instance_uuid)
+            original_instance = window.candidate.instance
+            identity_current = bool(
+                active_instance is not None
+                and active_instance.structural_generation
+                == original_instance.structural_generation
+                and active_instance.settings_revision
+                == original_instance.settings_revision
+            )
+            runtime = runtime_instances.get(
+                window.instance_uuid,
+                InstanceRuntimeState(),
+            ).data
+            last_success = self._parse_iso_datetime(runtime.last_success_at)
+            if last_success is not None:
+                last_success = self._align_datetime_tz(last_success, current_dt)
+            if not identity_current or (
+                last_success is not None and last_success >= window.due_since
+            ):
+                self._finish_weather_liveness_window(
+                    reason=("target_changed" if not identity_current else "completed"),
+                    resource_sample=resource_sample,
+                )
+                return None, False, False
+
+            target = candidates_by_uuid.get(window.instance_uuid)
+            next_retry = self._parse_iso_datetime(runtime.next_retry_at)
+            retry_pending = False
+            if next_retry is not None:
+                next_retry = self._align_datetime_tz(next_retry, current_dt)
+                retry_pending = current_dt < next_retry
+            if target is None and not retry_pending:
+                self._finish_weather_liveness_window(
+                    reason="no_longer_due",
+                    resource_sample=resource_sample,
+                )
+                return None, False, False
+
+            if now >= window.deadline_monotonic:
+                self._finish_weather_liveness_window(
+                    reason=(
+                        "concession" if concession_margin else "margin_unavailable"
+                    ),
+                    resource_sample=resource_sample,
+                )
+                if not concession_margin:
+                    return None, False, False
+                # The retry gate can hide a candidate created by this window's
+                # own pressure deferral. Rebuild it with the currently active,
+                # identity-checked snapshot before issuing the single concession.
+                target = target or replace(
+                    window.candidate,
+                    instance=active_instance,
+                )
+                logger.warning(
+                    "Weather quiet window reached its bounded concession. | "
+                    "instance_uuid_hash: %s | available_mb: %s | swap_percent: %s | "
+                    "required_available_mb: %s",
+                    hashlib.sha256(
+                        window.instance_uuid.encode("utf-8")
+                    ).hexdigest()[:16],
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                    concession_min_mb,
+                )
+                return target, False, True
+            if normal_margin:
+                if target is None and retry_pending:
+                    target = replace(
+                        window.candidate,
+                        instance=active_instance,
+                    )
+                return target, False, False
+            return None, True, False
+
+        weather_candidates = sorted(
+            candidates_by_uuid.values(),
+            key=lambda candidate: (
+                self._align_datetime_tz(candidate.due_since, current_dt),
+                candidate.instance.instance_uuid,
+            ),
+        )
+        target = weather_candidates[0] if weather_candidates else None
+        if target is None:
+            return None, False, False
+        if normal_margin:
+            # With no quiet window, Weather participates in the ordinary DATA
+            # ordering. The liveness path must not grant an unnecessary
+            # priority boost merely because its start margin is healthy.
+            return None, False, False
+        if now < self._weather_liveness_cooldown_until_monotonic:
+            return None, False, False
+        # A quiet window is useful only when a bounded start could eventually
+        # be safe. Unknown metrics or less than 115 MiB never hold other work.
+        if not concession_margin:
+            return None, False, False
+        window_seconds = self._weather_liveness_seconds(
+            "weather_liveness_window_seconds",
+            DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS,
+            90,
+        )
+        if window_seconds <= 0:
+            return None, False, False
+        self._run_memory_maintenance("weather-liveness-window", force=True)
+        due_since = self._align_datetime_tz(target.due_since, current_dt)
+        self._weather_liveness_window = _WeatherLivenessWindow(
+            instance_uuid=target.instance.instance_uuid,
+            due_since=due_since,
+            started_monotonic=now,
+            deadline_monotonic=now + window_seconds,
+            candidate=target,
+        )
+        logger.warning(
+            "Reserving bounded quiet window for due Weather data. | "
+            "instance_uuid_hash: %s | overdue_seconds: %.1f | window_seconds: %.1f | "
+            "available_mb: %s | swap_percent: %s | required_available_mb: %s | "
+            "max_swap_percent: %s",
+            hashlib.sha256(
+                target.instance.instance_uuid.encode("utf-8")
+            ).hexdigest()[:16],
+            max(0.0, (current_dt - due_since).total_seconds()),
+            window_seconds,
+            resource_sample.available_mb,
+            resource_sample.swap_percent,
+            required_mb,
+            max_swap,
+        )
+        return None, True, False
 
     @staticmethod
     def _is_ticketmaster_background_data_command(command):
@@ -5220,6 +5750,8 @@ class RefreshTask:
                                 resolved_theme_context=resolved_theme_context,
                             )
                             generated = True
+                        except ResourcePressureDeferred:
+                            raise
                         except Exception:
                             logger.exception(
                                 "Plugin instance could not refresh for scheduled display; using placeholder. | "
@@ -6430,6 +6962,7 @@ class RefreshTask:
         automatic_rotation=False,
         force_hardware_write=False,
         background_live_refresh=False,
+        weather_liveness_concession=False,
     ):
         now = self._clock()
         if deadline_monotonic is None:
@@ -6461,6 +6994,8 @@ class RefreshTask:
             )
         if background_live_refresh:
             payload["background_live_refresh"] = True
+        if weather_liveness_concession:
+            payload["weather_liveness_concession"] = True
         if preserve_rotation_anchor:
             payload["preserve_rotation_anchor"] = True
         if resolved_theme_context is None:
@@ -7419,10 +7954,16 @@ class RefreshTask:
     def _memory_watchdog_should_restart(self):
         watchdog_enabled = self.device_config.get_config("memory_watchdog_enabled", default=True)
         if not _setting_enabled(watchdog_enabled):
+            self._memory_watchdog_pressure_episode_active = False
+            self._memory_watchdog_pressure_since_monotonic = None
+            self._memory_watchdog_next_check_seconds = None
             return False
 
         stats = self._read_memory_stats()
         if stats is None:
+            self._memory_watchdog_pressure_episode_active = False
+            self._memory_watchdog_pressure_since_monotonic = None
+            self._memory_watchdog_next_check_seconds = None
             return False
 
         min_available_mb = max(0.0, self._config_float(
@@ -7438,9 +7979,63 @@ class RefreshTask:
             or stats["swap_percent"] >= max_swap_percent
         )
         if not under_pressure:
+            self._memory_watchdog_pressure_episode_active = False
+            self._memory_watchdog_pressure_since_monotonic = None
+            self._memory_watchdog_next_check_seconds = None
             return False
 
+        if not self._memory_watchdog_pressure_episode_active:
+            self._memory_watchdog_pressure_episode_active = True
+            self._run_memory_maintenance(
+                "memory-watchdog-pressure",
+                force=True,
+            )
+            stats = self._read_memory_stats()
+            if stats is None:
+                self._memory_watchdog_pressure_episode_active = False
+                self._memory_watchdog_pressure_since_monotonic = None
+                self._memory_watchdog_next_check_seconds = None
+                return False
+            under_pressure = (
+                stats["available_mb"] < min_available_mb
+                or stats["swap_percent"] >= max_swap_percent
+            )
+            if not under_pressure:
+                self._memory_watchdog_pressure_episode_active = False
+                self._memory_watchdog_pressure_since_monotonic = None
+                self._memory_watchdog_next_check_seconds = None
+                return False
+
         now_monotonic = time.monotonic()
+        low_memory = stats["available_mb"] < min_available_mb
+        if not low_memory:
+            confirmation_max_available_mb = max(0.0, self._config_float(
+                "memory_watchdog_confirmation_max_available_mb",
+                DEFAULT_MEMORY_WATCHDOG_CONFIRMATION_MAX_AVAILABLE_MB,
+            ))
+            sustained_dual_pressure = (
+                stats["available_mb"] < confirmation_max_available_mb
+                and stats["swap_percent"] >= max_swap_percent
+            )
+            if not sustained_dual_pressure:
+                self._memory_watchdog_pressure_since_monotonic = None
+                self._memory_watchdog_next_check_seconds = None
+                return False
+            confirmation_seconds = max(0.0, self._config_float(
+                "memory_watchdog_pressure_confirmation_seconds",
+                DEFAULT_MEMORY_WATCHDOG_PRESSURE_CONFIRMATION_SECONDS,
+            ))
+            pressure_since = self._memory_watchdog_pressure_since_monotonic
+            if pressure_since is None:
+                self._memory_watchdog_pressure_since_monotonic = now_monotonic
+                pressure_since = now_monotonic
+            confirmation_remaining = confirmation_seconds - (
+                now_monotonic - pressure_since
+            )
+            if confirmation_remaining > 0:
+                self._memory_watchdog_next_check_seconds = confirmation_remaining
+                return False
+        self._memory_watchdog_next_check_seconds = None
         now_epoch = time.time()
         min_interval_seconds = max(0.0, self._config_float(
             "memory_watchdog_restart_min_interval_seconds",
@@ -7456,6 +8051,7 @@ class RefreshTask:
             return False
 
         self._last_memory_pressure_restart_monotonic = now_monotonic
+        self._memory_watchdog_pressure_since_monotonic = None
         self._write_memory_watchdog_last_restart_epoch(now_epoch)
         self._restart_process_for_memory_pressure(stats, min_available_mb, max_swap_percent)
         return True

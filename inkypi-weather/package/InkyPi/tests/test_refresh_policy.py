@@ -950,11 +950,15 @@ def test_hard_admits_no_presentation():
     assert decision.state == state
 
 
-def test_hard_threshold_wins_over_soft_threshold():
+def test_hard_swap_requires_low_memory_headroom():
     thresholds = ResourceThresholds()
 
     assert classify_resource_tier(
         ResourceSample(available_mb=149.0, swap_percent=75.0),
+        thresholds,
+    ) is ResourceTier.SOFT
+    assert classify_resource_tier(
+        ResourceSample(available_mb=114.99, swap_percent=75.0),
         thresholds,
     ) is ResourceTier.HARD
     assert classify_resource_tier(
@@ -985,7 +989,7 @@ def test_resource_threshold_boundaries_cover_hard_soft_and_healthy():
     assert classify_resource_tier(
         ResourceSample(available_mb=150.0, swap_percent=75.0),
         thresholds,
-    ) is ResourceTier.HARD
+    ) is ResourceTier.SOFT
 
 
 def test_missing_metric_degrades_to_soft():

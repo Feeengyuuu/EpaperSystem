@@ -15,6 +15,7 @@ from src.runtime.cache_lifecycle import (
 )
 from runtime.refresh_contracts import TaskContext
 from runtime.refresh_policy import ResourceSample
+from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.long_task_executor import (
     InstanceIdentity,
     bind_long_task_runtime,
@@ -541,28 +542,35 @@ def test_html_render_aborts_running_chromium_when_pressure_becomes_hard(
             self.returncode = -9
 
     process = RunningProcess()
+    samples = iter(
+        (
+            ResourceSample(available_mb=512, swap_percent=0),
+            ResourceSample(available_mb=60, swap_percent=0),
+        )
+    )
     renderer = BrowserRenderer(
         binary="chromium",
         temp_root=tmp_path,
         popen=lambda *_args, **_kwargs: process,
-        resource_sampler=lambda: ResourceSample(
-            available_mb=60,
-            swap_percent=0,
-        ),
+        resource_sampler=lambda: next(samples),
     )
     _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
     with caplog.at_level("WARNING", logger="src.utils.browser_renderer"):
-        result = renderer.render_html(
-            "<p>weather</p>",
-            viewport=(80, 48),
-            context=_context(),
-            timeout_seconds=5,
-            failure_domain="weather:weather.html",
-            abort_on_hard_pressure=True,
-        )
+        with pytest.raises(ResourcePressureDeferred) as deferred:
+            renderer.render_html(
+                "<p>weather</p>",
+                viewport=(80, 48),
+                context=_context(),
+                timeout_seconds=5,
+                failure_domain="weather:weather.html",
+                abort_on_hard_pressure=True,
+            )
 
-    assert result is None
+    assert deferred.value.reason == "browser_resource_pressure"
+    assert deferred.value.phase == "in_flight"
+    assert deferred.value.available_mb == 60
+    assert deferred.value.swap_percent == 0
     assert process.terminated
     assert not process.killed
     assert renderer.active_processes == ()
@@ -623,6 +631,8 @@ def test_html_pressure_abort_does_not_retry_same_call_or_poison_next_request(
         nonlocal sample_calls
         sample_calls += 1
         if sample_calls == 1:
+            return ResourceSample(available_mb=512, swap_percent=0)
+        if sample_calls == 2:
             return ResourceSample(available_mb=100, swap_percent=80)
         return ResourceSample(available_mb=512, swap_percent=0)
 
@@ -634,15 +644,16 @@ def test_html_pressure_abort_does_not_retry_same_call_or_poison_next_request(
     )
     _route_fake_process_group_signals(monkeypatch, lambda: launches)
 
-    first_result = renderer.render_html(
-        "<p>weather</p>",
-        viewport=(80, 48),
-        context=_context(),
-        timeout_seconds=5,
-        failure_domain="weather:weather.html",
-        retry_once=True,
-        abort_on_hard_pressure=True,
-    )
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(),
+            timeout_seconds=5,
+            failure_domain="weather:weather.html",
+            retry_once=True,
+            abort_on_hard_pressure=True,
+        )
 
     second_result = renderer.render_html(
         "<p>weather</p>",
@@ -653,7 +664,7 @@ def test_html_pressure_abort_does_not_retry_same_call_or_poison_next_request(
         abort_on_hard_pressure=True,
     )
 
-    assert first_result is None
+    assert deferred.value.phase == "in_flight"
     assert second_result is not None
     assert second_result.size == (80, 48)
     assert len(launches) == 2
@@ -726,6 +737,8 @@ def test_delayed_pressure_kill_does_not_poison_next_request(
         nonlocal sample_calls
         sample_calls += 1
         if sample_calls == 1:
+            return ResourceSample(available_mb=512, swap_percent=0)
+        if sample_calls == 2:
             return ResourceSample(available_mb=60, swap_percent=80)
         return ResourceSample(available_mb=512, swap_percent=0)
 
@@ -737,14 +750,15 @@ def test_delayed_pressure_kill_does_not_poison_next_request(
     )
     _route_fake_process_group_signals(monkeypatch, lambda: launches)
 
-    first_result = renderer.render_html(
-        "<p>weather</p>",
-        viewport=(80, 48),
-        context=_context(seconds=10),
-        timeout_seconds=10,
-        failure_domain="weather:weather.html",
-        abort_on_hard_pressure=True,
-    )
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(seconds=10),
+            timeout_seconds=10,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
     second_result = renderer.render_html(
         "<p>weather</p>",
         viewport=(80, 48),
@@ -754,7 +768,7 @@ def test_delayed_pressure_kill_does_not_poison_next_request(
         abort_on_hard_pressure=True,
     )
 
-    assert first_result is None
+    assert deferred.value.phase == "in_flight"
     assert launches[0].terminated
     assert launches[0].killed
     assert launches[0].wait_calls == 4
@@ -792,27 +806,31 @@ def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
             self.killed = True
 
     process = NeverExitProcess()
+    samples = iter(
+        (
+            ResourceSample(available_mb=512, swap_percent=0),
+            ResourceSample(available_mb=60, swap_percent=80),
+        )
+    )
     renderer = BrowserRenderer(
         binary="chromium",
         temp_root=tmp_path,
         popen=lambda *_args, **_kwargs: process,
-        resource_sampler=lambda: ResourceSample(
-            available_mb=60,
-            swap_percent=80,
-        ),
+        resource_sampler=lambda: next(samples),
     )
     _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
-    result = renderer.render_html(
-        "<p>weather</p>",
-        viewport=(80, 48),
-        context=_context(seconds=10),
-        timeout_seconds=0.01,
-        failure_domain="weather:weather.html",
-        abort_on_hard_pressure=True,
-    )
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(seconds=10),
+            timeout_seconds=0.01,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
 
-    assert result is None
+    assert deferred.value.phase == "in_flight"
     assert process.terminated
     assert process.killed
     assert renderer.negative_cache_size == 0
@@ -924,27 +942,31 @@ def test_pressure_stop_waits_for_late_process_exit_without_caching_failure(
         process = LateExitProcess(command)
         return process
 
+    samples = iter(
+        (
+            ResourceSample(available_mb=512, swap_percent=0),
+            ResourceSample(available_mb=60, swap_percent=80),
+        )
+    )
     renderer = BrowserRenderer(
         binary="chromium",
         temp_root=tmp_path,
         popen=popen,
-        resource_sampler=lambda: ResourceSample(
-            available_mb=60,
-            swap_percent=80,
-        ),
+        resource_sampler=lambda: next(samples),
     )
     _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
-    result = renderer.render_html(
-        "<p>weather</p>",
-        viewport=(80, 48),
-        context=_context(seconds=10),
-        timeout_seconds=10,
-        failure_domain="weather:weather.html",
-        abort_on_hard_pressure=True,
-    )
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(seconds=10),
+            timeout_seconds=10,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
 
-    assert result is None
+    assert deferred.value.phase == "in_flight"
     assert process.terminated
     assert process.killed
     assert process.wait_calls == 4
@@ -1144,6 +1166,90 @@ def test_html_render_continues_with_high_swap_when_memory_headroom_remains(
     assert renderer.negative_cache_size == 0
     assert renderer.html_circuit_size == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def test_html_start_admission_allows_high_swap_headroom_and_defers_hard_low_memory(
+    tmp_path,
+):
+    launches = []
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 2478
+
+        def __init__(self, command):
+            launches.append(command)
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    high_root = tmp_path / "high"
+    high_renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=high_root,
+        popen=lambda command, **_kwargs: SuccessProcess(command),
+        resource_sampler=lambda: ResourceSample(
+            available_mb=150,
+            swap_percent=90,
+        ),
+    )
+
+    image = high_renderer.render_html(
+        "<p>weather</p>",
+        viewport=(80, 48),
+        context=_context(),
+        timeout_seconds=5,
+        failure_domain="weather:weather.html",
+        abort_on_hard_pressure=True,
+    )
+
+    assert image is not None
+    assert image.size == (80, 48)
+    assert len(launches) == 1
+    assert high_renderer.negative_cache_size == 0
+    assert high_renderer.html_circuit_size == 0
+    assert list(high_root.iterdir()) == []
+
+    low_launches = []
+    low_root = tmp_path / "low"
+    low_renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=low_root,
+        popen=lambda *_args, **_kwargs: low_launches.append(True),
+        resource_sampler=lambda: ResourceSample(
+            available_mb=69,
+            swap_percent=0,
+        ),
+    )
+
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        low_renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(),
+            timeout_seconds=5,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
+
+    assert deferred.value.reason == "browser_resource_pressure"
+    assert deferred.value.phase == "start"
+    assert deferred.value.available_mb == 69
+    assert deferred.value.swap_percent == 0
+    assert low_launches == []
+    assert low_renderer.active_processes == ()
+    assert low_renderer.negative_cache_size == 0
+    assert low_renderer.html_circuit_size == 0
+    assert list(low_root.iterdir()) == []
 
 
 def test_each_render_uses_clean_profile_without_disabling_sandbox(tmp_path):

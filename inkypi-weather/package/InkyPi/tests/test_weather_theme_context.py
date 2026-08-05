@@ -10,6 +10,8 @@ from PIL import Image
 
 from plugins.weather import weather as weather_module
 from plugins.weather.weather import Weather
+from runtime.refresh_contracts import TaskCancelled
+from runtime.resource_deferral import ResourcePressureDeferred
 from plugins.base_plugin.render_provenance import (  # noqa: E402
     SourceProvenance,
     read_source_provenance,
@@ -291,6 +293,43 @@ def test_weather_does_not_replace_original_ui_when_browser_is_down(
 
     with pytest.raises(RuntimeError, match="original HTML weather layout"):
         plugin.generate_image(_settings(), FakeDeviceConfig())
+
+
+def test_weather_propagates_browser_resource_deferral_without_wrapping(monkeypatch):
+    plugin = _plugin()
+    _install_openweather(plugin)
+    _fixed_now(
+        plugin,
+        datetime(2026, 7, 12, 12, 0, tzinfo=timezone(timedelta(hours=-7))),
+    )
+    monkeypatch.setattr(weather_module, "write_context", lambda *_a, **_k: True)
+    plugin.resolve_theme = lambda *_a, **_k: {
+        "requested_mode": "auto",
+        "mode": "day",
+        "source": "weather",
+        "reason": "sunrise/sunset",
+        "palette": {},
+        "css": {},
+    }
+    deferred = ResourcePressureDeferred(
+        reason="browser_resource_pressure",
+        phase="in_flight",
+        available_mb=60,
+        swap_percent=80,
+    )
+
+    def render(*_args, **_kwargs):
+        raise deferred
+
+    plugin.render_image = render
+
+    with pytest.raises(ResourcePressureDeferred) as caught:
+        plugin.generate_image(_settings(), FakeDeviceConfig())
+
+    assert caught.value is deferred
+    assert isinstance(caught.value, TaskCancelled)
+    assert caught.value.reason == "browser_resource_pressure"
+    assert caught.value.phase == "in_flight"
 
 
 def test_weather_keeps_original_html_renderer_on_constrained_runtime(monkeypatch):
