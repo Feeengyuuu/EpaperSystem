@@ -56,9 +56,9 @@
                     <div class="compact-rank">{{ game.rank }}</div>
                     <div class="compact-name{% if show_images and game.image %} has-image{% endif %}">
                         {% if show_images and game.image %}
-                        <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none'" />
+                        <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none';this.parentElement.classList.add('cover-missing')" />
                         {% endif %}
-                        <div class="compact-copy{% if game.english_only_name %} single-name{% endif %}">
+                        <div class="compact-copy{% if game.center_title_block %} center-title-block{% endif %}">
                             <div class="compact-title" data-fit-text data-fit-min="13.8">{{ game.display_name | default(game.name) }}</div>
                             {% if game.secondary_name %}<div class="compact-secondary" data-fit-text data-fit-min="8">{{ game.display_secondary_name | default(game.secondary_name) }}</div>{% endif %}
                         </div>

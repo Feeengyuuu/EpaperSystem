@@ -356,6 +356,9 @@ class SteamCharts(BasePlugin):
             game.get("name", ""),
             game.get("secondary_name", ""),
         )
+        game["center_title_block"] = game["english_only_name"] or bool(
+            str(game.get("secondary_name") or "").strip()
+        )
         return game
 
     @staticmethod
@@ -841,22 +844,6 @@ class SteamCharts(BasePlugin):
                 name_bbox = draw.textbbox((0, 0), "Ag国", font=row_name_font)
                 name_line_height = max(1, name_bbox[3] - name_bbox[1])
                 secondary_text = str(game.get("secondary_name") or "")
-                name_top = content_top
-                if cover:
-                    name_top = self._compact_title_block_top(
-                        content_top,
-                        cover_height,
-                        name_line_height,
-                        len(name_lines),
-                        game.get("english_only_name", False),
-                    )
-                for line_index, name_line in enumerate(name_lines):
-                    draw.text(
-                        (title_x, name_top + line_index * (name_line_height + 1)),
-                        name_line,
-                        fill=ink,
-                        font=row_name_font,
-                    )
                 row_secondary_font, secondary_lines = self._fit_complete_lines(
                     draw,
                     secondary_text,
@@ -869,10 +856,44 @@ class SteamCharts(BasePlugin):
                 # Two primary lines already use the available title block; in
                 # that case the complete primary title takes precedence over a
                 # duplicate translated/English alias.
-                if len(name_lines) == 1 and secondary_lines:
+                visible_secondary_lines = secondary_lines if len(name_lines) == 1 else []
+                secondary_line_height = 0
+                if visible_secondary_lines:
+                    secondary_bbox = draw.textbbox((0, 0), "Ag国", font=row_secondary_font)
+                    secondary_line_height = max(1, secondary_bbox[3] - secondary_bbox[1])
+                name_top = content_top
+                if cover:
+                    name_top = self._compact_title_block_top(
+                        content_top,
+                        cover_height,
+                        name_line_height,
+                        len(name_lines),
+                        center_title_block=game.get("center_title_block", False),
+                        secondary_line_height=secondary_line_height,
+                        secondary_line_count=len(visible_secondary_lines),
+                    )
+                for line_index, name_line in enumerate(name_lines):
                     draw.text(
-                        (title_x, y + int(row_height * 0.48)),
-                        secondary_lines[0],
+                        (title_x, name_top + line_index * (name_line_height + 1)),
+                        name_line,
+                        fill=ink,
+                        font=row_name_font,
+                    )
+                if visible_secondary_lines:
+                    primary_block_height = (
+                        len(name_lines) * name_line_height + max(0, len(name_lines) - 1)
+                    )
+                    secondary_top = self._compact_secondary_title_top(
+                        y,
+                        row_height,
+                        name_top,
+                        primary_block_height,
+                        center_title_block=game.get("center_title_block", False),
+                        has_cover=bool(cover),
+                    )
+                    draw.text(
+                        (title_x, secondary_top),
+                        visible_secondary_lines[0],
                         fill=ink,
                         font=row_secondary_font,
                     )
@@ -1523,14 +1544,42 @@ class SteamCharts(BasePlugin):
         return int(row_y) + max(3, int(row_height * 0.04))
 
     @staticmethod
-    def _compact_title_block_top(content_top, cover_height, line_height, line_count, english_only_name=False):
-        if not english_only_name:
+    def _compact_title_block_top(
+        content_top,
+        cover_height,
+        line_height,
+        line_count,
+        center_title_block=False,
+        secondary_line_height=0,
+        secondary_line_count=0,
+    ):
+        if not center_title_block:
             return int(content_top)
 
         line_count = max(1, int(line_count or 1))
         line_height = max(1, int(line_height))
         block_height = line_count * line_height + max(0, line_count - 1)
+        secondary_line_count = max(0, int(secondary_line_count or 0))
+        if secondary_line_count:
+            secondary_line_height = max(1, int(secondary_line_height))
+            block_height += 1 + (
+                secondary_line_count * secondary_line_height
+                + max(0, secondary_line_count - 1)
+            )
         return int(content_top) + max(0, (int(cover_height) - block_height) // 2)
+
+    @staticmethod
+    def _compact_secondary_title_top(
+        row_y,
+        row_height,
+        name_top,
+        primary_block_height,
+        center_title_block=False,
+        has_cover=False,
+    ):
+        if center_title_block and has_cover:
+            return int(name_top) + int(primary_block_height) + 1
+        return int(row_y) + int(row_height * 0.48)
 
     @staticmethod
     def _compact_sparkline_width_ratio(table_variant, sparkline_svg=""):

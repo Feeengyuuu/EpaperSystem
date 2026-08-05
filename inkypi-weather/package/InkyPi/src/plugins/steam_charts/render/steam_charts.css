@@ -469,6 +469,10 @@ body {
     gap: 0.7vw;
 }
 
+.compact-name.has-image.cover-missing {
+    display: flex;
+}
+
 .compact-image {
     width: 100%;
     aspect-ratio: 8 / 3;
@@ -486,7 +490,7 @@ body {
     overflow: hidden;
 }
 
-.compact-name.has-image .compact-copy.single-name {
+.compact-name.has-image:not(.cover-missing) .compact-copy.center-title-block {
     justify-content: center;
 }
 
