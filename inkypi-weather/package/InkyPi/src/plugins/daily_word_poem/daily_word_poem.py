@@ -33,12 +33,12 @@ WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/
 WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
 WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
 REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
-CACHE_SCHEMA_VERSION = "daily-word-quote-v4"
+CACHE_SCHEMA_VERSION = "daily-word-quote-v5"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (224, 48)
-QUOTE_TEXT_MAX_LEN = 360
+QUOTE_TEXT_MAX_LEN = 520
 QUOTE_SOURCE_MAX_LEN = 520
 WIKIQUOTE_MONTH_NAMES = (
     "January",
@@ -815,17 +815,32 @@ class DailyWordPoem(BasePlugin):
         raw = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", raw)
         raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
 
-        paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", raw, flags=re.IGNORECASE | re.DOTALL)
-        if paragraphs:
-            parts = [_clean_text(re.sub(r"<[^>]+>", " ", part), QUOTE_SOURCE_MAX_LEN) for part in paragraphs]
-        else:
-            text = re.sub(r"<[^>]+>", " ", raw)
-            text = re.sub(r"^\s*(?:\{\||\|\}|!|\|[-}]?|\|\s*align=.*)$", " ", text, flags=re.MULTILINE)
-            parts = [_clean_text(part, QUOTE_SOURCE_MAX_LEN) for part in text.splitlines()]
+        raw = re.sub(r"</?p[^>]*>", "\n", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"^\s*\{\|[^\n]*$", " ", raw, flags=re.MULTILINE)
+        raw = re.sub(r"^\s*\|(?:-|})[^\n]*$", " ", raw, flags=re.MULTILINE)
+        raw = re.sub(
+            r"^\s*\|\s*(?:align|valign|style|class|width|height|colspan|rowspan)\s*=[^|\n]*\|\s*",
+            "",
+            raw,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        raw = re.sub(r"^\s*\|\s*", "", raw, flags=re.MULTILINE)
+        text = re.sub(r"<[^>]+>", " ", raw)
+        parts = [_clean_text(part, QUOTE_SOURCE_MAX_LEN) for part in text.splitlines()]
 
         parts = [part for part in parts if part and not part.lower().startswith("image")]
         joined = "\n".join(parts)
-        match = re.search(r"(?P<quote>.+?)\s*~\s*(?P<author>[^~\n]+)\s*~", joined, flags=re.DOTALL)
+        match = re.search(
+            r"(?P<quote>.+?)\s*~\s*(?P<author>[^~\n]+?)\s*~(?:\s|$)",
+            joined,
+            flags=re.DOTALL,
+        )
+        if not match:
+            match = re.search(
+                r"(?P<quote>.+)\s*~\s*(?P<author>[^~\n]+?)\s*$",
+                joined,
+                flags=re.DOTALL,
+            )
         if match:
             quote_text = _clean_quote_text(match.group("quote"))
             author = _clean_text(match.group("author"), 80)
@@ -833,6 +848,8 @@ class DailyWordPoem(BasePlugin):
             quote_text = _clean_quote_text(parts[0] if parts else "")
             author = "Wikiquote"
 
+        if re.fullmatch(r"~\s*[^~]+?(?:\s*~)?\s*", quote_text):
+            quote_text = ""
         if not quote_text:
             raise RuntimeError("Wikiquote date page has no quote text.")
 

@@ -217,6 +217,132 @@ def test_parse_wikiquote_day_raw_extracts_fields(tmp_path):
     assert result["source_url"].endswith("/May_28")
 
 
+def test_parse_wikiquote_day_raw_keeps_quote_outside_attribution_paragraph(tmp_path):
+    plugin = _plugin(tmp_path)
+    result = plugin._parse_wikiquote_day_raw(
+        """{| style="background:{{{color}}};"
+| align=center | I did not want to move. For I had the feeling that this was a place, once seen, that could not be seen again. <p> ~ [[Clifford D. Simak]] ~</p>
+{{QoDfooter|Month={{CURRENTMONTHNAME}}|Year=2009}}
+|}""",
+        "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/August_3",
+        "2026-08-03",
+    )
+
+    assert result["text"] == (
+        "I did not want to move. For I had the feeling that this was a place, once seen, "
+        "that could not be seen again."
+    )
+    assert result["author"] == "Clifford D. Simak"
+
+
+@pytest.mark.parametrize(
+    "attribution",
+    ["<p> ~ [[Clifford D. Simak]] ~ </p>", "<p> ~ [[Clifford D. Simak]] </p>"],
+)
+def test_parse_wikiquote_day_raw_rejects_attribution_without_quote(tmp_path, attribution):
+    plugin = _plugin(tmp_path)
+
+    with pytest.raises(RuntimeError, match="no quote text"):
+        plugin._parse_wikiquote_day_raw(
+            attribution,
+            "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/August_3",
+            "2026-08-03",
+        )
+
+
+def test_parse_wikiquote_day_raw_accepts_author_without_closing_tilde(tmp_path):
+    plugin = _plugin(tmp_path)
+    result = plugin._parse_wikiquote_day_raw(
+        "| align=center | A compact quote. ~ [[Single Marker Author]]",
+        "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/January_1",
+        "2026-01-01",
+    )
+
+    assert result["text"] == "A compact quote."
+    assert result["author"] == "Single Marker Author"
+
+
+def test_parse_wikiquote_day_raw_keeps_author_before_trailing_source(tmp_path):
+    plugin = _plugin(tmp_path)
+    result = plugin._parse_wikiquote_day_raw(
+        """{| style="background:{{{color}}};"
+| align=center | How many observe Christ's birthday! How few, his precepts! <p> ~ [[Benjamin Franklin]] ~ <br> in <br> ''[[Poor Richard's Almanack]]'' </p>
+|}""",
+        "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/December_25",
+        "2026-12-25",
+    )
+
+    assert result["text"] == "How many observe Christ's birthday! How few, his precepts!"
+    assert result["author"] == "Benjamin Franklin"
+
+
+def test_parse_wikiquote_day_raw_preserves_literal_pipe_in_quote(tmp_path):
+    plugin = _plugin(tmp_path)
+    result = plugin._parse_wikiquote_day_raw(
+        "| A quote with a | literal divider. ~ [[Pipe Author]] ~",
+        "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/January_2",
+        "2026-01-02",
+    )
+
+    assert result["text"] == "A quote with a | literal divider."
+    assert result["author"] == "Pipe Author"
+
+
+def test_generate_image_renders_quote_outside_attribution_paragraph(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    raw = """{| style="background:{{{color}}};"
+| align=center | I did not want to move. For I had the feeling that this was a place, once seen, that could not be seen again. If I left and then came back, it would not be the same; no matter how many times I might return to this particular spot the place and feeling would never be the same, something would be lost or something would be added, and there never would exist again, through all eternity, all the integrated factors that made it what it was in this magic moment. <p> ~ [[Clifford D. Simak]] ~</p>
+{{QoDfooter|Month={{CURRENTMONTHNAME}}|Year=2009}}
+|}"""
+
+    class FakeResponse:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    class FakeSession:
+        def get(self, url, **_kwargs):
+            if "action=raw" in url:
+                return FakeResponse(200, raw)
+            return FakeResponse(404)
+
+    rendered_text = []
+    real_draw = word_module.ImageDraw.Draw
+
+    class RecordingDrawProxy:
+        def __init__(self, delegate):
+            self.delegate = delegate
+
+        def text(self, position, value, *args, **kwargs):
+            rendered_text.append(str(value))
+            return self.delegate.text(position, value, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+    monkeypatch.setattr(
+        word_module.ImageDraw,
+        "Draw",
+        lambda image, *args, **kwargs: RecordingDrawProxy(real_draw(image, *args, **kwargs)),
+    )
+    monkeypatch.setattr(word_module, "get_http_session", lambda: FakeSession())
+    monkeypatch.setattr(plugin, "_localized_now", lambda _device: datetime(2026, 8, 3, 9, 0))
+
+    plugin.generate_image(
+        {"fetch_dictionary": False, "fetch_wikiquote": True, "force_refresh": True},
+        FakeDeviceConfig(),
+    )
+
+    rendered = " ".join(rendered_text)
+    assert "I did not want to move." in rendered
+    assert "magic moment." in rendered
+    assert "- Clifford D. Simak" in rendered_text
+
+
 def test_generate_image_renders_and_writes_daily_cache(tmp_path):
     plugin = _plugin(tmp_path)
 
@@ -440,6 +566,45 @@ def test_cached_payload_is_reused_without_network(tmp_path):
     assert "quote" in first
     assert second["from_cache"] is True
     assert calls == {"dictionary": 1, "wikiquote": 1}
+
+
+def test_v4_cache_is_refreshed_after_wikiquote_parser_fix(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = {"fetch_dictionary": False, "fetch_wikiquote": True}
+    now = datetime(2026, 8, 3, 9, 0)
+    old_cache = {
+        "cache_key": "2b43c7119cee250b35f195cda5ca38b0e7ce6de62205d7543c6088c09e0716bb",
+        "date": "2026-08-03",
+        "word": plugin._daily_word(settings, now),
+        "quote": {
+            "text": "~ Clifford D. Simak ~",
+            "author": "Wikiquote",
+            "source": "Wikiquote QOTD",
+        },
+        "sources": ["local word list", "Wikiquote QOTD"],
+        "from_cache": False,
+    }
+    (tmp_path / "daily.json").write_text(json.dumps(old_cache), encoding="utf-8")
+    calls = []
+
+    def fetch_quote(date_key):
+        calls.append(date_key)
+        return {
+            "text": "I did not want to move.",
+            "author": "Clifford D. Simak",
+            "source": "Wikiquote QOTD",
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_wikiquote_quote", fetch_quote)
+
+    result = plugin._daily_payload(settings, now)
+    persisted = json.loads((tmp_path / "daily.json").read_text(encoding="utf-8"))
+
+    assert result["from_cache"] is False
+    assert result["quote"]["text"] == "I did not want to move."
+    assert calls == ["2026-08-03"]
+    assert persisted["cache_key"] == result["cache_key"]
+    assert persisted["quote"]["text"] == "I did not want to move."
 
 
 def test_generate_image_attests_fresh_remote_cache_without_network(tmp_path, monkeypatch):
