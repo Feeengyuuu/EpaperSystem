@@ -33,6 +33,7 @@ _SOURCE_URGENCY = {
 }
 _MAX_TERMINAL_LIMIT = 256
 _MAX_TERMINAL_TTL_SECONDS = 1800.0
+_COALESCED_ADMISSION_FLAGS = frozenset({"weather_liveness_concession"})
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ class RefreshQueue:
         self.alias_limit = max(1, min(4096, int(alias_limit)))
         self._clock = clock
         self._wall_clock = wall_clock
-        self._condition = threading.Condition()
+        self._condition = threading.Condition(threading.RLock())
         self._pending: dict[str, int] = {}
         self._running: set[str] = set()
         self._jobs: dict[str, JobRecord] = {}
@@ -226,6 +227,18 @@ class RefreshQueue:
             self._publish_change_locked()
             return replace(job)
 
+    def submit_entry(self, command: RefreshCommand) -> QueueEntry:
+        """Atomically submit work and snapshot the queue-owned command."""
+        with self._condition:
+            # The queue condition owns a re-entrant lock, so submit cannot
+            # release admission to a worker before this command snapshot is
+            # captured under the same outer critical section.
+            job = self.submit(command)
+            entry = self._entry_locked(job.id)
+            if entry is None:  # pragma: no cover - guarded by the queue lock
+                raise RuntimeError("accepted refresh command has no queue entry")
+            return entry
+
     def take(self, timeout: float | None = None) -> QueueEntry | None:
         wait_deadline = None
         timed_out = False
@@ -334,16 +347,19 @@ class RefreshQueue:
             now = self._clock()
             self._prune_terminal_locked(now)
             self._expire_pending_locked(now)
-            actual_job_id = self._resolve_actual_job_id_locked(job_id)
-            job = self._jobs.get(actual_job_id)
-            command = self._commands.get(actual_job_id)
-            if job is None or command is None:
-                return None
-            return QueueEntry(
-                command,
-                replace(job),
-                CancellationSignal(self._cancel_events[actual_job_id]),
-            )
+            return self._entry_locked(job_id)
+
+    def _entry_locked(self, job_id: str) -> QueueEntry | None:
+        actual_job_id = self._resolve_actual_job_id_locked(job_id)
+        job = self._jobs.get(actual_job_id)
+        command = self._commands.get(actual_job_id)
+        if job is None or command is None:
+            return None
+        return QueueEntry(
+            command,
+            replace(job),
+            CancellationSignal(self._cancel_events[actual_job_id]),
+        )
 
     def cancel_instance(self, instance_uuid: str) -> int:
         with self._condition:
@@ -820,6 +836,13 @@ class RefreshQueue:
             without_rotation_ack.pop("automatic_rotation", None)
             selected_payload = freeze_payload(without_rotation_ack)
 
+        if revision_comparison == 0:
+            selected_payload = self._merged_admission_payload(
+                existing.payload,
+                incoming.payload,
+                selected_payload,
+            )
+
         deadline = existing.deadline_monotonic
         if (
             incoming.deadline_monotonic > now
@@ -840,6 +863,26 @@ class RefreshQueue:
             deadline_monotonic=deadline,
             payload=selected_payload,
         )
+
+    @staticmethod
+    def _merged_admission_payload(
+        existing_payload,
+        incoming_payload,
+        selected_payload,
+    ):
+        """Keep granted admission when equivalent queued work coalesces."""
+        granted = tuple(
+            flag
+            for flag in _COALESCED_ADMISSION_FLAGS
+            if existing_payload.get(flag) is True
+            or incoming_payload.get(flag) is True
+        )
+        if not granted:
+            return selected_payload
+        merged = dict(selected_payload)
+        for flag in granted:
+            merged[flag] = True
+        return freeze_payload(merged)
 
     @staticmethod
     def _merged_theme_transition_payload(

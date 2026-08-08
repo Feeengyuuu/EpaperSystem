@@ -1239,7 +1239,7 @@ class RefreshTask:
             ):
                 refresh_command = self._select_independent_refresh_command(current_dt)
                 if refresh_command is not None:
-                    self.refresh_queue.submit(refresh_command)
+                    self._submit_independent_refresh_command(refresh_command)
             next_delay = 30.0 if restart_requested else self._scheduler_poll_seconds()
             if (
                 not restart_requested
@@ -2116,6 +2116,7 @@ class RefreshTask:
         current_dt,
     ) -> RefreshCommand | None:
         """Admit at most one ordinary renderer command for this probe."""
+        self._update_burst_liveness_ordinary_yield_window()
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         theme_context = get_theme_context(self.device_config, now=current_dt)
@@ -2593,52 +2594,48 @@ class RefreshTask:
         if weather_liveness_holds_independent:
             return None
         if self._burst_liveness_yield_ordinary_pending:
-            if self._clock() >= self._burst_liveness_yield_deadline_monotonic:
-                self._burst_liveness_yield_ordinary_pending = False
-                self._burst_liveness_yield_deadline_monotonic = 0.0
-            else:
-                ordinary_candidates = [
-                    candidate
-                    for candidate in eligible_data_candidates
-                    if candidate.instance.plugin_id
-                    not in {
-                        "sports_dashboard",
-                        "ticketmaster_events",
-                        "weather",
-                    }
-                ]
-                ordinary_admission = choose_refresh_candidate(
-                    ordinary_candidates,
-                    [],
-                    # The concession itself just consumed the SOFT spacing
-                    # clock. This one bounded handoff intentionally bypasses
-                    # that spacing, while HARD pressure still admits nothing.
-                    tier=(
-                        ResourceTier.HARD
-                        if tier is ResourceTier.HARD
-                        else ResourceTier.HEALTHY
-                    ),
-                    state=self._admission_state,
-                    now_monotonic=self._clock(),
-                    thresholds=thresholds,
-                )
-                self._admission_state = ordinary_admission.state
-                candidate = ordinary_admission.candidate
-                if candidate is None:
-                    return None
-                self._burst_liveness_yield_ordinary_pending = False
-                self._burst_liveness_yield_deadline_monotonic = 0.0
-                return self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.DATA_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=98,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                )
+            ordinary_candidates = [
+                candidate
+                for candidate in eligible_data_candidates
+                if candidate.instance.plugin_id
+                not in {
+                    "sports_dashboard",
+                    "ticketmaster_events",
+                    "weather",
+                }
+            ]
+            ordinary_admission = choose_refresh_candidate(
+                ordinary_candidates,
+                [],
+                # The concession itself just consumed the SOFT spacing
+                # clock. This one-shot handoff intentionally bypasses that
+                # spacing, while HARD pressure still admits nothing.
+                tier=(
+                    ResourceTier.HARD
+                    if tier is ResourceTier.HARD
+                    else ResourceTier.HEALTHY
+                ),
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            )
+            self._admission_state = ordinary_admission.state
+            candidate = ordinary_admission.candidate
+            if candidate is None:
+                return None
+            self._burst_liveness_yield_ordinary_pending = False
+            self._burst_liveness_yield_deadline_monotonic = 0.0
+            return self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=98,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+            )
 
         if sports_liveness_candidate is not None:
             liveness_admission = choose_refresh_candidate(
@@ -4125,13 +4122,35 @@ class RefreshTask:
         return min(float(maximum), value)
 
     def _request_burst_liveness_ordinary_yield(self):
-        duration = self._weather_liveness_seconds(
+        configured_seconds = self._weather_liveness_seconds(
             "burst_liveness_ordinary_yield_seconds",
             DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS,
             90,
         )
-        self._burst_liveness_yield_ordinary_pending = duration > 0
-        self._burst_liveness_yield_deadline_monotonic = self._clock() + duration
+        # Arm only the one-shot right here. The single worker may spend longer
+        # than the configured window executing the accepted burst command, so
+        # the first subsequent independent selector starts the wall-clock wait.
+        self._burst_liveness_yield_ordinary_pending = configured_seconds > 0
+        self._burst_liveness_yield_deadline_monotonic = 0.0
+
+    def _update_burst_liveness_ordinary_yield_window(self):
+        if not self._burst_liveness_yield_ordinary_pending:
+            return
+        now = self._clock()
+        deadline = self._burst_liveness_yield_deadline_monotonic
+        if deadline <= 0:
+            duration = self._weather_liveness_seconds(
+                "burst_liveness_ordinary_yield_seconds",
+                DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS,
+                90,
+            )
+            if duration > 0:
+                self._burst_liveness_yield_deadline_monotonic = now + duration
+                return
+        elif now < deadline:
+            return
+        self._burst_liveness_yield_ordinary_pending = False
+        self._burst_liveness_yield_deadline_monotonic = 0.0
 
     def _finish_weather_liveness_window(self, *, reason, resource_sample):
         window = self._weather_liveness_window
@@ -4159,6 +4178,54 @@ class RefreshTask:
             getattr(resource_sample, "swap_percent", None),
         )
 
+    def _submit_independent_refresh_command(self, command):
+        if command.payload.get("weather_liveness_concession") is not True:
+            return self.refresh_queue.submit(command)
+
+        entry = self.refresh_queue.submit_entry(command)
+        submitted = entry.job
+        window = self._weather_liveness_window
+        retained = bool(
+            entry.job.status is JobStatus.QUEUED
+            and window is not None
+            and entry.command.instance_uuid == command.instance_uuid
+            and entry.command.instance_uuid == window.instance_uuid
+            and entry.command.structural_generation
+            == command.structural_generation
+            and entry.command.settings_revision == command.settings_revision
+            and self._is_weather_background_data_command(entry.command)
+            and entry.command.payload.get("weather_liveness_concession") is True
+        )
+        if retained:
+            resource_sample = self._resource_sample()
+            _margin_available, concession_min_mb = self._weather_concession_margin(
+                resource_sample
+            )
+            logger.warning(
+                "Weather quiet window reached its bounded concession. | "
+                "instance_uuid_hash: %s | available_mb: %s | swap_percent: %s | "
+                "required_available_mb: %s",
+                hashlib.sha256(
+                    entry.command.instance_uuid.encode("utf-8")
+                ).hexdigest()[:16],
+                resource_sample.available_mb,
+                resource_sample.swap_percent,
+                concession_min_mb,
+            )
+            self._finish_weather_liveness_window(
+                reason="concession_submitted",
+                resource_sample=resource_sample,
+            )
+        else:
+            logger.error(
+                "Weather concession submission did not retain its admission; "
+                "keeping the liveness window open. | instance_uuid_hash: %s",
+                hashlib.sha256(
+                    str(command.instance_uuid).encode("utf-8")
+                ).hexdigest()[:16],
+            )
+        return submitted
+
     def _weather_liveness_decision(
         self,
         active,
@@ -4183,7 +4250,7 @@ class RefreshTask:
         normal_margin, required_mb, max_swap = (
             self._weather_background_start_margin(resource_sample)
         )
-        concession_margin, concession_min_mb = self._weather_concession_margin(
+        concession_margin, _ = self._weather_concession_margin(
             resource_sample
         )
         window = self._weather_liveness_window
@@ -4227,13 +4294,11 @@ class RefreshTask:
                 return None, False, False
 
             if now >= window.deadline_monotonic:
-                self._finish_weather_liveness_window(
-                    reason=(
-                        "concession" if concession_margin else "margin_unavailable"
-                    ),
-                    resource_sample=resource_sample,
-                )
                 if not concession_margin:
+                    self._finish_weather_liveness_window(
+                        reason="margin_unavailable",
+                        resource_sample=resource_sample,
+                    )
                     return None, False, False
                 # The retry gate can hide a candidate created by this window's
                 # own pressure deferral. Rebuild it with the currently active,
@@ -4241,17 +4306,6 @@ class RefreshTask:
                 target = target or replace(
                     window.candidate,
                     instance=active_instance,
-                )
-                logger.warning(
-                    "Weather quiet window reached its bounded concession. | "
-                    "instance_uuid_hash: %s | available_mb: %s | swap_percent: %s | "
-                    "required_available_mb: %s",
-                    hashlib.sha256(
-                        window.instance_uuid.encode("utf-8")
-                    ).hexdigest()[:16],
-                    resource_sample.available_mb,
-                    resource_sample.swap_percent,
-                    concession_min_mb,
                 )
                 return target, False, True
             if normal_margin:

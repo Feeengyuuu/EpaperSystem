@@ -385,6 +385,147 @@ def test_same_intent_same_revision_coalesces_and_new_revision_supersedes():
     assert selected.priority == 5
 
 
+@pytest.mark.parametrize("concession_first", [False, True])
+def test_weather_concession_admission_survives_same_revision_queue_coalescing(
+    concession_first,
+):
+    queue = make_queue()
+
+    def weather_command(*, concession):
+        payload = {
+            "playlist_name": "DailyDoseOfDay",
+            "owner": "concession" if concession else "ordinary",
+        }
+        if concession:
+            payload["weather_liveness_concession"] = True
+        return command(
+            kind=CommandKind.CACHE_REFRESH,
+            source=CommandSource.BACKGROUND,
+            plugin_id="weather",
+            instance_uuid="weather-instance",
+            structural_generation=3,
+            settings_revision=7,
+            priority=98 if concession else 10,
+            payload=payload,
+            intent=RefreshIntent.DATA_REFRESH,
+        )
+
+    existing = weather_command(concession=concession_first)
+    incoming = weather_command(concession=not concession_first)
+
+    existing_job = queue.submit(existing)
+    coalesced_entry = queue.submit_entry(incoming)
+    selected = coalesced_entry.command
+
+    assert coalesced_entry.job.id == existing_job.id
+    assert coalesced_entry.job.status is JobStatus.QUEUED
+    assert selected.priority == 98
+    assert selected.payload["weather_liveness_concession"] is True
+    assert queue.take(timeout=0).command == selected
+
+
+def test_submit_entry_snapshot_precedes_worker_take(monkeypatch):
+    queue = make_queue()
+    candidate = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-submit-entry-race",
+        payload={"weather_liveness_concession": True},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted_inside_outer_lock = threading.Event()
+    release_submit = threading.Event()
+    take_started = threading.Event()
+    take_finished = threading.Event()
+    submitted_entries = []
+    taken_entries = []
+    failures = []
+    original_submit = queue.submit
+
+    def paused_submit(command_to_submit):
+        submitted = original_submit(command_to_submit)
+        submitted_inside_outer_lock.set()
+        if not release_submit.wait(1.0):
+            raise AssertionError("submit_entry test did not release submission")
+        return submitted
+
+    monkeypatch.setattr(queue, "submit", paused_submit)
+
+    def submit_entry():
+        try:
+            submitted_entries.append(queue.submit_entry(candidate))
+        except BaseException as error:  # pragma: no cover - asserted below
+            failures.append(error)
+
+    def take_entry():
+        try:
+            take_started.set()
+            taken_entries.append(queue.take(timeout=1.0))
+        except BaseException as error:  # pragma: no cover - asserted below
+            failures.append(error)
+        finally:
+            take_finished.set()
+
+    submitter = threading.Thread(target=submit_entry)
+    taker = threading.Thread(target=take_entry)
+    submitter.start()
+    try:
+        assert submitted_inside_outer_lock.wait(1.0)
+        taker.start()
+        assert take_started.wait(1.0)
+        assert not take_finished.wait(0.05)
+    finally:
+        release_submit.set()
+        submitter.join(timeout=1.0)
+        if taker.ident is not None:
+            taker.join(timeout=1.0)
+
+    assert not failures
+    assert not submitter.is_alive()
+    assert not taker.is_alive()
+    assert len(submitted_entries) == 1
+    assert len(taken_entries) == 1
+    assert taken_entries[0] is not None
+    assert submitted_entries[0].job.id == taken_entries[0].job.id
+    assert submitted_entries[0].command is taken_entries[0].command
+
+
+def test_weather_concession_admission_does_not_cross_settings_revision():
+    queue = make_queue()
+    concession = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        structural_generation=3,
+        settings_revision=7,
+        priority=98,
+        payload={"weather_liveness_concession": True},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    updated = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="weather",
+        instance_uuid="weather-instance",
+        structural_generation=3,
+        settings_revision=8,
+        priority=10,
+        payload={"owner": "updated-settings"},
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    concession_job = queue.submit(concession)
+    updated_job = queue.submit(updated)
+    selected = queue.take(timeout=0).command
+
+    assert updated_job.id == updated.id
+    assert queue.get_job(concession_job.id).status is JobStatus.SUPERSEDED
+    assert selected.settings_revision == 8
+    assert "weather_liveness_concession" not in selected.payload
+
+
 @pytest.mark.parametrize("manual_first", [False, True])
 def test_manual_exact_data_refresh_owns_inactive_payload_when_coalesced(
     manual_first,

@@ -17554,8 +17554,96 @@ def test_weather_window_concedes_once_at_deadline_with_115_mib_floor(monkeypatch
     assert concession is not None
     assert concession.instance_uuid == weather.instance_uuid
     assert concession.payload["weather_liveness_concession"] is True
+    submitted = task._submit_independent_refresh_command(concession)
+    queued = task.refresh_queue.get_entry(submitted.id)
+
+    assert queued is not None
+    assert queued.job.status is JobStatus.QUEUED
+    assert queued.command.payload["weather_liveness_concession"] is True
     assert task._weather_liveness_window is None
     assert task._weather_liveness_cooldown_until_monotonic > clock.monotonic()
+
+
+def test_weather_concession_submit_rejection_preserves_window_and_cooldown(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-concession-submit-rejected",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    original_window = task._weather_liveness_window
+    assert original_window is not None
+    clock.advance(90)
+
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(task, "_sample_disk_pressure", lambda: DiskPressureTier.HEALTHY)
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_cache_lifecycle_should_yield", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_get_current_datetime",
+        lambda: current_dt + timedelta(seconds=90),
+    )
+    rejected = []
+
+    def reject_submission(command):
+        rejected.append(command)
+        raise QueueFullError("queue is full")
+
+    monkeypatch.setattr(task.refresh_queue, "submit", reject_submission)
+
+    assert task._run_one_iteration_for_test() is None
+
+    assert len(rejected) == 1
+    assert rejected[0].instance_uuid == weather.instance_uuid
+    assert rejected[0].payload["weather_liveness_concession"] is True
+    assert task._weather_liveness_window == original_window
+    assert task._weather_liveness_cooldown_until_monotonic == 0
+    assert task._burst_liveness_yield_ordinary_pending is False
+
+
+def test_non_concession_independent_submit_keeps_submit_only_queue_contract():
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, ordinary = _weather_margin_runtime(
+        "ordinary-submit-only-queue-contract",
+        current_dt,
+    )
+    command = task._playlist_command(
+        "DailyDoseOfDay",
+        ordinary,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+    submitted = object()
+
+    class SubmitOnlyQueue:
+        def __init__(self):
+            self.command = None
+
+        def submit(self, candidate):
+            self.command = candidate
+            return submitted
+
+    queue = SubmitOnlyQueue()
+    task.refresh_queue = queue
+
+    assert task._submit_independent_refresh_command(command) is submitted
+    assert queue.command is command
 
 
 def test_weather_below_115_mib_never_opens_window_or_holds_ordinary(monkeypatch):
@@ -17700,6 +17788,11 @@ def test_weather_concession_yields_next_soft_pressure_turn_to_ordinary_data(
     )
     assert concession.instance_uuid == weather.instance_uuid
     assert concession.payload["weather_liveness_concession"] is True
+    submitted = task._submit_independent_refresh_command(concession)
+    queued = task.refresh_queue.take(timeout=0)
+    assert queued is not None
+    assert queued.job.id == submitted.id
+    task.refresh_queue.finish(queued.job.id, JobStatus.SUCCEEDED)
 
     clock.advance(1)
     ordinary_command = task._select_independent_refresh_command(
@@ -17711,6 +17804,154 @@ def test_weather_concession_yields_next_soft_pressure_turn_to_ordinary_data(
     assert "weather_liveness_concession" not in ordinary_command.payload
     assert task._burst_liveness_yield_ordinary_pending is False
     assert task._weather_liveness_window is None
+
+
+def test_weather_concession_long_execution_preserves_one_shot_ordinary_handoff(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-concession-long-execution-handoff",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    clock.advance(90)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
+
+    submitted = task._submit_independent_refresh_command(concession)
+    queued = task.refresh_queue.take(timeout=0)
+    assert queued is not None
+    assert queued.job.id == submitted.id
+
+    # The single worker can spend longer than the old 30-second handoff
+    # deadline inside Weather/Chromium before another scheduler turn exists.
+    clock.advance(31)
+    task.refresh_queue.finish(queued.job.id, JobStatus.SUCCEEDED)
+
+    scheduler_dt = {"value": current_dt + timedelta(seconds=121)}
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: scheduler_dt["value"])
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    task.device_config.config["plugin_cycle_interval_seconds"] = 1
+
+    ordinary_turn = task._run_one_iteration_for_test()
+
+    assert ordinary_turn is not None
+    assert ordinary_turn.command.instance_uuid == ordinary.instance_uuid
+    assert task._burst_liveness_yield_ordinary_pending is False
+
+    clock.advance(1)
+    scheduler_dt["value"] += timedelta(seconds=1)
+    repeated_bypass = task._run_one_iteration_for_test()
+
+    assert repeated_bypass is None
+
+
+def test_weather_handoff_without_ordinary_expires_before_specialized_liveness(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports",
+        interval=60,
+    )
+    sports_data["instance_uuid"] = "11111111111111111111111111111111"
+    weather_data = _runtime_plugin_data(
+        "weather",
+        "Weather",
+        interval=60,
+    )
+    weather_data["instance_uuid"] = "22222222222222222222222222222222"
+    playlist = _runtime_playlist(sports_data, weather_data)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("weather-handoff-specialized-release"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "weather_liveness_window_seconds": 90,
+            "weather_liveness_cooldown_seconds": 300,
+            "burst_liveness_ordinary_yield_seconds": 30,
+            "sports_isolated_liveness_starvation_seconds": 60 * 60,
+            "sports_isolated_liveness_window_seconds": 60,
+        }
+    )
+    sports, weather = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, weather):
+        _write_runtime_cache(task, instance)
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (current_dt - timedelta(minutes=20)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([]),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is not None
+    clock.advance(90)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession.instance_uuid == weather.instance_uuid
+    submitted = task._submit_independent_refresh_command(concession)
+    queued = task.refresh_queue.take(timeout=0)
+    assert queued is not None
+    assert queued.job.id == submitted.id
+    clock.advance(31)
+    task.refresh_queue.finish(queued.job.id, JobStatus.SUCCEEDED)
+
+    device_config.config["sports_isolated_liveness_starvation_seconds"] = 0
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=121)
+        )
+        is None
+    )
+    assert task._sports_liveness_window is None
+
+    clock.advance(31)
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=152)
+        )
+        is None
+    )
+    assert task._burst_liveness_yield_ordinary_pending is False
+    assert task._sports_liveness_window is not None
+    assert task._sports_liveness_window.instance_uuid == sports.instance_uuid
 
 
 def test_weather_quiet_window_does_not_block_cached_display(monkeypatch):
@@ -17751,7 +17992,7 @@ def test_weather_quiet_window_does_not_block_cached_display(monkeypatch):
     assert task._weather_liveness_window is not None
 
 
-def test_rotation_deadline_guard_blocks_weather_concession(monkeypatch):
+def test_rotation_deadline_guard_blocks_weather_concession(monkeypatch, caplog):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, clock, _weather, _ordinary = _weather_margin_runtime(
         "weather-concession-rotation-deadline-guard",
@@ -17775,8 +18016,37 @@ def test_rotation_deadline_guard_blocks_weather_concession(monkeypatch):
         )
         is None
     )
-    assert task._weather_liveness_window is None
-    assert task._burst_liveness_yield_ordinary_pending is True
+    clock.advance(1)
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=91)
+        )
+        is None
+    )
+    assert task._weather_liveness_window is not None
+    assert task._weather_liveness_cooldown_until_monotonic == 0
+    assert task._burst_liveness_yield_ordinary_pending is False
+    assert not [
+        record
+        for record in caplog.records
+        if "Weather quiet window reached its bounded concession" in record.message
+    ]
+
+    task._rotation_deadline_guard_active = False
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=91)
+    )
+    assert concession is not None
+    task._submit_independent_refresh_command(concession)
+
+    assert len(
+        [
+            record
+            for record in caplog.records
+            if "Weather quiet window reached its bounded concession" in record.message
+        ]
+    ) == 1
 
 
 @pytest.mark.parametrize("window_owner", ["sports", "ticketmaster", "weather"])
