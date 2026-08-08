@@ -11,7 +11,7 @@ from pathlib import Path
 import threading
 import time
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
@@ -34,6 +34,22 @@ CACHE_MAX_BYTES = 64 * 1024
 CACHE_FILE_NAME = "summary-v2.json"
 LEGACY_CACHE_FILE_NAME = "summary-v1.json"
 VEHICLE_IMAGE_NAME = "vehicle.png"
+DASHBOARD_ICON_DIR_NAME = "dashboard_icons"
+DASHBOARD_ICON_FILES = {
+    "energy": "energy.png",
+    "security": "security.png",
+    "climate": "climate.png",
+    "vehicle": "vehicle_info.png",
+    "tires": "tires.png",
+    "freshness": "freshness.png",
+}
+DASHBOARD_ICON_LIMITS = ImageLimits(
+    max_bytes=64 * 1024,
+    max_width=64,
+    max_height=64,
+    max_pixels=64 * 64,
+    allowed_formats=frozenset({"PNG"}),
+)
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
 VEHICLE_ART_BOX = (300, 50, 500, 96)
@@ -899,6 +915,13 @@ class VehicleStatus(BasePlugin):
         )
         art_x = art_left + ((art_right - art_left - vehicle_art.width) // 2)
         art_y = art_top + ((art_bottom - art_top - vehicle_art.height) // 2)
+        if isinstance(theme, dict) and theme.get("mode") == "night":
+            alpha = vehicle_art.getchannel("A")
+            expanded = alpha.filter(ImageFilter.MaxFilter(5))
+            outline_mask = ImageChops.subtract(expanded, alpha)
+            outline = Image.new("RGBA", vehicle_art.size, (*colors["muted"], 0))
+            outline.putalpha(outline_mask)
+            canvas.paste(outline, (art_x, art_y), outline)
         canvas.paste(vehicle_art, (art_x, art_y), vehicle_art)
 
         status_label = _enum_text(
@@ -920,7 +943,7 @@ class VehicleStatus(BasePlugin):
         draw.line((40, 100, 760, 100), fill=colors["rule"], width=1)
 
         _dashboard_panel(draw, (40, 112, 300, 416), colors)
-        _section_label(draw, 58, 127, _t(language, "energy"), colors)
+        _section_label(canvas, draw, 58, 127, _t(language, "energy"), colors, "energy")
         level = battery["level_percent"]
         level_text = "--" if level is None else str(int(round(level)))
         level_font = _font(52 if len(level_text) >= 3 else 58, True)
@@ -1042,7 +1065,15 @@ class VehicleStatus(BasePlugin):
                 )
 
         _dashboard_panel(draw, (334, 112, 532, 254), colors)
-        _section_label(draw, 350, 127, _t(language, "security"), colors)
+        _section_label(
+            canvas,
+            draw,
+            350,
+            127,
+            _t(language, "security"),
+            colors,
+            "security",
+        )
         lock_text = _bool_status(
             vehicle["locked"],
             _t(language, "locked"),
@@ -1121,7 +1152,15 @@ class VehicleStatus(BasePlugin):
             )
 
         _dashboard_panel(draw, (564, 112, 760, 254), colors)
-        _section_label(draw, 580, 127, _t(language, "climate"), colors)
+        _section_label(
+            canvas,
+            draw,
+            580,
+            127,
+            _t(language, "climate"),
+            colors,
+            "climate",
+        )
         climate_status = _bool_status(
             climate["is_climate_on"],
             _t(language, "hvac_on"),
@@ -1173,7 +1212,15 @@ class VehicleStatus(BasePlugin):
                 )
 
         _dashboard_panel(draw, (334, 278, 532, 416), colors)
-        _section_label(draw, 350, 293, _t(language, "vehicle"), colors)
+        _section_label(
+            canvas,
+            draw,
+            350,
+            293,
+            _t(language, "vehicle"),
+            colors,
+            "vehicle",
+        )
         if is_v2:
             display_state = vehicle["center_display_state"]
             _right_text(
@@ -1233,7 +1280,15 @@ class VehicleStatus(BasePlugin):
             )
 
         _dashboard_panel(draw, (564, 278, 760, 416), colors)
-        _section_label(draw, 580, 293, _t(language, "tires"), colors)
+        _section_label(
+            canvas,
+            draw,
+            580,
+            293,
+            _t(language, "tires"),
+            colors,
+            "tires",
+        )
         if is_v2:
             _render_tires(draw, tires, settings, preferences, colors, language)
         else:
@@ -1245,8 +1300,20 @@ class VehicleStatus(BasePlugin):
             )
 
         draw.line((40, 428, 760, 428), fill=colors["rule"], width=1)
+        freshness_left = (
+            62
+            if _draw_dashboard_icon(
+                canvas,
+                "freshness",
+                40,
+                434,
+                colors,
+                size=16,
+            )
+            else 40
+        )
         draw.text(
-            (40, 438),
+            (freshness_left, 438),
             _t(
                 language,
                 "updated",
@@ -2241,8 +2308,10 @@ def _dashboard_panel(draw, box, colors):
     )
 
 
-def _section_label(draw, left, top, text, colors):
-    draw.text((left, top), text, font=_font(12, True), fill=colors["muted"])
+def _section_label(canvas, draw, left, top, text, colors, icon_kind):
+    has_icon = _draw_dashboard_icon(canvas, icon_kind, left, top - 3, colors)
+    text_left = left + 27 if has_icon else left
+    draw.text((text_left, top), text, font=_font(12, True), fill=colors["muted"])
 
 
 def _dashboard_row(
@@ -2825,6 +2894,37 @@ def _draw_vehicle_silhouette(draw, origin, colors, scale=1.0):
         draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=colors["ink"])
         hub = max(3, int(6 * scale))
         draw.ellipse((cx - hub, cy - hub, cx + hub, cy + hub), fill=colors["surface"])
+
+
+def _draw_dashboard_icon(canvas, kind, left, top, colors, size=20):
+    mask = _load_dashboard_icon_mask(kind)
+    if mask is None:
+        return False
+
+    resized_mask = mask.resize((size, size), Image.Resampling.LANCZOS)
+    glyph = Image.new("RGBA", (size, size), (*colors["ink"], 0))
+    glyph.putalpha(resized_mask)
+    canvas.paste(glyph, (left, top), glyph)
+    return True
+
+
+def _load_dashboard_icon_mask(kind):
+    filename = DASHBOARD_ICON_FILES.get(kind)
+    if filename is None:
+        return None
+    path = Path(__file__).with_name(DASHBOARD_ICON_DIR_NAME) / filename
+    try:
+        with safe_open_image(path, limits=DASHBOARD_ICON_LIMITS) as source:
+            if source.size != (64, 64):
+                raise ValueError("dashboard icon dimensions are invalid")
+            return source.convert("RGBA").getchannel("A").copy()
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning(
+            "Vehicle dashboard icon unavailable kind=%s type=%s",
+            kind,
+            type(exc).__name__,
+        )
+        return None
 
 
 def _load_vehicle_art():

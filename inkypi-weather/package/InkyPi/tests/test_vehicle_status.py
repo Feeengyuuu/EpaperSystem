@@ -1,4 +1,5 @@
 from copy import deepcopy
+import hashlib
 import json
 import sys
 import time
@@ -6,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image, ImageChops, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -1304,3 +1305,244 @@ def test_header_vehicle_is_visually_centered_between_long_identity_and_status(
     assert 50 <= top < bottom <= 96
     assert right - left >= 90
     assert abs(((left + right) / 2) - 400) <= 1
+
+
+def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
+    tmp_path,
+    monkeypatch,
+):
+    dark_vehicle = Image.new("RGBA", (160, 60), (0, 0, 0, 0))
+    dark_draw = ImageDraw.Draw(dark_vehicle)
+    dark_draw.rounded_rectangle((8, 10, 152, 50), radius=14, fill=(0, 0, 0, 255))
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def load_dark_vehicle(path, *args, **kwargs):
+        if Path(path).name == "vehicle.png":
+            return dark_vehicle.copy()
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", load_dark_vehicle)
+    image = _render_payload(
+        tmp_path,
+        monkeypatch,
+        _summary_v2(),
+        {
+            "language": "zh-CN",
+            "_inkypi_theme": {"mode": "night", "palette": {}},
+        },
+    )
+
+    palette = Image.new("P", (1, 1))
+    palette.putpalette(
+        (
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255,
+            0,
+            255,
+            0,
+        )
+        + (0, 0, 0) * 249
+    )
+    panel_image = image.quantize(
+        palette=palette,
+        dither=Image.Dither.NONE,
+    ).convert("RGB")
+    vehicle_box = (300, 50, 500, 96)
+    visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
+
+    assert visible is not None
+    assert visible[2] - visible[0] >= 110
+    assert visible[3] - visible[1] >= 34
+
+
+_DASHBOARD_ICON_ASSETS = (
+    "energy.png",
+    "security.png",
+    "climate.png",
+    "vehicle_info.png",
+    "tires.png",
+    "freshness.png",
+)
+
+
+@pytest.mark.parametrize("filename", _DASHBOARD_ICON_ASSETS)
+def test_dashboard_icon_assets_are_small_binary_alpha_img2_glyphs(filename):
+    path = Path(vehicle_module.__file__).with_name("dashboard_icons") / filename
+
+    assert path.is_file()
+    assert path.stat().st_size <= 64 * 1024
+    with Image.open(path) as source:
+        assert source.format == "PNG"
+        image = source.convert("RGBA")
+
+    assert image.size == (64, 64)
+    alpha = image.getchannel("A")
+    flattened_alpha = getattr(alpha, "get_flattened_data", alpha.getdata)
+    alpha_values = set(flattened_alpha())
+    assert alpha_values == {0, 255}
+    assert all(
+        alpha.getpixel(point) == 0
+        for point in ((0, 0), (63, 0), (0, 63), (63, 63))
+    )
+    left, top, right, bottom = alpha.getbbox()
+    assert 4 <= left < right <= 60
+    assert 4 <= top < bottom <= 60
+    visible_width = right - left
+    visible_height = bottom - top
+    assert max(visible_width, visible_height) >= 48
+    assert min(visible_width, visible_height) >= 24
+
+    flattened = getattr(image, "get_flattened_data", image.getdata)
+    visible = [pixel for pixel in flattened() if pixel[3] > 0]
+    assert len(visible) >= 450
+    assert not any(
+        red > 180 and green < 80 and blue > 170
+        for red, green, blue, _alpha in visible
+    )
+
+
+def test_dashboard_icon_assets_are_visually_distinct():
+    root = Path(vehicle_module.__file__).with_name("dashboard_icons")
+    digests = set()
+    for filename in _DASHBOARD_ICON_ASSETS:
+        with Image.open(root / filename) as source:
+            alpha = source.convert("RGBA").getchannel("A")
+        digests.add(hashlib.sha256(alpha.tobytes()).hexdigest())
+
+    assert len(digests) == len(_DASHBOARD_ICON_ASSETS)
+
+
+@pytest.mark.parametrize(
+    ("language", "theme_mode", "panel", "surface"),
+    [
+        ("zh-CN", "day", (242, 237, 228), (251, 249, 244)),
+        ("zh-CN", "night", (11, 16, 23), (22, 29, 38)),
+        ("en", "day", (242, 237, 228), (251, 249, 244)),
+        ("en", "night", (11, 16, 23), (22, 29, 38)),
+    ],
+)
+def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
+    tmp_path,
+    monkeypatch,
+    language,
+    theme_mode,
+    panel,
+    surface,
+):
+    settings = {
+        "language": language,
+        "_inkypi_theme": {"mode": theme_mode, "palette": {}},
+    }
+    full = _render_payload(tmp_path, monkeypatch, _summary_v2(), settings)
+    empty = _render_payload(tmp_path, monkeypatch, _null_v2_summary(), settings)
+    icon_boxes = (
+        ((58, 124, 78, 144), (78, 124, 84, 144)),
+        ((350, 124, 370, 144), (370, 124, 376, 144)),
+        ((580, 124, 600, 144), (600, 124, 606, 144)),
+        ((350, 290, 370, 310), (370, 290, 376, 310)),
+        ((580, 290, 600, 310), (600, 290, 606, 310)),
+    )
+
+    for icon_box, gap_box in icon_boxes:
+        full_icon = full.crop(icon_box)
+        empty_icon = empty.crop(icon_box)
+        visible = _visible_non_background_bbox(full, icon_box, panel)
+        assert visible is not None
+        visible_width = visible[2] - visible[0]
+        visible_height = visible[3] - visible[1]
+        assert max(visible_width, visible_height) >= 16
+        assert min(visible_width, visible_height) >= 10
+        assert ImageChops.difference(full_icon, empty_icon).getbbox() is None
+        gap = full.crop(gap_box)
+        gap_pixels = getattr(gap, "get_flattened_data", gap.getdata)
+        assert set(gap_pixels()) == {panel}
+
+    freshness_box = (40, 434, 56, 450)
+    freshness_gap_box = (56, 434, 62, 450)
+    freshness_visible = _visible_non_background_bbox(full, freshness_box, surface)
+    assert freshness_visible is not None
+    assert freshness_visible[2] - freshness_visible[0] >= 12
+    assert freshness_visible[3] - freshness_visible[1] >= 12
+    assert ImageChops.difference(
+        full.crop(freshness_box),
+        empty.crop(freshness_box),
+    ).getbbox() is None
+    freshness_gap = full.crop(freshness_gap_box)
+    freshness_gap_pixels = getattr(
+        freshness_gap,
+        "get_flattened_data",
+        freshness_gap.getdata,
+    )
+    assert set(freshness_gap_pixels()) == {surface}
+
+
+def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
+    tmp_path,
+    monkeypatch,
+):
+    real_safe_open_image = vehicle_module.safe_open_image
+    settings = {
+        "language": "zh-CN",
+        "_inkypi_theme": {"mode": "day", "palette": {}},
+    }
+    normal = _render_payload(
+        tmp_path,
+        monkeypatch,
+        _summary_v2(),
+        settings,
+    )
+
+    def fail_selected_icons(path, *args, **kwargs):
+        if Path(path).name in {"security.png", "freshness.png"}:
+            raise OSError("synthetic icon decode failure")
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", fail_selected_icons)
+    degraded = _render_payload(
+        tmp_path,
+        monkeypatch,
+        _summary_v2(),
+        settings,
+    )
+
+    def fail_all_dashboard_icons(path, *args, **kwargs):
+        if Path(path).parent.name == "dashboard_icons":
+            raise OSError("synthetic icon decode failure")
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", fail_all_dashboard_icons)
+    text_only = _render_payload(
+        tmp_path,
+        monkeypatch,
+        _summary_v2(),
+        settings,
+    )
+
+    assert degraded.mode == "RGB"
+    assert degraded.size == (800, 480)
+    assert read_source_provenance(degraded) is SourceProvenance.LIVE
+    for box in ((350, 122, 470, 145), (40, 432, 220, 455)):
+        assert ImageChops.difference(
+            degraded.crop(box),
+            text_only.crop(box),
+        ).getbbox() is None
+        assert ImageChops.difference(
+            normal.crop(box),
+            degraded.crop(box),
+        ).getbbox() is not None
