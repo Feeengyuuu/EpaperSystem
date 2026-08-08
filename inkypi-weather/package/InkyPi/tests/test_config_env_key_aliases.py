@@ -621,6 +621,7 @@ def test_injected_runtime_paths_bind_one_identity_without_changing_legacy_aliase
     legacy_aliases = (
         Config.config_file,
         Config.current_image_file,
+        Config.display_revision_file,
         Config.plugin_image_dir,
     )
 
@@ -629,10 +630,12 @@ def test_injected_runtime_paths_bind_one_identity_without_changing_legacy_aliase
     assert config.runtime_paths is paths
     assert Path(config.config_file) == paths.config_file
     assert Path(config.current_image_file) == paths.current_image_file
+    assert Path(config.display_revision_file) == paths.display_revision_file
     assert Path(config.plugin_image_dir) == paths.plugin_image_dir
     assert (
         Config.config_file,
         Config.current_image_file,
+        Config.display_revision_file,
         Config.plugin_image_dir,
     ) == legacy_aliases
 

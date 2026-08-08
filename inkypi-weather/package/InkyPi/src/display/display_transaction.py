@@ -191,6 +191,7 @@ class DisplayTransaction:
         *,
         display_dir,
         compatibility_image_path,
+        revision_marker_path=None,
         runtime_state_store,
     ):
         self.manager = manager
@@ -198,6 +199,9 @@ class DisplayTransaction:
         self.objects_dir = self.display_dir / OBJECTS_DIR_NAME
         self.manifest_path = self.display_dir / MANIFEST_NAME
         self.compatibility_image_path = Path(compatibility_image_path)
+        self.revision_marker_path = (
+            None if revision_marker_path is None else Path(revision_marker_path)
+        )
         self.runtime_state = runtime_state_store
         self._lock = threading.RLock()
         self.display_dir.mkdir(parents=True, exist_ok=True)
@@ -277,6 +281,7 @@ class DisplayTransaction:
                 instance_uuid=self._instance_uuid(prepared.logical_target),
                 changed_at=commit.committed_at,
             )
+            self._publish_revision_marker(prepared.commit_id)
             self._publish_compatibility_image(prepared.image_path)
             self._prune_objects(current_path=prepared.image_path)
             return commit
@@ -485,6 +490,7 @@ class DisplayTransaction:
                 current.commit_id,
                 instance_uuid=self._instance_uuid(current.logical_target),
             )
+            self._publish_revision_marker(current.commit_id)
             self._prune_objects(current_path=current.image_path)
             self._publish_compatibility_image(current.image_path)
             return current
@@ -553,6 +559,23 @@ class DisplayTransaction:
             logger.exception(
                 "Display manifest committed, but compatibility image publication failed: %s",
                 self.compatibility_image_path,
+            )
+
+    def _publish_revision_marker(self, commit_id: str) -> None:
+        """Wake read-only sidecars without coupling display success to the cloud."""
+
+        if self.revision_marker_path is None:
+            return
+        try:
+            atomic_write_bytes(
+                self.revision_marker_path,
+                f"{commit_id}\n".encode("ascii"),
+                mode=0o644,
+            )
+        except OSError:
+            logger.exception(
+                "Display commit succeeded, but revision marker publication failed: %s",
+                self.revision_marker_path,
             )
 
     def _prune_objects(

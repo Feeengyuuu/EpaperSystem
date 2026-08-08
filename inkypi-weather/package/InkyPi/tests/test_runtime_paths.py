@@ -19,6 +19,7 @@ PATH_ENV_KEYS = (
     "INKYPI_ENV_FILE",
     "INKYPI_DISPLAY_DIR",
     "INKYPI_CURRENT_IMAGE_FILE",
+    "INKYPI_DISPLAY_REVISION_FILE",
     "INKYPI_PLUGIN_IMAGE_DIR",
     "INKYPI_FLASK_SECRET_FILE",
 )
@@ -43,6 +44,7 @@ def test_production_defaults_are_external_and_complete(monkeypatch):
     assert paths.env_file == Path("/etc/inkypi/inkypi.env")
     assert paths.display_dir == Path("/var/lib/inkypi/display")
     assert paths.current_image_file == Path("/var/lib/inkypi/display/current_image.png")
+    assert paths.display_revision_file == Path("/run/inkypi/display_revision")
     assert paths.plugin_image_dir == Path("/var/lib/inkypi/plugins")
     assert paths.flask_secret_file == Path("/var/lib/inkypi/config/flask_secret")
     assert "/opt/inkypi/current" not in str(paths.config_file).replace("\\", "/")
@@ -61,6 +63,7 @@ def test_development_defaults_use_device_dev_and_source_compatible_locations(tmp
     assert paths.env_file == dev_root.parent / ".env"
     assert paths.display_dir == dev_root / "static" / "display"
     assert paths.current_image_file == dev_root / "static" / "images" / "current_image.png"
+    assert paths.display_revision_file == dev_root / "static" / "display" / "display_revision"
     assert paths.plugin_image_dir == dev_root / "static" / "images" / "plugins"
     assert paths.flask_secret_file == dev_root / "config" / ".flask_secret"
 
@@ -78,6 +81,7 @@ def test_explicit_overrides_are_independent_of_cwd(tmp_path, monkeypatch):
         "INKYPI_ENV_FILE": override_root / "secrets" / "inkypi.env",
         "INKYPI_DISPLAY_DIR": override_root / "display",
         "INKYPI_CURRENT_IMAGE_FILE": override_root / "published" / "current.png",
+        "INKYPI_DISPLAY_REVISION_FILE": override_root / "published" / "revision",
         "INKYPI_PLUGIN_IMAGE_DIR": override_root / "plugins",
         "INKYPI_FLASK_SECRET_FILE": override_root / "secrets" / "flask",
     }
@@ -96,6 +100,7 @@ def test_explicit_overrides_are_independent_of_cwd(tmp_path, monkeypatch):
     assert first.env_file == overrides["INKYPI_ENV_FILE"]
     assert first.display_dir == overrides["INKYPI_DISPLAY_DIR"]
     assert first.current_image_file == overrides["INKYPI_CURRENT_IMAGE_FILE"]
+    assert first.display_revision_file == overrides["INKYPI_DISPLAY_REVISION_FILE"]
     assert first.plugin_image_dir == overrides["INKYPI_PLUGIN_IMAGE_DIR"]
     assert first.flask_secret_file == overrides["INKYPI_FLASK_SECRET_FILE"]
 

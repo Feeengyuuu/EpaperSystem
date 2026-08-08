@@ -97,6 +97,49 @@ def display_transaction(tmp_path):
     return transaction, manager, runtime_state
 
 
+def test_commit_publishes_revision_marker(tmp_path):
+    display_dir = tmp_path / "display"
+    revision_marker = tmp_path / "run" / "display_revision"
+    revision_marker.parent.mkdir()
+    transaction = DisplayTransaction(
+        FakeManager(),
+        display_dir=display_dir,
+        compatibility_image_path=display_dir / "current_image.png",
+        revision_marker_path=revision_marker,
+        runtime_state_store=RuntimeStateStore(tmp_path / "runtime.json"),
+    )
+
+    committed = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+
+    assert revision_marker.read_text(encoding="ascii") == f"{committed.commit_id}\n"
+
+
+def test_revision_marker_failure_does_not_invalidate_commit(tmp_path, monkeypatch):
+    display_dir = tmp_path / "display"
+    transaction = DisplayTransaction(
+        FakeManager(),
+        display_dir=display_dir,
+        compatibility_image_path=display_dir / "current_image.png",
+        revision_marker_path=tmp_path / "run" / "display_revision",
+        runtime_state_store=RuntimeStateStore(tmp_path / "runtime.json"),
+    )
+    monkeypatch.setattr(
+        transaction_module,
+        "atomic_write_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read-only marker")),
+    )
+
+    committed = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+
+    assert transaction.current().commit_id == committed.commit_id
+
+
 def test_hardware_failure_keeps_previous_manifest(display_transaction):
     transaction, manager, _runtime_state = display_transaction
     first = transaction.commit(
@@ -202,6 +245,29 @@ def test_recover_resubmits_last_manifest_after_newer_orphan(display_transaction)
     assert snapshot.display_state == "committed"
     assert snapshot.display_commit_id == first.commit_id
     assert snapshot.displayed_instance_uuid == "one"
+
+
+def test_recover_republishes_revision_marker(tmp_path):
+    display_dir = tmp_path / "display"
+    revision_marker = tmp_path / "run" / "display_revision"
+    revision_marker.parent.mkdir()
+    transaction = DisplayTransaction(
+        FakeManager(),
+        display_dir=display_dir,
+        compatibility_image_path=display_dir / "current_image.png",
+        revision_marker_path=revision_marker,
+        runtime_state_store=RuntimeStateStore(tmp_path / "runtime.json"),
+    )
+    committed = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+    revision_marker.unlink()
+
+    recovered = transaction.recover(task_context=_context())
+
+    assert recovered.commit_id == committed.commit_id
+    assert revision_marker.read_text(encoding="ascii") == f"{committed.commit_id}\n"
 
 
 def test_recover_without_valid_manifest_stays_not_ready(display_transaction):

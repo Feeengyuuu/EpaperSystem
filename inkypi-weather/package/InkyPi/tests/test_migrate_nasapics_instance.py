@@ -171,6 +171,7 @@ def _runtime_paths(tmp_path, *, release_id="candidate"):
         env_file=tmp_path / "inkypi.env",
         display_dir=tmp_path / "display",
         current_image_file=tmp_path / "display" / "current.png",
+        display_revision_file=tmp_path / "display" / "display_revision",
         plugin_image_dir=tmp_path / "plugins",
         flask_secret_file=tmp_path / "config" / "flask_secret",
     )

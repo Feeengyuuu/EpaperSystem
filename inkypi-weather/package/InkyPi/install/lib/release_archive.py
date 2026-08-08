@@ -62,13 +62,13 @@ def is_runtime_plugin_cache(path: PurePath) -> bool:
 
 
 def is_runtime_display_image(path: PurePath) -> bool:
-    """Return whether a member is the mutable last-displayed frame."""
+    """Return whether a member belongs to mutable display runtime state."""
 
-    return tuple(part.casefold() for part in path.parts) == (
-        "src",
-        "static",
-        "images",
-        "current_image.png",
+    parts = tuple(part.casefold() for part in path.parts)
+    return parts == (
+        "src", "static", "images", "current_image.png"
+    ) or parts[:3] == (
+        "src", "static", "display"
     )
 
 

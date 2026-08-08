@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {
+      "background": "#f2ede4",
+      "accent": "#b4362c"
+    },
+    "night": {
+      "background": "#0b1017",
+      "accent": "#f46f60"
+    }
+  },
+  "display_name": "Vehicle Status",
+  "id": "vehicle_status",
+  "class": "VehicleStatus",
+  "refresh_on_display": false,
+  "recommended_refresh": {
+    "interval": 10800
+  },
+  "repository": "local://epaper-vehicle-bridge"
+}

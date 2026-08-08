@@ -15,6 +15,7 @@ class FakeDeviceConfig:
     def __init__(self, tmp_path):
         self.display_dir = tmp_path / "display"
         self.current_image_file = self.display_dir / "current_image.png"
+        self.display_revision_file = tmp_path / "run" / "display_revision"
         self.data_dir = tmp_path / "data"
         self.display_dir.mkdir()
         self.data_dir.mkdir()
@@ -83,6 +84,15 @@ def test_display_manager_only_publishes_current_image_after_hardware_success(tmp
 
     assert Path(manager.device_config.current_image_file).read_bytes() == before
     assert manager.transaction.current().commit_id == first.commit_id
+
+
+def test_display_manager_wires_the_runtime_revision_marker(tmp_path):
+    manager = _manager(tmp_path)
+
+    assert (
+        manager.transaction.revision_marker_path
+        == manager.device_config.display_revision_file
+    )
 
 
 def test_prepare_image_applies_pipeline_without_mutating_source(tmp_path):

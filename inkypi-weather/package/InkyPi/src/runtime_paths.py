@@ -19,6 +19,7 @@ _PATH_ENV_KEYS = (
     "INKYPI_ENV_FILE",
     "INKYPI_DISPLAY_DIR",
     "INKYPI_CURRENT_IMAGE_FILE",
+    "INKYPI_DISPLAY_REVISION_FILE",
     "INKYPI_PLUGIN_IMAGE_DIR",
     "INKYPI_FLASK_SECRET_FILE",
 )
@@ -56,6 +57,7 @@ class RuntimePaths:
     env_file: Path
     display_dir: Path
     current_image_file: Path
+    display_revision_file: Path
     plugin_image_dir: Path
     flask_secret_file: Path
 
@@ -134,6 +136,11 @@ class RuntimePaths:
                 env_file=env_file,
                 display_dir=display_dir,
                 current_image_file=current_image_file,
+                display_revision_file=_path_override(
+                    "INKYPI_DISPLAY_REVISION_FILE",
+                    display_dir / "display_revision",
+                    require_absolute=True,
+                ),
                 plugin_image_dir=plugin_image_dir,
                 flask_secret_file=flask_secret_file,
             )
@@ -170,6 +177,11 @@ class RuntimePaths:
             current_image_file=_path_override(
                 "INKYPI_CURRENT_IMAGE_FILE",
                 display_dir / "current_image.png",
+                require_absolute=True,
+            ),
+            display_revision_file=_path_override(
+                "INKYPI_DISPLAY_REVISION_FILE",
+                Path("/run/inkypi/display_revision"),
                 require_absolute=True,
             ),
             plugin_image_dir=_path_override(

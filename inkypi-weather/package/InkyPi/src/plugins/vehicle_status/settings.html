@@ -1,0 +1,45 @@
+<div style="margin-bottom:14px;">
+  <div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:1em;color:var(--text-primary);font-weight:500;background:var(--bg-secondary);padding:12px 14px;border-left:3px solid var(--border-color);border-radius:2px;line-height:1.45;max-width:100%;">
+    Read-only vehicle status through the private Epaper Vehicle Bridge. This plugin never wakes the vehicle, sends commands, or requests location data.
+  </div>
+</div>
+
+<div class="form-group">
+  <label class="form-label">Bridge Token</label>
+  <small>Store it in API Keys as <strong>EPAPER_VEHICLE_BRIDGE_TOKEN</strong>. The token is never saved in playlist settings or the plugin cache.</small>
+</div>
+
+<div class="form-group">
+  <label for="cacheSeconds" class="form-label">Local Cache Seconds</label>
+  <input type="number" id="cacheSeconds" name="cacheSeconds" class="form-input" value="900" min="0" max="86400">
+  <small>900 seconds avoids duplicate API reads during previews. The recommended playlist interval is 3 hours.</small>
+</div>
+
+<div class="form-group">
+  <label for="distanceUnit" class="form-label">Distance Unit</label>
+  <select id="distanceUnit" name="distanceUnit" class="form-input">
+    <option value="auto">Vehicle default</option>
+    <option value="mi">Miles</option>
+    <option value="km">Kilometers</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label">
+    <input type="checkbox" id="showClimate" name="showClimate" value="true" checked>
+    Show cabin and outside temperature
+  </label>
+  <input type="hidden" name="showClimate" value="false">
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (loadPluginSettings) {
+      document.getElementById('cacheSeconds').value = pluginSettings.cacheSeconds || '900';
+      document.getElementById('distanceUnit').value = pluginSettings.distanceUnit || 'auto';
+      const showClimate = pluginSettings.showClimate;
+      document.getElementById('showClimate').checked = showClimate == null
+        || ['true', 'on', '1', 'yes'].includes(String(pluginSettings.showClimate).toLowerCase());
+    }
+  });
+</script>

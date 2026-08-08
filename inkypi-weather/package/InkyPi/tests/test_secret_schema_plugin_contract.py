@@ -66,6 +66,7 @@ def test_required_provider_contracts_are_present_even_without_a_plugin_snapshot(
         "TELEGRAM_API_ID",
         "TELEGRAM_API_HASH",
         "TELEGRAM_SESSION_PATH",
+        "EPAPER_VEHICLE_BRIDGE_TOKEN",
         "BAMBU_ACCESS_CODE",
         "BLIZZARD_CLIENT_ID",
         "BLIZZARD_CLIENT_SECRET",

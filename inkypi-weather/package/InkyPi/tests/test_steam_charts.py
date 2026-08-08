@@ -1,4 +1,6 @@
+import base64
 import sys
+from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -37,6 +39,86 @@ class FakeDeviceConfig:
 
 def _plugin():
     return SteamCharts({"id": "steam_charts"})
+
+
+_FINAL_IMAGE_COVER_COLOR = (211, 59, 49)
+_LEFT_COMPACT_COVER_BOX = (40, 120, 143, 175)
+_LEFT_COMPACT_TITLE_WITH_COVER_BOX = (143, 120, 290, 175)
+_LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX = (42, 120, 290, 175)
+
+
+def _solid_cover_data_uri():
+    output = BytesIO()
+    Image.new("RGB", (80, 30), _FINAL_IMAGE_COVER_COLOR).save(output, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def _render_final_compact_title(name, secondary_name="", image=""):
+    plugin = _plugin()
+
+    def fake_fetch(_source, _count):
+        return [
+            {
+                "rank": 1,
+                "app_id": 570,
+                "name": name,
+                "secondary_name": secondary_name,
+                "image": image,
+                "current_players_fmt": "123,456",
+                "peak_players_fmt": "234,567",
+                "change_24h_fmt": "+1.0%",
+                "sparkline_svg": "",
+            }
+        ]
+
+    plugin._fetch_games = fake_fetch
+    plugin._apply_store_metadata = lambda games, include_images: None
+    plugin._write_combined_context = lambda *args, **kwargs: None
+    plugin.render_image = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("PIL-first rendering should not call the HTML renderer")
+    )
+    return plugin.generate_image(
+        {
+            "mode": "live_overview",
+            "itemsCount": "1",
+            "showImages": "true",
+            "themeMode": "day",
+            "preferPilFallback": "true",
+        },
+        FakeDeviceConfig(),
+    )
+
+
+def _pixel_bbox(image, box, predicate):
+    points = [
+        (x, y)
+        for y in range(box[1], box[3])
+        for x in range(box[0], box[2])
+        if predicate(image.getpixel((x, y)))
+    ]
+    assert points, f"expected matching pixels inside {box}"
+    return (
+        min(x for x, _y in points),
+        min(y for _x, y in points),
+        max(x for x, _y in points) + 1,
+        max(y for _x, y in points) + 1,
+    )
+
+
+def _title_ink_bbox(image, box):
+    return _pixel_bbox(image, box, lambda pixel: max(pixel) < 90)
+
+
+def _cover_bbox(image):
+    return _pixel_bbox(
+        image,
+        _LEFT_COMPACT_COVER_BOX,
+        lambda pixel: pixel == _FINAL_IMAGE_COVER_COLOR,
+    )
+
+
+def _vertical_midline_twice(box):
+    return box[1] + box[3]
 
 
 def test_scrape_trending_extracts_games_and_formats_players():
@@ -430,6 +512,59 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.getpixel((0, 0)) == (0, 0, 0)
     assert image.info["inkypi_skip_cache"] is True
     assert image.info["inkypi_visual_fallback"] == "steam_charts_pillow"
+
+
+def test_generate_image_centers_english_title_on_loaded_cover_midline():
+    image = _render_final_compact_title("Dota 2", image=_solid_cover_data_uri())
+
+    title_bbox = _title_ink_bbox(image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
+    cover_bbox = _cover_bbox(image)
+
+    assert abs(_vertical_midline_twice(title_bbox) - _vertical_midline_twice(cover_bbox)) <= 4
+
+
+def test_generate_image_centers_bilingual_title_block_on_loaded_cover_midline():
+    image = _render_final_compact_title(
+        "\u5200\u5854",
+        secondary_name="Dota 2",
+        image=_solid_cover_data_uri(),
+    )
+
+    title_bbox = _title_ink_bbox(image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
+    cover_bbox = _cover_bbox(image)
+
+    assert abs(_vertical_midline_twice(title_bbox) - _vertical_midline_twice(cover_bbox)) <= 4
+
+
+def test_generate_image_keeps_chinese_title_top_aligned_with_or_without_cover():
+    loaded_image = _render_final_compact_title("\u5200\u5854", image=_solid_cover_data_uri())
+    missing_image = _render_final_compact_title("\u5200\u5854", image="")
+
+    loaded_title_bbox = _title_ink_bbox(loaded_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
+    missing_title_bbox = _title_ink_bbox(
+        missing_image,
+        _LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX,
+    )
+
+    assert loaded_title_bbox[1] == missing_title_bbox[1]
+
+
+def test_generate_image_does_not_center_title_for_missing_or_broken_cover():
+    loaded_image = _render_final_compact_title("Dota 2", image=_solid_cover_data_uri())
+    missing_image = _render_final_compact_title("Dota 2", image="")
+    broken_image = _render_final_compact_title(
+        "Dota 2",
+        image="data:image/png;base64,not-a-valid-image",
+    )
+
+    loaded_title_bbox = _title_ink_bbox(loaded_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
+    missing_title_bbox = _title_ink_bbox(
+        missing_image,
+        _LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX,
+    )
+    broken_title_bbox = _title_ink_bbox(broken_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
+
+    assert missing_title_bbox[1] == broken_title_bbox[1] < loaded_title_bbox[1]
 
 
 def test_steam_charts_css_prefers_embedded_yahei_font():

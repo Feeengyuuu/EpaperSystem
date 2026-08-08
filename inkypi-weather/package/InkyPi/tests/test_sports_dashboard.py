@@ -16557,6 +16557,7 @@ def test_theme_only_injected_palettes_use_cached_stubs_without_provider_and_rese
     plugin._should_show_offseason_hub_panel = lambda *_args, **_kwargs: False
     settings = {
         "sportsDashboardTheme": "night",
+        "footballPanelMode": "worldcup",
         "localTimezone": "America/Los_Angeles",
         "worldCupTopHeight": "208",
         "valveEsportsEnabled": "false",

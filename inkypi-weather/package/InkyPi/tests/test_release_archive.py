@@ -70,9 +70,11 @@ def test_release_archive_excludes_hidden_plugin_caches_and_current_display(
         / ".lol_info_cache"
     )
     static_images = source / "src" / "static" / "images"
+    static_display = source / "src" / "static" / "display"
     context_cache.mkdir(parents=True)
     plugin_cache.mkdir(parents=True)
     static_images.mkdir(parents=True)
+    (static_display / "objects").mkdir(parents=True)
     (context_cache / "plugin.json").write_text(
         '{"runtime":true}\n',
         encoding="utf-8",
@@ -83,6 +85,9 @@ def test_release_archive_excludes_hidden_plugin_caches_and_current_display(
     )
     (static_images / "current_image.png").write_bytes(b"runtime-display")
     (static_images / "inkypi.png").write_bytes(b"packaged-logo")
+    (static_display / "display_revision").write_text("commit-id\n", encoding="ascii")
+    (static_display / "display_manifest.json").write_text("{}\n", encoding="utf-8")
+    (static_display / "objects" / "commit-id.png").write_bytes(b"runtime-object")
     artifact = tmp_path / "release.zip"
 
     build_release_archive(source, artifact)
@@ -91,6 +96,7 @@ def test_release_archive_excludes_hidden_plugin_caches_and_current_display(
         names = set(archive.namelist())
     assert "src/static/images/inkypi.png" in names
     assert "src/static/images/current_image.png" not in names
+    assert not any(name.startswith("src/static/display/") for name in names)
     assert not any(name.startswith("src/plugins/.context_cache/") for name in names)
     assert not any(
         name.startswith("src/plugins/lol_info/.lol_info_cache/")

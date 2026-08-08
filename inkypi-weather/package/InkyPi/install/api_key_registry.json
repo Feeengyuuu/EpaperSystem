@@ -628,6 +628,18 @@
       "value_type": "secret"
     },
     {
+      "key": "EPAPER_VEHICLE_BRIDGE_TOKEN",
+      "service": "Epaper Vehicle Bridge",
+      "features": [
+        "Vehicle Status"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://epaper-vehicle-bridge.superxfy.workers.dev/",
+      "notes": "Private read-only bridge token; never place it in playlist settings.",
+      "value_type": "secret"
+    },
+    {
       "key": "TWITCH_CLIENT_ID",
       "service": "Twitch application client ID",
       "features": [
