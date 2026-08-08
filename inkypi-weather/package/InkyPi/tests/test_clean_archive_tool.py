@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import os
 import subprocess
 import tarfile
 from pathlib import Path
@@ -109,3 +110,25 @@ def test_verifier_absolutizes_external_interpreter_before_archive_cwd(tmp_path, 
     tool.verify_clean_archive(REPO_ROOT, Path("python.exe"), [], temp_parent=tmp_path)
 
     assert seen == [python.resolve(), python.resolve()]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path headroom contract")
+def test_clean_archive_temp_layout_reserves_nested_venv_headroom():
+    tool = _load_tool()
+    system_temp = Path(os.environ["LOCALAPPDATA"]) / "Temp"
+    owned_root = system_temp / f"{tool.OWNED_TEMP_PREFIX}{'x' * 8}"
+    process_temp = owned_root / tool.PROCESS_TEMP_NAME
+    nested_python = (
+        process_temp
+        / f"inkypi-basetemp-contract-{'x' * 8}"
+        / "relative-basetemp"
+        / f"headroom_for_nested_windows_venv-{'x' * 32}"
+        / "opt"
+        / "releases"
+        / "current-release"
+        / "venv_inkypi"
+        / "Scripts"
+        / "python.exe"
+    )
+
+    assert len(str(nested_python)) <= 240

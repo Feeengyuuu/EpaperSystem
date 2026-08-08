@@ -16,6 +16,9 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 PROJECT_RELATIVE = Path("inkypi-weather/package/InkyPi")
+OWNED_TEMP_PREFIX = "ica-"
+EXTRACTED_ROOT_NAME = "s"
+PROCESS_TEMP_NAME = "t"
 PYTHON_VERSION_CODE = (
     "import json, sys; "
     "print(json.dumps([sys.version_info.major, sys.version_info.minor, "
@@ -142,7 +145,7 @@ def run_archive_tests(
     pytest_args: list[str],
 ) -> subprocess.CompletedProcess[str]:
     project_root = archive_root / PROJECT_RELATIVE
-    process_temp = archive_root / ".pytest-temp"
+    process_temp = archive_root.parent / PROCESS_TEMP_NAME
     process_temp.mkdir()
     environment = os.environ.copy()
     environment.update(
@@ -184,10 +187,10 @@ def verify_clean_archive(
     python = resolve_python(python)
     require_python_311(python)
     parent = str(temp_parent.resolve()) if temp_parent is not None else None
-    with tempfile.TemporaryDirectory(prefix="inkypi-clean-archive-", dir=parent) as owned_temp:
+    with tempfile.TemporaryDirectory(prefix=OWNED_TEMP_PREFIX, dir=parent) as owned_temp:
         owned_root = Path(owned_temp)
         archive_path = owned_root / "source.tar"
-        extracted_root = owned_root / "source"
+        extracted_root = owned_root / EXTRACTED_ROOT_NAME
         create_head_archive(repo_root, archive_path)
         extract_archive(archive_path, extracted_root)
         project_root = extracted_root / PROJECT_RELATIVE
