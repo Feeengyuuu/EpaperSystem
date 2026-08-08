@@ -1,0 +1,23 @@
+{
+  "name": "@epapersystem/vehicle-auth-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "cf:types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run cf:types && npm run typecheck && npm test && wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@types/node": "latest",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.118.0"
+  },
+  "overrides": {
+    "undici": "7.29.0"
+  }
+}
