@@ -27,22 +27,52 @@ from utils.safe_image import ImageLimits, safe_open_image
 logger = logging.getLogger(__name__)
 
 BRIDGE_ORIGIN = "https://epaper-vehicle-bridge.superxfy.workers.dev"
-BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}/api/vehicle-summary"
+BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}/api/vehicle-summary?schema_version=2"
 BRIDGE_TOKEN_ENV = "EPAPER_VEHICLE_BRIDGE_TOKEN"
 SUMMARY_MAX_BYTES = 64 * 1024
 CACHE_MAX_BYTES = 64 * 1024
-CACHE_FILE_NAME = "summary-v1.json"
+CACHE_FILE_NAME = "summary-v2.json"
+LEGACY_CACHE_FILE_NAME = "summary-v1.json"
 VEHICLE_IMAGE_NAME = "vehicle.png"
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
-VEHICLE_ART_BOX = (350, 50, 620, 165)
-HEADER_IDENTITY_RIGHT = VEHICLE_ART_BOX[0] - 16
+VEHICLE_ART_BOX = (300, 50, 500, 96)
+HEADER_IDENTITY_RIGHT = 300
 
 _CACHE_LOCK = threading.RLock()
-_TOP_KEYS = {"schema_version", "served_at", "snapshot", "vehicle", "battery", "climate", "closures"}
+_TOP_KEYS_V1 = {
+    "schema_version",
+    "served_at",
+    "snapshot",
+    "vehicle",
+    "battery",
+    "climate",
+    "closures",
+}
+_TOP_KEYS_V2 = {
+    "schema_version",
+    "served_at",
+    "snapshot",
+    "vehicle",
+    "battery",
+    "charging",
+    "climate",
+    "closures",
+    "tires",
+    "software_update",
+    "preferences",
+}
 _SNAPSHOT_KEYS = {"captured_at", "freshness", "age_seconds", "vehicle_connectivity"}
-_VEHICLE_KEYS = {"key", "display_name", "model", "trim", "locked", "software_version", "odometer"}
-_BATTERY_KEYS = {
+_VEHICLE_KEYS_V1 = {
+    "key",
+    "display_name",
+    "model",
+    "trim",
+    "locked",
+    "software_version",
+    "odometer",
+}
+_BATTERY_KEYS_V1 = {
     "level_percent",
     "estimated_range",
     "charging_state",
@@ -50,8 +80,111 @@ _BATTERY_KEYS = {
     "time_to_full_minutes",
     "power_kw",
 }
-_CLIMATE_KEYS = {"inside_temp_c", "outside_temp_c", "is_climate_on"}
-_CLOSURE_KEYS = {"all_closed", "open", "charge_port_open"}
+_CLIMATE_KEYS_V1 = {"inside_temp_c", "outside_temp_c", "is_climate_on"}
+_CLOSURE_KEYS_V1 = {"all_closed", "open", "charge_port_open"}
+_VEHICLE_KEYS_V2 = _VEHICLE_KEYS_V1 | {
+    "exterior_color",
+    "wheel_type",
+    "roof_color",
+    "charge_port_type",
+    "efficiency_package",
+    "rear_seat_heaters",
+    "right_hand_drive",
+    "europe_vehicle",
+    "sunroof_installed",
+    "sentry_mode",
+    "service_mode",
+    "valet_mode",
+    "center_display_state",
+    "speed_limit_mode",
+}
+_SPEED_LIMIT_MODE_KEYS = {"active", "limit"}
+_BATTERY_KEYS_V2 = {
+    "level_percent",
+    "usable_level_percent",
+    "rated_range",
+    "estimated_range",
+}
+_CHARGING_KEYS_V2 = {
+    "state",
+    "charge_limit_percent",
+    "time_to_full_minutes",
+    "power_kw",
+    "energy_added_kwh",
+    "rate",
+    "actual_current_a",
+    "voltage_v",
+    "phases",
+    "requested_current_a",
+    "max_current_a",
+    "enabled",
+    "cable_type",
+    "fast_charger_present",
+    "fast_charger_type",
+    "port_latch",
+    "port_cold_weather_mode",
+    "preconditioning",
+    "not_enough_power_to_heat",
+    "supercharger_trip_planner",
+    "scheduled",
+}
+_SCHEDULED_KEYS = {"pending", "mode"}
+_CLIMATE_KEYS_V2 = _CLIMATE_KEYS_V1 | {
+    "driver_target_temp_c",
+    "passenger_target_temp_c",
+    "keeper_mode",
+    "defrost_mode",
+    "rear_defroster_on",
+    "battery_heater_on",
+    "wiper_heater_on",
+    "hvac_auto_mode",
+    "fan_status",
+    "steering_wheel_heat_level",
+    "steering_wheel_heat_auto",
+    "seat_heaters",
+    "seat_cooling",
+    "auto_seat_climate",
+    "cabin_overheat",
+}
+_SEAT_HEATER_KEYS = {
+    "front_left",
+    "front_right",
+    "rear_left",
+    "rear_right",
+    "rear_center",
+}
+_FRONT_SEAT_KEYS = {"front_left", "front_right"}
+_CABIN_OVERHEAT_KEYS = {"mode", "temp_limit"}
+_CLOSURE_KEYS_V2 = _CLOSURE_KEYS_V1 | {"doors", "windows"}
+_DOOR_KEYS = {
+    "driver_front",
+    "driver_rear",
+    "passenger_front",
+    "passenger_rear",
+    "front_trunk",
+    "rear_trunk",
+}
+_WINDOW_KEYS = {
+    "driver_front",
+    "driver_rear",
+    "passenger_front",
+    "passenger_rear",
+}
+_TIRES_KEYS = {"pressures", "soft_warnings", "hard_warnings"}
+_TIRE_POSITIONS = {"front_left", "front_right", "rear_left", "rear_right"}
+_SOFTWARE_UPDATE_KEYS = {
+    "version",
+    "download_percent",
+    "install_percent",
+    "expected_duration_minutes",
+}
+_PREFERENCE_KEYS = {
+    "distance_unit",
+    "temperature_unit",
+    "pressure_unit",
+    "charge_display_unit",
+    "use_24_hour_time",
+}
 _MEASUREMENT_KEYS = {"value", "unit"}
 _FRESHNESS = {"live", "fresh_cache", "stale_cache"}
 _CONNECTIVITY = {"online", "asleep", "offline", "unknown", "unavailable", "in_service"}
@@ -66,6 +199,370 @@ _OPEN_CLOSURES = {
     "driver_rear_window",
     "passenger_front_window",
     "passenger_rear_window",
+}
+
+_UI_TEXT = {
+    "en": {
+        "vehicle_fallback": "Vehicle",
+        "energy": "ENERGY",
+        "rated_range": "RATED RANGE",
+        "estimated_range": "EST. RANGE",
+        "usable": "USABLE {value}%",
+        "limit_left": "LIMIT / LEFT",
+        "power_added": "POWER / ADDED",
+        "input": "INPUT",
+        "request_max": "REQUEST / MAX",
+        "rate": "RATE",
+        "status": "STATUS",
+        "limit": "LIMIT",
+        "time_left": "TIME LEFT",
+        "power": "POWER",
+        "security": "SECURITY",
+        "locked": "LOCKED",
+        "unlocked": "UNLOCKED",
+        "sentry": "SENTRY {value}",
+        "sentry_not_reported": "SENTRY NOT REPORTED",
+        "all_closed": "ALL CLOSED",
+        "open_count": "{count} OPEN",
+        "status_unknown": "STATUS UNKNOWN",
+        "all_access_secure": "ALL ACCESS POINTS SECURE",
+        "opening_incomplete": "OPENING DATA INCOMPLETE",
+        "more_open": "+{count} MORE",
+        "port_open": "PORT OPEN",
+        "port_closed": "PORT CLOSED",
+        "service_on": "SERVICE ON",
+        "valet_on": "VALET ON",
+        "speed_limit": "LIMIT {value}",
+        "modes_off": "MODES OFF",
+        "modes_unknown": "MODES --",
+        "climate": "CLIMATE",
+        "hvac_on": "HVAC ON",
+        "hvac_off": "HVAC OFF",
+        "inside_outside": "{inside} IN / {outside} OUT",
+        "target": "TARGET D {driver} / P {passenger}",
+        "auto_fan_defrost": "AUTO {auto} / FAN {fan} / DEF {defrost}",
+        "rear_defrost": "REAR DEF",
+        "battery_heat": "BAT HEAT",
+        "wiper_heat": "WIPER HEAT",
+        "wheel_heat": "WHEEL {level}",
+        "seat_heat": "SEAT {value}",
+        "seat_cool": "COOL {value}",
+        "overheat": "COP {mode}{limit}",
+        "no_active_climate": "NO ACTIVE HEAT / COOL",
+        "vehicle": "VEHICLE",
+        "display": "DISPLAY {value}",
+        "odometer": "ODOMETER",
+        "software": "SOFTWARE",
+        "update": "UPDATE",
+        "progress": "PROGRESS",
+        "body": "BODY",
+        "body_wheel": "BODY/WHEEL",
+        "wheels": "WHEELS",
+        "config": "CONFIG",
+        "equipment": "EQUIPMENT",
+        "progress_value": "D {download} / I {install} / {duration}",
+        "rhd": "RHD",
+        "lhd": "LHD",
+        "eu": "EU",
+        "non_eu": "NON-EU",
+        "tires": "TIRES",
+        "tire_fl": "FL",
+        "tire_fr": "FR",
+        "tire_rl": "RL",
+        "tire_rr": "RR",
+        "seat_front_left": "FL",
+        "seat_front_right": "FR",
+        "seat_rear_left": "RL",
+        "seat_rear_right": "RR",
+        "seat_rear_center": "RC",
+        "not_reported_v1": "NOT REPORTED BY V1",
+        "hard_warning": "HARD WARNING {positions}",
+        "low_pressure": "LOW PRESSURE {positions}",
+        "pressure_unknown": "STATUS UNKNOWN",
+        "pressure_partial": "PRESSURES PARTIAL",
+        "pressure_ok": "PRESSURES OK",
+        "updated": "UPDATED {age} AGO / {freshness}",
+        "read_only_footer": "READ ONLY / NO WAKE / NO COMMANDS / NO LOCATION",
+        "unknown": "UNKNOWN",
+        "none": "NONE",
+        "not_reported": "NOT REPORTED",
+        "reported": "REPORTED",
+        "enabled": "ENABLED",
+        "disabled": "DISABLED",
+        "heat_power_low": "HEAT PWR LOW",
+        "port_heat": "PORT HEAT",
+        "precondition": "PRECOND",
+        "fast_charge": "FAST {kind}",
+        "schedule": "SCHED {mode}",
+        "trip_plan": "TRIP PLAN",
+        "latch": "LATCH {state}",
+        "unit_kw": "KW",
+        "unit_kwh": "KWH",
+        "unit_amp": "A",
+        "unit_volt": "V",
+        "unit_phase": "P",
+        "unit_mile": "mi",
+        "unit_km": "km",
+        "unit_mph": "MI/H",
+        "unit_kph": "KM/H",
+        "unit_bar": "BAR",
+        "unit_psi": "PSI",
+        "unit_c": " C",
+        "unit_f": " F",
+        "age_seconds": "{value}S",
+        "age_minutes": "{value}M",
+        "age_hours": "{value}H",
+        "duration_minutes": "{value}M",
+        "duration_hours": "{hours}H {minutes}M",
+        "setup_footer": "Read-only / no wake / no commands / no location",
+        "connect_bridge_title": "CONNECT BRIDGE",
+        "connect_bridge_message": "Add {token} in API Keys.",
+        "status_old_title": "STATUS TOO OLD",
+        "status_old_message": "Refresh the bridge before trusting vehicle status.",
+        "status_unavailable_title": "STATUS UNAVAILABLE",
+        "status_unavailable_message": "No cached vehicle status is available yet.",
+        "no_cache_title": "NO CACHED STATUS",
+        "no_cache_message": "Refresh the plugin once after authorization.",
+    },
+    "zh-CN": {
+        "vehicle_fallback": "车辆",
+        "energy": "能源",
+        "rated_range": "标称续航",
+        "estimated_range": "预估续航",
+        "usable": "可用电量 {value}%",
+        "limit_left": "上限 / 剩余",
+        "power_added": "功率 / 已充",
+        "input": "输入",
+        "request_max": "请求 / 最大",
+        "rate": "速度",
+        "status": "状态",
+        "limit": "上限",
+        "time_left": "剩余时间",
+        "power": "功率",
+        "security": "安全",
+        "locked": "已锁车",
+        "unlocked": "未锁车",
+        "sentry": "哨兵 {value}",
+        "sentry_not_reported": "哨兵 未上报",
+        "all_closed": "全部关闭",
+        "open_count": "{count} 处开启",
+        "status_unknown": "状态未知",
+        "all_access_secure": "门窗均已关闭",
+        "opening_incomplete": "门窗数据不完整",
+        "more_open": "另 {count} 处",
+        "port_open": "充电口开启",
+        "port_closed": "充电口关闭",
+        "service_on": "维修模式",
+        "valet_on": "代客模式",
+        "speed_limit": "限速 {value}",
+        "modes_off": "特殊模式关闭",
+        "modes_unknown": "模式未知",
+        "climate": "温控",
+        "hvac_on": "温控已开",
+        "hvac_off": "温控已关",
+        "inside_outside": "车内 {inside} / 车外 {outside}",
+        "target": "目标 主 {driver} / 副 {passenger}",
+        "auto_fan_defrost": "自动 {auto} / 风量 {fan} / 除霜 {defrost}",
+        "rear_defrost": "后窗除霜",
+        "battery_heat": "电池加热",
+        "wiper_heat": "雨刷加热",
+        "wheel_heat": "方向盘 {level}",
+        "seat_heat": "座椅 {value}",
+        "seat_cool": "通风 {value}",
+        "overheat": "过热保护 {mode}{limit}",
+        "no_active_climate": "无主动温控",
+        "vehicle": "车辆",
+        "display": "屏幕 {value}",
+        "odometer": "里程",
+        "software": "软件",
+        "update": "更新",
+        "progress": "进度",
+        "body": "外观",
+        "body_wheel": "外观/轮毂",
+        "wheels": "轮毂",
+        "config": "配置",
+        "equipment": "装备",
+        "progress_value": "下 {download} / 装 {install} / {duration}",
+        "rhd": "右舵",
+        "lhd": "左舵",
+        "eu": "欧规",
+        "non_eu": "非欧规",
+        "tires": "轮胎",
+        "tire_fl": "左前",
+        "tire_fr": "右前",
+        "tire_rl": "左后",
+        "tire_rr": "右后",
+        "seat_front_left": "前左",
+        "seat_front_right": "前右",
+        "seat_rear_left": "后左",
+        "seat_rear_right": "后右",
+        "seat_rear_center": "后中",
+        "not_reported_v1": "V1 未上报",
+        "hard_warning": "严重告警 {positions}",
+        "low_pressure": "胎压偏低 {positions}",
+        "pressure_unknown": "状态未知",
+        "pressure_partial": "胎压数据不完整",
+        "pressure_ok": "胎压正常",
+        "updated": "{age}前更新 / {freshness}",
+        "read_only_footer": "只读 / 不唤醒 / 不读取位置 / 不发送指令",
+        "unknown": "未知",
+        "none": "无更新",
+        "not_reported": "未上报",
+        "reported": "已上报",
+        "enabled": "已启用",
+        "disabled": "已停用",
+        "heat_power_low": "加热功率不足",
+        "port_heat": "充电口加热",
+        "precondition": "电池预热",
+        "fast_charge": "快充 {kind}",
+        "schedule": "计划 {mode}",
+        "trip_plan": "超充行程规划",
+        "latch": "锁扣 {state}",
+        "unit_kw": "千瓦",
+        "unit_kwh": "千瓦时",
+        "unit_amp": "安",
+        "unit_volt": "伏",
+        "unit_phase": "相",
+        "unit_mile": "英里",
+        "unit_km": "公里",
+        "unit_mph": "英里/时",
+        "unit_kph": "公里/时",
+        "unit_bar": "巴",
+        "unit_psi": "PSI",
+        "unit_c": "°C",
+        "unit_f": "°F",
+        "age_seconds": "{value}秒",
+        "age_minutes": "{value}分",
+        "age_hours": "{value}小时",
+        "duration_minutes": "{value}分",
+        "duration_hours": "{hours}小时{minutes}分",
+        "setup_footer": "只读 / 不唤醒 / 不读取位置 / 不发送指令",
+        "connect_bridge_title": "连接车辆桥接",
+        "connect_bridge_message": "请在 API 密钥中添加 {token}。",
+        "status_old_title": "车辆状态已过期",
+        "status_old_message": "请刷新桥接后再使用车辆信息。",
+        "status_unavailable_title": "车辆状态不可用",
+        "status_unavailable_message": "当前没有可用的车辆状态缓存。",
+        "no_cache_title": "暂无车辆缓存",
+        "no_cache_message": "授权后请先刷新一次此插件。",
+    },
+}
+
+_ENUM_TEXT = {
+    "en": {
+        "connectivity": {
+            "online": "ONLINE",
+            "asleep": "ASLEEP",
+            "offline": "OFFLINE",
+            "unknown": "UNKNOWN",
+            "unavailable": "UNAVAILABLE",
+            "in_service": "IN SERVICE",
+        },
+        "freshness": {
+            "live": "LIVE",
+            "fresh_cache": "FRESH CACHE",
+            "stale_cache": "STALE CACHE",
+        },
+        "provider_compact": {
+            "midnightsilver": "SILV",
+            "colored": "BODY",
+            "uberturbine20": "20T",
+            "us": "US",
+            "installed": "REAR HT",
+            "not_installed": "NO SUN",
+            "my2021": "MY21",
+        },
+    },
+    "zh-CN": {
+        "connectivity": {
+            "online": "在线",
+            "asleep": "休眠",
+            "offline": "离线",
+            "unknown": "未知",
+            "unavailable": "不可用",
+            "in_service": "维修中",
+        },
+        "freshness": {
+            "live": "实时",
+            "fresh_cache": "缓存",
+            "stale_cache": "过期缓存",
+        },
+        "charging": {
+            "charging": "充电中",
+            "complete": "已充满",
+            "disconnected": "未连接",
+            "stopped": "已停止",
+            "starting": "准备充电",
+            "no_power": "无电源",
+            "unknown": "未知",
+        },
+        "state": {
+            "on": "开启",
+            "off": "关闭",
+            "true": "开启",
+            "false": "关闭",
+            "unknown": "未知",
+            "engaged": "已锁定",
+            "not_installed": "未安装",
+            "start_at": "定时启动",
+            "depart_by": "按时出发",
+        },
+        "keeper": {
+            "dog": "爱犬模式",
+            "camp": "露营模式",
+            "keep": "保持温度",
+            "off": "关闭",
+            "unknown": "未知",
+        },
+        "provider": {
+            "performance": "高性能版",
+            "midnightsilver": "午夜银",
+            "colored": "同色车顶",
+            "uberturbine20": "20寸涡轮轮毂",
+            "us": "美规",
+            "installed": "已安装",
+            "not_installed": "未安装",
+            "modely": "Model Y",
+        },
+        "provider_compact": {
+            "midnightsilver": "午夜银",
+            "colored": "同色",
+            "uberturbine20": "20涡轮",
+            "us": "美规",
+            "installed": "后排加热",
+            "not_installed": "无天窗",
+            "my2021": "MY21",
+        },
+    },
+}
+
+_OPENING_TEXT = {
+    "en": {
+        "driver_front_door": "DRIVER FRONT DOOR",
+        "driver_rear_door": "DRIVER REAR DOOR",
+        "passenger_front_door": "PASS FRONT DOOR",
+        "passenger_rear_door": "PASS REAR DOOR",
+        "front_trunk": "FRONT TRUNK",
+        "rear_trunk": "REAR TRUNK",
+        "driver_front_window": "DRIVER FRONT WINDOW",
+        "driver_rear_window": "DRIVER REAR WINDOW",
+        "passenger_front_window": "PASS FRONT WINDOW",
+        "passenger_rear_window": "PASS REAR WINDOW",
+        "charge_port": "CHARGE PORT",
+    },
+    "zh-CN": {
+        "driver_front_door": "驾驶侧前门",
+        "driver_rear_door": "驾驶侧后门",
+        "passenger_front_door": "副驾侧前门",
+        "passenger_rear_door": "副驾侧后门",
+        "front_trunk": "前备箱",
+        "rear_trunk": "后备箱",
+        "driver_front_window": "驾驶侧前窗",
+        "driver_rear_window": "驾驶侧后窗",
+        "passenger_front_window": "副驾侧前窗",
+        "passenger_rear_window": "副驾侧后窗",
+        "charge_port": "充电口",
+    },
 }
 
 
@@ -86,6 +583,7 @@ class VehicleStatus(BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = dict(settings or {})
+        language = _language(settings)
         dimensions = self.get_dimensions(device_config)
         theme = settings.get("_inkypi_theme")
         if not isinstance(theme, dict):
@@ -128,14 +626,20 @@ class VehicleStatus(BasePlugin):
                     return self._render_local_message(
                         dimensions,
                         theme,
-                        "STATUS TOO OLD",
-                        "Refresh the bridge before trusting vehicle status.",
+                        _t(language, "status_old_title"),
+                        _t(language, "status_old_message"),
+                        language,
                     )
                 return self._render_local_message(
                     dimensions,
                     theme,
-                    "CONNECT BRIDGE",
-                    f"Add {BRIDGE_TOKEN_ENV} in API Keys.",
+                    _t(language, "connect_bridge_title"),
+                    _t(
+                        language,
+                        "connect_bridge_message",
+                        token=BRIDGE_TOKEN_ENV,
+                    ),
+                    language,
                 )
 
             try:
@@ -165,14 +669,16 @@ class VehicleStatus(BasePlugin):
                     return self._render_local_message(
                         dimensions,
                         theme,
-                        "STATUS TOO OLD",
-                        "Refresh the bridge before trusting vehicle status.",
+                        _t(language, "status_old_title"),
+                        _t(language, "status_old_message"),
+                        language,
                     )
                 return self._render_local_message(
                     dimensions,
                     theme,
-                    "STATUS UNAVAILABLE",
-                    "No cached vehicle status is available yet.",
+                    _t(language, "status_unavailable_title"),
+                    _t(language, "status_unavailable_message"),
+                    language,
                 )
 
             provenance = _bridge_provenance(summary)
@@ -194,22 +700,25 @@ class VehicleStatus(BasePlugin):
             return image
 
     def _theme_only_image(self, settings, dimensions, theme):
+        language = _language(settings)
         with _CACHE_LOCK:
             cached = self._read_cache_unlocked(create=False)
         if not cached or not cached.get("summary"):
             return self._render_local_message(
                 dimensions,
                 theme,
-                "NO CACHED STATUS",
-                "Refresh the plugin once after authorization.",
+                _t(language, "no_cache_title"),
+                _t(language, "no_cache_message"),
+                language,
             )
         now = time.time()
         if not _cache_within_max_stale(cached, now):
             return self._render_local_message(
                 dimensions,
                 theme,
-                "STATUS TOO OLD",
-                "Refresh the bridge before trusting vehicle status.",
+                _t(language, "status_old_title"),
+                _t(language, "status_old_message"),
+                language,
             )
         cache_seconds = _int_setting(settings, "cacheSeconds", 900, 0, 86_400)
         summary = _advance_cached_age(cached["summary"], cached["fetched_at"], now)
@@ -227,13 +736,22 @@ class VehicleStatus(BasePlugin):
         )
 
     def _render_attested(self, summary, dimensions, theme, settings, provenance):
-        image = self._render_summary(summary, dimensions, theme, settings)
+        display_summary = dict(summary)
+        display_snapshot = dict(summary["snapshot"])
+        display_snapshot["freshness"] = {
+            SourceProvenance.LIVE: "live",
+            SourceProvenance.FRESH_CACHE: "fresh_cache",
+            SourceProvenance.STALE_CACHE: "stale_cache",
+            SourceProvenance.LOCAL_FALLBACK: "stale_cache",
+        }[provenance]
+        display_summary["snapshot"] = display_snapshot
+        image = self._render_summary(display_summary, dimensions, theme, settings)
         if provenance in {SourceProvenance.STALE_CACHE, SourceProvenance.LOCAL_FALLBACK}:
             image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
         return attach_source_provenance(image, provenance)
 
-    def _render_local_message(self, dimensions, theme, title, message):
-        image = self._render_message(dimensions, theme, title, message)
+    def _render_local_message(self, dimensions, theme, title, message, language):
+        image = self._render_message(dimensions, theme, title, message, language)
         image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
         return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
 
@@ -241,27 +759,51 @@ class VehicleStatus(BasePlugin):
         root = self.cache_dir(leaf="cache", create=create)
         return Path(root) / CACHE_FILE_NAME
 
+    def _legacy_cache_file(self, *, create=False):
+        root = self.cache_dir(leaf="cache", create=create)
+        return Path(root) / LEGACY_CACHE_FILE_NAME
+
     def _read_cache(self, *, create=False):
         with _CACHE_LOCK:
             return self._read_cache_unlocked(create=create)
 
     def _read_cache_unlocked(self, *, create=False):
-        path = self._cache_file(create=create)
-        try:
-            if not path.is_file() or path.stat().st_size > CACHE_MAX_BYTES:
-                return None
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if type(payload) is not dict or set(payload) != {"fetched_at", "summary"}:
-                return None
-            fetched_at = _number(payload.get("fetched_at"), 0, 100_000_000_000)
-            if fetched_at is None:
-                return None
-            return {
-                "fetched_at": fetched_at,
-                "summary": sanitize_summary(payload.get("summary")),
-            }
-        except (OSError, UnicodeError, json.JSONDecodeError, SummaryContractError):
+        paths = (
+            self._cache_file(create=create),
+            self._legacy_cache_file(create=False),
+        )
+        candidates = []
+        for path in paths:
+            try:
+                if not path.is_file() or path.stat().st_size > CACHE_MAX_BYTES:
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if type(payload) is not dict or set(payload) != {"fetched_at", "summary"}:
+                    continue
+                fetched_at = _number(payload.get("fetched_at"), 0, 100_000_000_000)
+                if fetched_at is None:
+                    continue
+                candidates.append(
+                    {
+                        "fetched_at": fetched_at,
+                        "summary": sanitize_summary(payload.get("summary")),
+                    }
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError, SummaryContractError):
+                continue
+        if not candidates:
             return None
+        now = time.time()
+
+        def recency(candidate):
+            content_age = _cached_content_age(candidate, now)
+            return (
+                content_age is None,
+                math.inf if content_age is None else content_age,
+                -candidate["fetched_at"],
+            )
+
+        return min(candidates, key=recency)
 
     def _write_cache(self, payload):
         with _CACHE_LOCK:
@@ -288,6 +830,7 @@ class VehicleStatus(BasePlugin):
 
     def _render_summary(self, summary, dimensions, theme, settings):
         colors = _render_colors(theme)
+        language = _language(settings)
         canvas = Image.new("RGB", (800, 480), colors["background"])
         draw = ImageDraw.Draw(canvas)
         vehicle = summary["vehicle"]
@@ -295,81 +838,438 @@ class VehicleStatus(BasePlugin):
         climate = summary["climate"]
         closures = summary["closures"]
         snapshot = summary["snapshot"]
+        is_v2 = summary["schema_version"] == 2
+        if is_v2:
+            charging = summary["charging"]
+            preferences = summary["preferences"]
+            tires = summary["tires"]
+            software_update = summary["software_update"]
+            hero_range = battery["rated_range"] or battery["estimated_range"]
+            hero_range_label = (
+                "RATED RANGE" if battery["rated_range"] is not None else "EST. RANGE"
+            )
+        else:
+            charging = {
+                "state": battery["charging_state"],
+                "charge_limit_percent": battery["charge_limit_percent"],
+                "time_to_full_minutes": battery["time_to_full_minutes"],
+                "power_kw": battery["power_kw"],
+            }
+            preferences = {}
+            tires = None
+            software_update = None
+            hero_range = battery["estimated_range"]
+            hero_range_label = "EST. RANGE"
 
-        draw.rounded_rectangle((22, 18, 778, 462), radius=22, fill=colors["surface"], outline=colors["rule"], width=2)
-        draw.text((48, 39), "VEHICLE / READ ONLY", font=_font(17, True), fill=colors["muted"])
-        status_label = snapshot["vehicle_connectivity"].upper()
-        status_color = colors["good"] if snapshot["vehicle_connectivity"] == "online" else colors["warning"]
-        _pill(draw, (650, 33, 750, 66), status_label, status_color, colors["surface"])
+        draw.rounded_rectangle(
+            (20, 16, 780, 464),
+            radius=18,
+            fill=colors["surface"],
+            outline=colors["rule"],
+            width=2,
+        )
 
-        name_font = _font(37, True)
-        model_font = _font(18)
+        name_font = _font(28, True)
+        model_font = _font(15)
         name = _ellipsize_text(
             draw,
             vehicle["display_name"],
             name_font,
-            HEADER_IDENTITY_RIGHT - 48,
+            HEADER_IDENTITY_RIGHT - 40,
         )
-        model_line = " · ".join(item for item in (vehicle["model"], vehicle["trim"]) if item) or "Vehicle"
+        model_line = " / ".join(
+            _enum_text(language, "provider", item)
+            for item in (vehicle["model"], vehicle["trim"])
+            if item
+        ) or _t(language, "vehicle_fallback")
         model_line = _ellipsize_text(
             draw,
             model_line,
             model_font,
-            HEADER_IDENTITY_RIGHT - 50,
+            HEADER_IDENTITY_RIGHT - 42,
         )
-        draw.text((48, 82), name, font=name_font, fill=colors["ink"])
-        draw.text((50, 128), model_line, font=model_font, fill=colors["muted"])
+        draw.text((40, 27), name, font=name_font, fill=colors["ink"])
+        draw.text((42, 67), model_line, font=model_font, fill=colors["muted"])
+
         vehicle_art = _load_vehicle_art()
         art_left, art_top, art_right, art_bottom = VEHICLE_ART_BOX
         vehicle_art.thumbnail(
             (art_right - art_left, art_bottom - art_top),
             Image.Resampling.LANCZOS,
         )
-        art_x = art_right - vehicle_art.width
+        art_x = art_left + ((art_right - art_left - vehicle_art.width) // 2)
         art_y = art_top + ((art_bottom - art_top - vehicle_art.height) // 2)
         canvas.paste(vehicle_art, (art_x, art_y), vehicle_art)
 
-        _card(draw, (42, 176, 352, 382), colors)
-        draw.text((64, 194), "BATTERY", font=_font(15, True), fill=colors["muted"])
+        status_label = _enum_text(
+            language,
+            "connectivity",
+            snapshot["vehicle_connectivity"],
+        )
+        status_color = _connectivity_color(snapshot["vehicle_connectivity"], colors)
+        _pill(draw, (654, 27, 760, 58), status_label, status_color, colors["surface"])
+        freshness = _enum_text(language, "freshness", snapshot["freshness"])
+        _right_text(
+            draw,
+            760,
+            68,
+            f"{freshness} / {_age_text(snapshot['age_seconds'], language)}",
+            _font(13, True),
+            colors["muted"],
+        )
+        draw.line((40, 100, 760, 100), fill=colors["rule"], width=1)
+
+        _dashboard_panel(draw, (40, 112, 300, 416), colors)
+        _section_label(draw, 58, 127, _t(language, "energy"), colors)
         level = battery["level_percent"]
         level_text = "--" if level is None else str(int(round(level)))
-        draw.text((64, 224), level_text, font=_font(70, True), fill=colors["ink"])
-        draw.text((166, 264), "%", font=_font(24, True), fill=colors["muted"])
-        _battery_bar(draw, (65, 319, 326, 350), level, colors)
-        limit = battery["charge_limit_percent"]
+        level_font = _font(52 if len(level_text) >= 3 else 58, True)
+        level_baseline = 208
+        draw.text(
+            (58, level_baseline),
+            level_text,
+            font=level_font,
+            fill=colors["ink"],
+            anchor="ls",
+        )
+        level_bbox = draw.textbbox(
+            (58, level_baseline),
+            level_text,
+            font=level_font,
+            anchor="ls",
+        )
+        draw.text(
+            (level_bbox[2] + 8, level_baseline),
+            "%",
+            font=_font(20, True),
+            fill=colors["muted"],
+            anchor="ls",
+        )
+        draw.text(
+            (280, 151),
+            _t(
+                language,
+                "rated_range" if hero_range_label == "RATED RANGE" else "estimated_range",
+            ),
+            font=_font(10, True),
+            fill=colors["muted"],
+            anchor="ra",
+        )
+        _right_text(
+            draw,
+            280,
+            173,
+            _measurement_text(hero_range, settings, preferences, language),
+            _font(22, True),
+            colors["ink"],
+        )
+        if is_v2 and battery["usable_level_percent"] is not None:
+            usable = int(round(battery["usable_level_percent"]))
+            draw.text(
+                (58, 211),
+                _t(language, "usable", value=usable),
+                font=_font(10, True),
+                fill=colors["muted"],
+            )
+        _battery_bar(draw, (58, 228, 282, 246), level, colors)
+
+        charge = charging["state"] or "unknown"
+        charge_color = _charging_state_color(charge, colors)
+        cable = charging.get("cable_type") if is_v2 else None
+        charge_width = 142 if cable else 224
+        charge_text = _ellipsize_text(
+            draw,
+            _enum_text(language, "charging", charge),
+            _font(16, True),
+            charge_width,
+        )
+        draw.text((58, 248), charge_text, font=_font(16, True), fill=charge_color)
+        if cable:
+            _right_text(
+                draw,
+                282,
+                252,
+                str(cable).upper(),
+                _font(10, True),
+                colors["muted"],
+            )
+
+        limit = charging["charge_limit_percent"]
         limit_text = "--" if limit is None else f"{int(round(limit))}%"
-        draw.text((65, 358), f"LIMIT {limit_text}", font=_font(13, True), fill=colors["muted"])
-        charge = battery["charging_state"] or "Unknown"
-        _right_text(draw, 327, 358, charge.upper(), _font(13, True), colors["accent"])
-
-        range_text = _measurement_text(battery["estimated_range"], settings)
-        lock_text = "LOCKED" if vehicle["locked"] is True else "UNLOCKED" if vehicle["locked"] is False else "UNKNOWN"
-        closure_text = "ALL CLOSED" if closures["all_closed"] is True else _closure_text(closures)
-        inside = _temperature_text(climate["inside_temp_c"])
-        outside = _temperature_text(climate["outside_temp_c"])
-        climate_text = f"{inside} IN / {outside} OUT"
-
-        _metric_card(draw, (374, 176, 742, 235), "EST. RANGE", range_text, colors)
-        _metric_card(draw, (374, 246, 552, 305), "SECURITY", lock_text, colors)
-        _metric_card(draw, (564, 246, 742, 305), "OPENINGS", closure_text, colors)
-        if _bool_setting(settings, "showClimate", True):
-            _metric_card(draw, (374, 316, 742, 382), "CLIMATE", climate_text, colors)
+        power = charging["power_kw"]
+        power_text = _number_with_unit(power, "unit_kw", None, language)
+        if is_v2:
+            rows = _v2_energy_rows(
+                battery,
+                charging,
+                settings,
+                preferences,
+                limit_text,
+                power_text,
+                language,
+            )
+            for index, (label, value) in enumerate(rows):
+                _dashboard_row(
+                    draw,
+                    58,
+                    282,
+                    274 + (index * 20),
+                    label,
+                    value,
+                    colors,
+                    label_size=10,
+                    value_size=10,
+                    label_width=78,
+                )
         else:
-            odometer = _measurement_text(vehicle["odometer"], settings)
-            _metric_card(draw, (374, 316, 742, 382), "ODOMETER", odometer, colors)
+            rows = (
+                (_t(language, "limit"), limit_text),
+                (
+                    _t(language, "time_left"),
+                    _minutes_text(charging["time_to_full_minutes"], language),
+                ),
+                (_t(language, "power"), power_text),
+            )
+            for index, (label, value) in enumerate(rows):
+                _dashboard_row(
+                    draw,
+                    58,
+                    282,
+                    286 + (index * 36),
+                    label,
+                    value,
+                    colors,
+                )
 
-        age = summary["snapshot"]["age_seconds"]
-        age_text = _age_text(age)
-        freshness = summary["snapshot"]["freshness"].replace("_", " ").upper()
-        draw.line((48, 407, 752, 407), fill=colors["rule"], width=1)
-        draw.text((49, 421), f"UPDATED {age_text} AGO  ·  {freshness}", font=_font(14, True), fill=colors["muted"])
-        _right_text(draw, 751, 421, "NO WAKE · NO COMMANDS", _font(14, True), colors["accent"])
+        _dashboard_panel(draw, (334, 112, 532, 254), colors)
+        _section_label(draw, 350, 127, _t(language, "security"), colors)
+        lock_text = _bool_status(
+            vehicle["locked"],
+            _t(language, "locked"),
+            _t(language, "unlocked"),
+            _t(language, "unknown"),
+        )
+        lock_color = (
+            colors["accent"]
+            if vehicle["locked"] is False
+            else colors["warning"]
+            if vehicle["locked"] is None
+            else colors["ink"]
+        )
+        draw.text((350, 149), lock_text, font=_font(19, True), fill=lock_color)
+        sentry_text = (
+            _t(
+                language,
+                "sentry",
+                value=_enum_text(language, "state", vehicle["sentry_mode"]),
+            )
+            if is_v2
+            else _t(language, "sentry_not_reported")
+        )
+        sentry_text = _ellipsize_text(draw, sentry_text, _font(10, True), 92)
+        _right_text(draw, 516, 153, sentry_text, _font(10, True), colors["muted"])
+        closure_text = _closure_status_text(closures, language)
+        confirmed_open = bool(closures["open"]) or closures["charge_port_open"] is True
+        closure_color = (
+            colors["accent"]
+            if closures["all_closed"] is False or confirmed_open
+            else colors["warning"]
+            if closures["all_closed"] is None
+            else colors["ink"]
+        )
+        draw.text(
+            (350, 178),
+            _ellipsize_text(draw, closure_text, _font(14, True), 166),
+            font=_font(14, True),
+            fill=closure_color,
+        )
+        detail_lines = _closure_detail_lines(closures, language)
+        for index, line in enumerate(detail_lines[:2]):
+            draw.text(
+                (350, 202 + (index * 18)),
+                _ellipsize_text(draw, line, _font(11, True), 166),
+                font=_font(11, True),
+                fill=colors["muted"],
+            )
+        port_text = _bool_status(
+            closures["charge_port_open"],
+            _t(language, "port_open"),
+            _t(language, "port_closed"),
+            _t(language, "unknown"),
+        )
+        draw.text((350, 232), port_text, font=_font(10, True), fill=colors["muted"])
+        if is_v2:
+            security_flag = _security_flag_text(
+                vehicle,
+                settings,
+                preferences,
+                language,
+            )
+            security_flag = _ellipsize_text(
+                draw,
+                security_flag,
+                _font(10, True),
+                83,
+            )
+            _right_text(
+                draw,
+                516,
+                233,
+                security_flag,
+                _font(10, True),
+                colors["muted"],
+            )
+
+        _dashboard_panel(draw, (564, 112, 760, 254), colors)
+        _section_label(draw, 580, 127, _t(language, "climate"), colors)
+        climate_status = _bool_status(
+            climate["is_climate_on"],
+            _t(language, "hvac_on"),
+            _t(language, "hvac_off"),
+            _t(language, "unknown"),
+        )
+        draw.text((580, 149), climate_status, font=_font(19, True), fill=colors["ink"])
+        if is_v2:
+            keeper = _enum_text(language, "keeper", climate["keeper_mode"])
+            _right_text(
+                draw,
+                744,
+                153,
+                _ellipsize_text(draw, keeper, _font(10, True), 74),
+                _font(10, True),
+                colors["muted"],
+            )
+        temperature_line = _t(
+            language,
+            "inside_outside",
+            inside=_temperature_text(
+                climate["inside_temp_c"],
+                settings,
+                preferences,
+                language,
+            ),
+            outside=_temperature_text(
+                climate["outside_temp_c"],
+                settings,
+                preferences,
+                language,
+            ),
+        )
+        draw.text((580, 178), temperature_line, font=_font(14, True), fill=colors["ink"])
+        if is_v2:
+            climate_lines = _v2_climate_lines(
+                climate,
+                settings,
+                preferences,
+                language,
+            )
+            for index, line in enumerate(climate_lines):
+                font = _font(10 if index >= 2 else 11, True)
+                draw.text(
+                    (580, 199 + (index * 17)),
+                    _ellipsize_text(draw, line, font, 164),
+                    font=font,
+                    fill=colors["muted"],
+                )
+
+        _dashboard_panel(draw, (334, 278, 532, 416), colors)
+        _section_label(draw, 350, 293, _t(language, "vehicle"), colors)
+        if is_v2:
+            display_state = vehicle["center_display_state"]
+            _right_text(
+                draw,
+                516,
+                294,
+                _t(
+                    language,
+                    "display",
+                    value=(
+                        _enum_text(language, "state", display_state)
+                        if display_state is not None
+                        else _t(language, "not_reported")
+                    ),
+                ),
+                _font(10, True),
+                colors["muted"],
+            )
+            vehicle_rows = _v2_vehicle_rows(
+                vehicle,
+                software_update,
+                settings,
+                preferences,
+                language,
+            )
+            for index, (label, value) in enumerate(vehicle_rows):
+                _dashboard_row(
+                    draw,
+                    350,
+                    516,
+                    312 + (index * 15),
+                    label,
+                    value,
+                    colors,
+                    label_size=10,
+                    value_size=10,
+                    label_width=64,
+                )
+        else:
+            _dashboard_row(
+                draw,
+                350,
+                516,
+                330,
+                _t(language, "odometer"),
+                _measurement_text(vehicle["odometer"], settings, preferences, language),
+                colors,
+            )
+            _dashboard_row(
+                draw,
+                350,
+                516,
+                370,
+                _t(language, "software"),
+                vehicle["software_version"] or "--",
+                colors,
+            )
+
+        _dashboard_panel(draw, (564, 278, 760, 416), colors)
+        _section_label(draw, 580, 293, _t(language, "tires"), colors)
+        if is_v2:
+            _render_tires(draw, tires, settings, preferences, colors, language)
+        else:
+            draw.text(
+                (580, 340),
+                _t(language, "not_reported_v1"),
+                font=_font(11, True),
+                fill=colors["muted"],
+            )
+
+        draw.line((40, 428, 760, 428), fill=colors["rule"], width=1)
+        draw.text(
+            (40, 438),
+            _t(
+                language,
+                "updated",
+                age=_age_text(snapshot["age_seconds"], language),
+                freshness=freshness,
+            ),
+            font=_font(12, True),
+            fill=colors["muted"],
+        )
+        _right_text(
+            draw,
+            760,
+            438,
+            _t(language, "read_only_footer"),
+            _font(12, True),
+            colors["accent"],
+        )
 
         if dimensions != (800, 480):
             canvas = canvas.resize(dimensions, Image.Resampling.LANCZOS)
         return canvas
 
-    def _render_message(self, dimensions, theme, title, message):
+    def _render_message(self, dimensions, theme, title, message, language):
         colors = _render_colors(theme)
         canvas = Image.new("RGB", (800, 480), colors["background"])
         draw = ImageDraw.Draw(canvas)
@@ -377,64 +1277,61 @@ class VehicleStatus(BasePlugin):
         _draw_vehicle_silhouette(draw, (282, 105), colors, scale=1.55)
         _center_text(draw, 400, 252, title, _font(31, True), colors["ink"])
         _center_text(draw, 400, 305, message, _font(17), colors["muted"])
-        _center_text(draw, 400, 365, "Read-only · no wake · no commands · no location", _font(14, True), colors["accent"])
+        _center_text(
+            draw,
+            400,
+            365,
+            _t(language, "setup_footer"),
+            _font(14, True),
+            colors["accent"],
+        )
         if dimensions != (800, 480):
             canvas = canvas.resize(dimensions, Image.Resampling.LANCZOS)
         return canvas
 
 
 def sanitize_summary(payload):
-    root = _object(payload, _TOP_KEYS, "summary")
-    if type(root["schema_version"]) is not int or root["schema_version"] != 1:
+    if type(payload) is not dict:
+        raise SummaryContractError("summary fields are invalid")
+    schema_version = payload.get("schema_version")
+    if type(schema_version) is not int:
         raise SummaryContractError("schema version is unsupported")
-    served_at = _timestamp(root["served_at"], "served_at")
+    if schema_version == 1:
+        return _sanitize_summary_v1(payload)
+    if schema_version == 2:
+        return _sanitize_summary_v2(payload)
+    raise SummaryContractError("schema version is unsupported")
 
+
+def _sanitize_snapshot(root):
     snapshot_raw = _object(root["snapshot"], _SNAPSHOT_KEYS, "snapshot")
     freshness = _string(snapshot_raw["freshness"], 20, "snapshot.freshness")
     if freshness not in _FRESHNESS:
         raise SummaryContractError("snapshot freshness is invalid")
-    connectivity = _string(snapshot_raw["vehicle_connectivity"], 32, "snapshot.vehicle_connectivity").lower()
+    connectivity = _string(
+        snapshot_raw["vehicle_connectivity"],
+        32,
+        "snapshot.vehicle_connectivity",
+    ).lower()
     if connectivity not in _CONNECTIVITY:
         connectivity = "unknown"
-    snapshot = {
-        "captured_at": _nullable_timestamp(snapshot_raw["captured_at"], "snapshot.captured_at"),
+    return {
+        "captured_at": _nullable_timestamp(
+            snapshot_raw["captured_at"],
+            "snapshot.captured_at",
+        ),
         "freshness": freshness,
-        "age_seconds": _nullable_number(snapshot_raw["age_seconds"], 0, 604_800, "snapshot.age_seconds"),
+        "age_seconds": _nullable_number(
+            snapshot_raw["age_seconds"],
+            0,
+            604_800,
+            "snapshot.age_seconds",
+        ),
         "vehicle_connectivity": connectivity,
     }
 
-    vehicle_raw = _object(root["vehicle"], _VEHICLE_KEYS, "vehicle")
-    if vehicle_raw["key"] != "primary":
-        raise SummaryContractError("vehicle key is invalid")
-    vehicle = {
-        "key": "primary",
-        "display_name": _string(vehicle_raw["display_name"], 64, "vehicle.display_name"),
-        "model": _nullable_string(vehicle_raw["model"], 40, "vehicle.model"),
-        "trim": _nullable_string(vehicle_raw["trim"], 40, "vehicle.trim"),
-        "locked": _nullable_bool(vehicle_raw["locked"], "vehicle.locked"),
-        "software_version": _nullable_string(vehicle_raw["software_version"], 64, "vehicle.software_version"),
-        "odometer": _measurement(vehicle_raw["odometer"], 0, 2_000_000, "vehicle.odometer"),
-    }
 
-    battery_raw = _object(root["battery"], _BATTERY_KEYS, "battery")
-    battery = {
-        "level_percent": _nullable_number(battery_raw["level_percent"], 0, 100, "battery.level_percent"),
-        "estimated_range": _measurement(battery_raw["estimated_range"], 0, 2_500, "battery.estimated_range"),
-        "charging_state": _nullable_string(battery_raw["charging_state"], 40, "battery.charging_state"),
-        "charge_limit_percent": _nullable_number(battery_raw["charge_limit_percent"], 0, 100, "battery.charge_limit_percent"),
-        "time_to_full_minutes": _nullable_number(battery_raw["time_to_full_minutes"], 0, 10_000, "battery.time_to_full_minutes"),
-        "power_kw": _nullable_number(battery_raw["power_kw"], 0, 1_000, "battery.power_kw"),
-    }
-
-    climate_raw = _object(root["climate"], _CLIMATE_KEYS, "climate")
-    climate = {
-        "inside_temp_c": _nullable_number(climate_raw["inside_temp_c"], -100, 100, "climate.inside_temp_c"),
-        "outside_temp_c": _nullable_number(climate_raw["outside_temp_c"], -100, 100, "climate.outside_temp_c"),
-        "is_climate_on": _nullable_bool(climate_raw["is_climate_on"], "climate.is_climate_on"),
-    }
-
-    closures_raw = _object(root["closures"], _CLOSURE_KEYS, "closures")
-    open_raw = closures_raw["open"]
+def _sanitize_open_items(open_raw):
     if type(open_raw) is not list or len(open_raw) > len(_OPEN_CLOSURES):
         raise SummaryContractError("closures.open is invalid")
     open_items = []
@@ -443,6 +1340,97 @@ def sanitize_summary(payload):
         if label not in _OPEN_CLOSURES or label in open_items:
             raise SummaryContractError("closures.open contains an invalid label")
         open_items.append(label)
+    return open_items
+
+
+def _sanitize_summary_v1(payload):
+    root = _object(payload, _TOP_KEYS_V1, "summary")
+    served_at = _timestamp(root["served_at"], "served_at")
+    snapshot = _sanitize_snapshot(root)
+
+    vehicle_raw = _object(root["vehicle"], _VEHICLE_KEYS_V1, "vehicle")
+    if vehicle_raw["key"] != "primary":
+        raise SummaryContractError("vehicle key is invalid")
+    vehicle = {
+        "key": "primary",
+        "display_name": _string(vehicle_raw["display_name"], 64, "vehicle.display_name"),
+        "model": _nullable_string(vehicle_raw["model"], 40, "vehicle.model"),
+        "trim": _nullable_string(vehicle_raw["trim"], 40, "vehicle.trim"),
+        "locked": _nullable_bool(vehicle_raw["locked"], "vehicle.locked"),
+        "software_version": _nullable_string(
+            vehicle_raw["software_version"],
+            64,
+            "vehicle.software_version",
+        ),
+        "odometer": _measurement(
+            vehicle_raw["odometer"],
+            0,
+            2_000_000,
+            "vehicle.odometer",
+        ),
+    }
+
+    battery_raw = _object(root["battery"], _BATTERY_KEYS_V1, "battery")
+    battery = {
+        "level_percent": _nullable_number(
+            battery_raw["level_percent"],
+            0,
+            100,
+            "battery.level_percent",
+        ),
+        "estimated_range": _measurement(
+            battery_raw["estimated_range"],
+            0,
+            2_500,
+            "battery.estimated_range",
+        ),
+        "charging_state": _nullable_string(
+            battery_raw["charging_state"],
+            40,
+            "battery.charging_state",
+        ),
+        "charge_limit_percent": _nullable_number(
+            battery_raw["charge_limit_percent"],
+            0,
+            100,
+            "battery.charge_limit_percent",
+        ),
+        "time_to_full_minutes": _nullable_number(
+            battery_raw["time_to_full_minutes"],
+            0,
+            10_000,
+            "battery.time_to_full_minutes",
+        ),
+        "power_kw": _nullable_number(
+            battery_raw["power_kw"],
+            0,
+            1_000,
+            "battery.power_kw",
+        ),
+    }
+
+    climate_raw = _object(root["climate"], _CLIMATE_KEYS_V1, "climate")
+    climate = {
+        "inside_temp_c": _nullable_number(
+            climate_raw["inside_temp_c"],
+            -100,
+            100,
+            "climate.inside_temp_c",
+        ),
+        "outside_temp_c": _nullable_number(
+            climate_raw["outside_temp_c"],
+            -100,
+            100,
+            "climate.outside_temp_c",
+        ),
+        "is_climate_on": _nullable_bool(
+            climate_raw["is_climate_on"],
+            "climate.is_climate_on",
+        ),
+    }
+
+    closures_raw = _object(root["closures"], _CLOSURE_KEYS_V1, "closures")
+    open_items = _sanitize_open_items(closures_raw["open"])
     all_closed = _nullable_bool(closures_raw["all_closed"], "closures.all_closed")
     charge_port_open = _nullable_bool(
         closures_raw["charge_port_open"],
@@ -469,6 +1457,492 @@ def sanitize_summary(payload):
     }
 
 
+def _sanitize_summary_v2(payload):
+    root = _object(payload, _TOP_KEYS_V2, "summary")
+    served_at = _timestamp(root["served_at"], "served_at")
+    snapshot = _sanitize_snapshot(root)
+
+    vehicle_raw = _object(root["vehicle"], _VEHICLE_KEYS_V2, "vehicle")
+    if vehicle_raw["key"] != "primary":
+        raise SummaryContractError("vehicle key is invalid")
+    speed_limit_raw = _object(
+        vehicle_raw["speed_limit_mode"],
+        _SPEED_LIMIT_MODE_KEYS,
+        "vehicle.speed_limit_mode",
+    )
+    vehicle = {
+        "key": "primary",
+        "display_name": _string(vehicle_raw["display_name"], 64, "vehicle.display_name"),
+        "model": _nullable_string(vehicle_raw["model"], 40, "vehicle.model"),
+        "trim": _nullable_string(vehicle_raw["trim"], 40, "vehicle.trim"),
+        "locked": _nullable_bool(vehicle_raw["locked"], "vehicle.locked"),
+        "software_version": _nullable_string(
+            vehicle_raw["software_version"],
+            64,
+            "vehicle.software_version",
+        ),
+        "odometer": _measurement(
+            vehicle_raw["odometer"],
+            0,
+            2_000_000,
+            "vehicle.odometer",
+        ),
+        "exterior_color": _nullable_string(
+            vehicle_raw["exterior_color"],
+            64,
+            "vehicle.exterior_color",
+        ),
+        "wheel_type": _nullable_string(vehicle_raw["wheel_type"], 64, "vehicle.wheel_type"),
+        "roof_color": _nullable_string(vehicle_raw["roof_color"], 64, "vehicle.roof_color"),
+        "charge_port_type": _nullable_string(
+            vehicle_raw["charge_port_type"],
+            64,
+            "vehicle.charge_port_type",
+        ),
+        "efficiency_package": _nullable_string(
+            vehicle_raw["efficiency_package"],
+            64,
+            "vehicle.efficiency_package",
+        ),
+        "rear_seat_heaters": _nullable_string(
+            vehicle_raw["rear_seat_heaters"],
+            64,
+            "vehicle.rear_seat_heaters",
+        ),
+        "right_hand_drive": _nullable_bool(
+            vehicle_raw["right_hand_drive"],
+            "vehicle.right_hand_drive",
+        ),
+        "europe_vehicle": _nullable_bool(
+            vehicle_raw["europe_vehicle"],
+            "vehicle.europe_vehicle",
+        ),
+        "sunroof_installed": _nullable_string(
+            vehicle_raw["sunroof_installed"],
+            64,
+            "vehicle.sunroof_installed",
+        ),
+        "sentry_mode": _nullable_string(
+            vehicle_raw["sentry_mode"],
+            32,
+            "vehicle.sentry_mode",
+        ),
+        "service_mode": _nullable_bool(
+            vehicle_raw["service_mode"],
+            "vehicle.service_mode",
+        ),
+        "valet_mode": _nullable_bool(vehicle_raw["valet_mode"], "vehicle.valet_mode"),
+        "center_display_state": _nullable_string(
+            vehicle_raw["center_display_state"],
+            32,
+            "vehicle.center_display_state",
+        ),
+        "speed_limit_mode": {
+            "active": _nullable_bool(
+                speed_limit_raw["active"],
+                "vehicle.speed_limit_mode.active",
+            ),
+            "limit": _measurement(
+                speed_limit_raw["limit"],
+                0,
+                1_000,
+                "vehicle.speed_limit_mode.limit",
+                {"mi/h"},
+            ),
+        },
+    }
+
+    battery_raw = _object(root["battery"], _BATTERY_KEYS_V2, "battery")
+    battery = {
+        "level_percent": _nullable_number(
+            battery_raw["level_percent"], 0, 100, "battery.level_percent"
+        ),
+        "usable_level_percent": _nullable_number(
+            battery_raw["usable_level_percent"],
+            0,
+            100,
+            "battery.usable_level_percent",
+        ),
+        "rated_range": _measurement(
+            battery_raw["rated_range"], 0, 2_500, "battery.rated_range"
+        ),
+        "estimated_range": _measurement(
+            battery_raw["estimated_range"], 0, 2_500, "battery.estimated_range"
+        ),
+    }
+
+    charging_raw = _object(root["charging"], _CHARGING_KEYS_V2, "charging")
+    scheduled_raw = _object(
+        charging_raw["scheduled"],
+        _SCHEDULED_KEYS,
+        "charging.scheduled",
+    )
+    charging = {
+        "state": _nullable_string(charging_raw["state"], 40, "charging.state"),
+        "charge_limit_percent": _nullable_number(
+            charging_raw["charge_limit_percent"],
+            0,
+            100,
+            "charging.charge_limit_percent",
+        ),
+        "time_to_full_minutes": _nullable_number(
+            charging_raw["time_to_full_minutes"],
+            0,
+            10_000,
+            "charging.time_to_full_minutes",
+        ),
+        "power_kw": _nullable_number(
+            charging_raw["power_kw"], 0, 1_000, "charging.power_kw"
+        ),
+        "energy_added_kwh": _nullable_number(
+            charging_raw["energy_added_kwh"],
+            0,
+            1_000,
+            "charging.energy_added_kwh",
+        ),
+        "rate": _measurement(
+            charging_raw["rate"], 0, 5_000, "charging.rate", {"mi/h"}
+        ),
+        "actual_current_a": _nullable_number(
+            charging_raw["actual_current_a"],
+            0,
+            2_000,
+            "charging.actual_current_a",
+        ),
+        "voltage_v": _nullable_number(
+            charging_raw["voltage_v"], 0, 2_000, "charging.voltage_v"
+        ),
+        "phases": _nullable_number(charging_raw["phases"], 0, 10, "charging.phases"),
+        "requested_current_a": _nullable_number(
+            charging_raw["requested_current_a"],
+            0,
+            2_000,
+            "charging.requested_current_a",
+        ),
+        "max_current_a": _nullable_number(
+            charging_raw["max_current_a"],
+            0,
+            2_000,
+            "charging.max_current_a",
+        ),
+        "enabled": _nullable_bool(charging_raw["enabled"], "charging.enabled"),
+        "cable_type": _nullable_string(
+            charging_raw["cable_type"], 40, "charging.cable_type"
+        ),
+        "fast_charger_present": _nullable_bool(
+            charging_raw["fast_charger_present"],
+            "charging.fast_charger_present",
+        ),
+        "fast_charger_type": _nullable_string(
+            charging_raw["fast_charger_type"],
+            40,
+            "charging.fast_charger_type",
+        ),
+        "port_latch": _nullable_string(
+            charging_raw["port_latch"], 40, "charging.port_latch"
+        ),
+        "port_cold_weather_mode": _nullable_bool(
+            charging_raw["port_cold_weather_mode"],
+            "charging.port_cold_weather_mode",
+        ),
+        "preconditioning": _nullable_bool(
+            charging_raw["preconditioning"],
+            "charging.preconditioning",
+        ),
+        "not_enough_power_to_heat": _nullable_bool(
+            charging_raw["not_enough_power_to_heat"],
+            "charging.not_enough_power_to_heat",
+        ),
+        "supercharger_trip_planner": _nullable_bool(
+            charging_raw["supercharger_trip_planner"],
+            "charging.supercharger_trip_planner",
+        ),
+        "scheduled": {
+            "pending": _nullable_bool(
+                scheduled_raw["pending"],
+                "charging.scheduled.pending",
+            ),
+            "mode": _nullable_string(
+                scheduled_raw["mode"],
+                40,
+                "charging.scheduled.mode",
+            ),
+        },
+    }
+
+    climate_raw = _object(root["climate"], _CLIMATE_KEYS_V2, "climate")
+    seat_heaters = _sanitize_nullable_number_object(
+        climate_raw["seat_heaters"],
+        _SEAT_HEATER_KEYS,
+        -1,
+        10,
+        "climate.seat_heaters",
+    )
+    seat_cooling = _sanitize_nullable_number_object(
+        climate_raw["seat_cooling"],
+        _FRONT_SEAT_KEYS,
+        -1,
+        10,
+        "climate.seat_cooling",
+    )
+    auto_seat_climate = _sanitize_nullable_bool_object(
+        climate_raw["auto_seat_climate"],
+        _FRONT_SEAT_KEYS,
+        "climate.auto_seat_climate",
+    )
+    cabin_overheat_raw = _object(
+        climate_raw["cabin_overheat"],
+        _CABIN_OVERHEAT_KEYS,
+        "climate.cabin_overheat",
+    )
+    climate = {
+        "inside_temp_c": _nullable_number(
+            climate_raw["inside_temp_c"], -100, 100, "climate.inside_temp_c"
+        ),
+        "outside_temp_c": _nullable_number(
+            climate_raw["outside_temp_c"], -100, 100, "climate.outside_temp_c"
+        ),
+        "is_climate_on": _nullable_bool(
+            climate_raw["is_climate_on"], "climate.is_climate_on"
+        ),
+        "driver_target_temp_c": _nullable_number(
+            climate_raw["driver_target_temp_c"],
+            -100,
+            100,
+            "climate.driver_target_temp_c",
+        ),
+        "passenger_target_temp_c": _nullable_number(
+            climate_raw["passenger_target_temp_c"],
+            -100,
+            100,
+            "climate.passenger_target_temp_c",
+        ),
+        "keeper_mode": _nullable_string(
+            climate_raw["keeper_mode"], 40, "climate.keeper_mode"
+        ),
+        "defrost_mode": _nullable_string(
+            climate_raw["defrost_mode"], 40, "climate.defrost_mode"
+        ),
+        "rear_defroster_on": _nullable_bool(
+            climate_raw["rear_defroster_on"],
+            "climate.rear_defroster_on",
+        ),
+        "battery_heater_on": _nullable_bool(
+            climate_raw["battery_heater_on"],
+            "climate.battery_heater_on",
+        ),
+        "wiper_heater_on": _nullable_bool(
+            climate_raw["wiper_heater_on"],
+            "climate.wiper_heater_on",
+        ),
+        "hvac_auto_mode": _nullable_string(
+            climate_raw["hvac_auto_mode"], 40, "climate.hvac_auto_mode"
+        ),
+        "fan_status": _nullable_number(
+            climate_raw["fan_status"], -1, 20, "climate.fan_status"
+        ),
+        "steering_wheel_heat_level": _nullable_number(
+            climate_raw["steering_wheel_heat_level"],
+            -1,
+            10,
+            "climate.steering_wheel_heat_level",
+        ),
+        "steering_wheel_heat_auto": _nullable_bool(
+            climate_raw["steering_wheel_heat_auto"],
+            "climate.steering_wheel_heat_auto",
+        ),
+        "seat_heaters": seat_heaters,
+        "seat_cooling": seat_cooling,
+        "auto_seat_climate": auto_seat_climate,
+        "cabin_overheat": {
+            "mode": _nullable_string(
+                cabin_overheat_raw["mode"],
+                40,
+                "climate.cabin_overheat.mode",
+            ),
+            "temp_limit": _nullable_string(
+                cabin_overheat_raw["temp_limit"],
+                40,
+                "climate.cabin_overheat.temp_limit",
+            ),
+        },
+    }
+
+    closures = _sanitize_closures_v2(root["closures"])
+
+    tires_raw = _object(root["tires"], _TIRES_KEYS, "tires")
+    pressures_raw = _object(
+        tires_raw["pressures"],
+        _TIRE_POSITIONS,
+        "tires.pressures",
+    )
+    pressures = {
+        position: _measurement(
+            pressures_raw[position],
+            0,
+            20,
+            f"tires.pressures.{position}",
+            {"bar"},
+        )
+        for position in _TIRE_POSITIONS
+    }
+    soft_warnings = _sanitize_nullable_bool_object(
+        tires_raw["soft_warnings"],
+        _TIRE_POSITIONS,
+        "tires.soft_warnings",
+    )
+    hard_warnings = _sanitize_nullable_bool_object(
+        tires_raw["hard_warnings"],
+        _TIRE_POSITIONS,
+        "tires.hard_warnings",
+    )
+    tires = {
+        "pressures": pressures,
+        "soft_warnings": soft_warnings,
+        "hard_warnings": hard_warnings,
+    }
+
+    update_raw = _object(
+        root["software_update"],
+        _SOFTWARE_UPDATE_KEYS,
+        "software_update",
+    )
+    software_update = {
+        "version": _nullable_string(
+            update_raw["version"], 64, "software_update.version"
+        ),
+        "download_percent": _nullable_number(
+            update_raw["download_percent"],
+            0,
+            100,
+            "software_update.download_percent",
+        ),
+        "install_percent": _nullable_number(
+            update_raw["install_percent"],
+            0,
+            100,
+            "software_update.install_percent",
+        ),
+        "expected_duration_minutes": _nullable_number(
+            update_raw["expected_duration_minutes"],
+            0,
+            10_080,
+            "software_update.expected_duration_minutes",
+        ),
+    }
+
+    preferences_raw = _object(root["preferences"], _PREFERENCE_KEYS, "preferences")
+    preferences = {
+        "distance_unit": _nullable_enum(
+            preferences_raw["distance_unit"],
+            {"mi", "km"},
+            "preferences.distance_unit",
+        ),
+        "temperature_unit": _nullable_enum(
+            preferences_raw["temperature_unit"],
+            {"C", "F"},
+            "preferences.temperature_unit",
+        ),
+        "pressure_unit": _nullable_enum(
+            preferences_raw["pressure_unit"],
+            {"psi", "bar"},
+            "preferences.pressure_unit",
+        ),
+        "charge_display_unit": _nullable_enum(
+            preferences_raw["charge_display_unit"],
+            {"distance", "percent", "unknown"},
+            "preferences.charge_display_unit",
+        ),
+        "use_24_hour_time": _nullable_bool(
+            preferences_raw["use_24_hour_time"],
+            "preferences.use_24_hour_time",
+        ),
+    }
+
+    return {
+        "schema_version": 2,
+        "served_at": served_at,
+        "snapshot": snapshot,
+        "vehicle": vehicle,
+        "battery": battery,
+        "charging": charging,
+        "climate": climate,
+        "closures": closures,
+        "tires": tires,
+        "software_update": software_update,
+        "preferences": preferences,
+    }
+
+
+def _sanitize_nullable_bool_object(value, expected_keys, field):
+    raw = _object(value, expected_keys, field)
+    return {
+        key: _nullable_bool(raw[key], f"{field}.{key}")
+        for key in expected_keys
+    }
+
+
+def _sanitize_nullable_number_object(
+    value,
+    expected_keys,
+    minimum,
+    maximum,
+    field,
+):
+    raw = _object(value, expected_keys, field)
+    return {
+        key: _nullable_number(raw[key], minimum, maximum, f"{field}.{key}")
+        for key in expected_keys
+    }
+
+
+def _sanitize_closures_v2(value):
+    raw = _object(value, _CLOSURE_KEYS_V2, "closures")
+    open_items = _sanitize_open_items(raw["open"])
+    all_closed = _nullable_bool(raw["all_closed"], "closures.all_closed")
+    charge_port_open = _nullable_bool(
+        raw["charge_port_open"],
+        "closures.charge_port_open",
+    )
+    doors = _sanitize_nullable_bool_object(raw["doors"], _DOOR_KEYS, "closures.doors")
+    windows = _sanitize_nullable_bool_object(
+        raw["windows"],
+        _WINDOW_KEYS,
+        "closures.windows",
+    )
+    nested = {
+        "driver_front_door": doors["driver_front"],
+        "driver_rear_door": doors["driver_rear"],
+        "passenger_front_door": doors["passenger_front"],
+        "passenger_rear_door": doors["passenger_rear"],
+        "front_trunk": doors["front_trunk"],
+        "rear_trunk": doors["rear_trunk"],
+        "driver_front_window": windows["driver_front"],
+        "driver_rear_window": windows["driver_rear"],
+        "passenger_front_window": windows["passenger_front"],
+        "passenger_rear_window": windows["passenger_rear"],
+    }
+    for label, state in nested.items():
+        if (label in open_items) != (state is True):
+            raise SummaryContractError("closures open list contradicts nested state")
+    known_open = charge_port_open is True or any(
+        state is True for state in nested.values()
+    )
+    all_known_closed = charge_port_open is False and all(
+        state is False for state in nested.values()
+    )
+    expected_all_closed = False if known_open else True if all_known_closed else None
+    if all_closed is not expected_all_closed:
+        raise SummaryContractError("closures contradict all_closed")
+    return {
+        "all_closed": all_closed,
+        "open": open_items,
+        "charge_port_open": charge_port_open,
+        "doors": doors,
+        "windows": windows,
+    }
+
+
 def _object(value, expected_keys, field):
     if type(value) is not dict or set(value) != expected_keys:
         raise SummaryContractError(f"{field} fields are invalid")
@@ -486,6 +1960,14 @@ def _string(value, max_length, field):
 
 def _nullable_string(value, max_length, field):
     return None if value is None else _string(value, max_length, field)
+
+
+def _nullable_enum(value, allowed, field):
+    if value is None:
+        return None
+    if type(value) is not str or value not in allowed:
+        raise SummaryContractError(f"{field} is invalid")
+    return value
 
 
 def _nullable_bool(value, field):
@@ -512,7 +1994,13 @@ def _nullable_number(value, minimum, maximum, field):
     return number
 
 
-def _measurement(value, minimum, maximum, field):
+def _measurement(
+    value,
+    minimum,
+    maximum,
+    field,
+    allowed_units=frozenset({"mi", "km"}),
+):
     if value is None:
         return None
     item = _object(value, _MEASUREMENT_KEYS, field)
@@ -520,7 +2008,7 @@ def _measurement(value, minimum, maximum, field):
     if number is None:
         raise SummaryContractError(f"{field}.value is invalid")
     unit = item["unit"]
-    if type(unit) is not str or unit not in {"mi", "km"}:
+    if type(unit) is not str or unit not in allowed_units:
         raise SummaryContractError(f"{field}.unit is invalid")
     return {"value": number, "unit": unit}
 
@@ -607,6 +2095,48 @@ def _log_bridge_failure(exc, *, has_cache):
     )
 
 
+def _language(settings):
+    value = str((settings or {}).get("language") or "zh-CN").strip().lower()
+    return "en" if value in {"en", "en-us", "english"} else "zh-CN"
+
+
+def _t(language, key, **values):
+    template = _UI_TEXT[language][key]
+    return template.format(**values) if values else template
+
+
+def _enum_text(language, category, value):
+    if value is None:
+        return _t(language, "unknown")
+    raw = str(value).strip()
+    normalized = raw.lower().replace("-", "_").replace(" ", "_")
+    mappings = _ENUM_TEXT.get(language, {}).get(category, {})
+    translated = mappings.get(normalized) or mappings.get(normalized.replace("_", ""))
+    if translated is not None:
+        return translated
+    if language == "en":
+        return raw.replace("_", " ").upper()
+    provider = _ENUM_TEXT["zh-CN"].get("provider", {})
+    return provider.get(normalized) or provider.get(normalized.replace("_", "")) or raw
+
+
+def _fixed_ui_characters(language):
+    chunks = list(_UI_TEXT[language].values())
+    for values in _ENUM_TEXT.get(language, {}).values():
+        chunks.extend(values.values())
+    chunks.extend(_OPENING_TEXT[language].values())
+    return tuple(
+        sorted(
+            {
+                character
+                for chunk in chunks
+                for character in chunk
+                if ord(character) > 127 and not character.isspace()
+            }
+        )
+    )
+
+
 def _bool_setting(settings, key, default):
     value = settings.get(key, default)
     if type(value) is bool:
@@ -635,7 +2165,7 @@ def _font(size, bold=False):
 def _ellipsize_text(draw, text, font, max_width):
     if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
         return text
-    ellipsis = "…"
+    ellipsis = "..."
     ellipsis_width = draw.textbbox((0, 0), ellipsis, font=font)[2]
     if ellipsis_width > max_width:
         return ""
@@ -682,8 +2212,8 @@ def _render_colors(theme):
         "muted": role("muted"),
         "rule": role("rule"),
         "accent": role("accent"),
-        "good": (45, 151, 100) if not night else (91, 207, 146),
-        "warning": (190, 119, 35) if not night else (239, 179, 83),
+        "good": (35, 116, 79) if not night else (91, 207, 146),
+        "warning": (138, 79, 0) if not night else (239, 179, 83),
         "track": (219, 215, 206) if not night else (50, 59, 70),
     }
 
@@ -699,6 +2229,489 @@ def _metric_card(draw, box, label, value, colors):
     text = str(value)
     font = _font(20 if len(text) <= 18 else 15, True)
     _right_text(draw, right - 18, top + 29, text, font, colors["ink"])
+
+
+def _dashboard_panel(draw, box, colors):
+    draw.rounded_rectangle(
+        box,
+        radius=14,
+        fill=colors["background"],
+        outline=colors["rule"],
+        width=1,
+    )
+
+
+def _section_label(draw, left, top, text, colors):
+    draw.text((left, top), text, font=_font(12, True), fill=colors["muted"])
+
+
+def _dashboard_row(
+    draw,
+    left,
+    right,
+    top,
+    label,
+    value,
+    colors,
+    *,
+    label_size=11,
+    value_size=12,
+    label_width=72,
+):
+    label_font = _font(label_size, True)
+    value_font = _font(value_size, True)
+    draw.text((left, top), label, font=label_font, fill=colors["muted"])
+    available = max(24, right - left - label_width)
+    value_text = _ellipsize_text(draw, str(value), value_font, available)
+    _right_text(draw, right, top - 1, value_text, value_font, colors["ink"])
+
+
+def _v2_energy_rows(
+    battery,
+    charging,
+    settings,
+    preferences,
+    limit_text,
+    power_text,
+    language,
+):
+    estimated_range = _measurement_text(
+        battery["estimated_range"],
+        settings,
+        preferences,
+        language,
+    )
+    left_text = _minutes_text(charging["time_to_full_minutes"], language)
+    energy_added = _number_with_unit(
+        charging["energy_added_kwh"],
+        "unit_kwh",
+        1,
+        language,
+    )
+    input_text = _charging_input_text(charging, language)
+    request_text = _charging_request_text(charging, language)
+    return (
+        (_t(language, "estimated_range"), estimated_range),
+        (_t(language, "limit_left"), f"{limit_text} / {left_text}"),
+        (_t(language, "power_added"), f"{power_text} / {energy_added}"),
+        (_t(language, "input"), input_text),
+        (_t(language, "request_max"), request_text),
+        (
+            _t(language, "rate"),
+            _speed_text(charging["rate"], settings, preferences, language),
+        ),
+        (_t(language, "status"), _charging_flags_text(charging, language)),
+    )
+
+
+def _number_with_unit(value, unit_key, decimals=0, language="en"):
+    if value is None:
+        return "--"
+    number = f"{value:g}" if decimals is None else f"{value:.{decimals}f}"
+    return f"{number} {_t(language, unit_key)}"
+
+
+def _charging_input_text(charging, language):
+    current = _number_with_unit(charging["actual_current_a"], "unit_amp", 0, language)
+    voltage = _number_with_unit(charging["voltage_v"], "unit_volt", 0, language)
+    phases = charging["phases"]
+    phase_text = (
+        "--"
+        if phases is None
+        else f"{phases:g} {_t(language, 'unit_phase')}"
+    )
+    return f"{current} / {voltage} / {phase_text}"
+
+
+def _charging_request_text(charging, language):
+    requested = _number_with_unit(
+        charging["requested_current_a"],
+        "unit_amp",
+        0,
+        language,
+    )
+    maximum = _number_with_unit(
+        charging["max_current_a"],
+        "unit_amp",
+        0,
+        language,
+    )
+    return f"{requested} / {maximum}"
+
+
+def _charging_flags_text(charging, language):
+    flags = []
+    if charging["not_enough_power_to_heat"] is True:
+        flags.append(_t(language, "heat_power_low"))
+    if charging["enabled"] is False:
+        flags.append(_t(language, "disabled"))
+    latch = charging["port_latch"]
+    if latch and str(latch).lower() not in {"engaged", "unknown"}:
+        flags.append(
+            _t(
+                language,
+                "latch",
+                state=_enum_text(language, "state", latch),
+            )
+        )
+    if charging["port_cold_weather_mode"] is True:
+        flags.append(_t(language, "port_heat"))
+    if charging["preconditioning"] is True:
+        flags.append(_t(language, "precondition"))
+    if charging["fast_charger_present"] is True:
+        charger = _enum_text(language, "provider", charging["fast_charger_type"])
+        flags.append(_t(language, "fast_charge", kind=charger))
+    if charging["scheduled"]["pending"] is True:
+        mode = _enum_text(language, "state", charging["scheduled"]["mode"])
+        flags.append(_t(language, "schedule", mode=mode))
+    if charging["supercharger_trip_planner"] is True:
+        flags.append(_t(language, "trip_plan"))
+    if not flags and charging["enabled"] is True:
+        return _t(language, "enabled")
+    return " / ".join(flags[:2]) or "--"
+
+
+def _security_flag_text(vehicle, settings, preferences, language):
+    flags = []
+    if vehicle["service_mode"] is True:
+        flags.append(_t(language, "service_on"))
+    if vehicle["valet_mode"] is True:
+        flags.append(_t(language, "valet_on"))
+    speed_limit = vehicle["speed_limit_mode"]
+    if speed_limit["active"] is True:
+        flags.append(
+            _t(
+                language,
+                "speed_limit",
+                value=_speed_text(
+                    speed_limit["limit"],
+                    settings,
+                    preferences,
+                    language,
+                ),
+            )
+        )
+    if (
+        not flags
+        and vehicle["service_mode"] is False
+        and vehicle["valet_mode"] is False
+        and speed_limit["active"] is False
+    ):
+        return _t(language, "modes_off")
+    return " / ".join(flags) or _t(language, "modes_unknown")
+
+
+def _v2_climate_lines(climate, settings, preferences, language):
+    driver = _temperature_text(
+        climate["driver_target_temp_c"],
+        settings,
+        preferences,
+        language,
+    )
+    passenger = _temperature_text(
+        climate["passenger_target_temp_c"],
+        settings,
+        preferences,
+        language,
+    )
+    auto_mode = _enum_text(language, "state", climate["hvac_auto_mode"])
+    fan = "--" if climate["fan_status"] is None else f"{climate['fan_status']:g}"
+    defrost = _enum_text(language, "state", climate["defrost_mode"])
+    return (
+        _t(language, "target", driver=driver, passenger=passenger),
+        _t(
+            language,
+            "auto_fan_defrost",
+            auto=auto_mode,
+            fan=fan,
+            defrost=defrost,
+        ),
+        _climate_feature_text(climate, language),
+    )
+
+
+def _climate_feature_text(climate, language):
+    active = []
+    if climate["rear_defroster_on"] is True:
+        active.append(_t(language, "rear_defrost"))
+    if climate["battery_heater_on"] is True:
+        active.append(_t(language, "battery_heat"))
+    if climate["wiper_heater_on"] is True:
+        active.append(_t(language, "wiper_heat"))
+    wheel = climate["steering_wheel_heat_level"]
+    if wheel is not None and wheel > 0:
+        active.append(_t(language, "wheel_heat", level=f"{wheel:g}"))
+    seat_labels = {
+        position: _t(language, f"seat_{position}")
+        for position in (
+            "front_left",
+            "front_right",
+            "rear_left",
+            "rear_right",
+            "rear_center",
+        )
+    }
+    seats = [
+        f"{seat_labels[position]}{level:g}"
+        for position, level in climate["seat_heaters"].items()
+        if level is not None and level > 0
+    ]
+    if seats:
+        active.append(_t(language, "seat_heat", value=" ".join(seats)))
+    cooling = [
+        _t(language, f"seat_{position}")
+        for position, level in climate["seat_cooling"].items()
+        if level is not None and level > 0
+    ]
+    if cooling:
+        active.append(_t(language, "seat_cool", value=" ".join(cooling)))
+    overheat = climate["cabin_overheat"]
+    if overheat["mode"]:
+        limit = (
+            f"/{_enum_text(language, 'state', overheat['temp_limit'])}"
+            if overheat["temp_limit"]
+            else ""
+        )
+        active.append(
+            _t(
+                language,
+                "overheat",
+                mode=_enum_text(language, "state", overheat["mode"]),
+                limit=limit,
+            )
+        )
+    if active:
+        return " / ".join(active[:2])
+    reported = (
+        climate["rear_defroster_on"],
+        climate["battery_heater_on"],
+        climate["wiper_heater_on"],
+        climate["steering_wheel_heat_level"],
+        *climate["seat_heaters"].values(),
+        *climate["seat_cooling"].values(),
+        climate["cabin_overheat"]["mode"],
+    )
+    return (
+        _t(language, "no_active_climate")
+        if any(value is not None for value in reported)
+        else _t(language, "not_reported")
+    )
+
+
+def _v2_vehicle_rows(vehicle, software_update, settings, preferences, language):
+    version = software_update["version"] or _t(language, "not_reported")
+    download = _percent_text(software_update["download_percent"])
+    install = _percent_text(software_update["install_percent"])
+    duration = _minutes_text(
+        software_update["expected_duration_minutes"],
+        language,
+    )
+    progress = (
+        _t(
+            language,
+            "progress_value",
+            download=download,
+            install=install,
+            duration=duration,
+        )
+        if any(
+            software_update[key] is not None
+            for key in (
+                "download_percent",
+                "install_percent",
+                "expected_duration_minutes",
+            )
+        )
+        else _t(language, "not_reported")
+    )
+    return (
+        (
+            _t(language, "odometer"),
+            _measurement_text(
+                vehicle["odometer"],
+                settings,
+                preferences,
+                language,
+            ),
+        ),
+        (
+            _t(language, "software"),
+            vehicle["software_version"] or _t(language, "not_reported"),
+        ),
+        (_t(language, "update"), version),
+        (_t(language, "progress"), progress),
+        (
+            _t(language, "body_wheel"),
+            _vehicle_appearance_text(vehicle, language),
+        ),
+        (
+            _t(language, "config"),
+            _vehicle_config_text(vehicle, language),
+        ),
+        (
+            _t(language, "equipment"),
+            _vehicle_equipment_text(vehicle, language),
+        ),
+    )
+
+
+def _percent_text(value):
+    return "--" if value is None else f"{value:.0f}%"
+
+
+def _compact_provider_text(language, value):
+    if value is None:
+        return "--"
+    return _enum_text(language, "provider_compact", value)
+
+
+def _vehicle_appearance_text(vehicle, language):
+    values = [
+        _compact_provider_text(language, value)
+        for value in (
+            vehicle["exterior_color"],
+            vehicle["roof_color"],
+            vehicle["wheel_type"],
+        )
+        if value is not None
+    ]
+    return "/".join(values) or _t(language, "not_reported")
+
+
+def _vehicle_config_text(vehicle, language):
+    drive = (
+        _t(language, "rhd")
+        if vehicle["right_hand_drive"] is True
+        else _t(language, "lhd")
+        if vehicle["right_hand_drive"] is False
+        else "--"
+    )
+    region = (
+        _t(language, "eu")
+        if vehicle["europe_vehicle"] is True
+        else _t(language, "non_eu")
+        if vehicle["europe_vehicle"] is False
+        else "--"
+    )
+    values = [
+        drive,
+        region,
+        _compact_provider_text(language, vehicle["charge_port_type"]),
+    ]
+    return "/".join(values)
+
+
+def _vehicle_equipment_text(vehicle, language):
+    values = [
+        _compact_provider_text(language, value)
+        for value in (
+            vehicle["efficiency_package"],
+            vehicle["sunroof_installed"],
+            vehicle["rear_seat_heaters"],
+        )
+        if value is not None
+    ]
+    return "/".join(values) or _t(language, "not_reported")
+
+
+def _render_tires(draw, tires, settings, preferences, colors, language):
+    unit = _preferred_unit(
+        settings,
+        preferences,
+        "pressureUnit",
+        "pressure_unit",
+        {"psi", "bar"},
+    ) or "bar"
+    unit_text = _t(language, "unit_psi" if unit == "psi" else "unit_bar")
+    _right_text(draw, 744, 294, unit_text, _font(10, True), colors["muted"])
+    positions = (
+        ("front_left", 580, 322),
+        ("front_right", 674, 322),
+        ("rear_left", 580, 357),
+        ("rear_right", 674, 357),
+    )
+    for position, left, top in positions:
+        label = _tire_abbreviation(position, language)
+        warning = _tire_warning_level(tires, position)
+        color = (
+            colors["accent"]
+            if warning == "hard"
+            else colors["warning"]
+            if warning in {"soft", "unknown"}
+            else colors["ink"]
+        )
+        pressure = _pressure_text(
+            tires["pressures"][position],
+            settings,
+            preferences,
+            language,
+        ).split(" ", 1)[0]
+        draw.text((left, top), label, font=_font(10, True), fill=colors["muted"])
+        draw.text((left + 22, top - 3), pressure, font=_font(15, True), fill=color)
+    status, color = _tire_status(tires, colors, language)
+    status_font = _font(10, True)
+    draw.text(
+        (580, 394),
+        _ellipsize_text(draw, status, status_font, 164),
+        font=status_font,
+        fill=color,
+    )
+
+
+def _tire_warning_level(tires, position):
+    if tires["hard_warnings"][position] is True:
+        return "hard"
+    if tires["soft_warnings"][position] is True:
+        return "soft"
+    if (
+        tires["hard_warnings"][position] is None
+        or tires["soft_warnings"][position] is None
+    ):
+        return "unknown"
+    return "none"
+
+
+def _tire_status(tires, colors, language):
+    hard = [
+        _tire_abbreviation(position, language)
+        for position, warning in tires["hard_warnings"].items()
+        if warning is True
+    ]
+    soft = [
+        _tire_abbreviation(position, language)
+        for position, warning in tires["soft_warnings"].items()
+        if warning is True and _tire_abbreviation(position, language) not in hard
+    ]
+    if hard:
+        return (
+            _t(language, "hard_warning", positions=" ".join(hard)),
+            colors["accent"],
+        )
+    if soft:
+        return (
+            _t(language, "low_pressure", positions=" ".join(soft)),
+            colors["warning"],
+        )
+    warnings = tuple(tires["hard_warnings"].values()) + tuple(
+        tires["soft_warnings"].values()
+    )
+    if any(warning is None for warning in warnings):
+        return _t(language, "pressure_unknown"), colors["warning"]
+    if any(value is None for value in tires["pressures"].values()):
+        return _t(language, "pressure_partial"), colors["warning"]
+    return _t(language, "pressure_ok"), colors["ink"]
+
+
+def _tire_abbreviation(position, language):
+    return _t(
+        language,
+        {
+            "front_left": "tire_fl",
+            "front_right": "tire_fr",
+            "rear_left": "tire_rl",
+            "rear_right": "tire_rr",
+        }[position],
+    )
 
 
 def _pill(draw, box, text, fill, surface):
@@ -720,6 +2733,84 @@ def _battery_bar(draw, box, level, colors):
     width = max(0, int((right - left) * ratio))
     if width > 0:
         draw.rounded_rectangle((left, top, left + width, bottom), radius=9, fill=colors["accent"])
+
+
+def _connectivity_color(connectivity, colors):
+    if connectivity == "online":
+        return colors["good"]
+    if connectivity in {"asleep", "unknown"}:
+        return colors["muted"]
+    if connectivity in {"offline", "unavailable", "in_service"}:
+        return colors["warning"]
+    return colors["muted"]
+
+
+def _charging_state_color(state, colors):
+    normalized = str(state or "").strip().lower().replace(" ", "_")
+    if normalized in {"charging", "complete"}:
+        return colors["good"]
+    if normalized in {"disconnected", "stopped", "unknown", ""}:
+        return colors["muted"]
+    if normalized in {"fault", "error", "no_power"}:
+        return colors["accent"]
+    return colors["warning"]
+
+
+def _bool_status(value, true_text, false_text, unknown_text="UNKNOWN"):
+    if value is True:
+        return true_text
+    if value is False:
+        return false_text
+    return unknown_text
+
+
+def _minutes_text(value, language="en"):
+    if value is None:
+        return "--"
+    minutes = max(0, int(round(value)))
+    if minutes < 60:
+        return _t(language, "duration_minutes", value=minutes)
+    hours, remainder = divmod(minutes, 60)
+    if remainder == 0:
+        return _t(language, "age_hours", value=hours)
+    return _t(
+        language,
+        "duration_hours",
+        hours=hours,
+        minutes=remainder,
+    )
+
+
+def _closure_status_text(closures, language="en"):
+    if closures["all_closed"] is True:
+        return _t(language, "all_closed")
+    count = len(closures["open"]) + (
+        1 if closures["charge_port_open"] is True else 0
+    )
+    return (
+        _t(language, "open_count", count=count)
+        if count
+        else _t(language, "status_unknown")
+    )
+
+
+def _closure_detail_lines(closures, language="en"):
+    labels = _OPENING_TEXT[language]
+    items = [labels[item] for item in closures["open"]]
+    if closures["charge_port_open"] is True:
+        items.append(labels["charge_port"])
+    if not items:
+        return [
+            _t(language, "all_access_secure")
+            if closures["all_closed"] is True
+            else _t(language, "opening_incomplete")
+        ]
+    if len(items) <= 2:
+        return items
+    return [
+        items[0],
+        f"{items[1]} / {_t(language, 'more_open', count=len(items) - 2)}",
+    ]
 
 
 def _draw_vehicle_silhouette(draw, origin, colors, scale=1.0):
@@ -750,23 +2841,99 @@ def _load_vehicle_art():
     return image.convert("RGBA")
 
 
-def _measurement_text(measurement, settings):
+def _measurement_text(measurement, settings, preferences=None, language="en"):
     if measurement is None:
         return "--"
     value = measurement["value"]
     if value is None:
         return "--"
     unit = measurement["unit"]
-    requested = str(settings.get("distanceUnit") or "auto").strip().lower()
+    requested = _preferred_unit(
+        settings,
+        preferences,
+        "distanceUnit",
+        "distance_unit",
+        {"mi", "km"},
+    )
     if requested == "km" and unit == "mi":
         value, unit = value * 1.609344, "km"
     elif requested == "mi" and unit == "km":
         value, unit = value / 1.609344, "mi"
-    return f"{value:,.0f} {unit}"
+    unit_key = "unit_km" if unit == "km" else "unit_mile"
+    return f"{value:,.0f} {_t(language, unit_key)}"
 
 
-def _temperature_text(value):
-    return "--" if value is None else f"{value:.0f}°C"
+def _temperature_text(value, settings=None, preferences=None, language="en"):
+    if value is None:
+        return "--"
+    unit = _preferred_unit(
+        settings,
+        preferences,
+        "temperatureUnit",
+        "temperature_unit",
+        {"C", "F"},
+        normalize=str.upper,
+    )
+    if unit == "F":
+        return f"{((value * 9 / 5) + 32):.0f}{_t(language, 'unit_f')}"
+    return f"{value:.0f}{_t(language, 'unit_c')}"
+
+
+def _pressure_text(measurement, settings=None, preferences=None, language="en"):
+    if measurement is None:
+        return "--"
+    value = measurement["value"]
+    if value is None:
+        return "--"
+    unit = _preferred_unit(
+        settings,
+        preferences,
+        "pressureUnit",
+        "pressure_unit",
+        {"psi", "bar"},
+    )
+    if unit == "psi":
+        return f"{(value * 14.5037738):.0f} {_t(language, 'unit_psi')}"
+    return f"{value:.1f} {_t(language, 'unit_bar')}"
+
+
+def _speed_text(measurement, settings=None, preferences=None, language="en"):
+    if measurement is None:
+        return "--"
+    value = measurement["value"]
+    if value is None:
+        return "--"
+    unit = _preferred_unit(
+        settings,
+        preferences,
+        "distanceUnit",
+        "distance_unit",
+        {"mi", "km"},
+    )
+    if unit == "km":
+        return f"{(value * 1.609344):.0f} {_t(language, 'unit_kph')}"
+    return f"{value:.0f} {_t(language, 'unit_mph')}"
+
+
+def _preferred_unit(
+    settings,
+    preferences,
+    setting_key,
+    preference_key,
+    allowed,
+    *,
+    normalize=str.lower,
+):
+    settings = settings if isinstance(settings, dict) else {}
+    preferences = preferences if isinstance(preferences, dict) else {}
+    requested = normalize(str(settings.get(setting_key) or "auto").strip())
+    if requested in allowed:
+        return requested
+    preferred = preferences.get(preference_key)
+    if preferred is None:
+        return None
+    normalized = normalize(str(preferred).strip())
+    return normalized if normalized in allowed else None
 
 
 def _closure_text(closures):
@@ -776,15 +2943,15 @@ def _closure_text(closures):
     return "UNKNOWN"
 
 
-def _age_text(seconds):
+def _age_text(seconds, language="en"):
     if seconds is None:
-        return "UNKNOWN"
+        return _t(language, "unknown")
     seconds = max(0, int(seconds))
     if seconds < 60:
-        return f"{seconds}S"
+        return _t(language, "age_seconds", value=seconds)
     if seconds < 3_600:
-        return f"{seconds // 60}M"
-    return f"{seconds // 3_600}H"
+        return _t(language, "age_minutes", value=seconds // 60)
+    return _t(language, "age_hours", value=seconds // 3_600)
 
 
 def _right_text(draw, right, top, text, font, fill):
