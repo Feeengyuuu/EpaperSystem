@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260808-GBW] best_practice
+
+**Logged**: 2026-08-08T19:18:10-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Generate e-paper header wordmarks against the measured runtime slot, then theme them from alpha with a text fallback.
+
+### Details
+The first img-2 direction was stylish but had an extremely wide visible aspect ratio, so fitting it into the 250x40 header slot made the lettering too short to read. A more compact source was generated and post-processed into a bounded 736x172 alpha-mask asset. At runtime the mask is recolored for day and night themes, applies only to the matching vehicle nickname, and safely falls back to dynamic text if the asset is missing or corrupt. The enlarged vehicle art and wordmark were both validated through the public 800x480 `generate_image()` path rather than private drawing helpers.
+
+### Suggested Action
+Measure the target slot, required visible bounding box, and safe gaps before prompting for an image asset. Reject sources whose visible alpha ratio makes the fitted result too small; then use bounded loading, theme tinting, a dynamic fallback, final-pixel tests, and representative day/night previews.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/vehicle_status/vehicle_status.py, inkypi-weather/package/InkyPi/src/plugins/vehicle_status/grey_bullet_wordmark.png, inkypi-weather/package/InkyPi/tests/test_vehicle_status.py
+- Tags: vehicle-status, img2, wordmark, e-paper, alpha-mask, theme, fallback
+- Pattern-Key: ui.epaper_measured_wordmark_asset
+- Recurrence-Count: 1
+- First-Seen: 2026-08-08
+- Last-Seen: 2026-08-08
+
+### Resolution
+- **Resolved**: 2026-08-08T19:18:10-07:00
+- **Commit/PR**: local branch
+- **Notes**: Four 800x480 previews and public `generate_image()` tests passed independent code and visual review.
+
+---
+
 ## [LRN-20260727-003] best_practice
 
 **Logged**: 2026-07-27T19:09:36-07:00

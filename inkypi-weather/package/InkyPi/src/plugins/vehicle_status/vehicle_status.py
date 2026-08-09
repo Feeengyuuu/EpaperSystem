@@ -34,6 +34,7 @@ CACHE_MAX_BYTES = 64 * 1024
 CACHE_FILE_NAME = "summary-v2.json"
 LEGACY_CACHE_FILE_NAME = "summary-v1.json"
 VEHICLE_IMAGE_NAME = "vehicle.png"
+VEHICLE_WORDMARK_NAME = "grey_bullet_wordmark.png"
 DASHBOARD_ICON_DIR_NAME = "dashboard_icons"
 DASHBOARD_ICON_FILES = {
     "energy": "energy.png",
@@ -50,10 +51,19 @@ DASHBOARD_ICON_LIMITS = ImageLimits(
     max_pixels=64 * 64,
     allowed_formats=frozenset({"PNG"}),
 )
+VEHICLE_WORDMARK_LIMITS = ImageLimits(
+    max_bytes=64 * 1024,
+    max_width=1024,
+    max_height=256,
+    max_pixels=1024 * 256,
+    allowed_formats=frozenset({"PNG"}),
+)
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
-VEHICLE_ART_BOX = (300, 50, 500, 96)
+VEHICLE_ART_BOX = (300, 20, 500, 96)
+VEHICLE_WORDMARK_BOX = (40, 20, 250, 60)
 HEADER_IDENTITY_RIGHT = 300
+GREY_BULLET_NAMES = frozenset({"gray bullet", "grey bullet"})
 
 _CACHE_LOCK = threading.RLock()
 _TOP_KEYS_V1 = {
@@ -904,7 +914,8 @@ class VehicleStatus(BasePlugin):
             model_font,
             HEADER_IDENTITY_RIGHT - 42,
         )
-        draw.text((40, 27), name, font=name_font, fill=colors["ink"])
+        if not _draw_vehicle_wordmark(canvas, vehicle["display_name"], colors):
+            draw.text((40, 27), name, font=name_font, fill=colors["ink"])
         draw.text((42, 67), model_line, font=model_font, fill=colors["muted"])
 
         vehicle_art = _load_vehicle_art()
@@ -2939,6 +2950,46 @@ def _load_vehicle_art():
         ),
     )
     return image.convert("RGBA")
+
+
+def _draw_vehicle_wordmark(canvas, display_name, colors):
+    normalized_name = " ".join(str(display_name).casefold().split())
+    if normalized_name not in GREY_BULLET_NAMES:
+        return False
+
+    mask = _load_vehicle_wordmark_mask()
+    if mask is None:
+        return False
+
+    left, top, right, bottom = VEHICLE_WORDMARK_BOX
+    fitted_mask = mask.copy()
+    fitted_mask.thumbnail(
+        (right - left, bottom - top),
+        Image.Resampling.LANCZOS,
+    )
+    glyph = Image.new("RGBA", fitted_mask.size, (*colors["ink"], 0))
+    glyph.putalpha(fitted_mask)
+    y = top + ((bottom - top - fitted_mask.height) // 2)
+    canvas.paste(glyph, (left, y), glyph)
+    return True
+
+
+def _load_vehicle_wordmark_mask():
+    path = Path(__file__).with_name(VEHICLE_WORDMARK_NAME)
+    try:
+        with safe_open_image(path, limits=VEHICLE_WORDMARK_LIMITS) as source:
+            if source.size != (736, 172):
+                raise ValueError("vehicle wordmark dimensions are invalid")
+            alpha = source.convert("RGBA").getchannel("A")
+            if alpha.getbbox() is None:
+                raise ValueError("vehicle wordmark is empty")
+            return alpha.copy()
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning(
+            "Vehicle wordmark unavailable type=%s",
+            type(exc).__name__,
+        )
+        return None
 
 
 def _measurement_text(measurement, settings, preferences=None, language="en"):

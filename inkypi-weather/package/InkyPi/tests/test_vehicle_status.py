@@ -1301,10 +1301,181 @@ def test_header_vehicle_is_visually_centered_between_long_identity_and_status(
     top = middle_header[1] + visible_bbox[1]
     right = middle_header[0] + visible_bbox[2]
     bottom = middle_header[1] + visible_bbox[3]
-    assert 315 <= left < right <= 485
-    assert 50 <= top < bottom <= 96
-    assert right - left >= 90
+    assert 310 <= left < right <= 490
+    assert 20 <= top < bottom <= 96
+    assert right - left >= 170
+    assert bottom - top >= 70
     assert abs(((left + right) / 2) - 400) <= 1
+
+
+def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
+    tmp_path,
+    monkeypatch,
+):
+    sentinel_color = (255, 0, 255)
+    sentinel = Image.new("RGBA", (231, 100), (*sentinel_color, 255))
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def load_sentinel_vehicle(path, *args, **kwargs):
+        if Path(path).name == "vehicle.png":
+            return sentinel.copy()
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        vehicle_module,
+        "safe_open_image",
+        load_sentinel_vehicle,
+    )
+
+    image = _render_payload(
+        tmp_path,
+        monkeypatch,
+        _summary_v2(),
+        {
+            "language": "zh-CN",
+            "_inkypi_theme": {"mode": "day", "palette": {}},
+        },
+    )
+    bbox = _visible_color_bbox(image, (0, 0, 800, 480), sentinel_color)
+
+    assert bbox is not None
+    left, top, right, bottom = bbox
+    width = right - left
+    height = bottom - top
+
+    assert 174 <= width <= 178
+    assert 74 <= height <= 76
+    assert 2.28 <= width / height <= 2.34
+    assert abs(((left + right) / 2) - 400) <= 1
+    assert left >= 310
+    assert right <= 490
+    assert top >= 20
+    assert bottom <= 96
+
+
+@pytest.mark.parametrize(
+    ("display_name", "language", "theme_mode", "ink"),
+    [
+        ("Gray Bullet", "zh-CN", "day", (24, 28, 33)),
+        ("Grey Bullet", "en", "night", (240, 244, 247)),
+    ],
+)
+def test_grey_bullet_uses_a_prominent_theme_aware_wordmark(
+    tmp_path,
+    monkeypatch,
+    display_name,
+    language,
+    theme_mode,
+    ink,
+):
+    payload = _summary_v2()
+    payload["vehicle"]["display_name"] = display_name
+
+    image = _render_payload(
+        tmp_path,
+        monkeypatch,
+        payload,
+        {
+            "language": language,
+            "_inkypi_theme": {"mode": theme_mode, "palette": {}},
+        },
+    )
+    name_box = (40, 18, 250, 62)
+    visible = _visible_color_bbox(image, name_box, ink)
+
+    assert visible is not None
+    width = visible[2] - visible[0]
+    height = visible[3] - visible[1]
+    assert width >= 160
+    assert height >= 30
+
+
+def test_grey_bullet_wordmark_failure_falls_back_to_dynamic_name(
+    tmp_path,
+    monkeypatch,
+):
+    payload = _summary_v2()
+    payload["vehicle"]["display_name"] = "Gray Bullet"
+    settings = {
+        "language": "zh-CN",
+        "_inkypi_theme": {"mode": "day", "palette": {}},
+    }
+    normal = _render_payload(tmp_path, monkeypatch, payload, settings)
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def fail_wordmark(path, *args, **kwargs):
+        if Path(path).name == "grey_bullet_wordmark.png":
+            raise OSError("synthetic wordmark decode failure")
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", fail_wordmark)
+    fallback = _render_payload(tmp_path, monkeypatch, payload, settings)
+    difference = ImageChops.difference(normal, fallback).getbbox()
+
+    assert fallback.size == (800, 480)
+    assert fallback.mode == "RGB"
+    assert read_source_provenance(fallback) is SourceProvenance.LIVE
+    assert difference is not None
+    assert 40 <= difference[0] < difference[2] <= 250
+    assert 18 <= difference[1] < difference[3] <= 62
+
+
+def test_other_vehicle_names_do_not_use_the_grey_bullet_wordmark(
+    tmp_path,
+    monkeypatch,
+):
+    payload = _summary_v2()
+    payload["vehicle"]["display_name"] = "Night Runner"
+    settings = {
+        "language": "en",
+        "_inkypi_theme": {"mode": "night", "palette": {}},
+    }
+    normal = _render_payload(tmp_path, monkeypatch, payload, settings)
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def fail_if_wordmark_is_requested(path, *args, **kwargs):
+        if Path(path).name == "grey_bullet_wordmark.png":
+            raise AssertionError("unrelated vehicle requested the personalized wordmark")
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        vehicle_module,
+        "safe_open_image",
+        fail_if_wordmark_is_requested,
+    )
+    repeated = _render_payload(tmp_path, monkeypatch, payload, settings)
+
+    assert ImageChops.difference(normal, repeated).getbbox() is None
+
+
+def test_grey_bullet_wordmark_is_a_small_transparent_img2_asset():
+    path = Path(vehicle_module.__file__).with_name("grey_bullet_wordmark.png")
+
+    assert path.is_file()
+    assert path.stat().st_size <= 64 * 1024
+    with Image.open(path) as source:
+        assert source.format == "PNG"
+        image = source.convert("RGBA")
+
+    assert image.size == (736, 172)
+    alpha = image.getchannel("A")
+    assert alpha.getextrema() == (0, 255)
+    assert all(
+        alpha.getpixel(point) == 0
+        for point in ((0, 0), (735, 0), (0, 171), (735, 171))
+    )
+    left, top, right, bottom = alpha.getbbox()
+    assert 6 <= left < right <= 730
+    assert 6 <= top < bottom <= 166
+    assert right - left >= 700
+    assert bottom - top >= 145
+    flattened = getattr(image, "get_flattened_data", image.getdata)
+    visible = [pixel for pixel in flattened() if pixel[3] > 32]
+    assert visible
+    assert not any(
+        green > 180 and red < 100 and blue < 100
+        for red, green, blue, _alpha in visible
+    )
 
 
 def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
@@ -1363,12 +1534,12 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
         palette=palette,
         dither=Image.Dither.NONE,
     ).convert("RGB")
-    vehicle_box = (300, 50, 500, 96)
+    vehicle_box = (300, 20, 500, 96)
     visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
 
     assert visible is not None
-    assert visible[2] - visible[0] >= 110
-    assert visible[3] - visible[1] >= 34
+    assert visible[2] - visible[0] >= 145
+    assert visible[3] - visible[1] >= 42
 
 
 _DASHBOARD_ICON_ASSETS = (
