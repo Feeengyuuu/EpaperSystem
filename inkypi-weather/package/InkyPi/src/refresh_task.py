@@ -156,6 +156,7 @@ DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT = 70
 DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 140
+MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS = 30
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
 # allocations can outrun the parent worker's resource polling interval.
@@ -3845,7 +3846,34 @@ class RefreshTask:
                     error=str(error),
                 )
             except ResourcePressureDeferred as error:
-                next_retry_at = self._record_resource_pressure_deferral(command)
+                weather_background_data = self._is_weather_background_data_command(
+                    command
+                )
+                next_retry_at = self._record_resource_pressure_deferral(
+                    command,
+                    minimum_seconds=(
+                        MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS
+                        if weather_background_data
+                        else 0
+                    ),
+                )
+                weather_window = self._weather_liveness_window
+                if (
+                    weather_background_data
+                    and weather_window is not None
+                    and weather_window.instance_uuid == command.instance_uuid
+                    and weather_window.candidate.instance.structural_generation
+                    == command.structural_generation
+                    and weather_window.candidate.instance.settings_revision
+                    == command.settings_revision
+                ):
+                    self._finish_weather_liveness_window(
+                        reason="resource_pressure",
+                        resource_sample=ResourceSample(
+                            available_mb=error.available_mb,
+                            swap_percent=error.swap_percent,
+                        ),
+                    )
                 logger.warning(
                     "Deferring refresh after typed resource pressure. | "
                     "plugin_id: %s | intent: %s | reason: %s | phase: %s | "
@@ -4035,13 +4063,20 @@ class RefreshTask:
                 command.instance_uuid,
             )
 
-    def _record_resource_pressure_deferral(self, command):
+    def _record_resource_pressure_deferral(self, command, *, minimum_seconds=0):
         return self._record_lane_resource_pressure_deferral(
             command.instance_uuid,
             command.intent,
+            minimum_seconds=minimum_seconds,
         )
 
-    def _record_lane_resource_pressure_deferral(self, instance_uuid, intent):
+    def _record_lane_resource_pressure_deferral(
+        self,
+        instance_uuid,
+        intent,
+        *,
+        minimum_seconds=0,
+    ):
         lane = self._lane_for_intent(intent)
         if instance_uuid is None or lane is None:
             return None
@@ -4049,6 +4084,7 @@ class RefreshTask:
         spacing_seconds = self._resource_thresholds().soft_spacing_seconds
         delay_seconds = max(
             poll_seconds,
+            minimum_seconds,
             min(
                 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS,
                 max(poll_seconds, spacing_seconds),

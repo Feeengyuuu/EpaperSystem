@@ -7480,7 +7480,7 @@ def test_resource_pressure_deferral_preserves_last_good_and_cached_display(
     assert task.scheduler_state.snapshot().last_failure_wall == before_scheduler_failure
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
     assert state.data.last_failure_at is None
-    assert state.data.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
+    assert state.data.next_retry_at == (current_dt + timedelta(minutes=5)).isoformat()
     assert state.last_good_cache == last_good
     assert cached.read_bytes() == cached_bytes
     assert cached.stat().st_mtime_ns == cached_mtime_ns
@@ -7503,6 +7503,60 @@ def test_resource_pressure_deferral_preserves_last_good_and_cached_display(
     assert plugin_calls == []
     assert len(task.display_manager.calls) == 1
     assert task.display_manager.calls[0][0].getpixel((0, 0)) == (17, 34, 51)
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "expected_delay"),
+    [
+        ("weather", timedelta(minutes=5)),
+        ("ordinary", timedelta(seconds=60)),
+    ],
+)
+def test_background_typed_resource_pressure_uses_weather_retry_floor(
+    monkeypatch,
+    plugin_id,
+    expected_delay,
+):
+    current_dt = datetime(2026, 8, 11, 20, 23, 53, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(_runtime_plugin_data(plugin_id, "Pressure Test"))
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(f"typed-pressure-retry-{plugin_id}"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_renderer_blocked_by_disk_pressure", lambda _command: False)
+
+    def defer(_command):
+        raise ResourcePressureDeferred(
+            reason="browser_resource_pressure",
+            phase="render",
+            available_mb=104.5,
+            swap_percent=99.1,
+        )
+
+    monkeypatch.setattr(task, "_execute_command", defer)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid].data
+    assert state.next_retry_at == (current_dt + expected_delay).isoformat()
 
 
 def test_cached_load_fallback_reraises_typed_resource_pressure(monkeypatch):
@@ -17700,6 +17754,69 @@ def test_weather_window_starts_immediately_when_normal_margin_recovers(
     assert recovered is not None
     assert recovered.instance_uuid == weather.instance_uuid
     assert "weather_liveness_concession" not in recovered.payload
+
+
+def test_weather_typed_pressure_ends_window_and_yields_retry_turn_to_ordinary(
+    monkeypatch,
+    caplog,
+):
+    current_dt = datetime(2026, 8, 11, 20, 23, 23, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-window-typed-pressure-handoff",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=75.3)}
+    executions = []
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
+
+    def execute(command):
+        executions.append(command.instance_uuid)
+        if command.instance_uuid == weather.instance_uuid:
+            raise ResourcePressureDeferred(
+                reason="browser_resource_pressure",
+                phase="render",
+                available_mb=104.5,
+                swap_percent=99.1,
+            )
+
+    monkeypatch.setattr(task, "_execute_command", execute)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is not None
+
+    sample["value"] = ResourceSample(available_mb=150, swap_percent=0)
+    clock.advance(30)
+    weather_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=30)
+    )
+    assert weather_command is not None
+    assert weather_command.instance_uuid == weather.instance_uuid
+    assert "weather_liveness_concession" not in weather_command.payload
+
+    with caplog.at_level("WARNING", logger=refresh_task_module.__name__):
+        deferred = _queue_and_process(task, weather_command)
+
+    assert deferred.job.status is JobStatus.CANCELED
+    assert deferred.job.error_code == "resource_pressure_deferred"
+    retry_state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
+    assert retry_state.next_retry_at == (
+        current_dt + timedelta(seconds=30, minutes=5)
+    ).isoformat()
+    assert task._weather_liveness_window is None
+    assert "reason: resource_pressure" in caplog.text
+
+    sample["value"] = ResourceSample(available_mb=146, swap_percent=75.3)
+    clock.advance(60)
+    next_command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+
+    assert next_command is not None
+    assert next_command.instance_uuid == ordinary.instance_uuid
+    completed = _queue_and_process(task, next_command)
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert executions == [weather.instance_uuid, ordinary.instance_uuid]
 
 
 def test_weather_window_concedes_once_at_deadline_with_140_mib_floor(monkeypatch):
