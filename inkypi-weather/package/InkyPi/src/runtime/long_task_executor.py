@@ -41,6 +41,12 @@ _CURRENT_INSTANCE_IDENTITY: ContextVar[InstanceIdentity | None] = ContextVar(
     "inkypi_long_task_identity",
     default=None,
 )
+_CURRENT_INSTANCE_IDENTITY_VALIDATOR: ContextVar[
+    Callable[[InstanceIdentity], bool] | None
+] = ContextVar(
+    "inkypi_long_task_identity_validator",
+    default=None,
+)
 _GLOBAL_EXECUTORS: weakref.WeakSet[LongTaskExecutor] = weakref.WeakSet()
 _GLOBAL_EXECUTORS_LOCK = threading.Lock()
 _STOP = object()
@@ -255,16 +261,26 @@ def _child_main(task, payload, cancel_event, sender) -> None:
 def bind_long_task_runtime(
     context: TaskContext,
     instance_identity: InstanceIdentity,
+    identity_validator: Callable[[InstanceIdentity], bool] | None = None,
 ):
-    """Expose a refresh context to nested plugin code for this call only."""
+    """Bind refresh identity and its optional parent-only validator."""
 
     if not isinstance(instance_identity, InstanceIdentity):
         raise TypeError("instance_identity must be an InstanceIdentity")
+    if (
+        identity_validator is not None
+        and not callable(identity_validator)
+    ):
+        raise TypeError("identity_validator must be callable or None")
     context_token = _CURRENT_TASK_CONTEXT.set(context)
     identity_token = _CURRENT_INSTANCE_IDENTITY.set(instance_identity)
+    validator_token = _CURRENT_INSTANCE_IDENTITY_VALIDATOR.set(
+        identity_validator
+    )
     try:
         yield
     finally:
+        _CURRENT_INSTANCE_IDENTITY_VALIDATOR.reset(validator_token)
         _CURRENT_INSTANCE_IDENTITY.reset(identity_token)
         _CURRENT_TASK_CONTEXT.reset(context_token)
 
@@ -275,6 +291,12 @@ def current_task_context() -> TaskContext | None:
 
 def current_instance_identity() -> InstanceIdentity | None:
     return _CURRENT_INSTANCE_IDENTITY.get()
+
+
+def current_instance_identity_validator() -> Callable[[InstanceIdentity], bool] | None:
+    """Return the parent-only stale-result validator bound to this refresh."""
+
+    return _CURRENT_INSTANCE_IDENTITY_VALIDATOR.get()
 
 
 def task_context_or_default(

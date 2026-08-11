@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import json
 import logging
 import math
 import os
@@ -15,6 +16,10 @@ from plugins.base_plugin.render_provenance import (
 )
 from runtime.long_task_executor import LongTaskExecutor
 from runtime.refresh_contracts import TaskCancelled, thaw_payload
+from runtime.sports_region_checkpoint import (
+    SPORTS_REGION_ORDER,
+    SportsRegionCheckpointStore,
+)
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import normalize_palette_colors
 
@@ -23,12 +28,19 @@ SPORTS_REGION_TASK = "sports_dashboard_region"
 SPORTS_EWC_PREFETCH_TASK = "sports_dashboard_ewc_prefetch"
 # Run the heaviest/provider-dense region before earlier results and allocator
 # fragmentation reduce the child-process safety margin on 416 MiB devices.
-SPORTS_REGIONS = ("esports", "football", "lower")
+SPORTS_REGIONS = SPORTS_REGION_ORDER
 # Keep the PNG plus settings safely below LongTaskExecutor's 2 MiB input cap
 # when the previous region becomes the next child payload.
 SPORTS_RESULT_MAX_BYTES = 1536 * 1024
 DEFAULT_RESOURCE_POLL_SECONDS = 0.25
 MIN_POSIX_WORKER_OOM_SCORE_ADJ = 800
+_FORCE_REFRESH_SETTING_KEYS = (
+    "forceRefresh",
+    "force_refresh",
+    "refreshNow",
+    "retry",
+)
+_DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 _EXECUTOR = None
 _EXECUTOR_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -36,6 +48,19 @@ logger = logging.getLogger(__name__)
 
 class SportsIsolatedResourcePressure(TaskCancelled):
     """The child was stopped before system pressure could threaten the parent."""
+
+
+class SportsIsolatedCheckpointPending(TaskCancelled):
+    """One permitted region completed and the durable render remains incomplete."""
+
+    def __init__(self, *, fingerprint, completed_regions, next_region):
+        self.fingerprint = str(fingerprint)
+        self.completed_regions = tuple(completed_regions)
+        self.next_region = str(next_region)
+        super().__init__(
+            "isolated Sports Dashboard checkpoint is awaiting region "
+            f"{self.next_region}"
+        )
 
 
 def _release_parent_transient_memory():
@@ -147,6 +172,93 @@ def _device_payload(device_config):
     return values, None if env_file is None else str(env_file)
 
 
+def _normalized_bool_setting(settings, key):
+    value = settings.get(key)
+    if value is None:
+        return False
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _render_semantics_digest(render_settings):
+    """Hash only normalized, non-secret settings that alter this render."""
+
+    document = {
+        "force_refresh": any(
+            _normalized_bool_setting(render_settings, key)
+            for key in _FORCE_REFRESH_SETTING_KEYS
+        ),
+        "display_render": _normalized_bool_setting(
+            render_settings,
+            _DISPLAY_RENDER_SETTING,
+        ),
+        "theme": render_settings.get("_inkypi_theme"),
+        "world_cup_screenshot_fallback": _normalized_bool_setting(
+            render_settings,
+            "worldCupScreenshotFallback",
+        ),
+        "sports_low_memory": _normalized_bool_setting(
+            render_settings,
+            "_inkypi_sports_low_memory",
+        ),
+        # All region workers consume the attested EWC handoff cache rather
+        # than repeating provider work after prefetch.
+        "ewc_cache_only": True,
+    }
+    encoded = json.dumps(
+        document,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _checkpoint_fingerprint(
+    instance_identity,
+    device_values,
+    render_semantics_digest,
+    attempt_token,
+):
+    """Bind a checkpoint to non-secret render identity and presentation facts."""
+
+    if attempt_token is None:
+        attempt_token_digest = None
+    else:
+        if (
+            type(attempt_token) is not str
+            or not attempt_token
+            or len(attempt_token) > 256
+        ):
+            raise ValueError("Sports checkpoint attempt token is invalid")
+        attempt_token_digest = hashlib.sha256(
+            attempt_token.encode("utf-8")
+        ).hexdigest()
+    document = {
+        "contract": "sports-isolated-regions-v3",
+        "instance_uuid_hash": hashlib.sha256(
+            str(instance_identity.instance_uuid or "").encode("utf-8")
+        ).hexdigest(),
+        "structural_generation": instance_identity.structural_generation,
+        "settings_revision": instance_identity.settings_revision,
+        "device": {
+            key: device_values.get(key)
+            for key in ("resolution", "orientation", "width", "height", "timezone")
+        },
+        "render_semantics_digest": render_semantics_digest,
+        "attempt_token_digest": attempt_token_digest,
+        "regions": SPORTS_REGIONS,
+    }
+    encoded = json.dumps(
+        document,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _wait_for_result(
     handle,
     *,
@@ -157,7 +269,19 @@ def _wait_for_result(
     poll_seconds,
 ):
     while True:
-        context.raise_if_cancelled()
+        try:
+            context.raise_if_cancelled()
+        except TaskCancelled:
+            # LongTaskExecutor.cancel() drives the existing child
+            # terminate/kill/join path.  Wait briefly for that coordinator so
+            # a canceled permit cannot leave a Sports worker overlapping the
+            # next one.
+            handle.cancel()
+            try:
+                handle.result(timeout=2)
+            except TimeoutError:
+                pass
+            raise
         try:
             sample = resource_sampler()
         except Exception:
@@ -206,6 +330,8 @@ def render_sports_dashboard_isolated(
     abort_min_available_mb,
     abort_max_swap_percent,
     now,
+    attempt_token=None,
+    checkpoint_store: SportsRegionCheckpointStore | None = None,
 ):
     """Render three regions in separate children and attest the final image."""
 
@@ -224,6 +350,17 @@ def render_sports_dashboard_isolated(
             thaw_payload(resolved_theme_context)
         )
     device_values, env_file = _device_payload(device_config)
+    if checkpoint_store is None:
+        checkpoint_store = SportsRegionCheckpointStore.for_device(
+            device_config,
+            instance_identity,
+        )
+    checkpoint_fingerprint = _checkpoint_fingerprint(
+        instance_identity,
+        device_values,
+        _render_semantics_digest(render_settings),
+        attempt_token,
+    )
     cache_identity = hashlib.sha256(
         (
             f"{instance_identity.instance_uuid or ''}:"
@@ -235,88 +372,102 @@ def render_sports_dashboard_isolated(
     base_png = None
     panel_provenances = {}
     final_value = None
+    completed_regions = ()
+    render_now = now.isoformat()
+    checkpoint = (
+        None
+        if checkpoint_store is None
+        else checkpoint_store.load(checkpoint_fingerprint, now=now)
+    )
+    if checkpoint is not None:
+        base_png = checkpoint.base_png
+        panel_provenances = dict(checkpoint.panel_provenances)
+        final_value = checkpoint.final_value
+        completed_regions = checkpoint.completed_regions
+        render_now = checkpoint.render_now
 
-    collected_objects, malloc_trimmed = _release_parent_transient_memory()
-    logger.info(
-        "Sports Dashboard parent memory maintenance completed. | "
-        "before_region: ewc_prefetch | collected_objects: %s | malloc_trim: %s",
-        collected_objects,
-        malloc_trimmed,
-    )
-    try:
-        prefetch_start_sample = resource_sampler()
-    except Exception:
-        prefetch_start_sample = None
-    if not _resource_margin_available(
-        prefetch_start_sample,
-        min_available_mb=start_min_available_mb,
-        max_swap_percent=start_max_swap_percent,
-    ):
-        raise SportsIsolatedResourcePressure(
-            "isolated Sports Dashboard worker deferred before EWC prefetch"
-        )
-    prefetch_payload = {
-        "settings": render_settings,
-        "device_config": device_values,
-        "env_file": env_file,
-        "now": now.isoformat(),
-        "timeout_seconds": context.remaining_seconds(),
-    }
-    prefetch_handle = executor.submit(
-        SPORTS_EWC_PREFETCH_TASK,
-        prefetch_payload,
-        context=context,
-        instance_identity=instance_identity,
-        identity_validator=identity_validator,
-    )
-    prefetch_result = _wait_for_result(
-        prefetch_handle,
-        context=context,
-        resource_sampler=resource_sampler,
-        abort_min_available_mb=abort_min_available_mb,
-        abort_max_swap_percent=abort_max_swap_percent,
-        poll_seconds=DEFAULT_RESOURCE_POLL_SECONDS,
-    )
-    if prefetch_result.status != "succeeded":
-        raise RuntimeError(
-            "isolated Sports Dashboard EWC prefetch failed: "
-            f"{prefetch_result.error_code or prefetch_result.status}"
-        )
-    prefetch_value = prefetch_result.value
-    if (
-        not isinstance(prefetch_value, dict)
-        or prefetch_value.get("region") != "ewc_prefetch"
-        or prefetch_value.get("cache_handoff_verified") is not True
-    ):
-        raise RuntimeError(
-            "isolated Sports Dashboard EWC prefetch returned an invalid result"
-        )
-    prefetch_worker_pid, prefetch_oom_score_adj = (
-        _require_worker_isolation_evidence(prefetch_value)
-    )
-    degraded_reason = str(prefetch_value.get("degraded_reason") or "")
-    if degraded_reason:
-        logger.warning(
-            "Sports Dashboard isolated EWC prefetch degraded to its durable "
-            "cache hand-off. | worker_pid: %s | worker_oom_score_adj: %s | "
-            "has_detail: %s | source_state: %s | reason: %s",
-            prefetch_worker_pid,
-            prefetch_oom_score_adj,
-            bool(prefetch_value.get("has_detail")),
-            prefetch_value.get("source_state") or "none",
-            degraded_reason,
-        )
-    else:
+    if checkpoint is None:
+        collected_objects, malloc_trimmed = _release_parent_transient_memory()
         logger.info(
-            "Sports Dashboard isolated EWC prefetch completed. | "
-            "worker_pid: %s | worker_oom_score_adj: %s | has_detail: %s | "
-            "source_state: %s | prefetch_source_state: %s",
-            prefetch_worker_pid,
-            prefetch_oom_score_adj,
-            bool(prefetch_value.get("has_detail")),
-            prefetch_value.get("source_state") or "none",
-            prefetch_value.get("prefetch_source_state") or "none",
+            "Sports Dashboard parent memory maintenance completed. | "
+            "before_region: ewc_prefetch | collected_objects: %s | malloc_trim: %s",
+            collected_objects,
+            malloc_trimmed,
         )
+        try:
+            prefetch_start_sample = resource_sampler()
+        except Exception:
+            prefetch_start_sample = None
+        if not _resource_margin_available(
+            prefetch_start_sample,
+            min_available_mb=start_min_available_mb,
+            max_swap_percent=start_max_swap_percent,
+        ):
+            raise SportsIsolatedResourcePressure(
+                "isolated Sports Dashboard worker deferred before EWC prefetch"
+            )
+        prefetch_payload = {
+            "settings": render_settings,
+            "device_config": device_values,
+            "env_file": env_file,
+            "now": render_now,
+            "timeout_seconds": context.remaining_seconds(),
+        }
+        prefetch_handle = executor.submit(
+            SPORTS_EWC_PREFETCH_TASK,
+            prefetch_payload,
+            context=context,
+            instance_identity=instance_identity,
+            identity_validator=identity_validator,
+        )
+        prefetch_result = _wait_for_result(
+            prefetch_handle,
+            context=context,
+            resource_sampler=resource_sampler,
+            abort_min_available_mb=abort_min_available_mb,
+            abort_max_swap_percent=abort_max_swap_percent,
+            poll_seconds=DEFAULT_RESOURCE_POLL_SECONDS,
+        )
+        if prefetch_result.status != "succeeded":
+            raise RuntimeError(
+                "isolated Sports Dashboard EWC prefetch failed: "
+                f"{prefetch_result.error_code or prefetch_result.status}"
+            )
+        prefetch_value = prefetch_result.value
+        if (
+            not isinstance(prefetch_value, dict)
+            or prefetch_value.get("region") != "ewc_prefetch"
+            or prefetch_value.get("cache_handoff_verified") is not True
+        ):
+            raise RuntimeError(
+                "isolated Sports Dashboard EWC prefetch returned an invalid result"
+            )
+        prefetch_worker_pid, prefetch_oom_score_adj = (
+            _require_worker_isolation_evidence(prefetch_value)
+        )
+        degraded_reason = str(prefetch_value.get("degraded_reason") or "")
+        if degraded_reason:
+            logger.warning(
+                "Sports Dashboard isolated EWC prefetch degraded to its durable "
+                "cache hand-off. | worker_pid: %s | worker_oom_score_adj: %s | "
+                "has_detail: %s | source_state: %s | reason: %s",
+                prefetch_worker_pid,
+                prefetch_oom_score_adj,
+                bool(prefetch_value.get("has_detail")),
+                prefetch_value.get("source_state") or "none",
+                degraded_reason,
+            )
+        else:
+            logger.info(
+                "Sports Dashboard isolated EWC prefetch completed. | "
+                "worker_pid: %s | worker_oom_score_adj: %s | has_detail: %s | "
+                "source_state: %s | prefetch_source_state: %s",
+                prefetch_worker_pid,
+                prefetch_oom_score_adj,
+                bool(prefetch_value.get("has_detail")),
+                prefetch_value.get("source_state") or "none",
+                prefetch_value.get("prefetch_source_state") or "none",
+            )
     # The dedicated child has either published and attested at most one bounded
     # EWC detail page or explicitly degraded to the last durable cache. The
     # later panel worker must stay cache-only so its LoL, Valve, image, and EWC
@@ -327,7 +478,10 @@ def render_sports_dashboard_isolated(
     prefetch_result = None
     prefetch_value = None
 
-    for region in SPORTS_REGIONS:
+    regions_to_run = SPORTS_REGIONS[len(completed_regions) :]
+    if checkpoint_store is not None:
+        regions_to_run = regions_to_run[:1]
+    for region in regions_to_run:
         context.raise_if_cancelled()
         collected_objects, malloc_trimmed = _release_parent_transient_memory()
         logger.info(
@@ -354,7 +508,7 @@ def render_sports_dashboard_isolated(
             "settings": render_settings,
             "device_config": device_values,
             "env_file": env_file,
-            "now": now.isoformat(),
+            "now": render_now,
             "base_png": base_png,
             "panel_provenances": dict(panel_provenances),
             "finalize": region == SPORTS_REGIONS[-1],
@@ -409,11 +563,47 @@ def render_sports_dashboard_isolated(
         base_png = image_png
         panel_provenances[region] = provenance.value
         if region == SPORTS_REGIONS[-1]:
+            try:
+                composite_provenance = SourceProvenance(
+                    value.get("composite_provenance")
+                ).value
+            except (TypeError, ValueError) as error:
+                raise RuntimeError(
+                    "isolated Sports Dashboard returned invalid composite provenance"
+                ) from error
+            skip_cache = value.get("skip_cache")
+            if type(skip_cache) is not bool:
+                raise RuntimeError(
+                    "isolated Sports Dashboard returned invalid cache policy"
+                )
+            theme_mode = value.get("theme_mode")
+            if theme_mode is not None and (
+                type(theme_mode) is not str or theme_mode not in ("day", "night")
+            ):
+                raise RuntimeError(
+                    "isolated Sports Dashboard returned invalid theme mode"
+                )
             final_value = {
-                "composite_provenance": value.get("composite_provenance"),
-                "skip_cache": value.get("skip_cache"),
-                "theme_mode": value.get("theme_mode"),
+                "composite_provenance": composite_provenance,
+                "skip_cache": skip_cache,
+                "theme_mode": theme_mode,
             }
+        if checkpoint_store is not None:
+            completed_regions = SPORTS_REGIONS[: SPORTS_REGIONS.index(region) + 1]
+            checkpoint_store.save(
+                fingerprint=checkpoint_fingerprint,
+                completed_regions=completed_regions,
+                base_png=base_png,
+                panel_provenances=panel_provenances,
+                render_now=render_now,
+                final_value=final_value,
+            )
+            if region != SPORTS_REGIONS[-1]:
+                raise SportsIsolatedCheckpointPending(
+                    fingerprint=checkpoint_fingerprint,
+                    completed_regions=completed_regions,
+                    next_region=SPORTS_REGIONS[len(completed_regions)],
+                )
         # Drop the completed process-boundary graph before the next iteration.
         # The next maintenance pass can then return its allocator pages to Linux
         # instead of carrying each region's transient heap into the EWC worker.
@@ -445,4 +635,9 @@ def render_sports_dashboard_isolated(
     theme_mode = final_value.get("theme_mode")
     if theme_mode in {"day", "night"}:
         image.info["inkypi_theme_mode"] = theme_mode
+    if checkpoint_store is not None:
+        # Retain the complete checkpoint until the composite has been decoded
+        # and attested.  Once this return value is safe to promote, the staged
+        # regions are no longer needed for a later permit.
+        checkpoint_store.clear()
     return image

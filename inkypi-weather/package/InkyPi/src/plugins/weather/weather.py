@@ -98,6 +98,42 @@ class Weather(BasePlugin):
         return apply_theme_to_plugin_settings(settings, theme_context)
 
     def generate_image(self, settings, device_config):
+        """Run the complete Weather pipeline in a disposable refresh worker.
+
+        Direct previews and unit-level callers have no bound refresh identity,
+        so they retain the established in-process behavior. RefreshTask binds
+        both values before invoking a plugin; that is the deployable seam that
+        lets Weather isolate data fetching, parsing, and Chromium together.
+        """
+
+        from runtime.long_task_executor import (
+            current_instance_identity,
+            current_instance_identity_validator,
+            current_task_context,
+        )
+
+        context = current_task_context()
+        identity = current_instance_identity()
+        identity_validator = current_instance_identity_validator()
+        if (
+            context is not None
+            and identity is not None
+            and identity.instance_uuid
+            and identity.structural_generation is not None
+            and identity.settings_revision is not None
+        ):
+            from plugins.weather.isolated_refresh import render_weather_isolated
+
+            return render_weather_isolated(
+                settings=settings,
+                device_config=device_config,
+                context=context,
+                instance_identity=identity,
+                identity_validator=identity_validator,
+            )
+        return self._generate_image_in_process(settings, device_config)
+
+    def _generate_image_in_process(self, settings, device_config):
         self._openweather_force_refresh = self._force_refresh_requested(settings)
         self._openweather_cache_hits = set()
         lat = float(settings.get('latitude'))
@@ -335,6 +371,12 @@ class Weather(BasePlugin):
                 "source": astronomy.get("source") or "weather",
             }
 
+        return self._publish_weather_context(payload, generated_at)
+
+    def _publish_weather_context(self, payload, generated_at):
+        publisher = getattr(self, "_weather_context_publisher", None)
+        if publisher is not None:
+            return bool(publisher(payload, generated_at))
         return write_context(
             "weather",
             payload,

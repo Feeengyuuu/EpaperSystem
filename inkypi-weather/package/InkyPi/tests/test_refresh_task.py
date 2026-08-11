@@ -62,6 +62,7 @@ from runtime.refresh_policy import (
     ResourceSample,
 )
 from runtime.render_arbiter import RenderArbiter
+from runtime.sports_isolated_renderer import SportsIsolatedCheckpointPending
 from runtime.runtime_state import (
     LastGoodCacheState,
     PresentationCommitReceipt,
@@ -71,6 +72,7 @@ from runtime.runtime_state import (
 from runtime.long_task_executor import (
     InstanceIdentity,
     current_instance_identity,
+    current_instance_identity_validator,
     current_task_context,
 )
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
@@ -7657,21 +7659,36 @@ def test_process_queue_entry_binds_context_and_immutable_instance_identity(monke
     observed = []
 
     def capture_runtime(_command):
-        observed.append((current_task_context(), current_instance_identity()))
+        observed.append(
+            (
+                current_task_context(),
+                current_instance_identity(),
+                current_instance_identity_validator(),
+            )
+        )
 
     monkeypatch.setattr(task, "_execute_command", capture_runtime)
 
     task._process_queue_entry(entry)
 
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
-    context, identity = observed[0]
+    context, identity, identity_validator = observed[0]
     assert context.cancel_event is entry.cancel_event
     assert context.deadline_monotonic == command.deadline_monotonic
     assert identity.instance_uuid == instance.instance_uuid
     assert identity.structural_generation == instance.structural_generation
     assert identity.settings_revision == instance.settings_revision
+    assert identity_validator(identity)
+    assert not identity_validator(
+        InstanceIdentity(
+            identity.instance_uuid,
+            identity.structural_generation,
+            identity.settings_revision + 1,
+        )
+    )
     assert current_task_context() is None
     assert current_instance_identity() is None
+    assert current_instance_identity_validator() is None
 
 
 def test_failure_bookkeeping_error_cannot_leave_queue_job_running(monkeypatch):
@@ -10194,6 +10211,159 @@ def test_background_sports_data_uses_isolated_renderer_below_legacy_margin(
     assert isolated_calls[0]["identity_validator"](
         isolated_calls[0]["instance_identity"]
     )
+
+
+def test_sports_region_checkpoints_continue_the_same_forced_job(monkeypatch):
+    tmp_path = make_test_dir("sports-region-checkpoint-pending")
+    current_dt = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+
+    calls = []
+
+    def checkpointing_renderer(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise SportsIsolatedCheckpointPending(
+                fingerprint="a" * 64,
+                completed_regions=("esports",),
+                next_region="football",
+            )
+        if len(calls) == 2:
+            raise SportsIsolatedCheckpointPending(
+                fingerprint="a" * 64,
+                completed_regions=("esports", "football"),
+                next_region="lower",
+            )
+        return Image.new("RGB", (1, 1), "white")
+
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        sports_isolated_renderer=checkpointing_renderer,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=300, swap_percent=0),
+    )
+
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+    submitted = task.refresh_queue.submit(command)
+    for expected_calls in (1, 2):
+        entry = task.refresh_queue.take(timeout=0)
+        assert entry is not None
+        assert entry.job.id == submitted.id
+        task._process_queue_entry(entry)
+        checkpointed = task.refresh_queue.get_entry(submitted.id)
+        assert checkpointed.job.status is JobStatus.QUEUED
+        assert len(calls) == expected_calls
+
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert entry.job.id == submitted.id
+    task._process_queue_entry(entry)
+    completed = task.refresh_queue.get_entry(submitted.id)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert completed.job.error_code is None
+    assert len(calls) == 3
+    assert all(call["settings"]["forceRefresh"] is True for call in calls)
+    assert all(call["settings"]["force_refresh"] is True for call in calls)
+    assert all(call["attempt_token"] == command.id for call in calls)
+    lane = task.runtime_state.snapshot().instances[command.instance_uuid].data
+    assert lane.last_failure_at is None
+    assert lane.next_retry_at is None
+
+
+def test_background_sports_checkpoint_returns_the_permit_to_manual_work(monkeypatch):
+    tmp_path = make_test_dir("sports-region-checkpoint-interleave")
+    current_dt = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "sports_dashboard",
+            "SportsDashboard",
+            latest_refresh_time=None,
+        )
+    )
+    calls = []
+
+    def checkpointing_renderer(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            completed = ("esports",) if len(calls) == 1 else ("esports", "football")
+            raise SportsIsolatedCheckpointPending(
+                fingerprint="b" * 64,
+                completed_regions=completed,
+                next_region="football" if len(calls) == 1 else "lower",
+            )
+        return Image.new("RGB", (1, 1), "white")
+
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        clock=clock,
+        sports_isolated_renderer=checkpointing_renderer,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=300, swap_percent=0),
+    )
+    sports = task._select_independent_refresh_command(current_dt)
+    assert sports is not None
+    sports_job = task.refresh_queue.submit(sports)
+    first = task.refresh_queue.take(timeout=0)
+    assert first is not None
+    task._process_queue_entry(first)
+    assert task.refresh_queue.get_entry(sports_job.id).job.status is JobStatus.QUEUED
+
+    urgent = RefreshCommand.create(
+        kind=CommandKind.DISPLAY,
+        source=CommandSource.MANUAL,
+        plugin_id="audit_global",
+        instance_uuid=None,
+        payload={"refresh_type": "Manual Update", "settings": {}},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=100,
+        intent=RefreshIntent.MANUAL_RENDER,
+    )
+    urgent_job = task.refresh_queue.submit(urgent)
+    interleaved = task.refresh_queue.take(timeout=0)
+    assert interleaved is not None
+    assert interleaved.job.id == urgent_job.id
+    task.refresh_queue.finish(interleaved.job.id, JobStatus.SUCCEEDED)
+
+    for expected_status in (JobStatus.QUEUED, JobStatus.SUCCEEDED):
+        resumed = task.refresh_queue.take(timeout=0)
+        assert resumed is not None
+        assert resumed.job.id == sports_job.id
+        task._process_queue_entry(resumed)
+        assert task.refresh_queue.get_entry(sports_job.id).job.status is expected_status
+
+    assert len(calls) == 3
 
 
 def test_manual_sports_data_refresh_uses_the_same_isolated_renderer(monkeypatch):
@@ -17532,7 +17702,7 @@ def test_weather_window_starts_immediately_when_normal_margin_recovers(
     assert "weather_liveness_concession" not in recovered.payload
 
 
-def test_weather_window_concedes_once_at_deadline_with_115_mib_floor(monkeypatch):
+def test_weather_window_concedes_once_at_deadline_with_140_mib_floor(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, clock, weather, _ordinary = _weather_margin_runtime(
         "weather-deadline-concession",
@@ -17646,7 +17816,7 @@ def test_non_concession_independent_submit_keeps_submit_only_queue_contract():
     assert queue.command is command
 
 
-def test_weather_below_115_mib_never_opens_window_or_holds_ordinary(monkeypatch):
+def test_weather_below_140_mib_never_opens_window_or_holds_ordinary(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, clock, _weather, ordinary = _weather_margin_runtime(
         "weather-below-concession-floor",
@@ -17696,6 +17866,32 @@ def test_weather_normal_start_margin_is_strict_and_finite(
     assert available is expected
     assert required_mb == 150
     assert max_swap == 70
+
+
+@pytest.mark.parametrize(
+    ("available_mb", "expected"),
+    [
+        (140, True),
+        (139.9, False),
+        (float("nan"), False),
+    ],
+)
+def test_weather_concession_keeps_the_measured_safe_memory_floor(
+    available_mb,
+    expected,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, _ordinary = _weather_margin_runtime(
+        f"weather-concession-margin-{available_mb}",
+        current_dt,
+    )
+
+    available, required_mb = task._weather_concession_margin(
+        ResourceSample(available_mb=available_mb, swap_percent=99)
+    )
+
+    assert available is expected
+    assert required_mb == 140
 
 
 def test_weather_concession_execution_race_stops_before_plugin_start(monkeypatch):

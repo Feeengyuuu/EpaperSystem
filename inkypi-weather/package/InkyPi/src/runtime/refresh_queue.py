@@ -333,6 +333,60 @@ class RefreshQueue:
             self._publish_change_locked()
             return result
 
+    def yield_running(self, job_id: str) -> JobRecord:
+        """Return one checkpointed job to the queue without changing its identity."""
+
+        with self._condition:
+            now = self._clock()
+            self._prune_terminal_locked(now)
+            actual_job_id = self._resolve_actual_job_id_locked(job_id)
+            job = self._jobs.get(actual_job_id)
+            if job is None:
+                raise InvalidJobTransitionError(
+                    f"unknown refresh job: {job_id}",
+                )
+            if job.status is not JobStatus.RUNNING:
+                raise InvalidJobTransitionError(
+                    f"refresh job cannot yield from {job.status.value}",
+                    job,
+                )
+
+            command = self._commands[actual_job_id]
+            deadline_expired = command.deadline_monotonic <= now
+            canceled = (
+                job.cancel_requested_at is not None
+                or self._cancel_events[actual_job_id].is_set()
+                or not self._accepting
+            )
+            if deadline_expired or canceled:
+                job.status = JobStatus.CANCELED
+                job.completed_at = self._wall_clock()
+                if deadline_expired:
+                    job.error_code = "deadline_expired"
+                    job.error = "refresh command deadline expired"
+                else:
+                    job.error_code = "task_canceled"
+                    job.error = "refresh command was canceled before it could resume"
+                self._cancel_events[actual_job_id].set()
+                self._running.discard(actual_job_id)
+                result = replace(job)
+                self._record_terminal_locked(actual_job_id, now)
+                self._prune_terminal_locked(now)
+                self._publish_change_locked()
+                return result
+
+            job.status = JobStatus.QUEUED
+            job.started_at = None
+            job.completed_at = None
+            job.error_code = None
+            job.error = None
+            self._running.discard(actual_job_id)
+            self._sequence += 1
+            self._pending[actual_job_id] = self._sequence
+            result = replace(job)
+            self._publish_change_locked()
+            return result
+
     def get_job(self, job_id: str) -> JobRecord | None:
         with self._condition:
             now = self._clock()

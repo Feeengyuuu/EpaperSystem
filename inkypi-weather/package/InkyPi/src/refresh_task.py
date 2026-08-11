@@ -108,6 +108,7 @@ from runtime.refresh_policy import (
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.render_arbiter import RenderArbiter
 from runtime.sports_isolated_renderer import (
+    SportsIsolatedCheckpointPending,
     SportsIsolatedResourcePressure,
     render_sports_dashboard_isolated,
 )
@@ -154,7 +155,7 @@ DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB = 150
 DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT = 70
 DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
-DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 115
+DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 140
 DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS = 30
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
 # allocations can outrun the parent worker's resource polling interval.
@@ -3778,8 +3779,58 @@ class RefreshTask:
                     command.structural_generation,
                     command.settings_revision,
                 )
-                with bind_long_task_runtime(context, identity):
+                identity_validator = (
+                    lambda candidate: self._isolated_instance_identity_is_current(
+                        command,
+                        candidate,
+                    )
+                )
+                with bind_long_task_runtime(
+                    context,
+                    identity,
+                    identity_validator=identity_validator,
+                ):
                     self._execute_command(command)
+            except SportsIsolatedCheckpointPending as pending:
+                try:
+                    context.raise_if_cancelled()
+                except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
+                    status, error_code, abort_message = self._abort_details(
+                        abort_error
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        status,
+                        error_code=error_code,
+                        error=abort_message,
+                    )
+                    self._signal_completion(finished.id)
+                    return
+                try:
+                    yielded = self.refresh_queue.yield_running(entry.job.id)
+                except Exception as error:
+                    logger.exception(
+                        "Sports Dashboard checkpoint could not return its queue permit"
+                    )
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.FAILED,
+                        error_code="sports_checkpoint_yield_failed",
+                        error=str(error),
+                    )
+                    self._signal_completion(finished.id)
+                    return
+                logger.info(
+                    "Isolated Sports Dashboard returned its queue permit after "
+                    "one durable region. | completed_regions: %s | "
+                    "next_region: %s | queue_status: %s",
+                    ",".join(pending.completed_regions),
+                    pending.next_region,
+                    yielded.status.value,
+                )
+                if yielded.status is not JobStatus.QUEUED:
+                    self._signal_completion(yielded.id)
+                return
             except SportsIsolatedResourcePressure as error:
                 next_retry_at = self._record_resource_pressure_deferral(command)
                 logger.warning(
@@ -4335,7 +4386,7 @@ class RefreshTask:
         if now < self._weather_liveness_cooldown_until_monotonic:
             return None, False, False
         # A quiet window is useful only when a bounded start could eventually
-        # be safe. Unknown metrics or less than 115 MiB never hold other work.
+        # be safe. Unknown metrics or less than 140 MiB never hold other work.
         if not concession_margin:
             return None, False, False
         window_seconds = self._weather_liveness_seconds(
@@ -4920,7 +4971,7 @@ class RefreshTask:
             max_swap_percent = DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT
         return min_available_mb, max_swap_percent
 
-    def _sports_isolated_identity_is_current(self, command, identity):
+    def _isolated_instance_identity_is_current(self, command, identity):
         expected = InstanceIdentity(
             command.instance_uuid,
             command.structural_generation,
@@ -5696,7 +5747,7 @@ class RefreshTask:
                             command.settings_revision,
                         ),
                         identity_validator=(
-                            lambda identity: self._sports_isolated_identity_is_current(
+                            lambda identity: self._isolated_instance_identity_is_current(
                                 command,
                                 identity,
                             )
@@ -5707,6 +5758,7 @@ class RefreshTask:
                         abort_min_available_mb=abort_min_available_mb,
                         abort_max_swap_percent=abort_max_swap_percent,
                         now=current_dt,
+                        attempt_token=(command.id if command.force else None),
                     )
                     generated = True
                 elif theme_render_only and theme_cache_ready:

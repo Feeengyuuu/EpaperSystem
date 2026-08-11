@@ -180,6 +180,77 @@ def test_running_entry_cancel_event_observes_queue_quiesce():
     assert entry.cancel_event.is_set()
 
 
+def test_yield_running_requeues_the_same_job_behind_urgent_work():
+    queue = make_queue()
+    sports = command(
+        plugin_id="sports_dashboard",
+        instance_uuid="sports",
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    submitted = queue.submit(sports)
+    running = queue.take(timeout=0)
+    assert running is not None
+    urgent = command(
+        source=CommandSource.MANUAL,
+        instance_uuid="urgent",
+        priority=100,
+    )
+    urgent_job = queue.submit(urgent)
+
+    yielded = queue.yield_running(submitted.id)
+
+    assert yielded.id == submitted.id
+    assert yielded.status is JobStatus.QUEUED
+    urgent_entry = queue.take(timeout=0)
+    assert urgent_entry is not None
+    assert urgent_entry.job.id == urgent_job.id
+    queue.finish(urgent_entry.job.id, JobStatus.SUCCEEDED)
+    resumed = queue.take(timeout=0)
+    assert resumed is not None
+    assert resumed.job.id == submitted.id
+    assert resumed.command.id == sports.id
+
+
+def test_yield_running_finishes_a_concurrently_canceled_job():
+    queue = make_queue()
+    submitted = queue.submit(command(instance_uuid="cancel-yield"))
+    running = queue.take(timeout=0)
+    assert running is not None
+    assert queue.cancel_instance("cancel-yield") == 1
+
+    yielded = queue.yield_running(submitted.id)
+
+    assert yielded.status is JobStatus.CANCELED
+    assert yielded.error_code == "task_canceled"
+    assert queue.take(timeout=0) is None
+
+
+def test_yield_running_finishes_a_job_whose_deadline_elapsed():
+    fake_time = FakeTime()
+    queue = make_queue(fake_time)
+    submitted = queue.submit(command(deadline=11.0))
+    running = queue.take(timeout=0)
+    assert running is not None
+    fake_time.advance(2.0)
+
+    yielded = queue.yield_running(submitted.id)
+
+    assert yielded.status is JobStatus.CANCELED
+    assert yielded.error_code == "deadline_expired"
+    assert queue.take(timeout=0) is None
+
+
+def test_yield_running_rejects_unknown_and_non_running_jobs():
+    queue = make_queue()
+    submitted = queue.submit(command())
+
+    with pytest.raises(InvalidJobTransitionError, match="unknown"):
+        queue.yield_running("missing")
+    with pytest.raises(InvalidJobTransitionError, match="cannot yield"):
+        queue.yield_running(submitted.id)
+
+
 def test_wait_for_change_observes_direct_submit_that_precedes_wait():
     queue = make_queue()
     token = queue.change_token()

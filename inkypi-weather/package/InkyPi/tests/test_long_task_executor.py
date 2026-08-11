@@ -13,6 +13,7 @@ from runtime.long_task_executor import (
     LongTaskQueueFull,
     bind_long_task_runtime,
     current_instance_identity,
+    current_instance_identity_validator,
     current_task_context,
 )
 from runtime.refresh_contracts import TaskContext
@@ -161,14 +162,35 @@ def test_runtime_binding_is_scoped_and_keeps_identity_immutable():
 
     assert current_task_context() is None
     assert current_instance_identity() is None
+    assert current_instance_identity_validator() is None
     with bind_long_task_runtime(context, identity):
         assert current_task_context() is context
         assert current_instance_identity() == identity
+        assert current_instance_identity_validator() is None
         with pytest.raises(Exception):
             identity.settings_revision = 6
 
     assert current_task_context() is None
     assert current_instance_identity() is None
+    assert current_instance_identity_validator() is None
+
+
+def test_runtime_binding_scopes_optional_parent_identity_validator():
+    context = _context(3)
+    identity = InstanceIdentity("instance", 2, 5)
+    validator = lambda candidate: candidate == identity
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=validator,
+    ):
+        assert current_instance_identity_validator() is validator
+        with bind_long_task_runtime(context, identity):
+            assert current_instance_identity_validator() is None
+        assert current_instance_identity_validator() is validator
+
+    assert current_instance_identity_validator() is None
 
 
 def test_payload_rejects_objects_that_cannot_cross_the_process_boundary():

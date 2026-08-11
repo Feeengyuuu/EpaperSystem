@@ -58,6 +58,18 @@ def test_main_unit_restarts_after_clean_external_termination():
     assert unit["Service"]["Restart"] == "always"
 
 
+def test_main_unit_grants_one_full_cpu_to_bounded_heavy_refreshes():
+    unit = _parse_unit(INSTALL_ROOT / "inkypi.service")
+
+    assert unit["Service"]["CPUQuota"] == "100%"
+
+
+def test_main_unit_does_not_reintroduce_an_unproven_hard_memory_cap():
+    unit = _parse_unit(INSTALL_ROOT / "inkypi.service")
+
+    assert "MemoryMax" not in unit["Service"]
+
+
 def test_updates_repair_runtime_env_without_persistent_root_service_hook():
     source = (INSTALL_ROOT / "inkypi.service").read_text(encoding="utf-8")
     helper_path = INSTALL_ROOT / "repair_env_permissions.py"
