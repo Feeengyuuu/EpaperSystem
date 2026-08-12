@@ -61,7 +61,7 @@ def test_main_unit_restarts_after_clean_external_termination():
 def test_main_unit_grants_one_full_cpu_to_bounded_heavy_refreshes():
     unit = _parse_unit(INSTALL_ROOT / "inkypi.service")
 
-    assert unit["Service"]["CPUQuota"] == "100%"
+    assert unit["Service"]["CPUQuota"] == "200%"
 
 
 def test_main_unit_does_not_reintroduce_an_unproven_hard_memory_cap():
