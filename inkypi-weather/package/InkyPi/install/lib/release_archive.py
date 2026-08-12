@@ -43,6 +43,19 @@ EXCLUDED_NAMES = {
     "tmp",
 }
 YAHEI_SUFFIXES = {".ttc", ".ttf"}
+LF_TEXT_SUFFIXES = {
+    ".conf",
+    ".py",
+    ".service",
+    ".sh",
+    ".socket",
+}
+LF_TEXT_MEMBERS = {
+    "install/cli/inkypi-plugin",
+    "install/debian-requirements.txt",
+    "install/inkypi",
+    "install/inkypi-update",
+}
 
 
 def is_device_owned_yahei_font(path: PurePath) -> bool:
@@ -77,6 +90,15 @@ def is_runtime_display_image(path: PurePath) -> bool:
         "src", "static", "images", "current_image.png"
     ) or parts[:3] == (
         "src", "static", "display"
+    )
+
+
+def is_linux_text_member(path: PurePath) -> bool:
+    """Return whether CRLF would break a Linux entrypoint or unit file."""
+
+    return (
+        path.as_posix() in LF_TEXT_MEMBERS
+        or path.suffix.casefold() in LF_TEXT_SUFFIXES
     )
 
 
@@ -115,7 +137,16 @@ def build_release_archive(
                 continue
             if path.is_symlink() or not path.is_file() or path.suffix == ".pyc":
                 continue
-            archive.write(path, relative.as_posix())
+            if is_linux_text_member(relative):
+                info = zipfile.ZipInfo.from_file(path, relative.as_posix())
+                archive.writestr(
+                    info,
+                    path.read_bytes().replace(b"\r\n", b"\n"),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
+            else:
+                archive.write(path, relative.as_posix())
         if requested_migrations:
             request = {
                 "schema_version": 1,
