@@ -2485,3 +2485,35 @@ For every future host migration, add a two-stage capability release, an explicit
 - **Notes**: Implemented and covered by headless_mode_v1 handshake, activation, failure, and power-loss tests.
 
 ---
+
+## [LRN-20260811-002] correction
+
+**Logged**: 2026-08-11T23:24:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Prepared-presentation acceptance must distinguish preparing a successor from committing that prepared image on the next display.
+
+### Details
+A first manual display can successfully write the current canonical image and enqueue preparation of the next bank selection without advancing `presentation_receipt`. The receipt is committed only when the exact prepared request is consumed by a later display. An acceptance loop that waits for a receipt immediately after the initial display can therefore time out even though production rotation is healthy. The display endpoint also defaults `request_presentation` to false, so a verification flag must send the value explicitly rather than omit the payload.
+
+### Suggested Action
+Before counting display rounds, require a prepared `presentation_request`. For each counted round, capture its request ID, explicitly submit `request_presentation=true`, require the resulting receipt to contain that exact ID, then wait for a distinct prepared successor. Verify displayed and canonical hashes together and keep warm-up displays separate from counted receipt advances.
+
+### Metadata
+- Source: error
+- Related Files: tools/live_all_instances_acceptance.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_live_all_instances_acceptance.py
+- Tags: presentation-refresh, receipt, display, acceptance, prepared-bank
+- Pattern-Key: acceptance.prepared_presentation_requires_next_display_commit
+- Recurrence-Count: 1
+- First-Seen: 2026-08-11
+- Last-Seen: 2026-08-11
+
+### Resolution
+- **Resolved**: 2026-08-11T23:24:00-07:00
+- **Commit/PR**: local branch
+- **Notes**: The tracked acceptance tool now sends the explicit presentation request flag, and the live Magazine sequence verifies exact request-to-receipt linkage across counted displays.
+
+---

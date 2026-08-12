@@ -1307,11 +1307,13 @@ def test_run_instance_records_prepared_request_consumed_by_exact_display(
         display_manifest_path=manifest_path,
         output_dir=tmp_path / "evidence",
     )
-    monkeypatch.setattr(
-        acceptance,
-        "submit_job",
-        lambda *_args, **_kwargs: {"id": "job"},
-    )
+    submissions = []
+
+    def submit(_session, _url, endpoint, _instance, **kwargs):
+        submissions.append((endpoint, kwargs))
+        return {"id": "job"}
+
+    monkeypatch.setattr(acceptance, "submit_job", submit)
     monkeypatch.setattr(
         acceptance,
         "poll_job",
@@ -1342,6 +1344,10 @@ def test_run_instance_records_prepared_request_consumed_by_exact_display(
         request["request_id"]
     )
     assert captures == ["display"]
+    assert submissions[1] == (
+        "/display_plugin_instance",
+        {"extra_payload": {"request_presentation": True}},
+    )
 
 
 def test_run_instance_rejects_missing_expected_presentation_request(

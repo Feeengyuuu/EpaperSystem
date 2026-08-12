@@ -1980,11 +1980,9 @@ class AcceptanceRunner:
                 self.base_url,
                 "/display_plugin_instance",
                 instance,
-                extra_payload=(
-                    None
-                    if self.verify_post_display_presentation
-                    else {"request_presentation": False}
-                ),
+                extra_payload={
+                    "request_presentation": self.verify_post_display_presentation
+                },
             )
             display_job = poll_job(
                 self.session,
